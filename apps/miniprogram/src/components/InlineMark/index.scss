@@ -1,0 +1,202 @@
+.inline-mark {
+  display: inline;
+  position: relative;
+  transition: background-color 0.18s var(--ease-reader-out), border-color 0.18s var(--ease-reader-out), opacity 0.18s var(--ease-reader-out);
+
+  &.background {
+    padding: 0 2rpx;
+    margin: 0 -1rpx;
+    border-radius: 3rpx;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+
+    &.tone-vocab {
+      background: linear-gradient(to top, rgba(242, 196, 84, 0.34) 42%, transparent 42%);
+    }
+
+    &.tone-phrase {
+      background: linear-gradient(to top, rgba(151, 126, 224, 0.20) 46%, transparent 46%);
+    }
+
+    &.tone-vocab:active,
+    &.clickable:active.tone-vocab,
+    &.active.tone-vocab {
+      background: linear-gradient(to top, rgba(242, 196, 84, 0.46) 46%, transparent 46%);
+    }
+
+    &.tone-phrase:active,
+    &.clickable:active.tone-phrase,
+    &.active.tone-phrase {
+      background: linear-gradient(to top, rgba(151, 126, 224, 0.30) 48%, transparent 48%);
+    }
+  }
+
+  &.underline {
+    padding-bottom: 2rpx;
+    border-radius: 0;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+
+    &.tone-context {
+      border-bottom: 1.5rpx solid var(--annotation-context-line);
+    }
+
+    &.tone-grammar {
+      border-bottom: 1rpx solid rgba(116, 102, 148, 0.40);
+      background: linear-gradient(to top, rgba(116, 102, 148, 0.035) 30%, transparent 30%);
+    }
+
+    &.tone-context:active,
+    &.clickable:active.tone-context,
+    &.active.tone-context {
+      border-bottom-color: var(--annotation-context-line-active);
+    }
+
+    &.tone-grammar:active,
+    &.active.tone-grammar {
+      border-bottom-width: 2rpx;
+      border-bottom-color: var(--annotation-grammar-line-active);
+      background: linear-gradient(to top, rgba(116, 102, 148, 0.12) 38%, transparent 38%);
+    }
+  }
+
+  &.clickable {
+    cursor: pointer;
+
+    &:active {
+      opacity: 0.82;
+    }
+  }
+
+  &.saved {
+    border-bottom: none !important;
+
+    &::after {
+      content: '';
+      position: absolute;
+      right: -2rpx;
+      bottom: -1rpx;
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 0 0 10rpx 10rpx;
+      border-color: transparent transparent #E6E7EB transparent;
+    }
+  }
+
+  &.saved-mastered::after {
+    border-color: transparent transparent rgba(16, 120, 87, 0.62) transparent;
+  }
+
+  &.in-selection {
+    background-color: rgba(59, 130, 246, 0.18) !important;
+    border-radius: 4rpx;
+  }
+
+  /* =========================================================
+   * Academic Mode — 统一灰度标注 + 锚点高亮动画
+   *
+   * 设计决策:
+   * - term / logic: 极细灰度下划线（默认态）
+   * - .active 态: 展开卡片时原文同步高亮 — 微暖脉冲信号
+   * - 动画原则 (animate): GPU 加速、< 500ms、ease-out-quart
+   * - 色彩原则 (delight): 全灰度轴，无彩色信号
+   * ========================================================= */
+  &.academic-mode {
+    &.underline.tone-term {
+      border-bottom: 1rpx solid var(--academic-term-line, rgba(73, 111, 143, 0.54));
+      padding-bottom: 2rpx;
+      transition: border-bottom-color 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                  background-color 0.3s ease,
+                  box-shadow 0.3s ease;
+
+      &:active,
+      &.clickable:active,
+      &.active {
+        border-bottom-color: var(--academic-term-line, rgba(73, 111, 143, 0.82));
+        background: linear-gradient(to top, var(--academic-term-surface, rgba(73, 111, 143, 0.08)) 42%, transparent 42%);
+        box-shadow: none;
+        animation: academicAnchorSettle 360ms cubic-bezier(0.16, 1, 0.3, 1) 1;
+      }
+    }
+
+    &.underline.tone-logic {
+      border-bottom: 1rpx solid var(--academic-logic-line, rgba(181, 117, 35, 0.48));
+      padding-bottom: 2rpx;
+      transition: border-bottom-color 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                  background-color 0.3s ease,
+                  box-shadow 0.3s ease;
+
+      &:active,
+      &.clickable:active,
+      &.active {
+        border-bottom-color: var(--academic-logic-line, rgba(181, 117, 35, 0.78));
+        background: linear-gradient(to top, var(--academic-logic-surface, rgba(181, 117, 35, 0.09)) 42%, transparent 42%);
+        box-shadow: none;
+        animation: academicAnchorSettle 360ms cubic-bezier(0.16, 1, 0.3, 1) 1;
+      }
+    }
+
+    &.tone-interpretation {
+      border-bottom: none !important;
+      background: none !important;
+    }
+
+    &.background.tone-term {
+      background-color: var(--academic-term-surface, rgba(73, 111, 143, 0.08));
+      transition: background-color 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                  box-shadow 0.3s ease;
+
+      &:active,
+      &.clickable:active,
+      &.active {
+        background-color: rgba(73, 111, 143, 0.13);
+        box-shadow: none;
+        animation: academicAnchorSettle 360ms cubic-bezier(0.16, 1, 0.3, 1) 1;
+      }
+    }
+
+    &.background.tone-logic {
+      background-color: var(--academic-logic-surface, rgba(181, 117, 35, 0.09));
+      transition: background-color 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                  box-shadow 0.3s ease;
+
+      &:active,
+      &.clickable:active,
+      &.active {
+        background-color: rgba(181, 117, 35, 0.14);
+        box-shadow: none;
+        animation: academicAnchorSettle 360ms cubic-bezier(0.16, 1, 0.3, 1) 1;
+      }
+    }
+
+    &.clickable:active {
+      opacity: 0.9;
+    }
+  }
+}
+
+/* =========================================================
+ * 锚点高亮微动画 (delight + animate)
+ *
+ * 原则:
+ * - 非常克制 — 这是阅读应用，不是游戏
+ * - 仅在 .active 时触发（卡片展开 → 原文高亮）
+ * - 2.5s 循环，用户感知为"温和的呼吸感"
+ * - 纯 transform + opacity，GPU 加速
+ * ========================================================= */
+
+@keyframes academicAnchorSettle {
+  0% {
+    opacity: 0.72;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inline-mark.academic-mode.active {
+    animation: none;
+  }
+}

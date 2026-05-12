@@ -1,0 +1,208 @@
+.daily-header {
+  position: relative;
+  overflow: hidden;
+
+  &__cover {
+    position: relative;
+    height: 720rpx;
+    overflow: hidden;
+  }
+
+  &__cover-img {
+    width: 100%;
+    height: 100%;
+  }
+
+  &__cover-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60%;
+    background: linear-gradient(to top, var(--dr-bg) 0%, color-mix(in srgb, var(--dr-bg) 60%, transparent) 50%, transparent 100%);
+  }
+
+  &__cover-tag {
+    position: absolute;
+    bottom: 32rpx;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    padding: 12rpx 28rpx;
+    background: rgba(44, 42, 40, 0.65);
+    backdrop-filter: blur(8px);
+    border-radius: 8rpx;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+
+  &__cover-tag-text {
+    font-size: 24rpx;
+    color: #FFFFFF;
+    font-weight: 500;
+    letter-spacing: 1rpx;
+  }
+
+  &__gradient {
+    height: 640rpx;
+
+    &--editorial_warm {
+      background: var(--dr-gradient-warm);
+    }
+    &--editorial_cool {
+      background: var(--dr-gradient-cool);
+    }
+    &--editorial_night {
+      background: var(--dr-gradient-night);
+    }
+  }
+
+  &__content {
+    padding: 32rpx 56rpx 64rpx;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16rpx;
+    margin-bottom: 24rpx;
+  }
+
+  &__source {
+    font-size: 24rpx;
+    font-weight: 700;
+    letter-spacing: 2rpx;
+    text-transform: uppercase;
+    color: var(--dr-accent);
+  }
+
+  &__dot {
+    font-size: 24rpx;
+    color: var(--dr-divider);
+  }
+
+  &__source-local {
+    font-size: 24rpx;
+    font-weight: 500;
+    color: var(--dr-text-muted);
+    letter-spacing: 1rpx;
+  }
+
+  &__date {
+    font-size: 24rpx;
+    color: var(--dr-text-muted);
+    letter-spacing: 1rpx;
+    text-transform: uppercase;
+  }
+
+  &__title {
+    display: block;
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 64rpx;
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--dr-text-heading);
+    letter-spacing: -1rpx;
+    margin-bottom: 20rpx;
+  }
+
+  &__subtitle {
+    display: block;
+    font-size: 32rpx;
+    line-height: 1.6;
+    color: var(--dr-text-sub);
+    margin-bottom: 40rpx;
+    font-weight: 400;
+  }
+
+  &__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16rpx;
+    margin-bottom: 64rpx;
+  }
+
+  &__badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 10rpx 24rpx;
+    border-radius: 4rpx;
+
+    &--difficulty {
+      background: var(--dr-badge-bg);
+    }
+    &--time {
+      background: var(--dr-badge-time-bg);
+    }
+    &--tag {
+      background: var(--dr-badge-tag-bg);
+    }
+  }
+
+  &__badge-text {
+    font-size: 22rpx;
+    font-weight: 600;
+    color: var(--dr-text-sub);
+    letter-spacing: 1rpx;
+    text-transform: uppercase;
+  }
+
+  &__guide {
+    position: relative;
+    padding: 40rpx;
+    background: var(--dr-bg); /* Use the page background to match design, not a card */
+    margin-top: 24rpx;
+  }
+
+  &__guide-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    margin-bottom: 20rpx;
+  }
+
+  &__guide-label {
+    display: block;
+    font-size: 26rpx;
+    font-weight: 600;
+    color: var(--dr-text-sub);
+    letter-spacing: 2rpx;
+  }
+
+  &__guide-overview {
+    display: block;
+    font-size: 30rpx;
+    line-height: 1.7;
+    color: var(--dr-text-reading);
+    font-style: italic;
+    margin-bottom: 32rpx;
+  }
+
+  &__guide-questions {
+    display: flex;
+    flex-direction: column;
+    gap: 20rpx;
+  }
+
+  &__guide-qitem {
+    display: flex;
+    align-items: flex-start;
+    gap: 16rpx;
+  }
+
+  &__guide-qnum {
+    font-size: 28rpx;
+    font-weight: 600;
+    color: var(--dr-text-heading);
+    line-height: 1.6;
+    min-width: 28rpx;
+  }
+
+  &__guide-qtext {
+    font-size: 28rpx;
+    line-height: 1.6;
+    color: var(--dr-text-sub);
+  }
+}

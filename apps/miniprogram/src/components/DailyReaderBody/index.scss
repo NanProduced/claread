@@ -1,0 +1,240 @@
+.daily-body {
+  padding: 0 50rpx;
+
+  &__paragraph-container {
+    margin-bottom: 84rpx;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  &__strip {
+    margin-bottom: 30rpx;
+    padding: 0;
+    background: rgba(166, 100, 69, 0.04);
+    border: 1rpx solid rgba(166, 100, 69, 0.12);
+    border-radius: 8rpx;
+    overflow: hidden;
+    transition: background-color 0.24s ease, border-color 0.24s ease;
+
+    &--expanded {
+      background: rgba(166, 100, 69, 0.055);
+      border-color: rgba(166, 100, 69, 0.18);
+    }
+  }
+
+  &__strip-header {
+    display: flex;
+    align-items: center;
+    gap: 20rpx;
+    min-height: 88rpx;
+    padding: 18rpx 22rpx;
+    transition: opacity 0.2s ease;
+
+    &:active {
+      opacity: 0.7;
+    }
+  }
+
+  &__strip-logo-wrap {
+    width: 40rpx;
+    height: 40rpx;
+    border-radius: 50%;
+    background: rgba(248, 246, 240, 0.82);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+    transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.24s ease;
+  }
+
+  &__strip-header--expanded &__strip-logo-wrap {
+    transform: scale(1.06);
+    opacity: 0.96;
+  }
+
+  &__strip-logo {
+    width: 32rpx;
+    height: 32rpx;
+    opacity: 0.78;
+  }
+
+  &__strip-main {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8rpx;
+  }
+
+  &__strip-label-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8rpx;
+  }
+
+  &__strip-label {
+    font-size: 24rpx;
+    font-weight: 700;
+    color: var(--dr-text-heading);
+    letter-spacing: 0;
+  }
+
+  &__strip-kicker {
+    font-size: 22rpx;
+    color: var(--dr-text-muted);
+    letter-spacing: 0;
+  }
+
+  &__strip-action {
+    display: flex;
+    align-items: center;
+    gap: 4rpx;
+    flex-shrink: 0;
+  }
+
+  &__strip-action-text {
+    font-size: 23rpx;
+    color: var(--dr-text-muted);
+    letter-spacing: 0;
+  }
+
+  &__strip-question {
+    font-size: 28rpx;
+    color: var(--dr-text-sub);
+    line-height: 1.55;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__strip-question--expanded {
+    white-space: normal;
+    color: var(--dr-text-sub);
+  }
+
+  &__strip-toggle {
+    display: flex;
+    align-items: center;
+    transition: transform 0.3s ease;
+
+    &--expanded {
+      transform: rotate(180deg);
+    }
+  }
+
+  &__strip-content {
+    margin: 0 22rpx;
+    padding: 20rpx 0 24rpx 60rpx;
+    border-top: 1rpx solid rgba(166, 100, 69, 0.12);
+    animation: daily-guide-reveal 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  &__strip-content-label {
+    display: block;
+    margin-bottom: 8rpx;
+    font-size: 23rpx;
+    font-weight: 700;
+    color: var(--dr-accent);
+    letter-spacing: 0;
+  }
+
+  &__strip-content-text {
+    display: block;
+    font-size: 27rpx;
+    color: var(--dr-text-sub);
+    line-height: 1.76;
+  }
+
+  &__paragraph {
+    position: relative;
+    margin-bottom: 22rpx;
+  }
+
+  &__text {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 38rpx;
+    line-height: 1.84;
+    color: var(--dr-text-reading);
+    letter-spacing: 0;
+    word-spacing: 1rpx;
+  }
+
+  &__translation-section {
+    margin-top: 18rpx;
+  }
+
+  &__translation-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 64rpx;
+    padding: 12rpx 0;
+    border-top: 1rpx solid var(--dr-border-subtle);
+    border-bottom: 1rpx solid var(--dr-border-subtle);
+    transition: opacity 0.2s ease;
+
+    &:active {
+      opacity: 0.68;
+    }
+  }
+
+  &__translation-label-wrap,
+  &__translation-action {
+    display: flex;
+    align-items: center;
+    gap: 8rpx;
+  }
+
+  &__translation-label {
+    font-size: 26rpx;
+    color: var(--dr-text-muted);
+    letter-spacing: 0;
+  }
+
+  &__translation-action-text {
+    font-size: 23rpx;
+    color: var(--dr-text-muted);
+    letter-spacing: 0;
+  }
+
+  &__translation-box {
+    margin-top: 18rpx;
+    padding: 22rpx 26rpx;
+    background: rgba(139, 120, 100, 0.035);
+    border-radius: 8rpx;
+  }
+
+  &__translation-text {
+    font-size: 28rpx;
+    color: var(--dr-text-muted);
+    line-height: 1.75;
+  }
+}
+
+@keyframes daily-guide-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .daily-body {
+    &__strip-content {
+      animation: none;
+    }
+
+    &__strip-logo-wrap,
+    &__strip-header,
+    &__strip-toggle {
+      transition: none;
+    }
+  }
+}

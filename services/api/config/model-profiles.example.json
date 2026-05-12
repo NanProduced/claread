@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "example": {
+      "provider": "openai-compatible",
+      "model": "example-model",
+      "base_url": "https://api.example.com/v1",
+      "api_key": "replace-with-local-key",
+      "temperature": 0.2
+    }
+  }
+}

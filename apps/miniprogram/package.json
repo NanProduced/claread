@@ -1,0 +1,43 @@
+{
+  "name": "claread-miniprogram",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Claread Client",
+  "scripts": {
+    "build:weapp": "taro build --type weapp",
+    "dev:weapp": "taro build --type weapp --watch"
+  },
+  "browserslist": [
+    "last 3 versions",
+    "Android >= 4.1",
+    "ios >= 8"
+  ],
+  "dependencies": {
+    "@babel/runtime": "^7.7.7",
+    "@tarojs/components": "3.6.8",
+    "@tarojs/helper": "3.6.8",
+    "@tarojs/plugin-framework-react": "3.6.8",
+    "@tarojs/plugin-platform-weapp": "3.6.8",
+    "@tarojs/react": "3.6.8",
+    "@tarojs/runtime": "3.6.8",
+    "@tarojs/shared": "3.6.8",
+    "@tarojs/taro": "3.6.8",
+    "lottie-miniprogram": "^1.0.12",
+    "react": "^18.0.0",
+    "zustand": "^4.3.8"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.8.0",
+    "@tarojs/cli": "3.6.8",
+    "@tarojs/taro-loader": "3.6.8",
+    "@tarojs/webpack5-runner": "3.6.8",
+    "@types/node": "^18.15.11",
+    "@types/react": "^18.0.0",
+    "@types/webpack": "^5.28.0",
+    "ajv": "^8.0.0",
+    "babel-preset-taro": "3.6.8",
+    "sass": "^1.59.3",
+    "typescript": "^5.0.0",
+    "webpack": "5.78.0"
+  }
+}

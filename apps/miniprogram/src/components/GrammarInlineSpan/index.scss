@@ -1,0 +1,33 @@
+.grammar-inline-span {
+  display: inline;
+  position: relative;
+  text-decoration: underline;
+  text-decoration-color: rgba(116, 102, 148, 0.42);
+  text-decoration-thickness: 1rpx;
+  text-underline-offset: 6rpx;
+  background: linear-gradient(to top, rgba(116, 102, 148, 0.035) 30%, transparent 30%);
+
+  &.active {
+    text-decoration-color: var(--annotation-grammar-line-active);
+    text-decoration-thickness: 2rpx;
+    background: linear-gradient(to top, rgba(116, 102, 148, 0.12) 38%, transparent 38%);
+  }
+
+  &.in-selection {
+    background-color: rgba(59, 130, 246, 0.18);
+    border-radius: 4rpx;
+  }
+
+  .grammar-role-label {
+    position: absolute;
+    top: -24rpx;
+    left: 0;
+    font-size: 16rpx;
+    color: var(--annotation-grammar-line);
+    white-space: nowrap;
+    background: var(--reader-paper);
+    padding: 0 4rpx;
+    border-radius: 4rpx;
+    font-weight: var(--weight-medium);
+  }
+}

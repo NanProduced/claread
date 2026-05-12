@@ -1,0 +1,127 @@
+beginner_reading:
+- example_type: vocab
+  sentence_text: The weather was very pleasant today.
+  output_fragment: '{"type": "vocab_highlight", "text": "pleasant"}'
+- example_type: phrase
+  sentence_text: He decided to give up smoking.
+  output_fragment: '{"type": "phrase_gloss", "text": "give up", "phrase_type": "phrasal_verb",
+    "zh": "放弃；戒掉。日常很常用，比如 give up smoking（戒烟）、give up trying（放弃尝试）"}'
+- example_type: phrase
+  sentence_text: She takes care of her little brother every day.
+  output_fragment: '{"type": "phrase_gloss", "text": "takes care of", "phrase_type":
+    "collocation", "zh": "照顾；照看。日常超常用，比如 take care of yourself（照顾好自己）"}'
+default:
+- example_type: phrase
+  sentence_text: The documentary scored 100 per cent on Rotten Tomatoes.
+  output_fragment: '{"type": "phrase_gloss", "text": "scored 100 per cent", "phrase_type":
+    "collocation", "zh": "获得百分之百的评分"}'
+- example_type: context
+  sentence_text: The government has been slow to address the issue.
+  output_fragment: '{"type": "context_gloss", "text": "address", "gloss": "处理；应对",
+    "reason": "address 常见义为"地址"或"演讲"，此处是"着手处理问题"的语境义"}'
+- example_type: context
+  sentence_text: The visuals rendered the ancient world far more vivid than earlier
+    documentaries.
+  output_fragment: '{"type": "context_gloss", "text": "rendered", "gloss": "把…呈现出来",
+    "reason": "render 常见义为"使得"或"渲染"，此处表示视觉上把远古世界呈现出来"}'
+intensive_reading:
+- example_type: context
+  sentence_text: The architect's design was a subtle nod to brutalism.
+  output_fragment: '{"type": "context_gloss", "text": "nod to", "gloss": "致敬；呼应",
+    "reason": "nod 原指点头，此处修辞性地表示设计上对某种风格的隐喻性致敬，体现了选词的委婉与深度"}'
+- example_type: vocab
+  sentence_text: His arguments were both pellucid and persuasive.
+  output_fragment: '{"type": "vocab_highlight", "text": "pellucid"}'
+- example_type: context
+  sentence_text: The policy was less a reform than a cosmetic tweak.
+  output_fragment: '{"type": "context_gloss", "text": "cosmetic", "gloss": "表面上的；装点门面的",
+    "reason": "cosmetic 本义"化妆品的"，此处隐喻政策改动只是表面功夫，未触及实质。选词本身带有讽刺意味"}'
+gaokao:
+- example_type: vocab
+  sentence_text: The government has adopted new measures to protect the environment.
+  output_fragment: '{"type": "vocab_highlight", "text": "adopted"}'
+- example_type: phrase
+  sentence_text: She is looking forward to hearing from her pen pal.
+  output_fragment: '{"type": "phrase_gloss", "text": "looking forward to", "phrase_type":
+    "collocation", "zh": "期待；盼望。注意 to 是介词，后面接动词-ing 形式：look forward to doing sth.
+    期待做某事"}'
+- example_type: phrase
+  sentence_text: The team carried out the experiment successfully.
+  output_fragment: '{"type": "phrase_gloss", "text": "carried out", "phrase_type":
+    "phrasal_verb", "zh": "执行；实施。高考常考短语，如 carry out a plan/experiment/survey"}'
+- example_type: context
+  sentence_text: The government has been slow to address the issue of air pollution.
+  output_fragment: '{"type": "context_gloss", "text": "address", "gloss": "处理；应对",
+    "reason": "address 常见义为"地址"或"演讲"，此处作动词表示"着手处理问题"。高考词义猜测题常考这类熟词僻义，解题关键是看词性和上下文：此处后面接了
+    the issue（问题），说明是动词"处理""}'
+cet:
+- example_type: vocab
+  sentence_text: The economic growth has slowed down significantly this year.
+  output_fragment: '{"type": "vocab_highlight", "text": "economic"}'
+- example_type: phrase
+  sentence_text: Rising temperatures account for the decline in crop yields.
+  output_fragment: '{"type": "phrase_gloss", "text": "account for", "phrase_type":
+    "collocation", "zh": "占……比例；是……的原因。同义表达：make up, explain, be responsible for"}'
+- example_type: phrase
+  sentence_text: The new policy has contributed to a significant reduction in emissions.
+  output_fragment: '{"type": "phrase_gloss", "text": "contributed to", "phrase_type":
+    "collocation", "zh": "促成；有助于。同义表达：led to, resulted in, brought about"}'
+- example_type: context
+  sentence_text: The government has been slow to address the issue of climate change.
+  output_fragment: '{"type": "context_gloss", "text": "address", "gloss": "处理；应对",
+    "reason": "address 常见义为"地址"或"演讲"，此处作动词表示"着手处理问题"。四六级选项常用该词的常见义设置干扰，注意根据上下文判断词义"}'
+kaoyan:
+- example_type: context
+  sentence_text: The government has been slow to address the growing crisis.
+  output_fragment: '{"type": "context_gloss", "text": "address", "gloss": "处理；应对",
+    "reason": "address 常见义为"地址"或"演讲"，此处作动词表示"着手处理"。考研常通过熟词僻义考察精确理解，解题关键是看词性和上下文：此处后面接了
+    the growing crisis，说明是动词"处理""}'
+- example_type: phrase
+  sentence_text: The policy is problematic in that it fails to consider regional differences.
+  output_fragment: '{"type": "phrase_gloss", "text": "in that", "phrase_type": "collocation",
+    "zh": "因为；在于。用于引出具体原因或限定范围，比 because 更正式，常出现在考研阅读的论证结构中"}'
+- example_type: phrase
+  sentence_text: The company succeeded by virtue of its early investment in technology.
+  output_fragment: '{"type": "phrase_gloss", "text": "by virtue of", "phrase_type":
+    "collocation", "zh": "凭借；由于。用于说明某事成立的原因或依据，比 because of 更正式，考研阅读中常出现在因果论证段落"}'
+- example_type: vocab
+  sentence_text: The novel approach has attracted widespread attention.
+  output_fragment: '{"type": "vocab_highlight", "text": "novel"}'
+tem:
+- example_type: context
+  sentence_text: The old house stood at the end of the lane, its windows like blind
+    eyes staring into nothingness.
+  output_fragment: '{"type": "context_gloss", "text": "blind", "gloss": "失明的；无神的",
+    "reason": "blind 常见义为"盲的"，此处修饰 windows，通过拟人手法赋予窗户"失明的眼睛"的意象，暗示房屋的荒废和死寂。专八常考察对修辞含义的精确理解，需超越字面义体会隐喻效果"}'
+- example_type: phrase
+  sentence_text: She found herself between Scylla and Charybdis, unable to please
+    either her employer or her family.
+  output_fragment: '{"type": "phrase_gloss", "text": "between Scylla and Charybdis",
+    "phrase_type": "idiom", "zh": "进退两难；腹背受敌。源自希腊神话中两个海怪的故事，文学文本中常用来暗示人物的两难困境，比 between
+    a rock and a hard place 更具文学性和文化底蕴"}'
+- example_type: vocab
+  sentence_text: The novel's evocative prose transports readers to a bygone era.
+  output_fragment: '{"type": "vocab_highlight", "text": "evocative"}'
+- example_type: context
+  sentence_text: The politician's promise was, at best, a Faustian bargain.
+  output_fragment: '{"type": "context_gloss", "text": "Faustian", "gloss": "浮士德式的；为获取利益而出卖灵魂的",
+    "reason": "Faustian 源自德国传说中浮士德与魔鬼的交易，此处隐喻政客的承诺看似诱人实则代价惨重。专八常考察对文化典故的识别和理解"}'
+ielts_toefl:
+- example_type: phrase
+  sentence_text: The decline in biodiversity has been attributed to habitat loss and
+    climate change.
+  output_fragment: '{"type": "phrase_gloss", "text": "has been attributed to", "phrase_type":
+    "collocation", "zh": "被归因于。学术高频搭配，用于说明因果关系。同义表达: result from, stem from, arise
+    from, be caused by"}'
+- example_type: phrase
+  sentence_text: The new policy gave rise to widespread criticism.
+  output_fragment: '{"type": "phrase_gloss", "text": "gave rise to", "phrase_type":
+    "collocation", "zh": "引起；导致。学术论证常用搭配，用于引出结果。同义表达: lead to, result in, bring about,
+    trigger"}'
+- example_type: context
+  sentence_text: The Chicago school of economics dominated policy-making in the 1980s.
+  output_fragment: '{"type": "context_gloss", "text": "school", "gloss": "学派；流派",
+    "reason": "school 常见义为"学校"，此处指学术流派。雅思/托福常利用学术义与日常义的差异设置考点，需根据上下文判断：此处后面接了 of economics，说明是"经济学派""}'
+- example_type: vocab
+  sentence_text: The findings facilitate a deeper understanding of the mechanism.
+  output_fragment: '{"type": "vocab_highlight", "text": "facilitate"}'

@@ -1,0 +1,69 @@
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(8rpx);
+  animation: fadeIn 0.2s ease-out;
+}
+
+.modal-container {
+  width: 620rpx;
+  max-width: 92%;
+  max-height: 82vh;
+  background-color: var(--color-white);
+  border-radius: 48rpx;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 40rpx 120rpx rgba(0, 0, 0, 0.2);
+  animation: modalPop 0.4s var(--ease-spring);
+}
+
+.modal-header {
+  padding: 32rpx 40rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1rpx solid rgba(0, 0, 0, 0.05);
+
+  .modal-title {
+    font-size: 32rpx;
+    font-weight: 800;
+    color: var(--color-ink);
+  }
+
+  .modal-close-btn {
+    padding: 12rpx;
+    margin-right: -12rpx;
+    opacity: 0.3;
+    transition: opacity 0.2s ease;
+    &:active { opacity: 0.6; }
+  }
+}
+
+.modal-content {
+  flex: 1;
+  overflow: hidden;
+
+  .modal-scroll {
+    height: 100%;
+    padding-bottom: 40rpx; // Prevent last item from being cut off
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalPop {
+  from { opacity: 0; transform: scale(0.9) translateY(20rpx); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}

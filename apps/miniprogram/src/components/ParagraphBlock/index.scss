@@ -1,0 +1,550 @@
+.paragraph-block {
+  margin-bottom: var(--paragraph-gap);
+  padding: 0 var(--reader-padding);
+
+  &:first-of-type {
+    margin-top: 64rpx; /* Increased from 54rpx for better airiness */
+  }
+
+
+  &.immersive {
+    margin-bottom: var(--paragraph-gap-immersive);
+    padding: 0 var(--reader-padding);
+
+    .english-paragraph {
+      text-align: left;
+      line-height: var(--reader-line-height, var(--leading-relaxed));
+      letter-spacing: 0;
+    }
+
+    .english-flow {
+      color: var(--reader-ink);
+      font-family: var(--font-english-serif), serif;
+      font-size: calc(36rpx * var(--reader-font-size-ratio, 1));
+      font-variant-numeric: oldstyle-nums;
+      line-height: var(--reader-line-height, var(--leading-relaxed));
+
+      &.drop-cap-flow {
+        display: block;
+      }
+    }
+
+    .drop-cap-initial {
+      float: left;
+      margin: 8rpx 22rpx 0 0;
+      color: var(--reader-ink);
+      font-family: var(--font-english-serif), serif;
+      font-size: calc(132rpx * var(--reader-font-size-ratio, 1));
+      font-weight: 700;
+      line-height: 0.78;
+      letter-spacing: -0.04em;
+      font-variant-numeric: normal;
+    }
+  }
+
+  &.intensive {
+    .paragraph-header {
+      display: flex;
+      align-items: center;
+      gap: 16rpx;
+      margin-bottom: 32rpx; /* Slightly more space */
+      opacity: 0.72;
+
+      .paragraph-anchor {
+        flex-shrink: 0;
+        color: var(--reader-muted);
+        font-family: var(--font-english-serif), serif;
+        font-size: 27rpx;
+        font-weight: var(--weight-medium);
+        letter-spacing: 0.04em;
+      }
+
+      .paragraph-divider {
+        flex: 1;
+        height: 1rpx;
+        background: rgba(17, 17, 17, 0.06);
+      }
+    }
+
+    .sentence-run {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .sentence-block {
+      margin-bottom: var(--reader-sentence-spacing, 36rpx);
+
+      &.sentence-block--plain {
+        margin-bottom: var(--reader-plain-sentence-spacing, 30rpx);
+      }
+    }
+
+    .sentence-main {
+      margin-bottom: 0;
+      position: relative;
+
+      &.is-favorited {
+        padding-right: 34rpx;
+      }
+
+      /* sentence-level fallback: whole-sentence highlight when no text_range offset */
+      &.user-highlighted {
+        .sentence-text {
+          border-radius: 3rpx;
+          box-decoration-break: clone;
+          -webkit-box-decoration-break: clone;
+        }
+
+        &.user-highlighted--soft_green .sentence-text {
+          background: linear-gradient(to top, rgba(168, 216, 185, 0.30) 38%, transparent 38%);
+        }
+        &.user-highlighted--soft_blue .sentence-text {
+          background: linear-gradient(to top, rgba(169, 203, 232, 0.28) 38%, transparent 38%);
+        }
+        &.user-highlighted--soft_purple .sentence-text {
+          background: linear-gradient(to top, rgba(199, 185, 230, 0.26) 38%, transparent 38%);
+        }
+      }
+
+      &.user-selection-active {
+        .sentence-text {
+          border-radius: 4rpx;
+          background: linear-gradient(to top, rgba(91, 136, 156, 0.18) 42%, transparent 42%);
+          box-decoration-break: clone;
+          -webkit-box-decoration-break: clone;
+        }
+      }
+
+      /* side margin stroke for sentences with notes (intensive mode) */
+      &.has-user-note::after {
+        content: '';
+        position: absolute;
+        right: -16rpx;
+        top: 6rpx;
+        bottom: 6rpx;
+        width: 3rpx;
+        border-radius: 2rpx;
+        background: rgba(17, 17, 17, 0.10);
+      }
+
+      .sentence-bookmark-corner {
+        position: absolute;
+        right: 0;
+        top: 7rpx;
+        width: 30rpx;
+        height: 30rpx;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.86;
+        pointer-events: none;
+      }
+
+      .user-annotation-wrapper {
+        margin-top: 16rpx;
+        padding: 16rpx 24rpx;
+        border-radius: 12rpx;
+        border: 1rpx solid rgba(17, 17, 17, 0.06);
+        background: rgba(0, 0, 0, 0.02);
+
+        &.theme-soft_green {
+          border-color: rgba(168, 216, 185, 0.42);
+          background: rgba(168, 216, 185, 0.08);
+        }
+        &.theme-soft_blue {
+          border-color: rgba(169, 203, 232, 0.42);
+          background: rgba(169, 203, 232, 0.08);
+        }
+        &.theme-soft_purple {
+          border-color: rgba(199, 185, 230, 0.42);
+          background: rgba(199, 185, 230, 0.08);
+        }
+
+        .user-annotation-note {
+          display: flex;
+          gap: 12rpx;
+          align-items: flex-start;
+
+          .note-icon {
+            font-size: 24rpx;
+            opacity: 0.8;
+            margin-top: 4rpx;
+          }
+
+          .note-text {
+            font-size: 26rpx;
+            color: var(--text-primary);
+            line-height: 1.6;
+          }
+        }
+      }
+    }
+
+    .english-flow {
+      color: var(--reader-ink);
+      font-family: var(--font-english-serif), serif;
+      font-size: calc(32rpx * var(--reader-font-size-ratio, 1));
+      font-weight: var(--weight-medium);
+      line-height: var(--reader-line-height, 1.62);
+      letter-spacing: 0;
+    }
+
+    .sentence-translation {
+      margin-top: var(--reader-translation-top-spacing, 14rpx);
+      margin-bottom: var(--reader-translation-bottom-spacing, 16rpx);
+      opacity: var(--reader-translation-opacity, 1);
+      transition: opacity 0.2s ease;
+
+      .translation-text {
+        color: rgba(17, 17, 17, 0.36);
+        font-family: var(--font-sans);
+        font-size: calc(25rpx * var(--reader-font-size-ratio, 1));
+        font-weight: var(--weight-normal);
+        line-height: var(--reader-line-height, 1.65);
+        letter-spacing: 0;
+      }
+    }
+
+    :global(.translation-hidden) & .sentence-translation {
+      display: none;
+    }
+
+    .analysis-cards-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8rpx;   /* 8×1 模数间距 */
+      margin-top: 8rpx;  /* 8×1 */
+
+      &.academic-mode {
+        gap: 0;     /* AcademicNoteGroup 自行管理内部间距 */
+        margin-top: 8rpx;
+        padding: 0;
+      }
+    }
+
+
+  /* =========================================================
+   * Drop Cap — 首字下沉 (Taro/WeChat 兼容版)
+   *
+   * 关键约束: 微信小程序中 <Text> 内嵌套 <Text> 的 float:left 不生效
+   * 解决方案: display:inline-block + vertical-align + 负 margin
+   * ========================================================= */
+  .drop-cap {
+    display: inline-block;
+    vertical-align: -0.22em;
+    margin-right: 6rpx;
+    color: var(--reader-ink);
+    font-family: var(--font-english-serif), serif;
+    font-size: 3.2em;
+    font-weight: 650;
+    line-height: 0.85;
+    letter-spacing: -0.02em;
+  }
+
+  .sentence-span,
+  .english-flow {
+    display: inline;
+    border-radius: 4rpx;
+    transition: background-color 0.24s var(--ease-reader-out);
+
+    &.is-highlighted-source {
+      background-color: var(--highlight-surface);
+      box-shadow: 0 0 10rpx var(--highlight-shadow);
+    }
+
+    /* sentence-level fallback highlight (immersive / merged chunks) */
+    &.user-highlighted {
+      border-radius: 4rpx;
+
+      &.user-highlighted--soft_green {
+        background: linear-gradient(to top, rgba(168, 216, 185, 0.30) 38%, transparent 38%);
+      }
+      &.user-highlighted--soft_blue {
+        background: linear-gradient(to top, rgba(169, 203, 232, 0.28) 38%, transparent 38%);
+      }
+      &.user-highlighted--soft_purple {
+        background: linear-gradient(to top, rgba(199, 185, 230, 0.26) 38%, transparent 38%);
+      }
+    }
+
+    /* =========================================================
+     * User Highlight Segment — precise text_range rendering
+     * 纸感低饱和，不覆盖 AI inline mark
+     * ========================================================= */
+    .user-highlight-segment {
+      display: inline;
+      padding: 1rpx 0;
+      border-radius: 3rpx;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      transition: background-color 0.18s ease;
+
+      &--soft_green {
+        background: rgba(168, 216, 185, 0.26);
+      }
+      &--soft_blue {
+        background: rgba(169, 203, 232, 0.24);
+      }
+      &--soft_purple {
+        background: rgba(199, 185, 230, 0.22);
+      }
+
+      .user-note-dot {
+        display: inline-block;
+        width: 6rpx;
+        height: 6rpx;
+        margin-left: 4rpx;
+        margin-bottom: 4rpx;
+        border-radius: 50%;
+        background: rgba(17, 17, 17, 0.35);
+        vertical-align: middle;
+      }
+    }
+
+    /* =========================================================
+     * User Selection — sentence-level long-press feedback
+     * 完全独立于 AI 批注样式
+     * ========================================================= */
+    &.user-selection-active {
+      position: relative;
+      background: linear-gradient(to top, rgba(91, 136, 156, 0.18) 42%, transparent 42%);
+      border-radius: 4rpx;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+  }
+
+  .sentence-bookmark-mark {
+    display: inline-block;
+    margin-left: 7rpx;
+    color: #47745f;
+    font-family: var(--font-sans);
+    font-size: 0.64em;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: 0.12em;
+    opacity: 0.86;
+  }
+
+  .in-selection {
+    background-color: rgba(59, 130, 246, 0.18);
+    border-radius: 4rpx;
+  }
+
+  .user-highlight-overlay {
+    &--soft_green { background-color: rgba(168, 216, 185, 0.30); border-radius: 4rpx; }
+    &--soft_blue { background-color: rgba(169, 203, 232, 0.28); border-radius: 4rpx; }
+    &--soft_purple { background-color: rgba(199, 185, 230, 0.26); border-radius: 4rpx; }
+  }
+
+  .sentence-text {
+    &.is-highlighted {
+      margin: 0 -2rpx;
+      padding: 0 4rpx;
+      border-radius: 4rpx;
+      background-color: var(--highlight-surface);
+    }
+
+    &.is-analyzing {
+      .analysis-atom {
+        display: inline;
+        position: relative;
+        padding: 4rpx 0;
+        border-radius: 4rpx;
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
+        transition: all 0.2s var(--ease-reader-out);
+      }
+
+      .chunk-inline-marker {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28rpx; /* Spec: 28rpx */
+        height: 28rpx;
+        margin-right: 8rpx;
+        border-radius: 50%;
+        border: 1.5rpx solid currentColor; /* Use current text color */
+        background: transparent;
+        color: var(--reader-muted);
+        font-size: 18rpx;
+        font-weight: var(--weight-bold);
+        line-height: 1;
+        vertical-align: middle;
+        opacity: 0.8;
+      }
+
+      .is-chunk {
+        &.color-type-0 {
+          color: var(--color-info);
+          border-bottom: 2rpx solid rgba(46, 91, 178, 0.45);
+          .chunk-inline-marker { color: var(--color-info); }
+        }
+        &.color-type-1 {
+          color: var(--color-focus);
+          border-bottom: 2rpx solid rgba(180, 83, 9, 0.45);
+          .chunk-inline-marker { color: var(--color-focus); }
+        }
+        &.color-type-2 {
+          color: var(--color-phrase);
+          border-bottom: 2rpx solid rgba(109, 40, 217, 0.45);
+          .chunk-inline-marker { color: var(--color-phrase); }
+        }
+        &.color-type-3 {
+          color: var(--color-grammar);
+          border-bottom: 2rpx solid rgba(4, 120, 87, 0.45);
+          .chunk-inline-marker { color: var(--color-grammar); }
+        }
+        &.color-type-4 {
+          color: var(--color-exam);
+          border-bottom: 2rpx solid rgba(190, 18, 60, 0.45);
+          .chunk-inline-marker { color: var(--color-exam); }
+        }
+
+      }
+    }
+  }
+
+  .sentence-translation {
+    &.is-highlighted {
+      margin-right: -8rpx;
+      margin-left: -8rpx;
+      padding-right: 8rpx;
+      padding-left: 8rpx;
+      border-radius: 8rpx;
+      background-color: var(--highlight-soft);
+      transition: all 0.24s var(--ease-reader-out);
+    }
+
+    .translation-text.segment {
+      display: inline;
+      padding: 2rpx 8rpx;
+      border-radius: 4rpx;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      transition: all 0.24s var(--ease-reader-out);
+
+      &.is-highlighted {
+        background-color: var(--highlight-surface);
+        color: var(--color-ink);
+        box-shadow: 0 0 10rpx var(--highlight-shadow);
+      }
+    }
+  }
+
+  .space-char {
+    display: inline;
+    white-space: pre-wrap;
+  }
+
+  .annotation-feedback-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    display: flex;
+    align-items: flex-end;
+    background: rgba(17, 17, 17, 0.36);
+  }
+
+  /* =========================================================
+   * Academic Mode Variant - 三级视觉层级重构
+   *
+   * 设计原则 (impeccable typeset):
+   * - 清晰的 1.25x 字号比例，创造明确的视觉层级
+   * - 主层: 英文原文（最强）- 用户的核心阅读对象
+   * - 次层: 中文翻译（明显弱化）- 辅助理解工具
+   * - 辅层: 学术注释（最弱）- 按需查看的参考信息
+   *
+   * 理想比例:
+   *   原文 32rpx : 翻译 24rpx : 注释 23rpx = 1.33 : 1.0 : 0.96
+   * ========================================================= */
+  &.academic-mode {
+    /* =========================================================
+     * 主层 (Primary): 英文原文
+     * - 视觉权重最强
+     * - 使用近乎纯黑的颜色
+     * - 舒适的行高和字距
+     * Typeset: 长单词智能断行处理
+     * ========================================================= */
+    .sentence-text,
+    .english-flow,
+    .sentence-span {
+      font-size: 32rpx;
+      font-weight: 500;  /* 中等字重，不是 bold */
+      color: var(--reader-ink);  /* 近乎纯黑 #111111 */
+      line-height: var(--reader-line-height, 1.62);
+      letter-spacing: 0;  /* 标准字距 */
+      font-family: var(--font-english-serif), serif;  /* 衬线字体增强学术感 */
+
+      /* ⭐ Typeset: 长单词智能断行 (解决截图3问题) */
+      word-break: break-word;           /* 允许在单词内断行 */
+      overflow-wrap: break-word;         /* 兼容性属性 */
+      -webkit-hyphens: auto;             /* 自动连字符 (Safari) */
+      -ms-hyphens: auto;                 /* 自动连字符 (IE/Edge) */
+      hyphens: auto;                     /* 自动连字符 (标准) */
+
+      /* 优化长文本容器行为 */
+      max-width: 100%;                   /* 不超过容器宽度 */
+      overflow-wrap: anywhere;            /* 更激进的断行策略 */
+
+      /* 可选: 优化连字符样式 */
+      &::hyphen {
+        color: rgba(17, 17, 17, 0.5);   /* 连字符颜色稍淡 */
+        font-weight: 400;
+      }
+    }
+
+    /* =========================================================
+     * 次层 (Secondary): 中文翻译
+     * - 可读性优先：颜色从 0.38 提升至 0.52
+     * - 明确弱于原文但保持可读
+     * ========================================================= */
+    .sentence-translation {
+      margin-top: var(--reader-translation-top-spacing, 8rpx);
+      margin-bottom: var(--reader-translation-bottom-spacing, 12rpx);
+
+      .translation-text {
+        color: var(--academic-translation-color, rgba(17, 17, 17, 0.52));
+        font-size: var(--academic-translation-size, 25rpx);
+        line-height: var(--academic-translation-line-height, 1.65);
+        font-weight: 400;
+        letter-spacing: 0.02em;
+      }
+    }
+
+    /* Highlighted 状态也保持极度克制 */
+    .sentence-translation.is-highlighted {
+      background-color: rgba(73, 111, 143, 0.03);  /* 更淡 */
+
+      .translation-text.segment.is-highlighted {
+        background-color: rgba(73, 111, 143, 0.06);  /* 更淡 */
+        box-shadow: none;
+        color: rgba(17, 17, 17, 0.42);  /* 高亮时稍微深一点 */
+      }
+    }
+
+    /* =========================================================
+     * 辅层 (Tertiary): 分析卡片列表
+     * - 视觉权重最弱
+     * - 通过容器样式控制整体层级
+     * - 不与原文/翻译竞争注意力
+     * ========================================================= */
+    .analysis-cards-list {
+      opacity: 0.85;  /* 轻微降低透明度，表达"辅助"地位 */
+
+      /* 卡片内部的文字已经通过 AnalysisCard 的 academic-mode 控制 */
+    }
+
+    /* Drop Cap - 学术模式下保持编辑品质，首字作为视觉锚点 */
+    .drop-cap {
+      color: rgba(17, 17, 17, 0.88);
+      font-size: 3.4em;
+      font-weight: 680;
+      letter-spacing: -0.03em;
+      opacity: 1;
+      vertical-align: -0.24em;
+    }
+  }  /* ⭐ 关闭 &.academic-mode (第278行) */
+}  /* ⭐ 关闭 &.intensive (第29行) */
+}  /* ⭐ 关闭 .paragraph-block (第1行) */

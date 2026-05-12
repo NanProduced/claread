@@ -1,0 +1,178 @@
+.login-guide-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.login-guide-modal {
+  width: 600rpx;
+  background: var(--color-white);
+  border-radius: var(--radius-lg);
+  padding: 56rpx 48rpx 40rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  animation: slideUp 0.3s var(--ease-spring);
+}
+
+.login-guide-icon {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 24rpx;
+  background: var(--blue-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 32rpx;
+
+  .icon-image {
+    width: 80rpx;
+    height: 80rpx;
+  }
+}
+
+.login-guide-title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text-main);
+  text-align: center;
+  margin-bottom: 36rpx;
+}
+
+.login-guide-cards {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  margin-bottom: 40rpx;
+}
+
+.guide-card {
+  width: 100%;
+  padding: 28rpx 32rpx;
+  border-radius: var(--radius-md);
+  border: 2rpx solid var(--border-color);
+
+  &-header {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    margin-bottom: 12rpx;
+  }
+
+  &-label {
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
+    color: var(--text-main);
+  }
+
+  &-desc {
+    font-size: var(--text-sm);
+    color: var(--text-main);
+    margin-bottom: 6rpx;
+  }
+
+  &-note {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+}
+
+.guest-card {
+  background: var(--color-bg);
+}
+
+.logged-card {
+  background: #F0FDF4;
+  border-color: #86EFAC;
+  position: relative;
+}
+
+.recommended-badge {
+  font-size: 20rpx;
+  font-weight: var(--weight-medium);
+  color: #15803D;
+  background: #BBF7D0;
+  padding: 4rpx 12rpx;
+  border-radius: 20rpx;
+}
+
+.login-guide-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  margin-bottom: 28rpx;
+}
+
+.btn-wechat-login {
+  width: 100%;
+  height: 88rpx;
+  background: #07C160;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  .btn-text {
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
+    color: #fff;
+  }
+
+  &:active {
+    background: #059669;
+  }
+}
+
+.btn-guest-trial {
+  width: 100%;
+  height: 88rpx;
+  border: 2rpx solid var(--border-color);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  .btn-text-ghost {
+    font-size: var(--text-base);
+    font-weight: var(--weight-medium);
+    color: var(--text-muted);
+  }
+
+  &:active {
+    background: var(--color-bg);
+  }
+}
+
+.login-guide-footer {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.4;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(40rpx) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

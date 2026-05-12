@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.venv/
+
+# Build outputs
+dist/
+build/
+coverage/
+apps/miniprogram/dist/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime data
+logs/
+*.log
+services/api/logs/
+services/api/static/covers/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+services/api/.env
+services/api/.env.*
+!services/api/.env.example
+apps/miniprogram/.env
+apps/miniprogram/.env.*
+!apps/miniprogram/.env.example
+infra/docker/.env
+infra/docker/.env.*
+!infra/docker/.env.example
+services/api/config/model-profiles.json
+services/api/config/model-presets.json
+
+# Migration / database dumps
+*.dump
+*.backup
+*.sql.gz
+
+# Local AI/tool state
+.claude/
+.gemini/
+.serena/
+.trae/
+.codex/
+_migration_prep/
+
+# WeChat DevTools private config
+project.private.config.json
+
+# Tool caches
+.swc/
+apps/miniprogram/.swc/

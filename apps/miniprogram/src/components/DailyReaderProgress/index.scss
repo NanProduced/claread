@@ -1,0 +1,16 @@
+.daily-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4rpx;
+  background: rgba(139, 115, 85, 0.08);
+  z-index: 100;
+
+  &__bar {
+    height: 100%;
+    background: var(--dr-accent);
+    transition: width 0.15s ease-out;
+    border-radius: 0 2rpx 2rpx 0;
+  }
+}

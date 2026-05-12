@@ -1,0 +1,635 @@
+.result-page {
+  min-height: 100vh;
+  background: var(--reader-paper);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.result-nav-spacer {
+  flex-shrink: 0;
+}
+
+// === 核心交互内容根节点 ===
+.result-content-root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  z-index: 10; // 提升交互层级
+  pointer-events: auto; // 显式开启交互
+}
+
+// === 通用状态容器 ===
+.state-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0 48rpx;
+  position: relative;
+  z-index: 5;
+
+  &.loading-state {
+    padding: 0;
+  }
+}
+
+.state-vertical {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24rpx;
+  padding-bottom: 120rpx; // 给 CTA 留空间
+}
+
+// 入场动画
+.illustration-container {
+  opacity: 0;
+  animation: state-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.state-illustration-img {
+  width: 280rpx;
+  height: 280rpx;
+  opacity: 0;
+  animation: state-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.state-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  color: var(--reader-ink);
+  text-align: center;
+  margin-top: 8rpx;
+  opacity: 0;
+  animation: state-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.12s forwards;
+}
+
+.state-subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: var(--leading-normal);
+  max-width: 500rpx;
+  opacity: 0;
+  animation: state-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.22s forwards;
+}
+
+.state-subtitle-secondary {
+  font-size: 24rpx;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: var(--leading-normal);
+  max-width: 500rpx;
+  opacity: 0;
+  animation: state-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.22s forwards;
+}
+
+@keyframes state-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.state-cta {
+  padding: 24rpx 0 calc(24rpx + env(safe-area-inset-bottom));
+}
+
+.article-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.article-container {
+  padding: var(--reader-space-lg) var(--reader-padding);
+}
+
+.article-header {
+  margin-bottom: var(--paragraph-gap);
+  padding-bottom: var(--reader-space-lg);
+  border-bottom: 1rpx solid rgba(17, 17, 17, 0.05);
+}
+
+.article-title {
+  display: block;
+  font-family: var(--font-english-serif), serif;
+  font-size: 42rpx;
+  font-weight: var(--weight-bold);
+  color: var(--reader-ink);
+  line-height: 1.35;
+  margin-bottom: 24rpx;
+  letter-spacing: 0.01em;
+}
+
+.article-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.source-tag {
+  font-size: 24rpx;
+  color: var(--text-sub);
+  background: var(--bg-color);
+  padding: 4rpx 16rpx;
+  border-radius: var(--radius-xs);
+  border: 1rpx solid var(--border-color);
+  font-weight: var(--weight-medium);
+}
+
+.level-tag {
+  font-size: 24rpx;
+  color: var(--grammar-accent);
+  background: var(--grammar-surface);
+  padding: 4rpx 16rpx;
+  border-radius: var(--radius-xs);
+  font-weight: var(--weight-bold);
+}
+
+.mode-tag-academic {
+  font-size: 24rpx;
+  color: var(--term-accent);
+  background: var(--term-surface);
+  padding: 4rpx 16rpx;
+  border-radius: var(--radius-xs);
+  font-weight: var(--weight-bold);
+  border: 1rpx solid var(--term-border);
+}
+
+// === Article End Actions (Impeccable Polish) ===
+.article-end-actions {
+  display: flex;
+  flex-direction: row;  /* Arrange: 横向排列，左次要右主要 */
+  margin-top: 72rpx;
+  padding: 32rpx 0 0;
+  border-top: 1rpx solid rgba(17, 17, 17, 0.04);
+  gap: 16rpx;  /* Arrange: 按钮间距 16rpx */
+  align-items: center;  /* Arrange: 垂直居中 */
+}
+
+/* =========================================================
+ * Secondary Button (收藏)
+ * Polish: 辅助操作 - 轻量、透明、不抢焦点
+ * ========================================================= */
+.end-btn-secondary {
+  flex: 1;
+  height: 80rpx;  /* 从84rpx微调 */
+  background: transparent;  /* Polish: 透明背景，更轻量 */
+  border: 1.5rpx solid rgba(17, 17, 17, 0.1);  /* 稍粗的边框 */
+  border-radius: 14rpx;  /* 更圆润 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  box-shadow: none;  /* 去掉阴影，更简洁 */
+
+  /* Polish: 平滑的过渡动画 */
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+
+  text {
+    font-size: 26rpx;  /* 从27rpx微调 */
+    font-weight: var(--weight-medium);
+    color: rgba(17, 17, 17, 0.6);  /* 更淡的文字颜色 */
+    letter-spacing: 0.02em;  /* 字距加宽 */
+  }
+
+  /* Polish: hover/active 状态有明确的视觉反馈 */
+  &:active {
+    background: rgba(17, 17, 17, 0.03);  /* 极淡背景 */
+    transform: scale(0.98);
+    border-color: rgba(17, 17, 17, 0.15);
+
+    text {
+      color: rgba(17, 17, 17, 0.75);  /* active 时稍深 */
+    }
+  }
+
+  /* Polish: 收藏状态的精致样式 */
+  &.favorited {
+    border-color: rgba(245, 158, 11, 0.3);
+    background: rgba(245, 158, 11, 0.04);
+
+    text.favorited-text {
+      color: #D97706;  /* 更温暖的琥珀色 */
+      font-weight: 500;
+
+      /* Delight: 收藏时的微妙脉动 */
+      animation: favoritePulse 2s ease-in-out infinite;
+
+      @keyframes favoritePulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.8; }
+      }
+    }
+  }
+}
+
+/* =========================================================
+ * Primary Button (再分析一篇)
+ * Polish: 主要操作 - 清晰但不霸道
+ * ========================================================= */
+.end-btn-primary {
+  flex: 1;  /* Arrange: 与 secondary 等宽 */
+  height: 80rpx;  /* 与 secondary 保持一致 */
+  background: var(--reader-ink);  /* 主色背景 */
+  border-radius: 14rpx;  /* 与 secondary 统一圆角 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  box-shadow: 0 4rpx 16rpx rgba(17, 17, 17, 0.08);  /* 保留轻微阴影增加层次 */
+
+  /* Polish: 更精致的阴影和过渡 */
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+
+  text {
+    font-size: 26rpx;  /* 从27rpx微调 */
+    font-weight: var(--weight-medium);
+    color: var(--reader-surface);
+    letter-spacing: 0.03em;  /* 字距加宽，提升可读性 */
+  }
+
+  /* Polish: 点击时有明显的反馈 */
+  &:active {
+    opacity: 0.9;
+    transform: scale(0.975);  /* 稍强的缩放 */
+    box-shadow: 0 2rpx 8rpx rgba(17, 17, 17, 0.12);  /* 阴影加深 */
+  }
+
+  /* Polish: hover 时微微上浮（如果支持）*/
+  @media (hover: hover) {
+    &:hover:not(:active) {
+      transform: translateY(-2rpx);
+      box-shadow: 0 6rpx 24rpx rgba(17, 17, 17, 0.12);
+    }
+  }
+}
+
+/* =========================================================
+ * Feedback Section (反馈区域)
+ * Polish: 克制、清晰、易用
+ * ========================================================= */
+.feedback-section {
+  margin-top: 32rpx;
+  padding-top: 28rpx;
+  border-top: 1rpx solid rgba(17, 17, 17, 0.04);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20rpx;
+}
+
+/* 反馈提示文字 */
+.feedback-prompt {
+  font-size: 23rpx;
+  color: rgba(17, 17, 17, 0.45);  /* 非常淡 */
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+/* 反馈按钮组 */
+.feedback-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32rpx;  /* 按钮之间充足间距 */
+  width: 100%;
+}
+
+/* 单个反馈按钮 */
+.feedback-action-btn {
+  display: flex;
+  flex-direction: column;  /* 纵向布局：图标在上，文字在下 */
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  padding: 16rpx 24rpx;
+  min-width: 120rpx;
+  border-radius: 14rpx;
+  background: transparent;
+  border: none;
+
+  /* Polish: 平滑过渡 */
+  transition: all 0.2s ease;
+
+  .feedback-icon {
+    width: 40rpx;
+    height: 40rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    color: rgba(17, 17, 17, 0.35);
+    transition: all 0.2s ease;
+  }
+
+  .feedback-label {
+    font-size: 21rpx;
+    color: rgba(17, 17, 17, 0.5);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    transition: all 0.2s ease;
+  }
+
+  /* Polish: 交互状态 */
+  &:active {
+    .feedback-icon {
+      background: rgba(17, 17, 17, 0.05);
+      color: rgba(17, 17, 17, 0.65);
+      transform: scale(0.95);
+    }
+
+    .feedback-label {
+      color: rgba(17, 17, 17, 0.7);
+    }
+  }
+
+  /* 特殊状态：有帮助 (正面反馈) */
+  &.is-positive:active {
+    .feedback-icon {
+      background: rgba(16, 120, 87, 0.08);
+      color: #10B781;
+    }
+
+    .feedback-label {
+      color: #10B781;
+    }
+  }
+
+  /* 特殊状态：不准确 (负面反馈) */
+  &.is-negative:active {
+    .feedback-icon {
+      background: rgba(220, 38, 38, 0.08);
+      color: #DC2626;
+    }
+
+    .feedback-label {
+      color: #DC2626;
+    }
+  }
+}
+
+.bottom-spacer {
+  height: 180rpx;  /* 从200rpx减小，更紧凑 */
+}
+
+// === Primary CTA Button ===
+.btn-primary {
+  width: 100%;
+  height: 96rpx;
+  background: var(--color-ink);
+  border-radius: 48rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+
+  &:active {
+    opacity: 0.9;
+    transform: scale(0.98);
+  }
+
+  .btn-primary-text {
+    font-size: var(--text-base);
+    font-weight: var(--weight-bold);
+    color: var(--reader-ink);
+  }
+}
+
+// === Degraded Banner ===
+.degraded-banner {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 20rpx 32rpx;
+  background: var(--vocab-surface);
+  border-bottom: 1rpx solid var(--vocab-border);
+
+  &.heavy {
+    background: var(--vocab-surface);
+    border-color: var(--color-focus);
+  }
+
+  &.academic {
+    background: var(--term-surface);
+    border-bottom: 1rpx solid var(--term-border);
+
+    &.heavy {
+      border-color: rgba(59, 130, 246, 0.15);
+    }
+  }
+}
+
+.academic-info-banner {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 16rpx 32rpx;
+  background: var(--term-surface);
+  border-bottom: 1rpx solid var(--term-border);
+
+  .academic-info-text {
+    flex: 1;
+    font-size: var(--text-sm);
+    color: var(--reader-ink);
+    line-height: var(--leading-normal);
+  }
+}
+
+.degraded-banner-text {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--text-main);
+  line-height: var(--leading-normal);
+}
+
+.degraded-retry-btn {
+  padding: 12rpx 24rpx;
+  background: var(--color-ink);
+  border-radius: 32rpx;
+  flex-shrink: 0;
+
+  .degraded-retry-text {
+    font-size: 24rpx;
+    color: var(--color-white);
+    font-weight: var(--weight-medium);
+  }
+
+  &:active {
+    opacity: 0.85;
+    transform: scale(0.97);
+  }
+}
+
+.fallback-article-container {
+  display: flex;
+  flex-direction: column;
+  gap: 32rpx;
+}
+
+.fallback-panel,
+.fallback-source-card {
+  background: var(--color-white);
+  border: 1rpx solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 28rpx;
+  box-shadow: var(--shadow-sm);
+}
+
+.fallback-title {
+  display: block;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-main);
+}
+
+.fallback-subtitle {
+  display: block;
+  margin-top: 12rpx;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-muted);
+}
+
+.fallback-source-label {
+  display: block;
+  font-size: 24rpx;
+  font-weight: var(--weight-bold);
+  color: var(--text-sub);
+  margin-bottom: 20rpx;
+}
+
+.fallback-source-paragraph {
+  display: block;
+  font-size: var(--text-base);
+  line-height: 1.8;
+  color: var(--text-main);
+}
+
+.fallback-source-paragraph + .fallback-source-paragraph {
+  margin-top: 20rpx;
+}
+
+/* =========================================================
+ * Academic Mode Page-Level Styles v2 — 结构性重构版
+ *
+ * 设计原则 (impeccable distill + typeset):
+ * - 零装饰性元素（无条纹、无彩色下划线、无渐变分隔）
+ * - 8rpx 模数间距体系
+ * - 温暖纸张 + 深墨文本 + 克制标注
+ * - 正文为主，注释为辅，概要最轻
+ * ========================================================= */
+
+.result-page.academic-mode {
+  background: #F9F7F3;
+
+  .article-container {
+    padding-left: 48rpx;
+    padding-right: 48rpx;
+    max-width: 680rpx;
+    margin: 0 auto;
+
+    @media (min-width: 750px) {
+      padding-left: 64rpx;
+      padding-right: 64rpx;
+    }
+  }
+
+  .article-header {
+    margin-bottom: 40rpx;  /* 8×5 */
+
+    .article-title {
+      font-family: var(--font-english-serif), serif;
+      font-size: 44rpx;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      color: #1a1a1a;
+      line-height: 1.25;
+      text-align: left;
+    }
+
+    .article-meta {
+      margin-top: 16rpx;  /* 8×2 */
+      font-size: 22rpx;
+      color: rgba(17, 17, 17, 0.45);
+      letter-spacing: 0.02em;
+    }
+  }
+
+  .academic-info-banner {
+    background: transparent;
+    border-bottom: 1rpx solid rgba(17, 17, 17, 0.04);
+    padding: 12rpx 0;
+
+    .academic-info-text {
+      color: rgba(17, 17, 17, 0.38);
+      font-size: 21rpx;
+      text-align: center;
+      font-style: italic;
+    }
+  }
+
+  /* === Paragraph Spacing (8rpx modular) === */
+  .paragraph-block.academic-mode {
+    margin-bottom: 56rpx;  /* 8×7 */
+    position: relative;
+
+    & + .paragraph-block::before {
+      content: '';
+      position: absolute;
+      top: -28rpx;
+      left: 10%;
+      right: 10%;
+      height: 1rpx;
+      background: linear-gradient(
+        to right,
+        transparent,
+        rgba(17, 17, 17, 0.055),
+        transparent
+      );
+    }
+  }
+
+  /* === End Actions === */
+  .article-end-actions {
+    gap: 24rpx;
+    margin-top: 72rpx;  /* 8×9 */
+    padding-top: 32rpx;  /* 8×4 */
+    border-top: 1rpx solid rgba(17, 17, 17, 0.05);
+
+    .end-btn-secondary {
+      box-shadow: none;
+      border: 1rpx solid rgba(17, 17, 17, 0.10);
+      background: transparent;
+
+      &:active {
+        background: rgba(17, 17, 17, 0.04);
+      }
+    }
+  }
+}
+
+.result-content-root.academic-mode {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.sentence-feedback-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(17, 17, 17, 0.36);
+}

@@ -1,0 +1,166 @@
+beginner_reading:
+- example_type: sentence_analysis
+  sentence_text: The boy who is wearing a red hat is my brother.
+  output_fragment: '{"type": "sentence_analysis", "label": "拆解长句", "analysis_zh":
+    "主干是 The boy is my brother（那个男孩是我弟弟）。中间 who is wearing a red hat 是补充说明男孩的，告诉我们是“戴红帽子的”那个男孩。先看主干，再看中间的补充说明。",
+    "chunks": [{"order": 1, "label": "主干主语", "text": "The boy"}, {"order": 2, "label":
+    "补充说明", "text": "who is wearing a red hat"}, {"order": 3, "label": "主干谓语宾语", "text":
+    "is my brother"}]}'
+- example_type: grammar
+  sentence_text: He gave up smoking last year.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "gave up"}, {"text":
+    "smoking"}], "label": "give up + 动词-ing", "note_zh": "give up 后面跟动词的 -ing 形式，表示“放弃做某事”。日常很常用，比如
+    I gave up eating junk food（我戒掉了垃圾食品）。"}'
+default:
+- example_type: grammar
+  sentence_text: Not only did the policy raise costs, but it also reduced supply.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Not only"}, {"text":
+    "did"}, {"text": "but"}], "label": "not only...but also 倒装结构", "note_zh": "Not
+    only 放在句首时触发部分倒装（did 提前）。阅读时先理解前半句主干，再接上 but 后面的补充。"}'
+- example_type: grammar
+  sentence_text: Had the company invested earlier, it would have dominated the market.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Had"}, {"text": "would
+    have"}], "label": "虚拟条件句倒装", "note_zh": "Had 开头等于 If it had，是虚拟条件句的倒装形式，表示与过去事实相反的假设。would
+    have dominated 是对应的虚拟结果。"}'
+intensive_reading:
+- example_type: sentence_analysis
+  sentence_text: Rarely has a discovery so fundamentally altered our understanding
+    of the cosmos.
+  output_fragment: '{"type": "sentence_analysis", "label": "否定副词前置与修辞强调", "analysis_zh":
+    "Rarely 前置触发倒装，强调“罕见性”。句子信息密度高，通过 altered our understanding 建立了发现与认知的关联。这种句式常用于学术或正式论述中，以增强语气。",
+    "chunks": [{"order": 1, "label": "强调起点", "text": "Rarely has a discovery"}, {"order":
+    2, "label": "核心动作", "text": "so fundamentally altered"}, {"order": 3, "label":
+    "受影响对象", "text": "our understanding of the cosmos"}]}'
+- example_type: sentence_analysis
+  sentence_text: That such a modest proposal provoked outrage reveals more about the
+    audience than the content.
+  output_fragment: '{"type": "sentence_analysis", "label": "名词性从句前置与信息焦点", "analysis_zh":
+    "That 引导的主语从句前置，将“引发愤怒”这一事实本身作为主语，使句子焦点自然落在 reveals 上——作者刻意将“令人意外”的信息结构化，暗示愤怒反应的不合理。这种结构比
+    “It reveals...that...” 更有力，因为主语从句本身承载了作者的判断。", "chunks": [{"order": 1, "label":
+    "事实主语", "text": "That such a modest proposal provoked outrage"}, {"order": 2,
+    "label": "核心判断", "text": "reveals more about the audience than the content"}]}'
+gaokao:
+- example_type: grammar
+  sentence_text: The book that was written by him has become a bestseller.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "that"}, {"text":
+    "was written"}], "label": "定语从句", "note_zh": "that 引导定语从句修饰 the book。that 在从句中作主语，指代先行词
+    the book，所以从句用被动语态 was written。高考语法填空常考：① 判断用哪个关系词（that/which/who/where） ② 从句的时态和语态。"}'
+- example_type: grammar
+  sentence_text: Inspired by the speech, the students decided to start their own project.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Inspired"}, {"text":
+    "decided"}], "label": "过去分词作状语", "note_zh": "Inspired by the speech 是过去分词短语作原因状语，逻辑主语是
+    the students（学生被演讲激励）。过去分词表被动关系，说明主语是动作的承受者。高考语法填空常考：判断用现在分词（-ing，表主动）还是过去分词（-ed，表被动）。"}'
+- example_type: sentence_analysis
+  sentence_text: The research conducted by scientists from different countries shows
+    that climate change has affected the lives of millions of people.
+  output_fragment: '{"type": "sentence_analysis", "label": "过去分词后置定语 + 宾语从句", "analysis_zh":
+    "主干：The research shows that...（这项研究表明……）。conducted by scientists from different
+    countries 是过去分词短语作后置定语，修饰 the research，说明是“来自不同国家的科学家所进行的”研究。that 引导宾语从句，作 shows
+    的宾语，说明研究的结果。高考阅读中遇到长句，先找主干（谁做了什么），再看修饰成分。", "chunks": [{"order": 1, "label": "主干主语",
+    "text": "The research"}, {"order": 2, "label": "后置定语", "text": "conducted by scientists
+    from different countries"}, {"order": 3, "label": "主干谓语", "text": "shows"}, {"order":
+    4, "label": "宾语从句", "text": "that climate change has affected the lives of millions
+    of people"}]}'
+cet:
+- example_type: grammar
+  sentence_text: The study, which was conducted by researchers from Harvard, found
+    that regular exercise can reduce stress.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which"}, {"text":
+    "found"}], "label": "非限制性定语从句", "note_zh": "which 引导非限制性定语从句，补充说明 the study。快速阅读时可先跳过逗号之间的从句，抓住主干
+    The study found that...（研究发现……）"}'
+- example_type: grammar
+  sentence_text: Influenced by social media, young people tend to spend more time
+    online.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Influenced"}, {"text":
+    "tend"}], "label": "过去分词作状语", "note_zh": "Influenced by social media 是过去分词短语作原因状语，表示“受社交媒体影响”。快速阅读时，看到句首的过去分词，先找主语和谓语（young
+    people tend to...），再回头看分词短语补充的信息"}'
+- example_type: sentence_analysis
+  sentence_text: A recent study conducted by the University of Oxford has found that
+    people who regularly engage in physical activity are less likely to develop heart
+    disease.
+  output_fragment: '{"type": "sentence_analysis", "label": "后置定语 + 宾语从句 + 定语从句", "analysis_zh":
+    "主干：A recent study has found that...（一项最新研究发现……）。conducted by the University of
+    Oxford 是过去分词短语作后置定语修饰 study。that 引导宾语从句，其中 who regularly engage in physical activity
+    是定语从句修饰 people。主干信息是“经常锻炼的人更不容易患心脏病”。在段落匹配题中，这类信息可能被改写为“physical activity is linked
+    to lower risk of heart disease”。", "chunks": [{"order": 1, "label": "主干主语", "text":
+    "A recent study"}, {"order": 2, "label": "后置定语", "text": "conducted by the University
+    of Oxford"}, {"order": 3, "label": "主干谓语", "text": "has found"}, {"order": 4,
+    "label": "宾语从句", "text": "that people who regularly engage in physical activity
+    are less likely to develop heart disease"}]}'
+kaoyan:
+- example_type: grammar
+  sentence_text: The approach, which was initially designed for urban areas, has failed
+    to address the needs of rural communities.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which"}, {"text":
+    "has failed"}], "label": "非限制性定语从句 + 主谓分离", "note_zh": "which 引导非限制性定语从句修饰 the
+    approach，可先跳过。主干是 The approach has failed to address...（这种方法未能解决……）。主语和谓语被从句拆开了，阅读时先跳过逗号之间的从句抓主干"}'
+- example_type: grammar
+  sentence_text: The findings, the researchers argue, challenge the prevailing assumption
+    that economic growth inevitably reduces poverty.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "the researchers argue"},
+    {"text": "that"}], "label": "插入语 + 同位语从句", "note_zh": "the researchers argue 是插入语，可先跳过。主干是
+    The findings challenge the assumption（发现挑战了假设）。that 引导同位语从句解释 assumption 的内容。这种“插入语打断主谓”的结构在考研文本中很常见"}'
+- example_type: sentence_analysis
+  sentence_text: The study suggests that the approach, which was initially designed
+    for urban areas, has failed to address the needs of rural communities, leading
+    researchers to call for a fundamental revision of the policy.
+  output_fragment: '{"type": "sentence_analysis", "label": "宾语从句 + 非限制性定语从句 + 分词结果状语",
+    "analysis_zh": "主干：The study suggests that...（研究表明……）。that 引导宾语从句，从句主干是 the approach
+    has failed to address...（这种方法未能解决……）。which was initially designed for urban areas
+    是非限制性定语从句修饰 approach，可先跳过。leading researchers to call for... 是现在分词作结果状语，表示“导致研究人员呼吁……”。这种“主句
+    + 宾语从句内嵌定语从句 + 分词状语”的多层嵌套结构是考研翻译题的高频出题点", "chunks": [{"order": 1, "label": "主干",
+    "text": "The study suggests"}, {"order": 2, "label": "宾语从句主语", "text": "that the
+    approach"}, {"order": 3, "label": "插入的定语从句", "text": "which was initially designed
+    for urban areas"}, {"order": 4, "label": "宾语从句谓语宾语", "text": "has failed to address
+    the needs of rural communities"}, {"order": 5, "label": "分词结果状语", "text": "leading
+    researchers to call for a fundamental revision of the policy"}]}'
+tem:
+- example_type: grammar
+  sentence_text: Never had she felt so alone, so utterly abandoned by the world.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Never"}, {"text":
+    "had she felt"}], "label": "倒装 + 反复", "note_zh": "Never 前置触发倒装，营造紧迫感和戏剧性——读者先被“从未”击中，再感受到主语的孤独。so...so...
+    反复强化情绪的递进，从 alone 到 utterly abandoned，孤独感层层加深。这种倒装+反复的组合是文学文本中常见的情绪渲染手法，专八常考作者意图题"}'
+- example_type: grammar
+  sentence_text: The shadows lengthened, stretched across the empty room like the
+    fingers of some unseen hand.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "lengthened"}, {"text":
+    "stretched"}], "label": "动词并列 + 明喻", "note_zh": "lengthened 和 stretched 两个动词并列，赋予阴影主动性和侵入感——阴影不是被动存在，而是在“蔓延”。like
+    the fingers of some unseen hand 是明喻，将阴影比作“看不见的手指”，营造不安和神秘氛围。这种动词选择+明喻的组合是文学描写中常见的氛围营造手法"}'
+- example_type: sentence_analysis
+  sentence_text: Had she known then what she knows now, she would never have opened
+    that door, would never have stepped into the light that was, in truth, no light
+    at all.
+  output_fragment: '{"type": "sentence_analysis", "label": "虚拟倒装 + 反复否定 + 反讽", "analysis_zh":
+    "Had she known 是虚拟条件句倒装，表达与过去事实相反的假设，奠定悔恨基调。would never have...would never have...
+    反复否定强化不可挽回的遗憾感。that was, in truth, no light at all 是反讽——看似光明实则黑暗，暗示主角被表象蒙蔽。整句通过虚拟+反复+反讽的三重修辞，将悔恨和幻灭推向极致。这种手法在专八阅读中常考作者意图和态度判断",
+    "chunks": [{"order": 1, "label": "虚拟假设", "text": "Had she known then what she
+    knows now"}, {"order": 2, "label": "反复否定一", "text": "she would never have opened
+    that door"}, {"order": 3, "label": "反复否定二", "text": "would never have stepped
+    into the light"}, {"order": 4, "label": "反讽揭示", "text": "that was, in truth, no
+    light at all"}]}'
+ielts_toefl:
+- example_type: grammar
+  sentence_text: The factor that contributed most significantly to the decline was
+    habitat loss.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "that"}, {"text":
+    "contributed"}], "label": "限制性定语从句", "note_zh": "that 引导限制性定语从句，限定了是“哪个” factor——是导致衰退最显著的那个因素。这类限定信息在雅思
+    T/F/NG 题中常被改写为判断对象，如果题目说“Habitat loss was the primary factor”，答案取决于原文的限定是否精确"}'
+- example_type: grammar
+  sentence_text: The mechanism by which the drug operates has not been fully elucidated.
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "by which"}, {"text":
+    "has not been"}], "label": "介词+关系代词 + 被动语态", "note_zh": "by which 引导定语从句修饰 mechanism，说明药物“通过什么机制”起作用。has
+    not been fully elucidated 是被动语态，动作执行者被省略（学术界惯例）。被动语态在学术文本中极常见（约 30-40% 的句子），需注意动作执行者是被省略了还是在
+    by 后面"}'
+- example_type: sentence_analysis
+  sentence_text: Although traditional methods have proven effective in certain contexts,
+    the emerging approach offers significant advantages, particularly in terms of
+    efficiency and scalability.
+  output_fragment: '{"type": "sentence_analysis", "label": "让步（承认传统方法价值）+ 转折（提出新方法优势）+
+    限定（适用范围）", "analysis_zh": "主干：the emerging approach offers significant advantages（新方法具有显著优势）。although
+    引导让步从句，承认传统方法的价值，为转折做铺垫。particularly in terms of... 限定了优势的适用范围——效率和可扩展性。这句在段落中的功能是提出核心论点并限定适用范围。TOEFL
+    可能考“为什么作者提到传统方法的优势？”（答案：让步，为转折做铺垫）。IELTS 的 T/F/NG 可能将“新方法在所有方面都优于传统方法”设为 False（因为原文有
+    particularly 限定）", "chunks": [{"order": 1, "label": "让步从句", "text": "Although
+    traditional methods have proven effective in certain contexts"}, {"order": 2,
+    "label": "核心主张", "text": "the emerging approach offers significant advantages"},
+    {"order": 3, "label": "限定范围", "text": "particularly in terms of efficiency and
+    scalability"}]}'

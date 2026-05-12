@@ -1,0 +1,173 @@
+.sel-toolbar-root {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+  pointer-events: none;
+}
+
+.sel-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(38, 36, 31, 0.04);
+  pointer-events: auto;
+}
+
+.sel-floating-toolbar {
+  position: fixed;
+  left: 32rpx;
+  right: 32rpx;
+  bottom: calc(28rpx + env(safe-area-inset-bottom));
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: center;
+  gap: 6rpx;
+  background: rgba(255, 253, 248, 0.98);
+  border: 1rpx solid rgba(43, 38, 31, 0.07);
+  border-radius: 24rpx;
+  padding: 10rpx;
+  box-shadow:
+    0 18rpx 46rpx rgba(39, 34, 27, 0.12),
+    0 4rpx 12rpx rgba(39, 34, 27, 0.05);
+  animation: sel-toolbar-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sel-toolbar-pop {
+  from {
+    opacity: 0;
+    transform: translateY(16rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sel-tool-btn {
+  position: relative;
+  min-width: 0;
+  height: 72rpx;
+  border-radius: 18rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  color: rgba(55, 54, 50, 0.88);
+  transition: all 0.15s ease;
+
+  &:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 18rpx;
+    right: -3rpx;
+    width: 1rpx;
+    height: 36rpx;
+    background: rgba(42, 38, 31, 0.06);
+  }
+
+  &:active {
+    background: rgba(44, 40, 32, 0.05);
+    transform: scale(0.96);
+  }
+
+  &--active {
+    background: rgba(119, 154, 133, 0.14);
+    color: #416F59;
+
+    .sel-tool-label {
+      color: #416F59;
+      font-weight: 650;
+    }
+
+    &::after {
+      opacity: 0;
+    }
+  }
+
+  &--noted {
+    color: #5F6F9E;
+
+    .sel-tool-label {
+      color: #5F6F9E;
+    }
+  }
+
+  &--has-menu {
+    position: relative;
+  }
+}
+
+.sel-tool-label {
+  font-size: 22rpx;
+  line-height: 1;
+  color: rgba(94, 94, 88, 0.78);
+}
+
+.sel-copy-menu {
+  position: fixed;
+  left: 88rpx;
+  right: 88rpx;
+  bottom: calc(118rpx + env(safe-area-inset-bottom));
+  display: flex;
+  gap: 4rpx;
+  background: rgba(255, 253, 248, 0.98);
+  border: 1rpx solid rgba(43, 38, 31, 0.07);
+  border-radius: 20rpx;
+  padding: 8rpx;
+  box-shadow:
+    0 14rpx 36rpx rgba(39, 34, 27, 0.11),
+    0 4rpx 10rpx rgba(39, 34, 27, 0.05);
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: auto;
+  animation: sel-copy-pop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 38%;
+    bottom: -10rpx;
+    width: 20rpx;
+    height: 20rpx;
+    background: rgba(255, 253, 248, 0.98);
+    border-right: 1rpx solid rgba(43, 38, 31, 0.07);
+    border-bottom: 1rpx solid rgba(43, 38, 31, 0.07);
+    transform: translateX(-50%) rotate(45deg);
+  }
+}
+
+@keyframes sel-copy-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8rpx) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.sel-copy-menu-item {
+  flex: 1;
+  height: 56rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14rpx;
+  font-size: 24rpx;
+  color: rgba(50, 49, 45, 0.88);
+  text-align: center;
+  position: relative;
+  z-index: 1;
+
+  &:active {
+    background: rgba(44, 40, 32, 0.05);
+  }
+}

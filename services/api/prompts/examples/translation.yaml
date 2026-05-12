@@ -1,0 +1,69 @@
+beginner_reading:
+- example_type: translation
+  sentence_text: The boy who is wearing a red hat is my brother.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "那个戴着红帽子的男孩是我的弟弟。"}'
+- example_type: translation
+  sentence_text: Having finished the report, she left the office.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "（在）完成了报告之后，她离开了办公室。"}'
+default:
+- example_type: translation
+  sentence_text: The visuals rendered the ancient world far more vivid than earlier
+    documentaries.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "这些画面把远古世界呈现得比以往的纪录片生动得多。"}'
+- example_type: translation
+  sentence_text: The policy, while well-intentioned, ended up hurting the very people
+    it was meant to help.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "这项政策虽然出发点是好的，最终却伤害了它本想帮助的人。"}'
+intensive_reading:
+- example_type: translation
+  sentence_text: Rarely has a discovery so fundamentally altered our understanding
+    of the cosmos.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "很少有一项发现能如此从根本上改变我们对宇宙的认知。"}'
+- example_type: translation
+  sentence_text: The policy was less a reform than a cosmetic tweak.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "这项政策与其说是改革，不如说是装点门面。"}'
+gaokao:
+- example_type: translation
+  sentence_text: The book that was written by him has become a bestseller.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "他写的那本书已经成为了一本畅销书。"}'
+- example_type: translation
+  sentence_text: Inspired by the speech, the students decided to start their own project.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "（被）演讲所激励，学生们决定开始他们自己的项目。"}'
+cet:
+- example_type: translation
+  sentence_text: The study, which was conducted by researchers from Harvard, found
+    that regular exercise can reduce stress.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "这项由哈佛大学研究人员进行的研究发现，经常锻炼可以减轻压力。"}'
+- example_type: translation
+  sentence_text: Rising temperatures account for the decline in crop yields.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "气温上升是农作物产量下降的原因。（此处 account
+    for 即题目中的 be responsible for）"}'
+kaoyan:
+- example_type: translation
+  sentence_text: The approach, which was initially designed for urban areas, has failed
+    to address the needs of rural communities.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "这种方法最初是为城市地区设计的，但未能解决农村社区的需求。"}'
+- example_type: translation
+  sentence_text: The findings, the researchers argue, challenge the prevailing assumption
+    that economic growth inevitably reduces poverty.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "研究人员认为，这些发现挑战了经济增长必然减少贫困这一普遍假设。（此处
+    that 从句解释 assumption 的内容）"}'
+tem:
+- example_type: translation
+  sentence_text: Never had she felt so alone, so utterly abandoned by the world.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "她从未感到如此孤独，如此被世界彻底遗弃。"}'
+- example_type: translation
+  sentence_text: The shadows lengthened, stretched across the empty room like the
+    fingers of some unseen hand.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "阴影渐渐拉长，如同一只看不见的手的指头般蔓延过空荡荡的房间。（此处
+    like 明喻将阴影比作手指，营造不安氛围）"}'
+ielts_toefl:
+- example_type: translation
+  sentence_text: The decline in biodiversity has been attributed to habitat loss and
+    climate change.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "生物多样性的下降被归因于栖息地丧失和气候变化。（此处
+    has been attributed to 在题目中常被改写为 result from 或 is caused by）"}'
+- example_type: translation
+  sentence_text: Although traditional methods have proven effective in certain contexts,
+    the emerging approach offers significant advantages.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "尽管传统方法在某些情境下已被证明有效，但新兴方法具有显著优势。"}'

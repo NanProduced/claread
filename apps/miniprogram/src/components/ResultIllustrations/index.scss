@@ -1,0 +1,66 @@
+.illustration-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 320rpx;
+  height: 320rpx;
+
+  svg {
+    display: block;
+    flex-shrink: 0;
+  }
+}
+
+// === Loading: 扫描线与分析点动画 ===
+.loading-illustration {
+  .scanner-line {
+    animation: scanner-move 2s ease-in-out infinite;
+    opacity: 0.6;
+    filter: blur(1rpx);
+  }
+
+  .analysis-dot {
+    opacity: 0;
+    transform: scale(0.5);
+    animation: dot-pulse 3s ease-in-out infinite;
+  }
+
+  .dot-1 { animation-delay: 0.2s; }
+  .dot-2 { animation-delay: 1.2s; }
+  .dot-3 { animation-delay: 2.2s; }
+}
+
+@keyframes scanner-move {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.2;
+  }
+  50% {
+    transform: translateY(52rpx); // 扫描到底部
+    opacity: 0.8;
+  }
+}
+
+@keyframes dot-pulse {
+  0%, 100% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  20%, 80% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+  50% {
+    transform: scale(1.5);
+    box-shadow: 0 0 12rpx var(--mark-color);
+  }
+}
+
+// 标题淡入切换动画
+.state-title {
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  &.fade-enter {
+    opacity: 0;
+    transform: translateY(10rpx);
+  }
+}

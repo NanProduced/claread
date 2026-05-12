@@ -1,0 +1,464 @@
+.analysis-card {
+  margin: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+
+
+  /* =========================================================
+   * NoteTab (Collapsed Entry)
+   * Spec: Height 58rpx, Radius 10rpx, Border 1rpx
+   * ========================================================= */
+  .card-summary-row {
+    display: inline-flex;
+    align-items: center;
+    max-width: 60%;
+    min-height: 58rpx;
+    padding: 11rpx 20rpx;
+    box-sizing: border-box;
+    background: var(--reader-surface);
+    border: 1rpx solid var(--entry-tab-border);
+    border-radius: var(--entry-tab-radius);
+    box-shadow: 0 4rpx 12rpx rgba(17, 17, 17, 0.035);
+    transition: background 0.16s var(--ease-reader-out), transform 0.16s var(--ease-reader-out), box-shadow 0.16s var(--ease-reader-out);
+
+    &:active {
+      background: var(--reader-paper-warm);
+      transform: translateY(1rpx);
+      box-shadow: 0 2rpx 6rpx rgba(17, 17, 17, 0.03);
+    }
+
+    .summary-main {
+      display: flex;
+      align-items: center;
+      gap: 12rpx;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .card-collapsed-title {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--reader-ink);
+      font-family: var(--font-sans);
+      font-size: var(--entry-tab-font-size);
+      font-weight: var(--weight-medium);
+      line-height: 1.25;
+      letter-spacing: 0;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .summary-icon {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      margin-left: 10rpx;
+      opacity: 0.48;
+      transition: transform 0.2s var(--ease-reader-out);
+
+      &.is-expanded {
+        transform: rotate(180deg);
+      }
+    }
+  }
+
+  /* =========================================================
+   * AnnotationNoteCard (Expanded Detail)
+   * Spec: Radius 28rpx, Shadow sm, Padding 26rpx 28rpx 20rpx
+   * ========================================================= */
+  .card-content-expandable {
+    display: grid;
+    width: 100%;
+    overflow: hidden;
+    transition: grid-template-rows 0.24s var(--ease-reader-out), opacity 0.2s var(--ease-reader-out);
+
+    &.hide {
+      grid-template-rows: 0fr;
+      opacity: 0;
+      pointer-events: none;
+
+      > .card-body {
+        min-height: 0;
+        overflow: hidden;
+      }
+    }
+
+    &.show {
+      grid-template-rows: 1fr;
+      opacity: 1;
+
+      > .card-body {
+        min-height: 0;
+        overflow: visible;
+      }
+    }
+  }
+
+  .card-body {
+    width: 100%;
+    padding: 28rpx 28rpx 20rpx;
+    box-sizing: border-box;
+    position: relative;
+
+    /* Header */
+    .expanded-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18rpx;
+      padding-bottom: 20rpx;
+      margin-bottom: 4rpx;
+      border-bottom: 1rpx solid rgba(17, 17, 17, 0.04);
+
+      .expanded-full-title {
+        color: var(--reader-ink);
+        font-family: var(--font-sans);
+        font-size: 30rpx;
+        font-weight: var(--weight-semibold);
+        line-height: 1.3;
+        letter-spacing: 0;
+      }
+
+      .collapse-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 48rpx;
+        height: 48rpx;
+        margin-right: -8rpx;
+        border-radius: 50%;
+        opacity: 0.5;
+        transition: opacity 0.2s ease, background 0.2s ease;
+
+        &:active {
+          background: rgba(17, 17, 17, 0.04);
+          opacity: 0.85;
+        }
+      }
+    }
+
+    /* Source Excerpt (Grammar Note) */
+    .grammar-snippet-box {
+      margin: 20rpx 0 16rpx;
+      padding: 20rpx 22rpx;
+      background: var(--reader-paper-deep);
+      border-radius: 16rpx;
+
+      .snippet-label {
+        display: block;
+        margin-bottom: 10rpx;
+        color: var(--reader-muted);
+        font-size: 22rpx;
+        font-weight: 450;
+        line-height: 1.2;
+      }
+
+      .snippet-text {
+        display: block;
+        color: var(--reader-ink);
+        font-family: var(--font-english-serif), serif;
+        font-size: 28rpx;
+        line-height: 1.6;
+        letter-spacing: 0.01em;
+      }
+    }
+
+    /* Content Area */
+    .card-content-wrapper {
+      padding-top: 4rpx;
+    }
+
+    .card-content {
+      display: block;
+      color: var(--reader-ink);
+      font-size: 28rpx;
+      line-height: 1.72;
+      white-space: pre-wrap;
+
+      .markdown-bold {
+        font-weight: var(--weight-semibold);
+      }
+    }
+
+    /* Feedback Footer - Elegant divider design */
+    .card-feedback-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 24rpx;
+      padding-top: 16rpx;
+      border-top: 1rpx solid rgba(17, 17, 17, 0.04);
+
+      .feedback-divider {
+        width: 1rpx;
+        height: 20rpx;
+        background: rgba(17, 17, 17, 0.08);
+      }
+    }
+
+    .feedback-quick-btn,
+    .feedback-detail-btn {
+      display: flex;
+      align-items: center;
+      gap: 8rpx;
+      min-height: 40rpx;
+      color: var(--reader-muted);
+      transition: opacity 0.16s var(--ease-reader-out);
+
+      &:active {
+        opacity: 0.58;
+      }
+    }
+
+    .feedback-quick-text,
+    .feedback-detail-text {
+      color: var(--reader-muted);
+      font-size: 22rpx;
+      line-height: 1.2;
+    }
+
+    .feedback-quick-btn.is-submitted {
+      .feedback-quick-text {
+        color: var(--reader-ink);
+        font-weight: var(--weight-medium);
+      }
+    }
+
+    .feedback-quick-btn.is-disabled {
+      opacity: 0.32;
+      pointer-events: none;
+    }
+
+    .feedback-detail-btn {
+      margin-left: auto;
+    }
+  }
+
+  /* =========================================================
+   * Sentence Analysis Details (Expanded)
+   * ========================================================= */
+  .sentence-analysis-details {
+    .analysis-summary {
+      display: block;
+      margin-bottom: 16rpx;
+      color: var(--reader-ink);
+      font-size: 27rpx;
+      line-height: 1.62;
+    }
+
+    .analysis-chunks-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+
+      .chunk-detail-item {
+        display: flex;
+        flex-direction: column;
+        gap: 8rpx;
+        padding: 16rpx 0;
+        border-bottom: 1rpx solid rgba(17, 17, 17, 0.04);
+
+        &:last-child {
+          border-bottom: 0;
+        }
+
+        &.color-idx-0 .label-index { background: var(--color-info); }
+        &.color-idx-1 .label-index { background: var(--color-focus); }
+        &.color-idx-2 .label-index { background: var(--color-phrase); }
+        &.color-idx-3 .label-index { background: var(--color-grammar); }
+        &.color-idx-4 .label-index { background: var(--color-exam); }
+
+        .chunk-detail-label {
+          display: flex;
+          align-items: center;
+          gap: 12rpx;
+          min-width: 0;
+
+          .label-index {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28rpx;
+            height: 28rpx;
+            color: var(--reader-surface);
+            border-radius: 50%;
+            background: var(--reader-muted);
+            font-size: 18rpx;
+            font-weight: var(--weight-bold);
+            line-height: 1;
+          }
+
+          .label-text {
+            color: var(--reader-ink);
+            font-size: 24rpx;
+            font-weight: var(--weight-medium);
+            line-height: 1.3;
+          }
+        }
+
+        .chunk-detail-text {
+          min-width: 0;
+          color: var(--reader-ink);
+          font-family: var(--font-english-serif), serif;
+          font-size: 25rpx;
+          line-height: 1.5;
+          padding-left: 40rpx;
+        }
+
+      }
+    }
+  }
+
+  /* =========================================================
+   * Expanded Card Container
+   * ========================================================= */
+  &.expanded {
+    align-items: stretch;
+    margin: 24rpx 0;
+
+    .card-summary-row {
+      display: none !important;
+    }
+
+    .card-content-expandable {
+      background: var(--reader-surface);
+      border: 1rpx solid var(--reader-border-subtle);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-reader-sm);
+    }
+  }
+
+  /* =========================================================
+   * Academic Mode Variant - 轻量学术便笺风格
+   *
+   * 设计原则 (来自 docs/uiux/academic-reading-system):
+   * - Paper slip, not dashboard card
+   * - 低饱和度学术色调
+   * - 细线边框、轻阴影、小标签
+   * - 语义化标题（术语/论证/解释）
+   * ========================================================= */
+  &.academic-mode {
+    /* =========================================================
+     * Collapsed Entry - 极致轻量的标签
+     * 目标: 高度 < 56rpx，像行内标注而非独立卡片
+     * ========================================================= */
+    .card-summary-row {
+      background: transparent;  /* 无背景 */
+      border: none;             /* 无边框 */
+      border-radius: 0;         /* 无圆角 */
+      box-shadow: none;          /* 无阴影 */
+      padding: 6rpx 0;          /* 极简内边距 */
+
+      .card-collapsed-title {
+        font-size: 23rpx;       /* 更小 */
+        font-weight: 500;
+        color: rgba(17, 17, 17, 0.55);  /* 更淡 */
+        line-height: 1.35;
+      }
+
+      .summary-icon {
+        opacity: 0.28;           /* 几乎不可见 */
+        width: 24rpx;
+        height: 24rpx;
+      }
+    }
+
+    /* Type-specific colors for collapsed entry - 只用文字颜色区分 */
+    &.type-term .card-summary-row {
+      .card-collapsed-title {
+        color: rgba(68, 98, 122, 0.45);  // 从 var(--academic-term-text) 降至 0.45
+        font-weight: 400;  // 从 500 降至 400
+
+        /* 添加极细的下划线作为类型信号 */
+        border-bottom: 1rpx solid rgba(68, 98, 122, 0.20);  // 更淡的下划线
+        display: inline;
+      }
+    }
+
+    &.type-logic .card-summary-row {
+      .card-collapsed-title {
+        color: var(--academic-logic-text);
+        font-weight: 500;
+
+        border-bottom: 1rpx solid var(--academic-logic-line);
+        display: inline;
+      }
+    }
+
+    &.type-interpretation .card-summary-row {
+      .card-collapsed-title {
+        color: var(--academic-interpret-text);
+        font-weight: 400;  /* 解释类更轻 */
+
+        /* 解释类不添加下划线 */
+      }
+    }
+
+    /* =========================================================
+     * Expanded Detail - Paper Slip 风格
+     * 目标: 最大高度 < 320rpx，避免占据整屏
+     * ========================================================= */
+    &.expanded {
+      margin: 8rpx 0;  /* 极小的外边距 */
+
+      .card-content-expandable {
+        background: var(--reader-paper-deep, #F9F7F3);  /* 温暖纸张 */
+        border: 1rpx solid rgba(17, 17, 17, 0.06);     /* 极淡边框 */
+        border-radius: var(--academic-note-radius, 24rpx);  /* 轻圆角 */
+        box-shadow: 0 4rpx 16rpx rgba(17, 17, 17, 0.03);  /* 极轻阴影 */
+        max-height: 300rpx;  /* ⚠️ 限制最大高度 */
+        overflow-y: auto;   /* 内容过长时允许滚动 */
+      }
+
+      .card-body {
+        padding: 20rpx 24rpx;  /* 更紧凑的 padding */
+
+        .expanded-title-row {
+          padding-bottom: 12rpx;
+          margin-bottom: 2rpx;
+          border-bottom-color: rgba(17, 17, 17, 0.04);
+
+          .expanded-full-title {
+            font-size: 26rpx;  /* 再小一点 */
+            font-weight: 600;
+            color: var(--reader-ink);
+            letter-spacing: 0.01em;
+          }
+        }
+
+        /* Content - 学术阅读字体大小和行高 */
+        .card-content-wrapper {
+          padding-top: 2rpx;
+        }
+
+        .card-content {
+          font-size: 25rpx;  /* 从 27rpx 减至 25rpx */
+          line-height: 1.65;
+          color: rgba(17, 17, 17, 0.75);  /* 更淡 */
+        }
+
+        /* Feedback Footer - 更加克制或完全隐藏 */
+        .card-feedback-row {
+          margin-top: 14rpx;
+          padding-top: 10rpx;
+          border-top-color: rgba(17, 17, 17, 0.03);
+
+          .feedback-quick-text,
+          .feedback-detail-text {
+            font-size: 20rpx;  /* 更小 */
+            color: rgba(17, 17, 17, 0.38);  /* 更淡 */
+          }
+        }
+      }
+    }
+
+    /* Grammar Snippet Box - 在 academic 模式下隐藏 */
+    .grammar-snippet-box {
+      display: none;
+    }
+  }
+}

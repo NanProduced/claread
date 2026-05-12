@@ -1,0 +1,46 @@
+.custom-navbar-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  transition: background-color 0.25s ease;
+
+  .navbar-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+
+    .navbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12rpx;
+
+      .action-btn-wrapper {
+        width: 64rpx;
+        height: 64rpx;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        &:active { opacity: 0.6; }
+      }
+    }
+
+    .navbar-title {
+      font-size: 32rpx;
+      font-weight: bold;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+
+    .navbar-right {
+      width: 80px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  }
+}

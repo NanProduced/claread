@@ -1,0 +1,315 @@
+.credit-detail {
+  min-height: 100vh;
+  background-color: var(--reader-paper, #FAF9F6);
+  padding: 16rpx 24rpx calc(40rpx + env(safe-area-inset-bottom));
+
+  /* === Type Scale ===
+   * Display  38rpx / 700  — summary main number
+   * Value    28rpx / 500  — bonus value, entry amount
+   * Body     26rpx / 450  — entry descriptions
+   * Label    22rpx / 400  — all labels, captions
+   * Micro    20rpx / 400  — time, bucket tags, unit text
+   */
+
+  /* === Summary Card === */
+  &__summary {
+    background-color: var(--reader-surface, #FFFFFF);
+    border-radius: 18rpx;
+    padding: 28rpx 30rpx 24rpx;
+    margin-bottom: 16rpx;
+    box-shadow: 0 1rpx 4rpx rgba(17, 17, 17, 0.04);
+  }
+
+  &__summary-label {
+    display: block;
+    font-size: 22rpx;
+    color: var(--reader-muted, #7A7D86);
+    font-weight: 400;
+    margin-bottom: 6rpx;
+    letter-spacing: 0.02em;
+  }
+
+  &__summary-main {
+    display: flex;
+    align-items: baseline;
+    margin-bottom: 14rpx;
+  }
+
+  &__summary-number {
+    font-size: 38rpx;
+    font-weight: 700;
+    color: var(--reader-ink, #111111);
+    letter-spacing: -0.025em;
+    font-feature-settings: 'tnum';
+  }
+
+  &__summary-total {
+    font-size: 24rpx;
+    font-weight: 400;
+    color: var(--reader-subtle, #9BA0A8);
+    margin-left: 2rpx;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Progress bar */
+  &__progress-track {
+    height: 6rpx;
+    background-color: #F0EAE0;
+    border-radius: 3rpx;
+    overflow: hidden;
+    margin-bottom: 18rpx;
+  }
+
+  &__progress-fill {
+    height: 100%;
+    background-color: #D97706;
+    border-radius: 3rpx;
+    transition: width 0.4s ease-out;
+  }
+
+  /* Bonus row with optional CTA */
+  &__summary-bonus-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  &__bonus-left {
+    display: flex;
+    align-items: center;
+    gap: 6rpx;
+  }
+
+  &__bonus-label {
+    font-size: 22rpx;
+    color: var(--reader-muted, #7A7D86);
+    font-weight: 400;
+  }
+
+  &__bonus-value {
+    font-size: 24rpx;
+    font-weight: 500;
+    color: var(--reader-ink, #111111);
+    font-feature-settings: 'tnum';
+
+    &--zero {
+      color: var(--reader-subtle, #B0B4BC);
+    }
+  }
+
+  &__bonus-cta {
+    display: flex;
+    align-items: center;
+    gap: 2rpx;
+    padding: 8rpx 16rpx 8rpx 10rpx;
+    background-color: rgba(59, 130, 246, 0.06);
+    border-radius: 20rpx;
+    transition: background-color 0.15s ease;
+
+    &:active {
+      background-color: rgba(59, 130, 246, 0.14);
+    }
+  }
+
+  &__bonus-cta-text {
+    font-size: 21rpx;
+    color: #3B82F6;
+    font-weight: 450;
+  }
+
+  /* === List === */
+  &__list {
+    display: flex;
+    flex-direction: column;
+    gap: 10rpx;
+  }
+
+  /* === Date Group === */
+  &__group {
+    display: flex;
+    flex-direction: column;
+    gap: 10rpx;
+  }
+
+  &__date-label {
+    font-size: 21rpx;
+    color: var(--reader-subtle, #B0B4BC);
+    font-weight: 400;
+    padding: 16rpx 0 6rpx;
+    letter-spacing: 0.03em;
+  }
+
+  /* === Entry Card — comfortable spacing === */
+  &__entry {
+    display: flex;
+    align-items: flex-start;
+    background-color: var(--reader-surface, #FFFFFF);
+    border-radius: 13rpx;
+    padding: 22rpx 24rpx;
+    border: 0.5rpx solid rgba(17, 17, 17, 0.055);
+    box-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.025);
+    transition: transform 0.1s ease-out, background-color 0.12s ease;
+
+    &:active {
+      background-color: rgba(0, 0, 0, 0.025);
+      transform: scale(0.99);
+    }
+
+    &--positive {
+      background-color: rgba(5, 150, 105, 0.025);
+    }
+  }
+
+  /* Left icon */
+  &__entry-icon-wrap {
+    width: 36rpx;
+    height: 36rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2rpx;
+    margin-right: 14rpx;
+  }
+
+  /* Center body */
+  &__entry-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6rpx;
+  }
+
+  &__entry-title-row {
+    display: flex;
+    align-items: baseline;
+  }
+
+  &__entry-desc {
+    font-size: 26rpx;
+    color: var(--reader-ink, #111111);
+    line-height: 1.4;
+    font-weight: 450;
+    letter-spacing: 0.005em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__entry-article {
+    font-size: 20rpx;
+    color: var(--reader-subtle, #B0B4BC);
+    line-height: 1.38;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Metadata row: bucket tag · time */
+  &__entry-meta {
+    display: flex;
+    align-items: center;
+    gap: 6rpx;
+    margin-top: 4rpx;
+  }
+
+  &__entry-meta-sep {
+    font-size: 18rpx;
+    color: var(--reader-subtle, #D0D3D8);
+    line-height: 1;
+  }
+
+  &__entry-bucket {
+    font-size: 20rpx;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+
+    &--free {
+      color: var(--reader-subtle, #999999);
+    }
+
+    &--bonus {
+      color: #3B82F6;
+    }
+  }
+
+  &__entry-time {
+    font-size: 20rpx;
+    color: var(--reader-subtle, #C4C8D0);
+    font-weight: 400;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Right amount */
+  &__entry-amount {
+    flex-shrink: 0;
+    margin-left: 16rpx;
+    padding-top: 2rpx;
+  }
+
+  &__entry-points {
+    font-size: 26rpx;
+    font-weight: 500;
+    color: #6B7280;
+    letter-spacing: -0.015em;
+    font-feature-settings: 'tnum';
+
+    &--plus {
+      color: #3d8b63;
+      font-weight: 500;
+    }
+  }
+
+  /* === Load More === */
+  &__load-more {
+    padding: 32rpx 0 16rpx;
+    text-align: center;
+    min-height: 80rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__load-more-text {
+    font-size: 22rpx;
+    color: var(--reader-subtle, #B0B4BC);
+    font-weight: 400;
+  }
+
+  /* === Empty State === */
+  &__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 120rpx 0 80rpx;
+    gap: 14rpx;
+  }
+
+  &__empty-icon {
+    width: 88rpx;
+    height: 88rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--reader-surface, #FFFFFF);
+    border-radius: 50%;
+    box-shadow: 0 1rpx 4rpx rgba(17, 17, 17, 0.04);
+  }
+
+  &__empty-title {
+    font-size: 28rpx;
+    font-weight: 500;
+    color: var(--reader-ink, #111111);
+    letter-spacing: 0.01em;
+  }
+
+  &__empty-desc {
+    font-size: 22rpx;
+    color: var(--reader-muted, #7A7D86);
+    line-height: 1.52;
+    max-width: 400rpx;
+    text-align: center;
+  }
+}

@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: claread-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-claread}
+      POSTGRES_USER: ${POSTGRES_USER:-claread}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-claread_dev}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - claread_postgres_data:/var/lib/postgresql/data
+      - ../migrations/0001_initial_schema.sql:/docker-entrypoint-initdb.d/0001_initial_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: claread-redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-claread_redis_dev}", "--save", "60", "1", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - claread_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-claread_redis_dev}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  claread_postgres_data:
+  claread_redis_data:

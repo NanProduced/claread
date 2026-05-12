@@ -1,0 +1,259 @@
+.input-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background-color: var(--color-bg);
+  transition: background-color 0.4s ease;
+
+  .nav-placeholder {
+    flex-shrink: 0;
+  }
+
+  // 聚焦状态：键盘弹起，bottom-bar 隐藏，mode-chip 淡化，让出全部空间给输入
+  &.is-focused {
+    .bottom-bar {
+      display: none;
+    }
+    .mode-chip {
+      opacity: 0.5;
+      transform: scale(0.9) translateY(-8rpx);
+    }
+  }
+
+  .canvas-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0 40rpx 40rpx;
+    position: relative;
+    overflow: hidden;
+
+    .canvas-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24rpx 0 40rpx;
+      animation: slideInUp 0.4s var(--ease-spring) both;
+    }
+
+    .mode-chip-v2 {
+      display: inline-flex;
+      align-items: center;
+      gap: 12rpx;
+      padding: 12rpx 28rpx;
+      background-color: var(--color-white);
+      border-radius: 100rpx;
+      box-shadow: var(--shadow-sm);
+      transition: all 0.3s var(--ease-spring);
+
+      &:active { transform: scale(0.96); opacity: 0.8; }
+
+      .dot {
+        width: 12rpx;
+        height: 12rpx;
+        background-color: var(--color-grammar);
+        border-radius: 50%;
+        box-shadow: 0 0 8rpx var(--grammar-accent);
+      }
+
+      .mode-label {
+        font-size: 24rpx;
+        color: var(--text-main);
+        font-weight: var(--weight-semibold);
+      }
+    }
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 24rpx;
+
+      .t-btn {
+        width: 64rpx;
+        height: 64rpx;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--color-white);
+        border-radius: 50%;
+        box-shadow: var(--shadow-sm);
+        transition: all 0.2s ease;
+
+        &:active { transform: scale(0.9); background: var(--border-light); }
+      }
+    }
+
+    .textarea-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background-color: var(--color-white);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-paper);
+      // 精简设计：移除繁琐纹理，回归纯粹画布
+      animation: slideInUp 0.5s var(--ease-spring) 0.1s both;
+
+      .content-textarea {
+        width: 100%;
+        flex: 1;
+        padding: 40rpx;
+        font-size: 34rpx;
+        line-height: var(--leading-relaxed);
+        color: var(--color-ink);
+        font-family: var(--font-serif);
+        background: transparent;
+        box-sizing: border-box;
+      }
+
+      .placeholder-style {
+        color: var(--text-muted);
+        font-weight: var(--weight-normal);
+        font-family: var(--font-sans);
+        opacity: 0.5;
+        padding-left: 0;
+      }
+
+      .empty-guide {
+        position: absolute;
+        top: 38.2%; // 黄金比例位置
+        left: 0;
+        right: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        pointer-events: none;
+        animation: fadeIn 0.8s ease both;
+
+        .guide-title {
+          font-size: 36rpx;
+          color: var(--text-muted);
+          font-family: var(--font-serif);
+          letter-spacing: 0.02em;
+          margin-bottom: 12rpx;
+          opacity: 0.4;
+        }
+
+        .guide-subtitle {
+          font-size: 24rpx;
+          color: var(--text-muted);
+          font-weight: var(--weight-normal);
+          opacity: 0.3;
+        }
+      }
+
+      .paste-shortcut {
+        position: absolute;
+        bottom: 40rpx;
+        left: 40rpx;
+        display: flex;
+        align-items: center;
+        gap: 8rpx;
+        padding: 12rpx 24rpx;
+        background-color: var(--color-bg);
+        border: 1rpx solid var(--border-color);
+        border-radius: 100rpx;
+        animation: slideInUp 0.5s var(--ease-spring) both;
+        z-index: 10;
+
+        text {
+          font-size: 24rpx;
+          color: var(--text-sub);
+          font-weight: var(--weight-medium);
+        }
+
+        &:active { opacity: 0.7; transform: scale(0.95); }
+      }
+    }
+
+    .ink-bubble {
+      position: absolute;
+      bottom: 80rpx;
+      right: 64rpx;
+      background-color: var(--color-ink);
+      padding: 24rpx 36rpx;
+      border-radius: 48rpx 48rpx 8rpx 48rpx;
+      display: flex;
+      align-items: center;
+      gap: 16rpx;
+      box-shadow: 0 24rpx 64rpx rgba(0, 0, 0, 0.2);
+      z-index: 100;
+      animation: bubble-appear 0.6s var(--ease-spring) both;
+
+      .bubble-text {
+        font-size: 26rpx;
+        color: #fff;
+        font-weight: var(--weight-medium);
+      }
+
+      &:active { transform: scale(0.95); opacity: 0.9; }
+    }
+  }
+
+  .bottom-bar {
+    padding: 40rpx 48rpx calc(48rpx + env(safe-area-inset-bottom));
+    animation: slideInUp 0.4s var(--ease-spring) 0.2s both;
+
+    .interpret-btn {
+      height: 112rpx;
+      background-color: var(--border-light);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 40rpx;
+      transition: all 0.4s var(--ease-spring);
+
+      .btn-content {
+        display: flex;
+        align-items: center;
+        gap: 24rpx;
+
+        .btn-text {
+          color: var(--text-muted);
+          font-size: 34rpx;
+          font-weight: var(--weight-bold);
+          letter-spacing: 2rpx;
+        }
+
+        .btn-divider {
+          width: 1rpx;
+          height: 32rpx;
+          background-color: var(--border-color);
+        }
+
+        .btn-stats {
+          font-size: 24rpx;
+          color: var(--text-muted);
+          font-family: var(--font-serif);
+          font-weight: var(--weight-medium);
+          opacity: 0.6;
+        }
+      }
+
+      &.active {
+        background-color: var(--color-ink);
+        box-shadow: var(--shadow-md);
+
+        .btn-text { color: #fff; }
+        .btn-divider { background-color: rgba(255, 255, 255, 0.2); }
+        .btn-stats { color: rgba(255, 255, 255, 0.7); }
+
+        &:active { transform: scale(0.98); opacity: 0.9; }
+      }
+    }
+  }
+}
+
+@keyframes bubble-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translateY(40rpx);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}

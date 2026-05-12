@@ -1,0 +1,65 @@
+.daily-hl {
+  display: inline;
+  border-radius: 4rpx;
+  padding: 0 5rpx;
+  margin: 0 1rpx;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  position: relative;
+
+  &--vocab {
+    background-color: var(--dr-tone-vocab-bg);
+    border-bottom: 1.5rpx dotted var(--dr-tone-vocab-border);
+  }
+
+  &--phrase {
+    background-color: var(--dr-tone-phrase-bg);
+    border-bottom: 1.5rpx dotted var(--dr-tone-phrase-border);
+  }
+
+  &--context {
+    background-color: var(--dr-tone-context-bg);
+    border-bottom: 1.5rpx dotted var(--dr-tone-context-border);
+  }
+
+  &--active {
+    &.daily-hl--vocab {
+      background-color: var(--dr-tone-vocab-bg-active);
+      border-bottom-style: solid;
+    }
+    &.daily-hl--phrase {
+      background-color: var(--dr-tone-phrase-bg-active);
+      border-bottom-style: solid;
+    }
+    &.daily-hl--context {
+      background-color: var(--dr-tone-context-bg-active);
+      border-bottom-style: solid;
+    }
+  }
+
+  &--hint {
+    animation: hintPulse 2s ease-in-out infinite;
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      inset: -6rpx -4rpx;
+      border-radius: 10rpx;
+      border: 2rpx solid var(--dr-border-accent);
+      opacity: 0;
+      animation: hintRing 2s ease-in-out infinite;
+    }
+  }
+}
+
+@keyframes hintPulse {
+  0%, 100% { background-color: var(--dr-tone-vocab-bg); }
+  50% { background-color: var(--dr-tone-vocab-bg-active); }
+}
+
+@keyframes hintRing {
+  0%, 100% { opacity: 0; transform: scale(0.95); }
+  30% { opacity: 0.4; transform: scale(1.02); }
+  60% { opacity: 0.15; transform: scale(1); }
+}

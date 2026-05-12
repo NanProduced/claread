@@ -1,0 +1,57 @@
+.clickable-word {
+  color: var(--reader-ink, var(--text-main));
+  border-radius: 4rpx;
+  padding: 0 2rpx;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  position: relative;
+
+  &:active, &.active {
+    background-color: rgba(242, 196, 84, 0.2); // subtle paper-like highlight
+    border-radius: 2rpx;
+  }
+
+  // Saved vocabulary folded-corner marker
+  &.saved {
+    position: relative;
+    font-weight: var(--weight-medium);
+
+    &::after {
+      content: '';
+      position: absolute;
+      right: -2rpx;
+      bottom: -2rpx;
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 0 0 12rpx 12rpx;
+      border-color: transparent transparent rgba(180, 83, 9, 0.6) transparent;
+    }
+
+    &:active::after {
+      border-color: transparent transparent rgba(180, 83, 9, 0.9) transparent;
+    }
+  }
+
+  &.saved-mastered {
+    &::after {
+      border-color: transparent transparent rgba(16, 185, 129, 0.6) transparent;
+    }
+
+    &:active::after {
+      border-color: transparent transparent rgba(16, 185, 129, 0.9) transparent;
+    }
+  }
+
+  // grammar_note span fallback
+  &.tone-grammar {
+    color: var(--reader-ink);
+    background: transparent;
+    transition: background-color 0.3s ease;
+  }
+
+  &.in-selection {
+    background-color: rgba(59, 130, 246, 0.18);
+    border-radius: 2rpx;
+  }
+}

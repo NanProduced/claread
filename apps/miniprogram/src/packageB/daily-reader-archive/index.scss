@@ -1,0 +1,140 @@
+.archive-page {
+  min-height: 100vh;
+  background: var(--dr-bg);
+  padding-bottom: env(safe-area-inset-bottom);
+
+  &__empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 240rpx;
+  }
+
+  &__empty-text {
+    font-size: 30rpx;
+    color: var(--dr-text-muted);
+  }
+
+  &__list {
+    padding: 0 28rpx;
+    padding-top: calc(var(--navbar-total-height, 0px) - 48rpx);
+    padding-bottom: 28rpx;
+    display: flex;
+    flex-direction: column;
+    gap: 16rpx;
+  }
+
+  &__load-more {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12rpx;
+    padding: 40rpx 0 64rpx;
+  }
+
+  &__load-more-text {
+    font-size: 26rpx;
+    color: var(--dr-accent);
+    letter-spacing: 1rpx;
+  }
+}
+
+.archive-card {
+  display: flex;
+  gap: 20rpx;
+  padding: 20rpx;
+  background: var(--dr-surface);
+  border-radius: 14rpx;
+  transition: all 0.2s ease;
+
+  &:active {
+    transform: scale(0.985);
+    background: #f7f3ed;
+  }
+
+  &__left {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__right {
+    flex-shrink: 0;
+    width: 144rpx;
+    height: 144rpx;
+    border-radius: 10rpx;
+    overflow: hidden;
+    margin-top: 2rpx;
+  }
+
+  &__cover {
+    width: 100%;
+    height: 100%;
+  }
+
+  &__title {
+    font-family: 'Georgia', 'Noto Serif SC', serif;
+    font-size: 30rpx;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--dr-text-heading);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-bottom: 10rpx;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    margin-bottom: 14rpx;
+  }
+
+  &__source {
+    font-size: 22rpx;
+    color: var(--dr-accent);
+    font-weight: 500;
+  }
+
+  &__dot {
+    font-size: 20rpx;
+    color: var(--dr-divider);
+  }
+
+  &__date {
+    font-size: 22rpx;
+    color: var(--dr-text-muted);
+  }
+
+  &__time {
+    font-size: 22rpx;
+    color: var(--dr-text-muted);
+  }
+
+  &__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8rpx;
+    margin-top: auto;
+  }
+
+  &__badge {
+    padding: 4rpx 12rpx;
+    border-radius: 6rpx;
+    background: var(--dr-badge-bg);
+
+    &--tag {
+      background: var(--dr-badge-tag-bg);
+    }
+  }
+
+  &__badge-text {
+    font-size: 20rpx;
+    font-weight: 500;
+    color: var(--dr-text-sub);
+  }
+}

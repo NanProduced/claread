@@ -1,0 +1,35 @@
+.note-tab {
+  display: inline-flex;
+  align-items: center;
+  height: var(--entry-tab-height, 58rpx);
+  padding: 0 20rpx;
+  border-radius: var(--entry-tab-radius, 10rpx);
+  border: 1rpx solid var(--dr-border-light, #E6E7EB);
+  background-color: var(--reader-surface, #FFFFFF);
+  max-width: 60%;
+  box-sizing: border-box;
+  transition: background-color 0.16s var(--ease-reader-out);
+
+  &:active {
+    background-color: var(--reader-paper-deep, #F6F3EC);
+  }
+
+  .note-tab-icon {
+    flex-shrink: 0;
+    margin-right: 12rpx;
+  }
+
+  .note-tab-text {
+    flex: 1 1 auto;
+    font-size: var(--entry-tab-font-size, 25rpx);
+    color: var(--reader-ink, #111111);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .note-tab-arrow {
+    flex-shrink: 0;
+    margin-left: 12rpx;
+  }
+}

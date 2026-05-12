@@ -1,0 +1,283 @@
+.vocab-study-card {
+  background-color: #fcfaf8;
+  border-radius: 20rpx;
+  padding: 20rpx 32rpx 24rpx;
+  border: 1rpx solid #e5e0d8;
+  box-shadow: 0 10rpx 30rpx rgba(32, 26, 18, 0.045);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+
+  &.review {
+    flex: 1 1 0;
+    height: 0;
+  }
+
+  &.inspect {
+    flex: 1 1 0;
+    height: 0;
+  }
+
+  .study-tabs {
+    align-self: center;
+    display: inline-flex;
+    gap: 2rpx;
+    padding: 4rpx;
+    border-radius: 999rpx;
+    background-color: #f1ede6;
+    border: 1rpx solid #e7dfd2;
+    margin-bottom: 20rpx;
+    flex-shrink: 0;
+
+    .study-tab {
+      min-width: 118rpx;
+      height: 46rpx;
+      border-radius: 999rpx;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-sub);
+      font-size: 24rpx;
+      transition: background-color 160ms ease-out, color 160ms ease-out;
+
+      &.active {
+        background-color: #fbfaf6;
+        color: var(--color-ink);
+        box-shadow: 0 2rpx 8rpx rgba(17, 17, 17, 0.06);
+      }
+    }
+  }
+
+  .word-header {
+    flex-shrink: 0;
+    margin-bottom: 8rpx;
+
+    .word-text {
+      display: block;
+      font-family: var(--font-english-serif), serif;
+      font-size: 58rpx;
+      font-weight: 800;
+      line-height: 1.08;
+      color: var(--color-ink);
+      word-break: break-word;
+    }
+
+    .phonetic-text {
+      display: block;
+      margin-top: 4rpx;
+      font-family: var(--font-english-sans), sans-serif;
+      font-size: 27rpx;
+      color: var(--text-sub);
+    }
+  }
+
+  .state-tag {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8rpx;
+    align-self: flex-start;
+    padding: 5rpx 14rpx;
+    border: 1rpx solid #e5e0d8;
+    border-radius: 999rpx;
+    color: var(--text-sub);
+    font-size: 21rpx;
+  }
+
+  .divider {
+    flex-shrink: 0;
+    height: 1rpx;
+    width: 100%;
+    background-color: #e5e0d8;
+    margin: 16rpx 0;
+  }
+
+  .study-content-shell {
+    flex: 1 1 0;
+    height: 0;
+    min-height: 0;
+    width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+    background-color: #fcfaf8;
+  }
+
+  .study-content-scroll {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    background-color: transparent;
+  }
+
+  .context-pane,
+  .dictionary-pane {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding-bottom: 18rpx;
+  }
+
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 10rpx;
+    color: var(--text-sub);
+    font-size: 25rpx;
+    font-weight: 600;
+    margin-bottom: 18rpx;
+
+    &.sub {
+      margin-top: 34rpx;
+    }
+  }
+
+  .meaning-preview {
+    display: flex;
+    align-items: baseline;
+    gap: 14rpx;
+    margin-bottom: 28rpx;
+
+    .pos-text {
+      flex-shrink: 0;
+      font-family: var(--font-english-serif), serif;
+      font-size: 30rpx;
+      font-style: italic;
+      color: var(--text-main);
+    }
+
+    .meaning-text {
+      color: var(--text-main);
+      font-size: 31rpx;
+      line-height: 1.48;
+      font-weight: 500;
+    }
+  }
+
+  .context-note {
+    background-color: #f6f2e9;
+    border: 1rpx solid #e8dfcf;
+    border-radius: 16rpx;
+    padding: 24rpx 26rpx;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+
+    .context-sentence {
+      display: block;
+      font-family: var(--font-english-serif), serif;
+      font-style: italic;
+      font-size: 30rpx;
+      line-height: 1.6;
+      color: var(--color-ink);
+      margin-bottom: 22rpx;
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    .context-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 20rpx;
+
+      .context-source,
+      .context-date {
+        display: block;
+        color: var(--text-muted);
+        font-size: 23rpx;
+        line-height: 1.5;
+      }
+
+      .inline-source-link {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 6rpx;
+        height: 46rpx;
+        padding: 0 16rpx;
+        border-radius: 999rpx;
+        background-color: #ece5d8;
+        color: var(--text-sub);
+        font-size: 23rpx;
+      }
+    }
+  }
+
+  .dictionary-pane {
+    .meanings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 22rpx;
+    }
+
+    .meaning-group {
+      display: flex;
+      align-items: flex-start;
+      gap: 18rpx;
+
+      .pos-text {
+        flex-shrink: 0;
+        min-width: 46rpx;
+        font-family: var(--font-english-serif), serif;
+        font-size: 28rpx;
+        font-style: italic;
+        color: var(--text-main);
+      }
+
+      .definitions {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .def-item {
+        margin-bottom: 14rpx;
+      }
+
+      .def-text {
+        display: block;
+        color: var(--text-main);
+      font-size: 28rpx;
+        line-height: 1.52;
+      }
+    }
+
+    .example-item,
+    .phrase-item {
+      padding: 20rpx 0;
+      border-top: 1rpx solid #eee8dd;
+    }
+
+    .ex-en,
+    .phrase-en {
+      display: block;
+      color: var(--color-ink);
+      font-family: var(--font-english-serif), serif;
+      font-size: 26rpx;
+      font-style: italic;
+      line-height: 1.5;
+      margin-bottom: 6rpx;
+    }
+
+    .ex-zh,
+    .phrase-zh {
+      display: block;
+      color: var(--text-sub);
+      font-size: 25rpx;
+      line-height: 1.45;
+    }
+  }
+
+  .empty-text,
+  .loading-text,
+  .swipe-hint {
+    color: var(--text-muted);
+    font-size: 23rpx;
+  }
+
+  .swipe-hint {
+    margin-top: 36rpx;
+    text-align: center;
+  }
+}

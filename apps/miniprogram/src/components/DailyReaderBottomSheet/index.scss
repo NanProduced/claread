@@ -1,0 +1,131 @@
+.daily-sheet-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--dr-overlay);
+  z-index: 999;
+  display: flex;
+  align-items: flex-end;
+}
+
+.daily-sheet {
+  width: 100%;
+  background: var(--dr-bg);
+  border-radius: 32rpx 32rpx 0 0;
+  padding: 24rpx 48rpx 80rpx;
+  max-height: 60vh;
+  overflow-y: auto;
+
+  &__handle {
+    width: 72rpx;
+    height: 8rpx;
+    background: var(--dr-divider);
+    border-radius: 4rpx;
+    margin: 0 auto 32rpx;
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 20rpx;
+    margin-bottom: 24rpx;
+  }
+
+  &__word {
+    font-family: 'Georgia', serif;
+    font-size: 44rpx;
+    font-weight: 700;
+    color: var(--dr-text-heading);
+  }
+
+  &__type-badge {
+    padding: 4rpx 16rpx;
+    border-radius: 8rpx;
+
+    &--vocab_highlight {
+      background: var(--dr-tone-vocab-bg);
+    }
+    &--phrase_gloss {
+      background: var(--dr-tone-phrase-bg);
+    }
+    &--context_gloss {
+      background: var(--dr-tone-context-bg);
+    }
+  }
+
+  &__type-text {
+    font-size: 22rpx;
+    font-weight: 500;
+    color: var(--dr-text-sub);
+  }
+
+  &__gloss {
+    padding: 24rpx 32rpx;
+    background: var(--dr-surface);
+    border-radius: 16rpx;
+    margin-bottom: 24rpx;
+  }
+
+  &__gloss-text {
+    font-size: 30rpx;
+    line-height: 1.6;
+    color: var(--dr-text-body);
+  }
+
+  &__detail {
+    margin-bottom: 32rpx;
+  }
+
+  &__phonetic {
+    font-size: 28rpx;
+    color: var(--dr-accent);
+    margin-right: 16rpx;
+  }
+
+  &__pos {
+    font-size: 26rpx;
+    color: var(--dr-text-muted);
+    font-style: italic;
+  }
+
+  &__context {
+    margin-top: 20rpx;
+    padding: 20rpx 28rpx;
+    background: rgba(139, 115, 85, 0.05);
+    border-radius: 12rpx;
+    border-top: 3rpx solid rgba(139, 115, 85, 0.18);
+  }
+
+  &__context-label {
+    font-size: 24rpx;
+    font-weight: 600;
+    color: var(--dr-accent);
+    display: block;
+    margin-bottom: 8rpx;
+  }
+
+  &__context-text {
+    font-size: 28rpx;
+    line-height: 1.5;
+    color: var(--dr-text-body);
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: center;
+  }
+
+  &__action-btn {
+    padding: 20rpx 48rpx;
+    background: var(--dr-badge-bg);
+    border-radius: 40rpx;
+  }
+
+  &__action-text {
+    font-size: 28rpx;
+    font-weight: 500;
+    color: var(--dr-text-sub);
+  }
+}

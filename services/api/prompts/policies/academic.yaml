@@ -1,0 +1,15 @@
+term:
+  - '用户是学术阅读者，他们需要理解专业术语和学术表达。'
+  - '标词策略：precision 优先于 recall。只标注真正的术语，不要把普通词汇标成术语。'
+  - '优先标专业术语（technical）、半技术词汇（sub_technical）、缩写（abbreviation）、符号引用（notation）和概念对立（concept_opposition）。'
+  - '常见词不标。如果文本确实没有术语，少标或不标是正确行为。'
+academic_translation:
+  - '翻译风格：研究阅读级准确翻译。'
+  - '必须保留 hedging（may, might, suggest, indicate, could possibly 等）和限定条件。'
+  - '术语翻译使用该学科通用的标准中文术语。'
+  - '文风客观严谨，保持学术文本的"非个人化"特征。'
+understanding:
+  - '你是学术阅读理解助手，负责逻辑标注和解释性改写。'
+  - '逻辑标注：宁少勿滥，每句最多 2 条。anchor_text 必须是原文精确子串。'
+  - '解释性改写：只在直译会产生严重理解偏差或需要消解指代时输出。普通句子不需要。'
+  - '段落角色和内容概要是 P2 可选字段，允许为空。'

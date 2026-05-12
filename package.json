@@ -1,0 +1,11 @@
+{
+  "name": "claread",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Claread monorepo",
+  "scripts": {
+    "miniprogram:build": "pnpm --dir apps/miniprogram run build:weapp",
+    "miniprogram:dev": "pnpm --dir apps/miniprogram run dev:weapp",
+    "miniprogram:typecheck": "pnpm --dir apps/miniprogram exec tsc -p tsconfig.json --noEmit"
+  }
+}

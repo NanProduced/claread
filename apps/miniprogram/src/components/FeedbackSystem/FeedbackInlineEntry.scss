@@ -1,0 +1,71 @@
+.feedback-inline-entry {
+  display: flex;
+  align-items: center;
+  width: 100%;
+
+  &__action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12rpx;
+    flex: 1;
+    min-height: 80rpx;
+    color: var(--reader-muted, #7A7D86);
+    font-size: 24rpx;
+    font-weight: 450;
+    transition: all 0.2s var(--ease-reader-out);
+    position: relative;
+
+    /* Subtle optical adjustment for icons next to Chinese text */
+    .feedback-inline-entry__icon-wrap {
+      transform: translateY(1rpx);
+    }
+
+    &:active {
+      color: var(--reader-ink, #111111);
+      transform: scale(0.98);
+    }
+
+    &--positive {
+      color: var(--reader-muted, #7A7D86);
+
+      &:active {
+        color: var(--color-success, #16A34A);
+      }
+
+      &.is-submitted {
+        color: var(--color-success, #16A34A);
+        font-weight: 500;
+      }
+    }
+
+    &--negative:active {
+      color: var(--color-warning, #F44336);
+    }
+
+    /* Divider between actions - not on first or last */
+    &:not(:first-child)::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 1rpx;
+      height: 28rpx;
+      background: var(--reader-border-subtle, rgba(0, 0, 0, 0.06));
+    }
+  }
+
+  &__icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32rpx;
+    height: 32rpx;
+    transition: transform 0.2s ease;
+  }
+
+  &__label {
+    letter-spacing: 0.01em;
+  }
+}

@@ -1,0 +1,140 @@
+/* AcademicNoteSlip v3.1 — 增强可点击识别度
+ *
+ * 与 AcademicNoteGroup 保持一致的视觉语言:
+ * - 折叠态有明确容器感 (背景+边框)
+ * - 文字对比度提升至可读区间
+ * - chevron 清晰可见
+ * - max-height 替代 grid (Taro/WeChat 兼容)
+ */
+
+.academic-note-slip {
+  width: 100%;
+  margin-top: 10rpx;
+
+  .slip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12rpx 14rpx;
+    cursor: pointer;
+    background: rgba(17, 17, 17, 0.028);
+    border: 1rpx solid rgba(17, 17, 17, 0.06);
+    border-radius: 10rpx;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+
+    &:active {
+      background: rgba(17, 17, 17, 0.055);
+      border-color: rgba(17, 17, 17, 0.10);
+    }
+
+    .slip-header-main {
+      display: flex;
+      align-items: center;
+      gap: 4rpx;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      margin-right: 8rpx;
+    }
+
+    .slip-variant {
+      font-size: 20rpx;
+      font-weight: 550;
+      color: rgba(17, 17, 17, 0.48);
+      letter-spacing: 0.03em;
+      flex-shrink: 0;
+    }
+
+    .slip-sep {
+      font-size: 20rpx;
+      color: rgba(17, 17, 17, 0.32);
+      flex-shrink: 0;
+    }
+
+    .slip-title {
+      font-size: 22rpx;
+      font-weight: 500;
+      color: rgba(17, 17, 17, 0.60);
+      letter-spacing: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .slip-chevron {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32rpx;
+      height: 32rpx;
+      flex-shrink: 0;
+      opacity: 0.55;
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+
+      &.is-open {
+        transform: rotate(90deg);
+        opacity: 0.70;
+      }
+    }
+  }
+
+  /* 使用 max-height 替代 grid 以兼容 Taro/WeChat */
+  .slip-body {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 0.3s ease-out,
+                margin-top 0.2s ease;
+
+    &.hide {
+      max-height: 0;
+      opacity: 0;
+      pointer-events: none;
+      margin-top: 0;
+
+      > .slip-body-inner {
+        display: none;
+      }
+    }
+
+    &.show {
+      max-height: 1200rpx;
+      opacity: 1;
+      margin-top: 8rpx;
+    }
+  }
+
+  .slip-body-inner {
+    padding: 14rpx 18rpx;
+    background: var(--reader-paper-deep, #F6F3EC);
+    border: 1rpx solid rgba(17, 17, 17, 0.07);
+    border-radius: 12rpx;
+
+    .slip-content {
+      display: block;
+      font-size: 25rpx;
+      line-height: 1.72;
+      color: rgba(17, 17, 17, 0.70);
+      letter-spacing: 0.01em;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+
+  &.is-collapsed {
+    .slip-header:active .slip-title {
+      opacity: 0.75;
+    }
+  }
+
+  &.is-expanded {
+    .slip-header {
+      border-bottom-left-radius: 0;
+      border-bottom-right-radius: 0;
+      border-bottom-color: transparent;
+    }
+  }
+}

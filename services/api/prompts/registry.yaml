@@ -1,0 +1,26 @@
+version: "0.0.1"
+agents:
+  vocabulary:
+    file: agents/vocabulary.yaml
+  grammar:
+    file: agents/grammar.yaml
+  translation:
+    file: agents/translation.yaml
+  repair:
+    file: agents/repair.yaml
+  term:
+    file: agents/term.yaml
+  understanding:
+    file: agents/understanding.yaml
+  academic_translation:
+    file: agents/academic_translation.yaml
+  daily_vocab:
+    file: agents/daily_vocab.yaml
+  daily_footer:
+    file: agents/daily_footer.yaml
+  daily_interpretation:
+    file: agents/daily_interpretation.yaml
+  daily_review:
+    file: agents/daily_review.yaml
+  daily_refinement:
+    file: agents/daily_refinement.yaml

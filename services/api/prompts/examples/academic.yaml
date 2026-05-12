@@ -1,0 +1,37 @@
+term:
+- example_type: vocab
+  sentence_text: The study employed a longitudinal design to track changes in cognitive
+    function.
+  output_fragment: '{"type": "term_note", "sentence_ids": ["s1"], "text": "longitudinal",
+    "term_category": "technical", "zh": "纵向的", "zh_uncertain": false, "context_definition":
+    "在研究方法语境下，longitudinal 指对同一组对象进行长期跟踪研究的设计，与 cross-sectional（横截面）相对", "discipline":
+    "research_methodology"}'
+- example_type: vocab
+  sentence_text: The results suggest that the effect may be mediated by attentional
+    processes.
+  output_fragment: '{"type": "term_note", "sentence_ids": ["s2"], "text": "mediated",
+    "term_category": "sub_technical", "zh": "中介/调节", "zh_uncertain": true, "context_definition":
+    "在统计学语境下，mediated 表示一个变量通过另一个变量间接产生影响，即中介效应", "discipline": "statistics"}'
+academic_translation:
+- example_type: translation
+  sentence_text: The results suggest that the effect may be mediated by attentional
+    processes.
+  output_fragment: '{"sentence_id": "s1", "translation_zh": "结果表明，该效应可能由注意过程中介。",
+    "translation_notes": ["保留了 may be 的不确定性表达"]}'
+- example_type: translation
+  sentence_text: Although the sample size was relatively small, the findings are consistent
+    with previous research.
+  output_fragment: '{"sentence_id": "s2", "translation_zh": "尽管样本量相对较小，但研究结果与先前研究一致。"}'
+understanding:
+- example_type: vocab
+  sentence_text: Although the sample size was relatively small, the findings are consistent
+    with previous research.
+  output_fragment: '{"type": "logic_note", "sentence_ids": ["s1"], "logic_type": "concession",
+    "anchor_text": "Although", "explanation": "让步：承认样本量小的局限，同时强调结果的一致性", "hedging_detected":
+    false, "hedging_words": []}'
+- example_type: vocab
+  sentence_text: The results suggest that the effect may be mediated by attentional
+    processes.
+  output_fragment: '{"type": "logic_note", "sentence_ids": ["s2"], "logic_type": "evidence",
+    "anchor_text": "suggest that", "explanation": "证据支撑：用 suggest 而非 prove 表明这是推断而非定论",
+    "hedging_detected": true, "hedging_words": ["suggest", "may"]}'

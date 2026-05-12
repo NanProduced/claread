@@ -1,0 +1,209 @@
+.academic-note-group {
+  width: 100%;
+  margin-top: 16rpx;
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 58rpx;
+    padding: 13rpx 16rpx;
+    cursor: pointer;
+    background: rgba(255, 253, 248, 0.62);
+    border: 1rpx solid rgba(17, 17, 17, 0.065);
+    border-radius: 16rpx;
+    transition: background-color 0.18s ease, border-color 0.18s ease;
+
+    &:active {
+      background: rgba(246, 243, 236, 0.72);
+      border-color: rgba(17, 17, 17, 0.10);
+    }
+  }
+
+  .group-summary {
+    flex: 1;
+    min-width: 0;
+    margin-right: 12rpx;
+  }
+
+  .summary-text {
+    display: block;
+    color: rgba(17, 17, 17, 0.56);
+    font-size: 23rpx;
+    font-weight: 520;
+    line-height: 1.45;
+    letter-spacing: 0.01em;
+  }
+
+  .group-chevron {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34rpx;
+    height: 34rpx;
+    flex-shrink: 0;
+    opacity: 0.55;
+    transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease;
+
+    &.is-open {
+      transform: rotate(90deg);
+      opacity: 0.72;
+    }
+  }
+
+  .group-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    overflow: hidden;
+    transition: grid-template-rows 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, margin-top 0.18s ease;
+
+    &.hide {
+      margin-top: 0;
+      pointer-events: none;
+    }
+
+    &.show {
+      grid-template-rows: 1fr;
+      margin-top: 8rpx;
+      opacity: 1;
+    }
+  }
+
+  .group-items {
+    min-height: 0;
+    overflow: hidden;
+    padding: 8rpx 12rpx;
+    background: rgba(255, 253, 248, 0.76);
+    border: 1rpx solid rgba(17, 17, 17, 0.065);
+    border-radius: 18rpx;
+    box-shadow: 0 8rpx 22rpx rgba(17, 17, 17, 0.025);
+  }
+
+  .group-item {
+    padding: 15rpx 8rpx;
+    cursor: pointer;
+    border-radius: 12rpx;
+    transition: background-color 0.18s ease;
+
+    &:active,
+    &.is-active {
+      background: rgba(246, 243, 236, 0.64);
+    }
+
+    & + .group-item {
+      border-top: 1rpx solid rgba(17, 17, 17, 0.045);
+    }
+  }
+
+  .item-label-row {
+    display: flex;
+    align-items: center;
+    gap: 7rpx;
+  }
+
+  .item-variant {
+    flex-shrink: 0;
+    color: rgba(73, 111, 143, 0.76);
+    font-size: 20rpx;
+    font-weight: 620;
+    letter-spacing: 0.035em;
+  }
+
+  .group-item.variant-logic .item-variant {
+    color: rgba(181, 117, 35, 0.74);
+  }
+
+  .group-item.variant-interpretation .item-variant {
+    color: rgba(85, 118, 102, 0.72);
+  }
+
+  .item-sep {
+    color: rgba(17, 17, 17, 0.28);
+    font-size: 20rpx;
+  }
+
+  .item-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    color: rgba(17, 17, 17, 0.70);
+    font-size: 24rpx;
+    font-weight: 540;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .item-chevron {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30rpx;
+    height: 30rpx;
+    flex-shrink: 0;
+    opacity: 0.44;
+    transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease;
+
+    &.is-open {
+      transform: rotate(180deg);
+      opacity: 0.66;
+    }
+  }
+
+  .item-content {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    overflow: hidden;
+    transition: grid-template-rows 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, margin-top 0.18s ease;
+
+    &.show {
+      grid-template-rows: 1fr;
+      margin-top: 10rpx;
+      opacity: 1;
+    }
+  }
+
+  .item-text-container {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .item-text {
+    display: block;
+    color: rgba(17, 17, 17, 0.70);
+    font-size: 25rpx;
+    line-height: 1.68;
+    word-break: break-word;
+  }
+
+  .source-hint {
+    margin-top: 12rpx;
+    padding-top: 10rpx;
+    border-top: 1rpx solid rgba(17, 17, 17, 0.045);
+  }
+
+  .source-label {
+    display: block;
+    color: rgba(17, 17, 17, 0.36);
+    font-size: 19rpx;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  .source-text {
+    display: block;
+    margin-top: 5rpx;
+    color: rgba(17, 17, 17, 0.50);
+    font-family: var(--font-english-serif), serif;
+    font-size: 23rpx;
+    line-height: 1.55;
+  }
+
+  &.is-expanded {
+    .group-header {
+      background: rgba(255, 253, 248, 0.82);
+    }
+  }
+}

@@ -1,0 +1,371 @@
+/* 全局 Design Tokens - 自适应 Figma 新设计与 Goodnotes 质感 */
+
+page {
+  /* 品牌色 (Brand Palette) - 模拟高档印刷质感 */
+  --color-ink: #121212;           /* 极致墨黑，替代纯黑 (更护眼，更有质感) */
+  --color-bg: #FAF9F6;            /* 温暖纸张色 (Design: reading-annotation-current-overview.png) */
+  --primary-color: var(--color-ink);
+  --bg-color: var(--color-bg);
+  --color-white: #FFFFFF;
+
+  /* 语义色 - 淡水/钻石光泽质感 (OKLCH 逻辑配色，低饱和度适中) */
+  --color-info:      #2E5BB2;     /* 钢青蓝 (info) */
+  --color-focus:     #B45309;     /* 琥珀 (focus) */
+  --color-exam:      #BE123C;     /* 朱红 (exam) */
+  --color-phrase:    #6D28D9;     /* 中紫 (phrase) */
+  --color-grammar:   #047857;     /* 松绿 (grammar) */
+  --color-warn:      #F59E0B;     /* 琥珀 (warn/favorite) */
+
+  // --- Category: Vocab (Amber/Orange) ---
+  --vocab-surface: #FFF8EB;
+  --vocab-border:  #FFE8CC;
+  --vocab-accent:  #F59E0B;
+  --vocab-label:   #D97706;
+  --vocab-content: #92400E;
+
+  // --- Category: Grammar (Indigo/Purple) ---
+  --grammar-surface: #F5F3FF;
+  --grammar-border:  #EDE9FE;
+  --grammar-accent:  #8B5CF6;
+  --grammar-label:   #7C3AED;
+  --grammar-content: #5B21B6;
+
+  // --- Category: Sentence (Emerald/Green) ---
+  --sentence-surface: #F0FDF4;
+  --sentence-border:  #DCFCE7;
+  --sentence-accent:  #10B981;
+  --sentence-label:   #059669;
+  --sentence-content: #065F46;
+
+  // --- Category: Term (Blue/Navy - Academic) ---
+  --term-surface: #EFF6FF;
+  --term-border:  #DBEAFE;
+  --term-accent:  #3B82F6;
+  --term-label:   #2563EB;
+  --term-content: #1E3A8A;
+
+  // --- Category: Logic (Amber/Orange - Academic) ---
+  --logic-surface: #FFF7ED;
+  --logic-border:  #FED7AA;
+  --logic-accent:  #F97316;
+  --logic-label:   #EA580C;
+  --logic-content: #9A3412;
+
+  // --- Category: Highlight (Marker/Yellow) ---
+  --highlight-surface: rgba(255, 231, 105, 0.45);
+  --highlight-shadow:  rgba(255, 231, 105, 0.2);
+  --highlight-soft:    rgba(255, 231, 105, 0.25);
+
+  /* 文字层级 */
+  --text-main: #1A1A1A;
+  --text-sub:  #646470;           /* 页面副调的灰，增加高阶感 */
+  --text-muted: #6B7280;          /* 提升对比度，符合 WCAG AA (4.5:1) */
+  --border-color: rgba(0, 0, 0, 0.04);
+  --border-light: rgba(0, 0, 0, 0.02);
+
+  // Goodnotes Shadows
+  --shadow-sm: 0 2rpx 8rpx rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 8rpx 32rpx rgba(0, 0, 0, 0.06);
+  --shadow-paper: 0 4rpx 16rpx rgba(0, 0, 0, 0.04), 0 1rpx 2rpx rgba(0, 0, 0, 0.02);
+
+  // Spring Curve
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  ///* 圆角系统 (8rpx grid) */
+  --radius-lg: 40rpx;   /* 稍微大一点更轻薄感 */
+  --radius-md: 24rpx;
+  --radius-sm: 16rpx;
+  --radius-xs: 8rpx;
+
+  /* 字体系统 (Typography Overhaul) */
+  /* 英文主体使用 Serif 增加阅读慰藉感；中文使用系统字体 */
+  --font-sans: -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Source Serif Pro", "Georgia", "PT Serif", serif;
+  --font-mono: "SF Mono", "Menlo", "Monaco", monospace;
+
+  --font-english-serif: "Source Serif Pro", "Georgia", "PT Serif", serif;
+  --font-english-sans: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+
+  /* 字号阶梯 (更细腻的比例) */
+  --text-xs: 22rpx;
+  --text-sm: 26rpx;
+  --text-base: 30rpx;
+  --text-lg: 36rpx;     /* 微增大 34 -> 36 提升阅读感 */
+  --text-xl: 42rpx;
+  --text-2xl: 52rpx;
+  --text-3xl: 64rpx;
+
+  /* 阅读行距 (Leading & Tracking) */
+  --leading-tight: 1.25;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.8;
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0.015em;
+  --tracking-wide: 0.03em;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* 交互状态高亮 (钻石光泽效果 - 降低饱和度，更自然) */
+  --active-highlight-bg: #FEF9C3; // 更淡的暖黄
+  --active-highlight-text: var(--color-ink);
+
+  /* 推荐卡片颜色 */
+  --blue-bg: rgba(46, 91, 178, 0.05);
+  --blue-text: var(--color-info);
+  --orange-bg: rgba(180, 83, 9, 0.05);
+  --orange-text: var(--color-focus);
+  --purple-bg: rgba(109, 40, 217, 0.05);
+  --purple-text: var(--color-phrase);
+
+  // --- Daily Reader 主题 (Editorial Warm - 绵密织感阅读体验) ---
+  --dr-padding: 56rpx;
+  --dr-bg: #fffcf7;
+  --dr-surface: #faf6f0;
+  --dr-surface-warning: #fdf6f0;
+  --dr-overlay: rgba(0, 0, 0, 0.3);
+  --dr-text-heading: #2c2420;
+  --dr-text-reading: #3a3330;
+  --dr-text-body: #4a3f35;
+  --dr-text-sub: #6b5e52;
+  --dr-text-muted: #9a8a7a;
+  --dr-text-tertiary: #7a6f65;
+  --dr-text-warning: #8b5e3c;
+  --dr-accent: #8b7355;
+  --dr-divider: #d8cfc4;
+  --dr-border-accent: #c9b8a3;
+  --dr-border-light: #ede4d8;
+  --dr-border-subtle: #e8e0d6;
+  --dr-border-warning: #d4a574;
+  --dr-badge-bg: #f0e6d8;
+  --dr-badge-time-bg: #e8e4df;
+  --dr-badge-tag-bg: #f5f0ea;
+  --dr-gradient-warm: linear-gradient(135deg, #f5e6d3 0%, #e8d5c4 30%, #d4c4b0 70%, var(--dr-border-accent) 100%);
+  --dr-gradient-cool: linear-gradient(135deg, #dce8f0 0%, #c8d8e8 30%, #b0c8d8 70%, #98b8c8 100%);
+  --dr-gradient-night: linear-gradient(135deg, #2c2c3a 0%, #3a3a4a 30%, #484858 70%, #565666 100%);
+  --dr-tone-vocab-bg: rgba(139, 115, 85, 0.12);
+  --dr-tone-vocab-border: rgba(139, 115, 85, 0.35);
+  --dr-tone-vocab-bg-active: rgba(139, 115, 85, 0.25);
+  --dr-tone-phrase-bg: rgba(85, 115, 139, 0.10);
+  --dr-tone-phrase-border: rgba(85, 115, 139, 0.30);
+  --dr-tone-phrase-bg-active: rgba(85, 115, 139, 0.22);
+  --dr-tone-context-bg: rgba(139, 85, 115, 0.10);
+  --dr-tone-context-border: rgba(139, 85, 115, 0.30);
+  --dr-tone-context-bg-active: rgba(139, 85, 115, 0.22);
+
+  // --- Tone 色系 (WordPopup / InlineMark 标注) ---
+  --tone-vocab-color: #B45309;
+  --tone-vocab-bg: #FFD166;
+  --tone-phrase-color: #6D28D9;
+  --tone-phrase-bg: #B2A4FF;
+  --tone-context-color: #0369A1;
+  --tone-context-bg: #90E0EF;
+  --tone-grammar-color: #047857;
+  --tone-grammar-bg: #6EE7B7;
+  --tone-term-color: #1D4ED8;
+  --tone-term-bg: #BFDBFE;
+  --tone-logic-color: #C2410C;
+  --tone-logic-bg: #FED7AA;
+
+  /* ====================================================================
+   * READING ANNOTATION SYSTEM - Visual Design Tokens (v2.1)
+   *
+   * Design Reference:
+   *   - assets/product-direction-overview.png (色彩系统)
+   *   - assets/reading-annotation-current-overview.png (整体布局)
+   *   - assets/annotation-micro-rules.png (标注微规则)
+   *   - assets/sentence-analysis-final-detail.png (细节规范)
+   *
+   * Core Metaphor: "Paper reading + Light annotation + Note slips"
+   * Design Philosophy: "Low-noise, paper-like, doesn't break reading flow"
+   * ==================================================================== */
+
+  /* --- Surface: Warm Paper System (温暖纸张表面) --- */
+  --reader-paper: #FAF9F6;        /* Main warm paper */
+  --reader-surface: #FFFFFF;      /* Production note / sheet surface */
+  --reader-paper-deep: #F6F3EC;   /* Quiet excerpt surface, not primary cards */
+  --reader-paper-warm: #FBF9F4;   /* Pressed warm paper */
+
+  /* --- Ink: Typography Hierarchy (墨水层级) --- */
+  --reader-ink: #111111;          /* 主文字 - 近乎纯黑 */
+  --reader-muted: #7A7D86;        /* 次要文字 - 灰色 */
+  --reader-subtle: #9BA0A8;       /* 辅助文字 - 更淡的灰色 */
+
+  /* --- Annotation Semantic Colors (标注语义色 - 文具调色板) --- */
+  --annotation-vocab: #E4B000;     /* 词汇 - 温暖琥珀 */
+  --annotation-phrase: #B9A8E6;    /* 短语 - 薰衣草紫 */
+  --annotation-context: #4C91C2;   /* 语境 - 蓝灰 */
+  --annotation-grammar: #746694;   /* 语法 - 淡紫灰 */
+  --annotation-analysis: #3F6FB6;  /* 分析 - 靛蓝 */
+  --annotation-merged: #3F6FB6;    /* 合并笔记 - 靛蓝 */
+
+  /* --- Inline Mark Visual Tones (内联标注视觉色调) ---
+   * 关键原则：低噪声、低饱和度、像纸上的标记
+   * 所有opacity值都经过设计图精确提取
+   */
+  --annotation-vocab-bg: rgba(242, 196, 84, 0.28);           /* 黄色荧光笔 ~28% */
+  --annotation-vocab-bg-active: rgba(242, 196, 84, 0.38);    /* Active ~38% */
+  --annotation-phrase-bg: rgba(151, 126, 224, 0.18);         /* 薰衣草扫过 ~18% (更淡!) */
+  --annotation-phrase-bg-active: rgba(151, 126, 224, 0.28);   /* Active ~28% */
+  --annotation-context-line: rgba(76, 145, 194, 0.72);       /* 蓝色铅笔线 ~72% */
+  --annotation-context-line-active: rgba(76, 145, 194, 0.88); /* Active ~88% */
+  --annotation-grammar-line: rgba(116, 102, 148, 0.62);      /* 淡紫灰线 ~62% */
+  --annotation-grammar-line-active: rgba(116, 102, 148, 0.78);/* Active ~78% */
+  --annotation-grammar-surface: rgba(116, 102, 148, 0.06);    /* 极浅渐变 ~6% */
+
+  /* --- Reader Spacing Scale (4pt-based) --- */
+  --reader-space-xs: 8rpx;
+  --reader-space-sm: 16rpx;
+  --reader-space-md: 24rpx;
+  --reader-space-lg: 32rpx;
+  --reader-space-xl: 48rpx;
+  --reader-space-xxl: 64rpx;
+
+  /* --- Component-specific Dimensions --- */
+  --reader-padding: 56rpx; /* Spec: Editorial padding */
+  --paragraph-gap: 80rpx; /* Increased for breathing room */
+  --paragraph-gap-immersive: 96rpx;
+  --sentence-gap: 40rpx;
+  --translation-gap: 14rpx;
+
+
+  /* --- Border & Elevation (Paper-like, not card-like) --- */
+  --reader-border-light: rgba(0, 0, 0, 0.04);
+  --reader-border-subtle: rgba(0, 0, 0, 0.06);
+  --shadow-reader-xs: 0 1rpx 3rpx rgba(0, 0, 0, 0.02);
+  --shadow-reader-sm: 0 4rpx 14rpx rgba(0, 0, 0, 0.045);
+  --shadow-reader-md: 0 10rpx 30rpx rgba(17, 17, 17, 0.08);
+  --shadow-reader-lg: 0 18rpx 56rpx rgba(17, 17, 17, 0.12);
+  --ease-reader-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- Radius System (Softer, more organic) --- */
+  --radius-note: 18rpx;
+  --radius-slip: 24rpx;
+  --radius-card: 28rpx;
+  --radius-sheet: 34rpx;
+
+  /* --- Tab & Navigation --- */
+  --tab-height: 80rpx;
+  --tab-font-size: 28rpx;
+  --tab-active-color: var(--reader-ink);
+  --tab-inactive-color: var(--reader-muted);
+  --tab-indicator-height: 2rpx;
+  --tab-indicator-color: var(--reader-ink);
+
+  /* --- Context Bar (Quiet Metadata) --- */
+  --context-bar-bg: transparent;
+  --context-bar-text: var(--reader-muted);
+  --context-bar-font-size: 24rpx;
+  --context-bar-item-gap: 20rpx;
+
+  /* --- Annotation Entry (Compact Tab) --- */
+  --entry-tab-height: 58rpx;
+  --entry-tab-padding: 11rpx 20rpx;
+  --entry-tab-font-size: 25rpx;
+  --entry-tab-max-width: 60%;
+  --entry-tab-bg: var(--reader-surface);
+  --entry-tab-border: rgba(17, 17, 17, 0.075);
+  --entry-tab-radius: 10rpx;
+
+  /* --- Word Lookup Slip --- */
+  --slip-width: 408rpx;
+  --slip-padding: 20rpx;
+  --slip-word-size: 30rpx;
+  --slip-def-size: 24rpx;
+  --slip-shadow: 0 4rpx 14rpx rgba(17, 17, 17, 0.045);
+
+  /* --- Dictionary Sheet --- */
+  --sheet-header-word-size: 60rpx;
+  --sheet-padding-x: 32rpx;
+  --sheet-radius: 34rpx;
+  --sheet-shadow: 0 -4rpx 20rpx rgba(17, 17, 17, 0.06);
+
+  /* --- Feedback (Quiet, secondary) --- */
+  --feedback-btn-size: 22rpx;
+  --feedback-color: var(--reader-muted);
+  --feedback-active-color: var(--reader-ink);
+  --annotation-chunk-marker-size: 28rpx;
+
+  /* --- State Colors --- */
+  --color-success: #16A34A;
+  --color-danger: #DC2626;
+  --color-pending: #F59E0B;
+
+  /* ====================================================================
+   * FEEDBACK SYSTEM - Compatibility Layer (Impeccable Craft Refactor)
+   *
+   * Purpose: Bridge existing reader tokens to feedback component needs
+   * Design: Paper-like, quiet, reading-first aesthetic
+   * ==================================================================== */
+
+  /* --- Text Hierarchy (Feedback-specific) --- */
+  --text-primary: var(--reader-ink, #111111);
+  --text-secondary: var(--reader-muted, #7A7D86);
+
+  /* --- Surface Colors (Layered paper system) --- */
+  --bg-secondary: var(--reader-surface, #FFFFFF);
+  --bg-tertiary: var(--reader-paper-deep, #F6F3EC);
+
+  /* --- Primary Action Color (Ink-based, not generic blue) --- */
+  --color-primary: var(--color-ink, #121212);
+  --color-primary-light: rgba(18, 18, 18, 0.08);
+  --color-primary-lighter: rgba(18, 18, 18, 0.04);
+
+  /* --- Semantic State Colors --- */
+  --color-success-light: rgba(22, 163, 74, 0.1);
+  --color-info-light: rgba(46, 91, 178, 0.08);
+  --color-danger-light: rgba(220, 38, 38, 0.08);
+
+  /* --- Spacing Scale (4pt grid for feedback components) --- */
+  --space-8: 8rpx;
+  --space-12: 12rpx;
+  --space-16: 16rpx;
+  --space-20: 20rpx;
+  --space-24: 24rpx;
+  --space-32: 32rpx;
+  --space-40: 40rpx;
+  --space-48: 48rpx;
+  --space-64: 64rpx;
+
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  line-height: var(--leading-normal);
+  letter-spacing: var(--tracking-normal);
+}
+
+.safe-area-bottom {
+  padding-bottom: constant(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Staggered Slide-In Animation */
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Bouncy Feedback */
+@keyframes springPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(0.92); }
+  75% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.animate-spring {
+  animation: springPop 0.4s var(--ease-spring);
+}
+
+/* Academic Mode Tokens - 安静的学术阅读桌面 */
+@import './styles/academic-tokens.scss';

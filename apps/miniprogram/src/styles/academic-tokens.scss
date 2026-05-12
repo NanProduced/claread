@@ -1,0 +1,41 @@
+/* Academic Mode Design Tokens v2 — 精简版
+ *
+ * 重构原则:
+ * - 保留低饱和学术语义色，不使用高噪声 AI 色块
+ * - term / logic / interpretation 只作为细线与轻 surface 信号
+ * - 容器仍复用 Claread paper tokens
+ */
+
+.academic-mode {
+  /* === 行内标注 (Inline Marks) — 低噪声语义色 === */
+  --academic-term-line: rgba(73, 111, 143, 0.72);
+  --academic-term-surface: rgba(73, 111, 143, 0.08);
+  --academic-logic-line: rgba(181, 117, 35, 0.62);
+  --academic-logic-surface: rgba(181, 117, 35, 0.09);
+  --academic-interpret-line: rgba(85, 118, 102, 0.62);
+  --academic-interpret-surface: rgba(85, 118, 102, 0.08);
+
+  /* === 容器样式 (Paper System) — 复用 reader tokens === */
+  --academic-surface: var(--reader-paper-deep, #F6F3EC);
+  --academic-border: rgba(17, 17, 17, 0.055);
+  --academic-border-subtle: rgba(17, 17, 17, 0.04);
+
+  /* === 排版层级 === */
+  --academic-title-size: 40rpx;
+  --academic-title-weight: 600;
+  --academic-body-size: 27rpx;
+  --academic-body-line-height: 1.65;
+  --academic-body-color: rgba(17, 17, 17, 0.82);
+
+  /* === 标签/元信息 === */
+  --academic-label-size: 21rpx;
+  --academic-label-color: rgba(17, 17, 17, 0.40);
+
+  /* === 翻译层 (可读性提升) === */
+  --academic-translation-size: 25rpx;
+  --academic-translation-color: rgba(17, 17, 17, 0.52);
+  --academic-translation-line-height: 1.65;
+
+  /* === 行内标注线宽 === */
+  --academic-mark-width: 1rpx;
+}

@@ -1,0 +1,31 @@
+.onboarding-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: #fff;
+  position: relative;
+  overflow: hidden;
+
+  &.fade-in {
+    animation: pageFadeIn 0.8s ease-out;
+  }
+
+  @keyframes pageFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .skip-btn {
+    font-size: 28rpx;
+    color: #999;
+    font-weight: 500;
+    padding: 10rpx 20rpx;
+  }
+
+  .content-area {
+    flex: 1;
+    padding: 20rpx 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

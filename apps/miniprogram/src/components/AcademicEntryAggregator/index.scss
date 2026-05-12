@@ -1,0 +1,157 @@
+/* Academic Entry Aggregator - 注释聚合入口
+ *
+ * 设计原则 (impeccable onboard/distill):
+ * - Progressive Disclosure: 先显示信号，用户主动才展开
+ * - 极轻量的存在感: 像脚注标记，而非卡片
+ * - 信息密度高: 一个 chip 展示所有类型和数量
+ * - 不打断阅读流: 紧贴在段落末尾
+ */
+
+.academic-entry-aggregator {
+  width: 100%;
+  margin-top: 6rpx;
+
+  /* =========================================================
+   * Collapsed State - 单行 Chip
+   * 目标: 高度 < 48rpx，不占用过多垂直空间
+   * ========================================================= */
+  .aggregator-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8rpx;
+    padding: 8rpx 16rpx;
+    background: transparent;
+    border: none;
+    border-radius: 20rpx;
+    transition: all 0.2s ease;
+
+    &:active {
+      background: rgba(17, 17, 17, 0.03);
+
+      .chip-label,
+      .count-number {
+        opacity: 0.7;
+      }
+    }
+
+    /* 图标 */
+    .chip-icon {
+      display: flex;
+      align-items: center;
+      opacity: 0.4;
+    }
+
+    /* 标签文字 */
+    .chip-label {
+      font-size: 21rpx;
+      color: var(--academic-label-color, rgba(17, 17, 17, 0.45));
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    /* 总数徽章 */
+    .chip-count {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 32rpx;
+      height: 28rpx;
+      padding: 0 8rpx;
+      background: rgba(73, 111, 143, 0.1);
+      border-radius: 14rpx;
+
+      .count-number {
+        font-size: 19rpx;
+        color: var(--academic-term-text, #496F8F);
+        font-weight: 600;
+        line-height: 1;
+      }
+    }
+
+    /* 类型小徽章 */
+    .type-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24rpx;
+      height: 24rpx;
+      padding: 0 6rpx;
+      border-radius: 12rpx;
+
+      &.type-term {
+        background: var(--academic-term-surface, rgba(73, 111, 143, 0.08));
+
+        .badge-count {
+          color: var(--academic-term-text, #496F8F);
+          font-size: 16rpx;
+          font-weight: 600;
+        }
+      }
+
+      &.type-logic {
+        background: var(--academic-logic-surface, rgba(181, 117, 35, 0.09));
+
+        .badge-count {
+          color: var(--academic-logic-text, #B57323);
+          font-size: 16rpx;
+          font-weight: 600;
+        }
+      }
+    }
+
+    /* 展开指示器 */
+    .expand-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 4rpx;
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      opacity: 0.35;
+
+      &.is-open {
+        transform: rotate(180deg);
+        opacity: 0.5;
+      }
+    }
+  }
+
+  /* =========================================================
+   * Expanded State - 提示信息
+   * ========================================================= */
+  &.is-expanded {
+    .aggregator-hint {
+      display: block;
+      animation: fadeIn 0.2s ease-out;
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(-4rpx);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    }
+  }
+
+  &.is-collapsed {
+    .aggregator-hint {
+      display: none;
+    }
+  }
+
+  .aggregator-hint {
+    padding: 10rpx 16rpx 6rpx;
+
+    .hint-text {
+      display: block;
+      font-size: 20rpx;
+      color: var(--reader-muted);
+      line-height: 1.45;
+      font-style: italic;  /* 斜体，像编者注 */
+      letter-spacing: 0.01em;
+    }
+  }
+}

@@ -1,0 +1,269 @@
+.feedback-page {
+  min-height: 100vh;
+  background-color: var(--reader-paper, #FAF9F6);
+  display: flex;
+  flex-direction: column;
+
+  &__content {
+    padding: 24rpx 32rpx calc(48rpx + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 28rpx;
+  }
+
+  /* === Header — Title + Mascot companion === */
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16rpx;
+    padding-top: 4rpx;
+  }
+
+  &__header-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6rpx;
+  }
+
+  &__title {
+    font-size: 38rpx;
+    font-weight: 560;
+    color: var(--reader-ink, #111111);
+    letter-spacing: -0.012em;
+    line-height: 1.26;
+    font-family: var(--font-english-serif), serif;
+  }
+
+  &__subtitle {
+    font-size: 25rpx;
+    color: var(--reader-muted, #7A7D86);
+    line-height: 1.54;
+    font-weight: 400;
+  }
+
+  /* === Mascot === */
+  &__mascot {
+    width: 120rpx;
+    height: 102rpx;
+    flex-shrink: 0;
+    position: relative;
+    animation: mascot-float 3s ease-in-out infinite;
+
+    .doc-face {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(148deg, #FFFFFF 0%, #F2EDE8 100%);
+      border-radius: 22rpx;
+      position: relative;
+      box-shadow:
+        0 4rpx 16rpx rgba(17, 17, 17, 0.07),
+        0 1rpx 3rpx rgba(17, 17, 17, 0.04),
+        inset 0 1rpx 0 rgba(255, 255, 255, 0.85);
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 20rpx;
+        left: 18rpx;
+        right: 18rpx;
+        height: 5rpx;
+        background: linear-gradient(90deg, #EAE6DF 0%, #DDD8CF 100%);
+        border-radius: 3rpx;
+        box-shadow:
+          0 11rpx 0 #EAE5DD,
+          0 22rpx 0 #EEE9E1;
+      }
+    }
+
+    .eye-left {
+      position: absolute;
+      bottom: 22rpx;
+      left: 27rpx;
+      width: 10rpx;
+      height: 10rpx;
+      border-radius: 50%;
+      background-color: var(--color-warn, #D97706);
+      animation: blink 4s ease-in-out infinite;
+    }
+
+    .eye-right {
+      position: absolute;
+      bottom: 62rpx;
+      right: 27rpx;
+      width: 10rpx;
+      height: 10rpx;
+      border-radius: 50%;
+      background-color: var(--color-warn, #D97706);
+      animation: blink 4s ease-in-out infinite 0.1s;
+    }
+
+    .smile {
+      position: absolute;
+      bottom: 16rpx;
+      right: 18rpx;
+      width: 26rpx;
+      height: 13rpx;
+      border-bottom-left-radius: 14rpx;
+      border-bottom-right-radius: 14rpx;
+      border: 2.5rpx solid var(--color-warn, #D97706);
+      border-top: none;
+      background: transparent;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    &--happy {
+      animation: mascot-happy-bounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+      .smile {
+        width: 32rpx;
+        height: 16rpx;
+        border-width: 3rpx;
+        right: 15rpx;
+        bottom: 13rpx;
+      }
+
+      .eye-left,
+      .eye-right {
+        background-color: #B45309;
+      }
+    }
+  }
+
+  @keyframes mascot-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4rpx); }
+  }
+
+  @keyframes blink {
+    0%, 45%, 55%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(0.1); }
+  }
+
+  @keyframes mascot-happy-bounce {
+    0% { transform: translateY(0) scale(1); }
+    40% { transform: translateY(-12rpx) scale(1.08); }
+    70% { transform: translateY(-4rpx) scale(1.03); }
+    100% { transform: translateY(0) scale(1); }
+  }
+
+  /* === Input Area === */
+  &__input-wrap {
+    background-color: var(--reader-surface, #FFFFFF);
+    border-radius: 16rpx;
+    padding: 24rpx 26rpx;
+    min-height: 180rpx;
+    border: 1rpx solid rgba(17, 17, 17, 0.05);
+    position: relative;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+
+    &:focus-within {
+      border-color: rgba(17, 17, 17, 0.12);
+      box-shadow: 0 2rpx 12rpx rgba(17, 17, 17, 0.04);
+    }
+  }
+
+  &__textarea {
+    width: 100%;
+    min-height: 128rpx;
+    font-size: 28rpx;
+    line-height: 1.64;
+    color: var(--reader-ink, #111111);
+    background: transparent;
+
+    &::placeholder {
+      color: var(--reader-subtle, #B0B4BC);
+      font-weight: 400;
+      line-height: 1.54;
+    }
+
+    &:focus {
+      outline: none;
+    }
+  }
+
+  &__char-count {
+    position: absolute;
+    right: 26rpx;
+    bottom: 18rpx;
+    font-size: 21rpx;
+    color: var(--reader-subtle, #C4C8D0);
+    font-weight: 450;
+    transition: color 0.35s ease;
+
+    &--active {
+      color: var(--reader-muted, #888C94);
+    }
+  }
+
+  /* === Submit Button === */
+  &__submit-wrap {
+    display: flex;
+    justify-content: center;
+    margin-top: 4rpx;
+  }
+
+  &__submit {
+    width: 100%;
+    height: 92rpx;
+    border-radius: 46rpx;
+    background-color: var(--reader-ink, #111111);
+    color: #FFFFFF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30rpx;
+    font-weight: 510;
+    letter-spacing: 0.04em;
+    box-shadow:
+      0 4rpx 16rpx rgba(17, 17, 17, 0.13),
+      0 1rpx 3rpx rgba(17, 17, 17, 0.06);
+    transition: all 0.2s ease;
+
+    &:active {
+      opacity: 0.88;
+      transform: scale(0.98);
+    }
+
+    &--disabled {
+      background-color: #EEEAE2;
+      color: #C0C4CC;
+      box-shadow: none;
+      pointer-events: none;
+    }
+
+    &--ready {
+      box-shadow:
+        0 6rpx 24rpx rgba(17, 17, 17, 0.18),
+        0 2rpx 6rpx rgba(17, 17, 17, 0.07);
+      animation: button-pulse 2.5s ease-in-out infinite;
+    }
+  }
+
+  @keyframes button-pulse {
+    0%, 100% { box-shadow: 0 6rpx 24rpx rgba(17, 17, 17, 0.18), 0 2rpx 6rpx rgba(17, 17, 17, 0.07); }
+    50% { box-shadow: 0 8rpx 30rpx rgba(17, 17, 17, 0.23), 0 3rpx 8rpx rgba(17, 17, 17, 0.09); }
+  }
+
+  /* Footer note */
+  &__footer-note {
+    text-align: center;
+
+    text {
+      font-size: 22rpx;
+      color: var(--reader-subtle, #BBBFC6);
+      line-height: 1.5;
+    }
+  }
+
+  /* Success State */
+  &__success-container {
+    background-color: var(--reader-surface, #FFFFFF);
+    border-radius: 20rpx;
+    padding: 52rpx 40rpx;
+    box-shadow: 0 2rpx 16rpx rgba(17, 17, 17, 0.05);
+  }
+}

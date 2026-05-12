@@ -1,0 +1,154 @@
+.reader-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14rpx;
+  padding: 28rpx var(--reader-padding) 12rpx;
+  min-height: 48rpx;
+
+  .reader-context-items {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 10rpx;
+    flex: 1;
+  }
+
+  .context-item {
+    font-family: var(--font-sans);
+    letter-spacing: 0.01em;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &.goal {
+      flex: 0 0 auto;
+      min-width: 58rpx;
+      max-width: 98rpx;
+      font-size: 24rpx;
+      font-weight: 400;
+      color: var(--reader-muted);
+    }
+
+    &.academic {
+      flex-shrink: 0;
+      font-size: 22rpx;
+      font-weight: 450;
+      color: rgba(17, 17, 17, 0.42);
+      letter-spacing: 0.02em;
+    }
+  }
+
+  .context-divider {
+    flex-shrink: 0;
+    color: var(--reader-subtle);
+    font-size: 20rpx;
+    line-height: 1;
+    opacity: 0.4;
+    margin: 0 2rpx;
+  }
+
+  /* Segmented Control - iOS风格分段控制器 */
+  .mode-switcher {
+    display: inline-flex;
+    background: rgba(17, 17, 17, 0.05);
+    border-radius: 12rpx;
+    padding: 4rpx;
+    gap: 0;
+    flex-shrink: 0;
+
+    .mode-option {
+      min-width: 60rpx;
+      padding: 10rpx 18rpx;
+      font-size: 24rpx;
+      font-weight: 500;
+      color: var(--reader-muted);
+      border-radius: 10rpx;
+      transition: all 0.25s var(--ease-reader-out);
+      position: relative;
+
+      &:not(.active):active {
+        transform: scale(0.96);
+      }
+
+      &.active {
+        background: var(--color-white);
+        color: var(--color-info);
+        box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.08);
+        font-weight: 600;
+      }
+    }
+  }
+
+  /* 换模式按钮 - 文字+图标组合 */
+  .actions-group {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-shrink: 0;
+}
+
+.settings-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 52rpx;
+  min-width: 58rpx;
+  padding: 0 12rpx;
+  border-radius: 26rpx;
+  background: rgba(46, 91, 178, 0.05);
+  color: var(--text-primary);
+  font-family: 'Georgia', serif;
+  font-style: italic;
+
+  &:active {
+    opacity: 0.7;
+    background: rgba(46, 91, 178, 0.1);
+  }
+}
+
+.settings-text {
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.action-divider {
+  width: 2rpx;
+  height: 24rpx;
+  background: var(--border-color);
+}
+
+.reparse-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6rpx;
+    padding: 8rpx 14rpx;
+    background: transparent;
+    border: 2rpx solid rgba(17, 17, 17, 0.1);
+    border-radius: 10rpx;
+    color: var(--reader-muted);
+    font-family: var(--font-sans);
+    transition: all 0.2s var(--ease-reader-out);
+    flex-shrink: 0;
+
+    &:hover {
+      border-color: var(--color-focus);
+      color: var(--color-focus);
+      background: rgba(180, 83, 9, 0.04);
+    }
+
+    &:active {
+      transform: scale(0.96);
+      border-color: var(--color-focus);
+      background: rgba(180, 83, 9, 0.08);
+    }
+
+    .reparse-text {
+      font-size: 22rpx;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+  }
+}
