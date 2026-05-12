@@ -1,6 +1,6 @@
 # 模型配置
 
-Claread 后端支持通过 profile、preset 和请求级 `model_selection` 切换模型。现阶段这套机制略重，但迁移阶段先保持，不在 clean import 中重构。
+Claread 后端支持通过 profile、preset 和请求级 `model_selection` 切换模型。现阶段这套机制略重，但先保持稳定，不在当前基线中重构。
 
 ## 核心概念
 
@@ -72,9 +72,10 @@ MODEL_PRESETS_JSON=config/model-presets.local.json
 }
 ```
 
-## 迁移注意
+## 注意事项
 
-- 不迁移真实 API key、个人 base URL 和旧 `.env`。
+- 不提交真实 API key、个人 base URL 和本地 `.env`。
 - 保留 `model_selection` API 兼容性，方便本地切模型和未来 eval。
 - 配置文档放在全局 `docs/operations/`，因为 Web、小程序和内部评测都会共享同一后端模型配置。
 - 如果未来简化模型配置，先补测试保护 `/analyze`、daily reader、academic workflow 的模型选择行为。
+- 结构化输出质量和模型能力相关；切换模型后必须重新验证解析结果中的词汇、语法、句式和翻译字段。

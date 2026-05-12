@@ -4,7 +4,7 @@ Claread 后端使用 PostgreSQL 作为业务事实源。Redis 用于缓存和任
 
 ## Migration Baseline
 
-clean import 第一阶段只保留一个 pre-release baseline：
+当前只保留一个 pre-release baseline：
 
 ```text
 infra/migrations/0001_initial_schema.sql
@@ -29,11 +29,24 @@ dict_lookup_targets
 dict_redirects
 ```
 
-默认通过 dump/restore 迁移到新 Claread volume。
+当前本地开发 volume：
+
+```text
+claread_postgres_data
+```
+
+当前恢复基线：
+
+```text
+dict_entries: 253300
+dict_lookup_targets: 1014676
+dict_redirects: 848873
+entries_with_exam_tags: 20239
+```
 
 ## reset 脚本
 
-建议迁移或重写：
+当前脚本：
 
 ```text
 infra/scripts/reset_dev_keep_dict.sql
@@ -72,7 +85,6 @@ LIMIT 20;
 
 ## 后续可考虑
 
-- 补 `check_schema_baseline.sql`。
-- 补 `check_dict_integrity.sql`。
-- 将 `_migration_prep/DICT_DUMP_RESTORE_COMMANDS.md` 的草稿转为 `dump_dict_tables` / `restore_dict_tables` 脚本。
+- 增加 `dump_dict_tables` 脚本，和现有 `restore_dict_tables.ps1` 配套。
 - 设计 `dict_entry_id` 长期稳定引用策略。
+- 重新评估词典数据清洗、`exam_tags` 和重跑脚本的时机。

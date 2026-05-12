@@ -56,7 +56,7 @@ uv run ruff check
 uv run mypy app
 ```
 
-迁移前已验证 `compileall` 和核心测试。`ruff` / `mypy` 需要在新仓库落地后重新校准。
+`compileall` 和核心测试是当前最低验证入口。`ruff` / `mypy` 需要按后续质量门槛继续校准。
 
 ## 环境变量
 
@@ -85,9 +85,9 @@ PostgreSQL 是主数据源。
 infra/migrations/
 ```
 
-当前迁移基线是 pre-release squashed `0001_initial_schema.sql`。
+当前数据库基线是 pre-release squashed `0001_initial_schema.sql`。
 
-词典表是高成本数据资产，保护和迁移策略见 `services/api/docs/database.md`。
+词典表是高成本数据资产，保护和恢复策略见 `services/api/docs/database.md`。
 
 ## API 契约
 

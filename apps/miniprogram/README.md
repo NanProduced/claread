@@ -4,7 +4,7 @@
 
 它是 Claread 的第一个客户端，也是 Web 端未来能力的功能子集。小程序内的实现需要尊重微信平台限制，但这些限制不应反向污染后端 canonical 模型和 Web 架构。
 
-当前迁移时的小程序状态是“基线冻结”，不是功能终局。迁移完成后，小程序仍会继续迭代，并和 Web 端共享后端能力与数据契约。
+当前小程序状态是稳定基线，不是功能终局。后续小程序仍会继续迭代，并和 Web 端共享后端能力与数据契约。
 
 ## 技术栈
 
@@ -34,7 +34,9 @@ pnpm run build:weapp
 pnpm run dev:weapp
 ```
 
-然后使用微信开发者工具打开构建输出目录。
+然后使用微信开发者工具打开 `apps/miniprogram`。项目配置中的 `miniprogramRoot` 指向 `dist/`。
+
+本地 API 使用 `http://localhost:8000` 时，微信开发者工具需要关闭本地域名校验，或使用已配置到微信后台的合法 request 域名。
 
 新仓库小程序端统一使用 pnpm；不要同时维护 npm 和 pnpm 两套 lock 文件。
 
@@ -103,4 +105,4 @@ Web 端可以共享业务契约，但应使用 Web 原生实现。
 - `favorite_records`
 - `reading_preferences_local`
 
-冻结范围见 `apps/miniprogram/docs/freeze-baseline.md`。不阻塞迁移的能力不会取消，迁移完成后小程序会继续推进功能和体验增强。
+稳定基线范围见 `apps/miniprogram/docs/freeze-baseline.md`。小程序会继续推进功能和体验增强，但新增能力应服从多端 API 契约。

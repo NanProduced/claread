@@ -1,6 +1,6 @@
 # API 契约
 
-本文记录 clean import 第一阶段必须保持稳定的后端契约。
+本文记录当前必须保持稳定的后端契约。
 
 ## 冻结原则
 
@@ -46,7 +46,7 @@
 | `client_record_id` | 客户端生成的稳定记录 ID |
 | `cloud_record_id` | 后端 `analysis_records.id` |
 | `task_id` | 分析任务 ID |
-| `record_id` | 兼容字段，迁移期仍保留 |
+| `record_id` | 兼容字段；新代码优先区分 `client_record_id` 和 `cloud_record_id` |
 
 ## 当前契约状态
 

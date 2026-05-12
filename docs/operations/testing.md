@@ -1,6 +1,6 @@
 # 测试与验证
 
-clean import 后，先验证当前后端和小程序基线，再开发 Web。
+先验证当前后端和小程序基线，再开发 Web。
 
 ## 后端核心测试
 
@@ -12,7 +12,7 @@ clean import 后，先验证当前后端和小程序基线，再开发 Web。
 rtk test uv run pytest tests/test_analyze_workflow.py tests/test_academic_workflow.py tests/test_task_center.py tests/test_quota_credits.py tests/test_user_assets.py tests/test_vocabulary_review.py -q
 ```
 
-旧仓库迁移前已验证通过。新仓库导入后应在 `services/api/` 下重新执行。
+当前基线应在 `services/api/` 下执行。
 
 ## 后端静态检查
 
@@ -24,7 +24,7 @@ rtk err uv run ruff check app tests
 rtk err uv run mypy app
 ```
 
-迁移前已验证 `compileall`。`ruff` 和 `mypy` 在新仓库落地后重新校准。
+`compileall` 是当前最低静态验证。`ruff` 和 `mypy` 需要按后续质量门槛继续校准。
 
 ## 小程序验证
 
@@ -54,9 +54,35 @@ rtk err pnpm exec tsc -p tsconfig.json --noEmit
 - few-shot RAG 从已审核样本中选择高质量案例。
 - LangSmith trace 负责观察单次运行过程，Directus/eval 负责沉淀结果和对比。
 
+## 当前数据库基线
+
+当前本地 Claread 数据库使用：
+
+```text
+claread_postgres_data
+```
+
+词典三表恢复基线：
+
+```text
+dict_entries: 253300
+dict_lookup_targets: 1014676
+dict_redirects: 848873
+entries_with_exam_tags: 20239
+```
+
+PostgreSQL 扩展：
+
+```text
+pgcrypto
+plpgsql
+```
+
+当前不依赖 pgvector。
+
 ## 数据库验证
 
-迁移后至少检查：
+当前至少检查：
 
 - `0001` 可在空库执行。
 - `daily_readers.paragraph_notes_json` 存在。

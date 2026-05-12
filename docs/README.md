@@ -8,7 +8,7 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 
 新仓库文档分三层：
 
-1. 全局文档：位于 `docs/`，说明产品、通用架构、数据、运维、评测、RAG 和迁移。
+1. 全局文档：位于 `docs/`，说明产品、通用架构、数据、运维、评测和 RAG。
 2. 服务文档：位于 `services/api/`，说明通用后端服务。
 3. 客户端文档：位于 `apps/miniprogram/`、`apps/web/` 等客户端目录，说明特定平台实现。
 
@@ -17,6 +17,7 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 | 文档 | 用途 |
 |------|------|
 | `docs/product/overview.md` | 产品定位、用户、核心链路 |
+| `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/workflow.md` | 当前 workflow 基线 |
@@ -33,17 +34,18 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 - 小程序限制写在 `apps/miniprogram/` 内，不污染后端和 Web 架构。
 - 后端文档默认描述通用 API 服务，不把后端写成“小程序后端”。
 - 历史探索、临时 handoff、review、tracker 不进入新仓库主线文档。
+- 不把迁移过程写成主线文档；必要时只记录多端化决策、当前目录边界和可运行状态。
 
 ## 代码结构概览
 
 ```text
 claread/
 ├── apps/
-│   ├── miniprogram/   # clean import 第一阶段
+│   ├── miniprogram/   # 当前可运行客户端
 │   ├── web/           # 后续
 │   └── directus/      # 后续
 ├── services/
-│   ├── api/           # clean import 第一阶段
+│   ├── api/           # 当前通用后端
 │   └── worker/        # 后续
 ├── packages/
 │   ├── contracts/     # 后续

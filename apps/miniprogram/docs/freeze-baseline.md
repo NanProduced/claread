@@ -1,8 +1,8 @@
 # 小程序冻结基线
 
-本文记录 clean import 时微信小程序客户端的冻结范围。
+本文记录微信小程序客户端的当前稳定范围。
 
-这里的冻结不是产品终局，只是迁移节点的稳定基线。迁移后，小程序仍会继续迭代。
+这里的冻结不是产品终局，只是多端化前的稳定基线。小程序仍会继续迭代。
 
 ## 当前范围
 
@@ -39,9 +39,9 @@
 - Daily Reader `body/highlights/paragraph_notes/takeaways` 当前兼容结构。
 - 本地 storage key 和 sync queue 语义。
 
-## clean import 资产
+## 当前保留资产
 
-迁移：
+保留：
 
 - `client/src/`
 - `client/config/`
@@ -50,7 +50,7 @@
 - `client/package.json`
 - `client/tsconfig.json`
 
-不迁移：
+不进入仓库：
 
 - `dist/`
 - `node_modules/`
