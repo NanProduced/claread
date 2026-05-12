@@ -17,6 +17,7 @@ docs/product/overview.md             # 产品定位
 docs/product/current-state.md        # 当前状态和下一步
 docs/development/mainline.md         # 后续主线流程
 docs/architecture/overview.md        # 架构总览
+docs/architecture/monorepo-boundaries.md # monorepo 边界
 docs/architecture/multi-client.md    # 多端原则
 docs/operations/local-dev.md         # 本地开发环境
 services/api/README.md               # 后端服务

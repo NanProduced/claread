@@ -20,6 +20,7 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 | `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
 | `docs/development/mainline.md` | 迁移完成后的主线推进流程 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
+| `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/workflow.md` | 当前 workflow 基线 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |
@@ -27,6 +28,8 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 | `docs/operations/prompt-versioning.md` | prompt registry 和版本规则 |
 | `docs/design/AGENTS.md` | 跨端设计决策规则 |
 | `services/api/README.md` | 后端服务启动、结构和边界 |
+| `services/worker/README.md` | 后台 worker 预留职责 |
+| `packages/README.md` | contracts、shared-utils、design-tokens 边界 |
 | `apps/miniprogram/README.md` | 微信小程序客户端启动、结构和平台限制 |
 
 ## 文档原则
