@@ -1,3 +1,5 @@
+name: claread
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -35,4 +37,6 @@ services:
 
 volumes:
   claread_postgres_data:
+    name: claread_postgres_data
   claread_redis_data:
+    name: claread_redis_data
