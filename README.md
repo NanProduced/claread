@@ -15,6 +15,7 @@ Claread 是一个多端英文阅读辅助产品。当前可运行基线包含：
 docs/README.md                       # 文档地图
 docs/product/overview.md             # 产品定位
 docs/product/current-state.md        # 当前状态和下一步
+docs/development/mainline.md         # 后续主线流程
 docs/architecture/overview.md        # 架构总览
 docs/architecture/multi-client.md    # 多端原则
 docs/operations/local-dev.md         # 本地开发环境

@@ -18,6 +18,7 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 |------|------|
 | `docs/product/overview.md` | 产品定位、用户、核心链路 |
 | `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
+| `docs/development/mainline.md` | 迁移完成后的主线推进流程 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/workflow.md` | 当前 workflow 基线 |
