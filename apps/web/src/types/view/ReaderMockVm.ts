@@ -53,7 +53,7 @@ export interface TranslationModel {
 
 export interface RequestMeta {
   requestId: string
-  sourceType: 'user_input'
+  sourceType: string
   readingGoal: string
   readingVariant: string
   profileId: string
@@ -85,8 +85,10 @@ export type AnnotationType =
   | 'phrase_gloss'
   | 'context_gloss'
   | 'grammar_note'
+  | 'term_note'
+  | 'logic_note'
 
-export type VisualTone = 'vocab' | 'phrase' | 'context' | 'grammar'
+export type VisualTone = 'vocab' | 'phrase' | 'context' | 'grammar' | 'term' | 'logic'
 
 export type PhraseKind =
   | 'word'
@@ -110,7 +112,13 @@ export interface InlineMarkModel {
   parentId?: string
 }
 
-export type SentenceEntryType = 'grammar_note' | 'sentence_analysis'
+export type SentenceEntryType =
+  | 'grammar_note'
+  | 'sentence_analysis'
+  | 'term_note'
+  | 'logic_note'
+  | 'interpretation_note'
+  | 'content_summary'
 
 export interface SentenceEntryModel {
   id: string
@@ -122,7 +130,7 @@ export interface SentenceEntryModel {
 }
 
 export interface RenderSceneVmBase {
-  schemaVersion: '3.0.0'
+  schemaVersion: string
   request: RequestMeta
   article: ArticleModel
   userFacingState: ContentResultState

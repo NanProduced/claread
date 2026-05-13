@@ -111,15 +111,8 @@ class TestGetOrCreateUserByWechat:
         """已存在的微信用户直接返回 user_id"""
         existing_user_id = UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = {"user_id": existing_user_id}
-
-        mock_pool = MagicMock()
-        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
-        mock_pool.acquire.return_value.__aexit__.return_value = None
-
-        # Patch via module reference (session.py uses `from app.database import connection`)
-        with patch("app.services.auth.session.db_connection.DB_POOL", mock_pool):
+        with patch("app.services.auth.session.get_or_create_user_by_identity") as mock_get:
+            mock_get.return_value.user_id = existing_user_id
             result = await get_or_create_user_by_wechat(
                 openid="existing_openid",
                 unionid=None,
@@ -127,24 +120,34 @@ class TestGetOrCreateUserByWechat:
             )
 
         assert result == existing_user_id
-        # advisory lock (execute) + SELECT identity (fetchrow) = early return
-        assert mock_conn.execute.call_count == 1
-        mock_conn.fetchval.assert_not_called()
-        mock_conn.fetchrow.assert_called_once()
+        assert mock_get.call_args.kwargs["provider"] == "wechat_miniprogram"
+        assert mock_get.call_args.kwargs["provider_user_id"] == "existing_openid"
+
+    async def test_wechat_helper_delegates_to_miniprogram_identity(self) -> None:
+        """微信 helper 保持小程序 provider 语义。"""
+        user_id = UUID("11111111-2222-4333-8444-555555555555")
+
+        with patch("app.services.auth.session.get_or_create_user_by_identity") as mock_get:
+            mock_get.return_value.user_id = user_id
+
+            result = await get_or_create_user_by_wechat(
+                openid="openid_123",
+                unionid="unionid_123",
+                auth_payload={"session_key": "sk"},
+            )
+
+        assert result == user_id
+        assert mock_get.call_args.kwargs["provider"] == "wechat_miniprogram"
+        assert mock_get.call_args.kwargs["provider_user_id"] == "openid_123"
+        assert mock_get.call_args.kwargs["unionid"] == "unionid_123"
 
     async def test_new_user_creates_user_and_identity(self) -> None:
         """新用户同时创建 user 和 user_identity"""
         new_user_id = UUID("b2c3d4e5-f6a7-8901-bcde-f12345678901")
 
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = None
-        mock_conn.fetchval.return_value = new_user_id
+        with patch("app.services.auth.session.get_or_create_user_by_identity") as mock_get:
+            mock_get.return_value.user_id = new_user_id
 
-        mock_pool = MagicMock()
-        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
-        mock_pool.acquire.return_value.__aexit__.return_value = None
-
-        with patch("app.services.auth.session.db_connection.DB_POOL", mock_pool):
             with patch("app.services.auth.session.get_settings") as mock_settings:
                 mock_settings.return_value.wechat_app_id = "wx_appid"
 
@@ -155,10 +158,8 @@ class TestGetOrCreateUserByWechat:
                 )
 
         assert result == new_user_id
-        assert mock_conn.fetchval.call_count == 1
-        # 2 execute calls: advisory lock + identity insert
-        assert mock_conn.execute.call_count == 2
-        mock_conn.fetchrow.assert_called_once()
+        assert mock_get.call_args.kwargs["app_id"] == "wx_appid"
+        assert mock_get.call_args.kwargs["unionid"] == "test_unionid"
 
 
 class TestSessionCreate:

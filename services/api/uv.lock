@@ -35,6 +35,15 @@ wheels = [
 ]
 
 [[package]]
+name = "aiofiles"
+version = "24.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/03/a88171e277e8caa88a4c77808c20ebb04ba74cc4681bf1e9416c862de237/aiofiles-24.1.0.tar.gz", hash = "sha256:22a075c9e5a3810f0c2e48f3008c94d68c65d763b9b03857924c99e57355166c", size = 30247, upload-time = "2024-06-24T11:02:03.584Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/45/30bb92d442636f570cb5651bc661f52b610e2eec3f891a5dc3a4c3667db0/aiofiles-24.1.0-py3-none-any.whl", hash = "sha256:b4ec55f4195e3eb5d7abd1bf7e061763e864dd4954231fb8539a0ef8bb8260e5", size = 15896, upload-time = "2024-06-24T11:02:01.529Z" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -125,6 +134,108 @@ wheels = [
 ]
 
 [[package]]
+name = "alibabacloud-credentials"
+version = "1.0.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "alibabacloud-credentials-api" },
+    { name = "alibabacloud-tea" },
+    { name = "apscheduler" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d2/15/2b01b4a6cbed4cc2c8a1c801efec43af945af22fd3ca5f78c932117fd4ce/alibabacloud_credentials-1.0.8.tar.gz", hash = "sha256:364c22abef2d240b259ceadf1ce6800017f19a336729553956928a1edd12e769", size = 40465, upload-time = "2026-03-11T09:13:59.398Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/24/7c47501b24897a1379cd57cc8b8de376161f2487548fc8233b2b74ab25c7/alibabacloud_credentials-1.0.8-py3-none-any.whl", hash = "sha256:66677c3fa54aeb66cfb9cc97da4a787534f38a04d09bbfa0bc6c815fe1af7e28", size = 48799, upload-time = "2026-03-11T09:13:58.113Z" },
+]
+
+[[package]]
+name = "alibabacloud-credentials-api"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/87/1d7019d23891897cb076b2f7e3c81ab3c2ba91de3bb067196f675d60d34c/alibabacloud-credentials-api-1.0.0.tar.gz", hash = "sha256:8c340038d904f0218d7214a8f4088c31912bfcf279af2cbc7d9be4897a97dd2f", size = 2330, upload-time = "2025-01-13T05:53:04.931Z" }
+
+[[package]]
+name = "alibabacloud-dypnsapi20170525"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alibabacloud-endpoint-util" },
+    { name = "alibabacloud-openapi-util" },
+    { name = "alibabacloud-tea-openapi" },
+    { name = "alibabacloud-tea-util" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/9e/955d69a85b3b9e6675a141f9df779d883bd5b62c14bfe455d3a5c666d013/alibabacloud_dypnsapi20170525-2.0.0.tar.gz", hash = "sha256:30a9259a4172c9dfbdd4eb1c94a8c1e002903c3cd621985ebef0469b6e5dc7a0", size = 24038, upload-time = "2025-09-28T01:52:31.132Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/74/e6b05f16495071367eb2181a0cf6fd588485bc96662a3038803f17bda911/alibabacloud_dypnsapi20170525-2.0.0-py3-none-any.whl", hash = "sha256:59fe474f2356e65c453ef4b235bd0fbf2827f2971196fbcbb8bb2769610507dd", size = 22797, upload-time = "2025-09-28T01:52:28.616Z" },
+]
+
+[[package]]
+name = "alibabacloud-endpoint-util"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/7d/8cc92a95c920e344835b005af6ea45a0db98763ad6ad19299d26892e6c8d/alibabacloud_endpoint_util-0.0.4.tar.gz", hash = "sha256:a593eb8ddd8168d5dc2216cd33111b144f9189fcd6e9ca20e48f358a739bbf90", size = 2813, upload-time = "2025-06-12T07:20:52.572Z" }
+
+[[package]]
+name = "alibabacloud-gateway-spi"
+version = "0.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alibabacloud-credentials" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ab/98/d7111245f17935bf72ee9bea60bbbeff2bc42cdfe24d2544db52bc517e1a/alibabacloud_gateway_spi-0.0.3.tar.gz", hash = "sha256:10d1c53a3fc5f87915fbd6b4985b98338a776e9b44a0263f56643c5048223b8b", size = 4249, upload-time = "2025-02-23T16:29:54.222Z" }
+
+[[package]]
+name = "alibabacloud-openapi-util"
+version = "0.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alibabacloud-tea-util" },
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f6/51/be5802851a4ed20ac2c6db50ac8354a6e431e93db6e714ca39b50983626f/alibabacloud_openapi_util-0.2.4.tar.gz", hash = "sha256:87022b9dcb7593a601f7a40ca698227ac3ccb776b58cb7b06b8dc7f510995c34", size = 7981, upload-time = "2026-01-15T08:05:03.947Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/46/9b217343648b366eb93447f5d93116e09a61956005794aed5ef95a2e9e2e/alibabacloud_openapi_util-0.2.4-py3-none-any.whl", hash = "sha256:a2474f230b5965ae9a8c286e0dc86132a887928d02d20b8182656cf6b1b6c5bd", size = 7661, upload-time = "2026-01-15T08:05:01.374Z" },
+]
+
+[[package]]
+name = "alibabacloud-tea"
+version = "0.4.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9a/7d/b22cb9a0d4f396ee0f3f9d7f26b76b9ed93d4101add7867a2c87ed2534f5/alibabacloud-tea-0.4.3.tar.gz", hash = "sha256:ec8053d0aa8d43ebe1deb632d5c5404339b39ec9a18a0707d57765838418504a", size = 8785, upload-time = "2025-03-24T07:34:42.958Z" }
+
+[[package]]
+name = "alibabacloud-tea-openapi"
+version = "0.4.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alibabacloud-credentials" },
+    { name = "alibabacloud-gateway-spi" },
+    { name = "alibabacloud-tea-util" },
+    { name = "cryptography" },
+    { name = "darabonba-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/93/138bcdc8fc596add73e37cf2073798f285284d1240bda9ee02f9384fc6be/alibabacloud_tea_openapi-0.4.4.tar.gz", hash = "sha256:1b0917bc03cd49417da64945e92731716d53e2eb8707b235f54e45b7473221ce", size = 21960, upload-time = "2026-03-26T10:16:16.792Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/5a/6bfc4506438c1809c486f66217ad11eab78157192b3d5707b4e2f4212f6c/alibabacloud_tea_openapi-0.4.4-py3-none-any.whl", hash = "sha256:cea6bc1fe35b0319a8752cb99eb0ecb0dab7ca1a71b99c12970ba0867410995f", size = 26236, upload-time = "2026-03-26T10:16:15.861Z" },
+]
+
+[[package]]
+name = "alibabacloud-tea-util"
+version = "0.3.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alibabacloud-tea" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/ee/ea90be94ad781a5055db29556744681fc71190ef444ae53adba45e1be5f3/alibabacloud_tea_util-0.3.14.tar.gz", hash = "sha256:708e7c9f64641a3c9e0e566365d2f23675f8d7c2a3e2971d9402ceede0408cdb", size = 7515, upload-time = "2025-11-19T06:01:08.504Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/9e/c394b4e2104766fb28a1e44e3ed36e4c7773b4d05c868e482be99d5635c9/alibabacloud_tea_util-0.3.14-py3-none-any.whl", hash = "sha256:10d3e5c340d8f7ec69dd27345eb2fc5a1dab07875742525edf07bbe86db93bfe", size = 6697, upload-time = "2025-11-19T06:01:07.355Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -172,6 +283,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/14/2c5dd9f512b66549ae92767a9c7b330ae88e1932ca57876909410251fe13/anyio-4.13.0.tar.gz", hash = "sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc", size = 231622, upload-time = "2026-03-24T12:59:09.671Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/da/42/e921fccf5015463e32a3cf6ee7f980a6ed0f395ceeaa45060b61d86486c2/anyio-4.13.0-py3-none-any.whl", hash = "sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708", size = 114353, upload-time = "2026-03-24T12:59:08.246Z" },
+]
+
+[[package]]
+name = "apscheduler"
+version = "3.11.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tzlocal" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/07/12/3e4389e5920b4c1763390c6d371162f3784f86f85cd6d6c1bfe68eef14e2/apscheduler-3.11.2.tar.gz", hash = "sha256:2a9966b052ec805f020c8c4c3ae6e6a06e24b1bf19f2e11d91d8cca0473eef41", size = 108683, upload-time = "2025-12-22T00:39:34.884Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/64/2e54428beba8d9992aa478bb8f6de9e4ecaa5f8f513bcfd567ed7fb0262d/apscheduler-3.11.2-py3-none-any.whl", hash = "sha256:ce005177f741409db4e4dd40a7431b76feb856b9dd69d57e0da49d6715bfd26d", size = 64439, upload-time = "2025-12-22T00:39:33.303Z" },
 ]
 
 [[package]]
@@ -499,6 +622,79 @@ wheels = [
 ]
 
 [[package]]
+name = "claread-api"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "alibabacloud-dypnsapi20170525" },
+    { name = "asyncpg" },
+    { name = "beautifulsoup4" },
+    { name = "dashscope" },
+    { name = "en-core-web-sm" },
+    { name = "fastapi" },
+    { name = "feedparser" },
+    { name = "ftfy" },
+    { name = "httpx" },
+    { name = "langdetect" },
+    { name = "langgraph" },
+    { name = "langsmith", extra = ["otel"] },
+    { name = "lemminflect" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "orjson" },
+    { name = "pydantic-ai" },
+    { name = "pydantic-settings" },
+    { name = "pymilvus" },
+    { name = "pyyaml" },
+    { name = "redis" },
+    { name = "spacy" },
+    { name = "trafilatura" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alibabacloud-dypnsapi20170525", specifier = ">=1.2.2,<3.0.0" },
+    { name = "asyncpg", specifier = ">=0.30.0,<0.31.0" },
+    { name = "beautifulsoup4", specifier = ">=4.12.3,<5.0.0" },
+    { name = "dashscope", specifier = ">=1.20.0,<2.0.0" },
+    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
+    { name = "fastapi", specifier = ">=0.116.1,<0.117.0" },
+    { name = "feedparser", specifier = ">=6.0.0,<7.0.0" },
+    { name = "ftfy", specifier = ">=6.2.0,<7.0.0" },
+    { name = "httpx", specifier = ">=0.28.1,<0.29.0" },
+    { name = "langdetect", specifier = ">=1.0.9,<2.0.0" },
+    { name = "langgraph", specifier = ">=0.6.6,<0.7.0" },
+    { name = "langsmith", extras = ["otel"], specifier = ">=0.4.26,<0.5.0" },
+    { name = "lemminflect", specifier = ">=0.2.3,<1.0.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.39.0,<2.0.0" },
+    { name = "orjson", specifier = ">=3.11.1,<4.0.0" },
+    { name = "pydantic-ai", specifier = ">=1.0.14,<2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.10.1,<3.0.0" },
+    { name = "pymilvus", specifier = ">=2.4.0,<3.0.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7.0" },
+    { name = "redis", specifier = ">=5.2.0,<6.0.0" },
+    { name = "spacy", specifier = ">=3.8.0,<4.0.0" },
+    { name = "trafilatura", specifier = ">=2.0.0,<3.0.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0,<0.36.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.17.1,<2.0.0" },
+    { name = "pytest", specifier = ">=8.4.1,<9.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0,<0.25.0" },
+    { name = "ruff", specifier = ">=0.12.8,<0.13.0" },
+]
+
+[[package]]
 name = "click"
 version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -671,6 +867,19 @@ wheels = [
 ]
 
 [[package]]
+name = "darabonba-core"
+version = "1.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "alibabacloud-tea" },
+    { name = "requests" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/d3/a7daaee544c904548e665829b51a9fa2572acb82c73ad787a8ff90273002/darabonba_core-1.0.5-py3-none-any.whl", hash = "sha256:671ab8dbc4edc2a8f88013da71646839bb8914f1259efc069353243ef52ea27c", size = 24580, upload-time = "2025-12-12T07:53:59.494Z" },
+]
+
+[[package]]
 name = "dashscope"
 version = "1.25.17"
 source = { registry = "https://pypi.org/simple" }
@@ -755,77 +964,6 @@ version = "3.8.0"
 source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 wheels = [
     { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
-]
-
-[[package]]
-name = "claread-api"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "asyncpg" },
-    { name = "beautifulsoup4" },
-    { name = "dashscope" },
-    { name = "en-core-web-sm" },
-    { name = "fastapi" },
-    { name = "feedparser" },
-    { name = "ftfy" },
-    { name = "httpx" },
-    { name = "langdetect" },
-    { name = "langgraph" },
-    { name = "langsmith", extra = ["otel"] },
-    { name = "lemminflect" },
-    { name = "opentelemetry-exporter-otlp" },
-    { name = "orjson" },
-    { name = "pydantic-ai" },
-    { name = "pydantic-settings" },
-    { name = "pymilvus" },
-    { name = "pyyaml" },
-    { name = "redis" },
-    { name = "spacy" },
-    { name = "trafilatura" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asyncpg", specifier = ">=0.30.0,<0.31.0" },
-    { name = "beautifulsoup4", specifier = ">=4.12.3,<5.0.0" },
-    { name = "dashscope", specifier = ">=1.20.0,<2.0.0" },
-    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
-    { name = "fastapi", specifier = ">=0.116.1,<0.117.0" },
-    { name = "feedparser", specifier = ">=6.0.0,<7.0.0" },
-    { name = "ftfy", specifier = ">=6.2.0,<7.0.0" },
-    { name = "httpx", specifier = ">=0.28.1,<0.29.0" },
-    { name = "langdetect", specifier = ">=1.0.9,<2.0.0" },
-    { name = "langgraph", specifier = ">=0.6.6,<0.7.0" },
-    { name = "langsmith", extras = ["otel"], specifier = ">=0.4.26,<0.5.0" },
-    { name = "lemminflect", specifier = ">=0.2.3,<1.0.0" },
-    { name = "opentelemetry-exporter-otlp", specifier = ">=1.39.0,<2.0.0" },
-    { name = "orjson", specifier = ">=3.11.1,<4.0.0" },
-    { name = "pydantic-ai", specifier = ">=1.0.14,<2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.10.1,<3.0.0" },
-    { name = "pymilvus", specifier = ">=2.4.0,<3.0.0" },
-    { name = "pyyaml", specifier = ">=6.0,<7.0" },
-    { name = "redis", specifier = ">=5.2.0,<6.0.0" },
-    { name = "spacy", specifier = ">=3.8.0,<4.0.0" },
-    { name = "trafilatura", specifier = ">=2.0.0,<3.0.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0,<0.36.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.17.1,<2.0.0" },
-    { name = "pytest", specifier = ">=8.4.1,<9.0.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0,<0.25.0" },
-    { name = "ruff", specifier = ">=0.12.8,<0.13.0" },
 ]
 
 [[package]]

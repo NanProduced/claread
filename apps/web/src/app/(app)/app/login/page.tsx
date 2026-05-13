@@ -1,3 +1,5 @@
+import { PhoneLoginForm } from "./PhoneLoginForm";
+
 export default function LoginPage() {
   return (
     <main className="mx-auto grid min-h-[calc(100vh-56px)] max-w-md content-center px-6">
@@ -9,21 +11,9 @@ export default function LoginPage() {
           手机号登录
         </h1>
         <p className="mt-3 text-sm leading-6 text-muted">
-          Web 首期将通过手机号短信验证码登录。浏览器只持有 httpOnly cookie，Next.js BFF 负责与 Claread API 建立内部 session。
+          Web 首期将通过手机号短信验证码登录。生产预留阿里云 Dypnsapi；本地调试先用验证码 888888 跑通 Web 会话。
         </p>
-        <div className="mt-6 space-y-3">
-          <input
-            className="w-full rounded-md border border-hairline bg-surface-warm px-4 py-3 text-sm text-ink outline-none placeholder:text-subtle"
-            placeholder="输入手机号"
-            disabled
-          />
-          <button
-            className="w-full rounded-pill bg-ink px-4 py-3 text-sm font-semibold text-surface opacity-60"
-            disabled
-          >
-            发送验证码
-          </button>
-        </div>
+        <PhoneLoginForm />
       </section>
     </main>
   );

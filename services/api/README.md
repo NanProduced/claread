@@ -70,6 +70,10 @@ uv run mypy app
 - `REDIS_URL`
 - `WECHAT_APP_ID`
 - `WECHAT_APP_SECRET`
+- `PHONE_AUTH_PROVIDER`（本地默认 `mock`；真实短信使用 `aliyun_dypnsapi`）
+- `ALIYUN_DYPNSAPI_SIGN_NAME`
+- `ALIYUN_DYPNSAPI_LOGIN_TEMPLATE_CODE`（赠送登录/注册模板默认 `100001`）
+- `ALIYUN_DYPNSAPI_*` 或本地已有的 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`
 - `MODEL_PROFILES_JSON`
 - `LANGSMITH_*`
 - `ZILLIZ_*`
@@ -122,3 +126,5 @@ infra/migrations/
 - 不为 Web 复制一套业务后端。
 - 客户端差异通过 adapter、render profile、capability profile 处理。
 - Web 登录是新的 auth adapter，不替换小程序登录流程。
+- `users.id` 是 Claread 内部用户主键；手机号、微信小程序 openid、未来 Web 微信 openid 都写入 `user_identities`，不直挂到 `users`。
+- 微信 `unionid` 可空；同一非空 `unionid` 的多个微信 identity 必须归属同一 `user_id`，跨用户冲突进入显式账号合并流程。

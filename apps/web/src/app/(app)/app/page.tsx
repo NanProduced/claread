@@ -1,11 +1,6 @@
 import Link from "next/link";
 import { mockHistoryRecords } from "@/lib/mock-data";
-
-const readingOptions = [
-  { value: "daily_reading", label: "日常阅读" },
-  { value: "academic", label: "学术摘要" },
-  { value: "exam", label: "备考精读" },
-];
+import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 
 export default function PasteToReadPage() {
   const recentRecords = mockHistoryRecords.slice(0, 2);
@@ -22,31 +17,7 @@ export default function PasteToReadPage() {
           </p>
         </header>
 
-        {/* Editor Area */}
-        <section className="bg-surface shadow-surface-quiet rounded-note border border-hairline overflow-hidden focus-within:border-muted transition-colors flex flex-col">
-          <textarea
-            className="w-full h-64 p-5 text-[1.125rem] font-reading leading-[1.8] text-ink placeholder:text-subtle resize-none outline-none bg-transparent"
-            placeholder="在这里粘贴英文文章..."
-            defaultValue=""
-          />
-          <div className="px-5 py-4 bg-surface-warm border-t border-hairline flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <select className="bg-transparent text-[0.8125rem] font-semibold text-ink-soft outline-none cursor-pointer">
-                {readingOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <Link
-              href="/app/reader/demo-record"
-              className="bg-ink text-surface rounded-pill px-[18px] py-[11px] text-[0.8125rem] font-semibold hover:opacity-90 transition-opacity"
-            >
-              开始解读
-            </Link>
-          </div>
-        </section>
+        <AnalyzeSubmitForm />
 
         {/* Recent Records (Optional minimal list) */}
         <section className="mt-8">

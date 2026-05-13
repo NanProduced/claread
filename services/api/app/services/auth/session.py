@@ -7,34 +7,18 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import random
 import secrets
-import string
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from logging import getLogger
 from typing import Any
 from uuid import UUID
 
 from app.config.settings import get_settings
 from app.database import connection as db_connection
+from app.services.auth.identity import get_or_create_user_by_identity
 
-
-def _generate_default_display_name() -> str:
-    """生成默认昵称 Claread_xxxx"""
-    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
-    return f"Claread_{suffix}"
-
-
-def _stable_lock_key(openid: str) -> int:
-    """
-    为 advisory lock 计算稳定的 BIGINT key。
-
-    使用 SHA256 digest 前 8 字节转 BIGINT，保证跨进程稳定性。
-    Python hash(openid) 在不同进程/重启动态下不可靠。
-    """
-    digest = hashlib.sha256(openid.encode()).digest()
-    return int.from_bytes(digest[:8], byteorder="big") & 0x7FFFFFFFFFFFFFFF  # 保证为正 BIGINT
+logger = getLogger("app.auth.session")
 
 
 @dataclass(frozen=True)
@@ -73,53 +57,14 @@ async def get_or_create_user_by_wechat(
     Returns:
         user_id UUID
     """
-    if db_connection.DB_POOL is None:
-        raise RuntimeError("Database pool not initialized")
-
-    lock_key = _stable_lock_key(openid)
-
-    async with db_connection.DB_POOL.acquire() as conn:
-        # 事务级 advisory lock，事务结束自动释放
-        await conn.execute("SELECT pg_advisory_xact_lock($1)", lock_key)
-
-        # 查找现有 identity（已持有锁，不会有竞态）
-        row = await conn.fetchrow(
-            """
-            SELECT user_id FROM user_identities
-            WHERE provider = 'wechat_miniprogram' AND provider_user_id = $1
-            """,
-            openid,
-        )
-
-        if row is not None:
-            return row["user_id"]  # type: ignore[no-any-return]
-
-        # 创建新用户（注册时生成默认昵称 Claread_xxxx）
-        default_name = _generate_default_display_name()
-        user_id: UUID = await conn.fetchval(
-            """
-            INSERT INTO users (display_name, metadata_json)
-            VALUES ($1, '{}'::jsonb)
-            RETURNING id
-            """,
-            default_name,
-        )
-
-        # 创建 identity（已持有锁，unique constraint 只起兜底作用）
-        await conn.execute(
-            """
-            INSERT INTO user_identities
-                (user_id, provider, provider_user_id, unionid, app_id, auth_payload_json)
-            VALUES ($1, 'wechat_miniprogram', $2, $3, $4, $5)
-            """,
-            user_id,
-            openid,
-            unionid,
-            get_settings().wechat_app_id or None,
-            json.dumps(auth_payload),
-        )
-
-        return user_id
+    result = await get_or_create_user_by_identity(
+        provider="wechat_miniprogram",
+        provider_user_id=openid,
+        unionid=unionid,
+        app_id=get_settings().wechat_app_id or None,
+        auth_payload=auth_payload,
+    )
+    return result.user_id
 
 
 async def create_session(

@@ -42,6 +42,20 @@ class Settings(BaseSettings):
     wechat_app_secret: str = ""
     auth_session_expiry_days: int = 30
 
+    # 手机号认证
+    # development 默认 mock；生产接入阿里云云通信号码认证服务 Dypnsapi。
+    phone_auth_provider: str = "mock"
+    phone_mock_verification_code: str = "888888"
+    aliyun_dypnsapi_access_key_id: str = ""
+    aliyun_dypnsapi_access_key_secret: str = ""
+    aliyun_dypnsapi_endpoint: str = "dypnsapi.aliyuncs.com"
+    aliyun_dypnsapi_region_id: str = "cn-hangzhou"
+    aliyun_dypnsapi_sign_name: str = ""
+    aliyun_dypnsapi_login_template_code: str = "100001"
+    aliyun_dypnsapi_code_ttl_minutes: int = 5
+    aliyun_dypnsapi_code_length: int = 6
+    aliyun_dypnsapi_send_interval_seconds: int = 60
+
     # 每日精读
     guardian_api_key: str = ""
     daily_reader_admin_openid: str = ""

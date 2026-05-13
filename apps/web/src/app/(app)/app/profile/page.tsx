@@ -1,6 +1,10 @@
 import { mockQuota } from "@/lib/mock-data";
+import { getWebSession, projectSession } from "@/services/bff/session";
 
-export default function ProfilePage() {
+import { LogoutButton } from "./LogoutButton";
+
+export default async function ProfilePage() {
+  const session = projectSession(await getWebSession());
   const quotaPercent = Math.round((mockQuota.quotaUsed / mockQuota.quotaLimit) * 100);
 
   return (
@@ -21,8 +25,16 @@ export default function ProfilePage() {
                 U
               </div>
               <div className="flex flex-col">
-                <span className="font-semibold text-ink">Web User</span>
-                <span className="text-sm text-muted">手机号登录待接入</span>
+                <span className="font-semibold text-ink">
+                  {session.phone ? `手机号用户 ${session.phone}` : "Web User"}
+                </span>
+                <span className="text-sm text-muted">
+                  {session.authenticated
+                    ? session.upstreamReady
+                      ? "已连接 FastAPI 调试 session"
+                      : "本地 mock 登录态"
+                    : "未登录"}
+                </span>
               </div>
             </div>
             
@@ -85,9 +97,7 @@ export default function ProfilePage() {
 
         {/* Actions */}
         <section className="pt-4">
-          <button className="text-error-red text-sm font-semibold hover:opacity-80">
-            退出登录
-          </button>
+          <LogoutButton />
         </section>
       </div>
     </main>

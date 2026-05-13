@@ -35,6 +35,8 @@ dependencies = [
     "pymilvus>=2.4.0,<3.0.0",
     # Grammar RAG 百炼 Embedding & Rerank
     "dashscope>=1.20.0,<2.0.0",
+    # 阿里云云通信号码认证服务 Dypnsapi（手机号短信验证码）
+    "alibabacloud-dypnsapi20170525>=1.2.2,<3.0.0",
 ]
 
 [dependency-groups]

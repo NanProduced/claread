@@ -26,9 +26,11 @@ Wave 1 的临时任务已完成并整合为当前 Web mock 基线：
 - `apps/web/src/lib/mock-data.ts` 提供 history、vocabulary、quota、reader demo 数据。
 - `apps/web/src/types/view/` 提供首批 Web VM：`RecordListItemVm`、`VocabularyItemVm`、`QuotaVm`、`ReaderMockVm`。
 - Reader mock 数据覆盖 `translations`、`inlineMarks`、`sentenceEntries`，并覆盖 `vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`sentence_analysis`。
-- 当前仍是静态 / mock UI；真实 API client、TanStack Query、BFF session 和后端 auth 尚未接入。
+- Web BFF/API 第一条窄路径已建立：`services/api/` 提供 server-only FastAPI upstream client，`services/bff/` 处理 Web session 投影，`adapters/records.adapter.ts` 将 `RecordResponse` / `render_scene_json` 投影为 Reader VM，`/app/reader/[recordId]` 会先尝试真实记录详情再回落 mock。
+- `/app` 已接入真实解析提交窄路径：页面提交到 `/api/web/analysis/submit`，BFF 调 FastAPI `/analysis-tasks`，同步等待超时后通过 `/api/web/analysis/tasks/[taskId]` 轮询，成功后进入 `/app/reader/[cloudRecordId]`。
+- 尚未接入 TanStack Query、真实历史列表、词典和生词本。手机号登录链路已具备开发期 mock、Web BFF cookie 投影和 FastAPI `aliyun_dypnsapi` provider，后续重点是登录页切到上游联调、补频控和正式账号绑定 UI。
 
-因此下一阶段开发应从“mock 页面整合与验证”进入“BFF/API 接入”，不要继续扩散临时 mock 结构。
+因此下一阶段开发应沿已有 BFF / adapter 边界继续接入，不要继续扩散临时 mock 结构，也不要让页面直接消费 FastAPI 原始 DTO。
 
 ## 产品实施策略
 
@@ -132,10 +134,12 @@ apps/web/src/
     vocabulary/
     export/
   services/
-    api/                    # server-only/BFF upstream client，不直接泄露内部 token
+    api/                    # server-only FastAPI upstream client，不直接泄露内部 token
     bff/                    # Web 投影、session cookie、错误态映射
   adapters/
+    records.adapter.ts      # RecordResponse/render_scene_json -> Reader VM
   types/
+    api/                    # BFF 上游 DTO，后续可由 packages/contracts 生成
     view/
   stores/
 ```

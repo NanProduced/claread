@@ -67,6 +67,7 @@ canonical analysis result
 Web 目标：
 
 - 新增 Web auth provider：手机号 + 短信验证码优先，后续接入微信开放平台登录和绑定。
+- 短信验证码 provider 使用阿里云云通信号码认证服务 Dypnsapi；验证码发送对应 `SendSmsVerifyCode`，验证码核验对应 `CheckSmsVerifyCode`。当前通用 FastAPI auth adapter 已支持本地 mock provider（`888888`）和 `aliyun_dypnsapi` provider，并通过 `provider=phone` 写入统一 identity。
 - 复用 `users`、`user_identities`、`user_sessions`。
 - 内部统一 Claread `user_id`，手机号、微信小程序、微信开放平台等身份都绑定到同一个内部用户。
 - `client_platform` 支持 `web`。
@@ -96,6 +97,9 @@ user_sessions
 
 - 手机号登录创建或复用 `provider=phone` 的 identity。
 - 用户登录后可绑定微信身份，微信 openid / unionid 只作为 identity，不直接成为业务用户 ID。
+- `openid` 是应用级标识，`unionid` 是微信开放平台级标识但可为空。后端不得把任一微信标识写成 `users` 主键或 `users` 直挂字段。
+- 同一个非空 `unionid` 允许在同一 `user_id` 下绑定多个微信 provider/openid，例如 `wechat_miniprogram` 和后续 `wechat_open`。
+- 新微信 identity 带 `unionid` 且已有同 `unionid` identity 时，归属到同一个 Claread `user_id`；如果同 `unionid` 已归属另一个 `user_id`，返回显式冲突，不自动合并资产。
 - 如果待绑定微信身份已归属另一个用户，不做静默合并，进入显式账号合并流程。
 - 有 unionid 时优先用 unionid 打通小程序和开放平台；只有 openid 时只能在单一微信应用内识别。
 
@@ -210,6 +214,10 @@ BFF 不负责：
 5. 统一错误码和错误体，便于 Web 友好错误态。
 6. BFF projection：不要让浏览器直接消费 `/analysis-tasks`、`/records/{id}`、`/vocabulary` 等 FastAPI 原始端点。
 7. 补齐影响 OpenAPI 生成的 response model；已声明 model 但返回裸 dict 的路由可逐步清理，不阻塞 Web 首期。
+
+Web 当前已先落地本地 mock 登录流程：`/api/web/auth/phone/request-code` 和 `/api/web/auth/phone/verify-code` 只在 Next.js BFF 内使用 mock 验证码，写入 httpOnly mock phone cookie；如果设置了 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`，同时写入上游 session cookie 用于 FastAPI 调试。该实现只用于首期联调，不替代后端正式 phone auth。
+
+后端当前已落地统一 identity 基础：`/auth/phone/request-code`、`/auth/phone/verify-code`、`/auth/phone/bind`、`/auth/wechat/bind`。手机号登录创建/复用 `user_identities(provider='phone')`，微信小程序继续使用 `provider='wechat_miniprogram'`，绑定冲突返回 409，不做静默账号/资产合并。Dypnsapi 配置集中在 FastAPI：本地默认 `PHONE_AUTH_PROVIDER=mock`；真实短信设置 `PHONE_AUTH_PROVIDER=aliyun_dypnsapi`、`ALIYUN_DYPNSAPI_SIGN_NAME`、`ALIYUN_DYPNSAPI_LOGIN_TEMPLATE_CODE=100001`，AK/SK 可用 `ALIYUN_DYPNSAPI_*` 或 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`。
 
 验收：
 

@@ -22,9 +22,12 @@ Browser -> Next.js BFF / RSC -> FastAPI internal API
 | `GET /auth/session/me` | ✅ `SessionInfoResponse` | 🟢 稳定 | BFF 上游可复用；浏览器侧由 `/api/web/session` 等 Web endpoint 投影 |
 | `PATCH /auth/profile` | ✅ `ProfileUpdateResponse` | 🟢 稳定 | BFF 上游可复用 |
 | `POST /auth/session/logout` | ✅ `LogoutResponse` | 🟢 稳定 | BFF 清除 httpOnly cookie 后调用上游登出 |
-| `POST /auth/phone/request-code` | ❌ 不存在 | 🔴 需新建 | Web 登录入口：发送短信验证码，接阿里云短信服务 |
-| `POST /auth/phone/verify-code` | ❌ 不存在 | 🔴 需新建 | 验证手机号验证码，创建内部 session；BFF 写入 httpOnly cookie |
-| `POST /auth/wechat/bind` | ❌ 不存在 | 🟡 后续新增 | 登录用户绑定微信身份；冲突时进入显式账号合并 |
+| `POST /auth/phone/request-code` | ✅ `PhoneCodeResponse` | 🟢 已落地 | Web 登录入口；开发期 mock code `888888`，生产 provider 使用阿里云 Dypnsapi |
+| `POST /auth/phone/verify-code` | ✅ `WeChatLoginResponse` 兼容形状 | 🟢 已落地 | 验证手机号验证码，创建 `provider=phone` identity 和 `client_platform=web` session；BFF 写入 httpOnly cookie |
+| `POST /auth/phone/bind` | ✅ `IdentityBindResponse` | 🟢 已落地 | 登录用户绑定手机号身份；冲突返回 409，不静默合并 |
+| `POST /auth/wechat/bind` | ✅ `IdentityBindResponse` | 🟢 已落地 | 登录用户绑定微信小程序身份；冲突返回 409，不静默合并 |
+
+微信身份归属规则：`openid` 按 provider/app 隔离，`unionid` 可空但一旦出现，应作为跨微信应用归属线索。同一非空 `unionid` 下允许存在多个 provider/openid identity，但必须归属同一个 Claread `user_id`；如果同 `unionid` 或同 provider identity 已归属其他 `user_id`，API 返回 409，由显式账号合并流程处理。
 
 ### 分析
 
@@ -178,13 +181,15 @@ Browser -> Next.js BFF / RSC -> FastAPI internal API
 1. **`POST /auth/phone/request-code`** — 发送短信验证码
    - 请求：`{ phone: string }`
    - 响应：`{ ok: bool, message: string }`
-   - 限制：同一手机号、同一 IP、同一设备指纹频率限制；验证码短 TTL；接入阿里云短信服务
+   - 限制：同一手机号、同一 IP、同一设备指纹频率限制；验证码短 TTL；接入阿里云云通信号码认证服务 Dypnsapi 的 `SendSmsVerifyCode`
 
 2. **`POST /auth/phone/verify-code`** — 验证短信验证码换内部 session
    - 请求：`{ phone: string, code: string }`
    - 响应：`WeChatLoginResponse` 复用（`user_id / session_token / expires_at`）
-   - 逻辑：查 `user_identities` 找 `provider=phone` 的 identity；不存在则创建内部用户和手机号身份；创建 `client_platform=web` 的 session
+   - 逻辑：通过阿里云 Dypnsapi 的 `CheckSmsVerifyCode` 核验验证码；查 `user_identities` 找 `provider=phone` 的 identity；不存在则创建内部用户和手机号身份；创建 `client_platform=web` 的 session
    - Web 行为：FastAPI 返回内部 session 后，由 Next.js BFF 设置 httpOnly cookie，浏览器 JS 不直接读取内部 token
+
+当前 Web BFF 已落地同源端点 `/api/web/auth/phone/request-code`、`/api/web/auth/phone/verify-code` 和 `/api/web/auth/logout`。默认 `CLAREAD_PHONE_AUTH_PROVIDER=mock` 时只用于本地 mock 登录和 session cookie 投影，验证码为 `888888`；设置为 `fastapi` 或 `aliyun_dypnsapi` 时，BFF 调用上表中的 FastAPI auth 契约并写入 httpOnly cookie。
 
 ### 🟡 需要增强（Web 体验提升）
 
@@ -234,7 +239,7 @@ apps/web/src/
 │   └── daily-reader.adapter.ts # DailyReaderArticleResponse → Web DailyReaderVm
 └── services/
     └── api/
-        ├── client.ts           # BFF/Server fetch 封装 + auth/error 处理；仅在明确需要时引入 Axios
+        ├── upstream.ts         # server-only FastAPI fetch 封装 + auth/error 处理
         ├── auth.ts             # 手机号登录、登出、session 投影
         ├── analysis.ts         # 分析任务 API
         ├── records.ts          # 记录 API
@@ -247,3 +252,10 @@ adapter 层职责：
 - 轻量结构适配（如 `dict` 字段的结构化解析）
 - 不引入业务逻辑
 - 不在其他位置做字段转换
+
+当前已落地的第一步：
+- `services/api/upstream.ts`、`services/api/tasks.ts` 和 `services/api/records.ts` 只在服务端调用 FastAPI。
+- `services/bff/session.ts` 支持 httpOnly cookie 预留和开发期 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`，未登录时进入明确 mock fallback。
+- `app/api/web/session` 和 `app/api/web/reader/[recordId]` 提供 Web BFF 投影接口。
+- `app/api/web/analysis/submit` 和 `app/api/web/analysis/tasks/[taskId]` 提供真实解析任务提交与状态轮询投影。
+- `/app/reader/[recordId]` Server Component 直接复用同一 BFF reader 服务，不让浏览器直连 FastAPI。
