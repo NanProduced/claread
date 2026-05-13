@@ -22,7 +22,18 @@ docs/architecture/multi-client.md    # 多端原则
 docs/operations/local-dev.md         # 本地开发环境
 services/api/README.md               # 后端服务
 apps/miniprogram/README.md           # 微信小程序
+apps/web/README.md                   # Web 客户端
 ```
+
+## 安装依赖
+
+Claread 使用 pnpm workspace 管理前端 app 和共享 package。新增或变更 JS 依赖后，在仓库根目录安装：
+
+```powershell
+pnpm install
+```
+
+如果遇到 `taro`、`next`、`tsc` 等命令无法识别，优先停止正在运行的 dev/watch 进程，然后在根目录重新执行 `pnpm install`，不要只在单个 app 目录做局部安装。
 
 ## 本地服务
 
@@ -40,14 +51,39 @@ cd services/api
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+## 客户端启动
+
 启动微信小程序构建监听：
 
 ```powershell
-cd apps/miniprogram
-pnpm run dev:weapp
+pnpm miniprogram:dev
 ```
 
 然后在微信开发者工具中打开 `apps/miniprogram`。
+
+启动 Web 客户端：
+
+```powershell
+pnpm web:dev
+```
+
+默认访问 `http://127.0.0.1:3000`。
+
+## 常用验证
+
+```powershell
+pnpm miniprogram:build
+pnpm miniprogram:typecheck
+pnpm web:build
+pnpm web:typecheck
+pnpm web:lint
+```
+
+后端验证在 `services/api/` 下运行：
+
+```powershell
+uv run pytest tests/test_health.py -q
+```
 
 ## 开发原则
 

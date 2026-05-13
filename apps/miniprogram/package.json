@@ -5,7 +5,8 @@
   "description": "Claread Client",
   "scripts": {
     "build:weapp": "taro build --type weapp",
-    "dev:weapp": "taro build --type weapp --watch"
+    "dev:weapp": "taro build --type weapp --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "browserslist": [
     "last 3 versions",

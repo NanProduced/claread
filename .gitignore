@@ -7,6 +7,8 @@ node_modules/
 dist/
 build/
 coverage/
+.next/
+*.tsbuildinfo
 apps/miniprogram/dist/
 
 # Python caches
@@ -50,6 +52,10 @@ services/api/config/model-presets.json
 .trae/
 .codex/
 _migration_prep/
+.agents/
+
+RTK.md
+skills-lock.json
 
 # WeChat DevTools private config
 project.private.config.json
@@ -57,3 +63,4 @@ project.private.config.json
 # Tool caches
 .swc/
 apps/miniprogram/.swc/
+.playwright-mcp/

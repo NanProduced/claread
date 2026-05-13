@@ -16,22 +16,36 @@
 
 ## 启动
 
-安装依赖：
+安装依赖应在仓库根目录执行：
 
 ```powershell
 pnpm install
 ```
 
-构建微信小程序：
+从仓库根目录构建微信小程序：
+
+```powershell
+pnpm miniprogram:build
+```
+
+从仓库根目录启动开发监听：
+
+```powershell
+pnpm miniprogram:dev
+```
+
+类型检查：
+
+```powershell
+pnpm miniprogram:typecheck
+```
+
+在当前目录内也可以直接运行：
 
 ```powershell
 pnpm run build:weapp
-```
-
-开发监听：
-
-```powershell
 pnpm run dev:weapp
+pnpm run typecheck
 ```
 
 然后使用微信开发者工具打开 `apps/miniprogram`。项目配置中的 `miniprogramRoot` 指向 `dist/`。
@@ -39,6 +53,8 @@ pnpm run dev:weapp
 本地 API 使用 `http://localhost:8000` 时，微信开发者工具需要关闭本地域名校验，或使用已配置到微信后台的合法 request 域名。
 
 新仓库小程序端统一使用 pnpm；不要同时维护 npm 和 pnpm 两套 lock 文件。
+
+如果出现 `'taro' is not recognized`，优先回到仓库根目录重新执行 `pnpm install`。这通常是 workspace 安装或 `.bin` 链接未完成，不代表 Web 端和小程序端依赖冲突。
 
 ## 目录职责
 

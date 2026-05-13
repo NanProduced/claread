@@ -21,6 +21,46 @@ services/api/config/model-profiles.example.json
 services/api/config/model-presets.example.json
 ```
 
+## pnpm workspace
+
+JS/TS 侧使用 pnpm workspace，范围由根目录 `pnpm-workspace.yaml` 管理：
+
+```text
+apps/*
+packages/*
+```
+
+依赖安装和刷新必须优先在仓库根目录执行：
+
+```powershell
+pnpm install
+```
+
+不要在 Web、小程序 watch 进程运行时安装依赖。安装过程中如果被中断，workspace 的 `.bin` 链接可能处于半完成状态，表现为 `taro`、`next` 或 `tsc` 无法识别。这通常不是 Web 和小程序冲突，处理方式是：
+
+1. 停止所有 `pnpm ... dev` / `taro ... --watch` / `next dev` 进程。
+2. 回到仓库根目录执行 `pnpm install`。
+3. 再用根目录脚本启动或验证。
+
+常用根目录脚本：
+
+| 命令 | 用途 |
+|------|------|
+| `pnpm miniprogram:dev` | 小程序 Taro watch 构建 |
+| `pnpm miniprogram:build` | 小程序一次性 weapp 构建 |
+| `pnpm miniprogram:typecheck` | 小程序 TypeScript 检查 |
+| `pnpm web:dev` | Web Next.js dev server |
+| `pnpm web:build` | Web 生产构建 |
+| `pnpm web:typecheck` | Web TypeScript 检查 |
+| `pnpm web:lint` | Web ESLint 检查 |
+
+需要直接定位 workspace 包时，也可以使用：
+
+```powershell
+pnpm --filter claread-miniprogram run build:weapp
+pnpm --filter @claread/web run build
+```
+
 ## 数据库
 
 本地 Docker Compose 位于：
@@ -69,3 +109,21 @@ dev/staging/prod 由构建环境注入。
 真实模型配置不提交。通过 `services/api/config/model-profiles.example.json`、`services/api/config/model-presets.example.json` 和环境变量注入模型配置。
 
 结构化输出链路对模型能力敏感。更换 `DEFAULT_MODEL_PROFILE` 或 `ANNOTATION_MODEL_PROFILE` 后，需要重新验证解析结果是否包含词汇、语法、句式和翻译字段。
+
+## 验证入口
+
+后端最小健康测试：
+
+```powershell
+cd services/api
+uv run pytest tests/test_health.py -q
+```
+
+后端当前核心回归入口：
+
+```powershell
+cd services/api
+uv run pytest tests/test_analyze_workflow.py tests/test_academic_workflow.py tests/test_task_center.py tests/test_quota_credits.py tests/test_user_assets.py tests/test_vocabulary_review.py -q
+```
+
+小程序和 Web 的构建/类型检查优先使用根目录脚本，见上方 `pnpm workspace`。

@@ -6,6 +6,10 @@
   "scripts": {
     "miniprogram:build": "pnpm --dir apps/miniprogram run build:weapp",
     "miniprogram:dev": "pnpm --dir apps/miniprogram run dev:weapp",
-    "miniprogram:typecheck": "pnpm --dir apps/miniprogram exec tsc -p tsconfig.json --noEmit"
+    "miniprogram:typecheck": "pnpm --dir apps/miniprogram run typecheck",
+    "web:dev": "pnpm --dir apps/web run dev",
+    "web:build": "pnpm --dir apps/web run build",
+    "web:typecheck": "pnpm --dir apps/web run typecheck",
+    "web:lint": "pnpm --dir apps/web run lint"
   }
 }
