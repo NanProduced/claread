@@ -22,3 +22,10 @@ export interface RecordResponseDto {
   created_at: string;
   updated_at: string;
 }
+
+export interface RecordListResponseDto {
+  items: RecordResponseDto[];
+  total: number;
+  page: number;
+  limit: number;
+}

@@ -28,7 +28,9 @@ Wave 1 的临时任务已完成并整合为当前 Web mock 基线：
 - Reader mock 数据覆盖 `translations`、`inlineMarks`、`sentenceEntries`，并覆盖 `vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`sentence_analysis`。
 - Web BFF/API 第一条窄路径已建立：`services/api/` 提供 server-only FastAPI upstream client，`services/bff/` 处理 Web session 投影，`adapters/records.adapter.ts` 将 `RecordResponse` / `render_scene_json` 投影为 Reader VM，`/app/reader/[recordId]` 会先尝试真实记录详情再回落 mock。
 - `/app` 已接入真实解析提交窄路径：页面提交到 `/api/web/analysis/submit`，BFF 调 FastAPI `/analysis-tasks`，同步等待超时后通过 `/api/web/analysis/tasks/[taskId]` 轮询，成功后进入 `/app/reader/[cloudRecordId]`。
-- 尚未接入 TanStack Query、真实历史列表、词典和生词本。手机号登录链路已具备开发期 mock、Web BFF cookie 投影和 FastAPI `aliyun_dypnsapi` provider，后续重点是登录页切到上游联调、补频控和正式账号绑定 UI。
+- `/app` 最近记录和 `/app/history` 已通过 Web BFF 接入 FastAPI `/records` 列表，上游可用时使用云端 `analysis_records.id` 进入 Reader；匿名、mock 登录或上游不可用时保留 mock fallback。列表请求默认不拉取 `render_scene_json`。
+- Reader 已能把真实 `render_scene_json` 中的 `multi_text` anchor 作为“结构线索”展示在句子下方和轻旁注中，不把非连续片段强行伪装成 inline highlight。
+- 尚未接入 TanStack Query、词典和生词本。手机号登录链路已具备开发期 mock、Web BFF cookie 投影和 FastAPI `aliyun_dypnsapi` provider，后续重点是登录页切到上游联调、补频控和正式账号绑定 UI。
 
 因此下一阶段开发应沿已有 BFF / adapter 边界继续接入，不要继续扩散临时 mock 结构，也不要让页面直接消费 FastAPI 原始 DTO。
 

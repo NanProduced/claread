@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { mockHistoryRecords } from "@/lib/mock-data";
+import { getRecordList } from "@/services/bff/records";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 
-export default function PasteToReadPage() {
-  const recentRecords = mockHistoryRecords.slice(0, 2);
+export default async function PasteToReadPage() {
+  const { records: recentRecords } = await getRecordList({ limit: 2 });
 
   return (
     <main className="flex-1 flex flex-col items-center pt-16 pb-12 px-6">

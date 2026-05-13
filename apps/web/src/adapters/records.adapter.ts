@@ -110,14 +110,16 @@ function mapAnchor(value: unknown): InlineMarkAnchor | null {
     return null;
   }
 
+  const sentenceId = readString(value.sentence_id ?? value.sentenceId);
+
   if (value.kind === "multi_text") {
     return {
       kind: "multi_text",
-      sentenceId: readString(value.sentence_id),
+      sentenceId,
       parts: readArray(value.parts)
         .filter(isRecord)
         .map((part) => ({
-          anchorText: readString(part.anchor_text),
+          anchorText: readString(part.anchor_text ?? part.anchorText),
           occurrence: typeof part.occurrence === "number" ? part.occurrence : undefined,
           role: readOptionalString(part.role),
         }))
@@ -127,8 +129,8 @@ function mapAnchor(value: unknown): InlineMarkAnchor | null {
 
   return {
     kind: "text",
-    sentenceId: readString(value.sentence_id),
-    anchorText: readString(value.anchor_text),
+    sentenceId,
+    anchorText: readString(value.anchor_text ?? value.anchorText),
     occurrence: typeof value.occurrence === "number" ? value.occurrence : undefined,
   };
 }

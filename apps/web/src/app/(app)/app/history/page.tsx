@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { mockHistoryRecords } from "@/lib/mock-data";
+import { getRecordList, type RecordsDataSource } from "@/services/bff/records";
 
 const goalLabel: Record<string, string> = {
   academic: "学术摘要",
@@ -7,21 +7,33 @@ const goalLabel: Record<string, string> = {
   exam: "备考精读",
 };
 
-export default function HistoryPage() {
+const dataSourceLabel: Record<RecordsDataSource, string> = {
+  upstream: "已连接云端记录",
+  "mock-fallback": "当前显示示例记录",
+};
+
+export default async function HistoryPage() {
+  const { records, dataSource } = await getRecordList({ limit: 50 });
+
   return (
     <main className="flex-1 flex justify-center py-10 px-6">
       <div className="w-full max-w-3xl flex flex-col gap-8">
-        <header className="flex items-center justify-between border-b border-hairline pb-4">
-          <h1 className="text-[1.75rem] font-headline font-semibold text-ink">
-            历史记录
-          </h1>
+        <header className="flex items-start justify-between border-b border-hairline pb-4 gap-4">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-[1.75rem] font-headline font-semibold text-ink">
+              历史记录
+            </h1>
+            <p className="text-[0.75rem] text-muted">
+              {dataSourceLabel[dataSource]}
+            </p>
+          </div>
           <Link href="/app" className="rounded-pill bg-surface border border-hairline px-4 py-2 text-[0.8125rem] font-semibold text-ink hover:border-muted transition-colors">
             新解析
           </Link>
         </header>
 
         <section className="flex flex-col gap-4">
-          {mockHistoryRecords.map((record) => (
+          {records.map((record) => (
             <Link
               key={record.id}
               href={`/app/reader/${record.id}`}

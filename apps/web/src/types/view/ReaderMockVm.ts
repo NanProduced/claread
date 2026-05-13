@@ -15,6 +15,11 @@ export interface TextAnchor {
 }
 
 export interface SpanRef {
+  /**
+   * Text fragment referenced by a multi_text anchor. This may be non-contiguous
+   * with other parts, so the Reader treats it as a structural cue rather than
+   * pretending it can always be highlighted inline.
+   */
   anchorText: string
   occurrence?: number
   role?: string
