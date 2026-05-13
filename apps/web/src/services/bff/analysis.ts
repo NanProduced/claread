@@ -78,6 +78,10 @@ function readStringField(payload: unknown, field: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function readCloudRecordId(payload: unknown): string | undefined {
+  return readStringField(payload, "cloud_record_id");
+}
+
 function upstreamErrorCode(status: number): string {
   if (status === 401) {
     return "upstream_auth_failed";
@@ -147,11 +151,21 @@ export async function submitAnalysisFromWeb(input: {
       code: upstreamErrorCode(upstreamResult.status),
       message: upstreamResult.message,
       taskId: readStringField(upstreamResult.payload, "task_id"),
-      recordId: readStringField(upstreamResult.payload, "record_id"),
+      recordId: readCloudRecordId(upstreamResult.payload),
     };
   }
 
-  const recordId = upstreamResult.data.cloud_record_id || upstreamResult.data.record_id;
+  const recordId = upstreamResult.data.cloud_record_id;
+
+  if (!recordId) {
+    return {
+      ok: false,
+      status: 502,
+      code: "upstream_contract_mismatch",
+      message: "解析任务已提交，但上游没有返回 cloud_record_id。",
+      taskId: upstreamResult.data.task_id,
+    };
+  }
 
   return {
     ok: true,
@@ -191,7 +205,16 @@ export async function getAnalysisTaskStatusFromWeb(
     };
   }
 
-  const recordId = upstreamResult.data.cloud_record_id || upstreamResult.data.record_id;
+  const recordId = upstreamResult.data.cloud_record_id;
+
+  if (!recordId) {
+    return {
+      ok: false,
+      status: 502,
+      code: "upstream_contract_mismatch",
+      message: "任务状态已返回，但上游没有返回 cloud_record_id。",
+    };
+  }
 
   return {
     ok: true,

@@ -9,8 +9,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from starlette.responses import JSONResponse
 
-logger = getLogger("app.api")
-
 from app.schemas.analysis import AcademicRenderSceneModel, AnyRenderSceneModel, RenderSceneModel
 from app.schemas.tasks import (
     ActiveTaskResponse,
@@ -31,6 +29,8 @@ from app.services.analysis.task_service import (
 )
 from app.services.auth.dependencies import AuthUserDep
 from app.services.user_assets import records as records_svc
+
+logger = getLogger("app.api")
 
 router = APIRouter(prefix="/analysis-tasks", tags=["tasks"])
 _TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "expired"}
@@ -165,6 +165,7 @@ async def submit_analysis_task(
                         "detail": latest.get("failure_message") or "Analysis task failed.",
                         "task_id": str(result.task_id),
                         "record_id": str(result.record_id),
+                        "cloud_record_id": str(result.record_id),
                         "status": latest["status"],
                         "failure_code": latest.get("failure_code"),
                     },
@@ -201,6 +202,7 @@ async def submit_analysis_task(
                 "detail": "You already have an active analysis task.",
                 "task_id": str(exc.task_id),
                 "record_id": str(exc.record_id),
+                "cloud_record_id": str(exc.record_id),
                 "status": exc.status,
             },
         )

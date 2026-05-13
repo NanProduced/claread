@@ -38,6 +38,8 @@ Browser -> Next.js BFF / RSC -> FastAPI internal API
 | `GET /analysis-tasks/current` | ✅ `ActiveTaskResponse` | 🟢 稳定 | Web 复用 |
 | `GET /analysis-tasks/{task_id}` | ✅ `TaskStatusResponse` | 🟢 稳定 | Web 轮询或 SSE |
 
+Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍在 FastAPI response model 中保留给旧调用方兼容，但 Web 投影层不应回退读取该 deprecated 字段。任务失败、超时等待失败和活跃任务冲突等错误响应也应携带 `cloud_record_id`，便于 Web 展示“打开当前任务”等操作而不暴露 FastAPI 原始 DTO。
+
 ### 记录
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |

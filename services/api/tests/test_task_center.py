@@ -15,11 +15,10 @@ import asyncio
 import json
 import sys
 import types
-from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -34,8 +33,8 @@ if "asyncpg" not in sys.modules:
     asyncpg_stub.create_pool = _create_pool
     sys.modules["asyncpg"] = asyncpg_stub
 
-from app.api.routes.tasks import submit_analysis_task
 from app.api.routes.health import health_check, readiness_check
+from app.api.routes.tasks import submit_analysis_task
 from app.schemas.analysis import RenderSceneModel
 from app.schemas.tasks import TaskSubmitRequest
 from app.services.analysis.task_executor import (
@@ -457,6 +456,7 @@ class TestTaskSubmitRoute:
         assert payload["status"] == "succeeded"
         assert payload["task_id"] == str(task_id)
         assert payload["record_id"] == str(record_id)
+        assert payload["cloud_record_id"] == str(record_id)
         assert payload["render_scene"]["schema_version"] == "3.0.0"
 
     @pytest.mark.anyio
@@ -544,6 +544,7 @@ class TestTaskSubmitRoute:
         payload = json.loads(response.body)
         assert payload["error"] == "ACTIVE_TASK_EXISTS"
         assert payload["task_id"] == str(task_id)
+        assert payload["cloud_record_id"] == str(record_id)
         active_mock.assert_awaited_once()
         quota_mock.assert_not_awaited()
         submit_mock.assert_not_awaited()
