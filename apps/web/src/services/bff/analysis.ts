@@ -172,7 +172,7 @@ export async function submitAnalysisFromWeb(input: {
     taskId: upstreamResult.data.task_id,
     recordId,
     status: upstreamResult.data.status,
-    readerUrl: `/app/reader/${recordId}`,
+    readerUrl: `/reader/${recordId}`,
     message:
       upstreamResult.data.status === "succeeded"
         ? "解析完成，正在打开 Reader。"
@@ -221,7 +221,7 @@ export async function getAnalysisTaskStatusFromWeb(
     taskId: upstreamResult.data.task_id,
     recordId,
     status: upstreamResult.data.status,
-    readerUrl: `/app/reader/${recordId}`,
+    readerUrl: `/reader/${recordId}`,
     failureCode: upstreamResult.data.failure_code,
     failureMessage: upstreamResult.data.failure_message,
   };

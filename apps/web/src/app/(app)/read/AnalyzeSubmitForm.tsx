@@ -40,7 +40,7 @@ const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 45;
 
 function readerRoute(recordId: string | undefined): Route {
-  return `/app/reader/${recordId || "demo-record"}` as Route;
+  return `/reader/${recordId || "demo-record"}` as Route;
 }
 
 export function AnalyzeSubmitForm() {

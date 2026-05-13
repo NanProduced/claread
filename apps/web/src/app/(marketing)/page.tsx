@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Route } from "next";
 
 const links: Array<{ href: Route; label: string }> = [
-  { href: "/app", label: "Open app" },
+  { href: "/read", label: "Read" },
   { href: "/help", label: "Help" },
   { href: "/about", label: "About" },
 ];
@@ -39,10 +39,10 @@ export default function HomePage() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/app"
+              href="/read"
               className="rounded-md bg-[var(--accent)] px-5 py-3 text-sm font-medium text-[var(--accent-foreground)]"
             >
-              Enter app
+              Start reading
             </Link>
             <Link
               href="/share/demo"

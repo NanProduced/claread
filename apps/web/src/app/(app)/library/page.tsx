@@ -1,5 +1,12 @@
 import Link from "next/link";
+import type { Route } from "next";
 import { getRecordList, type RecordsDataSource } from "@/services/bff/records";
+
+const readRoute = "/read" as Route;
+
+function readerRoute(recordId: string): Route {
+  return `/reader/${recordId}` as Route;
+}
 
 const goalLabel: Record<string, string> = {
   academic: "学术摘要",
@@ -27,7 +34,7 @@ export default async function HistoryPage() {
               {dataSourceLabel[dataSource]}
             </p>
           </div>
-          <Link href="/app" className="rounded-pill bg-surface border border-hairline px-4 py-2 text-[0.8125rem] font-semibold text-ink hover:border-muted transition-colors">
+          <Link href={readRoute} className="rounded-pill bg-surface border border-hairline px-4 py-2 text-[0.8125rem] font-semibold text-ink hover:border-muted transition-colors">
             新解析
           </Link>
         </header>
@@ -36,7 +43,7 @@ export default async function HistoryPage() {
           {records.map((record) => (
             <Link
               key={record.id}
-              href={`/app/reader/${record.id}`}
+              href={readerRoute(record.id)}
               className="group p-5 bg-surface rounded-note border border-hairline shadow-surface-quiet hover:border-muted transition-colors flex flex-col md:flex-row justify-between md:items-center gap-4"
             >
               <div className="flex flex-col gap-2 flex-1">

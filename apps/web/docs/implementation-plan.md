@@ -20,17 +20,19 @@ Web 首期遵循：
 
 ## 当前实现基线
 
-Wave 1 的临时任务已完成并整合为当前 Web mock 基线：
+Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入“小程序 MVP 功能 Web 化”阶段：
 
-- 已有 `/app`、`/app/history`、`/app/vocabulary`、`/app/profile` 和 `/app/reader/[recordId]` 的功能页骨架。
+- 已有 `/read`、`/library`、`/vocabulary`、`/settings`、`/login` 和 `/reader/[recordId]` 的首期产品化路由；开发阶段不保留已废弃功能前缀的兼容层。
 - `apps/web/src/lib/mock-data.ts` 提供 history、vocabulary、quota、reader demo 数据。
 - `apps/web/src/types/view/` 提供首批 Web VM：`RecordListItemVm`、`VocabularyItemVm`、`QuotaVm`、`ReaderMockVm`。
 - Reader mock 数据覆盖 `translations`、`inlineMarks`、`sentenceEntries`，并覆盖 `vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`sentence_analysis`。
-- Web BFF/API 第一条窄路径已建立：`services/api/` 提供 server-only FastAPI upstream client，`services/bff/` 处理 Web session 投影，`adapters/records.adapter.ts` 将 `RecordResponse` / `render_scene_json` 投影为 Reader VM，`/app/reader/[recordId]` 会先尝试真实记录详情再回落 mock。
-- `/app` 已接入真实解析提交窄路径：页面提交到 `/api/web/analysis/submit`，BFF 调 FastAPI `/analysis-tasks`，同步等待超时后通过 `/api/web/analysis/tasks/[taskId]` 轮询，成功后进入 `/app/reader/[cloudRecordId]`。
-- `/app` 最近记录和 `/app/history` 已通过 Web BFF 接入 FastAPI `/records` 列表，上游可用时使用云端 `analysis_records.id` 进入 Reader；匿名、mock 登录或上游不可用时保留 mock fallback。列表请求默认不拉取 `render_scene_json`。
+- Web BFF/API 第一条窄路径已建立：`services/api/` 提供 server-only FastAPI upstream client，`services/bff/` 处理 Web session 投影，`adapters/records.adapter.ts` 将 `RecordResponse` / `render_scene_json` 投影为 Reader VM，`/reader/[recordId]` 会先尝试真实记录详情再回落 mock。
+- `/read` 已接入真实解析提交窄路径：页面提交到 `/api/web/analysis/submit`，BFF 调 FastAPI `/analysis-tasks`，同步等待超时后通过 `/api/web/analysis/tasks/[taskId]` 轮询，成功后进入 `/reader/[cloudRecordId]`。
+- `/read` 最近记录和 `/library` 已通过 Web BFF 接入 FastAPI `/records` 列表，上游可用时使用云端 `analysis_records.id` 进入 Reader；匿名、mock 登录或上游不可用时保留 mock fallback。列表请求默认不拉取 `render_scene_json`。
 - Reader 已能把真实 `render_scene_json` 中的 `multi_text` anchor 作为“结构线索”展示在句子下方和轻旁注中，不把非连续片段强行伪装成 inline highlight。
-- 尚未接入 TanStack Query、词典和生词本。手机号登录链路已具备开发期 mock、Web BFF cookie 投影和 FastAPI `aliyun_dypnsapi` provider，后续重点是登录页切到上游联调、补频控和正式账号绑定 UI。
+- `/settings` 已通过 Web BFF 读取 FastAPI `/auth/session/me` 和 `/me/quota`；本地 mock 手机号状态只显示明确不可用提示，不再伪造额度。
+- 词典 BFF 已接入 FastAPI `/dict` 和 `/dict/entry`，返回 Web 专用 `entry` / `disambiguation` / `not_found` / `error` union，不向页面暴露原始 FastAPI DTO。
+- 尚未接入 TanStack Query、生词本真实列表、复习、收藏、反馈和用户批注。手机号登录链路已具备开发期 mock、Web BFF cookie 投影和 FastAPI `aliyun_dypnsapi` provider，后续重点是补齐小程序 baseline 的剩余 API 和正式账号绑定 UI。
 
 因此下一阶段开发应沿已有 BFF / adapter 边界继续接入，不要继续扩散临时 mock 结构，也不要让页面直接消费 FastAPI 原始 DTO。
 
@@ -44,15 +46,15 @@ Wave 1 的临时任务已完成并整合为当前 Web mock 基线：
 
 | 模块 | Web 页面 | 后端依赖 | 首期要求 |
 | --- | --- | --- | --- |
-| 输入与分析提交 | `/app` | `POST /analysis-tasks` | 可提交文本并进入任务状态 |
-| 任务状态 | `/app` / reader pending state | `GET /analysis-tasks/{id}` | 轮询成功/失败/额度不足 |
-| 结果阅读 | `/app/reader/[recordId]` | `GET /records/{id}` 或任务结果 | 渲染现有 `render_scene` |
-| 历史记录 | `/app/history` | `GET /records` | 列表、进入详情 |
+| 输入与分析提交 | `/read` | `POST /analysis-tasks` | 可提交文本并进入任务状态 |
+| 任务状态 | `/read` / reader pending state | `GET /analysis-tasks/{id}` | 轮询成功/失败/额度不足 |
+| 结果阅读 | `/reader/[recordId]` | `GET /records/{id}` 或任务结果 | 渲染现有 `render_scene` |
+| 历史记录 | `/library` | `GET /records` | 列表、进入详情 |
 | 词典查词 | Reader popover | `GET /dict` / `GET /dict/entry` | 点击词或标注查词 |
-| 登录 / 配额 | `/app/login`, `/app/profile` | Next.js BFF + session / quota APIs | 手机号短信登录为目标；开发期可用受控调试态 |
+| 登录 / 配额 | `/login`, `/settings` | Next.js BFF + session / quota APIs | 手机号短信登录为目标；开发期可用受控调试态 |
 | 收藏 | Reader / history | favorites APIs | 可延后到第一波后段 |
-| 生词本 | `/app/vocabulary` | vocabulary APIs | 先读列表，再支持写入 |
-| 生词复习 | `/app/review` | review APIs | 第二波 |
+| 生词本 | `/vocabulary` | vocabulary APIs | 先读列表，再支持写入 |
+| 生词复习 | `/review` | review APIs | 第二波 |
 | 反馈 | Reader feedback | feedback APIs | 第二波 |
 
 验收标准：
@@ -109,15 +111,15 @@ Wave 1 的临时任务已完成并整合为当前 Web mock 基线：
 | 路由 | 优先级 | 说明 |
 | --- | --- | --- |
 | `/` | P2 | 占位入口，不做完整 landing |
-| `/app` | P0 | 粘贴即解读首页，最近记录入口 |
-| `/app/login` | P0/P1 | Web auth 入口，取决于后端 auth readiness |
-| `/app/reader/[recordId]` | P0 | 核心 Reader |
-| `/app/history` | P0 | 历史记录 |
-| `/app/vocabulary` | P1 | 生词本 |
-| `/app/review` | P1 | 生词复习 |
-| `/app/profile` | P1 | 用户、配额、设置 |
+| `/read` | P0 | 粘贴即解读首页，最近记录入口 |
+| `/login` | P0/P1 | Web auth 入口，取决于后端 auth readiness |
+| `/reader/[recordId]` | P0 | 核心 Reader |
+| `/library` | P0 | 历史记录 |
+| `/vocabulary` | P1 | 生词本 |
+| `/review` | P1 | 生词复习 |
+| `/settings` | P1 | 用户、配额、设置 |
 | `/share/[shareId]` | P1/P2 | 分享页，SSR metadata |
-| `/app/export/[recordId]` | P2 | Artifact Studio |
+| `/export/[recordId]` | P2 | Artifact Studio |
 | `/about`, `/help`, `/blog` | P3 | 先占位，后续内容站阶段再做 |
 
 ## 前端架构建议
@@ -126,7 +128,7 @@ Wave 1 的临时任务已完成并整合为当前 Web mock 基线：
 apps/web/src/
   app/
     (marketing)/            # 占位，不做完整 landing
-    (app)/app/              # 登录后功能页
+    (app)/                  # Web 功能页，使用 /read、/library、/reader 等语义路由
     share/[shareId]/        # 公开分享页
   components/
     app-shell/
@@ -166,10 +168,11 @@ pnpm web:build
 
 关键 UI 改动需要浏览器验证：
 
-- `/app`
-- `/app/reader/demo` 或 mock record
-- `/app/history`
-- `/app/vocabulary`
+- `/read`
+- `/reader/demo-record` 或 mock record
+- `/library`
+- `/vocabulary`
+- `/settings`
 - `/share/demo`
 
 后续补 Playwright smoke：

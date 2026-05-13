@@ -1,11 +1,15 @@
-import { mockQuota } from "@/lib/mock-data";
-import { getWebSession, projectSession } from "@/services/bff/session";
+import { getProfileSettings } from "@/services/bff/profile";
 
 import { LogoutButton } from "./LogoutButton";
 
-export default async function ProfilePage() {
-  const session = projectSession(await getWebSession());
-  const quotaPercent = Math.round((mockQuota.quotaUsed / mockQuota.quotaLimit) * 100);
+export default async function SettingsPage() {
+  const settings = await getProfileSettings();
+  const quota = settings.quota;
+  const quotaPercent = quota
+    ? Math.min(100, Math.round((quota.quotaUsed / Math.max(quota.quotaLimit, 1)) * 100))
+    : 0;
+  const displayName = settings.profile?.nickname || settings.session.phone || "Web User";
+  const avatarText = displayName.trim().slice(0, 1).toUpperCase() || "U";
 
   return (
     <main className="flex-1 flex justify-center py-10 px-6">
@@ -16,46 +20,57 @@ export default async function ProfilePage() {
           </h1>
         </header>
 
-        {/* User Info & Quota */}
         <section className="flex flex-col gap-4">
           <h2 className="text-[1.125rem] font-title font-semibold text-ink">订阅配额</h2>
           <div className="bg-surface rounded-note border border-hairline shadow-surface-quiet p-6 flex flex-col gap-6">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-full bg-lens-blue-soft text-lens-blue flex items-center justify-center font-display font-bold text-xl">
-                U
+                {avatarText}
               </div>
               <div className="flex flex-col">
                 <span className="font-semibold text-ink">
-                  {session.phone ? `手机号用户 ${session.phone}` : "Web User"}
+                  {settings.session.phone ? `手机号用户 ${settings.session.phone}` : displayName}
                 </span>
                 <span className="text-sm text-muted">
-                  {session.authenticated
-                    ? session.upstreamReady
-                      ? "已连接 FastAPI 调试 session"
-                      : "本地 mock 登录态"
-                    : "未登录"}
+                  {settings.status === "ready"
+                    ? "已连接 FastAPI session"
+                    : settings.status === "mock_session"
+                      ? "本地 mock 登录态，未连接真实账户"
+                      : settings.status === "unauthenticated"
+                        ? "未登录"
+                        : "上游账户服务暂不可用"}
                 </span>
               </div>
             </div>
-            
+
             <div className="border-t border-hairline pt-5">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-semibold text-ink">当月解析额度</span>
-                <span className="text-sm text-muted">{mockQuota.quotaUsed} / {mockQuota.quotaLimit} 篇</span>
+                <span className="text-sm font-semibold text-ink">今日解析点数</span>
+                <span className="text-sm text-muted">
+                  {quota ? `${quota.dailyUsedPoints ?? quota.quotaUsed} / ${quota.dailyFreePoints ?? quota.quotaLimit} 点` : "不可用"}
+                </span>
               </div>
               <div className="w-full h-2 bg-web-canvas rounded-full overflow-hidden">
                 <div className="h-full bg-lens-blue rounded-full" style={{ width: `${quotaPercent}%` }}></div>
               </div>
-              <p className="text-[0.75rem] text-muted mt-3">额度将在 {new Date(mockQuota.resetAt ?? "").toLocaleDateString("zh-CN")} 重置</p>
+              {quota ? (
+                <p className="text-[0.75rem] text-muted mt-3">
+                  剩余 {quota.remainingPoints ?? 0} 点，奖励点数 {quota.bonusPoints ?? 0} 点。
+                </p>
+              ) : (
+                <p className="text-[0.75rem] text-muted mt-3">{settings.message}</p>
+              )}
             </div>
-            
-            <button className="w-full py-2.5 bg-ink text-surface rounded-pill text-[0.8125rem] font-semibold mt-2">
-              升级订阅
+
+            <button
+              className="w-full py-2.5 bg-web-canvas text-muted rounded-pill text-[0.8125rem] font-semibold mt-2 cursor-not-allowed"
+              disabled
+            >
+              订阅升级暂未开放
             </button>
           </div>
         </section>
 
-        {/* Reader Settings */}
         <section className="flex flex-col gap-4">
           <h2 className="text-[1.125rem] font-title font-semibold text-ink">阅读偏好</h2>
           <div className="bg-surface rounded-note border border-hairline shadow-surface-quiet overflow-hidden">
@@ -95,7 +110,6 @@ export default async function ProfilePage() {
           </div>
         </section>
 
-        {/* Actions */}
         <section className="pt-4">
           <LogoutButton />
         </section>

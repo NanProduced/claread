@@ -6,14 +6,14 @@
 
 先设计功能页面，不先做完整 landing / 产品介绍页。首期页面包括：
 
-- `/app`：粘贴即解读入口。
-- `/app/reader/[id]`：核心 Reader。
-- `/app/history`：历史记录。
-- `/app/vocabulary`：生词本。
-- `/app/review`：复习。
-- `/app/profile`：用户、配额、设置。
+- `/read`：粘贴即解读入口。
+- `/reader/[id]`：核心 Reader。
+- `/library`：历史记录。
+- `/vocabulary`：生词本。
+- `/review`：复习。
+- `/settings`：用户、配额、设置。
 - `/share/[id]`：分享页。
-- `/app/export/[id]`：后续导出预览。
+- `/export/[id]`：后续导出预览。
 
 ## 外部灵感提炼
 

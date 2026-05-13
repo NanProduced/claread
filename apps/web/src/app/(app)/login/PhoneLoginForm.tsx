@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 
 type AuthStatus =
@@ -16,6 +17,7 @@ type ApiResponse = {
 
 const REQUEST_CODE_ENDPOINT = "/api/web/auth/phone/request-code";
 const VERIFY_CODE_ENDPOINT = "/api/web/auth/phone/verify-code";
+const settingsRoute = "/settings" as Route;
 
 function normalizeDigits(value: string, maxLength: number) {
   return value.replace(/\D/g, "").slice(0, maxLength);
@@ -164,7 +166,7 @@ export function PhoneLoginForm() {
         message: pickMessage(payload) ?? "登录成功，Web 会话已建立。",
       });
       router.refresh();
-      router.push("/app/profile");
+      router.push(settingsRoute);
     } catch (error) {
       setStatus({
         tone: "error",

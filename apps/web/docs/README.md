@@ -12,6 +12,7 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 | `../DESIGN.md` | Web 端 impeccable 设计系统，限定 Web Reader、轻旁注、Grammar X-Ray、Artifact Studio 方向 |
 | `tech-stack-options.md` | 技术栈备选对比、推荐方案、依赖清单、OpenAPI 类型生成策略 |
 | `api-contract-audit.md` | Web 首期接口审计、枚举审计、错误态审计、需后端新增/增强清单 |
+| `baseline-adaptation-plan.md` | 对照小程序 MVP 的 Web baseline 适配计划、路由语义化、mock 退出策略和分批验收 |
 | `reader-ia.md` | Web Reader 信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统、历史回看 |
 | `design/` | Web 端 UI 方向探索、视觉参考、设计纲要草案 |
 

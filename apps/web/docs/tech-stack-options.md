@@ -55,7 +55,7 @@ apps/web/
 
 - Landing / 帮助 / 博客可做 SSG/ISR。
 - `/share/[shareId]` 可做 SSR 或可缓存动态渲染，并生成动态 metadata / OG image。
-- `/app/*` 登录后页面可用 Server Components 加 Client Components 混合实现。
+- `/read`、`/reader/*`、`/library` 等功能页面可用 Server Components 加 Client Components 混合实现。
 - Route Handlers 可做很薄的 Web BFF：设置 httpOnly cookie、代理 FastAPI、保护服务端 token。
 - 文件路由、metadata、sitemap、robots、OG image、font/image 优化都在同一框架内。
 
@@ -238,10 +238,10 @@ app/
 │   ├── page.tsx                 # 公开分享结果页
 │   └── opengraph-image.tsx      # 动态 OG 图
 ├── (app)/
-│   ├── app/page.tsx             # 输入 / 工作台
-│   ├── app/reader/[recordId]/page.tsx
-│   ├── app/history/page.tsx
-│   └── app/login/page.tsx
+│   ├── read/page.tsx            # 输入 / 工作台
+│   ├── reader/[recordId]/page.tsx
+│   ├── library/page.tsx
+│   └── login/page.tsx
 ├── api/
 │   └── auth/*/route.ts          # 仅 Web BFF / cookie 设置，不写业务后端
 ├── layout.tsx
@@ -286,7 +286,7 @@ pnpm --dir apps/web run test:e2e
 Playwright smoke test 需要覆盖：
 
 - `/` landing 占位可访问，metadata 正确。
-- `/app` 功能入口可渲染。
+- `/read` 功能入口可渲染。
 - 输入文本并提交分析。
 - Reader 渲染正文、翻译、inline marks、sentence entries。
 - 选区工具栏出现并能创建批注。

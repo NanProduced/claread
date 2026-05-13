@@ -1,6 +1,13 @@
 import Link from "next/link";
+import type { Route } from "next";
 import { getRecordList } from "@/services/bff/records";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
+
+const libraryRoute = "/library" as Route;
+
+function readerRoute(recordId: string): Route {
+  return `/reader/${recordId}` as Route;
+}
 
 export default async function PasteToReadPage() {
   const { records: recentRecords } = await getRecordList({ limit: 2 });
@@ -23,7 +30,7 @@ export default async function PasteToReadPage() {
         <section className="mt-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-[1.125rem] font-title font-semibold text-ink">最近记录</h2>
-            <Link href="/app/history" className="text-[0.8125rem] font-semibold text-muted hover:text-ink">
+            <Link href={libraryRoute} className="text-[0.8125rem] font-semibold text-muted hover:text-ink">
               查看全部
             </Link>
           </div>
@@ -31,7 +38,7 @@ export default async function PasteToReadPage() {
             {recentRecords.map((record) => (
               <Link
                 key={record.id}
-                href={`/app/reader/${record.id}`}
+                href={readerRoute(record.id)}
                 className="group p-4 bg-surface rounded-md border border-hairline hover:border-muted transition-colors flex justify-between items-center"
               >
                 <div className="flex flex-col gap-1">

@@ -1,7 +1,7 @@
 /**
  * Mock 数据
  *
- * 供 /app、history、vocabulary、profile、reader demo 使用。
+ * 供 /read、library、vocabulary、settings、reader demo 使用。
  * 不接真实 API，不改后端。
  * 类型简单可读，后续可被真实 adapter 替换。
  */
@@ -11,7 +11,7 @@ import type { VocabularyItemVm } from '@/types/view/VocabularyItemVm'
 import type { QuotaVm } from '@/types/view/QuotaVm'
 import type { ReaderMockVm } from '@/types/view/ReaderMockVm'
 
-// ============ /app 主页 Mock ============
+// ============ /read 主页 Mock ============
 
 export const mockAppStats = {
   totalRecords: 12,

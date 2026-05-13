@@ -7,4 +7,9 @@ export interface QuotaVm {
   quotaLimit: number
   quotaType: 'daily' | 'monthly' | 'unlimited'
   resetAt?: string
+  dailyFreePoints?: number
+  dailyUsedPoints?: number
+  bonusPoints?: number
+  remainingPoints?: number
+  unit?: 'points'
 }

@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
+
+const loginRoute = "/login" as Route;
 
 export function LogoutButton() {
   const router = useRouter();
@@ -11,7 +14,7 @@ export function LogoutButton() {
     setPending(true);
     await fetch("/api/web/auth/logout", { method: "POST" });
     router.refresh();
-    router.push("/app/login");
+    router.push(loginRoute);
   }
 
   return (

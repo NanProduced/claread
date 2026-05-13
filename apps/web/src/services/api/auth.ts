@@ -5,6 +5,7 @@ import type {
   LogoutResponseDto,
   PhoneCodeResponseDto,
   PhoneVerifyResponseDto,
+  SessionInfoResponseDto,
 } from "@/types/api/auth";
 
 export function requestUpstreamPhoneCode(
@@ -32,5 +33,13 @@ export function logoutUpstreamSession(
   return fastApiFetch<LogoutResponseDto>("/auth/session/logout", {
     method: "POST",
     body: JSON.stringify({ session_token: sessionToken }),
+  });
+}
+
+export function getUpstreamSessionMe(
+  sessionToken: string,
+): Promise<UpstreamResult<SessionInfoResponseDto>> {
+  return fastApiFetch<SessionInfoResponseDto>("/auth/session/me", {
+    sessionToken,
   });
 }
