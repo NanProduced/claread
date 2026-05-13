@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-13T00:00:00+08:00",
+  "title": "Design System: Claread Web Functional UI",
+  "extensions": {
+    "colorMeta": {
+      "web-canvas": {
+        "role": "neutral",
+        "displayName": "Clean Web Canvas",
+        "canonical": "#F7F6F2",
+        "tonalRamp": ["#292824", "#44413A", "#625D52", "#827B70", "#A39D91", "#C6BFB4", "#E5E0D8", "#F7F6F2"]
+      },
+      "reader-paper": {
+        "role": "neutral",
+        "displayName": "Reader Paper",
+        "canonical": "#FAF9F6",
+        "tonalRamp": ["#2B2925", "#46423B", "#635D52", "#837B6F", "#A59E92", "#C7C0B4", "#E6E1D8", "#FAF9F6"]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Printed Ink",
+        "canonical": "#111111",
+        "tonalRamp": ["#111111", "#262626", "#404040", "#5C5C5C", "#7A7A7A", "#9B9B9B", "#C7C7C7", "#ECECEC"]
+      },
+      "lens-blue": {
+        "role": "primary",
+        "displayName": "Claread Lens Blue",
+        "canonical": "#155CFF",
+        "tonalRamp": ["#061536", "#0A2460", "#0E358E", "#1248C3", "#155CFF", "#5A8AFF", "#A3BEFF", "#EAF1FF"]
+      },
+      "grammar-violet": {
+        "role": "secondary",
+        "displayName": "Grammar Violet",
+        "canonical": "#746694",
+        "tonalRamp": ["#1D182A", "#302744", "#463B60", "#5C5079", "#746694", "#9B8EBA", "#C4BCDB", "#F1EEFA"]
+      }
+    },
+    "typographyMeta": {
+      "reading": {
+        "displayName": "Web Reading Serif",
+        "purpose": "English article body, example sentences, and Reader excerpts."
+      },
+      "body": {
+        "displayName": "Web System UI",
+        "purpose": "Chinese explanations, controls, panels, and utility surfaces."
+      },
+      "display": {
+        "displayName": "Artifact Display",
+        "purpose": "Share/export covers and rare brand moments."
+      }
+    },
+    "shadows": [
+      {
+        "name": "surface-quiet",
+        "value": "0 1px 2px rgba(17, 17, 17, 0.03), 0 8px 24px rgba(17, 17, 17, 0.04)",
+        "purpose": "Ordinary note cards, history rows, paste entry surfaces."
+      },
+      {
+        "name": "reader-float",
+        "value": "0 14px 42px rgba(28, 24, 18, 0.11)",
+        "purpose": "Dictionary popovers, grammar notes, selection toolbar."
+      },
+      {
+        "name": "artifact-lift",
+        "value": "0 28px 90px rgba(17, 17, 17, 0.16)",
+        "purpose": "Export and share previews."
+      }
+    ],
+    "motion": [
+      {
+        "name": "reader-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Reader notes, popovers, rail transitions."
+      },
+      {
+        "name": "artifact-reveal",
+        "value": "cubic-bezier(0.19, 1, 0.22, 1)",
+        "purpose": "Template and export preview transitions."
+      }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "0px" },
+      { "name": "tablet", "value": "768px" },
+      { "name": "desktop", "value": "1024px" },
+      { "name": "wide", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Editorial Reader",
+      "kind": "custom",
+      "refersTo": "reader-surface",
+      "description": "Default Web Reader: single-column article with progressive annotations.",
+      "html": "<article class=\"ds-web-reader\"><h1>The world's largest ever digital camera has become operational</h1><p><mark>has become operational</mark> in an observatory in Chile.</p></article>",
+      "css": ".ds-web-reader { max-width: 780px; margin: 0 auto; padding: 64px 48px; background: #FAF9F6; color: #111111; } .ds-web-reader h1 { margin: 0 0 36px; font: 650 42px/1.18 Source Serif Pro, Georgia, serif; } .ds-web-reader p { margin: 0; font: 400 20px/1.9 Source Serif Pro, Georgia, serif; } .ds-web-reader mark { background: rgba(228,176,0,0.24); color: inherit; padding: 0 3px; border-radius: 4px; }"
+    },
+    {
+      "name": "Light Marginalia Note",
+      "kind": "card",
+      "refersTo": "note-card",
+      "description": "Quiet right-rail or floating note tied to the current sentence.",
+      "html": "<aside class=\"ds-web-note\"><strong>新闻导语式主谓宾结构</strong><p>句子主干是 The camera has become operational，地点状语补充背景。</p></aside>",
+      "css": ".ds-web-note { width: 300px; padding: 18px 20px; border-radius: 16px; background: #FFFFFF; color: #111111; border: 1px solid rgba(17,17,17,0.06); box-shadow: 0 1px 2px rgba(17,17,17,0.03), 0 8px 24px rgba(17,17,17,0.04); } .ds-web-note strong { display: block; margin-bottom: 10px; font: 650 15px/1.35 -apple-system, BlinkMacSystemFont, Inter, PingFang SC, sans-serif; } .ds-web-note p { margin: 0; color: #4A4A4A; font: 400 14px/1.65 -apple-system, BlinkMacSystemFont, Inter, PingFang SC, sans-serif; }"
+    },
+    {
+      "name": "Grammar X-Ray Label",
+      "kind": "custom",
+      "refersTo": "lens-focus",
+      "description": "Focused syntax label for Web's signature grammar visualization mode.",
+      "html": "<span class=\"ds-xray-label\">主干</span>",
+      "css": ".ds-xray-label { display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 8px; background: #155CFF; color: #FFFFFF; font: 700 12px/1 -apple-system, BlinkMacSystemFont, Inter, sans-serif; box-shadow: 0 8px 22px rgba(21,92,255,0.18); }"
+    },
+    {
+      "name": "Artifact Preview Card",
+      "kind": "card",
+      "refersTo": "note-card",
+      "description": "Premium share/export preview for long image, PDF, or Markdown output.",
+      "html": "<section class=\"ds-artifact-card\"><small>Grammar X-Ray Notes</small><h2>Long Sentence Breakdown</h2><p>结构、语法和译文被整理成可保存的精读笔记。</p></section>",
+      "css": ".ds-artifact-card { width: 380px; padding: 34px; border-radius: 28px; background: #FBFAF6; color: #111111; border: 1px solid #E8E4DA; box-shadow: 0 28px 90px rgba(17,17,17,0.16); } .ds-artifact-card small { display: block; margin-bottom: 18px; color: #155CFF; font: 700 11px/1.2 -apple-system, BlinkMacSystemFont, Inter, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; } .ds-artifact-card h2 { margin: 0 0 16px; font: 650 31px/1.14 Source Serif Pro, Georgia, serif; } .ds-artifact-card p { margin: 0; color: #4A4A4A; font: 400 15px/1.7 -apple-system, BlinkMacSystemFont, Inter, PingFang SC, sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Editorial Reading Instrument",
+    "overview": "Claread Web 是一个功能优先的高保真阅读空间。它不靠 landing 建立第一印象，而靠粘贴即解读、文章解析页、历史/生词/复习这些日常功能，以及后续分享和导出产物来建立品牌记忆。",
+    "keyCharacteristics": [
+      "Functional pages first, but with premium craft.",
+      "Single-column reader by default, progressive marginalia when needed.",
+      "Grammar X-Ray as the memorable Web-native capability.",
+      "Artifact Studio as a second-stage export/share surface."
+    ],
+    "rules": [
+      {
+        "name": "The Reader Paper Rule",
+        "body": "文章所在区域必须有明确阅读面。不要让文章漂在普通后台灰底上。",
+        "section": "colors"
+      },
+      {
+        "name": "The Reader Weight Rule",
+        "body": "正文不能被控件字体压过。控件可以清晰，但不应比文章更有存在感。",
+        "section": "typography"
+      },
+      {
+        "name": "The Shell Recedes Rule",
+        "body": "应用壳永远比 Reader 轻。侧栏、顶栏、历史面板不能抢正文。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do 先做 /app、Reader、history、vocabulary、review、profile、share 等功能页。",
+      "Do 让 Reader 成为 Web 端的品牌第一现场。",
+      "Do 默认单栏阅读，让轻旁注渐进出现。"
+    ],
+    "donts": [
+      "Don't 先投入完整 landing 和产品介绍页。",
+      "Don't 使用传统 SaaS dashboard 作为 Web 默认形态。",
+      "Don't 把右侧栏做成 AI chat。"
+    ]
+  }
+}

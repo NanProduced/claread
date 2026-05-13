@@ -16,8 +16,11 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 
 | 文档 | 用途 |
 |------|------|
+| `PRODUCT.md` | impeccable 跨端产品与品牌上下文，定义 Claread 总体定位和设计原则 |
+| `DESIGN.md` | impeccable 跨端设计系统，定义 Claread 品牌调性、视觉规则和组件角色 |
 | `docs/product/overview.md` | 产品定位、用户、核心链路 |
 | `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
+| `docs/product/competitive-landscape.md` | 阅读、笔记、英语学习和 AI 竞品格局，以及 Claread 差异化 |
 | `docs/development/mainline.md` | 迁移完成后的主线推进流程 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
 | `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
@@ -39,6 +42,9 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 - 后端文档默认描述通用 API 服务，不把后端写成“小程序后端”。
 - 历史探索、临时 handoff、review、tracker 不进入新仓库主线文档。
 - 不把迁移过程写成主线文档；必要时只记录多端化决策、当前目录边界和可运行状态。
+- 任务分配、子任务拆分、agent prompt、执行跟踪等过程文档必须标注 `TMP`，优先放到对应目录的 `tmp/` 下。
+- `tmp/` 文档不作为长期事实来源。任务完成后应删除，或将仍然有效的结论压缩回正式文档。
+- 定期清理进度类文档，避免文档堆积、过期信息和开发 agent 业务漂移。
 
 ## 代码结构概览
 

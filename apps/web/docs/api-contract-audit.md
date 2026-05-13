@@ -1,0 +1,239 @@
+# API 契约审计
+
+本文审计 Claread Web 首期需要的后端接口、字段、枚举和错误态，以及当前在 OpenAPI / response_model 中的稳定性。
+
+审计基于 `services/api/` 当前代码（2026-05），对照小程序冻结基线和小程序 API 消费模式。
+
+## Web 首期接口审计
+
+### 认证
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /auth/wechat/login` | ✅ `WeChatLoginResponse` | 🟢 稳定 | Web 不使用此接口 |
+| `GET /auth/session/me` | ✅ `SessionInfoResponse` | 🟢 稳定 | Web 复用，需确认 session_token 机制兼容 |
+| `PATCH /auth/profile` | ✅ `ProfileUpdateResponse` | 🟢 稳定 | Web 复用 |
+| `POST /auth/session/logout` | ✅ `LogoutResponse` | 🟢 稳定 | Web 复用 |
+| `POST /auth/email/request` | ❌ 不存在 | 🔴 需新建 | Web 登录入口：发送 magic link |
+| `POST /auth/email/verify` | ❌ 不存在 | 🔴 需新建 | Web 登录验证：magic link 换 session_token |
+
+### 分析
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /analyze` | ✅ `AnyRenderSceneModel` | 🟢 稳定 | 匿名/调试用，Web 可用 |
+| `POST /analysis-tasks` | ✅ `TaskSubmitResponse` | 🟢 稳定 | Web 主链路，`wait_for_result=true` 对 Web 更友好 |
+| `GET /analysis-tasks/current` | ✅ `ActiveTaskResponse` | 🟢 稳定 | Web 复用 |
+| `GET /analysis-tasks/{task_id}` | ✅ `TaskStatusResponse` | 🟢 稳定 | Web 轮询或 SSE |
+
+### 记录
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /records` | ✅ `RecordUpsertResponse` | 🟢 稳定 | Web 需自己生成 `client_record_id` |
+| `GET /records` | ✅ `RecordListResponse` | 🟢 稳定 | Web 需搜索/筛选扩展（按 goal/type/日期） |
+| `GET /records/{record_id}` | ✅ `RecordResponse` | 🟡 需增强 | Web 需要 `include_render_scene=true` 默认打开 |
+| `GET /records/by-client-id/{id}` | ✅ `RecordResponse` | 🟢 稳定 | Web 复用 |
+| `PATCH /records/{record_id}` | ✅ `RecordResponse` | 🟢 稳定 | Web 复用 |
+| `DELETE /records/{record_id}` | ✅ `RecordDeleteResponse` | 🟢 稳定 | Web 复用 |
+
+### 配额
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `GET /me/quota` | ✅ `QuotaResponse` | 🟢 稳定 | Web 复用 |
+| `GET /me/quota/anonymous` | ✅ `AnonymousQuotaResponse` | 🟢 稳定 | Web 复用 |
+| `POST /me/quota/check` | ✅ `QuotaCheckResponse` | 🟢 稳定 | Web 复用 |
+| `GET /me/credit/ledger` | ✅ `LedgerListResponse` | 🟢 稳定 | Web 复用 |
+
+### 词典
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `GET /dict` | ✅ `DictionaryLookupResult` | 🟢 稳定 | Web 浮层高频调用，已有 Cache-Control: max-age=3600 |
+| `GET /dict/entry` | ✅ `DictionaryEntryResult` | 🟢 稳定 | Web 词典详情页 |
+
+### 生词本
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /vocabulary` | ✅ `VocabularyUpsertResponse` | 🟢 稳定 | Web 第二波 |
+| `GET /vocabulary` | ✅ `VocabularyListResponse` | 🟢 稳定 | Web 第二波 |
+| `PATCH /vocabulary/{id}` | ✅ `VocabularyResponse` | 🟢 稳定 | Web 第二波 |
+| `DELETE /vocabulary/{id}` | ✅ `VocabularyDeleteResponse` | 🟢 稳定 | Web 第二波 |
+| `POST /vocabulary/highlights` | ✅ `VocabHighlightsResponse` | 🟢 稳定 | Web reader 高亮匹配 |
+| `GET /vocabulary/review/due` | ✅ `ReviewResultResponse` | 🟢 稳定 | Web 第二波 |
+| `POST /vocabulary/review/submit` | ✅ `ReviewResultResponse` | 🟢 稳定 | Web 第二波 |
+
+### 收藏
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /favorites` | 🟡 返回 `dict` 而非 model | 🟡 需修复 | 返回 `{"id": str, "ok": True}`，应改为 `FavoriteCreateResponse` |
+| `GET /favorites` | ✅ `FavoriteListResponse` | 🟢 稳定 | Web 第二波 |
+| `DELETE /favorites/target` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web 第二波 |
+
+### 反馈
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /feedback` | ✅ `FeedbackResponse` | 🟢 稳定 | Web 第二波 |
+| `GET /feedback` | ✅ `FeedbackListResponse` | 🟢 稳定 | Web 第二波 |
+
+### 每日精读
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `GET /daily-reader/today` | ✅ `DailyReaderTodayResponse` | 🟡 需增强 | `body`/`highlights`/`paragraph_notes`/`takeaways` 均为 `dict` |
+| `GET /daily-reader` | ✅ `DailyReaderListResponse` | 🟢 稳定 | 列表项不含 body，结构已明确 |
+| `GET /daily-reader/{article_id}` | ✅ `DailyReaderArticleResponse` | 🟡 需增强 | 同 today，详情的 body 等字段未结构化 |
+
+### 批注
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /user-annotations` | ✅ `UserAnnotationResponse` | 🟢 稳定 | Web 批注核心，`text_range` anchor_type 是 Web 独有增强点 |
+| `GET /user-annotations` | ✅ `UserAnnotationListResponse` | 🟢 稳定 | Web 复用 |
+| `PATCH /user-annotations/{id}` | ✅ `UserAnnotationResponse` | 🟢 稳定 | Web 复用 |
+| `DELETE /user-annotations/{id}` | ✅ `{"ok": True}` | 🟢 稳定 | Web 复用 |
+
+### 健康
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `GET /health` | ✅ | 🟢 稳定 | Web 前端健康检查 |
+
+## 枚举审计
+
+### 已稳定枚举（Web 完整复用）
+
+| 枚举 | 当前值 | 来源 |
+|------|--------|------|
+| `SourceType` | `user_input / daily_article / imported / ocr` | `schemas/analysis.py` |
+| `ReadingGoal` | `exam / daily_reading / academic` | `schemas/internal/analysis.py` |
+| `ReadingVariant` | 9 种：`gaokao / cet / kaoyan / tem / ielts_toefl / beginner_reading / intermediate_reading / intensive_reading / academic_general` | `schemas/internal/analysis.py` |
+| `TaskStatus` | `queued / running / finalizing / succeeded / failed / cancelled / expired` | `schemas/tasks.py` |
+| `UserFacingState` | `normal / degraded_light / degraded_heavy` | `schemas/analysis.py` |
+| `MasteryStatus` | `new / learning / review / mastered / archived` | DB CHECK |
+| `AnnotationType` | `highlight / note` | DB CHECK |
+| `AnchorType` | `sentence / paragraph / text_range` | DB CHECK |
+| `AnnotationColor` | `soft_green / soft_blue / soft_purple / warm_yellow / sage_green` | DB CHECK |
+| `FeedbackScope` | `analysis_result / annotation / sentence / dictionary / app` | `schemas/feedback.py` |
+| `Sentiment` | `positive / negative / neutral` | `schemas/feedback.py` |
+| `InlineMarkRenderType` | `background / underline` | `schemas/analysis.py` |
+| `VisualTone` | `vocab / phrase / context / grammar` | `schemas/analysis.py` |
+| `AnnotationType (mark)` | `vocab_highlight / phrase_gloss / context_gloss / grammar_note` | `schemas/analysis.py` |
+| `AcademicAnnotationType` | `term_note / logic_note` | `schemas/analysis.py` |
+| `AcademicVisualTone` | `term / logic` | `schemas/analysis.py` |
+| `SchemaVersion` | `3.0.0 / 3.0.0-academic` | `schemas/analysis.py` |
+
+### Web 可能需要扩展的枚举
+
+| 枚举 | 当前值 | Web 扩展建议 |
+|------|--------|-------------|
+| `SourceType` | `user_input / daily_article / imported / ocr` | 新增 `web_clip` 或 `url_import`（Web 端粘贴 URL 导入） |
+| `client_platform` (session) | `wechat_miniprogram` | 新增 `web` |
+| `provider` (identity) | `wechat_miniprogram` | 新增 `email` |
+
+## 错误态审计
+
+### HTTP 状态码
+
+| 状态码 | 触发场景 | 当前处理 | Web 需要补充 |
+|--------|---------|---------|-------------|
+| 400 | 请求参数无效 | FastAPI 自动 422 | Web 需表单验证 + 友好提示 |
+| 401 | token 无效/过期 | `HTTPException(401, detail=...)` | Web 需自动跳登录页 + token 刷新 |
+| 404 | 记录/词条不存在 | `HTTPException(404, detail=...)` | Web 需空态/404 页面 |
+| 422 | 模型选择失败 / 参数校验失败 | `ModelSelectionError → 422` / FastAPI validation | Web 需友好提示 |
+| 500 | 服务器内部错误 | `HTTPException(500, detail=...)` | Web 需通用错误页 + 重试 |
+| 502 | 上游服务错误 | analyze 路由 | Web 需重试 UI |
+| 503 | 词典服务不可用 | `HTTPException(503)` | Web 浮层需降级提示 |
+
+### 业务错误态
+
+| 场景 | 当前处理 | Web 需要补充 |
+|------|---------|-------------|
+| 额度不足 | `InsufficientCredits` → 403 或 422 | Web 需额度引导页 + 充值/反馈入口 |
+| 活跃任务冲突 | `ActiveTaskConflict` → 409 | Web 需冲突处理 UI：跳转到当前任务 |
+| 匿名额度耗尽 | `check_and_consume_anonymous_trial` | Web 需引导登录 |
+| 词典未找到 | `DictionaryNotFoundResult` (HTTP 200) | Web 浮层需空态设计 |
+| 词典歧义 | `DictionaryDisambiguationResult` (HTTP 200) | Web 浮层需候选选择 UI |
+| 分析结果降级 | `user_facing_state: degraded_light / degraded_heavy` | Web 可对 degraded 做更精细降级提示 |
+| 分析任务失败 | `failure_code + failure_message` | Web 需失败详情页 + 重试 |
+
+## 需后端新增/增强的接口
+
+### 🔴 必须新增（Web 首期阻塞）
+
+1. **`POST /auth/email/request`** — 发送 magic link
+   - 请求：`{ email: string }`
+   - 响应：`{ ok: bool, message: string }`
+   - 限制：同一 email 频率限制（如 60s 内最多 1 次）
+
+2. **`POST /auth/email/verify`** — 验证 magic link 换 session_token
+   - 请求：`{ token: string }`
+   - 响应：`WeChatLoginResponse` 复用（`user_id / session_token / expires_at`）
+   - 逻辑：查 `user_identities` 找 `provider=email` 的 identity，创建 session
+
+### 🟡 需要增强（Web 体验提升）
+
+3. **Daily Reader schema 结构化** — `body`/`highlights`/`paragraph_notes`/`takeaways` 从 `dict` 升级为 Pydantic model
+   - 当前 `DailyReaderArticleResponse` 中这四个字段是 `dict`，前端无法类型安全消费
+   - 小程序已有完整 DTO 定义（`daily-reader.dto.ts`），可直接对齐
+
+4. **`GET /records` 搜索/筛选增强** — Web 需要按 `reading_goal`、`source_type`、日期范围筛选
+   - 当前只有 `page`/`limit`/`include_render_scene` 参数
+   - 建议新增：`reading_goal`/`source_type`/`date_from`/`date_to`/`search` 参数
+
+5. **`POST /favorites` response_model 修复** — 当前返回 `dict` 而非 `FavoriteCreateResponse`
+
+### 🟢 可选增强（后续优化）
+
+6. **SSE / WebSocket 任务进度推送** — 替代轮询，Web 可选
+7. **`POST /auth/email/register`** — 独立注册（如果 magic link 不够）
+8. **`GET /records/{id}` 默认 include_render_scene** — 减少前端二次请求
+9. **CORS / 同源代理配置** — 开发环境需要支持 Next.js 本地端口，生产建议由 Next.js / Nginx 反代到 FastAPI，优先减少浏览器跨域面
+
+## 小程序 DTO 与后端 Schema 对齐状态
+
+小程序已有完整的 DTO 层（`src/types/api/`），与后端 Pydantic schema 基本对齐。Web 可参考但不直接复用（小程序是 Taro 上下文，字段命名和类型映射不同）。
+
+| 后端 Schema | 小程序 DTO | 对齐状态 |
+|-------------|-----------|---------|
+| `RenderSceneModel` | `AnalyzeResponseDto` | ✅ 完整对齐 |
+| `AcademicRenderSceneModel` | `AcademicAnalyzeResponseDto` | ✅ 完整对齐 |
+| `DictionaryLookupResult` | `DictResponseDto` | ✅ 完整对齐 |
+| `DailyReaderArticleResponse` | `DailyReaderArticleDto` | 🟡 小程序 DTO 更细致（body/paragraphs/highlights 已结构化），后端仍是 `dict` |
+| `TaskSubmitResponse` | 内联处理 | ✅ 对齐 |
+| `VocabularyResponse` | `VocabularyResponseDto` | ✅ 对齐 |
+| `UserAnnotationResponse` | 无独立 DTO | 🟡 小程序直接用 VM |
+
+## Web 前端 adapter 层设计
+
+Web 需要自己的 DTO → VM adapter，模式参考小程序 `services/api/adapters/`：
+
+```
+apps/web/src/
+├── types/
+│   ├── api/                    # 来自 @claread/contracts 的类型重导出
+│   └── view/                   # Web 前端 VM 类型
+├── adapters/
+│   ├── analysis.adapter.ts     # AnyRenderSceneModel → Web RenderSceneVm
+│   ├── dict.adapter.ts         # DictionaryLookupResult → Web DictVm
+│   ├── records.adapter.ts      # RecordResponse → Web RecordVm
+│   └── daily-reader.adapter.ts # DailyReaderArticleResponse → Web DailyReaderVm
+└── services/
+    └── api/
+        ├── client.ts           # fetch 封装 + auth/error 处理；仅在明确需要时引入 Axios
+        ├── auth.ts             # 登录/登出/session 管理
+        ├── analysis.ts         # 分析任务 API
+        ├── records.ts          # 记录 API
+        ├── dict.ts             # 词典 API
+        └── vocabulary.ts       # 生词本 API（第二波）
+```
+
+adapter 层职责：
+- snake_case → camelCase 字段映射
+- 轻量结构适配（如 `dict` 字段的结构化解析）
+- 不引入业务逻辑
+- 不在其他位置做字段转换

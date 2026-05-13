@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-13T00:00:00+08:00",
+  "title": "Design System: Claread Cross-Client Design System",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "primary",
+        "displayName": "Printed Ink",
+        "canonical": "#111111",
+        "tonalRamp": ["#111111", "#262626", "#404040", "#5C5C5C", "#7A7A7A", "#9B9B9B", "#C7C7C7", "#ECECEC"]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Warm Paper",
+        "canonical": "#FAF9F6",
+        "tonalRamp": ["#2B2925", "#46423B", "#635D52", "#837B6F", "#A59E92", "#C7C0B4", "#E6E1D8", "#FAF9F6"]
+      },
+      "lens-blue": {
+        "role": "primary",
+        "displayName": "Claread Lens Blue",
+        "canonical": "#155CFF",
+        "tonalRamp": ["#061536", "#0A2460", "#0E358E", "#1248C3", "#155CFF", "#5A8AFF", "#A3BEFF", "#EAF1FF"]
+      },
+      "amber-marker": {
+        "role": "secondary",
+        "displayName": "Amber Marker",
+        "canonical": "#E4B000",
+        "tonalRamp": ["#3A2A00", "#5B4200", "#805D00", "#A77B00", "#C99800", "#E4B000", "#F4D36E", "#FFF3C2"]
+      },
+      "grammar-violet": {
+        "role": "secondary",
+        "displayName": "Grammar Violet",
+        "canonical": "#746694",
+        "tonalRamp": ["#1D182A", "#302744", "#463B60", "#5C5079", "#746694", "#9B8EBA", "#C4BCDB", "#F1EEFA"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Editorial Display",
+        "purpose": "Brand moments, landing headlines, share covers, major artifacts."
+      },
+      "reading": {
+        "displayName": "Reading Serif",
+        "purpose": "English paragraphs, examples, article titles and exported reading material."
+      },
+      "body": {
+        "displayName": "System UI",
+        "purpose": "Chinese explanations, controls, menus and utility surfaces."
+      }
+    },
+    "shadows": [
+      {
+        "name": "paper-lift",
+        "value": "0 4px 18px rgba(17, 17, 17, 0.05)",
+        "purpose": "Cards, note slips, small reader panels."
+      },
+      {
+        "name": "floating-note",
+        "value": "0 14px 44px rgba(28, 24, 18, 0.12)",
+        "purpose": "Word popup, grammar note, contextual toolbar."
+      },
+      {
+        "name": "artifact-preview",
+        "value": "0 24px 80px rgba(17, 17, 17, 0.14)",
+        "purpose": "Export preview, PDF or long-image composition."
+      }
+    ],
+    "motion": [
+      {
+        "name": "reader-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Reader notes, floating explanations and quiet transitions."
+      },
+      {
+        "name": "artifact-reveal",
+        "value": "cubic-bezier(0.19, 1, 0.22, 1)",
+        "purpose": "Share/export preview transitions and material reveal moments."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "0px"
+      },
+      {
+        "name": "tablet",
+        "value": "768px"
+      },
+      {
+        "name": "desktop",
+        "value": "1024px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Reading Surface",
+      "kind": "custom",
+      "refersTo": "reading-surface",
+      "description": "The central article surface where Claread must feel like a calm reading lens.",
+      "html": "<article class=\"ds-reading-surface\"><h1>The world's largest ever digital camera has become operational</h1><p>Astronomers will now commence a period of testing before the observatory begins its work.</p></article>",
+      "css": ".ds-reading-surface { max-width: 760px; margin: 0 auto; padding: 56px 40px; background: #FAF9F6; color: #111111; } .ds-reading-surface h1 { font: 650 42px/1.18 Source Serif Pro, Georgia, serif; margin: 0 0 32px; letter-spacing: normal; } .ds-reading-surface p { font: 400 20px/1.85 Source Serif Pro, Georgia, serif; margin: 0; }"
+    },
+    {
+      "name": "Explanation Note",
+      "kind": "card",
+      "refersTo": "explanation-note",
+      "description": "Structured AI output presented as an edited note, not a chat message.",
+      "html": "<aside class=\"ds-explanation-note\"><strong>主谓宾结构</strong><p>这句话的主干是 The camera has become operational，地点状语补充背景。</p></aside>",
+      "css": ".ds-explanation-note { width: 320px; padding: 20px 24px; border-radius: 18px; background: #FFFFFF; color: #111111; box-shadow: 0 4px 18px rgba(17,17,17,0.05); border: 1px solid rgba(17,17,17,0.06); } .ds-explanation-note strong { display: block; font: 650 15px/1.35 -apple-system, BlinkMacSystemFont, Inter, PingFang SC, sans-serif; margin-bottom: 10px; } .ds-explanation-note p { margin: 0; font: 400 14px/1.65 -apple-system, BlinkMacSystemFont, Inter, PingFang SC, sans-serif; color: #3F3F3F; }"
+    },
+    {
+      "name": "Lens Accent",
+      "kind": "custom",
+      "refersTo": "lens-accent",
+      "description": "A focused blue light used sparingly for brand moments and active syntax focus.",
+      "html": "<span class=\"ds-lens-accent\">Grammar X-Ray</span>",
+      "css": ".ds-lens-accent { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 8px; background: #155CFF; color: #FFFFFF; font: 650 12px/1 -apple-system, BlinkMacSystemFont, Inter, sans-serif; letter-spacing: 0.02em; box-shadow: 0 8px 24px rgba(21,92,255,0.18); }"
+    },
+    {
+      "name": "Artifact Preview",
+      "kind": "card",
+      "refersTo": "explanation-note",
+      "description": "A share/export object that can be more expressive while staying editorial.",
+      "html": "<section class=\"ds-artifact-preview\"><small>Claread Grammar X-Ray</small><h2>Long Sentence Breakdown</h2><p>主干、修饰关系和语义层级被整理成可分享的精读笔记。</p></section>",
+      "css": ".ds-artifact-preview { width: 360px; padding: 32px; border-radius: 24px; background: #FBF9F4; color: #111111; border: 1px solid #EAE7DF; box-shadow: 0 24px 80px rgba(17,17,17,0.14); } .ds-artifact-preview small { display: block; color: #155CFF; font: 700 11px/1.2 -apple-system, BlinkMacSystemFont, Inter, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 18px; } .ds-artifact-preview h2 { margin: 0 0 16px; font: 650 30px/1.12 Source Serif Pro, Georgia, serif; } .ds-artifact-preview p { margin: 0; font: 400 15px/1.7 -apple-system, BlinkMacSystemFont, Inter, PingFang SC, sans-serif; color: #4A4A4A; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Reading Lens",
+    "overview": "Claread 的跨端设计系统不是某一种固定页面结构，而是一套可识别的阅读体验原则。小程序、Web、未来 App、分享图和 PDF 可以长得不同，但都应像同一枚阅读镜头照出的结果：清晰、克制、精密、有质感。",
+    "keyCharacteristics": [
+      "Reading first, tools second.",
+      "Grammar and sentence structure are visible, anchored, and beautiful.",
+      "AI output is edited into pages, notes, and artifacts, not dumped as chat.",
+      "Every client can adapt its shell, but must keep Claread's calm confidence."
+    ],
+    "rules": [
+      {
+        "name": "The Lens Blue Rule",
+        "body": "Blue is the brand light, not the background. If a whole screen turns blue, the brand loses its precision.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reader Serif Rule",
+        "body": "Use serif type where the user is reading language. Use sans where the user is operating the product.",
+        "section": "typography"
+      },
+      {
+        "name": "The Text Wins Rule",
+        "body": "If elevation makes the UI object more noticeable than the article, reduce it.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do make the article and its anchored explanations the center of every reading experience.",
+      "Do use Claread's lens metaphor to guide focus, clarity and reveal behavior.",
+      "Do make grammar and sentence analysis visually memorable."
+    ],
+    "donts": [
+      "Don't define Claread by a fixed sidebar, fixed dashboard, fixed card grid or fixed mobile layout.",
+      "Don't make Web copy the miniprogram UI, and don't make miniprogram inherit Web complexity.",
+      "Don't turn the Reader into Word, WPS, a database dashboard, or a generic AI chat."
+    ]
+  }
+}

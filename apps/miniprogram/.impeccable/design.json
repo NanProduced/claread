@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-13T00:00:00+08:00",
+  "title": "Design System: Claread WeChat Mini Program Frozen UI",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Warm Paper",
+        "canonical": "#FAF9F6",
+        "tonalRamp": ["#2A2926", "#47443F", "#666158", "#888175", "#AAA397", "#CBC5B9", "#E8E3D9", "#FAF9F6"]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Printed Ink",
+        "canonical": "#111111",
+        "tonalRamp": ["#111111", "#242424", "#3A3A3A", "#555555", "#767676", "#9A9A9A", "#C6C6C6", "#EAEAEA"]
+      },
+      "annotation-vocab": {
+        "role": "secondary",
+        "displayName": "Soft Amber Marker",
+        "canonical": "#E4B000",
+        "tonalRamp": ["#3A2A00", "#5B4200", "#805D00", "#A77B00", "#C99800", "#E4B000", "#F4D36E", "#FFF3C2"]
+      },
+      "annotation-phrase": {
+        "role": "secondary",
+        "displayName": "Lavender Note",
+        "canonical": "#B9A8E6",
+        "tonalRamp": ["#27213A", "#41355F", "#5D4E86", "#7868A9", "#9585CA", "#B9A8E6", "#D8CEF4", "#F3EEFF"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Editorial Display",
+        "purpose": "Home greetings, article titles and profile numbers."
+      },
+      "body": {
+        "displayName": "Apple System UI",
+        "purpose": "Controls, menus, subtitles and operational copy."
+      },
+      "reading": {
+        "displayName": "Reading Serif",
+        "purpose": "English paragraphs, examples and dictionary context."
+      }
+    },
+    "shadows": [
+      {
+        "name": "paper",
+        "value": "0 4rpx 16rpx rgba(0, 0, 0, 0.04), 0 1rpx 2rpx rgba(0, 0, 0, 0.02)",
+        "purpose": "Default card and profile panels."
+      },
+      {
+        "name": "reader-sm",
+        "value": "0 4rpx 14rpx rgba(17, 17, 17, 0.045)",
+        "purpose": "Word slip and small floating reading aids."
+      },
+      {
+        "name": "toolbar-float",
+        "value": "0 18rpx 46rpx rgba(39, 34, 27, 0.12), 0 4rpx 12rpx rgba(39, 34, 27, 0.05)",
+        "purpose": "Selection toolbar and floating copy menu."
+      }
+    ],
+    "motion": [
+      {
+        "name": "reader-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Reader entrances, sheets and floating tools."
+      },
+      {
+        "name": "spring",
+        "value": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "purpose": "Small touch confirmations where the current baseline already uses spring feedback."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Ink Action",
+      "kind": "button",
+      "refersTo": "primary-action",
+      "description": "Ink-filled capsule or circular action used only for decisive actions.",
+      "html": "<button class=\"ds-primary-ink-action\">继续阅读</button>",
+      "css": ".ds-primary-ink-action { height: 80rpx; padding: 0 32rpx; border: 0; border-radius: 999rpx; background: #111111; color: #FFFFFF; font: 600 28rpx -apple-system, SF Pro Text, PingFang SC, sans-serif; box-shadow: 0 4rpx 16rpx rgba(17,17,17,0.08); transition: transform 0.2s cubic-bezier(0.16,1,0.3,1), opacity 0.2s ease; } .ds-primary-ink-action:active { transform: scale(0.975); opacity: 0.9; }"
+    },
+    {
+      "name": "Paper Card",
+      "kind": "card",
+      "refersTo": "paper-card",
+      "description": "Warm white surface for history, profile and grouped settings.",
+      "html": "<article class=\"ds-paper-card\"><h3>智利启用全球最大数字相机探索宇宙</h3><p>昨天</p></article>",
+      "css": ".ds-paper-card { background: #FFFFFF; color: #111111; border-radius: 28rpx; padding: 40rpx; border: 1rpx solid rgba(0,0,0,0.02); box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.04), 0 1rpx 2rpx rgba(0,0,0,0.02); } .ds-paper-card h3 { margin: 0 0 20rpx; font: 700 36rpx/1.35 Source Serif Pro, Georgia, serif; } .ds-paper-card p { margin: 0; color: #7A7D86; font: 500 22rpx/1.2 -apple-system, SF Pro Text, sans-serif; }"
+    },
+    {
+      "name": "Word Lookup Slip",
+      "kind": "custom",
+      "refersTo": "note-slip",
+      "description": "Compact floating note for dictionary lookup during reading.",
+      "html": "<aside class=\"ds-word-slip\"><strong>commence</strong><span>/kəˈmens/</span><p>vi. 开始; vt. 使开始</p></aside>",
+      "css": ".ds-word-slip { width: 408rpx; padding: 20rpx; border-radius: 24rpx; background: #FFFFFF; color: #111111; box-shadow: 0 4rpx 14rpx rgba(17,17,17,0.045); border: 1rpx solid rgba(17,17,17,0.04); } .ds-word-slip strong { display: block; font: 800 30rpx/1.1 Source Serif Pro, Georgia, serif; margin-bottom: 8rpx; } .ds-word-slip span { display: block; color: #7A7D86; font: 500 22rpx/1.3 -apple-system, SF Pro Text, sans-serif; margin-bottom: 12rpx; } .ds-word-slip p { margin: 0; font: 400 24rpx/1.55 -apple-system, SF Pro Text, PingFang SC, sans-serif; }"
+    },
+    {
+      "name": "Selection Toolbar",
+      "kind": "nav",
+      "refersTo": "note-slip",
+      "description": "Floating contextual toolbar that appears only after selecting text.",
+      "html": "<nav class=\"ds-selection-toolbar\"><button>复制</button><button>标注</button><button>生词</button><button>反馈</button></nav>",
+      "css": ".ds-selection-toolbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6rpx; padding: 10rpx; border-radius: 24rpx; background: rgba(255,253,248,0.98); border: 1rpx solid rgba(43,38,31,0.07); box-shadow: 0 18rpx 46rpx rgba(39,34,27,0.12), 0 4rpx 12rpx rgba(39,34,27,0.05); } .ds-selection-toolbar button { height: 72rpx; border: 0; border-radius: 18rpx; background: transparent; color: rgba(55,54,50,0.88); font: 500 22rpx/1 -apple-system, SF Pro Text, sans-serif; } .ds-selection-toolbar button:active { background: rgba(44,40,32,0.05); transform: scale(0.96); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Magazine Notebook",
+    "overview": "小程序冻结 UI 是一套手机上的纸面阅读系统。它把英文材料当成被编辑整理过的杂志页面，把 AI 解释、词典、生词、反馈和个人资产处理成轻量旁注，而不是工具面板。",
+    "keyCharacteristics": [
+      "Warm paper surfaces, not sterile white app chrome.",
+      "Serif-led reading moments, system sans for operational UI.",
+      "Annotation colors behave like stationery marks, not category badges.",
+      "Cards and sheets are tactile but quiet, using soft shadows and paper borders."
+    ],
+    "rules": [
+      {
+        "name": "The Paper First Rule",
+        "body": "The page background is warm paper by default. Use pure white only for raised surfaces, sheets, cards, input portals and selected tabs.",
+        "section": "colors"
+      },
+      {
+        "name": "The Editorial Serif Rule",
+        "body": "Use serif type where the user is reading, reflecting or recognizing a text. Do not use serif for dense controls, toggles or operational copy.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Heavy Card Rule",
+        "body": "Cards should feel like stacked paper, not plastic panels. If the shadow is visible before the content, it is too strong.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep page backgrounds warm paper and content surfaces white or warm white.",
+      "Do use serif type for English reading, article titles, context examples and reflective content.",
+      "Do keep annotation colors translucent and stationery-like."
+    ],
+    "donts": [
+      "Don't turn Claread into a generic AI chat interface.",
+      "Don't use dashboard-style card grids on the reading page.",
+      "Don't copy this mobile layout as the Web design ceiling."
+    ]
+  }
+}
