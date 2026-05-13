@@ -114,3 +114,34 @@ Web 首期默认采用 A + B 的混合：
 - Artifact Studio 放在第二阶段，不阻塞首期功能页。
 
 这能同时满足“先做功能页面”和“Claread 品牌要有记忆点”。
+
+## 小程序冻结基线校正
+
+Web 细节设计必须先尊重当前小程序和后端 render scene 的事实，不能把已经存在的核心逻辑误画成新的 UI 假设。
+
+### 已实现的解析层
+
+小程序结果页消费后端 `render_scene`，其中 learning schema 已包含：
+
+- `article.paragraphs / article.sentences`：段落、句子和稳定 `sentence_id`。
+- `translations`：逐句中文翻译。
+- `inline_marks`：行内锚点标注，包含 `vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`。
+- `sentence_entries`：句后/句尾解析入口，包含 `grammar_note` 和 `sentence_analysis`。
+- `warnings / user_facing_state`：降级、失败和渲染告警。
+
+Academic schema 另有 `term_note`、`logic_note`、`interpretation_note`、`content_summary` 和 `title`。
+
+### 不应误画的内容
+
+- 不要把“词汇 / 语法 / 句子解析”画成用户选择的 Reader modes。它们不是互斥模式，也不是提交前的功能开关，而是 workflow 根据文章自动生成的解析层。
+- 不要把 Web 右侧栏画成 AI chat 或手动配置面板。它应是当前句、当前段、当前选区相关解析的轻旁注轨道。
+- 不要把 Grammar X-Ray 画成独立产品入口。它更合理的定位是 `sentence_analysis` / `grammar_note` 在 Web 上的高保真展开视图和分享/导出模板。
+
+### 可以存在的 UI 模式
+
+小程序当前有 `原文 / 精读` 显示模式。它是阅读密度和展示方式切换，不改变后端已经生成的解析内容。Web 可以延续这个思想：
+
+- 默认阅读：文章和必要的行内锚点先出现。
+- 精读展开：同一份解析结果里的语法卡片、句子拆解、旁注轨道和用户笔记逐步展开。
+- 轻量 X-Ray：首期只能基于现有 `sentence_analysis.chunks` 和 `grammar_note` 做句子拆分、解释卡片和有限锚点可视化。
+- 真正 X-Ray：如果要展示主干、修饰、从句、非谓语、指代和逻辑关系，需要后续修改 workflow agent schema，引入结构化 `sentence_xray` / `sentence_structure` 输出。不要把当前直出文本型 schema 误画成已经具备完整结构化语法树。

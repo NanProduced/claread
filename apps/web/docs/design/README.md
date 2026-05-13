@@ -7,8 +7,8 @@ Web 端设计必须服从根目录 `PRODUCT.md` / `DESIGN.md` 的跨端总纲，
 ## 当前工作流
 
 1. 调研阅读、笔记、AI、annotation、editorial web design 的视觉模式。
-2. 生成 3-4 个 Web 方向图供选择。
-3. 选定方向后写 `apps/web/PRODUCT.md` 和 `apps/web/DESIGN.md`。
+2. 生成 Web 方向图，指导功能页 UI 开发。
+3. 以 `apps/web/PRODUCT.md` 和 `apps/web/DESIGN.md` 作为正式设计上下文。
 4. 再进入 Web 功能页 IA、组件和实现计划。
 
 ## 已确认原则
@@ -19,7 +19,9 @@ Web 端设计必须服从根目录 `PRODUCT.md` / `DESIGN.md` 的跨端总纲，
 - 不做 SaaS dashboard、Word/WPS 编辑器、NotebookLM 资料工作台或 AI chat 中心。
 - 核心差异化是语法、长难句、段落和篇章解读的可视化。
 
-## 待产出
+## 设计图
 
-- `direction-exploration.md`：设计方向、参考模式、候选方案。
-- `web-design-brief.md`：选定方向后的 Web 设计纲要草案。
+- `mockups/web-ui-direction-board-01.png`：Reader、Reading Studio、Grammar X-Ray、Artifact Studio 多方向设计板。
+- `mockups/desktop-layout-directions-01.png`：Editorial Reader、Reading Studio、Artifact Studio 桌面布局对比设计板。
+
+这些设计图是开发参考图，不是固定像素规范。真正实现时优先服从 `apps/web/DESIGN.md`，并用浏览器截图回看。

@@ -4,18 +4,27 @@
 
 审计基于 `services/api/` 当前代码（2026-05），对照小程序冻结基线和小程序 API 消费模式。
 
+Web 首期不建议让浏览器直接消费 FastAPI 原始端点。推荐路径是：
+
+```text
+Browser -> Next.js BFF / RSC -> FastAPI internal API
+```
+
+因此本文中的 FastAPI 接口多为 BFF 的上游契约；浏览器侧应优先看到 Web 专用投影接口、RSC 数据流或 SSR HTML，而不是直接看到后端原始 DTO、内部 session token 和 workflow 结构。
+
 ## Web 首期接口审计
 
 ### 认证
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /auth/wechat/login` | ✅ `WeChatLoginResponse` | 🟢 稳定 | Web 不使用此接口 |
-| `GET /auth/session/me` | ✅ `SessionInfoResponse` | 🟢 稳定 | Web 复用，需确认 session_token 机制兼容 |
-| `PATCH /auth/profile` | ✅ `ProfileUpdateResponse` | 🟢 稳定 | Web 复用 |
-| `POST /auth/session/logout` | ✅ `LogoutResponse` | 🟢 稳定 | Web 复用 |
-| `POST /auth/email/request` | ❌ 不存在 | 🔴 需新建 | Web 登录入口：发送 magic link |
-| `POST /auth/email/verify` | ❌ 不存在 | 🔴 需新建 | Web 登录验证：magic link 换 session_token |
+| `POST /auth/wechat/login` | ✅ `WeChatLoginResponse` | 🟢 稳定 | 小程序继续使用；Web 后续走微信开放平台登录/绑定，不直接复用小程序 openid |
+| `GET /auth/session/me` | ✅ `SessionInfoResponse` | 🟢 稳定 | BFF 上游可复用；浏览器侧由 `/api/web/session` 等 Web endpoint 投影 |
+| `PATCH /auth/profile` | ✅ `ProfileUpdateResponse` | 🟢 稳定 | BFF 上游可复用 |
+| `POST /auth/session/logout` | ✅ `LogoutResponse` | 🟢 稳定 | BFF 清除 httpOnly cookie 后调用上游登出 |
+| `POST /auth/phone/request-code` | ❌ 不存在 | 🔴 需新建 | Web 登录入口：发送短信验证码，接阿里云短信服务 |
+| `POST /auth/phone/verify-code` | ❌ 不存在 | 🔴 需新建 | 验证手机号验证码，创建内部 session；BFF 写入 httpOnly cookie |
+| `POST /auth/wechat/bind` | ❌ 不存在 | 🟡 后续新增 | 登录用户绑定微信身份；冲突时进入显式账号合并 |
 
 ### 分析
 
@@ -32,10 +41,10 @@
 |------|---------------|---------|-------------|
 | `POST /records` | ✅ `RecordUpsertResponse` | 🟢 稳定 | Web 需自己生成 `client_record_id` |
 | `GET /records` | ✅ `RecordListResponse` | 🟢 稳定 | Web 需搜索/筛选扩展（按 goal/type/日期） |
-| `GET /records/{record_id}` | ✅ `RecordResponse` | 🟡 需增强 | Web 需要 `include_render_scene=true` 默认打开 |
+| `GET /records/{record_id}` | ✅ `RecordResponse` | 🟢 稳定 | 详情接口无 `include_render_scene` 参数；当前返回完整记录详情，Web Reader 进入详情时消费此接口 |
 | `GET /records/by-client-id/{id}` | ✅ `RecordResponse` | 🟢 稳定 | Web 复用 |
 | `PATCH /records/{record_id}` | ✅ `RecordResponse` | 🟢 稳定 | Web 复用 |
-| `DELETE /records/{record_id}` | ✅ `RecordDeleteResponse` | 🟢 稳定 | Web 复用 |
+| `DELETE /records/{record_id}` | ✅ `RecordDeleteResponse` | 🟡 可清理 | 已声明 response_model，当前返回 `{"deleted": True}` 裸 dict，可改为 model 实例 |
 
 ### 配额
 
@@ -69,9 +78,10 @@
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /favorites` | 🟡 返回 `dict` 而非 model | 🟡 需修复 | 返回 `{"id": str, "ok": True}`，应改为 `FavoriteCreateResponse` |
+| `POST /favorites` | ✅ `FavoriteCreateResponse` | 🟡 可清理 | 已声明 response_model，当前返回兼容裸 dict，可改为 model 实例提升一致性 |
 | `GET /favorites` | ✅ `FavoriteListResponse` | 🟢 稳定 | Web 第二波 |
 | `DELETE /favorites/target` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web 第二波 |
+| `DELETE /favorites/{analysis_record_id}` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web 第二波 |
 
 ### 反馈
 
@@ -133,7 +143,7 @@
 |------|--------|-------------|
 | `SourceType` | `user_input / daily_article / imported / ocr` | 新增 `web_clip` 或 `url_import`（Web 端粘贴 URL 导入） |
 | `client_platform` (session) | `wechat_miniprogram` | 新增 `web` |
-| `provider` (identity) | `wechat_miniprogram` | 新增 `email` |
+| `provider` (identity) | `wechat_miniprogram` | 新增 `phone`，后续新增 `wechat_open` |
 
 ## 错误态审计
 
@@ -165,15 +175,16 @@
 
 ### 🔴 必须新增（Web 首期阻塞）
 
-1. **`POST /auth/email/request`** — 发送 magic link
-   - 请求：`{ email: string }`
+1. **`POST /auth/phone/request-code`** — 发送短信验证码
+   - 请求：`{ phone: string }`
    - 响应：`{ ok: bool, message: string }`
-   - 限制：同一 email 频率限制（如 60s 内最多 1 次）
+   - 限制：同一手机号、同一 IP、同一设备指纹频率限制；验证码短 TTL；接入阿里云短信服务
 
-2. **`POST /auth/email/verify`** — 验证 magic link 换 session_token
-   - 请求：`{ token: string }`
+2. **`POST /auth/phone/verify-code`** — 验证短信验证码换内部 session
+   - 请求：`{ phone: string, code: string }`
    - 响应：`WeChatLoginResponse` 复用（`user_id / session_token / expires_at`）
-   - 逻辑：查 `user_identities` 找 `provider=email` 的 identity，创建 session
+   - 逻辑：查 `user_identities` 找 `provider=phone` 的 identity；不存在则创建内部用户和手机号身份；创建 `client_platform=web` 的 session
+   - Web 行为：FastAPI 返回内部 session 后，由 Next.js BFF 设置 httpOnly cookie，浏览器 JS 不直接读取内部 token
 
 ### 🟡 需要增强（Web 体验提升）
 
@@ -185,14 +196,13 @@
    - 当前只有 `page`/`limit`/`include_render_scene` 参数
    - 建议新增：`reading_goal`/`source_type`/`date_from`/`date_to`/`search` 参数
 
-5. **`POST /favorites` response_model 修复** — 当前返回 `dict` 而非 `FavoriteCreateResponse`
+5. **Delete / create response model 代码风格清理** — records / favorites 等少数路由已声明 response_model 但返回裸 dict，可改为 Pydantic model 实例
 
 ### 🟢 可选增强（后续优化）
 
 6. **SSE / WebSocket 任务进度推送** — 替代轮询，Web 可选
-7. **`POST /auth/email/register`** — 独立注册（如果 magic link 不够）
-8. **`GET /records/{id}` 默认 include_render_scene** — 减少前端二次请求
-9. **CORS / 同源代理配置** — 开发环境需要支持 Next.js 本地端口，生产建议由 Next.js / Nginx 反代到 FastAPI，优先减少浏览器跨域面
+7. **`POST /auth/wechat/bind` / 微信开放平台登录** — 后续打通手机号账号与微信身份
+8. **CORS / 同源代理配置** — 若浏览器直连 FastAPI，开发环境需要支持 Next.js 本地端口；采用 Next.js BFF 后，生产优先走服务端上游调用和同源 Web endpoint，减少浏览器跨域面
 
 ## 小程序 DTO 与后端 Schema 对齐状态
 
@@ -210,7 +220,7 @@
 
 ## Web 前端 adapter 层设计
 
-Web 需要自己的 DTO → VM adapter，模式参考小程序 `services/api/adapters/`：
+Web 需要自己的 DTO → VM adapter，模式参考小程序 `services/api/adapters/`。当页面由 Server Component 或 BFF Route Handler 获取数据时，adapter 可放在 server-only 模块中，避免浏览器直接暴露 FastAPI 原始 DTO：
 
 ```
 apps/web/src/
@@ -224,8 +234,8 @@ apps/web/src/
 │   └── daily-reader.adapter.ts # DailyReaderArticleResponse → Web DailyReaderVm
 └── services/
     └── api/
-        ├── client.ts           # fetch 封装 + auth/error 处理；仅在明确需要时引入 Axios
-        ├── auth.ts             # 登录/登出/session 管理
+        ├── client.ts           # BFF/Server fetch 封装 + auth/error 处理；仅在明确需要时引入 Axios
+        ├── auth.ts             # 手机号登录、登出、session 投影
         ├── analysis.ts         # 分析任务 API
         ├── records.ts          # 记录 API
         ├── dict.ts             # 词典 API

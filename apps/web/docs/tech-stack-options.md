@@ -251,10 +251,11 @@ app/
 
 ## 后端适配影响
 
-Next.js 选择会新增两个后端方向：
+Next.js 选择会新增三个后端方向：
 
-1. Web auth adapter：Email + Magic Link，写入 `user_identities(provider='email')` 和 `user_sessions(client_platform='web')`。
-2. 分享 snapshot：支持公开分享页 SSR/metadata，不直接暴露私有 records。
+1. Web auth adapter：手机号 + 短信验证码优先，写入 `user_identities(provider='phone')` 和 `user_sessions(client_platform='web')`；后续支持微信开放平台登录/绑定。
+2. Next.js BFF：浏览器持 httpOnly cookie，BFF 持内部 session token 调 FastAPI；BFF 做聚合和投影，但不复制 workflow、词典、记录、配额等核心后端业务。
+3. 分享 snapshot：支持公开分享页 SSR/metadata，不直接暴露私有 records。
 
 Reader 首期仍直接消费现有 `AnyRenderSceneModel`，不新增 Web render profile。只有当 Web 需要不同字段组合或公开分享脱敏投影时，再定义 `render_target=web_rich` 或 `share_snapshot`。
 

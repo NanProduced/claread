@@ -1,27 +1,64 @@
 @import "tailwindcss";
 
-:root {
-  --background: #fbfaf7;
-  --foreground: #191816;
-  --muted: #6f6a62;
-  --border: #dfd9cf;
-  --surface: #ffffff;
-  --accent: #275d4a;
-  --accent-foreground: #ffffff;
-  --reader-paper: #fffdf8;
-  --reader-ink: #20201d;
+@theme {
+  --color-web-canvas: var(--web-canvas);
+  --color-reader-paper: var(--reader-paper);
+  --color-surface: var(--surface);
+  --color-surface-warm: var(--surface-warm);
+  --color-surface-raised: var(--surface-raised);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-hairline: var(--hairline);
+  --color-lens-blue: var(--lens-blue);
+  --color-lens-blue-soft: var(--lens-blue-soft);
+  --color-vocab-amber: var(--vocab-amber);
+  --color-phrase-lavender: var(--phrase-lavender);
+  --color-context-blue: var(--context-blue);
+  --color-grammar-violet: var(--grammar-violet);
+  --color-structure-green: var(--structure-green);
+  --color-error-red: var(--error-red);
+
+  --font-display: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
+  --font-headline: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
+  --font-reading: "Source Serif Pro", Georgia, "Times New Roman", serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-note: 16px;
+  --radius-panel: 20px;
+  --radius-sheet: 28px;
 }
 
-[data-theme="dark"] {
-  --background: #141413;
-  --foreground: #f3efe7;
-  --muted: #aba398;
-  --border: #34312d;
-  --surface: #1c1b19;
-  --accent: #8ac6a9;
-  --accent-foreground: #102119;
-  --reader-paper: #1a1917;
-  --reader-ink: #f1ecdf;
+:root {
+  --web-canvas: #F7F6F2;
+  --reader-paper: #FAF9F6;
+  --surface: #FFFFFF;
+  --surface-warm: #FBFAF6;
+  --surface-raised: #FDFCF8;
+  --ink: #111111;
+  --ink-soft: #1A1A1A;
+  --muted: #757780;
+  --subtle: #A0A4AB;
+  --hairline: #E8E4DA;
+  --lens-blue: #155CFF;
+  --lens-blue-soft: #EAF1FF;
+  --vocab-amber: #E4B000;
+  --phrase-lavender: #B9A8E6;
+  --context-blue: #4C91C2;
+  --grammar-violet: #746694;
+  --structure-green: #3C8C68;
+  --error-red: #BE123C;
+
+  /* Legacy vars for compatibility if needed */
+  --background: var(--web-canvas);
+  --foreground: var(--ink);
+  --border: var(--hairline);
+  --accent: var(--lens-blue);
+  --accent-foreground: var(--surface);
 }
 
 * {
@@ -30,17 +67,15 @@
 
 html {
   min-height: 100%;
-  background: var(--background);
+  background: var(--web-canvas);
 }
 
 body {
   min-height: 100%;
   margin: 0;
-  background: var(--background);
-  color: var(--foreground);
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  background: var(--web-canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
   letter-spacing: 0;
 }
 
@@ -57,6 +92,9 @@ select {
 }
 
 .reader-serif {
-  font-family:
-    Newsreader, Charter, "Source Serif 4", "Noto Serif", Georgia, serif;
+  font-family: var(--font-reading);
+}
+
+.shadow-surface-quiet {
+  box-shadow: 0 1px 2px rgba(17, 17, 17, 0.03), 0 8px 24px rgba(17, 17, 17, 0.04);
 }
