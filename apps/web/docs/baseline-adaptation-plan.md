@@ -67,9 +67,9 @@ This version does not need final visual polish, but it must not feel like a demo
 User-visible mock data should be removed from the main product path in this order:
 
 1. `/read`, `/library`, `/reader`: replace mock fallback with real empty/error/unauthenticated states. Keep `/reader/demo-record` only as a development preview.
-2. `/settings`: replace mock quota with `/me/quota` and session projection.
-3. `/vocabulary`: replace mock vocabulary with `/vocabulary`.
-4. `/review`: add real due queue and submit review.
+2. `/settings`: replace mock quota with `/me/quota` and session projection. `DONE`
+3. `/vocabulary`: replace mock vocabulary with `/vocabulary`. `DONE`
+4. `/review`: add real due queue and submit review. `DONE`
 5. Move remaining fixture data out of `src/lib/mock-data.ts` into a clearly dev-only fixture location if still needed.
 
 ## Implementation Batches
@@ -79,14 +79,14 @@ User-visible mock data should be removed from the main product path in this orde
 - Add semantic routes and remove rejected route prefixes instead of adding compatibility redirects.
 - Update Web BFF analysis `readerUrl` to `/reader/[cloudRecordId]`.
 - Connect `/settings` to `/auth/session/me` and `/me/quota`.
-- Add dictionary API/BFF and a basic Reader lookup interaction.
+- Add dictionary API/BFF and a basic Reader lookup interaction. `DONE`
 
 ### Batch 2: Vocabulary And Review
 
-- Connect `/vocabulary` to `GET /vocabulary`.
+- Connect `/vocabulary` to `GET /vocabulary`. `DONE`
 - Add Reader "save to vocabulary" for dictionary/inline marks.
-- Add `/review` using `GET /vocabulary/review/due` and `POST /vocabulary/{id}/review`.
-- Remove vocabulary mock from user-visible pages.
+- Add `/review` using `GET /vocabulary/review/due` and `POST /vocabulary/{id}/review`. `DONE`
+- Remove vocabulary mock from user-visible pages. `DONE`
 
 ### Batch 3: User Assets
 

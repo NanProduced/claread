@@ -4,6 +4,7 @@ import type { Route } from "next";
 const readRoute = "/read" as Route;
 const libraryRoute = "/library" as Route;
 const vocabularyRoute = "/vocabulary" as Route;
+const reviewRoute = "/review" as Route;
 const settingsRoute = "/settings" as Route;
 
 export default function AppShellLayout({
@@ -28,6 +29,9 @@ export default function AppShellLayout({
               </Link>
               <Link href={vocabularyRoute} className="hover:text-ink transition-colors">
                 生词本
+              </Link>
+              <Link href={reviewRoute} className="hover:text-ink transition-colors">
+                复习
               </Link>
               <Link href={settingsRoute} className="hover:text-ink transition-colors">
                 设置

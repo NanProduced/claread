@@ -33,7 +33,7 @@ export default async function SettingsPage() {
                 </span>
                 <span className="text-sm text-muted">
                   {settings.status === "ready"
-                    ? "已连接 FastAPI session"
+                    ? "已连接账户"
                     : settings.status === "mock_session"
                       ? "本地 mock 登录态，未连接真实账户"
                       : settings.status === "unauthenticated"

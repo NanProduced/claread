@@ -1,24 +1,13 @@
 /**
  * Mock 数据
  *
- * 供 /read、library、vocabulary、settings、reader demo 使用。
+ * 供 library fallback 和 reader demo 使用。
  * 不接真实 API，不改后端。
  * 类型简单可读，后续可被真实 adapter 替换。
  */
 
 import type { RecordListItemVm } from '@/types/view/RecordListItemVm'
-import type { VocabularyItemVm } from '@/types/view/VocabularyItemVm'
-import type { QuotaVm } from '@/types/view/QuotaVm'
 import type { ReaderMockVm } from '@/types/view/ReaderMockVm'
-
-// ============ /read 主页 Mock ============
-
-export const mockAppStats = {
-  totalRecords: 12,
-  totalWords: 3847,
-  totalVocabulary: 156,
-  streak: 5,
-}
 
 // ============ history Mock ============
 
@@ -63,71 +52,6 @@ export const mockHistoryRecords: RecordListItemVm[] = [
     translationCount: 7,
   },
 ]
-
-// ============ vocabulary Mock ============
-
-export const mockVocabularyList: VocabularyItemVm[] = [
-  {
-    id: 'voc_001',
-    word: 'entanglement',
-    lookupKind: 'word',
-    partOfSpeech: 'noun',
-    contextSentence:
-      'Quantum entanglement is a phenomenon where two or more particles become linked.',
-    contextTranslation: '量子纠缠是一种两个或多个粒子变得关联的现象。',
-    sourceRecordId: 'rec_demo_002',
-    sourceRecordTitle: 'Understanding Quantum Entanglement',
-    createdAt: '2026-05-11T14:30:00Z',
-    mastered: false,
-  },
-  {
-    id: 'voc_002',
-    word: 'infrastructure',
-    lookupKind: 'word',
-    partOfSpeech: 'noun',
-    contextSentence:
-      'AI systems are increasingly integrated into critical infrastructure.',
-    contextTranslation: '人工智能系统正日益集成到关键基础设施中。',
-    sourceRecordId: 'rec_demo_001',
-    sourceRecordTitle: 'The Silent Spring of AI Regulation',
-    createdAt: '2026-05-12T08:45:00Z',
-    mastered: true,
-  },
-  {
-    id: 'voc_003',
-    word: 'renewable energy',
-    lookupKind: 'phrase',
-    contextSentence:
-      'The global shift toward renewable energy sources is reshaping economic structures.',
-    contextTranslation: '全球向可再生能源的转变正在重塑经济结构。',
-    sourceRecordId: 'rec_demo_003',
-    sourceRecordTitle: 'The Economics of Climate Transition',
-    createdAt: '2026-05-10T09:30:00Z',
-    mastered: false,
-  },
-  {
-    id: 'voc_004',
-    word: 'systemic risk',
-    lookupKind: 'phrase',
-    contextSentence:
-      'Regulators are grappling with how to balance innovation against systemic risk.',
-    contextTranslation: '监管机构正在努力平衡创新与系统性风险。',
-    sourceRecordId: 'rec_demo_001',
-    sourceRecordTitle: 'The Silent Spring of AI Regulation',
-    createdAt: '2026-05-12T08:50:00Z',
-    mastered: false,
-  },
-]
-
-// ============ profile / quota Mock ============
-
-export const mockQuota: QuotaVm = {
-  profileId: 'prof_demo_001',
-  quotaUsed: 8,
-  quotaLimit: 20,
-  quotaType: 'daily',
-  resetAt: '2026-05-13T00:00:00Z',
-}
 
 // ============ reader Mock ============
 

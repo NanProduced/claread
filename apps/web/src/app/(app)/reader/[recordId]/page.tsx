@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { getReaderRecord, type ReaderDataSource } from "@/services/bff/reader";
 import type { InlineMarkModel, SentenceModel } from "@/types/view/ReaderMockVm";
+import { DictionaryMark } from "./DictionaryMark";
 
 type ReaderPageProps = {
   params: Promise<{ recordId: string }>;
@@ -25,9 +26,9 @@ const toneLabel: Record<InlineMarkModel["visualTone"], string> = {
 };
 
 const dataSourceLabel: Record<ReaderDataSource, string> = {
-  "upstream-render-scene": "FastAPI Render Scene",
-  "upstream-source-text": "FastAPI Source Text",
-  "mock-fallback": "Mock Fallback",
+  "upstream-render-scene": "解析结果",
+  "upstream-source-text": "原文回退",
+  "mock-fallback": "开发示例",
 };
 
 const entryTypeLabel: Record<string, string> = {
@@ -92,6 +93,14 @@ function markDisplayText(mark: InlineMarkModel): string {
   return mark.lookupText ?? mark.glossary?.zh ?? mark.anchor.anchorText ?? mark.annotationType;
 }
 
+function markLookupType(mark: InlineMarkModel) {
+  return mark.visualTone === "phrase" ? "phrase" : "word";
+}
+
+function markLookupQuery(mark: InlineMarkModel, anchorText: string): string {
+  return mark.lookupText ?? anchorText;
+}
+
 function renderSentenceText(sentence: SentenceModel, marks: InlineMarkModel[]): ReactNode[] {
   const ranges = marks
     .filter((mark) => mark.anchor.kind === "text")
@@ -114,13 +123,16 @@ function renderSentenceText(sentence: SentenceModel, marks: InlineMarkModel[]): 
       nodes.push(sentence.text.slice(cursor, range.start));
     }
     nodes.push(
-      <mark
+      <DictionaryMark
         key={range.mark.id}
         className={`rounded-[3px] px-0.5 ${toneClass[range.mark.visualTone]}`}
+        contextSentence={sentence.text}
+        lookupType={markLookupType(range.mark)}
+        query={markLookupQuery(range.mark, range.anchorText)}
         title={range.mark.glossary?.zh ?? range.mark.lookupText ?? toneLabel[range.mark.visualTone]}
       >
         {range.anchorText}
-      </mark>,
+      </DictionaryMark>,
     );
     cursor = range.end;
   });
@@ -252,7 +264,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
           <div className="border-b border-hairline pb-4">
             <h2 className="font-title text-lg font-semibold tracking-normal text-ink">轻旁注</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              当前页面只消费 Web Reader VM。真实记录由 BFF 投影；不可用时回落到 mock demo。
+              当前句子的词汇、结构和语法线索会在这里集中呈现。
             </p>
           </div>
           <div className="mt-4 space-y-4">
