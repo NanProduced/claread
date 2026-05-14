@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { notFound } from "next/navigation";
 import { getReaderRecord, type ReaderDataSource } from "@/services/bff/reader";
 import type { InlineMarkModel, SentenceModel } from "@/types/view/ReaderMockVm";
 import { DictionaryMark } from "./DictionaryMark";
@@ -28,7 +29,6 @@ const toneLabel: Record<InlineMarkModel["visualTone"], string> = {
 const dataSourceLabel: Record<ReaderDataSource, string> = {
   "upstream-render-scene": "解析结果",
   "upstream-source-text": "原文回退",
-  "mock-fallback": "开发示例",
 };
 
 const entryTypeLabel: Record<string, string> = {
@@ -187,7 +187,28 @@ function renderStructureCues(marks: InlineMarkModel[]) {
 export default async function ReaderPage({ params }: ReaderPageProps) {
   const { recordId } = await params;
   const result = await getReaderRecord(recordId);
-  const { record, dataSource, fallbackReason } = result;
+
+  if (!result.ok) {
+    if (result.status === 404) {
+      notFound();
+    }
+
+    return (
+      <main className="min-h-[calc(100vh-56px)] bg-reader-paper px-5 py-8 text-ink">
+        <section className="mx-auto max-w-2xl rounded-note border border-hairline bg-surface p-8 shadow-surface-quiet">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-lens-blue">
+            Reader
+          </p>
+          <h1 className="mt-3 font-headline text-2xl font-semibold text-ink">
+            无法打开阅读记录
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-muted">{result.message}</p>
+        </section>
+      </main>
+    );
+  }
+
+  const { record, dataSource, message } = result;
   const reader = record.reader;
   const structureMarks = multiTextMarks(reader.inlineMarks);
   const translationBySentence = new Map(
@@ -212,9 +233,9 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
             </div>
           </div>
 
-          {fallbackReason ? (
+          {message ? (
             <div className="mb-6 rounded-md border border-hairline bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
-              {fallbackReason}
+              {message}
             </div>
           ) : null}
 

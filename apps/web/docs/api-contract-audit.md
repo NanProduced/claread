@@ -191,7 +191,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
    - 逻辑：通过阿里云 Dypnsapi 的 `CheckSmsVerifyCode` 核验验证码；查 `user_identities` 找 `provider=phone` 的 identity；不存在则创建内部用户和手机号身份；创建 `client_platform=web` 的 session
    - Web 行为：FastAPI 返回内部 session 后，由 Next.js BFF 设置 httpOnly cookie，浏览器 JS 不直接读取内部 token
 
-当前 Web BFF 已落地同源端点 `/api/web/auth/phone/request-code`、`/api/web/auth/phone/verify-code` 和 `/api/web/auth/logout`。默认 `CLAREAD_PHONE_AUTH_PROVIDER=mock` 时只用于本地 mock 登录和 session cookie 投影，验证码为 `888888`；设置为 `fastapi` 或 `aliyun_dypnsapi` 时，BFF 调用上表中的 FastAPI auth 契约并写入 httpOnly cookie。
+当前 Web BFF 已落地同源端点 `/api/web/auth/phone/request-code`、`/api/web/auth/phone/verify-code` 和 `/api/web/auth/logout`。默认走 `CLAREAD_PHONE_AUTH_PROVIDER=fastapi`，由 BFF 调用 FastAPI auth 契约并写入 httpOnly cookie；开发期验证码由 FastAPI 当前 provider 决定，本地默认可使用 `888888`。
 
 ### 🟡 需要增强（Web 体验提升）
 

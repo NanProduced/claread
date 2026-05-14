@@ -26,7 +26,7 @@ export interface PhoneVerifyResult extends PhoneAuthResult {
 const MOCK_CODE = "888888";
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const PHONE_RE = /^1[3-9]\d{9}$/;
-const PHONE_AUTH_PROVIDER = process.env.CLAREAD_PHONE_AUTH_PROVIDER ?? "mock";
+const PHONE_AUTH_PROVIDER = process.env.CLAREAD_PHONE_AUTH_PROVIDER ?? "fastapi";
 const FASTAPI_PHONE_AUTH_PROVIDERS = new Set(["fastapi", "aliyun-dypnsapi", "aliyun_dypnsapi"]);
 
 function isMockProviderEnabled(): boolean {
@@ -237,7 +237,7 @@ export async function verifyPhoneCode(
     upstreamSessionReady: Boolean(debugToken),
     message: debugToken
       ? "已进入本地调试登录态，并写入 FastAPI debug session。"
-      : "已进入本地 mock 登录态；未配置 FastAPI debug session，真实数据仍会 fallback。",
+      : "已进入本地调试登录态；未配置 FastAPI debug session，真实账户数据不可用。",
   };
 }
 

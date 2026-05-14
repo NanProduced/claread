@@ -1,21 +1,25 @@
 import "server-only";
 
-import { mockHistoryRecords } from "@/lib/mock-data";
 import { listRecords } from "@/services/api/records";
 import { getWebSession, type WebSession } from "@/services/bff/session";
 import type { RecordResponseDto } from "@/types/api/records";
 import type { RecordListItemVm } from "@/types/view/RecordListItemVm";
 
-export type RecordsDataSource = "upstream" | "mock-fallback";
+export type RecordsBffStatus =
+  | "ready"
+  | "unauthenticated"
+  | "mock_session"
+  | "upstream_unavailable"
+  | "upstream_error";
 
 export interface RecordsBffResult {
+  status: RecordsBffStatus;
   records: RecordListItemVm[];
   total: number;
   page: number;
   limit: number;
-  dataSource: RecordsDataSource;
   session: WebSession;
-  fallbackReason?: string;
+  message?: string;
 }
 
 export interface GetRecordsOptions {
@@ -78,22 +82,20 @@ function projectRecordToListItem(record: RecordResponseDto): RecordListItemVm {
   };
 }
 
-function mockResult(
+function emptyResult(
   session: WebSession,
   options: Required<GetRecordsOptions>,
-  fallbackReason?: string,
+  status: RecordsBffStatus,
+  message?: string,
 ): RecordsBffResult {
-  const start = (options.page - 1) * options.limit;
-  const records = mockHistoryRecords.slice(start, start + options.limit);
-
   return {
-    records,
-    total: mockHistoryRecords.length,
+    status,
+    records: [],
+    total: 0,
     page: options.page,
     limit: options.limit,
-    dataSource: "mock-fallback",
     session,
-    fallbackReason,
+    message,
   };
 }
 
@@ -105,31 +107,37 @@ export async function getRecordList(options: GetRecordsOptions = {}): Promise<Re
   const session = await getWebSession();
 
   if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    return mockResult(
+    return emptyResult(
       session,
       normalizedOptions,
+      session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
       session.kind === "mock_phone"
-        ? "Local mock phone session is active, but no FastAPI debug session token is configured."
-        : "No Web session cookie or dev debug session is configured.",
+        ? "当前登录态不能访问真实记录，请使用真实登录会话后查看历史。"
+        : "请先登录后查看历史记录。",
     );
   }
 
   const upstreamResult = await listRecords(session.sessionToken, normalizedOptions);
 
   if (!upstreamResult.ok) {
-    return mockResult(
+    return emptyResult(
       session,
       normalizedOptions,
-      `FastAPI records/list failed (${upstreamResult.status}): ${upstreamResult.message}`,
+      upstreamResult.status === 0 || upstreamResult.status >= 500
+        ? "upstream_unavailable"
+        : "upstream_error",
+      upstreamResult.status === 0 || upstreamResult.status >= 500
+        ? "历史记录服务暂时不可用，请稍后重试。"
+        : upstreamResult.message,
     );
   }
 
   return {
+    status: "ready",
     records: upstreamResult.data.items.map(projectRecordToListItem),
     total: upstreamResult.data.total,
     page: upstreamResult.data.page,
     limit: upstreamResult.data.limit,
-    dataSource: "upstream",
     session,
   };
 }

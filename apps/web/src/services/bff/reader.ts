@@ -1,7 +1,6 @@
 import "server-only";
 
 import { adaptRecordToReaderRecord, type ReaderRecordVm } from "@/adapters/records.adapter";
-import { mockReaderVm } from "@/lib/mock-data";
 import {
   getUpstreamRecordByClientId,
   getUpstreamRecordById,
@@ -11,38 +10,30 @@ import type { RecordResponseDto } from "@/types/api/records";
 
 export type ReaderDataSource =
   | "upstream-render-scene"
-  | "upstream-source-text"
-  | "mock-fallback";
+  | "upstream-source-text";
 
-export interface ReaderBffResult {
-  record: ReaderRecordVm;
-  dataSource: ReaderDataSource;
-  session: WebSession;
-  fallbackReason?: string;
-}
+export type ReaderBffResult =
+  | {
+      ok: true;
+      record: ReaderRecordVm;
+      dataSource: ReaderDataSource;
+      session: WebSession;
+      message?: string;
+    }
+  | {
+      ok: false;
+      status: number;
+      code:
+        | "auth_required"
+        | "upstream_auth_failed"
+        | "record_not_found"
+        | "upstream_unavailable"
+        | "upstream_error";
+      message: string;
+      session: WebSession;
+    };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function mockReaderRecord(recordId: string): ReaderRecordVm {
-  return {
-    id: recordId,
-    title: "The Silent Spring of AI Regulation",
-    createdAt: "2026-05-12T08:30:00Z",
-    sourceText: mockReaderVm.article.sentences.map((sentence) => sentence.text).join(" "),
-    readingGoal: mockReaderVm.request.readingGoal,
-    readingVariant: mockReaderVm.request.readingVariant,
-    analysisStatus: "mock",
-    reader: mockReaderVm,
-  };
-}
-
-function resolveRecordId(recordId: string): string {
-  if (recordId === "demo-record" && process.env.CLAREAD_WEB_DEMO_RECORD_ID) {
-    return process.env.CLAREAD_WEB_DEMO_RECORD_ID;
-  }
-
-  return recordId;
-}
 
 function hasRenderableScene(record: RecordResponseDto): boolean {
   const scene = record.render_scene_json;
@@ -60,40 +51,54 @@ export async function getReaderRecord(recordId: string): Promise<ReaderBffResult
 
   if (session.kind === "anonymous" || session.kind === "mock_phone") {
     return {
-      record: mockReaderRecord(recordId),
-      dataSource: "mock-fallback",
+      ok: false,
+      status: 401,
+      code: "auth_required",
       session,
-      fallbackReason:
+      message:
         session.kind === "mock_phone"
-          ? "Local mock phone session is active, but no FastAPI debug session token is configured."
-          : "No Web session cookie or dev debug session is configured.",
+          ? "当前登录态不能访问真实记录，请使用真实登录会话后打开 Reader。"
+          : "请先登录后打开 Reader。",
     };
   }
 
-  const upstreamRecordId = resolveRecordId(recordId);
-  const upstreamResult = UUID_RE.test(upstreamRecordId)
-    ? await getUpstreamRecordById(upstreamRecordId, session.sessionToken)
-    : await getUpstreamRecordByClientId(upstreamRecordId, session.sessionToken);
+  const upstreamResult = UUID_RE.test(recordId)
+    ? await getUpstreamRecordById(recordId, session.sessionToken)
+    : await getUpstreamRecordByClientId(recordId, session.sessionToken);
 
   if (!upstreamResult.ok) {
     return {
-      record: mockReaderRecord(recordId),
-      dataSource: "mock-fallback",
+      ok: false,
+      status: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+      code:
+        upstreamResult.status === 0 || upstreamResult.status >= 500
+          ? "upstream_unavailable"
+          : upstreamResult.status === 401
+            ? "upstream_auth_failed"
+            : upstreamResult.status === 404
+              ? "record_not_found"
+              : "upstream_error",
       session,
-      fallbackReason: `FastAPI records/detail failed (${upstreamResult.status}): ${upstreamResult.message}`,
+      message:
+        upstreamResult.status === 0 || upstreamResult.status >= 500
+          ? "Reader 记录服务暂时不可用，请稍后重试。"
+          : upstreamResult.status === 404
+            ? "没有找到这条阅读记录。"
+            : upstreamResult.message,
     };
   }
 
   const record = adaptRecordToReaderRecord(upstreamResult.data);
 
   return {
+    ok: true,
     record,
     dataSource: hasRenderableScene(upstreamResult.data)
       ? "upstream-render-scene"
       : "upstream-source-text",
     session,
-    fallbackReason: hasRenderableScene(upstreamResult.data)
+    message: hasRenderableScene(upstreamResult.data)
       ? undefined
-      : "FastAPI record exists but render_scene_json is missing or incomplete; rendering source_text only.",
+      : "这条记录暂时没有完整解析结果，当前仅显示原文。",
   };
 }

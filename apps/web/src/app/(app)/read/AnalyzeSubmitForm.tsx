@@ -38,9 +38,10 @@ interface AnalysisTaskStatusResponse {
 const TERMINAL_STATUS = new Set(["succeeded", "failed", "cancelled", "expired"]);
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 45;
+const libraryRoute = "/library" as Route;
 
-function readerRoute(recordId: string | undefined): Route {
-  return `/reader/${recordId || "demo-record"}` as Route;
+function readerRoute(recordId: string): Route {
+  return `/reader/${recordId}` as Route;
 }
 
 export function AnalyzeSubmitForm() {
@@ -109,7 +110,10 @@ export function AnalyzeSubmitForm() {
         const latest = await pollTaskUntilReady(payload.taskId);
 
         if (latest.status === "succeeded") {
-          router.push((latest.readerUrl as Route | undefined) || readerRoute(latest.recordId));
+          router.push(
+            (latest.readerUrl as Route | undefined) ||
+              (latest.recordId ? readerRoute(latest.recordId) : libraryRoute),
+          );
           return;
         }
 
@@ -122,7 +126,10 @@ export function AnalyzeSubmitForm() {
       }
 
       setState({ kind: "success", message: payload.message });
-      router.push((payload.readerUrl as Route | undefined) || readerRoute(payload.recordId));
+      router.push(
+        (payload.readerUrl as Route | undefined) ||
+          (payload.recordId ? readerRoute(payload.recordId) : libraryRoute),
+      );
     } catch (error) {
       setState({
         kind: "error",
@@ -132,6 +139,7 @@ export function AnalyzeSubmitForm() {
   }
 
   const isPending = state.kind === "pending";
+  const errorRecordId = state.kind === "error" ? state.recordId : undefined;
 
   return (
     <section className="bg-surface shadow-surface-quiet rounded-note border border-hairline overflow-hidden focus-within:border-muted transition-colors flex flex-col">
@@ -178,11 +186,11 @@ export function AnalyzeSubmitForm() {
           }`}
         >
           {state.message}
-          {state.kind === "error" && state.recordId ? (
+          {errorRecordId ? (
             <button
               type="button"
               className="ml-3 font-semibold text-ink underline decoration-hairline underline-offset-4"
-              onClick={() => router.push(readerRoute(state.recordId))}
+              onClick={() => router.push(readerRoute(errorRecordId))}
             >
               打开当前任务
             </button>

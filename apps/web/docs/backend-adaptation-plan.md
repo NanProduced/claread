@@ -215,7 +215,7 @@ BFF 不负责：
 6. BFF projection：不要让浏览器直接消费 `/analysis-tasks`、`/records/{id}`、`/vocabulary` 等 FastAPI 原始端点。
 7. 补齐影响 OpenAPI 生成的 response model；已声明 model 但返回裸 dict 的路由可逐步清理，不阻塞 Web 首期。
 
-Web 当前已先落地本地 mock 登录流程：`/api/web/auth/phone/request-code` 和 `/api/web/auth/phone/verify-code` 只在 Next.js BFF 内使用 mock 验证码，写入 httpOnly mock phone cookie；如果设置了 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`，同时写入上游 session cookie 用于 FastAPI 调试。该实现只用于首期联调，不替代后端正式 phone auth。
+Web 当前登录流程默认通过 Next.js BFF 调用 FastAPI phone auth：`/api/web/auth/phone/request-code` 和 `/api/web/auth/phone/verify-code` 写入 httpOnly Web session cookie。开发期验证码由 FastAPI 当前 provider 决定，本地默认可使用 `888888`。
 
 后端当前已落地统一 identity 基础：`/auth/phone/request-code`、`/auth/phone/verify-code`、`/auth/phone/bind`、`/auth/wechat/bind`。手机号登录创建/复用 `user_identities(provider='phone')`，微信小程序继续使用 `provider='wechat_miniprogram'`，绑定冲突返回 409，不做静默账号/资产合并。Dypnsapi 配置集中在 FastAPI：本地默认 `PHONE_AUTH_PROVIDER=mock`；真实短信设置 `PHONE_AUTH_PROVIDER=aliyun_dypnsapi`、`ALIYUN_DYPNSAPI_SIGN_NAME`、`ALIYUN_DYPNSAPI_LOGIN_TEMPLATE_CODE=100001`，AK/SK 可用 `ALIYUN_DYPNSAPI_*` 或 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`。
 

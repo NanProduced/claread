@@ -10,13 +10,9 @@ export async function GET(_request: Request, context: ReaderRouteContext) {
   const { recordId } = await context.params;
   const result = await getReaderRecord(recordId);
 
-  return NextResponse.json({
-    record: result.record,
-    dataSource: result.dataSource,
-    session: {
-      mode: result.session.kind,
-      source: result.session.source,
-    },
-    fallbackReason: result.fallbackReason,
-  });
+  if (!result.ok) {
+    return NextResponse.json(result, { status: result.status });
+  }
+
+  return NextResponse.json(result);
 }

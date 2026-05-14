@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Route } from "next";
-import { getRecordList, type RecordsDataSource } from "@/services/bff/records";
+import { getRecordList, type RecordsBffStatus } from "@/services/bff/records";
 
 const readRoute = "/read" as Route;
 
@@ -14,13 +14,17 @@ const goalLabel: Record<string, string> = {
   exam: "备考精读",
 };
 
-const dataSourceLabel: Record<RecordsDataSource, string> = {
-  upstream: "已连接云端记录",
-  "mock-fallback": "当前显示示例记录",
+const statusLabel: Record<RecordsBffStatus, string> = {
+  ready: "已同步",
+  unauthenticated: "未登录",
+  mock_session: "登录态不可用",
+  upstream_unavailable: "服务暂不可用",
+  upstream_error: "读取失败",
 };
 
 export default async function HistoryPage() {
-  const { records, dataSource } = await getRecordList({ limit: 50 });
+  const { records, status, message, total } = await getRecordList({ limit: 50 });
+  const hasRecords = records.length > 0;
 
   return (
     <main className="flex-1 flex justify-center py-10 px-6">
@@ -31,8 +35,9 @@ export default async function HistoryPage() {
               历史记录
             </h1>
             <p className="text-[0.75rem] text-muted">
-              {dataSourceLabel[dataSource]}
+              {total} 条记录 · {statusLabel[status]}
             </p>
+            {message ? <p className="mt-2 max-w-2xl text-[0.8125rem] text-muted">{message}</p> : null}
           </div>
           <Link href={readRoute} className="rounded-pill bg-surface border border-hairline px-4 py-2 text-[0.8125rem] font-semibold text-ink hover:border-muted transition-colors">
             新解析
@@ -40,7 +45,7 @@ export default async function HistoryPage() {
         </header>
 
         <section className="flex flex-col gap-4">
-          {records.map((record) => (
+          {hasRecords ? records.map((record) => (
             <Link
               key={record.id}
               href={readerRoute(record.id)}
@@ -65,7 +70,16 @@ export default async function HistoryPage() {
                 </svg>
               </div>
             </Link>
-          ))}
+          )) : (
+            <div className="rounded-note border border-hairline bg-surface p-8 text-center shadow-surface-quiet">
+              <h2 className="font-headline text-xl font-semibold text-ink">
+                {status === "ready" ? "还没有阅读记录" : statusLabel[status]}
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-muted">
+                {message ?? "提交一次真实解析后，这里会显示你的阅读记录。"}
+              </p>
+            </div>
+          )}
         </section>
       </div>
     </main>

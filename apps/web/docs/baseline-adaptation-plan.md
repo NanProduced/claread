@@ -55,7 +55,7 @@ Implementation rule: route groups may still use `(app)`, but the URL and source 
 This version does not need final visual polish, but it must not feel like a demo:
 
 - The Reader must have a stable paper surface and 65-75ch line length.
-- Engineering diagnostics like `mock-fallback` or `FastAPI Render Scene` should become low-priority debug text or disappear from user-facing surfaces.
+- Engineering diagnostics such as upstream source names or adapter states should not appear on user-facing surfaces.
 - Empty, error, loading, unauthenticated, insufficient quota, active task conflict, and degraded analysis states must be explicit.
 - Lists should be quiet asset lists, not dashboard card grids.
 - Reader marks need semantic meaning and accessible interaction. Color is not the only signal.
@@ -66,11 +66,11 @@ This version does not need final visual polish, but it must not feel like a demo
 
 User-visible mock data should be removed from the main product path in this order:
 
-1. `/read`, `/library`, `/reader`: replace mock fallback with real empty/error/unauthenticated states. Keep `/reader/demo-record` only as a development preview.
+1. `/read`, `/library`, `/reader`: replace mock fallback with real empty/error/unauthenticated states. `DONE`
 2. `/settings`: replace mock quota with `/me/quota` and session projection. `DONE`
 3. `/vocabulary`: replace mock vocabulary with `/vocabulary`. `DONE`
 4. `/review`: add real due queue and submit review. `DONE`
-5. Move remaining fixture data out of `src/lib/mock-data.ts` into a clearly dev-only fixture location if still needed.
+5. Remove fixture data rather than carrying a dev-only mock path. `DONE`
 
 ## Implementation Batches
 
