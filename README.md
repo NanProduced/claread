@@ -1,13 +1,14 @@
 # Claread
 
-Claread 是一个多端英文阅读辅助产品。当前可运行基线包含：
+Claread 是一个多端英文阅读辅助产品。当前稳定基线包含：
 
 - `services/api/`：通用 FastAPI 后端。
 - `apps/miniprogram/`：微信小程序客户端。
+- `apps/web/`：Web baseline，通过 Next.js BFF 接入真实后端。
 - `infra/docker/`：本地 PostgreSQL / Redis。
 - `infra/migrations/0001_initial_schema.sql`：当前 pre-release 数据库基线。
 
-微信小程序是第一个客户端，不是 Claread 的架构中心。后续 Web、Directus 内部工具、评测系统和 few-shot RAG 都应复用同一套后端业务核心和 PostgreSQL 数据。
+微信小程序是第一个客户端，不是 Claread 的架构中心。Web、Directus 内部工具、评测系统和 few-shot RAG 都应复用同一套后端业务核心和 PostgreSQL 数据。
 
 ## 快速入口
 
@@ -15,7 +16,7 @@ Claread 是一个多端英文阅读辅助产品。当前可运行基线包含：
 docs/README.md                       # 文档地图
 docs/product/overview.md             # 产品定位
 docs/product/current-state.md        # 当前状态和下一步
-docs/development/mainline.md         # 后续主线流程
+docs/development/mainline.md         # 当前开发主线
 docs/architecture/overview.md        # 架构总览
 docs/architecture/monorepo-boundaries.md # monorepo 边界
 docs/architecture/multi-client.md    # 多端原则
@@ -84,6 +85,8 @@ pnpm web:lint
 ```powershell
 uv run pytest tests/test_health.py -q
 ```
+
+当前稳定基线的完整验证入口见 `docs/operations/testing.md`。
 
 ## 开发原则
 

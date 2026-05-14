@@ -2,7 +2,7 @@
 
 本目录是 Claread 的全局文档入口。
 
-Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微信小程序，后续会继续建设 Web 端、内部运营工具、评测系统和 RAG 数据流。
+Claread 是一个多端英文阅读辅助产品。当前稳定基线包含微信小程序、Web baseline、通用 FastAPI 后端、本地 PostgreSQL/Redis 和词典数据。后续会继续建设 Web 产品体验、内部运营工具、评测系统和 RAG 数据流。
 
 ## 文档分层
 
@@ -21,10 +21,11 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 | `docs/product/overview.md` | 产品定位、用户、核心链路 |
 | `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
 | `docs/product/competitive-landscape.md` | 阅读、笔记、英语学习和 AI 竞品格局，以及 Claread 差异化 |
-| `docs/development/mainline.md` | 迁移完成后的主线推进流程 |
+| `docs/development/mainline.md` | 当前开发主线和近期方向 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
 | `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
+| `docs/architecture/backend-multiclient-review.md` | 后端多端化架构评审和待评估问题域 |
 | `docs/architecture/workflow.md` | 当前 workflow 基线 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |
 | `docs/operations/model-config.md` | 模型 profile / preset 配置 |
@@ -52,14 +53,14 @@ Claread 是一个多端英文阅读辅助产品。当前第一个客户端是微
 claread/
 ├── apps/
 │   ├── miniprogram/   # 当前可运行客户端
-│   ├── web/           # 后续
+│   ├── web/           # Web baseline 与后续 Web 产品体验
 │   └── directus/      # 后续
 ├── services/
 │   ├── api/           # 当前通用后端
 │   └── worker/        # 后续
 ├── packages/
 │   ├── contracts/     # 后续
-│   ├── design-tokens/ # 后续
+│   ├── design-tokens/ # 品牌资产与设计 token
 │   └── shared-utils/  # 后续
 ├── infra/
 │   ├── docker/

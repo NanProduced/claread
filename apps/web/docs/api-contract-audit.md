@@ -71,29 +71,29 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /vocabulary` | ✅ `VocabularyUpsertResponse` | 🟢 稳定 | Web 第二波 |
-| `GET /vocabulary` | ✅ `VocabularyListResponse` | 🟢 稳定 | Web 第二波 |
-| `PATCH /vocabulary/{id}` | ✅ `VocabularyResponse` | 🟢 稳定 | Web 第二波 |
-| `DELETE /vocabulary/{id}` | ✅ `VocabularyDeleteResponse` | 🟢 稳定 | Web 第二波 |
+| `POST /vocabulary` | ✅ `VocabularyUpsertResponse` | 🟢 稳定 | Web Reader 已通过 BFF 写入生词 |
+| `GET /vocabulary` | ✅ `VocabularyListResponse` | 🟢 稳定 | Web 生词本已接入 |
+| `PATCH /vocabulary/{id}` | ✅ `VocabularyResponse` | 🟢 稳定 | Web 后续可用于资产管理 |
+| `DELETE /vocabulary/{id}` | ✅ `VocabularyDeleteResponse` | 🟢 稳定 | Web 后续可用于资产管理 |
 | `POST /vocabulary/highlights` | ✅ `VocabHighlightsResponse` | 🟢 稳定 | Web reader 高亮匹配 |
-| `GET /vocabulary/review/due` | ✅ `ReviewResultResponse` | 🟢 稳定 | Web 第二波 |
-| `POST /vocabulary/review/submit` | ✅ `ReviewResultResponse` | 🟢 稳定 | Web 第二波 |
+| `GET /vocabulary/review/due` | ✅ `ReviewResultResponse` | 🟢 稳定 | Web 复习页已接入 |
+| `POST /vocabulary/review/submit` | ✅ `ReviewResultResponse` | 🟢 稳定 | Web 复习页已接入 |
 
 ### 收藏
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
 | `POST /favorites` | ✅ `FavoriteCreateResponse` | 🟡 可清理 | 已声明 response_model，当前返回兼容裸 dict，可改为 model 实例提升一致性 |
-| `GET /favorites` | ✅ `FavoriteListResponse` | 🟢 稳定 | Web 第二波 |
-| `DELETE /favorites/target` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web 第二波 |
-| `DELETE /favorites/{analysis_record_id}` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web 第二波 |
+| `GET /favorites` | ✅ `FavoriteListResponse` | 🟡 需增强 | Web Reader 已接入；后续需要分页/target filter |
+| `DELETE /favorites/target` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web Reader 取消收藏使用此接口 |
+| `DELETE /favorites/{analysis_record_id}` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | 兼容按分析记录取消收藏 |
 
 ### 反馈
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /feedback` | ✅ `FeedbackResponse` | 🟢 稳定 | Web 第二波 |
-| `GET /feedback` | ✅ `FeedbackListResponse` | 🟢 稳定 | Web 第二波 |
+| `POST /feedback` | ✅ `FeedbackResponse` | 🟢 稳定 | Web Settings 已接入；Reader 反馈待 UI/UX 评审 |
+| `GET /feedback` | ✅ `FeedbackListResponse` | 🟢 稳定 | Web 后续可用于反馈历史或内部入口 |
 
 ### 每日精读
 
@@ -178,37 +178,32 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 ## 需后端新增/增强的接口
 
-### 🔴 必须新增（Web 首期阻塞）
+### ✅ 已补齐的 Web 首期阻塞项
 
-1. **`POST /auth/phone/request-code`** — 发送短信验证码
-   - 请求：`{ phone: string }`
-   - 响应：`{ ok: bool, message: string }`
-   - 限制：同一手机号、同一 IP、同一设备指纹频率限制；验证码短 TTL；接入阿里云云通信号码认证服务 Dypnsapi 的 `SendSmsVerifyCode`
-
-2. **`POST /auth/phone/verify-code`** — 验证短信验证码换内部 session
-   - 请求：`{ phone: string, code: string }`
-   - 响应：`WeChatLoginResponse` 复用（`user_id / session_token / expires_at`）
-   - 逻辑：通过阿里云 Dypnsapi 的 `CheckSmsVerifyCode` 核验验证码；查 `user_identities` 找 `provider=phone` 的 identity；不存在则创建内部用户和手机号身份；创建 `client_platform=web` 的 session
-   - Web 行为：FastAPI 返回内部 session 后，由 Next.js BFF 设置 httpOnly cookie，浏览器 JS 不直接读取内部 token
-
-当前 Web BFF 已落地同源端点 `/api/web/auth/phone/request-code`、`/api/web/auth/phone/verify-code` 和 `/api/web/auth/logout`。默认走 `CLAREAD_PHONE_AUTH_PROVIDER=fastapi`，由 BFF 调用 FastAPI auth 契约并写入 httpOnly cookie；开发期验证码由 FastAPI 当前 provider 决定，本地默认可使用 `888888`。
+1. **手机号验证码登录**：`POST /auth/phone/request-code`、`POST /auth/phone/verify-code` 已落地，Web BFF 同源端点负责写入 httpOnly cookie。
+2. **Web baseline 用户资产**：Reader 收藏、生词写入、句子级批注、Settings 反馈已通过 Web BFF 接入真实后端。
+3. **记录删除**：Library 已通过 Web BFF 调用 `DELETE /records/{record_id}`。
 
 ### 🟡 需要增强（Web 体验提升）
 
-3. **Daily Reader schema 结构化** — `body`/`highlights`/`paragraph_notes`/`takeaways` 从 `dict` 升级为 Pydantic model
+1. **Daily Reader schema 结构化** — `body`/`highlights`/`paragraph_notes`/`takeaways` 从 `dict` 升级为 Pydantic model
    - 当前 `DailyReaderArticleResponse` 中这四个字段是 `dict`，前端无法类型安全消费
    - 小程序已有完整 DTO 定义（`daily-reader.dto.ts`），可直接对齐
 
-4. **`GET /records` 搜索/筛选增强** — Web 需要按 `reading_goal`、`source_type`、日期范围筛选
+2. **`GET /records` 搜索/筛选增强** — Web 需要按 `reading_goal`、`source_type`、日期范围筛选
    - 当前只有 `page`/`limit`/`include_render_scene` 参数
    - 建议新增：`reading_goal`/`source_type`/`date_from`/`date_to`/`search` 参数
+
+3. **Favorites 列表增强** — Web 需要按 `target_type` / `target_key` 查询收藏状态，当前只能拉全量后在 BFF 侧过滤
+
+4. **Contracts 生成策略** — 当前 Web DTO 仍为手写，后续应评估 OpenAPI -> `packages/contracts` 生成方式
 
 5. **Delete / create response model 代码风格清理** — records / favorites 等少数路由已声明 response_model 但返回裸 dict，可改为 Pydantic model 实例
 
 ### 🟢 可选增强（后续优化）
 
 6. **SSE / WebSocket 任务进度推送** — 替代轮询，Web 可选
-7. **`POST /auth/wechat/bind` / 微信开放平台登录** — 后续打通手机号账号与微信身份
+7. **微信开放平台登录/绑定** — 后续打通手机号账号与微信身份
 8. **CORS / 同源代理配置** — 若浏览器直连 FastAPI，开发环境需要支持 Next.js 本地端口；采用 Next.js BFF 后，生产优先走服务端上游调用和同源 Web endpoint，减少浏览器跨域面
 
 ## 小程序 DTO 与后端 Schema 对齐状态

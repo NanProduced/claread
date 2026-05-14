@@ -11,7 +11,7 @@ Claread 使用一套后端业务内核，服务多个客户端。
 | 客户端 | 目录 | 定位 |
 |--------|------|------|
 | 微信小程序 | `apps/miniprogram/` | 当前第一个客户端，功能子集，受平台能力限制 |
-| Web | `apps/web/` | 后续客户端，高保真阅读体验 |
+| Web | `apps/web/` | 当前 baseline 已接入真实后端，后续推进高保真阅读体验 |
 | Directus / Admin | `apps/directus/` | 后续内部运营、数据管理、评测样本、RAG 示例管理 |
 
 小程序是第一个客户端，不是一次性冻结的旧客户端。迁移完成后，小程序仍会继续迭代，只是它的新增能力应在多端契约下推进。
@@ -42,7 +42,7 @@ services/api/
 services/worker/
 ```
 
-用于异步任务、RAG ingestion、LLM-as-a-Judge 或 Directus action worker。当前迁移基线仍以 `services/api/` 为主。
+用于异步任务、RAG ingestion、LLM-as-a-Judge 或 Directus action worker。当前稳定基线仍以 `services/api/` 为主。
 
 ## 数据真相源
 
@@ -142,7 +142,7 @@ source_input_type
 wx.login -> /auth/wechat/login -> Claread session_token
 ```
 
-Web 端后续使用微信开放平台 OAuth2 或其他身份提供方。
+Web 端当前优先使用手机号验证码登录，后续可评估微信开放平台 OAuth2 或其他身份提供方。
 
 后端不应把微信 `openid` 当业务用户主键。统一模型：
 
@@ -177,4 +177,4 @@ user_sessions
 
 ## 后续扩展方向
 
-当前先恢复小程序和后端稳定。随后再为记录增加客户端来源元数据，为 Web 引入更高保真的 render profile，并让 Directus、eval 和 RAG 读取同一套后端数据边界。
+当前先在双端稳定基线之上评估记录来源元数据、Web 高保真 render profile、Directus、eval 和 RAG 的数据边界。具体落地顺序以后续产品与技术评审为准。

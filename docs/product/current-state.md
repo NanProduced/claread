@@ -5,15 +5,17 @@
 ## 当前可运行基线
 
 - 后端：`services/api/`，FastAPI，通用 Claread API。
-- 客户端：`apps/miniprogram/`，微信小程序，当前已可连接本地后端运行。
+- 客户端：`apps/miniprogram/` 微信小程序和 `apps/web/` Web baseline。
 - 数据库：`infra/docker/` 启动 PostgreSQL / Redis。
 - schema：`infra/migrations/0001_initial_schema.sql`。
 - 词典：`dict_entries`、`dict_lookup_targets`、`dict_redirects` 已恢复到 `claread_postgres_data`。
 
-当前小程序和后端是可运行起点，不是 Claread 的完整功能上限。
+当前基线已经从“迁移后小程序 + 后端”推进到“双端可回归基线”。小程序是稳定客户端，Web baseline 已通过 Next.js BFF 接入真实后端主链路。两端仍共享同一套后端业务核心和 PostgreSQL 数据。
 
 ## 已验证事实
 
+- 2026-05-14 验证：Web typecheck / lint / build 通过；小程序 typecheck / build 通过；`services/api/tests` 全量通过。
+- Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、收藏、句子级批注、反馈和设置/配额。
 - Docker Compose project 使用 `claread`。
 - 本地 PostgreSQL volume 使用 `claread_postgres_data`。
 - 本地 Redis volume 使用 `claread_redis_data`。
@@ -46,16 +48,15 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 ## 当前主要方向
 
-1. 稳定微信小程序当前基线。
-2. 校准新仓库文档、AGENTS 指令和本地开发流程。
-3. 逐步抽出 API contracts。
-4. 开始 Web 端设计和开发。
-5. 规划 Directus 内部面板、评测样本管理和 few-shot RAG 数据流。
+1. 基于双端稳定基线评审 Web 第一版 UI/UX。
+2. 评审后端多端化边界，优先解决会阻碍双端并行的 contract、ID、用户资产、Daily Reader 和 render profile 问题。
+3. 按真实产品迭代要求整理文档、验证流程和后续质量门槛。
+4. 评估 Directus、LLM-as-a-Judge 和 few-shot RAG 的边界与落地顺序。
 
 ## 已知边界
 
 - 真实 `.env`、模型 key、微信 secret、Zilliz token 不提交。
-- `apps/web/`、`apps/directus/`、`evals/` 和 `packages/` 当前是规划位置，具体实现后续补齐。
+- `apps/directus/`、`evals/` 和部分 `packages/` 仍是规划位置，具体实现后续评估。
 - 小程序 UI/UX 是当前实现，不代表 Web 端体验上限。
 - 模型输出质量和结构化输出稳定性依赖 `services/api/.env` 中的模型 profile；更换模型后需要重新跑解析链路。
 - 旧脚本式 regression suite 不进入新仓库主线；评测系统后续基于 Directus + LLM-as-a-Judge 重新设计。

@@ -93,8 +93,8 @@
 - [ ] **小程序**：检查是否有平台专属限制被误写入全局文档。
       验证：搜索 `docs/` 和根目录 `.md` 中出现"小程序"、"微信"的位置，判断是否应移至 `apps/miniprogram/`。
 - [ ] **Web**：`apps/web/docs/implementation-plan.md` 进度是否与代码一致；`apps/web/docs/api-contract-audit.md` 是否跟进后端变更。
-      验证：implementation-plan.md 中的 Wave 状态与 `apps/web/src/app/` 实际页面匹配。
-- [ ] **Web**：`apps/web/docs/` 下的非 tmp 文档（`development-tracker.md`、`tech-stack-options.md`、`reader-ia.md` 等）是否有标了 TMP 但未放 tmp/ 目录的情况，或内容已过时。
+      验证：implementation-plan.md 中的阶段状态与 `apps/web/src/app/` 实际页面匹配。
+- [ ] **Web**：`apps/web/docs/` 下的非 tmp 文档（`tech-stack-options.md`、`reader-ia.md`、`implementation-plan.md` 等）是否有标了 TMP 但未放 tmp/ 目录的情况，或内容已过时。
       验证：检查这些文档顶部的状态标记和内容时效性。
 
 ### 3. 后端文档检查
@@ -117,7 +117,7 @@
 ### 5. TMP 与过期清理
 - [ ] 扫描全库 `tmp/` 目录（当前仅 `apps/web/docs/tmp/`），判断任务是否已完成。
       验证：读取每个 `tmp-*.md` 的内容，检查其描述的任务是否已在代码中落地。
-- [ ] 扫描全库 `.md` 文件中顶部标了 `TMP` 但未放在 `tmp/` 目录的文档（如 `development-tracker.md`）。
+- [ ] 扫描全库 `.md` 文件中顶部标了 `TMP` 但未放在 `tmp/` 目录的文档。
       验证：grep `TMP` 标记，确认文件位置与标记一致。
 - [ ] 已完成的 TMP 文档：有效结论是否已压缩回正式文档？是则删除。
 - [ ] 检查是否存在超过 2 周未被引用的 TMP 文件，标为 D2 待清理。
@@ -127,7 +127,7 @@
 - `tmp/` 目录：存放临时过程文档的物理位置，文件名以 `tmp-` 开头。
 - `TMP` 标记：文档顶部的状态声明，表示过程性文档。
 - 两者应统一：标了 `TMP` 的文档应放在 `tmp/` 目录下；放在 `tmp/` 目录下的文档应标 `TMP`。
-- 例外：`apps/web/docs/development-tracker.md` 等早期文档标了 TMP 但未放 tmp/，agent 检查时应标记为需迁移或清理。
+- 例外：若发现早期 tracker 标了 TMP 但未放 tmp/，agent 检查时应标记为需迁移或清理。
 
 ---
 

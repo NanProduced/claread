@@ -2,7 +2,7 @@
 
 本文设计 Claread Web Reader 的信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统和历史回看。
 
-设计原则来自 `docs/product/design-context.md`：Calm / Precise / Editorial。Web Reader 不复刻小程序 ScrollView 单栏布局，而是面向桌面宽屏设计，移动 Web 第二波适配。
+设计原则来自 `docs/product/design-context.md`：Calm / Precise / Editorial。Web Reader 不复刻小程序 ScrollView 单栏布局，而是面向桌面宽屏设计；移动 Web 适配需在第一版 UI/UX 评审中明确范围。
 
 ## 设计原则
 

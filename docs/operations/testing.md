@@ -1,40 +1,50 @@
 # 测试与验证
 
-先验证当前后端和小程序基线，再开发 Web。
+先验证当前后端、小程序和 Web baseline，再进入大范围产品体验或架构改动。
 
 ## 后端核心测试
 
-工作目录：`services/api/`。
+工作目录：仓库根目录。
 
-核心测试套件：
+当前稳定基线使用全量后端测试：
 
 ```powershell
-rtk test uv run pytest tests/test_analyze_workflow.py tests/test_academic_workflow.py tests/test_task_center.py tests/test_quota_credits.py tests/test_user_assets.py tests/test_vocabulary_review.py -q
+uv run pytest services/api/tests -q
 ```
 
-当前基线应在 `services/api/` 下执行。
+如果在 `services/api/` 目录内执行，可改为 `uv run pytest tests -q`。
 
 ## 后端静态检查
 
 建议执行：
 
 ```powershell
-rtk err uv run python -m compileall app tests
-rtk err uv run ruff check app tests
-rtk err uv run mypy app
+uv run ruff check app tests
 ```
 
-`compileall` 是当前最低静态验证。`ruff` 和 `mypy` 需要按后续质量门槛继续校准。
+`ruff` 和 `mypy` 的全量门槛仍需继续校准；改动后至少对触达文件运行 targeted ruff。
+
+## Web 验证
+
+工作目录：仓库根目录。
+
+```powershell
+pnpm --filter @claread/web typecheck
+pnpm --filter @claread/web lint
+pnpm --filter @claread/web build
+```
+
+Web baseline smoke 应覆盖手机号登录、分析提交、Reader、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
 ## 小程序验证
 
-工作目录：`apps/miniprogram/`。
+工作目录：仓库根目录。
 
 建议执行：
 
 ```powershell
-rtk err pnpm run build:weapp
-rtk err pnpm exec tsc -p tsconfig.json --noEmit
+pnpm miniprogram:typecheck
+pnpm miniprogram:build
 ```
 
 已知非阻塞 warning：

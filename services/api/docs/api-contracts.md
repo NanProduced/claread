@@ -51,11 +51,13 @@
 ## 当前契约状态
 
 - `/dict` 和 `/dict/entry` 声明了 response model。
+- 手机号验证码登录已通过 `provider=phone` 和 `client_platform=web` 接入统一身份模型。
 - `source_type` 统一为 `user_input / daily_article / imported / ocr`。
 - `RecordCreateRequest.source_type` 使用统一枚举。
 - `TaskSubmitResponse` / `TaskStatusResponse` 兼容只传 `record_id` 时自动补 `cloud_record_id`。
 - `vocabulary_book.dict_entry_id` 指向 `dict_entries.id`；词典重导前必须处理 ID 稳定性。
+- `VocabHighlight` 拒绝未知字段，避免 LLM 草稿把旧字段静默带入 canonical annotation。
 
 ## 后续增强方向
 
-后续可结构化 Daily Reader payload，收紧 records 枚举，补内部管理接口 response model，并把匿名额度 check 拆分为 peek / consume。
+后续可结构化 Daily Reader payload，增强 records 搜索/筛选，补齐 contracts 生成策略，统一错误响应，并评估把匿名额度 check 拆分为 peek / consume。

@@ -4,7 +4,7 @@
 
 ## 当前阶段判断
 
-Claread 已经从“迁移后仓库整理”进入“业务开发”阶段。Web 端已经初始化为 Next.js App Router 项目，并已有跨端和 Web 专属 impeccable 设计上下文：
+Claread 已经进入双端稳定基线之后的产品迭代准备阶段。Web 端基于 Next.js App Router，已有跨端和 Web 专属 impeccable 设计上下文：
 
 - 根目录 `PRODUCT.md` / `DESIGN.md`：跨端品牌和体验总纲。
 - `apps/web/PRODUCT.md` / `apps/web/DESIGN.md`：Web 功能页和 Reader 方向。

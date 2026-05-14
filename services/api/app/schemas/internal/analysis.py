@@ -20,8 +20,26 @@ ReadingVariant = Literal[
 ]
 AnnotationStyle = Literal["exam_oriented", "plain_and_supportive", "structural_and_academic"]
 TranslationStyle = Literal["exam", "natural", "academic", "literal_support", "nuanced_aesthetic"]
-GrammarGranularity = Literal["focused", "balanced", "structural", "explicit_split", "structural_logic", "explicit_exam", "speed_support", "rhetorical", "info_extraction"]
-VocabularyPolicy = Literal["high_value_only", "exam_priority", "academic_priority", "semantic_nuance", "exam_depth", "literary_depth", "academic_strategy"]
+GrammarGranularity = Literal[
+    "focused",
+    "balanced",
+    "structural",
+    "explicit_split",
+    "structural_logic",
+    "explicit_exam",
+    "speed_support",
+    "rhetorical",
+    "info_extraction",
+]
+VocabularyPolicy = Literal[
+    "high_value_only",
+    "exam_priority",
+    "academic_priority",
+    "semantic_nuance",
+    "exam_depth",
+    "literary_depth",
+    "academic_strategy",
+]
 
 BASE_MODEL_CONFIG = ConfigDict(extra="ignore", str_strip_whitespace=True)
 PHRASE_TYPES = ("collocation", "phrasal_verb", "idiom", "proper_noun", "compound")
@@ -86,8 +104,12 @@ class PreparedSentence(BaseModel):
 class PreparedInput(BaseModel):
     source_text: str = Field(description='用户输入的原始文本，用于结果页的"查看原文"模块。')
     render_text: str = Field(description="清洗后可安全渲染、可定位的正文文本。")
-    paragraphs: list[PreparedParagraph] = Field(default_factory=list, description="清洗后的段落列表。")
-    sentences: list[PreparedSentence] = Field(default_factory=list, description="清洗后的句子列表。")
+    paragraphs: list[PreparedParagraph] = Field(
+        default_factory=list, description="清洗后的段落列表。"
+    )
+    sentences: list[PreparedSentence] = Field(
+        default_factory=list, description="清洗后的句子列表。"
+    )
     sanitize_report: SanitizeReport = Field(description="输入清洗报告。")
     english_ratio: float = Field(ge=0.0, le=1.0, description="render_text 中英文字符的粗略占比。")
     noise_ratio: float = Field(ge=0.0, le=1.0, description="原始输入中被视为噪音并被处理的比例。")
@@ -139,7 +161,7 @@ class Chunk(BaseModel):
 class VocabHighlight(BaseModel):
     """高价值单词高亮。"""
 
-    model_config = BASE_MODEL_CONFIG
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     type: Literal["vocab_highlight"] = "vocab_highlight"
     sentence_id: str = Field(description="句子ID")
@@ -178,7 +200,7 @@ class PhraseGloss(BaseModel):
     zh: str = Field(min_length=1, description="中文释义")
 
     @model_validator(mode="after")
-    def validate_phrase_semantics(self) -> "PhraseGloss":
+    def validate_phrase_semantics(self) -> PhraseGloss:
         if is_single_token(self.text) and self.phrase_type not in {"proper_noun", "compound"}:
             raise ValueError("Single-token PhraseGloss is only allowed for proper_noun or compound")
         if self.phrase_type == "proper_noun" and is_likely_basic_english_word(self.text):
