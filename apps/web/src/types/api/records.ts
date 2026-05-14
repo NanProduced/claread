@@ -29,3 +29,7 @@ export interface RecordListResponseDto {
   page: number;
   limit: number;
 }
+
+export interface RecordDeleteResponseDto {
+  deleted: boolean;
+}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { getRecordList, type RecordsBffStatus } from "@/services/bff/records";
+import { DeleteRecordButton } from "./DeleteRecordButton";
 
 const readRoute = "/read" as Route;
 
@@ -46,30 +47,32 @@ export default async function HistoryPage() {
 
         <section className="flex flex-col gap-4">
           {hasRecords ? records.map((record) => (
-            <Link
+            <article
               key={record.id}
-              href={readerRoute(record.id)}
-              className="group p-5 bg-surface rounded-note border border-hairline shadow-surface-quiet hover:border-muted transition-colors flex flex-col md:flex-row justify-between md:items-center gap-4"
+              className="group flex flex-col gap-4 rounded-note border border-hairline bg-surface p-5 shadow-surface-quiet transition-colors hover:border-muted md:flex-row md:items-center md:justify-between"
             >
-              <div className="flex flex-col gap-2 flex-1">
-                <h2 className="font-headline font-semibold text-[1.25rem] text-ink line-clamp-2 leading-snug">
+              <Link href={readerRoute(record.id)} className="flex min-w-0 flex-1 flex-col gap-2">
+                <h2 className="line-clamp-2 font-headline text-[1.25rem] font-semibold leading-snug text-ink">
                   {record.title}
                 </h2>
-                <div className="flex items-center gap-3 text-[0.8125rem] text-muted">
+                <div className="flex flex-wrap items-center gap-3 text-[0.8125rem] text-muted">
                   <span>{new Date(record.createdAt).toLocaleDateString("zh-CN")}</span>
-                  <span className="w-1 h-1 rounded-full bg-hairline"></span>
+                  <span className="h-1 w-1 rounded-full bg-hairline"></span>
                   <span>{record.wordCount} words</span>
-                  <span className="w-1 h-1 rounded-full bg-hairline"></span>
-                  <span className="px-2 py-0.5 bg-surface-warm rounded-sm border border-hairline text-subtle">{goalLabel[record.readingGoal] ?? record.readingGoal}</span>
+                  <span className="h-1 w-1 rounded-full bg-hairline"></span>
+                  <span className="rounded-sm border border-hairline bg-surface-warm px-2 py-0.5 text-subtle">
+                    {goalLabel[record.readingGoal] ?? record.readingGoal}
+                  </span>
                 </div>
-              </div>
-              <div className="text-muted group-hover:text-lens-blue transition-colors self-end md:self-center">
+              </Link>
+              <div className="flex items-start gap-3 self-end md:self-center">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M5 12h14"></path>
                   <path d="m12 5 7 7-7 7"></path>
                 </svg>
+                <DeleteRecordButton recordId={record.id} title={record.title} />
               </div>
-            </Link>
+            </article>
           )) : (
             <div className="rounded-note border border-hairline bg-surface p-8 text-center shadow-surface-quiet">
               <h2 className="font-headline text-xl font-semibold text-ink">

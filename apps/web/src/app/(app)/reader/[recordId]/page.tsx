@@ -1,8 +1,11 @@
 import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
+import { getReaderAnnotations } from "@/services/bff/annotations";
 import { getReaderRecord, type ReaderDataSource } from "@/services/bff/reader";
 import type { InlineMarkModel, SentenceModel } from "@/types/view/ReaderMockVm";
 import { DictionaryMark } from "./DictionaryMark";
+import { ReaderAnnotationList, SentenceAnnotationAction } from "./ReaderAnnotations";
+import { FavoriteButton } from "./FavoriteButton";
 
 type ReaderPageProps = {
   params: Promise<{ recordId: string }>;
@@ -101,7 +104,12 @@ function markLookupQuery(mark: InlineMarkModel, anchorText: string): string {
   return mark.lookupText ?? anchorText;
 }
 
-function renderSentenceText(sentence: SentenceModel, marks: InlineMarkModel[]): ReactNode[] {
+function renderSentenceText(
+  sentence: SentenceModel,
+  marks: InlineMarkModel[],
+  recordId: string,
+  sourceContext?: string,
+): ReactNode[] {
   const ranges = marks
     .filter((mark) => mark.anchor.kind === "text")
     .map((mark) => {
@@ -127,6 +135,11 @@ function renderSentenceText(sentence: SentenceModel, marks: InlineMarkModel[]): 
         key={range.mark.id}
         className={`rounded-[3px] px-0.5 ${toneClass[range.mark.visualTone]}`}
         contextSentence={sentence.text}
+        sourceContext={sourceContext}
+        recordId={recordId}
+        sentenceId={sentence.sentenceId}
+        anchorText={range.anchorText}
+        occurrence={range.mark.anchor.kind === "text" ? range.mark.anchor.occurrence : undefined}
         lookupType={markLookupType(range.mark)}
         query={markLookupQuery(range.mark, range.anchorText)}
         title={range.mark.glossary?.zh ?? range.mark.lookupText ?? toneLabel[range.mark.visualTone]}
@@ -209,6 +222,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
   }
 
   const { record, dataSource, message } = result;
+  const annotationResult = await getReaderAnnotations(record.id);
   const reader = record.reader;
   const structureMarks = multiTextMarks(reader.inlineMarks);
   const translationBySentence = new Map(
@@ -219,7 +233,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
     <main className="min-h-[calc(100vh-56px)] bg-reader-paper px-5 py-8 text-ink">
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <article className="rounded-note border border-hairline bg-surface p-6 shadow-surface-quiet md:p-10">
-          <div className="mb-8 flex items-center justify-between border-b border-hairline pb-4">
+          <div className="mb-8 flex items-start justify-between gap-4 border-b border-hairline pb-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-lens-blue">
                 Record {record.id}
@@ -228,8 +242,11 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
                 {record.title}
               </h1>
             </div>
-            <div className="rounded-pill border border-hairline bg-surface-warm px-3 py-1 text-xs font-semibold text-muted">
-              {dataSourceLabel[dataSource]}
+            <div className="flex shrink-0 items-start gap-3">
+              <FavoriteButton recordId={record.id} />
+              <div className="rounded-pill border border-hairline bg-surface-warm px-3 py-1 text-xs font-semibold text-muted">
+                {dataSourceLabel[dataSource]}
+              </div>
             </div>
           </div>
 
@@ -254,12 +271,18 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
                   return (
                     <div key={sentence.sentenceId} className="space-y-2">
                       <p className="reader-serif text-[1.35rem] leading-[1.85] text-ink">
-                        {renderSentenceText(sentence, marks)}
+                        {renderSentenceText(
+                          sentence,
+                          marks,
+                          record.id,
+                          translationBySentence.get(sentence.sentenceId),
+                        )}
                       </p>
                       <p className="text-sm leading-7 text-muted">
                         {translationBySentence.get(sentence.sentenceId) ?? null}
                       </p>
                       {renderStructureCues(marks)}
+                      <SentenceAnnotationAction recordId={record.id} sentence={sentence} />
                       {marks.length > 0 ? (
                         <div className="flex flex-wrap gap-2 pt-1">
                           {marks.map((mark) => (
@@ -289,6 +312,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
             </p>
           </div>
           <div className="mt-4 space-y-4">
+            <ReaderAnnotationList recordId={record.id} initialItems={annotationResult.items} />
             {reader.sentenceEntries.map((entry) => (
               <section key={entry.id} className="rounded-md border border-hairline bg-surface-warm p-4">
                 <div className="mb-2 flex items-center justify-between gap-3">

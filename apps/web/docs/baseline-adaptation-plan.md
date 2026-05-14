@@ -90,10 +90,21 @@ User-visible mock data should be removed from the main product path in this orde
 
 ### Batch 3: User Assets
 
-- Add favorites for records/sentences/paragraphs.
+- Add favorites for records. `DONE`
+- Add record deletion in Library through Web BFF. `DONE`
 - Add annotations with `text_range` support.
-- Add feedback entry points for Reader and settings.
+  - 2026-05-14 review: Web Reader can safely create sentence-anchored highlight/note records through `/user-annotations`; true Web text selection is still blocked because the current Reader does not project DOM selections back to canonical sentence offsets, occurrence indexes, and text hash validation. Do not send `text_range` from Web until that mapping exists.
+- Add feedback entry points for settings. `DONE`
+- Add Reader dictionary/analysis feedback entry points after the Reader interaction model is reviewed.
 - Add excerpts/library enhancements only after Reader and vocabulary are stable.
+
+## Follow-Up Review Items
+
+- Daily Reader response fields `body` / `highlights` / `paragraph_notes` / `takeaways` are still wide `dict` payloads. Web should wait for structured Pydantic models before adding a production Daily Reader view.
+- `GET /records` needs Web search/filter parameters before the Library is promoted beyond baseline validation.
+- `GET /favorites` has no pagination/filter parameters; record favorite state currently requires scanning the user's full favorites list.
+- Feedback scope/type constants are duplicated between FastAPI and Web. Move them to generated contracts or a shared package before adding more feedback surfaces.
+- Web text selection annotations need a canonical mapping from DOM selection to sentence offsets, occurrence indexes, and text hash before enabling `text_range`.
 
 ### Batch 4: Web-Specific Enhancements
 

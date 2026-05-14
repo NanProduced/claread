@@ -8,7 +8,7 @@ function statusLabel(status: VocabularyBffStatus): string {
     case "unauthenticated":
       return "未登录";
     case "mock_session":
-      return "本地 mock 登录";
+      return "登录态不可用";
     case "upstream_unavailable":
       return "服务暂不可用";
     case "upstream_error":

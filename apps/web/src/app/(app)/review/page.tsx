@@ -14,7 +14,7 @@ const stateTitle: Record<ReviewQueueVm["state"], string> = {
   ready: "待复习",
   empty: "暂无待复习",
   anonymous: "需要登录",
-  mock_session: "当前是本地 mock 登录态",
+  mock_session: "登录态不可用",
   upstream_unavailable: "复习服务不可用",
   error: "复习队列读取失败",
 };

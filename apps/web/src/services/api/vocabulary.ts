@@ -1,7 +1,11 @@
 import "server-only";
 
 import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
-import type { VocabularyListResponseDto } from "@/types/api/vocabulary";
+import type {
+  VocabularyCreateRequestDto,
+  VocabularyListResponseDto,
+  VocabularyUpsertResponseDto,
+} from "@/types/api/vocabulary";
 
 export interface ListVocabularyParams {
   page?: number;
@@ -38,4 +42,15 @@ export function listVocabulary(
     `/vocabulary${query ? `?${query}` : ""}`,
     { sessionToken },
   );
+}
+
+export function createVocabulary(
+  sessionToken: string,
+  body: VocabularyCreateRequestDto,
+): Promise<UpstreamResult<VocabularyUpsertResponseDto>> {
+  return fastApiFetch<VocabularyUpsertResponseDto>("/vocabulary", {
+    method: "POST",
+    sessionToken,
+    body: JSON.stringify(body),
+  });
 }

@@ -24,6 +24,29 @@ export interface VocabularyPayloadDto {
   [key: string]: unknown;
 }
 
+export interface VocabularyCreateRequestDto {
+  lemma: string;
+  display_word: string;
+  phonetic?: string | null;
+  part_of_speech?: string | null;
+  short_meaning: string;
+  meanings_json?: Record<string, unknown>[];
+  tags?: string[];
+  exchange?: string[];
+  source_provider: string;
+  dict_entry_id: number | null;
+  source_sentence: string | null;
+  source_context: string | null;
+  payload_json: VocabularyPayloadDto;
+}
+
+export interface VocabularyUpsertResponseDto {
+  id: string;
+  lemma: string;
+  created: boolean;
+  updated_at: string;
+}
+
 export interface VocabularyResponseDto {
   id: string;
   user_id: string;

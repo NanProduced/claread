@@ -125,7 +125,7 @@ export async function submitAnalysisFromWeb(input: {
       code: "auth_required",
       message:
         session.kind === "mock_phone"
-          ? "当前只有本地 mock 登录态；请启用 FastAPI session 后再提交真实解析。"
+          ? "当前登录态不能提交真实解析，请使用真实登录会话后再试。"
           : "请先登录后再提交真实解析。",
     };
   }

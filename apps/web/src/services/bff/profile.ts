@@ -68,7 +68,7 @@ function unauthenticatedResult(session: WebSession): ProfileSettingsVm {
     quota: null,
     message:
       session.kind === "mock_phone"
-        ? "当前只有本地 mock 手机号状态；请完成真实 FastAPI session 登录后查看账户和额度。"
+        ? "当前登录态未连接真实账户，请使用真实登录会话后查看账户和额度。"
         : "请先登录后查看账户和额度。",
   };
 }

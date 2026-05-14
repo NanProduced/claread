@@ -1,5 +1,6 @@
 import { getProfileSettings } from "@/services/bff/profile";
 
+import { FeedbackForm } from "./FeedbackForm";
 import { LogoutButton } from "./LogoutButton";
 
 export default async function SettingsPage() {
@@ -35,7 +36,7 @@ export default async function SettingsPage() {
                   {settings.status === "ready"
                     ? "已连接账户"
                     : settings.status === "mock_session"
-                      ? "本地 mock 登录态，未连接真实账户"
+                      ? "当前登录态未连接真实账户"
                       : settings.status === "unauthenticated"
                         ? "未登录"
                         : "上游账户服务暂不可用"}
@@ -108,6 +109,11 @@ export default async function SettingsPage() {
               </select>
             </div>
           </div>
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-[1.125rem] font-title font-semibold text-ink">反馈</h2>
+          <FeedbackForm />
         </section>
 
         <section className="pt-4">

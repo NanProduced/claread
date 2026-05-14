@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
+import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
 
 type LookupState =
   | { kind: "idle" }
@@ -10,11 +11,22 @@ type LookupState =
   | { kind: "ready"; result: WebDictResult }
   | { kind: "error"; message: string };
 
+type SaveState =
+  | { kind: "idle" }
+  | { kind: "saving" }
+  | { kind: "saved"; message: string }
+  | { kind: "error"; message: string };
+
 interface DictionaryMarkProps {
   children: string;
   className: string;
   query: string;
   contextSentence: string;
+  sourceContext?: string;
+  recordId: string;
+  sentenceId: string;
+  anchorText: string;
+  occurrence?: number;
   lookupType: DictLookupTypeDto;
   title: string;
 }
@@ -28,7 +40,42 @@ function firstMeaning(result: WebDictResult): string {
   return firstDefinition?.meaning ?? "";
 }
 
-function ResultPanel({ state }: { state: LookupState }) {
+function firstPartOfSpeech(result: WebDictResult): string | null {
+  if (result.kind !== "entry") {
+    return null;
+  }
+
+  return result.entry.meanings.at(0)?.partOfSpeech ?? null;
+}
+
+function meaningsJson(result: WebDictResult): Record<string, unknown>[] {
+  if (result.kind !== "entry") {
+    return [];
+  }
+
+  return result.entry.meanings.map((meaning) => ({
+    part_of_speech: meaning.partOfSpeech,
+    definitions: meaning.definitions.map((definition) => ({
+      meaning: definition.meaning,
+      example: definition.example ?? null,
+      example_translation: definition.exampleTranslation ?? null,
+    })),
+  }));
+}
+
+function exchangeForms(result: WebDictResult): string[] {
+  return result.kind === "entry" ? result.entry.exchange : [];
+}
+
+function ResultPanel({
+  state,
+  saveState,
+  onSave,
+}: {
+  state: LookupState;
+  saveState: SaveState;
+  onSave: () => void;
+}) {
   if (state.kind === "idle") {
     return null;
   }
@@ -46,6 +93,22 @@ function ResultPanel({ state }: { state: LookupState }) {
             ) : null}
           </span>
           <span className="mt-1 block">{firstMeaning(state.result) || "暂无释义。"}</span>
+          <span className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-hairline bg-ink px-2.5 py-1 text-xs font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onSave}
+              disabled={saveState.kind === "saving" || saveState.kind === "saved"}
+            >
+              {saveState.kind === "saving" ? "写入中..." : "加入生词本"}
+            </button>
+            {saveState.kind === "saved" ? (
+              <span className="text-xs text-structure-green">{saveState.message}</span>
+            ) : null}
+            {saveState.kind === "error" ? (
+              <span className="text-xs text-error-red">{saveState.message}</span>
+            ) : null}
+          </span>
         </span>
       ) : null}
       {state.kind === "ready" && state.result.kind === "disambiguation" ? (
@@ -74,10 +137,16 @@ export function DictionaryMark({
   className,
   query,
   contextSentence,
+  sourceContext,
+  recordId,
+  sentenceId,
+  anchorText,
+  occurrence,
   lookupType,
   title,
 }: DictionaryMarkProps) {
   const [state, setState] = useState<LookupState>({ kind: "idle" });
+  const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
   const [open, setOpen] = useState(false);
 
   async function handleLookup() {
@@ -107,10 +176,85 @@ export function DictionaryMark({
       }
 
       setState({ kind: "ready", result: payload });
+      setSaveState({ kind: "idle" });
     } catch (error) {
       setState({
         kind: "error",
         message: error instanceof Error ? error.message : "词典查询失败。",
+      });
+    }
+  }
+
+  async function handleSave() {
+    if (state.kind !== "ready" || state.result.kind !== "entry") {
+      setSaveState({ kind: "error", message: "请先查到明确词条后再加入生词本。" });
+      return;
+    }
+
+    const result = state.result;
+    const shortMeaning = firstMeaning(result);
+
+    if (!shortMeaning) {
+      setSaveState({ kind: "error", message: "当前词条缺少可写入的释义。" });
+      return;
+    }
+
+    setSaveState({ kind: "saving" });
+
+    const body: VocabularyCreateRequestDto = {
+      lemma: result.entry.baseWord ?? result.entry.word,
+      display_word: result.entry.word,
+      phonetic: result.entry.phonetic ?? null,
+      part_of_speech: firstPartOfSpeech(result),
+      short_meaning: shortMeaning,
+      meanings_json: meaningsJson(result),
+      tags: result.entry.tags,
+      exchange: exchangeForms(result),
+      source_provider: result.provider,
+      dict_entry_id: result.entry.id,
+      source_sentence: contextSentence,
+      source_context: sourceContext ?? null,
+      payload_json: {
+        source_refs: [
+          {
+            client_record_id: recordId,
+            cloud_record_id: recordId,
+            source_sentence: contextSentence,
+            source_context: sourceContext ?? null,
+            source_sentence_id: sentenceId,
+            source_anchor_text: anchorText,
+            source_occurrence: occurrence ?? null,
+            collected_at: new Date().toISOString(),
+          },
+        ],
+        collected_forms: [anchorText, query],
+      },
+    };
+
+    try {
+      const response = await fetch("/api/web/vocabulary", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+
+      if (!response.ok) {
+        setSaveState({
+          kind: "error",
+          message: payload.message ?? "加入生词本失败。",
+        });
+        return;
+      }
+
+      setSaveState({
+        kind: "saved",
+        message: payload.message ?? "已加入生词本。",
+      });
+    } catch (error) {
+      setSaveState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "加入生词本失败。",
       });
     }
   }
@@ -126,7 +270,7 @@ export function DictionaryMark({
       >
         {children}
       </button>
-      {open ? <ResultPanel state={state} /> : null}
+      {open ? <ResultPanel state={state} saveState={saveState} onSave={handleSave} /> : null}
     </span>
   );
 }
