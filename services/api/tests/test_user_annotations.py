@@ -70,15 +70,15 @@ def _make_row(**overrides):
 
 class TestSchemaValidation:
     def test_create_request_defaults(self):
-        req = UserAnnotationCreateRequest(selected_text="hello")
+        req = UserAnnotationCreateRequest(selected_text="hello", sentence_id="s1")
         assert req.annotation_type == "highlight"
         assert req.anchor_type == "sentence"
         assert req.color == "soft_green"
         assert req.payload_json == {}
 
     def test_create_request_accepts_current_colors(self):
-        assert UserAnnotationCreateRequest(selected_text="hello", color="soft_green").color == "soft_green"
-        assert UserAnnotationCreateRequest(selected_text="hello", color="soft_purple").color == "soft_purple"
+        assert UserAnnotationCreateRequest(selected_text="hello", sentence_id="s1", color="soft_green").color == "soft_green"
+        assert UserAnnotationCreateRequest(selected_text="hello", sentence_id="s1", color="soft_purple").color == "soft_purple"
 
     def test_create_request_rejects_bad_annotation_type(self):
         with pytest.raises(ValidationError):
@@ -91,6 +91,38 @@ class TestSchemaValidation:
     def test_create_request_rejects_bad_color(self):
         with pytest.raises(ValidationError):
             UserAnnotationCreateRequest(selected_text="hello", color="red")
+
+    def test_create_request_requires_sentence_id_for_sentence_anchor(self):
+        with pytest.raises(ValidationError):
+            UserAnnotationCreateRequest(selected_text="hello", anchor_type="sentence")
+
+    def test_create_request_requires_paragraph_id_for_paragraph_anchor(self):
+        with pytest.raises(ValidationError):
+            UserAnnotationCreateRequest(selected_text="hello", anchor_type="paragraph")
+
+    def test_create_request_accepts_valid_text_range_anchor(self):
+        req = UserAnnotationCreateRequest(
+            selected_text="hello",
+            anchor_type="text_range",
+            sentence_id="s1",
+            start_offset=2,
+            end_offset=7,
+            text_hash="abc123",
+        )
+        assert req.anchor_type == "text_range"
+        assert req.start_offset == 2
+        assert req.end_offset == 7
+
+    def test_create_request_rejects_incomplete_text_range_anchor(self):
+        with pytest.raises(ValidationError):
+            UserAnnotationCreateRequest(
+                selected_text="hello",
+                anchor_type="text_range",
+                sentence_id="s1",
+                start_offset=7,
+                end_offset=2,
+                text_hash="abc123",
+            )
 
     def test_update_request_allows_none(self):
         req = UserAnnotationUpdateRequest()
@@ -122,6 +154,7 @@ class TestBuildTargetKey:
         req = UserAnnotationCreateRequest(
             selected_text="hello",
             target_key="custom:key",
+            sentence_id="s1",
         )
         assert _build_target_key(req) == "custom:key"
 

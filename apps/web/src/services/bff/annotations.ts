@@ -2,13 +2,17 @@ import "server-only";
 
 import {
   createUserAnnotation,
+  deleteUserAnnotation,
   listUserAnnotations,
+  updateUserAnnotation,
 } from "@/services/api/annotations";
 import { getWebSession, projectSession, type WebSession } from "@/services/bff/session";
 import type {
   UserAnnotationCreateRequestDto,
+  UserAnnotationUpdateRequestDto,
   UserAnnotationResponseDto,
   WebAnnotationCreateRequest,
+  WebAnnotationUpdateRequest,
   WebAnnotationVm,
 } from "@/types/api/annotations";
 
@@ -28,11 +32,46 @@ export interface AnnotationsBffResult {
   message?: string;
 }
 
+const annotationColorValues = new Set(["soft_green", "soft_blue", "soft_purple", "warm_yellow", "sage_green"]);
+
+function isUserAnnotationColor(value: unknown): value is NonNullable<WebAnnotationUpdateRequest["color"]> {
+  return typeof value === "string" && annotationColorValues.has(value);
+}
+
 export type CreateAnnotationBffResult =
   | {
       ok: true;
       status: "created";
       item: WebAnnotationVm;
+      session: ReturnType<typeof projectSession>;
+    }
+  | {
+      ok: false;
+      status: Exclude<AnnotationsBffStatus, "ready" | "created">;
+      message: string;
+      session: ReturnType<typeof projectSession>;
+      httpStatus: number;
+    };
+
+export type UpdateAnnotationBffResult =
+  | {
+      ok: true;
+      status: "updated";
+      item: WebAnnotationVm;
+      session: ReturnType<typeof projectSession>;
+    }
+  | {
+      ok: false;
+      status: Exclude<AnnotationsBffStatus, "ready" | "created">;
+      message: string;
+      session: ReturnType<typeof projectSession>;
+      httpStatus: number;
+    };
+
+export type DeleteAnnotationBffResult =
+  | {
+      ok: true;
+      status: "deleted";
       session: ReturnType<typeof projectSession>;
     }
   | {
@@ -76,6 +115,9 @@ function projectAnnotation(item: UserAnnotationResponseDto): WebAnnotationVm {
     paragraphId: item.paragraph_id,
     sentenceId: item.sentence_id,
     selectedText: item.selected_text,
+    startOffset: item.start_offset,
+    endOffset: item.end_offset,
+    textHash: item.text_hash,
     color: item.color,
     note: item.note,
     createdAt: item.created_at,
@@ -85,6 +127,10 @@ function projectAnnotation(item: UserAnnotationResponseDto): WebAnnotationVm {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" ? value.trim() : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -158,6 +204,10 @@ export async function createReaderSentenceAnnotation(
   const paragraphId = readString(request.paragraphId);
   const selectedText = readString(request.selectedText);
   const note = readString(request.note);
+  const anchorType = request.anchorType ?? "sentence";
+  const startOffset = readNumber(request.startOffset);
+  const endOffset = readNumber(request.endOffset);
+  const textHash = readString(request.textHash);
 
   if (!recordId || !sentenceId || !selectedText) {
     return {
@@ -169,18 +219,53 @@ export async function createReaderSentenceAnnotation(
     };
   }
 
+  if (anchorType !== "sentence" && anchorType !== "paragraph" && anchorType !== "text_range") {
+    return {
+      ok: false,
+      status: "invalid_request",
+      message: "anchorType 不正确。",
+      session: projectSession(session),
+      httpStatus: 400,
+    };
+  }
+
+  if (anchorType === "text_range") {
+    if (startOffset === undefined || endOffset === undefined || startOffset < 0 || startOffset >= endOffset || !textHash) {
+      return {
+        ok: false,
+        status: "invalid_request",
+        message: "text_range 需要有效的 startOffset、endOffset 和 textHash。",
+        session: projectSession(session),
+        httpStatus: 400,
+      };
+    }
+    if (selectedText.length !== endOffset - startOffset) {
+      return {
+        ok: false,
+        status: "invalid_request",
+        message: "text_range 的 selectedText 长度必须匹配 startOffset/endOffset。",
+        session: projectSession(session),
+        httpStatus: 400,
+      };
+    }
+  }
+
   const upstreamBody: UserAnnotationCreateRequestDto = {
     analysis_record_id: recordId,
     annotation_type: note ? "note" : "highlight",
-    anchor_type: "sentence",
+    anchor_type: anchorType,
     paragraph_id: paragraphId,
     sentence_id: sentenceId,
     selected_text: selectedText,
+    start_offset: anchorType === "text_range" ? startOffset : null,
+    end_offset: anchorType === "text_range" ? endOffset : null,
+    text_hash: anchorType === "text_range" ? textHash : null,
     color: request.color ?? "soft_green",
     note: note || null,
     payload_json: {
-      source: "web_reader_sentence_action",
-      range_status: "sentence_anchor_no_text_range",
+      ...(isRecord(request.payloadJson) ? request.payloadJson : {}),
+      source: anchorType === "text_range" ? "web_reader_text_range_action" : "web_reader_sentence_action",
+      range_status: anchorType === "text_range" ? "text_range_anchor" : "sentence_anchor",
     },
   };
 
@@ -200,6 +285,126 @@ export async function createReaderSentenceAnnotation(
     ok: true,
     status: "created",
     item: projectAnnotation(upstreamResult.data),
+    session: projectSession(session),
+  };
+}
+
+export async function updateReaderAnnotation(
+  annotationId: string,
+  body: unknown,
+): Promise<UpdateAnnotationBffResult> {
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    const error = authError(session);
+    return {
+      ok: false,
+      status: error.status,
+      message: error.message,
+      session: projectSession(session),
+      httpStatus: error.httpStatus,
+    };
+  }
+
+  if (!annotationId.trim() || !isRecord(body)) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      message: "请求体格式不正确。",
+      session: projectSession(session),
+      httpStatus: 400,
+    };
+  }
+
+  const request = body as Partial<WebAnnotationUpdateRequest>;
+  const upstreamBody: UserAnnotationUpdateRequestDto = {};
+
+  if ("color" in request) {
+    if (request.color !== null && request.color !== undefined && !isUserAnnotationColor(request.color)) {
+      return {
+        ok: false,
+        status: "invalid_request",
+        message: "color 不正确。",
+        session: projectSession(session),
+        httpStatus: 400,
+      };
+    }
+    upstreamBody.color = request.color ?? null;
+  }
+
+  if ("note" in request) {
+    upstreamBody.note = typeof request.note === "string" ? request.note.trim() || null : null;
+  }
+
+  if (!("color" in upstreamBody) && !("note" in upstreamBody)) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      message: "至少需要提供 color 或 note。",
+      session: projectSession(session),
+      httpStatus: 400,
+    };
+  }
+
+  const upstreamResult = await updateUserAnnotation(session.sessionToken, annotationId, upstreamBody);
+
+  if (!upstreamResult.ok) {
+    return {
+      ok: false,
+      status: unavailableStatus(upstreamResult.status),
+      message: unavailableMessage(upstreamResult.status, upstreamResult.message),
+      session: projectSession(session),
+      httpStatus: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+    };
+  }
+
+  return {
+    ok: true,
+    status: "updated",
+    item: projectAnnotation(upstreamResult.data),
+    session: projectSession(session),
+  };
+}
+
+export async function deleteReaderAnnotation(annotationId: string): Promise<DeleteAnnotationBffResult> {
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    const error = authError(session);
+    return {
+      ok: false,
+      status: error.status,
+      message: error.message,
+      session: projectSession(session),
+      httpStatus: error.httpStatus,
+    };
+  }
+
+  if (!annotationId.trim()) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      message: "annotationId 是必填项。",
+      session: projectSession(session),
+      httpStatus: 400,
+    };
+  }
+
+  const upstreamResult = await deleteUserAnnotation(session.sessionToken, annotationId);
+
+  if (!upstreamResult.ok) {
+    return {
+      ok: false,
+      status: unavailableStatus(upstreamResult.status),
+      message: unavailableMessage(upstreamResult.status, upstreamResult.message),
+      session: projectSession(session),
+      httpStatus: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+    };
+  }
+
+  return {
+    ok: true,
+    status: "deleted",
     session: projectSession(session),
   };
 }

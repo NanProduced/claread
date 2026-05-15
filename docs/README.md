@@ -25,6 +25,7 @@ Claread 是一个多端英文阅读辅助产品。当前稳定基线包含微信
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
 | `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
+| `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、分叉点、`text_range` 与学习资产差异 |
 | `docs/architecture/backend-multiclient-review.md` | 后端多端化架构评审和待评估问题域 |
 | `docs/architecture/workflow.md` | 当前 workflow 基线 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |

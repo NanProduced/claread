@@ -1,8 +1,7 @@
 "use client";
 
-import type { CSSProperties, FormEvent, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
+import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   Check,
@@ -22,8 +21,14 @@ import {
   AnnotationGutter,
   AnnotationSlip,
   ReaderContextPanel,
+  ReaderFloatingSurface,
+  SelectionToolbar,
   SentenceEntryCard,
+  sentenceAnchorAttributes,
+  textRangeAnchorAttributes,
+  useReaderFloatingLayer,
 } from "@/components/reader";
+import { parseSentenceAnalysisContent } from "@/components/reader/reader-entry-utils";
 import type { UserAnnotationColorDto, WebAnnotationCreateRequest, WebAnnotationVm } from "@/types/api/annotations";
 import type { WebDictResult } from "@/types/api/dict";
 import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
@@ -55,6 +60,17 @@ interface ReaderWorkbenchProps {
   dataSource: ReaderDataSource;
   message?: string;
   initialAnnotations: WebAnnotationVm[];
+}
+
+interface ReaderTextSelection {
+  anchorType: "text_range" | "sentence";
+  sentence: SentenceModel;
+  selectedText: string;
+  startOffset: number;
+  endOffset: number;
+  textHash: string;
+  rect: DOMRect;
+  range?: Range;
 }
 
 type AnnotationSaveState =
@@ -122,12 +138,32 @@ const dataSourceLabel: Record<ReaderDataSource, string> = {
 };
 
 const sentenceHighlightToneClass: Record<UserAnnotationColorDto, string> = {
-  soft_green: "from-structure-green/18",
-  soft_blue: "from-context-blue/18",
-  soft_purple: "from-phrase-lavender/22",
-  warm_yellow: "from-vocab-amber/24",
-  sage_green: "from-structure-green/14",
+  soft_green: "reader-user-highlight--soft-green",
+  soft_blue: "reader-user-highlight--soft-blue",
+  soft_purple: "reader-user-highlight--soft-purple",
+  warm_yellow: "reader-user-highlight--warm-yellow",
+  sage_green: "reader-user-highlight--sage-green",
 };
+
+const userRangeToneClass: Record<UserAnnotationColorDto, string> = {
+  soft_green: "reader-user-range--soft-green",
+  soft_blue: "reader-user-range--soft-blue",
+  soft_purple: "reader-user-range--soft-purple",
+  warm_yellow: "reader-user-range--warm-yellow",
+  sage_green: "reader-user-range--sage-green",
+};
+
+const annotationColorValues: UserAnnotationColorDto[] = [
+  "soft_green",
+  "soft_blue",
+  "soft_purple",
+  "warm_yellow",
+  "sage_green",
+];
+
+function isUserAnnotationColor(value: string): value is UserAnnotationColorDto {
+  return annotationColorValues.includes(value as UserAnnotationColorDto);
+}
 
 function sentenceMarks(sentenceId: string, marks: InlineMarkModel[]) {
   return marks.filter((mark) => mark.anchor.sentenceId === sentenceId);
@@ -186,6 +222,130 @@ function buildOccurrenceByStart(text: string) {
   return occurrenceByStart;
 }
 
+function hashAnchorText(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function copyDomRect(rect: DOMRect): DOMRect {
+  return DOMRect.fromRect({
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+  });
+}
+
+function annotationOverlapsRange(annotation: WebAnnotationVm, start: number, end: number) {
+  if (annotation.anchorType !== "text_range") {
+    return false;
+  }
+  if (typeof annotation.startOffset !== "number" || typeof annotation.endOffset !== "number") {
+    return false;
+  }
+  return start < annotation.endOffset && end > annotation.startOffset;
+}
+
+function annotationMatchesSelection(annotation: WebAnnotationVm, selection: ReaderTextSelection) {
+  if (annotation.sentenceId !== selection.sentence.sentenceId) {
+    return false;
+  }
+
+  if (selection.anchorType === "sentence") {
+    return annotation.anchorType === "sentence";
+  }
+
+  return (
+    annotation.anchorType === "text_range" &&
+    typeof annotation.startOffset === "number" &&
+    typeof annotation.endOffset === "number" &&
+    selection.startOffset < annotation.endOffset &&
+    selection.endOffset > annotation.startOffset
+  );
+}
+
+function targetKeyForSelection(recordId: string, selection: ReaderTextSelection) {
+  if (selection.anchorType === "sentence") {
+    return `record:${recordId}:sentence:${selection.sentence.sentenceId}`;
+  }
+  return `record:${recordId}:range:${selection.sentence.sentenceId}:${selection.startOffset}:${selection.endOffset}:${selection.textHash}`;
+}
+
+function favoriteTargetForSelection(recordId: string, selection: ReaderTextSelection, annotation?: WebAnnotationVm | null) {
+  if (annotation && annotation.anchorType === selection.anchorType) {
+    return {
+      targetType: annotation.anchorType === "sentence" ? "sentence" : "text_range",
+      targetKey: annotation.targetKey,
+    };
+  }
+
+  return {
+    targetType: selection.anchorType === "sentence" ? "sentence" : "text_range",
+    targetKey: targetKeyForSelection(recordId, selection),
+  };
+}
+
+function userRangeClassForSpan(annotations: WebAnnotationVm[], start: number, end: number) {
+  const match = annotations.find((item) => annotationOverlapsRange(item, start, end));
+  return match ? `reader-user-range ${userRangeToneClass[match.color]}` : "";
+}
+
+function userRangeClassForAnnotation(annotation: WebAnnotationVm) {
+  return `reader-user-range ${userRangeToneClass[annotation.color]}`;
+}
+
+function acceptedUserRanges(annotations: WebAnnotationVm[]): WebAnnotationVm[] {
+  return annotations
+    .filter(
+      (item) =>
+        item.anchorType === "text_range" &&
+        typeof item.startOffset === "number" &&
+        typeof item.endOffset === "number" &&
+        item.startOffset < item.endOffset,
+    )
+    .sort((a, b) => {
+      const startDelta = (a.startOffset ?? 0) - (b.startOffset ?? 0);
+      if (startDelta !== 0) {
+        return startDelta;
+      }
+      return (b.endOffset ?? 0) - (a.endOffset ?? 0);
+    })
+    .reduce<WebAnnotationVm[]>((accepted, item) => {
+      const previous = accepted.at(-1);
+      if (
+        previous &&
+        typeof previous.endOffset === "number" &&
+        typeof item.startOffset === "number" &&
+        item.startOffset < previous.endOffset
+      ) {
+        return accepted;
+      }
+      accepted.push(item);
+      return accepted;
+    }, []);
+}
+
+function compactReaderAnchorId(value?: string) {
+  return value?.replace(/^(im|se)_/, "") ?? "";
+}
+
+function markMatchesEntry(mark: InlineMarkModel, entry?: SentenceEntryModel | null) {
+  if (!entry) {
+    return false;
+  }
+  const entryKey = compactReaderAnchorId(entry.id);
+  return (
+    mark.id === entry.id ||
+    mark.parentId === entry.id ||
+    compactReaderAnchorId(mark.id) === entryKey ||
+    compactReaderAnchorId(mark.parentId) === entryKey
+  );
+}
+
 function entryLabel(entry: SentenceEntryModel) {
   if (entry.entryType === "grammar_note") {
     return "语法旁注";
@@ -203,6 +363,16 @@ interface MarkRange {
   end: number;
   anchorText: string;
   occurrence?: number;
+}
+
+interface AnalysisRange {
+  key: string;
+  index: number;
+  order: string;
+  label: string;
+  start: number;
+  end: number;
+  text: string;
 }
 
 function buildMarkRanges(sentence: SentenceModel, marks: InlineMarkModel[]): MarkRange[] {
@@ -270,6 +440,58 @@ function buildMarkRanges(sentence: SentenceModel, marks: InlineMarkModel[]): Mar
     }, []);
 }
 
+function buildAnalysisRanges(sentence: SentenceModel, entry?: SentenceEntryModel | null): AnalysisRange[] {
+  if (!entry || entry.entryType !== "sentence_analysis") {
+    return [];
+  }
+
+  const parsed = parseSentenceAnalysisContent(entry.content);
+  const ranges: AnalysisRange[] = [];
+  let cursor = 0;
+
+  parsed.chunks.forEach((chunk, index) => {
+    const anchorText = chunk.text.trim();
+    if (!anchorText) {
+      return;
+    }
+
+    let start = sentence.text.indexOf(anchorText, cursor);
+    if (start < 0) {
+      start = findTextAnchorPosition(sentence.text, anchorText, 1);
+    }
+    if (start < 0) {
+      return;
+    }
+
+    ranges.push({
+      key: `${entry.id}-analysis-${index}`,
+      index,
+      order: chunk.order,
+      label: chunk.label,
+      start,
+      end: start + anchorText.length,
+      text: anchorText,
+    });
+    cursor = start + anchorText.length;
+  });
+
+  return ranges
+    .sort((a, b) => {
+      if (a.start !== b.start) {
+        return a.start - b.start;
+      }
+      return b.end - a.end;
+    })
+    .reduce<AnalysisRange[]>((accepted, range) => {
+      const previous = accepted.at(-1);
+      if (previous && range.start < previous.end) {
+        return accepted;
+      }
+      accepted.push(range);
+      return accepted;
+    }, []);
+}
+
 type LookupBase = Omit<DictionaryLookupSnapshot, "state">;
 
 function sameLookupTarget(lookup: DictionaryLookupSnapshot | null, base: LookupBase) {
@@ -284,6 +506,176 @@ function sameLookupTarget(lookup: DictionaryLookupSnapshot | null, base: LookupB
     lookup.anchorText === base.anchorText &&
     (lookup.occurrence ?? null) === (base.occurrence ?? null)
   );
+}
+
+function elementFromNode(node: Node): Element | null {
+  return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+}
+
+function firstUsableRangeRect(range: Range): DOMRect | null {
+  const rects = Array.from(range.getClientRects());
+  const rect = rects.find((item) => item.width > 0 && item.height > 0) ?? range.getBoundingClientRect();
+
+  if (rect.width === 0 && rect.height === 0) {
+    return null;
+  }
+
+  return copyDomRect(rect);
+}
+
+function textOffsetWithinElement(element: HTMLElement, node: Node, offset: number): number | null {
+  if (!element.contains(node)) {
+    return null;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  try {
+    range.setEnd(node, offset);
+    return range.toString().length;
+  } catch {
+    return null;
+  } finally {
+    range.detach();
+  }
+}
+
+function readReaderSelection(
+  articleElement: HTMLElement | null,
+  sentenceById: Map<string, SentenceModel>,
+): ReaderTextSelection | null {
+  if (!articleElement) {
+    return null;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  const commonElement = elementFromNode(range.commonAncestorContainer);
+  const sentenceTextElement = commonElement?.closest<HTMLElement>("[data-reader-sentence-text='true']");
+  if (!sentenceTextElement || !articleElement.contains(sentenceTextElement)) {
+    return null;
+  }
+  if (!sentenceTextElement.contains(range.startContainer) || !sentenceTextElement.contains(range.endContainer)) {
+    return null;
+  }
+
+  const sentenceElement = sentenceTextElement.closest<HTMLElement>("[data-reader-anchor='sentence']");
+  const sentenceId = sentenceElement?.dataset.sentenceId;
+  if (!sentenceId) {
+    return null;
+  }
+
+  const sentence = sentenceById.get(sentenceId);
+  if (!sentence) {
+    return null;
+  }
+
+  const startOffset = textOffsetWithinElement(sentenceTextElement, range.startContainer, range.startOffset);
+  const endOffset = textOffsetWithinElement(sentenceTextElement, range.endContainer, range.endOffset);
+  if (startOffset === null || endOffset === null || startOffset >= endOffset) {
+    return null;
+  }
+
+  const selectedText = sentence.text.slice(startOffset, endOffset);
+  if (!selectedText.trim()) {
+    return null;
+  }
+
+  const rect = firstUsableRangeRect(range);
+  if (!rect) {
+    return null;
+  }
+
+  return {
+    anchorType: "text_range",
+    sentence,
+    selectedText,
+    startOffset,
+    endOffset,
+    textHash: hashAnchorText(selectedText),
+    rect,
+    range: range.cloneRange(),
+  };
+}
+
+function caretRangeFromPoint(clientX: number, clientY: number): Range | null {
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (
+      x: number,
+      y: number,
+    ) => { offsetNode: Node; offset: number } | null;
+  };
+
+  const legacyRange = doc.caretRangeFromPoint?.(clientX, clientY);
+  if (legacyRange) {
+    return legacyRange;
+  }
+
+  const position = doc.caretPositionFromPoint?.(clientX, clientY);
+  if (!position) {
+    return null;
+  }
+
+  const range = document.createRange();
+  range.setStart(position.offsetNode, position.offset);
+  range.collapse(true);
+  return range;
+}
+
+function lookupBaseFromSentencePoint({
+  element,
+  sentence,
+  recordId,
+  sourceContext,
+  clientX,
+  clientY,
+}: {
+  element: HTMLElement;
+  sentence: SentenceModel;
+  recordId: string;
+  sourceContext?: string;
+  clientX: number;
+  clientY: number;
+}): LookupBase | null {
+  const range = caretRangeFromPoint(clientX, clientY);
+  if (!range) {
+    return null;
+  }
+
+  const offset = textOffsetWithinElement(element, range.startContainer, range.startOffset);
+  range.detach();
+  if (offset === null) {
+    return null;
+  }
+
+  const token = tokenizeText(sentence.text).find((item) => {
+    if (item.type !== "word") {
+      return false;
+    }
+    const tokenEnd = item.start + item.text.length;
+    return offset >= item.start && offset <= tokenEnd;
+  });
+  if (!token || token.type !== "word") {
+    return null;
+  }
+
+  const occurrence = buildOccurrenceByStart(sentence.text).get(token.start);
+  return {
+    query: token.text,
+    lookupType: "word",
+    contextSentence: sentence.text,
+    sourceContext,
+    recordId,
+    sentenceId: sentence.sentenceId,
+    anchorText: token.text,
+    occurrence,
+    title: "查词",
+  };
 }
 
 function splitDictionaryField(value?: string) {
@@ -351,8 +743,8 @@ function InlineLookupPreview({
         : "";
 
   return (
-    <span
-      ref={floatingRef}
+    <ReaderFloatingSurface
+      floatingRef={floatingRef}
       className="reader-lookup-preview"
       role="status"
       aria-live="polite"
@@ -418,7 +810,7 @@ function InlineLookupPreview({
       <span className="mt-3 block border-t border-hairline pt-2 text-xs font-semibold text-muted">
         左侧查看完整释义
       </span>
-    </span>
+    </ReaderFloatingSurface>
   );
 }
 
@@ -431,6 +823,7 @@ function LookupToken({
   onLookup,
   onDismiss,
   onReveal,
+  anchorAttributes,
   focusable = false,
 }: {
   children: ReactNode;
@@ -441,6 +834,7 @@ function LookupToken({
   onLookup: (snapshot: LookupBase) => void;
   onDismiss: () => void;
   onReveal: () => void;
+  anchorAttributes?: Record<`data-${string}`, string>;
   focusable?: boolean;
 }) {
   const activeTarget = sameLookupTarget(activeLookup, base);
@@ -448,44 +842,69 @@ function LookupToken({
   const {
     refs: { setReference, setFloating },
     floatingStyles,
-  } = useFloating({
+  } = useReaderFloatingLayer({
     open: active,
     placement: "bottom-start",
-    middleware: [offset(8), flip({ padding: 16 }), shift({ padding: 16 })],
-    whileElementsMounted: autoUpdate,
   });
+
+  const tokenClassName = `reader-lookup-token ${className} ${active ? "reader-mark--active" : ""}`;
+  const activateLookup = () => {
+    if (active) {
+      onDismiss();
+      return;
+    }
+    if (activeTarget) {
+      onReveal();
+      return;
+    }
+    onLookup(base);
+  };
+
+  const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape" && active) {
+      event.stopPropagation();
+      onDismiss();
+    }
+  };
 
   return (
     <span className="relative inline">
-      <button
-        ref={setReference}
-        type="button"
-        tabIndex={focusable ? 0 : -1}
-        className={`reader-lookup-token ${className} ${active ? "reader-mark--active" : ""}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (active) {
-            onDismiss();
-            return;
-          }
-          if (activeTarget) {
-            onReveal();
-            return;
-          }
-          onLookup(base);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && active) {
+      {focusable ? (
+        <button
+          ref={setReference}
+          type="button"
+          className={tokenClassName}
+          onClick={(event) => {
             event.stopPropagation();
-            onDismiss();
-          }
-        }}
-        title={base.title}
-        aria-label={`查询 ${base.query}`}
-        aria-expanded={active}
-      >
-        {children}
-      </button>
+            activateLookup();
+          }}
+          onKeyDown={handleEscape}
+          title={base.title}
+          aria-label={`查询 ${base.query}`}
+          aria-expanded={active}
+          {...anchorAttributes}
+        >
+          {children}
+        </button>
+      ) : (
+        <span
+          ref={setReference}
+          className={tokenClassName}
+          role="button"
+          tabIndex={-1}
+          title={base.title}
+          aria-label={`查询 ${base.query}`}
+          aria-expanded={active}
+          onClick={(event) => {
+            event.stopPropagation();
+            activateLookup();
+          }}
+          onKeyDown={handleEscape}
+          {...anchorAttributes}
+        >
+          {children}
+        </span>
+      )}
       {activeLookup && active ? (
         <InlineLookupPreview
           lookup={activeLookup}
@@ -504,6 +923,8 @@ function renderSentenceText({
   recordId,
   sourceContext,
   markVisibility,
+  userTextRangeAnnotations,
+  activeEntry,
   activeLookup,
   lookupPreviewOpen,
   onLookup,
@@ -515,6 +936,8 @@ function renderSentenceText({
   recordId: string;
   sourceContext?: string;
   markVisibility: MarkVisibility;
+  userTextRangeAnnotations?: WebAnnotationVm[];
+  activeEntry?: SentenceEntryModel | null;
   activeLookup: DictionaryLookupSnapshot | null;
   lookupPreviewOpen: boolean;
   onLookup: (snapshot: LookupBase) => void;
@@ -522,46 +945,107 @@ function renderSentenceText({
   onRevealLookup: () => void;
 }): ReactNode[] {
   const ranges = buildMarkRanges(sentence, marks);
-  const occurrenceByStart = buildOccurrenceByStart(sentence.text);
+  const analysisRanges = buildAnalysisRanges(sentence, activeEntry);
+  const rangeAnnotations = userTextRangeAnnotations ?? [];
+  const plainUserRanges = acceptedUserRanges(rangeAnnotations);
 
   const nodes: ReactNode[] = [];
   let cursor = 0;
 
   function renderPlainSegment(text: string, offset: number) {
-    return tokenizeText(text).map((token, index) => {
-      if (token.type !== "word") {
-        return token.text;
+    const segmentStart = offset;
+    const segmentEnd = offset + text.length;
+    const overlappingRanges = plainUserRanges.filter(
+      (item) =>
+        typeof item.startOffset === "number" &&
+        typeof item.endOffset === "number" &&
+        item.startOffset < segmentEnd &&
+        item.endOffset > segmentStart,
+    );
+
+    if (overlappingRanges.length === 0) {
+      return [text];
+    }
+
+    const segmentNodes: ReactNode[] = [];
+    let segmentCursor = segmentStart;
+
+    overlappingRanges.forEach((annotation) => {
+      const rangeStart = Math.max(segmentStart, annotation.startOffset ?? segmentStart);
+      const rangeEnd = Math.min(segmentEnd, annotation.endOffset ?? segmentEnd);
+
+      if (rangeStart > segmentCursor) {
+        segmentNodes.push(sentence.text.slice(segmentCursor, rangeStart));
       }
 
-      const absoluteStart = offset + token.start;
-      const occurrence = occurrenceByStart.get(absoluteStart);
-      const base: LookupBase = {
-        query: token.text,
-        lookupType: "word",
-        contextSentence: sentence.text,
-        sourceContext,
-        recordId,
-        sentenceId: sentence.sentenceId,
-        anchorText: token.text,
-        occurrence,
-        title: "查词",
-      };
+      if (rangeEnd > rangeStart) {
+        const anchorText = sentence.text.slice(rangeStart, rangeEnd);
+        segmentNodes.push(
+          <span
+            key={`user-range-${annotation.id}-${rangeStart}-${rangeEnd}`}
+            className={userRangeClassForAnnotation(annotation)}
+            title={annotation.note ? `笔记：${annotation.note}` : "用户标注"}
+            {...textRangeAnchorAttributes({
+              paragraphId: sentence.paragraphId,
+              sentenceId: sentence.sentenceId,
+              startOffset: rangeStart,
+              endOffset: rangeEnd,
+              text: anchorText,
+            })}
+          >
+            {anchorText}
+          </span>,
+        );
+      }
 
-      return (
-        <LookupToken
-          key={`plain-${offset}-${index}-${token.text}`}
-          className="reader-plain-word"
-          base={base}
-          activeLookup={activeLookup}
-          previewOpen={lookupPreviewOpen}
-          onLookup={onLookup}
-          onDismiss={onDismissLookup}
-          onReveal={onRevealLookup}
-        >
-          {token.text}
-        </LookupToken>
-      );
+      segmentCursor = Math.max(segmentCursor, rangeEnd);
     });
+
+    if (segmentCursor < segmentEnd) {
+      segmentNodes.push(sentence.text.slice(segmentCursor, segmentEnd));
+    }
+
+    return segmentNodes;
+  }
+
+  if (analysisRanges.length > 0 && activeEntry?.entryType === "sentence_analysis") {
+    analysisRanges.forEach((range) => {
+      if (range.start < cursor) {
+        return;
+      }
+      if (range.start > cursor) {
+        nodes.push(...renderPlainSegment(sentence.text.slice(cursor, range.start), cursor));
+      }
+
+      const userRangeClass = userRangeClassForSpan(rangeAnnotations, range.start, range.end);
+      nodes.push(
+        <span
+          key={range.key}
+          className={`reader-analysis-atom reader-analysis-atom--${(range.index % 6) + 1} ${userRangeClass}`.trim()}
+          data-analysis-id={activeEntry.id}
+          data-analysis-index={range.index + 1}
+          data-analysis-order={range.order}
+          data-analysis-label={range.label}
+          title={`${range.index + 1}. ${range.label}`}
+          {...textRangeAnchorAttributes({
+            paragraphId: sentence.paragraphId,
+            sentenceId: sentence.sentenceId,
+            startOffset: range.start,
+            endOffset: range.end,
+            text: range.text,
+          })}
+        >
+          {range.text}
+        </span>,
+      );
+      cursor = range.end;
+    });
+
+    if (cursor < sentence.text.length) {
+      nodes.push(...renderPlainSegment(sentence.text.slice(cursor), cursor));
+    }
+
+    return nodes.length > 0 ? nodes : [sentence.text];
   }
 
   ranges.forEach((range) => {
@@ -576,6 +1060,9 @@ function renderSentenceText({
       markVisibility === "full"
         ? toneClass[range.mark.visualTone]
         : quietToneClass[range.mark.visualTone];
+    const activeEntryClass = markMatchesEntry(range.mark, activeEntry) ? "reader-mark--entry-active" : "";
+    const userRangeClass = userRangeClassForSpan(rangeAnnotations, range.start, range.end);
+    const composedMarkClass = `${markClass} ${activeEntryClass} ${userRangeClass}`.trim();
 
     if (isDictionaryMark(range.mark)) {
       const base: LookupBase = {
@@ -597,13 +1084,20 @@ function renderSentenceText({
       nodes.push(
         <LookupToken
           key={range.key}
-          className={markClass}
+          className={composedMarkClass}
           base={base}
           activeLookup={activeLookup}
           previewOpen={lookupPreviewOpen}
           onLookup={onLookup}
           onDismiss={onDismissLookup}
           onReveal={onRevealLookup}
+          anchorAttributes={textRangeAnchorAttributes({
+            paragraphId: sentence.paragraphId,
+            sentenceId: sentence.sentenceId,
+            startOffset: range.start,
+            endOffset: range.end,
+            text: range.anchorText,
+          })}
           focusable
         >
           {range.anchorText}
@@ -613,8 +1107,15 @@ function renderSentenceText({
       nodes.push(
         <span
           key={range.key}
-          className={markClass}
+          className={composedMarkClass}
           title={markLabel(range.mark)}
+          {...textRangeAnchorAttributes({
+            paragraphId: sentence.paragraphId,
+            sentenceId: sentence.sentenceId,
+            startOffset: range.start,
+            endOffset: range.end,
+            text: range.anchorText,
+          })}
         >
           {range.anchorText}
         </span>,
@@ -1072,7 +1573,7 @@ function SentenceEntrySummary({
   onOpen,
 }: {
   entries: SentenceEntryModel[];
-  onOpen: () => void;
+  onOpen: (entry: SentenceEntryModel) => void;
 }) {
   if (entries.length === 0) {
     return null;
@@ -1087,7 +1588,7 @@ function SentenceEntrySummary({
           className="focus-ring reader-entry-chip"
           onClick={(event) => {
             event.stopPropagation();
-            onOpen();
+            onOpen(entry);
           }}
         >
           {entry.entryType === "sentence_analysis" ? (
@@ -1115,10 +1616,16 @@ export function ReaderWorkbench({
   const [dictionarySaveState, setDictionarySaveState] = useState<SaveState>({ kind: "idle" });
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const [activeSentence, setActiveSentence] = useState<SentenceModel | null>(null);
+  const [textSelection, setTextSelection] = useState<ReaderTextSelection | null>(null);
   const [lowerPanelMode, setLowerPanelMode] = useState<LowerPanelMode>("sentence");
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [expandedSentenceId, setExpandedSentenceId] = useState<string | null>(null);
+  const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [selectionNoteOpen, setSelectionNoteOpen] = useState(false);
+  const [selectionNoteDraft, setSelectionNoteDraft] = useState("");
+  const [selectionFavorited, setSelectionFavorited] = useState(false);
+  const [selectionFavoriteLoading, setSelectionFavoriteLoading] = useState(false);
   const [annotationColor, setAnnotationColor] = useState<UserAnnotationColorDto>("warm_yellow");
   const [annotationSaveState, setAnnotationSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
   const [showTranslation, setShowTranslation] = useState(true);
@@ -1129,6 +1636,21 @@ export function ReaderWorkbench({
   const [aiOpen, setAiOpen] = useState(false);
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
   const [dictionaryQuery, setDictionaryQuery] = useState("");
+  const articleRef = useRef<HTMLElement | null>(null);
+
+  const {
+    refs: {
+      setFloating: setSelectionToolbarFloating,
+      setPositionReference: setSelectionToolbarReference,
+    },
+    floatingStyles: selectionToolbarStyles,
+  } = useReaderFloatingLayer({
+    open: Boolean(textSelection),
+    placement: "top-start",
+    offsetPx: 14,
+    crossAxisOffsetPx: 28,
+    strategy: "fixed",
+  });
 
   const translationBySentence = useMemo(
     () => new Map(reader.translations.map((item) => [item.sentenceId, item.translationZh])),
@@ -1151,6 +1673,13 @@ export function ReaderWorkbench({
     return map;
   }, [reader.sentenceEntries]);
 
+  const activeEntry = useMemo(() => {
+    if (!activeEntryId) {
+      return null;
+    }
+    return reader.sentenceEntries.find((entry) => entry.id === activeEntryId) ?? null;
+  }, [activeEntryId, reader.sentenceEntries]);
+
   const annotationsBySentence = useMemo(() => {
     const map = new Map<string, WebAnnotationVm[]>();
     annotations
@@ -1168,6 +1697,15 @@ export function ReaderWorkbench({
   const activeSentenceAnnotations = activeSentence
     ? annotationsBySentence.get(activeSentence.sentenceId) ?? []
     : [];
+
+  const selectedAnnotation = useMemo(() => {
+    if (!textSelection) {
+      return null;
+    }
+
+    const sentenceAnnotations = annotationsBySentence.get(textSelection.sentence.sentenceId) ?? [];
+    return sentenceAnnotations.find((item) => annotationMatchesSelection(item, textSelection)) ?? null;
+  }, [annotationsBySentence, textSelection]);
 
   const dismissLookupPreview = useCallback(() => {
     setLookupPreviewOpen(false);
@@ -1213,6 +1751,52 @@ export function ReaderWorkbench({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [lookupPreviewOpen]);
+
+  useEffect(() => {
+    if (!textSelection) {
+      setSelectionToolbarReference(null);
+      return;
+    }
+
+    setSelectionToolbarReference({
+      getBoundingClientRect: () => {
+        if (textSelection.range) {
+          const rangeRect = firstUsableRangeRect(textSelection.range);
+          if (rangeRect) {
+            return rangeRect;
+          }
+        }
+
+        if (textSelection.anchorType === "sentence") {
+          const sentenceElement = articleRef.current?.querySelector<HTMLElement>(
+            `[data-reader-anchor="sentence"][data-sentence-id="${CSS.escape(textSelection.sentence.sentenceId)}"] [data-reader-sentence-text="true"]`,
+          );
+          if (sentenceElement) {
+            return copyDomRect(sentenceElement.getBoundingClientRect());
+          }
+        }
+
+        return textSelection.rect;
+      },
+      contextElement: articleRef.current ?? undefined,
+    });
+  }, [setSelectionToolbarReference, textSelection]);
+
+  useEffect(() => {
+    if (!textSelection) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setTextSelection(null);
+        window.getSelection()?.removeAllRanges();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [textSelection]);
 
   const handleLookupSnapshot = useCallback((snapshot: DictionaryLookupSnapshot) => {
     setActiveLookup(snapshot);
@@ -1343,6 +1927,77 @@ export function ReaderWorkbench({
     }
   }, [activeLookup, handleLookupSnapshot]);
 
+  const updateTextSelectionFromDom = useCallback(() => {
+    const nextSelection = readReaderSelection(articleRef.current, sentenceById);
+    setTextSelection(nextSelection);
+
+    if (nextSelection) {
+      setActiveSentence(nextSelection.sentence);
+      setLowerPanelMode("sentence");
+      setContextPanelOpen(false);
+      setAiOpen(false);
+      setSelectionNoteOpen(false);
+      setSelectionNoteDraft("");
+      setSelectionFavorited(false);
+      setSelectionFavoriteLoading(false);
+      setAnnotationSaveState({ kind: "idle" });
+    } else {
+      setSelectionNoteOpen(false);
+      setSelectionNoteDraft("");
+      setSelectionFavorited(false);
+      setSelectionFavoriteLoading(false);
+    }
+  }, [sentenceById]);
+
+  useEffect(() => {
+    if (!textSelection) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const { targetType, targetKey } = favoriteTargetForSelection(record.id, textSelection, selectedAnnotation);
+
+    const params = new URLSearchParams({
+      targetType,
+      targetKey,
+    });
+
+    void fetch(`/api/web/favorites/target?${params.toString()}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as { ok: boolean; favorited?: boolean };
+        if (response.ok && payload.ok) {
+          setSelectionFavorited(Boolean(payload.favorited));
+        }
+      })
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setSelectionFavorited(false);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setSelectionFavoriteLoading(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [record.id, selectedAnnotation, textSelection]);
+
+  function openEntry(sentence: SentenceModel, entry: SentenceEntryModel) {
+    setActiveSentence(sentence);
+    setContextPanelOpen(false);
+    setExpandedSentenceId(sentence.sentenceId);
+    setActiveEntryId(entry.id);
+    setTextSelection(null);
+    setAnnotationSaveState({ kind: "idle" });
+  }
+
+  function activateEntry(entry: SentenceEntryModel) {
+    setActiveEntryId(entry.id);
+  }
+
   async function saveVocabularyFromDictionary() {
     if (activeLookup?.state.kind !== "ready" || activeLookup.state.result.kind !== "entry") {
       setDictionarySaveState({ kind: "error", message: "请先查到明确词条后再加入生词本。" });
@@ -1416,21 +2071,48 @@ export function ReaderWorkbench({
     }
   }
 
-  async function saveSentenceAnnotation(useNote: boolean) {
-    if (!activeSentence) {
+  async function saveSentenceAnnotation(
+    useNote: boolean,
+    options?: { color?: UserAnnotationColorDto; selection?: ReaderTextSelection | null; noteText?: string },
+  ) {
+    const targetSelection = options?.selection ?? textSelection;
+    const targetSentence = targetSelection?.sentence ?? activeSentence;
+
+    if (!targetSentence) {
       setAnnotationSaveState({ kind: "error", message: "请先选择一个句子。" });
       return;
     }
 
     setAnnotationSaveState({ kind: "saving" });
 
+    const selectedText = targetSelection?.selectedText ?? targetSentence.text;
+    const anchorType = targetSelection?.anchorType ?? "sentence";
+    const isTextRange = anchorType === "text_range";
+    const color = options?.color ?? annotationColor;
+    const noteText = options?.noteText ?? note;
+
     const body: WebAnnotationCreateRequest = {
       recordId: record.id,
-      paragraphId: activeSentence.paragraphId,
-      sentenceId: activeSentence.sentenceId,
-      selectedText: activeSentence.text,
-      color: annotationColor,
-      note: useNote ? note.trim() : undefined,
+      paragraphId: targetSentence.paragraphId,
+      sentenceId: targetSentence.sentenceId,
+      selectedText,
+      anchorType,
+      startOffset: isTextRange ? targetSelection?.startOffset ?? null : null,
+      endOffset: isTextRange ? targetSelection?.endOffset ?? null : null,
+      textHash: isTextRange ? targetSelection?.textHash ?? null : null,
+      color,
+      note: useNote ? noteText.trim() : undefined,
+      payloadJson: isTextRange
+        ? {
+            offset_unit: "utf16",
+            selected_text_hash: targetSelection?.textHash ?? null,
+            sentence_text_hash: hashAnchorText(targetSentence.text),
+            prefix: targetSentence.text.slice(0, targetSelection?.startOffset ?? 0).slice(-32),
+            suffix: targetSentence.text.slice(targetSelection?.endOffset ?? 0, (targetSelection?.endOffset ?? 0) + 32),
+            created_client: "web",
+            translation: translationBySentence.get(targetSentence.sentenceId) ?? null,
+          }
+        : undefined,
     };
 
     try {
@@ -1459,6 +2141,8 @@ export function ReaderWorkbench({
         new CustomEvent<WebAnnotationVm>(ANNOTATION_CREATED_EVENT, { detail: payload.item }),
       );
       setNote("");
+      setSelectionNoteDraft(payload.item.note ?? "");
+      setSelectionNoteOpen(Boolean(payload.item.note));
       setAnnotationSaveState({ kind: "saved", message: useNote ? "笔记已保存。" : "高亮已保存。" });
     } catch (error) {
       setAnnotationSaveState({
@@ -1468,11 +2152,287 @@ export function ReaderWorkbench({
     }
   }
 
+  function highlightTextSelection(colorValue: string) {
+    if (!textSelection) {
+      return;
+    }
+    const color = isUserAnnotationColor(colorValue) ? colorValue : annotationColor;
+    setAnnotationColor(color);
+    void saveSentenceAnnotation(false, { color, selection: textSelection });
+  }
+
+  function openTextSelectionNote() {
+    if (!textSelection) {
+      return;
+    }
+    setActiveSentence(textSelection.sentence);
+    setLowerPanelMode("sentence");
+    setContextPanelOpen(false);
+    setAiOpen(false);
+    setSelectionNoteDraft(selectedAnnotation?.note ?? "");
+    setSelectionNoteOpen((value) => !value);
+    setAnnotationSaveState({ kind: "idle" });
+  }
+
+  async function saveTextSelectionNote() {
+    if (!textSelection) {
+      return;
+    }
+
+    const trimmed = selectionNoteDraft.trim();
+    if (!trimmed) {
+      setAnnotationSaveState({ kind: "error", message: "请先输入笔记内容。" });
+      return;
+    }
+
+    if (selectedAnnotation) {
+      setAnnotationSaveState({ kind: "saving" });
+      try {
+        const response = await fetch(`/api/web/annotations/${encodeURIComponent(selectedAnnotation.id)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ note: trimmed, color: selectedAnnotation.color ?? annotationColor }),
+        });
+        const payload = (await response.json()) as
+          | { ok: true; item: WebAnnotationVm }
+          | { ok: false; message?: string };
+
+        if (!response.ok || !payload.ok) {
+          setAnnotationSaveState({
+            kind: "error",
+            message: payload.ok === false && payload.message ? payload.message : "笔记保存失败。",
+          });
+          return;
+        }
+
+        setAnnotations((current) => [
+          payload.item,
+          ...current.filter((existing) => existing.id !== payload.item.id),
+        ]);
+        setAnnotationSaveState({ kind: "saved", message: "笔记已保存。" });
+      } catch (error) {
+        setAnnotationSaveState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "笔记保存失败。",
+        });
+      }
+      return;
+    }
+
+    await saveSentenceAnnotation(true, {
+      color: annotationColor,
+      selection: textSelection,
+      noteText: trimmed,
+    });
+  }
+
+  async function clearTextSelectionNote() {
+    if (!selectedAnnotation) {
+      setSelectionNoteDraft("");
+      setSelectionNoteOpen(false);
+      return;
+    }
+
+    setAnnotationSaveState({ kind: "saving" });
+    try {
+      const response = await fetch(`/api/web/annotations/${encodeURIComponent(selectedAnnotation.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ note: null }),
+      });
+      const payload = (await response.json()) as
+        | { ok: true; item: WebAnnotationVm }
+        | { ok: false; message?: string };
+
+      if (!response.ok || !payload.ok) {
+        setAnnotationSaveState({
+          kind: "error",
+          message: payload.ok === false && payload.message ? payload.message : "删除笔记失败。",
+        });
+        return;
+      }
+
+      setAnnotations((current) => [
+        payload.item,
+        ...current.filter((existing) => existing.id !== payload.item.id),
+      ]);
+      setSelectionNoteDraft("");
+      setSelectionNoteOpen(false);
+      setAnnotationSaveState({ kind: "saved", message: "笔记已删除。" });
+    } catch (error) {
+      setAnnotationSaveState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "删除笔记失败。",
+      });
+    }
+  }
+
+  async function deleteTextSelectionAnnotation() {
+    if (!selectedAnnotation) {
+      return;
+    }
+
+    setAnnotationSaveState({ kind: "saving" });
+    try {
+      const response = await fetch(`/api/web/annotations/${encodeURIComponent(selectedAnnotation.id)}`, {
+        method: "DELETE",
+      });
+      const payload = (await response.json()) as { ok: true } | { ok: false; message?: string };
+
+      if (!response.ok || !payload.ok) {
+        setAnnotationSaveState({
+          kind: "error",
+          message: payload.ok === false && payload.message ? payload.message : "取消标注失败。",
+        });
+        return;
+      }
+
+      setAnnotations((current) => current.filter((existing) => existing.id !== selectedAnnotation.id));
+      setSelectionNoteDraft("");
+      setSelectionNoteOpen(false);
+      setAnnotationSaveState({ kind: "saved", message: "标注已取消。" });
+    } catch (error) {
+      setAnnotationSaveState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "取消标注失败。",
+      });
+    }
+  }
+
+  async function toggleTextSelectionFavorite() {
+    if (!textSelection) {
+      return;
+    }
+
+    const { targetType, targetKey } = favoriteTargetForSelection(record.id, textSelection, selectedAnnotation);
+    setSelectionFavoriteLoading(true);
+
+    try {
+      const response = selectionFavorited
+        ? await fetch(
+            `/api/web/favorites/target?${new URLSearchParams({
+              targetType,
+              targetKey,
+            }).toString()}`,
+            { method: "DELETE" },
+          )
+        : await fetch("/api/web/favorites/target", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              recordId: record.id,
+              targetType,
+              targetKey,
+              payloadJson: {
+                source: "web_reader_selection_toolbar",
+                anchor_type: textSelection.anchorType,
+                paragraph_id: textSelection.sentence.paragraphId,
+                sentence_id: textSelection.sentence.sentenceId,
+                selected_text: textSelection.selectedText,
+                start_offset: textSelection.anchorType === "text_range" ? textSelection.startOffset : null,
+                end_offset: textSelection.anchorType === "text_range" ? textSelection.endOffset : null,
+                text_hash: textSelection.anchorType === "text_range" ? textSelection.textHash : null,
+                offset_unit: "utf16",
+                translation: translationBySentence.get(textSelection.sentence.sentenceId) ?? null,
+              },
+            }),
+          });
+      const payload = (await response.json()) as { ok: boolean; favorited?: boolean; message?: string };
+
+      if (!response.ok || !payload.ok) {
+        setAnnotationSaveState({ kind: "error", message: payload.message ?? "收藏操作失败。" });
+        return;
+      }
+
+      setSelectionFavorited(Boolean(payload.favorited));
+      setAnnotationSaveState({
+        kind: "saved",
+        message: payload.favorited ? "已收藏。" : "已取消收藏。",
+      });
+    } catch (error) {
+      setAnnotationSaveState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "收藏操作失败。",
+      });
+    } finally {
+      setSelectionFavoriteLoading(false);
+    }
+  }
+
+  function selectCurrentSentenceFromToolbar() {
+    if (!textSelection) {
+      return;
+    }
+
+    const sentence = textSelection.sentence;
+    const sentenceElement = articleRef.current?.querySelector<HTMLElement>(
+      `[data-reader-anchor="sentence"][data-sentence-id="${CSS.escape(sentence.sentenceId)}"] [data-reader-sentence-text="true"]`,
+    );
+    const rect = sentenceElement ? copyDomRect(sentenceElement.getBoundingClientRect()) : textSelection.rect;
+    setActiveSentence(sentence);
+    setLowerPanelMode("sentence");
+    setContextPanelOpen(false);
+    setAiOpen(false);
+    setTextSelection({
+      anchorType: "sentence",
+      sentence,
+      selectedText: sentence.text,
+      startOffset: 0,
+      endOffset: sentence.text.length,
+      textHash: hashAnchorText(sentence.text),
+      rect,
+    });
+    setSelectionNoteOpen(false);
+    setSelectionNoteDraft("");
+    setSelectionFavorited(false);
+    setSelectionFavoriteLoading(false);
+    setAnnotationSaveState({ kind: "idle" });
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function lookupTextSelection() {
+    if (!textSelection) {
+      return;
+    }
+
+    const query = textSelection.selectedText.trim();
+    if (!query) {
+      return;
+    }
+
+    setActiveSentence(textSelection.sentence);
+    void lookupPlainText(
+      {
+        query,
+        lookupType: /\s/.test(query) ? "phrase" : "word",
+        contextSentence: textSelection.sentence.text,
+        sourceContext: translationBySentence.get(textSelection.sentence.sentenceId),
+        recordId: record.id,
+        sentenceId: textSelection.sentence.sentenceId,
+        anchorText: query,
+        title: "选区查词",
+        label: "选区查词",
+      },
+      { showPreview: false },
+    );
+  }
+
+  function showSelectionActionPending(message: string) {
+    if (textSelection) {
+      setActiveSentence(textSelection.sentence);
+    }
+    setLowerPanelMode("sentence");
+    setContextPanelOpen(false);
+    setAnnotationSaveState({ kind: "error", message });
+  }
+
   function selectSentence(sentence: SentenceModel) {
     setActiveSentence(sentence);
+    setTextSelection(null);
     setLowerPanelMode("sentence");
     setContextPanelOpen(true);
     setExpandedSentenceId(null);
+    setActiveEntryId(null);
     setNote("");
     setAnnotationSaveState({ kind: "idle" });
   }
@@ -1498,6 +2458,8 @@ export function ReaderWorkbench({
     if (lowerPanelMode === "sentence") {
       setActiveSentence(null);
       setExpandedSentenceId(null);
+      setActiveEntryId(null);
+      setTextSelection(null);
     }
   }
 
@@ -1524,8 +2486,19 @@ export function ReaderWorkbench({
     <main className="paper-grain min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5">
       <div className="relative">
         <article
+          ref={articleRef}
           className={`min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${canvasThemeClass}`}
           onClick={lookupPreviewOpen ? dismissLookupPreview : undefined}
+          onMouseUp={() => {
+            window.requestAnimationFrame(updateTextSelectionFromDom);
+          }}
+          onKeyUp={(event) => {
+            if (event.key === "Escape") {
+              setTextSelection(null);
+              return;
+            }
+            window.requestAnimationFrame(updateTextSelectionFromDom);
+          }}
         >
           <header className="border-b border-hairline px-5 py-4 sm:px-8 lg:px-10">
             <div className="mx-auto flex max-w-[96ch] flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1597,23 +2570,38 @@ export function ReaderWorkbench({
                     const marks = sentenceMarks(sentence.sentenceId, reader.inlineMarks);
                     const entries = entriesBySentence.get(sentence.sentenceId) ?? [];
                     const sentenceAnnotations = annotationsBySentence.get(sentence.sentenceId) ?? [];
+                    const textRangeAnnotations = sentenceAnnotations.filter(
+                      (item) => item.anchorType === "text_range",
+                    );
+                    const sentenceLevelAnnotations = sentenceAnnotations.filter(
+                      (item) => item.anchorType !== "text_range",
+                    );
                     const isActive = activeSentence?.sentenceId === sentence.sentenceId;
+                    const activeSentenceEntry =
+                      activeEntry?.sentenceId === sentence.sentenceId ? activeEntry : null;
                     const sentenceHasActiveLookup =
                       lookupPreviewOpen && activeLookup?.sentenceId === sentence.sentenceId;
                     const highlight =
-                      sentenceAnnotations.find((item) => item.type === "highlight") ?? sentenceAnnotations.at(0);
+                      sentenceLevelAnnotations.find((item) => item.type === "highlight") ?? sentenceLevelAnnotations.at(0);
                     const sentenceFrameClass = isActive
                       ? "rounded-[8px] bg-surface/42"
                       : "rounded-[8px] hover:bg-surface/28";
                     const textHighlightClass = highlight
-                      ? `box-decoration-clone bg-gradient-to-t ${sentenceHighlightToneClass[highlight.color]} from-[44%] to-transparent to-[44%]`
+                      ? `reader-user-highlight ${sentenceHighlightToneClass[highlight.color]}`
                       : "";
+                    const entryActiveClass =
+                      activeSentenceEntry?.entryType === "sentence_analysis"
+                        ? "reader-sentence-entry-active reader-sentence-entry-active--analysis"
+                        : activeSentenceEntry?.entryType === "grammar_note"
+                          ? "reader-sentence-entry-active reader-sentence-entry-active--grammar"
+                          : "";
 
                     return (
                       <section
                         key={sentence.sentenceId}
                         className={`group/sentence relative scroll-mt-8 px-2 py-2 transition-colors ${sentenceFrameClass}`}
                         aria-label={`句子 ${sentence.sentenceId}`}
+                        {...sentenceAnchorAttributes(sentence)}
                       >
                         <AnnotationGutter annotations={sentenceAnnotations} />
                         {isActive ? (
@@ -1624,7 +2612,6 @@ export function ReaderWorkbench({
                         <div
                           tabIndex={0}
                           className="focus-ring block w-full text-left"
-                          onClick={() => selectSentence(sentence)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
@@ -1632,13 +2619,44 @@ export function ReaderWorkbench({
                             }
                           }}
                         >
-                          <p className={`${readingClass} ${textHighlightClass}`}>
+                          <p
+                            className={`${readingClass} ${textHighlightClass} ${entryActiveClass}`}
+                            data-reader-sentence-text="true"
+                            onClick={(event) => {
+                              const target = event.target instanceof HTMLElement ? event.target : null;
+                              if (target?.closest("button")) {
+                                return;
+                              }
+
+                              const currentSelection = window.getSelection();
+                              if (currentSelection && !currentSelection.isCollapsed) {
+                                return;
+                              }
+
+                              const lookupBase = lookupBaseFromSentencePoint({
+                                element: event.currentTarget,
+                                sentence,
+                                recordId: record.id,
+                                sourceContext: translationBySentence.get(sentence.sentenceId),
+                                clientX: event.clientX,
+                                clientY: event.clientY,
+                              });
+                              if (!lookupBase) {
+                                return;
+                              }
+
+                              event.stopPropagation();
+                              void lookupPlainText(lookupBase);
+                            }}
+                          >
                             {renderSentenceText({
                               sentence,
                               marks,
                               recordId: record.id,
                               sourceContext: translationBySentence.get(sentence.sentenceId),
                               markVisibility,
+                              userTextRangeAnnotations: textRangeAnnotations,
+                              activeEntry: activeSentenceEntry,
                               activeLookup,
                               lookupPreviewOpen,
                               onLookup: lookupPlainText,
@@ -1659,15 +2677,17 @@ export function ReaderWorkbench({
 
                         {expandedSentenceId === sentence.sentenceId ? (
                           entries.map((entry) => (
-                            <SentenceEntryCard key={entry.id} entry={entry} />
+                            <SentenceEntryCard
+                              key={entry.id}
+                              entry={entry}
+                              active={activeEntryId === entry.id}
+                              onActivate={activateEntry}
+                            />
                           ))
                         ) : (
                           <SentenceEntrySummary
                             entries={entries}
-                            onOpen={() => {
-                              selectSentence(sentence);
-                              setExpandedSentenceId(sentence.sentenceId);
-                            }}
+                            onOpen={(entry) => openEntry(sentence, entry)}
                           />
                         )}
                       </section>
@@ -1679,6 +2699,57 @@ export function ReaderWorkbench({
             </div>
           </div>
         </article>
+
+        {textSelection && !contextPanelVisible ? (
+          <div
+            ref={setSelectionToolbarFloating}
+            style={selectionToolbarStyles}
+            className="z-50"
+            onPointerDown={(event) => {
+              const target = event.target instanceof HTMLElement ? event.target : null;
+              if (target?.closest("[data-selection-note-input='true']")) {
+                return;
+              }
+              event.preventDefault();
+            }}
+          >
+            <SelectionToolbar
+              selectedText={textSelection.selectedText}
+              selectionMode={textSelection.anchorType}
+              activeColor={selectedAnnotation?.color ?? annotationColor}
+              hasAnnotation={Boolean(selectedAnnotation)}
+              hasNote={Boolean(selectedAnnotation?.note)}
+              favorited={selectionFavorited}
+              noteOpen={selectionNoteOpen}
+              noteValue={selectionNoteDraft}
+              noteSaving={annotationSaveState.kind === "saving"}
+              statusMessage={
+                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
+                  ? annotationSaveState.message
+                  : undefined
+              }
+              statusKind={
+                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
+                  ? annotationSaveState.kind
+                  : undefined
+              }
+              disabled={{
+                favorite: selectionFavoriteLoading,
+              }}
+              onSelectSentence={selectCurrentSentenceFromToolbar}
+              onHighlight={(color) => highlightTextSelection(color)}
+              onNote={openTextSelectionNote}
+              onNoteChange={setSelectionNoteDraft}
+              onNoteSave={saveTextSelectionNote}
+              onNoteClear={clearTextSelectionNote}
+              onClearAnnotation={deleteTextSelectionAnnotation}
+              onFavorite={toggleTextSelectionFavorite}
+              onLookup={lookupTextSelection}
+              onFeedback={() => showSelectionActionPending("选区反馈稍后接入；当前可先用笔记记录问题。")}
+              onMore={() => showSelectionActionPending("更多选区操作稍后接入。")}
+            />
+          </div>
+        ) : null}
 
       </div>
 
@@ -1736,6 +2807,8 @@ export function ReaderWorkbench({
           <ReaderContextPanel
             mode={lowerPanelMode}
             sentence={activeSentence}
+            selectedText={textSelection?.selectedText ?? null}
+            annotationScope={textSelection ? "text_range" : "sentence"}
             note={note}
             color={annotationColor}
             saveState={annotationSaveState}

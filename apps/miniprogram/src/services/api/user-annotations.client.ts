@@ -52,8 +52,12 @@ export async function createUserAnnotation(data: UserAnnotationCreateDto): Promi
   })
 }
 
-export async function listUserAnnotations(recordId?: string): Promise<UserAnnotationDto[]> {
-  const url = recordId ? `/user-annotations?analysis_record_id=${encodeURIComponent(recordId)}` : '/user-annotations'
+export async function listUserAnnotations(recordId?: string, limit = 200): Promise<UserAnnotationDto[]> {
+  const params = new URLSearchParams()
+  if (recordId) params.set('analysis_record_id', recordId)
+  params.set('limit', String(limit))
+  const query = params.toString()
+  const url = query ? `/user-annotations?${query}` : '/user-annotations'
   const res = await request<UserAnnotationListDto>({
     url,
     method: 'GET',

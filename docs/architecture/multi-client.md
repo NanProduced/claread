@@ -6,6 +6,8 @@ Claread 使用一套后端业务内核，服务多个客户端。
 
 不为 Web 端另写一套业务后端。客户端差异通过认证 adapter、render profile 和 capability profile 处理。
 
+当前 Web、小程序和后端的能力差异，按用户可感知功能追踪在 `docs/architecture/multi-client-capability-matrix.md`。该矩阵区分某端“可操作”和“仅展示”，例如 Web 局部 text range 批注可由小程序复现展示，但小程序不一定提供同样的选区操作。
+
 ## 客户端
 
 | 客户端 | 目录 | 定位 |

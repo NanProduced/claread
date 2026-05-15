@@ -3,4 +3,7 @@ export * from "./ReaderContextPanel";
 export * from "./AnnotationSlip";
 export * from "./AnnotationGutter";
 export * from "./AiWorkspacePanel";
+export * from "./ReaderFloatingLayer";
+export * from "./SelectionToolbar";
+export * from "./reader-anchors";
 export * from "./reader-entry-utils";

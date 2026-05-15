@@ -7,9 +7,19 @@ Defines request/response Pydantic models for /favorites endpoints.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+FavoriteTargetType = Literal[
+    "analysis_record",
+    "sentence",
+    "paragraph",
+    "phrase",
+    "vocab",
+    "text_range",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -21,7 +31,7 @@ class FavoriteCreateRequest(BaseModel):
     """POST /favorites — add a favorite."""
 
     analysis_record_id: UUID | None = Field(default=None)
-    target_type: str = Field(default="analysis_record")
+    target_type: FavoriteTargetType = Field(default="analysis_record")
     target_key: str = Field(min_length=1, max_length=256)
     payload_json: dict = Field(default_factory=dict)
     note: str | None = Field(default=None, max_length=1024)
@@ -37,7 +47,7 @@ class FavoriteResponse(BaseModel):
 
     id: UUID
     user_id: UUID
-    target_type: str
+    target_type: FavoriteTargetType
     target_key: str
     analysis_record_id: UUID | None
     payload_json: dict

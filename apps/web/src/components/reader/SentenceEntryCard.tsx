@@ -1,9 +1,12 @@
 import { BookOpen, Sparkles } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import type { SentenceEntryModel } from "@/types/view/ReaderMockVm";
 import { parseSentenceAnalysisContent } from "./reader-entry-utils";
 
 interface SentenceEntryCardProps {
   entry: SentenceEntryModel;
+  active?: boolean;
+  onActivate?: (entry: SentenceEntryModel) => void;
 }
 
 const entryToneHeaderClass: Record<string, string> = {
@@ -28,16 +31,32 @@ function cardLabel(entry: SentenceEntryModel) {
   return entryTypeLabel[entry.entryType] ?? entry.label ?? "解析";
 }
 
-export function SentenceEntryCard({ entry }: SentenceEntryCardProps) {
+export function SentenceEntryCard({ entry, active = false, onActivate }: SentenceEntryCardProps) {
   const label = entry.title ?? entry.label ?? "解析";
   const iconClass = entryToneHeaderClass[entry.entryType] ?? entryToneHeaderClass.content_summary;
   const category = cardLabel(entry);
+  const activate = () => onActivate?.(entry);
+  const interactiveProps = {
+    tabIndex: 0,
+    "aria-current": active ? true : undefined,
+    onClick: activate,
+    onFocus: activate,
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      }
+    },
+  };
 
   if (entry.entryType === "sentence_analysis") {
     const parsed = parseSentenceAnalysisContent(entry.content);
 
     return (
-      <section className="reader-entry-note border-structure-green/20">
+      <section
+        className={`reader-entry-note border-structure-green/20 ${active ? "reader-entry-note--active reader-entry-note--active-analysis" : ""}`}
+        {...interactiveProps}
+      >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-center gap-2">
             <span className={`flex h-8 w-8 items-center justify-center rounded-full ring-1 ${iconClass}`}>
@@ -61,12 +80,15 @@ export function SentenceEntryCard({ entry }: SentenceEntryCardProps) {
               {parsed.chunks.map((chunk, index) => (
                 <div
                   key={`${entry.id}-chunk-${index}`}
+                  data-analysis-id={entry.id}
+                  data-analysis-index={index + 1}
+                  data-analysis-order={chunk.order}
                   className={`grid grid-cols-[2.25rem_1fr] text-[0.9375rem] leading-[1.65] sm:grid-cols-[2.25rem_minmax(7rem,0.45fr)_1fr] ${
                     index > 0 ? "border-t border-hairline/80" : ""
                   }`}
                 >
-                  <div className="flex items-center justify-center border-r border-hairline/80 bg-structure-green/8 text-xs font-semibold text-structure-green">
-                    {chunk.order}
+                  <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1}`}>
+                    {index + 1}
                   </div>
                   <div className="flex items-center px-3 py-2.5 text-sm font-semibold text-ink sm:border-r sm:border-hairline/80">
                     {chunk.label}
@@ -88,7 +110,10 @@ export function SentenceEntryCard({ entry }: SentenceEntryCardProps) {
   }
 
   return (
-    <section className="reader-entry-note border-grammar-violet/20">
+    <section
+      className={`reader-entry-note border-grammar-violet/20 ${active ? "reader-entry-note--active reader-entry-note--active-grammar" : ""}`}
+      {...interactiveProps}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-center gap-2">
           <span className={`flex h-8 w-8 items-center justify-center rounded-full ring-1 ${iconClass}`}>

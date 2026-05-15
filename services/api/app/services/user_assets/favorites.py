@@ -7,11 +7,24 @@ Handles CRUD operations for favorite_records table.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
+
+
+def _ensure_payload_dict(row: dict) -> dict:
+    """Normalize asyncpg JSONB payloads across real DB and tests."""
+    payload = row.get("payload_json")
+    if isinstance(payload, str):
+        try:
+            row["payload_json"] = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            row["payload_json"] = {}
+    elif payload is None:
+        row["payload_json"] = {}
+    return row
 
 
 async def add_favorite(
@@ -40,7 +53,7 @@ async def add_favorite(
             INSERT INTO favorite_records
                 (user_id, target_type, target_key, analysis_record_id,
                  payload_json, note, deleted_at, deleted_by, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $7)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, NULL, NULL, $7, $7)
             ON CONFLICT (user_id, target_type, target_key) DO UPDATE SET
                 analysis_record_id = EXCLUDED.analysis_record_id,
                 payload_json = EXCLUDED.payload_json,
@@ -54,9 +67,9 @@ async def add_favorite(
             target_type,
             target_key,
             analysis_record_id,
-            payload_json,
+            json.dumps(payload_json, ensure_ascii=False),
             note,
-            datetime.now(timezone.utc),
+            datetime.now(UTC),
         )
         assert row is not None
         return UUID(str(row["id"]))
@@ -81,7 +94,7 @@ async def list_favorites(
             """,
             user_id,
         )
-        return [dict(row) for row in rows]
+        return [_ensure_payload_dict(dict(row)) for row in rows]
 
 
 async def remove_favorite(
@@ -95,7 +108,7 @@ async def remove_favorite(
         raise RuntimeError("Database pool not initialized")
 
     async with pool.acquire() as conn:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await conn.execute(
             """
             UPDATE favorite_records
@@ -125,7 +138,7 @@ async def remove_favorite_by_analysis_record(
         raise RuntimeError("Database pool not initialized")
 
     async with pool.acquire() as conn:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await conn.execute(
             """
             UPDATE favorite_records

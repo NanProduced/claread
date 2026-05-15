@@ -56,8 +56,18 @@ export interface WebAnnotationCreateRequest {
   paragraphId?: string;
   sentenceId: string;
   selectedText: string;
+  anchorType?: UserAnnotationAnchorTypeDto;
+  startOffset?: number | null;
+  endOffset?: number | null;
+  textHash?: string | null;
   color?: UserAnnotationColorDto;
   note?: string;
+  payloadJson?: Record<string, unknown>;
+}
+
+export interface WebAnnotationUpdateRequest {
+  color?: UserAnnotationColorDto | null;
+  note?: string | null;
 }
 
 export interface WebAnnotationVm {
@@ -69,6 +79,9 @@ export interface WebAnnotationVm {
   paragraphId: string | null;
   sentenceId: string | null;
   selectedText: string;
+  startOffset: number | null;
+  endOffset: number | null;
+  textHash: string | null;
   color: UserAnnotationColorDto;
   note: string | null;
   createdAt: string;

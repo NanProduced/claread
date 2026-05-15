@@ -9,7 +9,7 @@
 
 - 原文画布、句子、段落、译文。
 - 机器标注：`vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`term_note`、`logic_note`。
-- 用户批注：句子级 highlight / note，精确 `text_range` 后置。
+- 用户批注：句子级 highlight / note，以及单句内 `text_range` highlight / note / favorite。
 - 画布左侧词典详情层、浮动上下文/阅读设置面板、右侧 AI 工作区 shell。
 - `grammar_note` / `sentence_analysis` 句后卡。
 
@@ -28,7 +28,7 @@
 5. **右侧不是批注仓库。** 右侧只保留 AI chatbox 和后续 AI 能力落地区，围绕当前句子、选区或全文上下文。
 6. **用户批注和机器标注分层。** 机器标注解释文本，用户批注表达个人资产；两者可以叠加，但视觉语言必须不同。
 7. **颜色必须语义化。** 不为了装饰新增随机颜色。
-8. **首版保持句子级批注。** 精确选区 toolbar 等到 DOM selection 到 canonical offset 映射稳定后再启用。
+8. **首版支持受控精确选区。** Web 可操作单句内 `text_range`，小程序可展示 Web 创建的局部资产但不必复刻精确选择。
 
 ### Reader Page Alignment
 
@@ -40,8 +40,16 @@
 - **轻浮层只做轻释义。** 原文附近 `ReaderLookupPreview` 只展示 surface form、类型、一个简短中文释义和必要提示，并支持再次点击同词、关闭按钮、点击正文或 `Esc` 收起；完整释义、例句、短语、消歧义、加入生词本只放 `DictionaryPanel`。
 - **Slot 先于组件。** 新增常驻或可钉住视窗前必须先声明 slot：画布左侧工具层、画布右侧工具层、正文内卡片、核心区短时浮层或移动端 bottom sheet，并检查与词典、AI、上下文面板和底部导航的冲突。
 - **用户界面不用 raw schema 文案。** 组件内部可以消费 `entryType`、`annotation_type` 等字段，但用户可见标签应是“语法旁注”“句子拆解”“词汇”“短语”“语境”等自然文案；`entryType: grammar_note` 这类调试字段只允许出现在开发诊断模式。
-- **不可用能力不能占据主视觉。** AI 对话、导出、精确选区、Grammar X-Ray 等未接入能力可以保留入口或占位，但默认视觉权重必须低，且不能挤压当前可用的阅读、词典、标注和句子卡。
+- **不可用能力不能占据主视觉。** AI 对话、导出、跨句选区、Grammar X-Ray 等未接入能力可以保留入口或占位，但默认视觉权重必须低，且不能挤压当前可用的阅读、词典、标注和句子卡。
 - **可访问性是组件规范的一部分。** 句子可键盘聚焦；可点击查词 token 后续应提供键盘路径；色点、图标按钮和面板切换目标应达到 40-44px 的可触控尺寸或有等价键盘/菜单入口。
+
+### Confirmed Infrastructure
+
+当前 Web Reader 先固定三层基础设施，再继续做组件扩展：
+
+1. **Claread Paper theme.** 现有暖纸、墨色、`lens-blue` 和语义标注色是 Claread 的主视觉基础。Vintage Paper 等 shadcn theme 只作为 moodboard，不直接套用。后续正式初始化 shadcn/ui 时，应把现有 token 映射到 shadcn semantic tokens，而不是用第三方主题覆盖 Claread 视觉。
+2. **Reader Floating Layer.** 所有锚定原文 token、句子或 DOM selection 的短时浮层统一走 Floating UI。Radix / shadcn Popover 继续用于按钮触发的常规菜单；原文画布上的轻释义、选区工具栏、语法 hover、二级操作菜单归入 Reader floating layer。
+3. **Annotation Anchor Model.** 当前已支持句子级批注和单句内 `text_range`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id`、句内 offset 和 anchor text 等锚点属性；后续重点是跨句选区、严格校验和跨文章资产索引。
 
 ## 3. Stack Rules
 
@@ -66,6 +74,7 @@
 - 暂不新增第三方批注/富文本编辑器依赖。
 - 暂不引入社区 shadcn registry block。
 - 如果需要正式 shadcn 组件，先补 `components.json` 决策，再通过 CLI 添加基础组件，不能手抄 registry 文件。
+- 新增通用 Reader 基础设施先放在 `apps/web/src/components/reader/`，等交互稳定后再决定是否上移到 `packages/`。
 
 后续推荐正式化的 shadcn 基础组件：
 
@@ -127,9 +136,10 @@
 | --- | --- |
 | `ReaderSentence` | 单句焦点、译文、机器标注、用户批注、句后卡挂载 |
 | `InlineMarkToken` | 机器标注 token，处理语义样式、点击查词和 active state |
-| `PlainLookupToken` | 普通英文词点击查词 token |
+| `PlainLookupToken` | 已弱化为句子级点击定位逻辑，避免逐词 DOM 节点破坏浏览器选区 |
 | `ReaderLookupPreview` | 原文附近轻释义，只做即时反馈 |
 | `MarkLegend` | 标注类型/密度说明和开关 |
+| `ReaderFloatingLayer` | Floating UI 统一封装，用于原文锚点浮层和后续 selection toolbar |
 
 ### Layer C: User Annotations
 
@@ -138,7 +148,8 @@
 | `AnnotationGutter` | 句子边缘 marker，显示本句有高亮/笔记 |
 | `AnnotationSlip` | 句后用户笔记纸条 |
 | `AnnotationColorSwatch` | 高亮颜色选择 |
-| `SelectionToolbar` | 后续 text-range 选区工具栏，使用 Floating UI virtual element |
+| `SelectionToolbar` | text-range 选区工具栏，使用 Floating UI virtual element 和 live DOM Range |
+| `reader-anchors` | Reader DOM 锚点属性生成器；先输出句子和句内 text range 属性 |
 
 ### Layer D: Explanation Cards
 
@@ -165,7 +176,7 @@
 | Type | Default Visual | Active Visual |
 | --- | --- | --- |
 | `vocab_highlight` | amber inline highlight on original English text only | stronger amber highlight + lightweight lookup preview |
-| `phrase_gloss` | lavender inline highlight on original English text only | stronger lavender highlight + phrase label in lightweight preview |
+| `phrase_gloss` | purple/lavender inline highlight, visually distinct from grammar underline | stronger purple highlight + phrase label in lightweight preview |
 | `context_gloss` | context-blue inline highlight on original English text only | stronger context-blue highlight + current-context meaning preview |
 | `grammar_note` | grammar-violet low highlight / subtle underline, no heavy fill | opens `GrammarNoteCard` |
 | `term_note` | structure-green low underline | opens term card |
@@ -176,6 +187,7 @@
 | Type | Default Visual | Active Visual |
 | --- | --- | --- |
 | sentence highlight | wide translucent highlighter behind the sentence text | stronger edge marker + subtle sentence background |
+| text range highlight | inline paper marker on selected text | toolbar反显颜色，可取消或更新 |
 | note | gutter marker + sentence-side paper slip | slip lift + current sentence dot |
 | favorite | small bookmark marker near sentence or header | warm amber icon fill |
 
@@ -212,14 +224,16 @@ Rules:
 2. `ReaderContextPanel` switches to settings.
 3. Settings are local UI state first; persistence can be added later.
 
-### Future Text Range
+### Text Range Selection
 
-`SelectionToolbar` remains future work until canonical mapping is stable. When enabled, it must use:
+`SelectionToolbar` is enabled for single-sentence selections. It must use:
 
 - DOM `Selection` / `Range`
 - `data-paragraph-id`, `data-sentence-id`, `data-start`, `data-end`
 - Floating UI virtual element with `range.getBoundingClientRect()` and `range.getClientRects()`
 - backend `anchor_type="text_range"`, `start_offset`, `end_offset`, and `text_hash`
+
+It must not force ordinary words into separate interactive DOM nodes. Plain text should remain selectable as continuous text; click-to-lookup can be implemented from sentence-level hit testing.
 
 ## 8. File Ownership
 
@@ -229,9 +243,12 @@ Current extraction:
 apps/web/src/components/reader/
   AnnotationGutter.tsx
   AnnotationSlip.tsx
+  ReaderFloatingLayer.tsx
   ReaderContextPanel.tsx
+  SelectionToolbar.tsx
   SentenceEntryCard.tsx
   AiWorkspacePanel.tsx
+  reader-anchors.ts
   reader-entry-utils.ts
   index.ts
 ```
@@ -246,7 +263,7 @@ Keep in `ReaderWorkbench.tsx` during first pass:
 Move later:
 
 - Zustand store for Reader UI state
-- Floating UI selection toolbar
+- Reader canvas / sentence rendering extraction
 - persisted Reader preferences
 - `DictionaryPanel`, `ReaderLookupPreview`, `InlineMarkToken`, `ReaderCanvas`, and `ReaderSentence` extraction once behavior stabilizes
 

@@ -1,6 +1,6 @@
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 USER_ANNOTATION_COLOR_PATTERN = (
@@ -22,6 +22,33 @@ class UserAnnotationCreateRequest(BaseModel):
     color: str = Field(default="soft_green", pattern=USER_ANNOTATION_COLOR_PATTERN)
     note: Optional[str] = None
     payload_json: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_anchor_fields(self):
+        if not self.selected_text.strip():
+            raise ValueError("selected_text must not be empty")
+
+        if self.anchor_type == "sentence":
+            if not self.sentence_id:
+                raise ValueError("sentence_id is required for sentence anchors")
+            return self
+
+        if self.anchor_type == "paragraph":
+            if not self.paragraph_id:
+                raise ValueError("paragraph_id is required for paragraph anchors")
+            return self
+
+        if not self.sentence_id:
+            raise ValueError("sentence_id is required for text_range anchors")
+        if self.start_offset is None or self.end_offset is None:
+            raise ValueError("start_offset and end_offset are required for text_range anchors")
+        if self.start_offset < 0 or self.end_offset < 0:
+            raise ValueError("text_range offsets must be non-negative")
+        if self.start_offset >= self.end_offset:
+            raise ValueError("start_offset must be less than end_offset")
+        if not self.text_hash:
+            raise ValueError("text_hash is required for text_range anchors")
+        return self
 
 
 class UserAnnotationUpdateRequest(BaseModel):

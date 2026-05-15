@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from logging import getLogger
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -13,6 +14,7 @@ from app.schemas.user_assets.favorites import (
     FavoriteDeleteResponse,
     FavoriteListResponse,
     FavoriteResponse,
+    FavoriteTargetType,
 )
 from app.services.auth.dependencies import AuthUserDep
 from app.services.user_assets import favorites as fav_svc
@@ -27,7 +29,7 @@ async def add_favorite(
     current_user: AuthUserDep,
     body: FavoriteCreateRequest,
 ) -> dict:
-    """收藏一条分析记录，按 target_type + target_key 去重。"""
+    """收藏一个目标，按 target_type + target_key 去重。"""
     try:
         fav_id = await fav_svc.add_favorite(
             user_id=UUID(current_user.user_id),
@@ -64,10 +66,10 @@ async def list_favorites(
 @router.delete("/target", response_model=FavoriteDeleteResponse, summary="按目标取消收藏")
 async def remove_favorite_by_target(
     current_user: AuthUserDep,
-    target_type: str = Query(min_length=1, max_length=64),
+    target_type: Annotated[FavoriteTargetType, Query()],
     target_key: str = Query(min_length=1, max_length=256),
 ) -> FavoriteDeleteResponse:
-    """根据 target_type + target_key 取消收藏，支持 Daily Reader 等非分析记录收藏。"""
+    """根据 target_type + target_key 取消收藏。"""
     try:
         deleted = await fav_svc.remove_favorite(
             user_id=UUID(current_user.user_id),

@@ -9,6 +9,14 @@ import { getWebSession, type WebSession } from "@/services/bff/session";
 import type { FavoriteResponseDto } from "@/types/api/favorites";
 
 const ANALYSIS_RECORD_TARGET_TYPE = "analysis_record";
+const ALLOWED_TARGET_TYPES = new Set([
+  "analysis_record",
+  "sentence",
+  "paragraph",
+  "phrase",
+  "vocab",
+  "text_range",
+]);
 
 export type FavoriteBffResult =
   | {
@@ -66,6 +74,19 @@ function findRecordFavorite(items: FavoriteResponseDto[], recordId: string) {
       item.target_type === ANALYSIS_RECORD_TARGET_TYPE &&
       (item.analysis_record_id === recordId || item.target_key === recordId),
   );
+}
+
+function normalizeTargetType(targetType: string): string {
+  const normalized = targetType.trim();
+  return ALLOWED_TARGET_TYPES.has(normalized) ? normalized : "";
+}
+
+function normalizeTargetKey(targetKey: string): string {
+  return targetKey.trim();
+}
+
+function findTargetFavorite(items: FavoriteResponseDto[], targetType: string, targetKey: string) {
+  return items.find((item) => item.target_type === targetType && item.target_key === targetKey);
 }
 
 export async function getRecordFavoriteState(recordId: string): Promise<FavoriteBffResult> {
@@ -169,5 +190,125 @@ export async function unfavoriteRecord(recordId: string): Promise<FavoriteBffRes
     ok: true,
     favorited: false,
     message: upstreamResult.data.deleted ? "已取消收藏。" : "这条记录尚未收藏。",
+  };
+}
+
+export async function getFavoriteTargetState(
+  targetType: string,
+  targetKey: string,
+): Promise<FavoriteBffResult> {
+  const normalizedTargetType = normalizeTargetType(targetType);
+  const normalizedTargetKey = normalizeTargetKey(targetKey);
+
+  if (!normalizedTargetType || !normalizedTargetKey) {
+    return {
+      ok: false,
+      status: 400,
+      code: "bad_request",
+      message: "Missing favorite target.",
+    };
+  }
+
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return authError(session);
+  }
+
+  const upstreamResult = await listFavorites(session.sessionToken);
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  const favorite = findTargetFavorite(upstreamResult.data.items, normalizedTargetType, normalizedTargetKey);
+
+  return {
+    ok: true,
+    favorited: Boolean(favorite),
+    favorite,
+  };
+}
+
+export async function favoriteTarget(input: {
+  recordId?: string | null;
+  targetType: string;
+  targetKey: string;
+  payloadJson?: Record<string, unknown>;
+  note?: string | null;
+}): Promise<FavoriteBffResult> {
+  const normalizedTargetType = normalizeTargetType(input.targetType);
+  const normalizedTargetKey = normalizeTargetKey(input.targetKey);
+
+  if (!normalizedTargetType || !normalizedTargetKey) {
+    return {
+      ok: false,
+      status: 400,
+      code: "bad_request",
+      message: "Missing favorite target.",
+    };
+  }
+
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return authError(session);
+  }
+
+  const upstreamResult = await createFavorite(session.sessionToken, {
+    analysis_record_id: input.recordId ?? null,
+    target_type: normalizedTargetType,
+    target_key: normalizedTargetKey,
+    payload_json: input.payloadJson ?? {},
+    note: input.note ?? null,
+  });
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return {
+    ok: true,
+    favorited: true,
+    message: "已收藏。",
+  };
+}
+
+export async function unfavoriteTarget(
+  targetType: string,
+  targetKey: string,
+): Promise<FavoriteBffResult> {
+  const normalizedTargetType = normalizeTargetType(targetType);
+  const normalizedTargetKey = normalizeTargetKey(targetKey);
+
+  if (!normalizedTargetType || !normalizedTargetKey) {
+    return {
+      ok: false,
+      status: 400,
+      code: "bad_request",
+      message: "Missing favorite target.",
+    };
+  }
+
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return authError(session);
+  }
+
+  const upstreamResult = await deleteFavoriteByTarget(
+    session.sessionToken,
+    normalizedTargetType,
+    normalizedTargetKey,
+  );
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return {
+    ok: true,
+    favorited: false,
+    message: upstreamResult.data.deleted ? "已取消收藏。" : "这个目标尚未收藏。",
   };
 }

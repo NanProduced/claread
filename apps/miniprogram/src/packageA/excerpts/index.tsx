@@ -29,6 +29,10 @@ interface SentenceAsset {
   recordId?: string | null
   cloudRecordId?: string | null
   sentenceId?: string
+  anchorType?: string
+  startOffset?: number
+  endOffset?: number
+  textHash?: string
   sourceTitle: string
   sourceSubtitle?: string
   sourceRank?: number
@@ -67,6 +71,12 @@ function getPayloadString(payload: Record<string, unknown> | undefined, key: str
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 
+function getPayloadNumber(payload: Record<string, unknown> | undefined, key: string): number | undefined {
+  if (!payload) return undefined
+  const value = payload[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
 function trimText(text: string | undefined, max = 54): string | undefined {
   if (!text) return undefined
   const normalized = text.replace(/\s+/g, ' ').trim()
@@ -83,6 +93,14 @@ function getFavoriteSentenceKey(item: FavoriteItemDto): string {
 }
 
 function getAnnotationSentenceKey(item: UserAnnotationDto): string {
+  if (item.target_key) return item.target_key
+  if (
+    item.anchor_type === 'text_range' &&
+    typeof item.start_offset === 'number' &&
+    typeof item.end_offset === 'number'
+  ) {
+    return `${item.analysis_record_id || 'record'}:range:${item.sentence_id}:${item.start_offset}:${item.end_offset}:${item.text_hash || ''}`
+  }
   return item.target_key || `${item.analysis_record_id || 'record'}:${item.sentence_id}`
 }
 
@@ -263,6 +281,10 @@ function upsertAsset(map: Map<string, SentenceAsset>, key: string, patch: Partia
     recordId: patch.recordId ?? current?.recordId,
     cloudRecordId: patch.cloudRecordId ?? current?.cloudRecordId,
     sentenceId: patch.sentenceId ?? current?.sentenceId,
+    anchorType: patch.anchorType ?? current?.anchorType,
+    startOffset: patch.startOffset ?? current?.startOffset,
+    endOffset: patch.endOffset ?? current?.endOffset,
+    textHash: patch.textHash ?? current?.textHash,
     sourceTitle: patch.sourceTitle || current?.sourceTitle || '未命名文章',
     sourceSubtitle: patch.sourceSubtitle ?? current?.sourceSubtitle,
     sourceRank: patch.sourceRank ?? current?.sourceRank,
@@ -284,8 +306,10 @@ function buildSentenceAssets(favorites: FavoriteItemDto[], annotations: UserAnno
   const recordsById = buildRecordLookup(records)
 
   favorites.forEach(item => {
-    if (item.target_type !== 'sentence') return
-    const text = getPayloadString(item.payload_json, 'text')
+    if (item.target_type !== 'sentence' && item.target_type !== 'text_range') return
+    const isTextRange = item.target_type === 'text_range'
+    const text = getPayloadString(item.payload_json, isTextRange ? 'selected_text' : 'text')
+      || getPayloadString(item.payload_json, 'text')
     if (!text) return
     const key = getFavoriteSentenceKey(item)
     const clientRecordId = getPayloadString(item.payload_json, 'client_record_id')
@@ -298,6 +322,10 @@ function buildSentenceAssets(favorites: FavoriteItemDto[], annotations: UserAnno
       recordId: record?.recordId || clientRecordId || item.analysis_record_id,
       cloudRecordId: item.analysis_record_id,
       sentenceId,
+      anchorType: isTextRange ? 'text_range' : 'sentence',
+      startOffset: isTextRange ? getPayloadNumber(item.payload_json, 'start_offset') : undefined,
+      endOffset: isTextRange ? getPayloadNumber(item.payload_json, 'end_offset') : undefined,
+      textHash: isTextRange ? getPayloadString(item.payload_json, 'text_hash') : undefined,
       sourceTitle: articleTitle.title,
       sourceSubtitle: articleTitle.subtitle,
       sourceRank: recordMatch?.rank,
@@ -310,7 +338,7 @@ function buildSentenceAssets(favorites: FavoriteItemDto[], annotations: UserAnno
   })
 
   annotations.forEach(item => {
-    if (item.anchor_type !== 'sentence') return
+    if (item.anchor_type !== 'sentence' && item.anchor_type !== 'text_range') return
     const key = getAnnotationSentenceKey(item)
     const clientRecordId = getPayloadString(item.payload_json, 'client_record_id')
     const recordMatch = recordsById.get(item.analysis_record_id || '') || recordsById.get(clientRecordId || '')
@@ -321,6 +349,10 @@ function buildSentenceAssets(favorites: FavoriteItemDto[], annotations: UserAnno
       recordId: record?.recordId || clientRecordId || item.analysis_record_id,
       cloudRecordId: item.analysis_record_id,
       sentenceId: item.sentence_id,
+      anchorType: item.anchor_type,
+      startOffset: item.start_offset,
+      endOffset: item.end_offset,
+      textHash: item.text_hash,
       sourceTitle: articleTitle.title,
       sourceSubtitle: articleTitle.subtitle,
       sourceRank: recordMatch?.rank,
@@ -506,7 +538,7 @@ export default function ExcerptsPage() {
                           {item.isHighlighted && (
                             <View className='asset-chip asset-chip--highlight'>
                               <LucideIcon name='highlighter' size={15} color='currentColor' />
-                              <Text>高亮</Text>
+                              <Text>{item.anchorType === 'text_range' ? '局部高亮' : '高亮'}</Text>
                             </View>
                           )}
                           {item.note && (

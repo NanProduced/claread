@@ -25,6 +25,8 @@ const colorOptions: Array<{ value: UserAnnotationColorDto; label: string; classN
 export interface ReaderContextPanelProps {
   mode: LowerPanelMode;
   sentence: SentenceModel | null;
+  selectedText?: string | null;
+  annotationScope?: "sentence" | "text_range";
   note: string;
   color: UserAnnotationColorDto;
   saveState: AnnotationSaveState;
@@ -50,6 +52,8 @@ export interface ReaderContextPanelProps {
 export function ReaderContextPanel({
   mode,
   sentence,
+  selectedText,
+  annotationScope = "sentence",
   note,
   color,
   saveState,
@@ -71,12 +75,16 @@ export function ReaderContextPanel({
   onMarkVisibilityChange,
   onClose,
 }: ReaderContextPanelProps) {
+  const activeSelectedText = selectedText?.trim() ? selectedText : null;
+  const previewText = activeSelectedText ?? sentence?.text ?? "";
+  const isTextRange = annotationScope === "text_range" && Boolean(activeSelectedText);
+
   return (
     <section className="reader-tool-panel flex max-h-[min(42vh,22rem)] flex-col overflow-hidden md:max-h-[min(54vh,22rem)]">
       <div className="flex items-start justify-between gap-3 border-b border-hairline px-5 py-3">
         <div>
           <h2 className="text-base font-semibold text-ink">
-            {mode === "settings" ? "显示" : "当前句"}
+            {mode === "settings" ? "显示" : isTextRange ? "当前选区" : "当前句"}
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted">
             {mode === "settings" ? "只影响本地阅读视图。" : "笔记和高亮会回到原文。"}
@@ -225,8 +233,8 @@ export function ReaderContextPanel({
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
           {sentence ? (
             <>
-              <div className="rounded-[12px] bg-surface px-3.5 py-3 ring-1 ring-structure-green/18" title="当前选中的句子">
-                <p className="line-clamp-2 reader-serif text-[1.02rem] leading-7 text-ink">{sentence.text}</p>
+              <div className="rounded-[12px] bg-surface px-3.5 py-3 ring-1 ring-structure-green/18" title={isTextRange ? "当前选中的原文片段" : "当前选中的句子"}>
+                <p className="line-clamp-3 reader-serif text-[1.02rem] leading-7 text-ink">{previewText}</p>
               </div>
               <div className="space-y-2">
                 <div className="grid grid-cols-5 gap-2" aria-label="高亮颜色">
@@ -245,7 +253,7 @@ export function ReaderContextPanel({
                   ))}
                 </div>
                 <span className="inline-flex w-fit shrink-0 rounded-full border border-hairline bg-reader-paper px-2.5 py-1 text-[0.65rem] font-semibold text-muted">
-                  {sentenceAnnotations.length > 0 ? `已保存 ${sentenceAnnotations.length}` : "句子级"}
+                  {sentenceAnnotations.length > 0 ? `已保存 ${sentenceAnnotations.length}` : isTextRange ? "选区级" : "句子级"}
                 </span>
               </div>
               <label className="block">
@@ -255,7 +263,7 @@ export function ReaderContextPanel({
                 </div>
                 <textarea
                   className="min-h-16 w-full resize-y rounded-xl border border-hairline bg-surface px-4 py-3 text-[0.9375rem] leading-[1.65] text-ink outline-none transition-colors focus:border-muted shadow-surface-quiet"
-                  placeholder="写一句和这句话绑定的笔记。"
+                  placeholder={isTextRange ? "写一句和这个选区绑定的笔记。" : "写一句和这句话绑定的笔记。"}
                   value={note}
                   maxLength={500}
                   onChange={(event) => onNoteChange(event.target.value)}

@@ -119,6 +119,8 @@ apps/web/
 原则：
 
 - 不直接套现成 dashboard 模板。
+- 不直接套第三方 shadcn theme。Claread Web 使用 **Claread Paper theme**：暖纸背景、墨色文字、品牌 `lens-blue` 焦点色和语义标注色。Vintage Paper 等主题只作为情绪参考。
+- shadcn/ui 正式初始化前，先在 `globals.css` 维护 shadcn-compatible semantic token aliases，避免后续组件接入时反向污染 Reader 视觉。
 - 不共享小程序 UI。
 - 不在 Reader 内堆卡片式营销布局。
 - 工具按钮优先图标 + tooltip，复杂设置使用菜单、分段控件、滑块、切换按钮。
@@ -161,7 +163,7 @@ Reader 首期不使用富文本编辑器作为主渲染引擎。
 - 自建 `RenderScene -> ReaderVm -> DOM` adapter。
 - 使用浏览器 Selection / Range API 做选区。
 - 使用 `text_range`、`sentence_id`、`paragraph_id` 和 selected text 记录用户批注。
-- 使用 Floating UI 定位选区工具栏、词典浮层、hover card。
+- 使用 Reader Floating Layer 封装 Floating UI，定位选区工具栏、词典浮层、hover card。
 - 使用 Radix Dialog/Popover/Tooltip 处理可访问交互。
 
 理由：
@@ -169,6 +171,12 @@ Reader 首期不使用富文本编辑器作为主渲染引擎。
 - Claread Reader 是“分析结果阅读器”，不是自由编辑器。
 - 后端 canonical result 已经有段落、句子、inline marks、sentence entries。
 - 富文本编辑器会引入文档模型转换、selection mapping 和 schema 维护成本。
+
+已确认的三层基础设施：
+
+1. `Claread Paper theme`：现有设计 token 是品牌事实，shadcn theme 只能承接这些 token。
+2. `Reader Floating Layer`：正文锚点浮层统一用 Floating UI，按钮菜单继续用 Radix/shadcn primitives。
+3. `Annotation Anchor Model`：句子级批注和单句内 `text_range` 已进入首期闭环；Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id`、句内 offset 和 anchor text，后续重点是跨句选择、严格校验和跨文章资产索引。
 
 可选增强：
 

@@ -14,8 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.user_assets.vocabulary import _merge_payload_on_conflict, SOURCE_REFS_MAX
-from app.schemas.user_assets.vocabulary import VocabularyPayload
+from app.schemas.user_assets.favorites import FavoriteCreateRequest
+from app.services.user_assets.vocabulary import SOURCE_REFS_MAX, _merge_payload_on_conflict
 
 client = TestClient(app)
 
@@ -76,7 +76,10 @@ class TestVocabularyMergeLogic:
         assert len(result["source_refs"]) == 1
 
     def test_merge_truncates_source_refs(self):
-        refs = [{"client_record_id": f"rec{i}", "source_sentence_id": f"s{i}"} for i in range(SOURCE_REFS_MAX + 5)]
+        refs = [
+            {"client_record_id": f"rec{i}", "source_sentence_id": f"s{i}"}
+            for i in range(SOURCE_REFS_MAX + 5)
+        ]
         existing = {"source_refs": refs[:SOURCE_REFS_MAX + 5], "collected_forms": []}
         incoming = {"source_refs": [], "collected_forms": []}
         result = _merge_payload_on_conflict(existing, incoming, "test")
@@ -125,36 +128,86 @@ class TestVocabularyRoutes:
 
 
 class TestFavoritesRoutes:
+    @pytest.mark.parametrize("target_type", ["analysis_record", "sentence", "paragraph"])
+    def test_favorite_create_request_keeps_legacy_target_types(self, target_type):
+        req = FavoriteCreateRequest(target_type=target_type, target_key="legacy_target")
+        assert req.target_type == target_type
+
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
-    def test_add_favorite(self, mock_pool, mock_auth):
+    def test_add_text_range_favorite(self, mock_pool, mock_auth):
         fav_id = uuid4()
         mock_conn = AsyncMock()
         mock_conn.fetchrow.return_value = {"id": fav_id}
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        record_id = uuid4()
+        range_key = f"{record_id}:p_001:s_001:6:17:hash_abc"
         response = client.post(
             "/favorites",
             json={
-                "target_type": "sentence",
-                "target_key": "sent_001",
-                "payload": {"text": "Hello world"},
+                "analysis_record_id": str(record_id),
+                "target_type": "text_range",
+                "target_key": range_key,
+                "payload_json": {
+                    "paragraph_id": "p_001",
+                    "sentence_id": "s_001",
+                    "start_offset": 6,
+                    "end_offset": 17,
+                    "selected_text": "range text",
+                    "text_hash": "hash_abc",
+                },
             },
             headers=AUTH_HEADERS,
         )
         assert response.status_code in (200, 201)
+        assert response.json() == {"id": str(fav_id), "ok": True}
+
+        args = mock_conn.fetchrow.call_args.args
+        assert args[2] == "text_range"
+        assert args[3] == range_key
+        assert args[4] == record_id
+        assert '"selected_text": "range text"' in args[5]
 
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
-    def test_list_favorites(self, mock_pool, mock_auth):
+    def test_list_text_range_favorites(self, mock_pool, mock_auth):
+        fav_id = uuid4()
+        record_id = uuid4()
+        now = datetime.now(UTC)
+        range_key = f"{record_id}:p_001:s_001:6:17:hash_abc"
         mock_conn = AsyncMock()
-        mock_conn.fetch.return_value = []
+        mock_conn.fetch.return_value = [
+            {
+                "id": fav_id,
+                "user_id": UUID(USER_ID),
+                "target_type": "text_range",
+                "target_key": range_key,
+                "analysis_record_id": record_id,
+                "payload_json": {
+                    "paragraph_id": "p_001",
+                    "sentence_id": "s_001",
+                    "start_offset": 6,
+                    "end_offset": 17,
+                    "selected_text": "range text",
+                    "text_hash": "hash_abc",
+                },
+                "note": None,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
         response = client.get("/favorites", headers=AUTH_HEADERS)
         assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["items"][0]["target_type"] == "text_range"
+        assert data["items"][0]["target_key"] == range_key
+        assert data["items"][0]["payload_json"]["selected_text"] == "range text"
 
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
@@ -173,18 +226,24 @@ class TestFavoritesRoutes:
 
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
-    def test_remove_favorite_by_target(self, mock_pool, mock_auth):
+    def test_remove_text_range_favorite_by_target(self, mock_pool, mock_auth):
         mock_conn = AsyncMock()
         mock_conn.execute.return_value = "UPDATE 1"
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        record_id = uuid4()
+        range_key = f"{record_id}:p_001:s_001:6:17:hash_abc"
         response = client.delete(
-            "/favorites/target?target_type=daily_reader_article&target_key=daily_2026_04_28_001",
+            f"/favorites/target?target_type=text_range&target_key={range_key}",
             headers=AUTH_HEADERS,
         )
         assert response.status_code == 200
         assert response.json()["deleted"] is True
+
+        args = mock_conn.execute.call_args.args
+        assert args[2] == "text_range"
+        assert args[3] == range_key
 
 
 class TestRecordsRoutes:
