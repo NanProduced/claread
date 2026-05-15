@@ -22,6 +22,12 @@ const GOAL_DEFAULT_VARIANT: Record<ReadingGoalDto, ReadingVariantDto> = {
   academic: "academic_general",
 };
 
+const GOAL_VARIANTS: Record<ReadingGoalDto, readonly ReadingVariantDto[]> = {
+  exam: ["gaokao", "cet", "kaoyan", "tem", "ielts_toefl"],
+  daily_reading: ["beginner_reading", "intermediate_reading", "intensive_reading"],
+  academic: ["academic_general"],
+};
+
 export type WebAnalysisSubmitResult =
   | {
       ok: true;
@@ -69,6 +75,17 @@ function normalizeReadingGoal(value: unknown): ReadingGoalDto {
   return "daily_reading";
 }
 
+function normalizeReadingVariant(goal: ReadingGoalDto, value: unknown): ReadingVariantDto {
+  if (typeof value !== "string") {
+    return GOAL_DEFAULT_VARIANT[goal];
+  }
+
+  const variants = GOAL_VARIANTS[goal];
+  return variants.includes(value as ReadingVariantDto)
+    ? (value as ReadingVariantDto)
+    : GOAL_DEFAULT_VARIANT[goal];
+}
+
 function readStringField(payload: unknown, field: string): string | undefined {
   if (!payload || typeof payload !== "object") {
     return undefined;
@@ -104,6 +121,7 @@ function upstreamErrorCode(status: number): string {
 export async function submitAnalysisFromWeb(input: {
   text?: unknown;
   readingGoal?: unknown;
+  readingVariant?: unknown;
 }): Promise<WebAnalysisSubmitResult> {
   const text = normalizeText(input.text);
 
@@ -131,10 +149,11 @@ export async function submitAnalysisFromWeb(input: {
   }
 
   const readingGoal = normalizeReadingGoal(input.readingGoal);
+  const readingVariant = normalizeReadingVariant(readingGoal, input.readingVariant);
   const payload: TaskSubmitRequestDto = {
     text,
     reading_goal: readingGoal,
-    reading_variant: GOAL_DEFAULT_VARIANT[readingGoal],
+    reading_variant: readingVariant,
     client_record_id: `web-${randomUUID()}`,
     source_type: "user_input",
     extended: readingGoal === "academic",

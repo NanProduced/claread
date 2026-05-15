@@ -5,12 +5,40 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ApertureWatermark, ClareadStamp } from "@/components/brand/BrandMarks";
+import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 
 const readingOptions = [
   { value: "daily_reading", label: "日常阅读" },
   { value: "academic", label: "学术摘要" },
   { value: "exam", label: "备考精读" },
 ] as const;
+
+const readingVariantOptions: Record<
+  ReadingGoalDto,
+  Array<{ value: ReadingVariantDto; label: string; helper: string }>
+> = {
+  daily_reading: [
+    { value: "beginner_reading", label: "入门", helper: "句意拆解更直白" },
+    { value: "intermediate_reading", label: "中级", helper: "词句平衡" },
+    { value: "intensive_reading", label: "精读", helper: "语法和表达更深入" },
+  ],
+  academic: [
+    { value: "academic_general", label: "学术通用", helper: "术语、逻辑和摘要" },
+  ],
+  exam: [
+    { value: "gaokao", label: "高考", helper: "中学语法与阅读题感" },
+    { value: "cet", label: "四六级", helper: "快速定位主干信息" },
+    { value: "kaoyan", label: "考研", helper: "长难句结构优先" },
+    { value: "tem", label: "专四专八", helper: "修辞和文学语感" },
+    { value: "ielts_toefl", label: "雅思托福", helper: "信息提取和题型判断" },
+  ],
+};
+
+const defaultVariantByGoal: Record<ReadingGoalDto, ReadingVariantDto> = {
+  daily_reading: "intermediate_reading",
+  academic: "academic_general",
+  exam: "cet",
+};
 
 type SubmitState =
   | { kind: "idle" }
@@ -48,9 +76,8 @@ function readerRoute(recordId: string): Route {
 export function AnalyzeSubmitForm() {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [readingGoal, setReadingGoal] = useState<(typeof readingOptions)[number]["value"]>(
-    "daily_reading",
-  );
+  const [readingGoal, setReadingGoal] = useState<ReadingGoalDto>("daily_reading");
+  const [readingVariant, setReadingVariant] = useState<ReadingVariantDto>("intermediate_reading");
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
 
   async function pollTaskUntilReady(taskId: string): Promise<AnalysisTaskStatusResponse> {
@@ -98,7 +125,7 @@ export function AnalyzeSubmitForm() {
       const response = await fetch("/api/web/analysis/submit", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, readingGoal }),
+        body: JSON.stringify({ text, readingGoal, readingVariant }),
       });
       const payload = (await response.json()) as AnalysisSubmitResponse;
 
@@ -146,6 +173,7 @@ export function AnalyzeSubmitForm() {
 
   const isPending = state.kind === "pending";
   const errorRecordId = state.kind === "error" ? state.recordId : undefined;
+  const activeVariantOptions = readingVariantOptions[readingGoal];
 
   return (
     <section className="relative overflow-hidden rounded-[2rem] border border-hairline bg-reader-paper shadow-[0_24px_76px_rgba(35,28,18,0.11)]">
@@ -177,7 +205,10 @@ export function AnalyzeSubmitForm() {
                       ? "border-lens-blue bg-lens-blue text-surface"
                       : "border-hairline bg-reader-paper text-ink hover:border-muted"
                   }`}
-                  onClick={() => setReadingGoal(option.value)}
+                  onClick={() => {
+                    setReadingGoal(option.value);
+                    setReadingVariant(defaultVariantByGoal[option.value]);
+                  }}
                   aria-pressed={readingGoal === option.value}
                 >
                   {option.label}
@@ -186,6 +217,29 @@ export function AnalyzeSubmitForm() {
             </div>
           </fieldset>
         </div>
+        <fieldset className="mt-4 border-t border-hairline pt-4">
+          <legend className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
+            细分场景
+          </legend>
+          <div className="flex flex-wrap gap-2">
+            {activeVariantOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`focus-ring min-h-10 rounded-pill border px-3 text-left text-xs font-semibold transition-colors ${
+                  readingVariant === option.value
+                    ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
+                    : "border-hairline bg-reader-paper text-ink hover:border-muted"
+                }`}
+                onClick={() => setReadingVariant(option.value)}
+                aria-pressed={readingVariant === option.value}
+              >
+                <span>{option.label}</span>
+                <span className="ml-2 font-normal text-muted">{option.helper}</span>
+              </button>
+            ))}
+          </div>
+        </fieldset>
       </div>
 
       <div className="relative grid min-h-[590px] md:grid-cols-[68px_minmax(0,1fr)]">

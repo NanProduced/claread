@@ -45,6 +45,13 @@ services/api/config/model-presets.json
 *.backup
 *.sql.gz
 
+# Local temporary files
+**/tmp/
+
+# Local design captures and UI review screenshots
+reader-*.png
+apps/web/docs/design/**/*.png
+
 # Local AI/tool state
 .claude/
 .gemini/

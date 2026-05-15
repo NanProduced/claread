@@ -83,18 +83,19 @@ rail 的角色是“阅读仪器条”，不是 SaaS 管理侧栏。默认保持
 
 ### 5. Reader 是品牌主场
 
-Reader 默认是中心原文画布 + 左侧常驻词典/动态操作区 + 右侧 AI 工作区：
+Reader 默认是原文画布 + 左右边缘工具层的 Canvas Workspace：
 
 - 正文保持 65-75ch 行长。
 - 英文正文使用 serif，中文解释和 UI 控件使用系统 sans。
 - 译文默认柔和显示，并提供原文 / 沉浸模式切换。
 - 词汇、短语、语境三类 inline marks 默认显示；语法下划线默认显示但不展开脚注；结构链默认不显示。
-- 左侧上半区是常驻词典面板。用户点击词/短语后，原文附近可出现轻释义浮层，左侧实时显示详细释义、例句、短语、加入生词本和本次会话查词痕迹。
-- 左侧下半区是动态操作区。用户选中句子时显示高亮、写笔记、收藏、问 Claread；点击 `Aa` 时切换为阅读设置。
-- 右侧是 AI 工作区。默认可收起，只保留 Ask Claread 入口；展开后围绕当前句子、选区或全文上下文对话。
+- 左侧画布工具层是词典详情区。用户点击词/短语后，原文附近可出现轻释义浮层，画布左侧显示详细释义、例句、短语、加入生词本和本次会话查词痕迹；默认按需展开，宽屏可钉住。
+- 句子操作和阅读设置使用短时浮层。用户选中句子时显示高亮、写笔记、收藏、问 Claread；点击 `Aa` 时切换为阅读设置。它们可以短时浮在核心区，但不应成为常驻遮挡。
+- 右侧画布工具层是 AI 工作区。默认可收起，只保留 Ask Claread 入口；展开后围绕当前句子、选区或全文上下文对话。
 - `grammar_note` 和 `sentence_analysis` 必须优先回到正文画布，在相关句子下方以解释卡展示，不进入右侧汇总列表。
 - Grammar X-Ray 需要后续结构化 xray payload 后再评审；当前不使用 X-Ray 命名。
 - 用户批注 v1 只做句子级，精确选区后置。
+- 新增可常驻视窗必须先进入 slot 体系：左侧详情层、右侧 AI 层、正文内卡片、核心区短时浮层或移动端 bottom sheet。宽屏允许左词典和右 AI 共存；中屏和移动端优先保护正文核心区。
 
 不应把 Reader 做成：
 
@@ -138,15 +139,11 @@ Vocabulary 是跨文章词汇资产，不应压过阅读主线：
 - 光圈水印只用于 loading、404 / 空状态、分享页右下角，不用于主阅读区。
 - Lens Blue `#2563EB` 严格限定为 CTA 主按钮、当前激活状态、品牌符号和内嵌链接。普通按钮用墨色、灰色或透明样式；禁止大面积铺色。
 
-## 当前设计图
+## 视觉参考管理
 
-- `directions/web-v1-login-start-direction.png`
-- `directions/web-v1-daily-reader-direction.png`
-- `directions/web-v1-reader-permanent-dictionary-direction.png`
-- `directions/web-v1-reader-settings-dynamic-panel-direction.png`
-- `directions/web-v1-reader-ai-workspace-direction.png`
+PNG 方向图、组件预览和浏览器截图只作为本地评审参考，不作为长期事实来源。`apps/web/docs/design/**/*.png` 已加入 `.gitignore`；稳定结论必须沉淀在本文、`component-system.md`、`reader-ia.md`、`PRODUCT.md` 和 `DESIGN.md`。
 
-这些方向图表达当前页面形态和品牌语言：报纸头版 Start/Login、公开每日精读、光圈 rail、中心原文画布、左侧常驻词典、左下动态操作区、右侧 AI 工作区、lens-blue focus pin、语义标注和纸质 note slip。
+当前正式方向是：报纸头版 Start/Login、公开每日精读、光圈 rail、中心原文画布、画布左侧词典详情卡片、短时上下文操作浮层、画布右侧 AI 工作区、lens-blue focus pin、语义标注和纸质 note slip。
 
 ## 待继续评审
 

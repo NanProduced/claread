@@ -2,19 +2,50 @@ import { ArrowRight, CalendarDays, LogIn } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { ApertureWatermark, BrandLockup, ClareadStamp } from "@/components/brand/BrandMarks";
+import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
+import type { DailyReaderListItem } from "@/types/view/DailyReaderVm";
 
 const dailyRoute = "/daily" as Route;
-const todayRoute = "/daily/2026-05-14" as Route;
-const loginSaveRoute = "/login?next=/daily/2026-05-14&intent=save" as Route;
 const examplesRoute = "/examples/news-brief" as Route;
 
-const pastArticles = [
-  { date: "May 13", topic: "科技", title: "The quiet cost of faster chips", meta: "8 分钟 · 术语密度中等" },
-  { date: "May 12", topic: "文化", title: "Why old books feel slow", meta: "10 分钟 · 长句较多" },
-  { date: "May 11", topic: "商业", title: "A memo that changed a company", meta: "7 分钟 · 适合通勤阅读" },
-] as const;
+export const dynamic = "force-dynamic";
 
-export default function DailyReaderPage() {
+function dailyArticleRoute(articleId: string): Route {
+  return `/daily/${articleId}` as Route;
+}
+
+function loginSaveRoute(articleId: string): Route {
+  return `/login?next=/daily/${encodeURIComponent(articleId)}&intent=save` as Route;
+}
+
+function formatPublishDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function articleMeta(article: DailyReaderListItem): string {
+  return `${article.readTimeMinutes} 分钟 · ${article.difficulty}`;
+}
+
+export default async function DailyReaderPage() {
+  const [todayResult, listResult] = await Promise.all([
+    fetchDailyReaderToday(),
+    fetchDailyReaderList({ limit: 8 }),
+  ]);
+  const todayArticles = todayResult.ok ? todayResult.data : [];
+  const firstArticle = todayArticles[0] ?? null;
+  const todayIds = new Set(todayArticles.map((article) => article.id));
+  const archiveItems = listResult.ok
+    ? listResult.data.items.filter((article) => !todayIds.has(article.id)).slice(0, 5)
+    : [];
+
   return (
     <main className="min-h-screen overflow-hidden bg-[oklch(97%_0.012_84)] text-ink">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_80%_12%,rgba(37,99,235,0.08),transparent_24rem),radial-gradient(circle_at_8%_85%,rgba(17,17,17,0.055),transparent_22rem)]" />
@@ -52,53 +83,82 @@ export default function DailyReaderPage() {
                 className="absolute -bottom-28 -right-24 h-80 w-80 opacity-[0.07]"
               />
               <div className="relative">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs font-semibold text-lens-blue">今日精读 · May 14</p>
-                  <span className="inline-flex items-center gap-2 rounded-pill border border-hairline bg-reader-paper px-3 py-1.5 text-xs font-semibold text-muted">
-                    <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />
-                    每日更新
-                  </span>
-                </div>
-                <h2 className="mt-6 max-w-2xl font-headline text-3xl font-semibold leading-tight tracking-normal text-ink sm:text-[2.65rem]">
-                  What makes a city readable?
-                </h2>
-                <p className="mt-3 text-sm leading-6 text-muted">
-                  The Atlantic · 中级 · 12 分钟 · 城市与日常生活
-                </p>
-                <div className="mt-8 border-t border-hairline pt-7 font-reading text-[1.35rem] leading-[1.85] text-ink">
-                  A city is readable when its{" "}
-                  <span className="rounded-sm bg-lens-blue-soft px-1.5 py-0.5 text-[#174ea6]">
-                    patterns
-                  </span>{" "}
-                  become familiar without becoming{" "}
-                  <span className="rounded-sm bg-[#e6f3e7] px-1.5 py-0.5 text-[#276247]">
-                    invisible
-                  </span>
-                  .
-                </div>
-                <div className="mt-7 grid gap-4 md:grid-cols-[minmax(0,1fr)_270px]">
-                  <div className="flex flex-wrap items-start gap-4">
+                {firstArticle ? (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs font-semibold text-lens-blue">
+                        今日精读 · {formatPublishDate(firstArticle.publishDate)}
+                      </p>
+                      <span className="inline-flex items-center gap-2 rounded-pill border border-hairline bg-reader-paper px-3 py-1.5 text-xs font-semibold text-muted">
+                        <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />
+                        每日更新
+                      </span>
+                    </div>
+                    <h2 className="mt-6 max-w-2xl font-headline text-3xl font-semibold leading-tight tracking-normal text-ink sm:text-[2.65rem]">
+                      {firstArticle.title}
+                    </h2>
+                    {firstArticle.subtitle ? (
+                      <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
+                        {firstArticle.subtitle}
+                      </p>
+                    ) : null}
+                    <p className="mt-3 text-sm leading-6 text-muted">
+                      {firstArticle.source} · {firstArticle.difficulty} · {firstArticle.readTimeMinutes} 分钟
+                      {firstArticle.tags.length > 0 ? ` · ${firstArticle.tags.slice(0, 2).join(" / ")}` : ""}
+                    </p>
+                    <div className="mt-8 border-t border-hairline pt-7 font-reading text-[1.35rem] leading-[1.85] text-ink">
+                      {firstArticle.subtitle || "今日精读已经准备好。打开文章，阅读正文、段落透读和关键表达。"}
+                    </div>
+                    <div className="mt-7 grid gap-4 md:grid-cols-[minmax(0,1fr)_270px]">
+                      <div className="flex flex-wrap items-start gap-4">
+                        <Link
+                          href={dailyArticleRoute(firstArticle.id)}
+                          className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
+                        >
+                          打开今日
+                          <ArrowRight aria-hidden="true" className="h-4 w-4" />
+                        </Link>
+                        <Link
+                          href={loginSaveRoute(firstArticle.id)}
+                          className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill px-1 text-sm font-semibold text-lens-blue"
+                        >
+                          加入我的阅读记录
+                        </Link>
+                      </div>
+                      <div className="border-l border-hairline pl-4">
+                        <p className="text-xs font-semibold text-ink">Claread 标注预览</p>
+                        <p className="mt-2 text-sm leading-6 text-muted">
+                          {firstArticle.tags.length > 0
+                            ? `主题：${firstArticle.tags.slice(0, 3).join("、")}`
+                            : "打开后查看词汇、语境和段落透读。"}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex min-h-[24rem] flex-col justify-center">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs font-semibold text-lens-blue">今日精读</p>
+                      <span className="inline-flex items-center gap-2 rounded-pill border border-hairline bg-reader-paper px-3 py-1.5 text-xs font-semibold text-muted">
+                        <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />
+                        等待发布
+                      </span>
+                    </div>
+                    <h2 className="mt-6 max-w-2xl font-headline text-3xl font-semibold leading-tight tracking-normal text-ink sm:text-[2.65rem]">
+                      今日精读暂未发布
+                    </h2>
+                    <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
+                      Web 已接入真实每日精读数据源。当前上游没有返回今日已发布文章，请稍后再来，或先阅读公开示例。
+                    </p>
                     <Link
-                      href={todayRoute}
-                      className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
+                      href={examplesRoute}
+                      className="focus-ring mt-8 inline-flex min-h-11 w-fit items-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
                     >
-                      打开今日
+                      打开公开示例
                       <ArrowRight aria-hidden="true" className="h-4 w-4" />
                     </Link>
-                    <Link
-                      href={loginSaveRoute}
-                      className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill px-1 text-sm font-semibold text-lens-blue"
-                    >
-                      加入我的阅读记录
-                    </Link>
                   </div>
-                  <div className="border-l border-hairline pl-4">
-                    <p className="text-xs font-semibold text-ink">Claread 标注预览</p>
-                    <p className="mt-2 text-sm leading-6 text-muted">
-                      patterns 指可识别的空间规律，不是装饰图案。
-                    </p>
-                  </div>
-                </div>
+                )}
               </div>
             </article>
 
@@ -108,22 +168,22 @@ export default function DailyReaderPage() {
                 <ClareadStamp label="READ DEEPLY" className="bg-surface-warm/80" />
               </div>
               <div className="divide-y divide-hairline border-y border-hairline">
-                {pastArticles.map((article) => (
+                {archiveItems.length > 0 ? archiveItems.map((article) => (
                   <Link
-                    key={article.title}
-                    href={todayRoute}
+                    key={article.id}
+                    href={dailyArticleRoute(article.id)}
                     className="focus-ring group block py-5 transition-colors hover:bg-surface-warm/70"
                   >
                     <div className="grid grid-cols-[4.7rem_minmax(0,1fr)_1.25rem] gap-3">
                       <p className="text-xs font-semibold leading-5 text-lens-blue">
-                        {article.date}
-                        <span className="mt-1 block text-muted">{article.topic}</span>
+                        {formatPublishDate(article.publishDate)}
+                        <span className="mt-1 block text-muted">{article.tags[0] ?? article.difficulty}</span>
                       </p>
                       <div>
                         <h3 className="font-headline text-xl font-semibold leading-snug tracking-normal text-ink">
                           {article.title}
                         </h3>
-                        <p className="mt-2 text-xs leading-5 text-muted">{article.meta}</p>
+                        <p className="mt-2 text-xs leading-5 text-muted">{articleMeta(article)}</p>
                       </div>
                       <ArrowRight
                         aria-hidden="true"
@@ -131,7 +191,11 @@ export default function DailyReaderPage() {
                       />
                     </div>
                   </Link>
-                ))}
+                )) : (
+                  <p className="py-5 text-sm leading-6 text-muted">
+                    暂无往期已发布文章。发布后会自动出现在这里。
+                  </p>
+                )}
               </div>
               <p className="mt-6 inline-flex items-center gap-2 text-xs leading-5 text-muted">
                 <LogIn aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />

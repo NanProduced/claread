@@ -141,6 +141,22 @@ select {
     var(--surface-warm);
 }
 
+.reader-dictionary-card {
+  box-shadow:
+    0 1px 2px rgba(17, 17, 17, 0.04),
+    0 22px 72px rgba(28, 24, 18, 0.11);
+}
+
+.reader-lookup-trail {
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(251, 250, 246, 0.9)),
+    var(--surface-warm);
+  box-shadow:
+    0 1px 2px rgba(17, 17, 17, 0.03),
+    0 12px 32px rgba(28, 24, 18, 0.055);
+}
+
 .reader-paragraph {
   position: relative;
   display: grid;
@@ -220,49 +236,37 @@ select {
   padding: 0 0.03em;
   border-radius: 3px;
   color: var(--ink);
-  text-decoration-line: underline;
-  text-decoration-thickness: 1.5px;
-  text-underline-offset: 0.2em;
+  text-decoration-line: none;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
   transition:
     background-color 160ms ease,
     background-image 160ms ease,
-    text-decoration-color 160ms ease,
     box-shadow 160ms ease;
 }
 
 .reader-mark--vocab {
   background-image: linear-gradient(to top, rgba(228, 176, 0, 0.28) 0 42%, transparent 42%);
-  text-decoration-color: rgba(228, 176, 0, 0.78);
 }
 
 .reader-mark--phrase {
   background-image: linear-gradient(to top, rgba(185, 168, 230, 0.28) 0 42%, transparent 42%);
-  text-decoration-color: rgba(116, 102, 148, 0.72);
 }
 
 .reader-mark--context {
-  background-image: linear-gradient(to top, rgba(76, 145, 194, 0.13) 0 36%, transparent 36%);
-  text-decoration-color: rgba(76, 145, 194, 0.82);
-  text-decoration-style: dotted;
+  background-image: linear-gradient(to top, rgba(76, 145, 194, 0.2) 0 40%, transparent 40%);
 }
 
 .reader-mark--grammar {
-  background-image: none;
-  text-decoration-color: rgba(116, 102, 148, 0.72);
-  text-decoration-style: dotted;
-  text-decoration-thickness: 1px;
+  background-image: linear-gradient(to top, rgba(116, 102, 148, 0.16) 0 38%, transparent 38%);
 }
 
 .reader-mark--term {
   background-image: linear-gradient(to top, rgba(60, 140, 104, 0.16) 0 38%, transparent 38%);
-  text-decoration-color: rgba(60, 140, 104, 0.78);
 }
 
 .reader-mark--logic {
-  background-image: linear-gradient(to top, rgba(37, 99, 235, 0.1) 0 36%, transparent 36%);
-  text-decoration-color: rgba(37, 99, 235, 0.7);
+  background-image: linear-gradient(to top, rgba(37, 99, 235, 0.13) 0 36%, transparent 36%);
 }
 
 .reader-mark--quiet.reader-mark--vocab {
@@ -282,7 +286,6 @@ select {
 .reader-mark--active {
   background-color: rgba(255, 255, 255, 0.62);
   box-shadow: inset 0 -0.32em 0 rgba(37, 99, 235, 0.14);
-  text-decoration-color: var(--lens-blue);
 }
 
 .reader-lookup-preview {
@@ -290,8 +293,8 @@ select {
   top: calc(100% + 0.55rem);
   left: 0;
   z-index: 40;
-  width: min(20rem, calc(100vw - 2rem));
-  max-width: 20rem;
+  width: min(19rem, calc(100vw - 2rem));
+  max-width: 19rem;
   border: 1px solid var(--hairline);
   border-radius: 12px;
   background:
@@ -303,12 +306,13 @@ select {
   line-height: 1.45;
   text-align: left;
   box-shadow: 0 18px 45px rgba(17, 17, 17, 0.14);
+  pointer-events: auto;
 }
 
 .reader-entry-note {
   margin-top: 1rem;
   margin-right: auto;
-  max-width: 58rem;
+  max-width: 52rem;
   border-width: 1px;
   border-style: solid;
   border-radius: 12px;
@@ -334,13 +338,13 @@ select {
 
 .reader-entry-chip {
   display: inline-flex;
-  min-height: 1.9rem;
+  min-height: 2.25rem;
   align-items: center;
   gap: 0.35rem;
   border: 1px solid rgba(232, 228, 218, 0.9);
   border-radius: 999px;
   background: rgba(251, 250, 246, 0.76);
-  padding: 0.25rem 0.65rem;
+  padding: 0.35rem 0.75rem;
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 600;
@@ -355,4 +359,24 @@ select {
   border-color: rgba(98, 101, 109, 0.38);
   background: rgba(255, 255, 255, 0.9);
   color: var(--ink);
+}
+
+@media (max-width: 767px) {
+  .reader-paragraph {
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    gap: 0.85rem;
+  }
+
+  .reader-paragraph::before {
+    left: 0.85rem;
+  }
+
+  .reader-paragraph-index {
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+  }
+
+  .reader-active-dot {
+    left: -2.75rem;
+  }
 }

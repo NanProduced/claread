@@ -5,7 +5,6 @@ import { ClareadStamp } from "@/components/brand/BrandMarks";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 
 const dailyRoute = "/daily" as Route;
-const todayRoute = "/daily/2026-05-14" as Route;
 const libraryRoute = "/library" as Route;
 
 export default function PasteToReadPage() {
@@ -45,7 +44,7 @@ export default function PasteToReadPage() {
         <div className="mt-5 flex flex-col gap-3 border-t border-hairline pt-4 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
           <p>没有现成文章时，可以从今日精读开始。它是公开内容，读完后再决定是否保存为个人资产。</p>
           <Link
-            href={todayRoute}
+            href={dailyRoute}
             className="focus-ring inline-flex min-h-10 items-center gap-2 rounded-pill px-1 text-sm font-semibold text-lens-blue"
           >
             打开今日精读

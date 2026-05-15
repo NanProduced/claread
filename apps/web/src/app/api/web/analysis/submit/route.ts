@@ -6,6 +6,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     text?: unknown;
     readingGoal?: unknown;
+    readingVariant?: unknown;
   };
   const result = await submitAnalysisFromWeb(body);
 

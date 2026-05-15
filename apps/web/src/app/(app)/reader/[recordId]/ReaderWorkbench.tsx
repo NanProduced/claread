@@ -1,23 +1,29 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import {
   BookOpen,
   Check,
   ChevronRight,
-  Highlighter,
-  MessageSquare,
   MoreHorizontal,
-  PenLine,
   Pin,
   Search,
   Sparkles,
   Type,
   Volume2,
+  X,
 } from "lucide-react";
 
 import type { ReaderRecordVm } from "@/adapters/records.adapter";
+import {
+  AiWorkspacePanel,
+  AnnotationGutter,
+  AnnotationSlip,
+  ReaderContextPanel,
+  SentenceEntryCard,
+} from "@/components/reader";
 import type { UserAnnotationColorDto, WebAnnotationCreateRequest, WebAnnotationVm } from "@/types/api/annotations";
 import type { WebDictResult } from "@/types/api/dict";
 import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
@@ -34,7 +40,7 @@ import {
   type SaveState,
 } from "./DictionaryMark";
 import { FavoriteButton } from "./FavoriteButton";
-import { findTextAnchorPosition, parseSentenceAnalysisContent, tokenizeText } from "./readerText";
+import { findTextAnchorPosition, tokenizeText } from "./readerText";
 
 type ReaderDataSource = "upstream-render-scene" | "upstream-source-text";
 type LowerPanelMode = "sentence" | "settings";
@@ -42,6 +48,7 @@ type ReadingDensity = "calm" | "roomy";
 type ReaderTheme = "paper" | "white" | "green";
 type MarkVisibility = "full" | "quiet";
 type ReaderFontSize = "compact" | "normal" | "large";
+type DictionaryEntryResult = Extract<WebDictResult, { kind: "entry" }>;
 
 interface ReaderWorkbenchProps {
   record: ReaderRecordVm;
@@ -114,15 +121,6 @@ const dataSourceLabel: Record<ReaderDataSource, string> = {
   "upstream-source-text": "原文回退",
 };
 
-const entryToneClass: Record<string, string> = {
-  grammar_note: "border-grammar-violet/35 bg-surface-warm",
-  sentence_analysis: "border-structure-green/35 bg-surface-warm",
-  term_note: "border-vocab-amber/35 bg-surface-warm",
-  logic_note: "border-lens-blue/25 bg-surface-warm",
-  interpretation_note: "border-context-blue/30 bg-surface-warm",
-  content_summary: "border-hairline bg-surface-warm",
-};
-
 const sentenceHighlightToneClass: Record<UserAnnotationColorDto, string> = {
   soft_green: "from-structure-green/18",
   soft_blue: "from-context-blue/18",
@@ -130,14 +128,6 @@ const sentenceHighlightToneClass: Record<UserAnnotationColorDto, string> = {
   warm_yellow: "from-vocab-amber/24",
   sage_green: "from-structure-green/14",
 };
-
-const colorOptions: Array<{ value: UserAnnotationColorDto; label: string; className: string }> = [
-  { value: "warm_yellow", label: "暖黄", className: "bg-vocab-amber/55" },
-  { value: "soft_green", label: "绿", className: "bg-structure-green/50" },
-  { value: "soft_blue", label: "蓝", className: "bg-context-blue/45" },
-  { value: "soft_purple", label: "紫", className: "bg-phrase-lavender/70" },
-  { value: "sage_green", label: "鼠尾草", className: "bg-structure-green/30" },
-];
 
 function sentenceMarks(sentenceId: string, marks: InlineMarkModel[]) {
   return marks.filter((mark) => mark.anchor.sentenceId === sentenceId);
@@ -196,13 +186,9 @@ function buildOccurrenceByStart(text: string) {
   return occurrenceByStart;
 }
 
-function shortId(id: string) {
-  return id.length > 12 ? `${id.slice(0, 8)}...${id.slice(-4)}` : id;
-}
-
 function entryLabel(entry: SentenceEntryModel) {
   if (entry.entryType === "grammar_note") {
-    return "语法说明";
+    return "语法旁注";
   }
   if (entry.entryType === "sentence_analysis") {
     return "句子拆解";
@@ -300,7 +286,57 @@ function sameLookupTarget(lookup: DictionaryLookupSnapshot | null, base: LookupB
   );
 }
 
-function InlineLookupPreview({ lookup }: { lookup: DictionaryLookupSnapshot }) {
+function splitDictionaryField(value?: string) {
+  return (value ?? "")
+    .split(/[；;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function dictionaryExampleItems(entry: DictionaryEntryResult["entry"]) {
+  const items: Array<{ example: string; exampleTranslation?: string }> = [];
+  const seen = new Set<string>();
+
+  function add(example?: string, exampleTranslation?: string) {
+    const normalized = example?.trim();
+    if (!normalized || seen.has(normalized.toLowerCase())) {
+      return;
+    }
+    seen.add(normalized.toLowerCase());
+    items.push({
+      example: normalized,
+      exampleTranslation: exampleTranslation?.trim() || undefined,
+    });
+  }
+
+  entry.examples.forEach((example) => {
+    add(example.example, example.exampleTranslation);
+  });
+
+  if (items.length === 0) {
+    entry.meanings.forEach((meaning) => {
+      meaning.definitions.forEach((definition) => {
+        const examples = splitDictionaryField(definition.example);
+        const translations = splitDictionaryField(definition.exampleTranslation);
+        examples.forEach((example, index) => add(example, translations[index]));
+      });
+    });
+  }
+
+  return items;
+}
+
+function InlineLookupPreview({
+  lookup,
+  floatingRef,
+  style,
+  onDismiss,
+}: {
+  lookup: DictionaryLookupSnapshot;
+  floatingRef?: (node: HTMLSpanElement | null) => void;
+  style?: CSSProperties;
+  onDismiss: () => void;
+}) {
   const glossaryTitle = contextualGlossaryTitle(lookup);
   const glossaryText = contextualGlossaryText(lookup.glossary);
   const result = lookup.state.kind === "ready" ? lookup.state.result : null;
@@ -316,9 +352,13 @@ function InlineLookupPreview({ lookup }: { lookup: DictionaryLookupSnapshot }) {
 
   return (
     <span
+      ref={floatingRef}
       className="reader-lookup-preview"
       role="status"
       aria-live="polite"
+      style={style}
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
     >
       <span className="flex items-start justify-between gap-3">
         <span className="min-w-0">
@@ -329,9 +369,19 @@ function InlineLookupPreview({ lookup }: { lookup: DictionaryLookupSnapshot }) {
             {entryResult?.entry.word ?? lookup.query}
           </span>
         </span>
-        {entryResult?.entry.phonetic ? (
-          <span className="mt-1 shrink-0 text-xs text-muted">{entryResult.entry.phonetic}</span>
-        ) : null}
+        <span className="flex shrink-0 items-start gap-2">
+          {entryResult?.entry.phonetic ? (
+            <span className="mt-1 text-xs text-muted">{entryResult.entry.phonetic}</span>
+          ) : null}
+          <button
+            type="button"
+            className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
+            onClick={onDismiss}
+            aria-label="关闭单词卡片"
+          >
+            <X aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        </span>
       </span>
 
       {glossaryTitle && glossaryText ? (
@@ -345,7 +395,7 @@ function InlineLookupPreview({ lookup }: { lookup: DictionaryLookupSnapshot }) {
         <span className="mt-3 block text-sm leading-6 text-muted">正在查词...</span>
       ) : null}
 
-      {entryResult ? (
+      {entryResult && !glossaryText ? (
         <span className="mt-3 block text-sm leading-6 text-ink-soft">
           {firstMeaning(entryResult) || "当前词条暂无简短释义，左侧面板可查看完整信息。"}
         </span>
@@ -377,32 +427,73 @@ function LookupToken({
   className,
   base,
   activeLookup,
+  previewOpen,
   onLookup,
+  onDismiss,
+  onReveal,
+  focusable = false,
 }: {
   children: ReactNode;
   className: string;
   base: LookupBase;
   activeLookup: DictionaryLookupSnapshot | null;
+  previewOpen: boolean;
   onLookup: (snapshot: LookupBase) => void;
+  onDismiss: () => void;
+  onReveal: () => void;
+  focusable?: boolean;
 }) {
-  const active = sameLookupTarget(activeLookup, base);
+  const activeTarget = sameLookupTarget(activeLookup, base);
+  const active = previewOpen && activeTarget;
+  const {
+    refs: { setReference, setFloating },
+    floatingStyles,
+  } = useFloating({
+    open: active,
+    placement: "bottom-start",
+    middleware: [offset(8), flip({ padding: 16 }), shift({ padding: 16 })],
+    whileElementsMounted: autoUpdate,
+  });
 
   return (
     <span className="relative inline">
       <button
+        ref={setReference}
         type="button"
-        tabIndex={-1}
+        tabIndex={focusable ? 0 : -1}
         className={`reader-lookup-token ${className} ${active ? "reader-mark--active" : ""}`}
         onClick={(event) => {
           event.stopPropagation();
+          if (active) {
+            onDismiss();
+            return;
+          }
+          if (activeTarget) {
+            onReveal();
+            return;
+          }
           onLookup(base);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && active) {
+            event.stopPropagation();
+            onDismiss();
+          }
         }}
         title={base.title}
         aria-label={`查询 ${base.query}`}
+        aria-expanded={active}
       >
         {children}
       </button>
-      {activeLookup && active ? <InlineLookupPreview lookup={activeLookup} /> : null}
+      {activeLookup && active ? (
+        <InlineLookupPreview
+          lookup={activeLookup}
+          floatingRef={setFloating}
+          style={floatingStyles}
+          onDismiss={onDismiss}
+        />
+      ) : null}
     </span>
   );
 }
@@ -414,7 +505,10 @@ function renderSentenceText({
   sourceContext,
   markVisibility,
   activeLookup,
+  lookupPreviewOpen,
   onLookup,
+  onDismissLookup,
+  onRevealLookup,
 }: {
   sentence: SentenceModel;
   marks: InlineMarkModel[];
@@ -422,7 +516,10 @@ function renderSentenceText({
   sourceContext?: string;
   markVisibility: MarkVisibility;
   activeLookup: DictionaryLookupSnapshot | null;
+  lookupPreviewOpen: boolean;
   onLookup: (snapshot: LookupBase) => void;
+  onDismissLookup: () => void;
+  onRevealLookup: () => void;
 }): ReactNode[] {
   const ranges = buildMarkRanges(sentence, marks);
   const occurrenceByStart = buildOccurrenceByStart(sentence.text);
@@ -456,7 +553,10 @@ function renderSentenceText({
           className="reader-plain-word"
           base={base}
           activeLookup={activeLookup}
+          previewOpen={lookupPreviewOpen}
           onLookup={onLookup}
+          onDismiss={onDismissLookup}
+          onReveal={onRevealLookup}
         >
           {token.text}
         </LookupToken>
@@ -500,7 +600,11 @@ function renderSentenceText({
           className={markClass}
           base={base}
           activeLookup={activeLookup}
+          previewOpen={lookupPreviewOpen}
           onLookup={onLookup}
+          onDismiss={onDismissLookup}
+          onReveal={onRevealLookup}
+          focusable
         >
           {range.anchorText}
         </LookupToken>,
@@ -529,18 +633,30 @@ function renderSentenceText({
 
 function DictionaryDetailPanel({
   lookup,
-  history,
   saveState,
+  searchQuery,
   onSave,
-  onSelectHistory,
+  onSearchQueryChange,
+  onSearchSubmit,
   onSelectCandidate,
+  onDismiss,
+  pinned = false,
+  onTogglePinned,
+  variant = "sheet",
+  canSaveVocabulary = true,
 }: {
   lookup: DictionaryLookupSnapshot | null;
-  history: DictionaryLookupSnapshot[];
   saveState: SaveState;
+  searchQuery: string;
   onSave: () => void;
-  onSelectHistory: (lookup: DictionaryLookupSnapshot) => void;
+  onSearchQueryChange: (value: string) => void;
+  onSearchSubmit: (query: string) => void;
   onSelectCandidate: (entryId: number) => void;
+  onDismiss?: () => void;
+  pinned?: boolean;
+  onTogglePinned?: () => void;
+  variant?: "card" | "sheet";
+  canSaveVocabulary?: boolean;
 }) {
   const lookupResult = lookup?.state.kind === "ready" ? lookup.state.result : null;
   const entryResult = lookupResult?.kind === "entry" ? lookupResult : null;
@@ -549,34 +665,104 @@ function DictionaryDetailPanel({
   const errorResult = lookupResult?.kind === "error" ? lookupResult : null;
   const glossaryTitle = lookup ? contextualGlossaryTitle(lookup) : null;
   const glossaryText = contextualGlossaryText(lookup?.glossary);
+  const isCard = variant === "card";
+  const examples = entryResult ? dictionaryExampleItems(entryResult.entry) : [];
+  const panelSizing = isCard
+    ? "h-full min-h-[22rem]"
+    : lookup
+      ? onDismiss
+        ? "h-full min-h-[18rem]"
+        : "min-h-[18rem] xl:max-h-[calc(100vh-1.5rem)]"
+      : onDismiss
+        ? "h-full min-h-[13.5rem]"
+        : "min-h-[13.5rem]";
+  const contentClass =
+    isCard && entryResult
+      ? "min-h-0 flex-1 overflow-hidden px-5 py-4"
+      : "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4";
+  const saveDisabled =
+    saveState.kind === "saving" || saveState.kind === "saved" || !canSaveVocabulary;
+
+  function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSearchSubmit(searchQuery);
+  }
 
   return (
-    <section className="reader-tool-panel reader-dictionary-panel flex min-h-[23rem] flex-col overflow-hidden xl:min-h-0">
-      <div className="border-b border-hairline px-5 py-4">
+    <section
+      className={`reader-tool-panel reader-dictionary-panel ${
+        isCard ? "reader-dictionary-card" : ""
+      } flex flex-col overflow-hidden ${panelSizing}`}
+    >
+      <div className={`border-b border-hairline px-5 ${isCard ? "py-3" : "py-4"}`}>
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-ink">词典</h2>
-            <p className="mt-1 text-xs leading-5 text-muted">正文轻释义，左侧完整词条</p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              {isCard ? "完整词条与当前语境" : "完整词条"}
+            </p>
           </div>
-          <div className="flex items-center gap-2 text-muted">
-            <Pin aria-hidden="true" className="h-4 w-4" />
-            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          <div className="flex items-center gap-2">
+            {onTogglePinned ? (
+              <button
+                type="button"
+                className={`focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
+                  pinned
+                    ? "border-lens-blue/25 bg-lens-blue-soft text-lens-blue"
+                    : "border-hairline bg-surface text-muted hover:border-muted hover:text-ink"
+                }`}
+                onClick={onTogglePinned}
+                aria-pressed={pinned}
+                aria-label={pinned ? "取消钉住词典" : "钉住词典"}
+              >
+                <Pin aria-hidden="true" className="h-4 w-4" />
+              </button>
+            ) : null}
+            {onDismiss ? (
+              <button
+                type="button"
+                className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
+                onClick={onDismiss}
+                aria-label="收起词典"
+              >
+                <ChevronRight aria-hidden="true" className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <form className="border-b border-hairline px-5 py-3" onSubmit={handleSearchSubmit}>
+        <div className="flex items-center gap-2 rounded-[12px] border border-hairline bg-reader-paper px-3 py-2 transition-colors focus-within:border-lens-blue/35 focus-within:bg-surface">
+          <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted" />
+          <input
+            className="min-w-0 flex-1 bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-subtle"
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+            placeholder="输入单词或短语"
+            aria-label="输入单词或短语"
+          />
+          <button
+            type="submit"
+            className="focus-ring rounded-pill bg-ink px-3 py-1.5 text-xs font-semibold text-surface transition-colors hover:bg-ink-soft"
+          >
+            查询
+          </button>
+        </div>
+      </form>
+
+      <div className={contentClass}>
         {!lookup ? (
-          <div className="flex min-h-52 flex-col justify-center border-b border-hairline/70 pb-6">
+          <div className="flex min-h-32 flex-col justify-center">
             <Search aria-hidden="true" className="mb-4 h-5 w-5 text-lens-blue" />
-            <p className="text-sm font-semibold text-ink">从原文开始查词</p>
+            <p className="text-sm font-semibold text-ink">从原文或搜索框开始查词</p>
             <p className="mt-2 text-sm leading-6 text-muted">
-              词汇、短语和语境标注会在原文附近给出轻释义，完整词条保留在这个面板。
+              点击正文保留语境，手动输入适合快速查一个独立词条。
             </p>
           </div>
         ) : null}
 
-        {lookup && glossaryTitle && glossaryText ? (
+        {lookup && glossaryTitle && glossaryText && (!entryResult || !isCard) ? (
           <div className="mb-5 rounded-[10px] bg-lens-blue-soft/70 px-3 py-3 ring-1 ring-lens-blue/15">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold text-lens-blue">{glossaryTitle}</p>
@@ -614,108 +800,180 @@ function DictionaryDetailPanel({
         ) : null}
 
         {lookup && entryResult ? (
-          <div className="space-y-5">
-            <div>
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="reader-serif text-[2.05rem] font-semibold leading-tight text-ink">
-                    {entryResult.entry.word}
-                  </h3>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
-                    {entryResult.entry.phonetic ? <span>{entryResult.entry.phonetic}</span> : null}
-                    <span>{entryResult.provider}</span>
-                    <span>{entryResult.cached ? "缓存" : "实时查询"}</span>
+          <div
+            className={
+              isCard
+                ? "grid h-full min-h-0 gap-5 lg:grid-cols-[minmax(12.5rem,0.68fr)_minmax(0,1.32fr)]"
+                : "space-y-5"
+            }
+          >
+            <div className={isCard ? "flex min-h-0 flex-col gap-4" : "space-y-5"}>
+              <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3
+                      className={`reader-serif font-semibold leading-tight text-ink ${
+                        isCard ? "text-[1.9rem]" : "text-[2.05rem]"
+                      }`}
+                    >
+                      {entryResult.entry.word}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                      {entryResult.entry.phonetic ? <span>{entryResult.entry.phonetic}</span> : null}
+                      {entryResult.entry.baseWord && entryResult.entry.baseWord !== entryResult.entry.word ? (
+                        <span>原形 {entryResult.entry.baseWord}</span>
+                      ) : null}
+                      {entryResult.entry.homographNo ? <span>义项 {entryResult.entry.homographNo}</span> : null}
+                      <span>{entryResult.provider}</span>
+                      <span>{entryResult.cached ? "缓存" : "实时查询"}</span>
+                    </div>
                   </div>
+                  <Volume2 aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted" />
                 </div>
-                <Volume2 aria-hidden="true" className="mt-2 h-4 w-4 shrink-0 text-muted" />
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold">
-                <span className="text-vocab-amber">{lookup.label ?? (lookup.lookupType === "phrase" ? "短语" : "词汇")}</span>
-                {firstMeaning(entryResult) ? <span className="text-ink-soft">{firstMeaning(entryResult)}</span> : null}
-              </div>
-            </div>
-
-            <div className="border-t border-hairline py-4">
-              <p className="text-sm font-semibold text-ink">详细释义</p>
-              <div className="mt-3 space-y-4">
-                {entryResult.entry.meanings.slice(0, 3).map((meaning) => (
-                  <div key={`${entryResult.entry.id}-${meaning.partOfSpeech}`}>
-                    <p className="text-xs font-semibold text-structure-green">{meaning.partOfSpeech}</p>
-                    <ol className="mt-2 space-y-2">
-                      {meaning.definitions.slice(0, 2).map((definition, index) => (
-                        <li
-                          key={`${entryResult.entry.id}-${meaning.partOfSpeech}-${definition.meaning}`}
-                          className="grid grid-cols-[1.5rem_1fr] gap-2 text-sm leading-6 text-ink-soft"
+                {entryResult.entry.tags.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {entryResult.entry.tags.slice(0, 8).map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded-pill border border-hairline bg-reader-paper px-2 py-1 text-[0.7rem] font-semibold uppercase text-muted"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {entryResult.entry.exchange.length > 0 ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold text-muted">词形</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {entryResult.entry.exchange.slice(0, 8).map((form) => (
+                        <span
+                          key={form}
+                          className="rounded-pill bg-surface px-2 py-1 text-xs font-semibold text-ink-soft ring-1 ring-hairline"
                         >
-                          <span className="text-xs font-semibold text-subtle">{index + 1}</span>
-                          <span>{definition.meaning}</span>
-                          {definition.example ? (
-                            <span className="col-start-2 reader-serif text-[0.9375rem] leading-6 text-muted">
-                              {definition.example}
-                            </span>
-                          ) : null}
-                        </li>
+                          {form}
+                        </span>
                       ))}
-                    </ol>
+                    </div>
                   </div>
-                ))}
+                ) : null}
+              </div>
+
+              {glossaryTitle && glossaryText ? (
+                <div
+                  className={
+                    isCard
+                      ? "rounded-[14px] bg-lens-blue-soft/70 px-4 py-3 ring-1 ring-lens-blue/15"
+                      : "rounded-[10px] bg-lens-blue-soft/70 px-3 py-3 ring-1 ring-lens-blue/15"
+                  }
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-lens-blue">{glossaryTitle}</p>
+                    {lookup.label && lookup.label !== glossaryTitle ? (
+                      <span className="text-[0.7rem] font-semibold text-muted">{lookup.label}</span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-ink">{glossaryText}</p>
+                  {lookup.glossary?.reason ? (
+                    <p className="mt-2 text-xs leading-5 text-muted">{lookup.glossary.reason}</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="border-t border-hairline pt-4">
+                <button
+                  type="button"
+                  className="focus-ring inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-ink px-4 text-sm font-semibold text-surface transition-colors hover:bg-ink-soft disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={onSave}
+                  disabled={saveDisabled}
+                  title={!canSaveVocabulary ? "手动查词需要先选中正文句子，才能保存到生词本。" : undefined}
+                >
+                  {!canSaveVocabulary
+                    ? "选中句子后保存"
+                    : saveState.kind === "saving"
+                      ? "写入中"
+                      : "加入生词本"}
+                </button>
+                {saveState.kind === "saved" ? (
+                  <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-structure-green">
+                    <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                    {saveState.message}
+                  </span>
+                ) : null}
+                {saveState.kind === "error" ? (
+                  <span className="mt-2 block text-xs font-semibold text-error-red">{saveState.message}</span>
+                ) : null}
               </div>
             </div>
 
-            {entryResult.entry.phrases.length > 0 || entryResult.entry.examples.length > 0 ? (
-              <div className="space-y-4">
-                {entryResult.entry.phrases.length > 0 ? (
-                  <div className="border-t border-hairline pt-4">
-                    <p className="text-sm font-semibold text-ink">搭配与派生</p>
-                    <div className="mt-2 space-y-2">
-                      {entryResult.entry.phrases.slice(0, 4).map((phrase) => (
-                        <p key={phrase.phrase} className="text-sm leading-6 text-ink-soft">
-                          <span className="font-semibold text-ink">{phrase.phrase}</span>
-                          {phrase.meaning ? <span className="ml-2 text-muted">{phrase.meaning}</span> : null}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {entryResult.entry.examples.length > 0 ? (
-                  <div className="border-t border-hairline pt-4">
-                    <p className="text-sm font-semibold text-ink">例句</p>
-                    <div className="mt-2 space-y-3">
-                      {entryResult.entry.examples.slice(0, 2).map((example) => (
-                        <figure key={example.example}>
-                          <blockquote className="reader-serif text-sm leading-6 text-ink-soft">
-                            {example.example}
-                          </blockquote>
-                          {example.exampleTranslation ? (
-                            <figcaption className="mt-1 text-xs leading-5 text-muted">
-                              {example.exampleTranslation}
-                            </figcaption>
-                          ) : null}
-                        </figure>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+            <div className={isCard ? "min-h-0 overflow-y-auto overscroll-contain pr-2" : "space-y-5"}>
+              <div className={isCard ? "" : "border-t border-hairline py-4"}>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-ink">详细释义</p>
+                  <span className="text-xs font-semibold text-muted">
+                    {entryResult.entry.meanings.reduce((count, meaning) => count + meaning.definitions.length, 0)} 条
+                  </span>
+                </div>
+                <div className="mt-3 space-y-5">
+                  {entryResult.entry.meanings.map((meaning) => (
+                    <section key={`${entryResult.entry.id}-${meaning.partOfSpeech}`} className="border-t border-hairline pt-4 first:border-t-0 first:pt-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-structure-green">{meaning.partOfSpeech}</p>
+                        <span className="text-[0.7rem] font-semibold text-subtle">
+                          {meaning.definitions.length}
+                        </span>
+                      </div>
+                      <ol className="mt-2 space-y-2.5">
+                        {meaning.definitions.map((definition, index) => (
+                          <li
+                            key={`${entryResult.entry.id}-${meaning.partOfSpeech}-${definition.meaning}`}
+                            className="grid grid-cols-[1.65rem_1fr] gap-2 text-sm leading-6 text-ink-soft"
+                          >
+                            <span className="pt-0.5 text-xs font-semibold text-subtle">{index + 1}</span>
+                            <span>{definition.meaning}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </section>
+                  ))}
+                </div>
               </div>
-            ) : null}
 
-            <div className="sticky bottom-0 -mx-5 flex flex-wrap items-center gap-2 border-t border-hairline bg-surface/96 px-5 py-3">
-              <button
-                type="button"
-                className="focus-ring inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-[10px] bg-ink px-4 text-sm font-semibold text-surface transition-colors hover:bg-ink-soft disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={onSave}
-                disabled={saveState.kind === "saving" || saveState.kind === "saved"}
-              >
-                {saveState.kind === "saving" ? "写入中" : "加入生词本"}
-              </button>
-              {saveState.kind === "saved" ? (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-structure-green">
-                  <Check aria-hidden="true" className="h-3.5 w-3.5" />
-                  {saveState.message}
-                </span>
-              ) : null}
-              {saveState.kind === "error" ? (
-                <span className="text-xs font-semibold text-error-red">{saveState.message}</span>
+              {entryResult.entry.phrases.length > 0 || examples.length > 0 ? (
+                <div className="mt-5 space-y-5">
+                  {entryResult.entry.phrases.length > 0 ? (
+                    <div className="border-t border-hairline pt-4">
+                      <p className="text-sm font-semibold text-ink">短语与搭配</p>
+                      <div className="mt-2 space-y-2">
+                        {entryResult.entry.phrases.map((phrase) => (
+                          <p key={phrase.phrase} className="text-sm leading-6 text-ink-soft">
+                            <span className="font-semibold text-ink">{phrase.phrase}</span>
+                            {phrase.meaning ? <span className="ml-2 text-muted">{phrase.meaning}</span> : null}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {examples.length > 0 ? (
+                    <div className="border-t border-hairline pt-4">
+                      <p className="text-sm font-semibold text-ink">例句</p>
+                      <div className="mt-2 space-y-3">
+                        {examples.map((example) => (
+                          <figure key={example.example}>
+                            <blockquote className="reader-serif text-sm leading-6 text-ink-soft">
+                              {example.example}
+                            </blockquote>
+                            {example.exampleTranslation ? (
+                              <figcaption className="mt-1 text-xs leading-5 text-muted">
+                                {example.exampleTranslation}
+                              </figcaption>
+                            ) : null}
+                          </figure>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </div>
@@ -757,290 +1015,55 @@ function DictionaryDetailPanel({
           </div>
         ) : null}
 
-        {history.length > 0 ? (
-          <div className="mt-6 border-t border-hairline pt-4">
-            <p className="text-xs font-semibold text-muted">本次查词</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {history.map((item) => (
-                <button
-                  key={`${item.query}-${item.sentenceId}-${item.anchorText}`}
-                  type="button"
-                  className="focus-ring rounded-pill border border-hairline bg-reader-paper px-3 py-1.5 text-xs font-semibold text-ink-soft transition-colors hover:border-muted hover:text-ink"
-                  onClick={() => onSelectHistory(item)}
-                >
-                  {item.query}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </div>
     </section>
   );
 }
 
-function ContextPanel({
-  mode,
-  sentence,
-  note,
-  color,
-  saveState,
-  sentenceAnnotations,
-  showTranslation,
-  fontSize,
-  density,
-  theme,
-  markVisibility,
-  onModeChange,
-  onNoteChange,
-  onColorChange,
-  onSaveAnnotation,
-  onAsk,
-  onShowTranslationChange,
-  onFontSizeChange,
-  onDensityChange,
-  onThemeChange,
-  onMarkVisibilityChange,
+function LookupTrail({
+  history,
+  activeLookup,
+  onSelect,
 }: {
-  mode: LowerPanelMode;
-  sentence: SentenceModel | null;
-  note: string;
-  color: UserAnnotationColorDto;
-  saveState: AnnotationSaveState;
-  sentenceAnnotations: WebAnnotationVm[];
-  showTranslation: boolean;
-  fontSize: ReaderFontSize;
-  density: ReadingDensity;
-  theme: ReaderTheme;
-  markVisibility: MarkVisibility;
-  onModeChange: (mode: LowerPanelMode) => void;
-  onNoteChange: (value: string) => void;
-  onColorChange: (value: UserAnnotationColorDto) => void;
-  onSaveAnnotation: (useNote: boolean) => void;
-  onAsk: () => void;
-  onShowTranslationChange: (value: boolean) => void;
-  onFontSizeChange: (value: ReaderFontSize) => void;
-  onDensityChange: (value: ReadingDensity) => void;
-  onThemeChange: (value: ReaderTheme) => void;
-  onMarkVisibilityChange: (value: MarkVisibility) => void;
+  history: DictionaryLookupSnapshot[];
+  activeLookup: DictionaryLookupSnapshot | null;
+  onSelect: (lookup: DictionaryLookupSnapshot) => void;
 }) {
+  if (history.length < 2) {
+    return null;
+  }
+
   return (
-    <section className="reader-tool-panel flex min-h-[19.5rem] flex-col overflow-hidden xl:min-h-0">
-      <div className="flex items-center justify-between gap-2 border-b border-hairline px-5 py-3.5">
-        <div>
-          <h2 className="text-base font-semibold text-ink">
-            {mode === "settings" ? "阅读设置" : "选中句子"}
-          </h2>
-          <p className="mt-1 text-xs leading-5 text-muted">
-            {mode === "settings" ? "仅调整本地阅读显示。" : "笔记、高亮和追问挂回原文。"}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-reader-paper text-muted transition-colors hover:border-muted hover:text-ink"
-          onClick={() => onModeChange(mode === "settings" ? "sentence" : "settings")}
-          aria-label={mode === "settings" ? "切回句子操作" : "打开阅读设置"}
-        >
-          {mode === "settings" ? <PenLine aria-hidden="true" className="h-4 w-4" /> : <Type aria-hidden="true" className="h-4 w-4" />}
-        </button>
+    <nav
+      className="reader-tool-panel reader-lookup-trail px-4 py-3"
+      aria-label="本次查词轨迹"
+    >
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold text-muted">查询轨迹</p>
+        <span className="text-[0.7rem] font-semibold text-subtle">{history.length}</span>
       </div>
-
-      {mode === "settings" ? (
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">译文</legend>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {[true, false].map((value) => (
-                <button
-                  key={String(value)}
-                  type="button"
-                  className={`focus-ring min-h-9 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    showTranslation === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
-                  onClick={() => onShowTranslationChange(value)}
-                >
-                  {value ? "显示译文" : "原文模式"}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">字号</legend>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {(["compact", "normal", "large"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`focus-ring min-h-9 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    fontSize === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
-                  onClick={() => onFontSizeChange(value)}
-                >
-                  {value === "compact" ? "小" : value === "normal" ? "中" : "大"}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">行距</legend>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {(["calm", "roomy"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`focus-ring min-h-9 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    density === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
-                  onClick={() => onDensityChange(value)}
-                >
-                  {value === "calm" ? "标准" : "舒展"}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">阅读背景</legend>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {(["paper", "white", "green"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`focus-ring min-h-9 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    theme === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
-                  onClick={() => onThemeChange(value)}
-                >
-                  {value === "paper" ? "纸张" : value === "white" ? "纯白" : "护眼"}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">标注显示</legend>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {(["full", "quiet"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`focus-ring min-h-9 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    markVisibility === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
-                  onClick={() => onMarkVisibilityChange(value)}
-                >
-                  {value === "full" ? "完整" : "安静"}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-        </div>
-      ) : (
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          {sentence ? (
-            <>
-              <div className="rounded-[10px] bg-structure-green/8 px-3 py-3 ring-1 ring-structure-green/18" title="当前选中的句子">
-                <p className="line-clamp-4 reader-serif text-[1rem] leading-7 text-ink">{sentence.text}</p>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex flex-wrap gap-2" aria-label="高亮颜色">
-                  {colorOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`focus-ring flex h-8 w-8 items-center justify-center rounded-full border ${
-                        color === option.value ? "border-lens-blue" : "border-hairline"
-                      }`}
-                      onClick={() => onColorChange(option.value)}
-                      aria-label={`选择${option.label}高亮`}
-                    >
-                      <span className={`h-5 w-5 rounded-full ${option.className}`} />
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-reader-paper text-muted transition-colors hover:border-muted hover:text-ink"
-                  aria-label="更多句子操作"
-                >
-                  <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
-                </button>
-              </div>
-              <label className="block">
-                <span className="text-xs font-semibold text-muted">我的笔记</span>
-                <textarea
-                  className="mt-2 min-h-28 w-full resize-y rounded-[10px] border border-hairline bg-reader-paper px-3 py-3 text-sm leading-6 text-ink outline-none transition-colors focus:border-muted"
-                  placeholder="写一句和这句话绑定的笔记。"
-                  value={note}
-                  onChange={(event) => onNoteChange(event.target.value)}
-                />
-              </label>
-              <div className="grid grid-cols-[1fr_1fr] gap-2">
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-[10px] bg-ink px-3.5 text-sm font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={saveState.kind === "saving"}
-                  onClick={() => onSaveAnnotation(false)}
-                >
-                  <Highlighter aria-hidden="true" className="h-4 w-4" />
-                  高亮本句
-                </button>
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-[10px] border border-hairline bg-reader-paper px-3.5 text-sm font-semibold text-ink-soft transition-colors hover:border-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={saveState.kind === "saving" || note.trim().length === 0}
-                  onClick={() => onSaveAnnotation(true)}
-                >
-                  <PenLine aria-hidden="true" className="h-4 w-4" />
-                  保存笔记
-                </button>
-                <button
-                  type="button"
-                  className="focus-ring col-span-2 inline-flex min-h-10 items-center justify-center gap-2 rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft/60 px-3.5 text-sm font-semibold text-lens-blue transition-colors hover:border-lens-blue/35"
-                  onClick={onAsk}
-                >
-                  <MessageSquare aria-hidden="true" className="h-4 w-4" />
-                  问 Claread
-                </button>
-              </div>
-              {saveState.kind === "saved" ? (
-                <p className="text-xs font-semibold text-structure-green">{saveState.message}</p>
-              ) : null}
-              {saveState.kind === "error" ? (
-                <p className="text-xs font-semibold text-error-red">{saveState.message}</p>
-              ) : null}
-              {sentenceAnnotations.length > 0 ? (
-                <div className="border-t border-hairline pt-3">
-                  <p className="text-xs font-semibold text-muted">本句已保存</p>
-                  <div className="mt-2 space-y-2">
-                    {sentenceAnnotations.slice(0, 3).map((item) => (
-                      <p key={item.id} className="text-sm leading-6 text-ink-soft">
-                        <span className="font-semibold text-ink">{item.type === "note" ? "笔记" : "高亮"}</span>
-                        {item.note ? <span className="ml-2 text-muted">{item.note}</span> : null}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <p className="text-sm leading-6 text-muted">点击正文中的句子后，可以在这里写笔记或保存高亮。</p>
-          )}
-        </div>
-      )}
-    </section>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {history.slice(0, 8).map((item) => {
+          const active =
+            activeLookup?.query.toLowerCase() === item.query.toLowerCase() &&
+            activeLookup?.sentenceId === item.sentenceId;
+          return (
+            <button
+              key={`${item.query}-${item.sentenceId}-${item.anchorText}`}
+              type="button"
+              className={`focus-ring shrink-0 rounded-pill border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                active
+                  ? "border-lens-blue/30 bg-lens-blue-soft text-lens-blue"
+                  : "border-hairline bg-reader-paper text-ink-soft hover:border-muted hover:text-ink"
+              }`}
+              onClick={() => onSelect(item)}
+            >
+              {item.query}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 
@@ -1061,8 +1084,7 @@ function SentenceEntrySummary({
         <button
           key={entry.id}
           type="button"
-          tabIndex={-1}
-          className="reader-entry-chip"
+          className="focus-ring reader-entry-chip"
           onClick={(event) => {
             event.stopPropagation();
             onOpen();
@@ -1080,130 +1102,6 @@ function SentenceEntrySummary({
   );
 }
 
-function SentenceEntryBlock({ entry }: { entry: SentenceEntryModel }) {
-  if (entry.entryType === "sentence_analysis") {
-    const parsed = parseSentenceAnalysisContent(entry.content);
-
-    return (
-      <section className={`reader-entry-note ${entryToneClass[entry.entryType]}`}>
-        <div className="flex items-start gap-3">
-          <span className="reader-entry-icon text-structure-green">
-            <BookOpen aria-hidden="true" className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold leading-6 text-ink">{entry.title ?? entryLabel(entry)}</h3>
-            {parsed.summary ? (
-              <p className="mt-2 whitespace-pre-line text-sm leading-7 text-ink-soft">{parsed.summary}</p>
-            ) : null}
-            {parsed.chunks.length > 0 ? (
-              <ol className="mt-3 divide-y divide-hairline/80 border-t border-hairline/80">
-                {parsed.chunks.map((chunk) => (
-                  <li
-                    key={`${entry.id}-${chunk.order}`}
-                    className="grid grid-cols-[1.75rem_1fr] gap-3 py-2.5 text-sm leading-6"
-                  >
-                    <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-surface text-xs font-semibold text-muted ring-1 ring-hairline">
-                      {chunk.order || "•"}
-                    </span>
-                    <span>
-                      <span className="font-semibold text-ink">{chunk.label}</span>
-                      <span className="mx-1 text-muted">:</span>
-                      <span className="text-ink-soft">{chunk.text}</span>
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className={`reader-entry-note ${entryToneClass[entry.entryType] ?? entryToneClass.content_summary}`}>
-      <div className="flex items-start gap-3">
-        <span className="reader-entry-icon text-grammar-violet">
-          <Sparkles aria-hidden="true" className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold leading-6 text-ink">{entry.title ?? entryLabel(entry)}</h3>
-          <p className="mt-2 whitespace-pre-line text-sm leading-7 text-ink-soft">{entry.content}</p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AiWorkspace({
-  open,
-  activeSentence,
-  onToggle,
-}: {
-  open: boolean;
-  activeSentence: SentenceModel | null;
-  onToggle: () => void;
-}) {
-  if (!open) {
-    return (
-      <aside className="rounded-panel border border-hairline bg-surface/86 shadow-surface-quiet xl:sticky xl:top-5 xl:min-h-[calc(100vh-2.5rem)]">
-        <button
-          type="button"
-          className="focus-ring flex min-h-20 w-full items-center justify-center gap-2 px-3 py-4 text-sm font-semibold text-ink-soft xl:h-full xl:flex-col"
-          onClick={onToggle}
-          aria-label="打开 AI 工作区"
-        >
-          <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-          <span className="xl:[writing-mode:vertical-rl]">Ask Claread</span>
-        </button>
-      </aside>
-    );
-  }
-
-  return (
-    <aside className="rounded-panel border border-hairline bg-surface shadow-surface-quiet xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:min-h-[calc(100vh-2.5rem)] xl:overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-4">
-        <div>
-          <h2 className="text-sm font-semibold text-ink">Ask Claread</h2>
-          <p className="mt-1 text-xs leading-5 text-muted">未来 AI 工作区，围绕当前句子或全文上下文。</p>
-        </div>
-        <button
-          type="button"
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-reader-paper text-muted transition-colors hover:border-muted hover:text-ink"
-          onClick={onToggle}
-          aria-label="收起 AI 工作区"
-        >
-          <ChevronRight aria-hidden="true" className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="flex min-h-[24rem] flex-col px-4 py-4 xl:h-[calc(100vh-8.5rem)]">
-        <div className="border-b border-hairline pb-4">
-          <p className="text-xs font-semibold text-muted">当前上下文</p>
-          <p className="mt-2 line-clamp-5 reader-serif text-sm leading-6 text-ink-soft">
-            {activeSentence?.text ?? "点击正文句子后，这里会带入上下文。"}
-          </p>
-        </div>
-        <div className="flex flex-1 items-center justify-center py-8">
-          <div className="text-center">
-            <MessageSquare aria-hidden="true" className="mx-auto h-8 w-8 text-lens-blue" />
-            <p className="mt-3 text-sm font-semibold text-ink">AI 对话尚未接入</p>
-            <p className="mt-2 text-sm leading-6 text-muted">首版只保留工作区位置，避免和正文批注争抢空间。</p>
-          </div>
-        </div>
-        <label className="block border-t border-hairline pt-4">
-          <span className="text-xs font-semibold text-muted">输入框</span>
-          <textarea
-            className="mt-2 min-h-24 w-full resize-none rounded-md border border-hairline bg-reader-paper px-3 py-2 text-sm leading-6 text-muted outline-none"
-            placeholder="后续接入 Ask Claread。"
-            disabled
-          />
-        </label>
-      </div>
-    </aside>
-  );
-}
-
 export function ReaderWorkbench({
   record,
   dataSource,
@@ -1211,13 +1109,15 @@ export function ReaderWorkbench({
   initialAnnotations,
 }: ReaderWorkbenchProps) {
   const reader = record.reader;
-  const firstSentence = reader.article.sentences.at(0) ?? null;
   const [activeLookup, setActiveLookup] = useState<DictionaryLookupSnapshot | null>(null);
+  const [lookupPreviewOpen, setLookupPreviewOpen] = useState(false);
   const [lookupHistory, setLookupHistory] = useState<DictionaryLookupSnapshot[]>([]);
   const [dictionarySaveState, setDictionarySaveState] = useState<SaveState>({ kind: "idle" });
   const [annotations, setAnnotations] = useState(initialAnnotations);
-  const [activeSentence, setActiveSentence] = useState<SentenceModel | null>(firstSentence);
+  const [activeSentence, setActiveSentence] = useState<SentenceModel | null>(null);
   const [lowerPanelMode, setLowerPanelMode] = useState<LowerPanelMode>("sentence");
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [expandedSentenceId, setExpandedSentenceId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [annotationColor, setAnnotationColor] = useState<UserAnnotationColorDto>("warm_yellow");
   const [annotationSaveState, setAnnotationSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
@@ -1227,6 +1127,8 @@ export function ReaderWorkbench({
   const [theme, setTheme] = useState<ReaderTheme>("paper");
   const [markVisibility, setMarkVisibility] = useState<MarkVisibility>("quiet");
   const [aiOpen, setAiOpen] = useState(false);
+  const [dictionaryPinned, setDictionaryPinned] = useState(false);
+  const [dictionaryQuery, setDictionaryQuery] = useState("");
 
   const translationBySentence = useMemo(
     () => new Map(reader.translations.map((item) => [item.sentenceId, item.translationZh])),
@@ -1267,6 +1169,24 @@ export function ReaderWorkbench({
     ? annotationsBySentence.get(activeSentence.sentenceId) ?? []
     : [];
 
+  const dismissLookupPreview = useCallback(() => {
+    setLookupPreviewOpen(false);
+  }, []);
+
+  const revealLookupPreview = useCallback(() => {
+    setLookupPreviewOpen(true);
+  }, []);
+
+  const clearLookup = useCallback(() => {
+    setLookupPreviewOpen(false);
+    setActiveLookup(null);
+  }, []);
+
+  const closeDictionaryPanel = useCallback(() => {
+    setDictionaryPinned(false);
+    clearLookup();
+  }, [clearLookup]);
+
   useEffect(() => {
     function handleCreated(event: Event) {
       const item = (event as CustomEvent<WebAnnotationVm>).detail;
@@ -1279,8 +1199,24 @@ export function ReaderWorkbench({
     return () => window.removeEventListener(ANNOTATION_CREATED_EVENT, handleCreated);
   }, [record.id]);
 
+  useEffect(() => {
+    if (!lookupPreviewOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLookupPreviewOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [lookupPreviewOpen]);
+
   const handleLookupSnapshot = useCallback((snapshot: DictionaryLookupSnapshot) => {
     setActiveLookup(snapshot);
+    setDictionaryQuery(snapshot.query);
     setDictionarySaveState({ kind: "idle" });
 
     if (snapshot.state.kind === "ready") {
@@ -1295,7 +1231,8 @@ export function ReaderWorkbench({
     }
   }, []);
 
-  const lookupPlainText = useCallback(async (base: LookupBase) => {
+  const lookupPlainText = useCallback(async (base: LookupBase, options?: { showPreview?: boolean }) => {
+    setLookupPreviewOpen(options?.showPreview ?? true);
     const loadingState = { kind: "loading" } satisfies DictionaryLookupSnapshot["state"];
     handleLookupSnapshot({ ...base, state: loadingState });
 
@@ -1329,6 +1266,36 @@ export function ReaderWorkbench({
       });
     }
   }, [handleLookupSnapshot]);
+
+  const lookupDictionaryQuery = useCallback((query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const sentence = activeSentence;
+    void lookupPlainText(
+      {
+        query: trimmed,
+        lookupType: trimmed.includes(" ") ? "phrase" : "word",
+        contextSentence: sentence?.text ?? "",
+        sourceContext: sentence ? translationBySentence.get(sentence.sentenceId) : undefined,
+        recordId: record.id,
+        sentenceId: sentence?.sentenceId ?? "__manual__",
+        anchorText: trimmed,
+        title: "手动查词",
+        label: sentence ? "当前句查词" : "手动查词",
+      },
+      { showPreview: false },
+    );
+  }, [activeSentence, lookupPlainText, record.id, translationBySentence]);
+
+  const selectLookupFromTrail = useCallback((lookup: DictionaryLookupSnapshot) => {
+    setActiveLookup(lookup);
+    setDictionaryQuery(lookup.query);
+    setDictionarySaveState({ kind: "idle" });
+    setLookupPreviewOpen(false);
+  }, []);
 
   const selectDictionaryCandidate = useCallback(async (entryId: number) => {
     if (!activeLookup) {
@@ -1387,6 +1354,11 @@ export function ReaderWorkbench({
 
     if (!shortMeaning) {
       setDictionarySaveState({ kind: "error", message: "当前词条缺少可写入的释义。" });
+      return;
+    }
+
+    if (!activeLookup.contextSentence.trim()) {
+      setDictionarySaveState({ kind: "error", message: "手动查词需要先选中正文句子后再加入生词本。" });
       return;
     }
 
@@ -1499,8 +1471,34 @@ export function ReaderWorkbench({
   function selectSentence(sentence: SentenceModel) {
     setActiveSentence(sentence);
     setLowerPanelMode("sentence");
+    setContextPanelOpen(true);
+    setExpandedSentenceId(null);
     setNote("");
     setAnnotationSaveState({ kind: "idle" });
+  }
+
+  function openSettingsPanel() {
+    setAiOpen(false);
+    setLowerPanelMode("settings");
+    setContextPanelOpen(true);
+  }
+
+  function toggleAiWorkspace() {
+    setAiOpen((value) => {
+      const nextValue = !value;
+      if (nextValue) {
+        setContextPanelOpen(false);
+      }
+      return nextValue;
+    });
+  }
+
+  function closeContextPanel() {
+    setContextPanelOpen(false);
+    if (lowerPanelMode === "sentence") {
+      setActiveSentence(null);
+      setExpandedSentenceId(null);
+    }
   }
 
   const canvasThemeClass =
@@ -1511,65 +1509,32 @@ export function ReaderWorkbench({
         : "reading-paper";
   const readingClass =
     `reader-serif text-ink ${
-      fontSize === "compact" ? "text-[1.16rem]" : fontSize === "large" ? "text-[1.42rem]" : "text-[1.28rem]"
+      fontSize === "compact"
+        ? "text-[1.04rem] sm:text-[1.16rem]"
+        : fontSize === "large"
+          ? "text-[1.24rem] sm:text-[1.42rem]"
+          : "text-[1.12rem] sm:text-[1.28rem]"
     } ${density === "roomy" ? "leading-[2.08]" : "leading-[1.88]"}`;
+  const contextPanelVisible = Boolean(
+    contextPanelOpen && (lowerPanelMode === "settings" || activeSentence),
+  );
+  const dictionaryPanelVisible = Boolean(activeLookup || dictionaryPinned);
 
   return (
-    <main className="paper-grain min-h-screen px-3 py-3 text-ink sm:px-4 lg:px-5">
-      <div
-        className={`grid gap-4 ${
-          aiOpen
-            ? "xl:grid-cols-[390px_minmax(0,1fr)_360px]"
-            : "xl:grid-cols-[390px_minmax(0,1fr)_72px]"
-        }`}
-      >
-        <aside className="order-2 grid min-h-0 gap-3 xl:order-1 xl:sticky xl:top-3 xl:h-[calc(100vh-1.5rem)] xl:grid-rows-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <DictionaryDetailPanel
-            lookup={activeLookup}
-            history={lookupHistory}
-            saveState={dictionarySaveState}
-            onSave={saveVocabularyFromDictionary}
-            onSelectHistory={setActiveLookup}
-            onSelectCandidate={selectDictionaryCandidate}
-          />
-          <ContextPanel
-            mode={lowerPanelMode}
-            sentence={activeSentence}
-            note={note}
-            color={annotationColor}
-            saveState={annotationSaveState}
-            sentenceAnnotations={activeSentenceAnnotations}
-            showTranslation={showTranslation}
-            fontSize={fontSize}
-            density={density}
-            theme={theme}
-            markVisibility={markVisibility}
-            onModeChange={setLowerPanelMode}
-            onNoteChange={setNote}
-            onColorChange={setAnnotationColor}
-            onSaveAnnotation={saveSentenceAnnotation}
-            onAsk={() => setAiOpen(true)}
-            onShowTranslationChange={setShowTranslation}
-            onFontSizeChange={setFontSize}
-            onDensityChange={setDensity}
-            onThemeChange={setTheme}
-            onMarkVisibilityChange={setMarkVisibility}
-          />
-        </aside>
-
+    <main className="paper-grain min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5">
+      <div className="relative">
         <article
-          className={`order-1 min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet xl:order-2 ${canvasThemeClass}`}
+          className={`min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${canvasThemeClass}`}
+          onClick={lookupPreviewOpen ? dismissLookupPreview : undefined}
         >
           <header className="border-b border-hairline px-5 py-4 sm:px-8 lg:px-10">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="mx-auto flex max-w-[96ch] flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
-                <p className="font-headline text-xl font-semibold text-ink">Claread Reader v1</p>
-                <h1 className="mt-3 max-w-[24ch] font-headline text-3xl font-semibold leading-tight tracking-normal text-ink md:text-[2.45rem]">
+                <p className="text-xs font-semibold text-muted">透读正文</p>
+                <h1 className="mt-2 max-w-[24ch] font-headline text-3xl font-semibold leading-tight tracking-normal text-ink md:text-[2.35rem]">
                   {record.title}
                 </h1>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
-                  <span>{shortId(record.id)}</span>
-                  <span aria-hidden="true" className="h-1 w-1 rounded-full bg-hairline" />
                   <span>{dataSourceLabel[dataSource]}</span>
                   <span aria-hidden="true" className="h-1 w-1 rounded-full bg-hairline" />
                   <span>{reader.article.sentences.length} 句</span>
@@ -1579,7 +1544,7 @@ export function ReaderWorkbench({
                 <FavoriteButton recordId={record.id} />
                 <button
                   type="button"
-                  className={`focus-ring inline-flex h-9 items-center rounded-pill border px-3 text-xs font-semibold transition-colors ${
+                  className={`focus-ring inline-flex h-10 items-center rounded-pill border px-3.5 text-xs font-semibold transition-colors ${
                     showTranslation
                       ? "border-lens-blue/30 bg-lens-blue-soft text-lens-blue"
                       : "border-hairline bg-surface-warm text-muted hover:border-muted hover:text-ink"
@@ -1590,15 +1555,15 @@ export function ReaderWorkbench({
                 </button>
                 <button
                   type="button"
-                  className="focus-ring inline-flex h-9 items-center gap-1 rounded-pill border border-hairline bg-surface-warm px-3 text-xs font-semibold text-ink-soft transition-colors hover:border-muted hover:text-ink"
-                  onClick={() => setLowerPanelMode("settings")}
+                  className="focus-ring inline-flex h-10 items-center gap-1 rounded-pill border border-hairline bg-surface-warm px-3.5 text-xs font-semibold text-ink-soft transition-colors hover:border-muted hover:text-ink"
+                  onClick={openSettingsPanel}
                 >
                   <Type aria-hidden="true" className="h-3.5 w-3.5" />
                   Aa
                 </button>
                 <button
                   type="button"
-                  className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-pill border border-hairline bg-surface-warm text-muted transition-colors hover:border-muted hover:text-ink"
+                  className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-pill border border-hairline bg-surface-warm text-muted transition-colors hover:border-muted hover:text-ink"
                   aria-label="更多阅读操作"
                 >
                   <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
@@ -1607,14 +1572,14 @@ export function ReaderWorkbench({
             </div>
 
             {message ? (
-              <div className="mt-5 border-l border-lens-blue/35 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
+              <div className="mx-auto mt-5 max-w-[96ch] rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
                 {message}
               </div>
             ) : null}
           </header>
 
           <div className="px-5 py-7 sm:px-8 lg:px-10 lg:py-9">
-            <div className="space-y-10">
+            <div className="mx-auto max-w-[96ch] space-y-10">
               {reader.article.paragraphs.map((paragraph, paragraphIndex) => (
                 <section key={paragraph.paragraphId} className="reader-paragraph">
                   <div className="reader-paragraph-index">
@@ -1633,9 +1598,10 @@ export function ReaderWorkbench({
                     const entries = entriesBySentence.get(sentence.sentenceId) ?? [];
                     const sentenceAnnotations = annotationsBySentence.get(sentence.sentenceId) ?? [];
                     const isActive = activeSentence?.sentenceId === sentence.sentenceId;
-                    const sentenceHasActiveLookup = activeLookup?.sentenceId === sentence.sentenceId;
-                    const highlight = sentenceAnnotations.at(0);
-                    const noteAnnotations = sentenceAnnotations.filter((item) => item.note);
+                    const sentenceHasActiveLookup =
+                      lookupPreviewOpen && activeLookup?.sentenceId === sentence.sentenceId;
+                    const highlight =
+                      sentenceAnnotations.find((item) => item.type === "highlight") ?? sentenceAnnotations.at(0);
                     const sentenceFrameClass = isActive
                       ? "rounded-[8px] bg-surface/42"
                       : "rounded-[8px] hover:bg-surface/28";
@@ -1649,6 +1615,7 @@ export function ReaderWorkbench({
                         className={`group/sentence relative scroll-mt-8 px-2 py-2 transition-colors ${sentenceFrameClass}`}
                         aria-label={`句子 ${sentence.sentenceId}`}
                       >
+                        <AnnotationGutter annotations={sentenceAnnotations} />
                         {isActive ? (
                           <span className="reader-active-dot" aria-hidden="true">
                             {sentenceIndex + 1}
@@ -1673,7 +1640,10 @@ export function ReaderWorkbench({
                               sourceContext: translationBySentence.get(sentence.sentenceId),
                               markVisibility,
                               activeLookup,
+                              lookupPreviewOpen,
                               onLookup: lookupPlainText,
+                              onDismissLookup: dismissLookupPreview,
+                              onRevealLookup: revealLookupPreview,
                             })}
                           </p>
                           {showTranslation ? (
@@ -1683,25 +1653,22 @@ export function ReaderWorkbench({
                           ) : null}
                         </div>
 
-                        {noteAnnotations.length > 0 ? (
-                          <div className="ml-3 mt-3 space-y-2 border-l border-vocab-amber/45 pl-4">
-                            {noteAnnotations.map((item) => (
-                              <div key={item.id} className="flex items-start gap-2 text-sm leading-6 text-ink-soft">
-                                <PenLine aria-hidden="true" className="mt-1 h-3.5 w-3.5 shrink-0 text-vocab-amber" />
-                                <p>{item.note}</p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
+                        <AnnotationSlip annotations={sentenceAnnotations} />
 
                         {sentenceHasActiveLookup ? <div className="h-28" aria-hidden="true" /> : null}
 
-                        {isActive ? (
+                        {expandedSentenceId === sentence.sentenceId ? (
                           entries.map((entry) => (
-                            <SentenceEntryBlock key={entry.id} entry={entry} />
+                            <SentenceEntryCard key={entry.id} entry={entry} />
                           ))
                         ) : (
-                          <SentenceEntrySummary entries={entries} onOpen={() => selectSentence(sentence)} />
+                          <SentenceEntrySummary
+                            entries={entries}
+                            onOpen={() => {
+                              selectSentence(sentence);
+                              setExpandedSentenceId(sentence.sentenceId);
+                            }}
+                          />
                         )}
                       </section>
                     );
@@ -1713,14 +1680,103 @@ export function ReaderWorkbench({
           </div>
         </article>
 
-        <div className="order-3 xl:order-3">
-          <AiWorkspace
-            open={aiOpen}
-            activeSentence={activeSentence}
-            onToggle={() => setAiOpen((value) => !value)}
+      </div>
+
+      {dictionaryPanelVisible ? (
+        <div className="fixed left-[calc(84px+5rem)] top-[clamp(7rem,13vh,9rem)] z-40 hidden w-[clamp(27rem,calc((100vw-84px-7rem-96ch)/2+3rem),32.5rem)] flex-col gap-3 2xl:flex">
+          <div className="h-[min(54vh,36rem)] overflow-hidden rounded-panel">
+            <DictionaryDetailPanel
+              lookup={activeLookup}
+              saveState={dictionarySaveState}
+              searchQuery={dictionaryQuery}
+              onSave={saveVocabularyFromDictionary}
+              onSearchQueryChange={setDictionaryQuery}
+              onSearchSubmit={lookupDictionaryQuery}
+              onSelectCandidate={selectDictionaryCandidate}
+              onDismiss={closeDictionaryPanel}
+              pinned={dictionaryPinned}
+              onTogglePinned={() => setDictionaryPinned((value) => !value)}
+              variant="card"
+              canSaveVocabulary={Boolean(activeLookup?.contextSentence.trim())}
+            />
+          </div>
+          <LookupTrail
+            history={lookupHistory}
+            activeLookup={activeLookup}
+            onSelect={selectLookupFromTrail}
           />
         </div>
-      </div>
+      ) : null}
+
+      {activeLookup && !aiOpen && !contextPanelVisible ? (
+        <div className="fixed inset-x-3 bottom-[5.25rem] z-50 flex max-h-[62vh] flex-col gap-2 md:bottom-6 2xl:hidden">
+          <div className="h-[min(44vh,29rem)] overflow-hidden rounded-panel md:h-[min(48vh,31rem)]">
+            <DictionaryDetailPanel
+              lookup={activeLookup}
+              saveState={dictionarySaveState}
+              searchQuery={dictionaryQuery}
+              onSave={saveVocabularyFromDictionary}
+              onSearchQueryChange={setDictionaryQuery}
+              onSearchSubmit={lookupDictionaryQuery}
+              onSelectCandidate={selectDictionaryCandidate}
+              onDismiss={clearLookup}
+              canSaveVocabulary={Boolean(activeLookup?.contextSentence.trim())}
+            />
+          </div>
+          <LookupTrail
+            history={lookupHistory}
+            activeLookup={activeLookup}
+            onSelect={selectLookupFromTrail}
+          />
+        </div>
+      ) : null}
+
+      {contextPanelVisible ? (
+        <div className="fixed inset-x-3 bottom-[5.25rem] z-50 md:bottom-6 md:left-1/2 md:right-auto md:w-[min(460px,calc(100vw-8rem))] md:-translate-x-1/2">
+          <ReaderContextPanel
+            mode={lowerPanelMode}
+            sentence={activeSentence}
+            note={note}
+            color={annotationColor}
+            saveState={annotationSaveState}
+            sentenceAnnotations={activeSentenceAnnotations}
+            showTranslation={showTranslation}
+            fontSize={fontSize}
+            density={density}
+            theme={theme}
+            markVisibility={markVisibility}
+            onModeChange={(mode) => {
+              if (mode === "sentence" && !activeSentence) {
+                return;
+              }
+              setLowerPanelMode(mode);
+            }}
+            onNoteChange={setNote}
+            onColorChange={setAnnotationColor}
+            onSaveAnnotation={saveSentenceAnnotation}
+            onAsk={() => {
+              setAiOpen(true);
+              setContextPanelOpen(false);
+            }}
+            onShowTranslationChange={setShowTranslation}
+            onFontSizeChange={setFontSize}
+            onDensityChange={setDensity}
+            onThemeChange={setTheme}
+            onMarkVisibilityChange={setMarkVisibility}
+            onClose={closeContextPanel}
+          />
+        </div>
+      ) : null}
+
+      {!contextPanelVisible || aiOpen ? (
+        <AiWorkspacePanel
+          open={aiOpen}
+          activeSentence={activeSentence}
+          hideLauncherOnMobile={Boolean(activeLookup)}
+          hideLauncherInCompactLayout={Boolean(activeLookup)}
+          onToggle={toggleAiWorkspace}
+        />
+      ) : null}
     </main>
   );
 }
