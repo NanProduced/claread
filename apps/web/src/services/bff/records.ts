@@ -132,7 +132,7 @@ export async function getRecordList(options: GetRecordsOptions = {}): Promise<Re
       session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
       session.kind === "mock_phone"
         ? "当前登录态不能访问真实记录，请使用真实登录会话后查看历史。"
-        : "请先登录后查看历史记录。",
+        : "当前会话已过期，请重新登录。",
     );
   }
 

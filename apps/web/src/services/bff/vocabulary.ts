@@ -67,7 +67,7 @@ function unauthenticatedResult(
     message:
       session.kind === "mock_phone"
         ? "当前登录态不能访问真实账户数据，请使用真实登录会话后查看生词本。"
-        : "请先登录后查看生词本。",
+        : "当前会话已过期，请重新登录。",
   };
 }
 

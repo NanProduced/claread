@@ -1,9 +1,10 @@
 "use client";
 
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Send, Sparkles } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { ApertureWatermark, ClareadStamp } from "@/components/brand/BrandMarks";
 
 const readingOptions = [
   { value: "daily_reading", label: "日常阅读" },
@@ -86,6 +87,11 @@ export function AnalyzeSubmitForm() {
       return;
     }
 
+    if (text.trim().length === 0) {
+      setState({ kind: "error", message: "请先粘贴一段需要透读的英文内容。" });
+      return;
+    }
+
     setState({ kind: "pending", message: "正在提交解析任务..." });
 
     try {
@@ -142,32 +148,103 @@ export function AnalyzeSubmitForm() {
   const errorRecordId = state.kind === "error" ? state.recordId : undefined;
 
   return (
-    <section className="bg-surface shadow-surface-quiet rounded-note border border-hairline overflow-hidden focus-within:border-muted transition-colors flex flex-col">
-      <textarea
-        className="w-full h-64 p-5 text-[1.125rem] font-reading leading-[1.8] text-ink placeholder:text-subtle resize-none outline-none bg-transparent"
-        placeholder="在这里粘贴英文文章..."
-        value={text}
-        onChange={(event) => setText(event.target.value)}
+    <section className="relative overflow-hidden rounded-[2rem] border border-hairline bg-reader-paper shadow-[0_24px_76px_rgba(35,28,18,0.11)]">
+      <ApertureWatermark
+        size={360}
+        className="absolute -right-32 top-28 h-80 w-80 opacity-[0.045]"
       />
-      <div className="px-5 py-4 bg-surface-warm border-t border-hairline flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <select
-            className="bg-transparent text-[0.8125rem] font-semibold text-ink-soft outline-none cursor-pointer"
-            value={readingGoal}
-            onChange={(event) =>
-              setReadingGoal(event.target.value as (typeof readingOptions)[number]["value"])
-            }
-          >
-            {readingOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+
+      <div className="relative border-b border-hairline bg-surface-warm/65 px-5 py-4 sm:px-7">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <ClareadStamp label="ARTICLE CANVAS" className="bg-reader-paper/80" />
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
+              把英文文章放到纸面上。复杂选项收在后面，正文先成为中心。
+            </p>
+          </div>
+
+          <fieldset className="min-w-0">
+            <legend className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
+              阅读目标
+            </legend>
+            <div className="flex flex-wrap gap-2">
+              {readingOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`focus-ring min-h-10 rounded-pill border px-3 text-xs font-semibold transition-colors ${
+                    readingGoal === option.value
+                      ? "border-lens-blue bg-lens-blue text-surface"
+                      : "border-hairline bg-reader-paper text-ink hover:border-muted"
+                  }`}
+                  onClick={() => setReadingGoal(option.value)}
+                  aria-pressed={readingGoal === option.value}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        </div>
+      </div>
+
+      <div className="relative grid min-h-[590px] md:grid-cols-[68px_minmax(0,1fr)]">
+        <div className="hidden border-r border-hairline bg-[linear-gradient(180deg,rgba(37,99,235,0.035),transparent_46%,rgba(17,17,17,0.025))] md:block">
+          <div className="sticky top-8 flex justify-center pt-9 font-reading text-sm text-subtle">
+            01
+          </div>
+        </div>
+
+        <div className="px-5 py-7 sm:px-8 lg:px-12 lg:py-10">
+          <div className="mb-7 flex flex-col gap-3 border-b border-hairline pb-5 sm:flex-row sm:items-end sm:justify-between">
+            <label
+              htmlFor="analysis-text"
+              className="inline-flex items-center gap-2 text-sm font-semibold text-ink"
+            >
+              <Sparkles aria-hidden="true" className="h-4 w-4 text-lens-blue" />
+              草稿正文
+            </label>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+              <span>{text.trim().length.toLocaleString("zh-CN")} 字符</span>
+              <span aria-hidden="true" className="h-1 w-1 rounded-full bg-hairline" />
+              <span>解析后写入阅读记录</span>
+            </div>
+          </div>
+
+          <textarea
+            id="analysis-text"
+            className="min-h-[420px] w-full resize-none bg-transparent font-reading text-[1.18rem] leading-[1.95] text-ink outline-none placeholder:text-[#736f66] sm:text-[1.32rem]"
+            placeholder={`Paste or write an English article here...
+
+Cities are not only built to be crossed, but also to be read through signs, corners, and quiet habits.`}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </div>
+
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-pill border border-hairline bg-surface-warm/85 px-2.5 py-4 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-muted shadow-surface-quiet xl:block [writing-mode:vertical-rl]"
+        >
+          Marginalia
+        </div>
+      </div>
+
+      <div className="relative flex flex-col gap-4 border-t border-hairline bg-surface-warm/70 px-5 py-4 sm:px-7 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
+          <span className="rounded-pill border border-hairline bg-reader-paper px-3 py-2">
+            原文 / 译文可切换
+          </span>
+          <span className="rounded-pill border border-hairline bg-reader-paper px-3 py-2">
+            标注层默认开启
+          </span>
+          <span className="rounded-pill border border-hairline bg-reader-paper px-3 py-2">
+            轻旁注按需唤起
+          </span>
         </div>
         <button
           type="button"
-          className="inline-flex items-center justify-center gap-2 bg-ink text-surface rounded-pill px-[18px] py-[11px] text-[0.8125rem] font-semibold hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isPending}
           onClick={handleSubmit}
         >
@@ -176,12 +253,13 @@ export function AnalyzeSubmitForm() {
           ) : (
             <Send aria-hidden className="h-4 w-4" />
           )}
-          {isPending ? "解析中" : "开始解读"}
+          {isPending ? "透读中" : "开始透读"}
         </button>
       </div>
-      {state.kind !== "idle" && (
+
+      {state.kind !== "idle" ? (
         <div
-          className={`border-t border-hairline px-5 py-3 text-[0.8125rem] ${
+          className={`relative border-t border-hairline bg-surface-warm px-5 py-3 text-[0.8125rem] ${
             state.kind === "error" ? "text-red-700" : "text-muted"
           }`}
         >
@@ -196,7 +274,7 @@ export function AnalyzeSubmitForm() {
             </button>
           ) : null}
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

@@ -161,7 +161,7 @@ export function ReviewQueueClient({ initialItems }: ReviewQueueClientProps) {
               type="button"
               disabled={disabled}
               onClick={() => submit(activeItem.id, "known")}
-              className="rounded-md border border-lens-blue bg-lens-blue px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-lens-blue/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-md border border-lens-blue bg-lens-blue px-4 py-3 text-sm font-semibold text-surface transition-colors hover:bg-lens-blue/90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               认识，进入下一阶段
             </button>

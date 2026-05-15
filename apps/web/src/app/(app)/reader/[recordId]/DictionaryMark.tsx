@@ -4,18 +4,36 @@ import { useState } from "react";
 
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
 import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
+import type { AnnotationType, InlineGlossary, VisualTone } from "@/types/view/ReaderMockVm";
 
-type LookupState =
+export type LookupState =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "ready"; result: WebDictResult }
   | { kind: "error"; message: string };
 
-type SaveState =
+export type SaveState =
   | { kind: "idle" }
   | { kind: "saving" }
   | { kind: "saved"; message: string }
   | { kind: "error"; message: string };
+
+export interface DictionaryLookupSnapshot {
+  query: string;
+  lookupType: DictLookupTypeDto;
+  contextSentence: string;
+  sourceContext?: string;
+  recordId: string;
+  sentenceId: string;
+  anchorText: string;
+  occurrence?: number;
+  title: string;
+  label?: string;
+  annotationType?: AnnotationType;
+  visualTone?: VisualTone;
+  glossary?: InlineGlossary;
+  state: LookupState;
+}
 
 interface DictionaryMarkProps {
   children: string;
@@ -29,9 +47,14 @@ interface DictionaryMarkProps {
   occurrence?: number;
   lookupType: DictLookupTypeDto;
   title: string;
+  label?: string;
+  annotationType?: AnnotationType;
+  visualTone?: VisualTone;
+  glossary?: InlineGlossary;
+  onLookupSnapshot?: (snapshot: DictionaryLookupSnapshot) => void;
 }
 
-function firstMeaning(result: WebDictResult): string {
+export function firstMeaning(result: WebDictResult): string {
   if (result.kind !== "entry") {
     return "";
   }
@@ -40,7 +63,7 @@ function firstMeaning(result: WebDictResult): string {
   return firstDefinition?.meaning ?? "";
 }
 
-function firstPartOfSpeech(result: WebDictResult): string | null {
+export function firstPartOfSpeech(result: WebDictResult): string | null {
   if (result.kind !== "entry") {
     return null;
   }
@@ -48,7 +71,7 @@ function firstPartOfSpeech(result: WebDictResult): string | null {
   return result.entry.meanings.at(0)?.partOfSpeech ?? null;
 }
 
-function meaningsJson(result: WebDictResult): Record<string, unknown>[] {
+export function meaningsJson(result: WebDictResult): Record<string, unknown>[] {
   if (result.kind !== "entry") {
     return [];
   }
@@ -63,7 +86,7 @@ function meaningsJson(result: WebDictResult): Record<string, unknown>[] {
   }));
 }
 
-function exchangeForms(result: WebDictResult): string[] {
+export function exchangeForms(result: WebDictResult): string[] {
   return result.kind === "entry" ? result.entry.exchange : [];
 }
 
@@ -144,44 +167,81 @@ export function DictionaryMark({
   occurrence,
   lookupType,
   title,
+  label,
+  annotationType,
+  visualTone,
+  glossary,
+  onLookupSnapshot,
 }: DictionaryMarkProps) {
   const [state, setState] = useState<LookupState>({ kind: "idle" });
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
   const [open, setOpen] = useState(false);
 
+  function emitSnapshot(nextState: LookupState) {
+    onLookupSnapshot?.({
+      query,
+      lookupType,
+      contextSentence,
+      sourceContext,
+      recordId,
+      sentenceId,
+      anchorText,
+      occurrence,
+      title,
+      label,
+      annotationType,
+      visualTone,
+      glossary,
+      state: nextState,
+    });
+  }
+
   async function handleLookup() {
     if (state.kind === "ready") {
       setOpen((value) => !value);
+      emitSnapshot(state);
       return;
     }
 
     setOpen(true);
-    setState({ kind: "loading" });
+    const loadingState: LookupState = { kind: "loading" };
+    setState(loadingState);
+    emitSnapshot(loadingState);
 
     try {
       const params = new URLSearchParams({
         word: query,
         type: lookupType,
         context: contextSentence,
+        sentenceId,
       });
+      if (occurrence !== undefined) {
+        params.set("occurrence", String(occurrence));
+      }
       const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
       const payload = (await response.json()) as WebDictResult;
 
       if (!response.ok || payload.kind === "error") {
-        setState({
+        const readyState: LookupState = {
           kind: "ready",
           result: payload,
-        });
+        };
+        setState(readyState);
+        emitSnapshot(readyState);
         return;
       }
 
-      setState({ kind: "ready", result: payload });
+      const readyState: LookupState = { kind: "ready", result: payload };
+      setState(readyState);
+      emitSnapshot(readyState);
       setSaveState({ kind: "idle" });
     } catch (error) {
-      setState({
+      const errorState: LookupState = {
         kind: "error",
         message: error instanceof Error ? error.message : "词典查询失败。",
-      });
+      };
+      setState(errorState);
+      emitSnapshot(errorState);
     }
   }
 

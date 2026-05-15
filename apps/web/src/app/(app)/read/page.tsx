@@ -1,57 +1,57 @@
-import Link from "next/link";
+import { ArrowRight, BookOpen } from "lucide-react";
 import type { Route } from "next";
-import { getRecordList } from "@/services/bff/records";
+import Link from "next/link";
+import { ClareadStamp } from "@/components/brand/BrandMarks";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 
+const dailyRoute = "/daily" as Route;
+const todayRoute = "/daily/2026-05-14" as Route;
 const libraryRoute = "/library" as Route;
 
-function readerRoute(recordId: string): Route {
-  return `/reader/${recordId}` as Route;
-}
-
-export default async function PasteToReadPage() {
-  const { records: recentRecords } = await getRecordList({ limit: 2 });
-
+export default function PasteToReadPage() {
   return (
-    <main className="flex-1 flex flex-col items-center pt-16 pb-12 px-6">
-      <div className="w-full max-w-2xl flex flex-col gap-6">
-        <header className="mb-4">
-          <h1 className="text-[1.75rem] font-headline font-semibold text-ink mb-2">
-            透读英文文章
-          </h1>
-          <p className="text-[0.9375rem] text-muted leading-relaxed">
-            粘贴英文文章、论文摘要或新闻。Claread 将为你提供结构化解析、长难句拆解和词汇标注，生成一份可读的精读笔记。
-          </p>
+    <main className="min-h-screen bg-[oklch(96.8%_0.012_84)] px-4 py-5 text-ink sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1180px]">
+        <header className="mb-5 flex flex-col gap-4 border-b border-hairline pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <ClareadStamp label="READING DESK" className="bg-reader-paper" />
+            <h1 className="mt-2 font-headline text-[2.15rem] font-semibold leading-tight tracking-normal text-ink sm:text-[2.8rem]">
+              打开一篇文章
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
+              从正文开始，而不是从配置开始。标注、旁注和生词操作会在 Reader 里贴近文章出现。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={dailyRoute}
+              className="focus-ring inline-flex min-h-10 items-center gap-2 rounded-pill border border-hairline bg-surface-warm px-4 text-sm font-semibold text-ink transition-colors hover:border-muted"
+            >
+              <BookOpen aria-hidden="true" className="h-4 w-4 text-lens-blue" />
+              今日精读
+            </Link>
+            <Link
+              href={libraryRoute}
+              className="focus-ring inline-flex min-h-10 items-center gap-2 rounded-pill border border-hairline bg-surface-warm px-4 text-sm font-semibold text-ink transition-colors hover:border-muted"
+            >
+              阅读记录
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </Link>
+          </div>
         </header>
 
         <AnalyzeSubmitForm />
 
-        {/* Recent Records (Optional minimal list) */}
-        <section className="mt-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[1.125rem] font-title font-semibold text-ink">最近记录</h2>
-            <Link href={libraryRoute} className="text-[0.8125rem] font-semibold text-muted hover:text-ink">
-              查看全部
-            </Link>
-          </div>
-          <div className="flex flex-col gap-3">
-            {recentRecords.map((record) => (
-              <Link
-                key={record.id}
-                href={readerRoute(record.id)}
-                className="group p-4 bg-surface rounded-md border border-hairline hover:border-muted transition-colors flex justify-between items-center"
-              >
-                <div className="flex flex-col gap-1">
-                  <span className="font-headline font-semibold text-[1.125rem] text-ink line-clamp-1">{record.title}</span>
-                  <span className="text-[0.8125rem] text-muted">{record.wordCount} words · {record.inlineMarkCount} 处标注</span>
-                </div>
-                <div className="text-muted group-hover:text-ink transition-colors">
-                  →
-                </div>
-              </Link>
-            ))}
-          </div>
-        </section>
+        <div className="mt-5 flex flex-col gap-3 border-t border-hairline pt-4 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
+          <p>没有现成文章时，可以从今日精读开始。它是公开内容，读完后再决定是否保存为个人资产。</p>
+          <Link
+            href={todayRoute}
+            className="focus-ring inline-flex min-h-10 items-center gap-2 rounded-pill px-1 text-sm font-semibold text-lens-blue"
+          >
+            打开今日精读
+            <ArrowRight aria-hidden="true" className="h-4 w-4" />
+          </Link>
+        </div>
       </div>
     </main>
   );

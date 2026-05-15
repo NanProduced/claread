@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Route } from "next";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type AuthStatus =
   | { tone: "idle"; message: "" }
@@ -17,7 +17,9 @@ type ApiResponse = {
 
 const REQUEST_CODE_ENDPOINT = "/api/web/auth/phone/request-code";
 const VERIFY_CODE_ENDPOINT = "/api/web/auth/phone/verify-code";
-const settingsRoute = "/settings" as Route;
+const fallbackRoute = "/read" as Route;
+const nextAllowlistPrefixes = ["/read", "/library", "/vocabulary", "/review", "/settings", "/reader", "/daily", "/examples", "/share"] as const;
+const intentAllowlist = new Set(["save"]);
 
 function normalizeDigits(value: string, maxLength: number) {
   return value.replace(/\D/g, "").slice(0, maxLength);
@@ -41,6 +43,26 @@ function pickMessage(body: ApiResponse) {
   }
 
   return null;
+}
+
+function safeNextRoute(value: string | null): Route {
+  if (!value || value.includes("\n") || value.includes("\r") || value.startsWith("//")) {
+    return fallbackRoute;
+  }
+
+  if (!value.startsWith("/")) {
+    return fallbackRoute;
+  }
+
+  const allowed = nextAllowlistPrefixes.some(
+    (prefix) => value === prefix || value.startsWith(`${prefix}/`),
+  );
+
+  return allowed ? (value as Route) : fallbackRoute;
+}
+
+function safeIntent(value: string | null) {
+  return value && intentAllowlist.has(value) ? value : null;
 }
 
 async function readErrorMessage(response: Response, fallback: string) {
@@ -87,6 +109,7 @@ async function postJson(url: string, body: Record<string, string>, fallback: str
 
 export function PhoneLoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [status, setStatus] = useState<AuthStatus>({ tone: "idle", message: "" });
@@ -126,7 +149,7 @@ export function PhoneLoginForm() {
       setHasRequestedCode(true);
       setStatus({
         tone: "success",
-        message: pickMessage(payload) ?? "验证码已发送，本地调试请输入 888888。",
+        message: pickMessage(payload) ?? "验证码已发送，请查看短信。",
       });
     } catch (error) {
       setStatus({
@@ -166,7 +189,9 @@ export function PhoneLoginForm() {
         message: pickMessage(payload) ?? "登录成功，Web 会话已建立。",
       });
       router.refresh();
-      router.push(settingsRoute);
+      const nextRoute = safeNextRoute(searchParams.get("next"));
+      const intent = safeIntent(searchParams.get("intent"));
+      router.push((intent ? `${nextRoute}?intent=${encodeURIComponent(intent)}` : nextRoute) as Route);
     } catch (error) {
       setStatus({
         tone: "error",
@@ -181,21 +206,36 @@ export function PhoneLoginForm() {
     status.tone === "error"
       ? "border-error-red/20 bg-error-red/5 text-error-red"
       : status.tone === "success"
-        ? "border-structure-green/20 bg-structure-green/10 text-structure-green"
-        : "border-lens-blue/20 bg-lens-blue-soft text-lens-blue";
+        ? "border-structure-green/20 bg-structure-green/10 text-[#276247]"
+        : "border-lens-blue/20 bg-lens-blue-soft text-[#174ea6]";
+  const requestCodeLabel = isRequestingCode
+    ? "发送中..."
+    : !isValidMainlandPhone(phone)
+      ? "输入手机号后发送"
+      : hasRequestedCode
+        ? "重新发送"
+        : "发送验证码";
+  const verifyButtonLabel = isVerifyingCode
+    ? "验证中..."
+    : safeIntent(searchParams.get("intent")) === "save"
+      ? "登录并保存"
+      : "登录并继续";
 
   return (
-    <form className="mt-6 space-y-4" onSubmit={handleVerifyCode}>
+    <form className="mt-6 space-y-5" onSubmit={handleVerifyCode}>
       <div className="space-y-2">
-        <label className="text-xs font-semibold text-muted" htmlFor="login-phone">
-          手机号
-        </label>
+        <div className="flex items-center justify-between gap-3">
+          <label className="text-xs font-semibold text-muted" htmlFor="login-phone">
+            手机号
+          </label>
+          <span className="text-xs text-subtle">中国大陆手机号</span>
+        </div>
         <input
           id="login-phone"
-          className="w-full rounded-md border border-hairline bg-surface-warm px-4 py-3 text-sm text-ink outline-none transition-colors placeholder:text-subtle focus:border-muted disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring w-full rounded-note border border-hairline bg-reader-paper px-4 py-3 text-sm text-ink placeholder:text-subtle disabled:cursor-not-allowed disabled:opacity-60"
           inputMode="tel"
           autoComplete="tel"
-          placeholder="输入手机号"
+          placeholder="1xxxxxxxxxx"
           value={phone}
           onChange={(event) => {
             setPhone(normalizeDigits(event.target.value, 11));
@@ -205,44 +245,45 @@ export function PhoneLoginForm() {
         />
       </div>
 
-      <button
-        className="w-full rounded-pill bg-ink px-4 py-3 text-sm font-semibold text-surface transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!canRequestCode}
-        onClick={handleRequestCode}
-        type="button"
-      >
-        {isRequestingCode ? "发送中..." : hasRequestedCode ? "重新发送验证码" : "发送验证码"}
-      </button>
-
       <div className="space-y-2">
         <label className="text-xs font-semibold text-muted" htmlFor="login-code">
           验证码
         </label>
-        <input
-          id="login-code"
-          className="w-full rounded-md border border-hairline bg-surface-warm px-4 py-3 text-sm text-ink outline-none transition-colors placeholder:text-subtle focus:border-muted disabled:cursor-not-allowed disabled:opacity-60"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="输入短信验证码"
-          value={code}
-          onChange={(event) => {
-            setCode(normalizeDigits(event.target.value, 8));
-            setStatus({ tone: "idle", message: "" });
-          }}
-          disabled={isRequestingCode || isVerifyingCode}
-        />
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_132px]">
+          <input
+            id="login-code"
+            className="focus-ring w-full rounded-note border border-hairline bg-reader-paper px-4 py-3 text-sm text-ink placeholder:text-subtle disabled:cursor-not-allowed disabled:opacity-60"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="6 位验证码"
+            value={code}
+            onChange={(event) => {
+              setCode(normalizeDigits(event.target.value, 8));
+              setStatus({ tone: "idle", message: "" });
+            }}
+            disabled={isRequestingCode || isVerifyingCode}
+          />
+          <button
+            className="focus-ring min-h-11 rounded-pill border border-hairline bg-surface px-4 text-sm font-semibold text-ink transition-colors hover:border-muted disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!canRequestCode}
+            onClick={handleRequestCode}
+            type="button"
+          >
+            {requestCodeLabel}
+          </button>
+        </div>
       </div>
 
       <button
-        className="w-full rounded-pill border border-ink bg-surface px-4 py-3 text-sm font-semibold text-ink transition-colors hover:bg-surface-warm disabled:cursor-not-allowed disabled:border-hairline disabled:text-subtle"
+        className="focus-ring w-full rounded-pill bg-lens-blue px-4 py-3 text-sm font-semibold text-surface transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={!canVerifyCode}
         type="submit"
       >
-        {isVerifyingCode ? "验证中..." : "登录"}
+        {verifyButtonLabel}
       </button>
 
       {status.message ? (
-        <p className={`rounded-md border px-3 py-2 text-sm leading-5 ${statusClassName}`}>
+        <p className={`rounded-md border px-3 py-2 text-sm leading-5 ${statusClassName}`} aria-live="polite">
           {status.message}
         </p>
       ) : null}

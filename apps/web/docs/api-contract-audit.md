@@ -241,7 +241,7 @@ apps/web/src/
         ├── analysis.ts         # 分析任务 API
         ├── records.ts          # 记录 API
         ├── dict.ts             # 词典 API
-        └── vocabulary.ts       # 生词本 API（第二波）
+        └── vocabulary.ts       # 生词本 API
 ```
 
 adapter 层职责：
@@ -252,7 +252,7 @@ adapter 层职责：
 
 当前已落地的第一步：
 - `services/api/upstream.ts`、`services/api/tasks.ts` 和 `services/api/records.ts` 只在服务端调用 FastAPI。
-- `services/bff/session.ts` 支持 httpOnly cookie 预留和开发期 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`，未登录时进入明确 mock fallback。
+- `services/bff/session.ts` 支持 httpOnly cookie 预留和开发期 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`；用户可见页面不再依赖 mock 数据回退。
 - `app/api/web/session` 和 `app/api/web/reader/[recordId]` 提供 Web BFF 投影接口。
 - `app/api/web/analysis/submit` 和 `app/api/web/analysis/tasks/[taskId]` 提供真实解析任务提交与状态轮询投影。
 - `/reader/[recordId]` Server Component 直接复用同一 BFF reader 服务，不让浏览器直连 FastAPI。

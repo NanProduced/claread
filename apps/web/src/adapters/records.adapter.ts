@@ -1,6 +1,7 @@
 import type { RecordResponseDto } from "@/types/api/records";
 import type {
   ArticleModel,
+  AnnotationType,
   ContentResultState,
   InlineGlossary,
   InlineMarkAnchor,
@@ -55,16 +56,64 @@ function toContentResultState(value: unknown): ContentResultState {
   return value === "degraded_light" || value === "degraded_heavy" ? value : "normal";
 }
 
-function toRenderType(value: unknown): RenderType {
-  return value === "underline" ? "underline" : "background";
-}
-
-function toVisualTone(value: unknown): VisualTone {
-  if (value === "phrase" || value === "context" || value === "grammar" || value === "term" || value === "logic") {
+function toAnnotationType(value: unknown): AnnotationType {
+  if (
+    value === "phrase_gloss" ||
+    value === "context_gloss" ||
+    value === "grammar_note" ||
+    value === "term_note" ||
+    value === "logic_note"
+  ) {
     return value;
   }
 
+  return "vocab_highlight";
+}
+
+function inferVisualTone(annotationType: AnnotationType, value: unknown): VisualTone {
+  if (value === "vocab" || value === "phrase" || value === "context" || value === "grammar" || value === "term" || value === "logic") {
+    return value;
+  }
+
+  if (annotationType === "phrase_gloss") {
+    return "phrase";
+  }
+  if (annotationType === "context_gloss") {
+    return "context";
+  }
+  if (annotationType === "grammar_note") {
+    return "grammar";
+  }
+  if (annotationType === "term_note") {
+    return "term";
+  }
+  if (annotationType === "logic_note") {
+    return "logic";
+  }
   return "vocab";
+}
+
+function inferRenderType(annotationType: AnnotationType, value: unknown): RenderType {
+  if (value === "background" || value === "underline") {
+    return value;
+  }
+  return annotationType === "context_gloss" || annotationType === "grammar_note" || annotationType === "logic_note"
+    ? "underline"
+    : "background";
+}
+
+function inferLookupKind(annotationType: AnnotationType, value: unknown): PhraseKind | undefined {
+  const explicit = toPhraseKind(value);
+  if (explicit) {
+    return explicit;
+  }
+  if (annotationType === "phrase_gloss") {
+    return "phrase";
+  }
+  if (annotationType === "vocab_highlight" || annotationType === "context_gloss") {
+    return "word";
+  }
+  return undefined;
 }
 
 function toPhraseKind(value: unknown): PhraseKind | undefined {
@@ -140,11 +189,11 @@ function mapGlossary(value: unknown): InlineGlossary | undefined {
     return undefined;
   }
 
-  const phraseType = toGlossaryPhraseType(value.phrase_type);
+  const phraseType = toGlossaryPhraseType(value.phrase_type ?? value.phraseType);
 
   return {
     zh: readOptionalString(value.zh),
-    gloss: readOptionalString(value.gloss ?? value.context_definition),
+    gloss: readOptionalString(value.gloss ?? value.context_definition ?? value.contextDefinition),
     reason: readOptionalString(value.reason),
     phraseType,
   };
@@ -199,16 +248,17 @@ function mapInlineMarks(value: unknown): InlineMarkModel[] {
       if (!anchor) {
         return null;
       }
+      const annotationType = toAnnotationType(mark.annotation_type ?? mark.annotationType);
 
       return {
         id: readString(mark.id),
-        annotationType: readString(mark.annotation_type, "vocab_highlight") as InlineMarkModel["annotationType"],
+        annotationType,
         anchor,
-        renderType: toRenderType(mark.render_type),
-        visualTone: toVisualTone(mark.visual_tone),
-        clickable: readBoolean(mark.clickable, true),
-        lookupText: readOptionalString(mark.lookup_text),
-        lookupKind: toPhraseKind(mark.lookup_kind),
+        renderType: inferRenderType(annotationType, mark.render_type ?? mark.renderType),
+        visualTone: inferVisualTone(annotationType, mark.visual_tone ?? mark.visualTone),
+        clickable: readBoolean(mark.clickable, annotationType !== "grammar_note"),
+        lookupText: readOptionalString(mark.lookup_text ?? mark.lookupText),
+        lookupKind: inferLookupKind(annotationType, mark.lookup_kind ?? mark.lookupKind),
         glossary: mapGlossary(mark.glossary),
         parentId: readOptionalString(mark.parent_id),
       };

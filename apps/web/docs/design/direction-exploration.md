@@ -1,147 +1,156 @@
 # Web UI 方向探索
 
-本文记录 Claread Web 端 UI 方向探索。当前阶段用于选择方向，不作为最终设计规范。
+> **状态**: `CURRENT` | **最后更新**: 2026-05-15
 
-## 目标
+本文记录 Claread Web 第一版页面形态的当前设计判断。它用于 UI/UX 评审和后续实现对齐，不是长期 tracker。
 
-先设计功能页面，不先做完整 landing / 产品介绍页。首期页面包括：
+## 北极星
 
-- `/read`：粘贴即解读入口。
-- `/reader/[id]`：核心 Reader。
-- `/library`：历史记录。
-- `/vocabulary`：生词本。
-- `/review`：复习。
-- `/settings`：用户、配额、设置。
-- `/share/[id]`：分享页。
-- `/export/[id]`：后续导出预览。
+Claread Web 是一台英文阅读镜头。界面要让用户感觉自己打开了一份被透读过的英文材料，而不是进入一个后台系统或 AI 工作台。
 
-## 外部灵感提炼
+当前方向来自三组约束：
 
-### Dribbble: annotation / reading web app
+- 产品理念：文章是主角，AI 输出应被编辑成有锚点的词、句、段、篇解读。
+- 品牌物料：光圈、镜头、蓝色楔形代表聚焦、照亮、切片和结构化理解。
+- Web 场景：桌面端需要更完整的阅读、批注、词典、AI 辅助、导出和资产管理，但不能牺牲阅读沉浸。
 
-可借鉴：
+## 已确认方向
 
-- 文档 + 旁注 / 评论区的清晰结构。
-- annotation popover、side panel、floating toolbar 等模式。
-- 低噪声的文档阅读容器。
+### 1. 左侧可折叠 Rail
 
-风险：
+Web 产品区使用左侧可折叠 rail，而不是顶部导航栏。
 
-- 很多方案偏 SaaS dashboard 或协作标注工具，容易让 Claread 变成后台。
-- 卡片和侧栏过重会削弱“透读文章”的第一印象。
+rail 的角色是“阅读仪器条”，不是 SaaS 管理侧栏。默认保持窄、低对比；Reader 内进一步弱化，只保留图标和必要入口。
 
-### Awwwards: interaction / editorial / premium material
+第一版一级入口建议：
 
-可借鉴：
+- 新解读：主操作，对应 `/read`。
+- 阅读记录：历史、收藏、有批注、有生词等先作为筛选，不拆成多个一级入口。
+- 生词本：跨文章词汇资产。
+- 设置：账户、配额、阅读偏好和反馈。
 
-- 高级排版、材质、转场、光感和品牌记忆点。
-- 让 Logo 的 lens / aperture 隐喻进入视觉语言。
-- 分享页和导出页可以更有表现力。
+暂不作为一级入口：
 
-风险：
+- Favorites：先作为 Library 筛选。
+- Annotations：先在 Reader 原文画布和 Library 筛选里出现。
+- Daily Reader：后端 schema 仍待评审。
+- Export / Share：Reader 内动作，不是主导航。
+- Grammar X-Ray：后续 Web 高价值能力，不是当前首版 Reader 入口；当前先适配 `grammar_note` 和 `sentence_analysis` baseline。
+- Review：从生词本顶部按钮进入，例如“开始复习 12 个”。用户默认会找“我的生词”，而不是主动找“复习任务”。
 
-- 不应把功能页做成作品集或 campaign 页。
-- 不能让动效、材质和视觉表演抢正文。
+### 2. `/login` 是 Start/Login
 
-## 候选方向
+`/login` 直接升级为 Start/Login，不新增 `/start`。它不是单纯的登录表单页，而是未登录用户第一次理解 Claread 的公共入口。
 
-### A. Editorial Reader
+首屏采用报纸头版式布局：
 
-最安静，单栏阅读为主，旁注以轻浮层、行内展开和小型 note slip 出现。适合作为默认 Reader。
+- 左侧是今日精读大卡，表达“今天 Claread 在读什么”。
+- 今日精读下方露出一行 3 个公开示例：新闻、学术、考试。
+- 右侧是手机号登录面板。
+- 下滑后才进入完整每日精读归档或公开示例归档。
 
-优势：
+不做 Canva 式全屏密集作品墙。Claread 的内容密度来自每天一篇精选和高质量解读，不适合堆叠大量重复阅读产物。
 
-- 符合“透读英文文章”的核心表达。
-- 最不像 SaaS 和 AI dashboard。
-- 易于先做功能 MVP。
+### 3. `/read` 是已登录文章画布
 
-风险：
+`/read` 是 Web app home，也是已登录用户的文章画布。它不是 landing，也不是普通表单页。未登录访问统一由 Next.js `proxy.ts` 重定向到 `/login?next=/read`，页面组件不再渲染未登录空态。
 
-- 桌面空间利用不充分。
-- 需要高质量的 hover / selection / anchor 交互，否则能力感不够。
+页面应包含：
 
-### B. Reading Studio
+- 大面积暖纸文章画布，默认聚焦。
+- 阅读目标分段控件：日常、学术、备考。
+- 当前任务状态和失败恢复。
+- 少量画布内状态提示，例如解析中、额度不足、任务冲突、解析失败。
+- 空画布中的今日精读入口，但比例克制，不形成 Feed。
 
-轻应用壳：左侧窄 rail 或顶部导航，中间文章，右侧轻旁注轨道。适合桌面端学习和高频回看。
+不应包含：
 
-优势：
+- 营销 banner。
+- 复杂导入配置。
+- 示例 mock 数据。
+- 右侧服务状态、配额、最近记录等 dashboard card。
+- 像 Feed 一样无限下滑的最近记录。
 
-- 承载历史、生词、导出、设置更自然。
-- 能展示更丰富的语法和句子解析。
-- 更接近 Web 端高保真体验。
+### 4. `/daily` 是公开每日精读入口
 
-风险：
+每日精读是“放在门口的报纸”，不是内容平台、任务中心或打卡系统。
 
-- 容易变成 SaaS dashboard。
-- 需要严格控制右侧栏密度。
+- `/daily` 是公开今日入口和往期精选列表。
+- `/daily/:date` 是公开文章详情，可完整阅读。
+- 未登录用户可阅读每日精读；保存为阅读记录、收藏、加入生词本或写入个人笔记时再进入 `/login?next=/daily/:date&intent=save`。
+- 每日精读也出现在 `/login` 首屏和 `/read` 空画布中，作为低摩擦内容入口。
+- 不做 push、红点、连续天数、排行榜或焦虑提醒。
 
-### C. Grammar X-Ray Workspace
+### 5. Reader 是品牌主场
 
-围绕句子结构可视化设计，突出主干、修饰、从句、非谓语、指代和逻辑关系。适合作为 Claread 标志性能力页或 Reader 内切换模式。
+Reader 默认是中心原文画布 + 左侧常驻词典/动态操作区 + 右侧 AI 工作区：
 
-优势：
+- 正文保持 65-75ch 行长。
+- 英文正文使用 serif，中文解释和 UI 控件使用系统 sans。
+- 译文默认柔和显示，并提供原文 / 沉浸模式切换。
+- 词汇、短语、语境三类 inline marks 默认显示；语法下划线默认显示但不展开脚注；结构链默认不显示。
+- 左侧上半区是常驻词典面板。用户点击词/短语后，原文附近可出现轻释义浮层，左侧实时显示详细释义、例句、短语、加入生词本和本次会话查词痕迹。
+- 左侧下半区是动态操作区。用户选中句子时显示高亮、写笔记、收藏、问 Claread；点击 `Aa` 时切换为阅读设置。
+- 右侧是 AI 工作区。默认可收起，只保留 Ask Claread 入口；展开后围绕当前句子、选区或全文上下文对话。
+- `grammar_note` 和 `sentence_analysis` 必须优先回到正文画布，在相关句子下方以解释卡展示，不进入右侧汇总列表。
+- Grammar X-Ray 需要后续结构化 xray payload 后再评审；当前不使用 X-Ray 命名。
+- 用户批注 v1 只做句子级，精确选区后置。
 
-- 差异化最强。
-- 适合做分享模板和社交传播。
-- 能让 Claread 被记住。
+不应把 Reader 做成：
 
-风险：
+- NotebookLM 式多资料工作台。
+- Word / WPS 式编辑器。
+- AI chat 中心或右侧批注仓库。
+- 三栏常开且正文被压缩的后台界面。
 
-- 首期实现复杂。
-- 如果默认打开会打断普通阅读。
+### 6. Library / Vocabulary 是资产索引
 
-### D. Artifact Studio
+Library 不做卡片墙，也不做完整 read-it-later inbox。第一版更像阅读档案索引：
 
-导出 / 分享工作台。中间是长图、PDF 或笔记预览，侧边是少量模板和导出控制。
+- 标题、日期、阅读目标、字数、标注数、生词数、收藏状态。
+- 继续阅读、删除、进入 Reader。
+- 筛选优先于拆路由，不做归档概念。
+- 提供客户端搜索框，先做标题和原文片段 fuzzy match。100 条左右记录在客户端搜索足够快，后端语义搜索后置。
+- 删除采用软删除 7 天，不单独做回收站页面；恢复入口可后续藏在 Settings。
 
-优势：
+Vocabulary 是跨文章词汇资产，不应压过阅读主线：
 
-- 直接服务传播和沉淀。
-- 可承接 Magazine Brief、Notebook Study、Grammar X-Ray 等模板。
+- 词、释义、来源句、来源文章、掌握状态。
+- 可回到原文。
+- 状态只保留学习中 / 已掌握两态，不做忽略。
+- Review 入口放在生词本顶部，例如“开始复习 12 个”，按钮和流程先与小程序保持一致。
+- 查词历史不保存；只有用户主动加入生词本的原词和上下文进入资产，为后续 AI 词汇增强保留干净数据。
+- Review 只做轻量队列，不做打卡、排行榜或压力指标。
 
-风险：
+## 移动 Web 范围
 
-- 不应先于 Reader 主链路。
-- 需要后端和前端一起支持稳定 render/export。
+移动 Web 必须完整自洽，尤其是分享链接的首次打开体验。不要主动弹窗引导打开小程序；分享页右上角可以保留安静的“在小程序中体验”入口。
 
-## 初步建议
+- 产品区底部导航保留四个入口：新解读、阅读记录、生词本、设置。
+- Reader 移动端隐藏 rail，词典、批注和 AI 辅助都走 bottom sheet。移动 Web 方向后续单独评审，本轮设计图只作为桌面 Reader 依据。
+- 复习从生词本进入，不进入底部导航。
 
-Web 首期默认采用 A + B 的混合：
+## 视觉强度规则
 
-- Reader 默认是 A：单栏阅读 + 轻旁注。
-- 进入学习/分析模式时逐步显出 B 的右侧轻旁注轨道。
-- Grammar X-Ray 作为 Reader 内高价值模式和分享模板，后续增强。
-- Artifact Studio 放在第二阶段，不阻塞首期功能页。
+- 左 rail 默认显示图标 + 文字，手动折叠才变成纯图标。
+- 纸张纹理只用于阅读区背景和后续 landing 背景，不用于按钮、popover、表单。
+- 印章只用于阅读卡片角落、分享页“由 Claread 解读”水印，不用于主导航或 CTA。
+- 光圈水印只用于 loading、404 / 空状态、分享页右下角，不用于主阅读区。
+- Lens Blue `#2563EB` 严格限定为 CTA 主按钮、当前激活状态、品牌符号和内嵌链接。普通按钮用墨色、灰色或透明样式；禁止大面积铺色。
 
-这能同时满足“先做功能页面”和“Claread 品牌要有记忆点”。
+## 当前设计图
 
-## 小程序冻结基线校正
+- `directions/web-v1-login-start-direction.png`
+- `directions/web-v1-daily-reader-direction.png`
+- `directions/web-v1-reader-permanent-dictionary-direction.png`
+- `directions/web-v1-reader-settings-dynamic-panel-direction.png`
+- `directions/web-v1-reader-ai-workspace-direction.png`
 
-Web 细节设计必须先尊重当前小程序和后端 render scene 的事实，不能把已经存在的核心逻辑误画成新的 UI 假设。
+这些方向图表达当前页面形态和品牌语言：报纸头版 Start/Login、公开每日精读、光圈 rail、中心原文画布、左侧常驻词典、左下动态操作区、右侧 AI 工作区、lens-blue focus pin、语义标注和纸质 note slip。
 
-### 已实现的解析层
+## 待继续评审
 
-小程序结果页消费后端 `render_scene`，其中 learning schema 已包含：
-
-- `article.paragraphs / article.sentences`：段落、句子和稳定 `sentence_id`。
-- `translations`：逐句中文翻译。
-- `inline_marks`：行内锚点标注，包含 `vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`。
-- `sentence_entries`：句后/句尾解析入口，包含 `grammar_note` 和 `sentence_analysis`。
-- `warnings / user_facing_state`：降级、失败和渲染告警。
-
-Academic schema 另有 `term_note`、`logic_note`、`interpretation_note`、`content_summary` 和 `title`。
-
-### 不应误画的内容
-
-- 不要把“词汇 / 语法 / 句子解析”画成用户选择的 Reader modes。它们不是互斥模式，也不是提交前的功能开关，而是 workflow 根据文章自动生成的解析层。
-- 不要把 Web 右侧栏画成 AI chat 或手动配置面板。它应是当前句、当前段、当前选区相关解析的轻旁注轨道。
-- 不要把 Grammar X-Ray 画成独立产品入口。它更合理的定位是 `sentence_analysis` / `grammar_note` 在 Web 上的高保真展开视图和分享/导出模板。
-
-### 可以存在的 UI 模式
-
-小程序当前有 `原文 / 精读` 显示模式。它是阅读密度和展示方式切换，不改变后端已经生成的解析内容。Web 可以延续这个思想：
-
-- 默认阅读：文章和必要的行内锚点先出现。
-- 精读展开：同一份解析结果里的语法卡片、句子拆解、旁注轨道和用户笔记逐步展开。
-- 轻量 X-Ray：首期只能基于现有 `sentence_analysis.chunks` 和 `grammar_note` 做句子拆分、解释卡片和有限锚点可视化。
-- 真正 X-Ray：如果要展示主干、修饰、从句、非谓语、指代和逻辑关系，需要后续修改 workflow agent schema，引入结构化 `sentence_xray` / `sentence_structure` 输出。不要把当前直出文本型 schema 误画成已经具备完整结构化语法树。
+- Daily Reader 内容源、SSG/ISR 生成机制和 schema 结构化归入后端/架构待评审项。
+- `/reader/[recordId]` 是否逐步迁移到 `/reader/r/[id]`。
+- Library 筛选范围是否需要等待后端 `GET /records` 搜索/筛选增强。
+- Grammar X-Ray 后续是否采用独立 `sentence_xray` / `grammar_xray` payload，以及如何与当前 `grammar_note`、`sentence_analysis` 降级关系衔接。

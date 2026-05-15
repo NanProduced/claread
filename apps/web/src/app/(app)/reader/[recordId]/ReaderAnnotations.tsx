@@ -21,7 +21,7 @@ interface SentenceAnnotationActionProps {
   sentence: SentenceModel;
 }
 
-const ANNOTATION_CREATED_EVENT = "claread:annotation-created";
+export const ANNOTATION_CREATED_EVENT = "claread:annotation-created";
 
 function annotationLabel(item: WebAnnotationVm): string {
   return item.type === "note" ? "笔记" : "高亮";
@@ -48,7 +48,7 @@ export function ReaderAnnotationList({ recordId, initialItems }: ReaderAnnotatio
   );
 
   return (
-    <section className="rounded-md border border-hairline bg-surface-warm p-4">
+    <section className="rounded-note border border-hairline bg-surface-warm p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-ink">我的批注</h3>
         <span className="shrink-0 rounded-pill bg-surface px-2 py-0.5 text-[0.6875rem] text-muted">
@@ -132,7 +132,7 @@ export function SentenceAnnotationAction({
     <div className="pt-1">
       <button
         type="button"
-        className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-xs font-semibold text-muted transition-colors hover:border-muted hover:text-ink"
+        className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-xs font-semibold text-muted transition-colors hover:border-muted hover:text-ink md:opacity-0 md:group-hover/sentence:opacity-100 md:focus-visible:opacity-100"
         onClick={() => setOpen((value) => !value)}
       >
         批注
@@ -148,7 +148,7 @@ export function SentenceAnnotationAction({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="rounded-pill bg-structure-green px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+              className="rounded-pill bg-structure-green px-3 py-1.5 text-xs font-semibold text-surface disabled:opacity-60"
               disabled={state.kind === "saving"}
               onClick={() => submitAnnotation(false)}
             >

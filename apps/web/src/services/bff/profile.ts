@@ -69,7 +69,7 @@ function unauthenticatedResult(session: WebSession): ProfileSettingsVm {
     message:
       session.kind === "mock_phone"
         ? "当前登录态未连接真实账户，请使用真实登录会话后查看账户和额度。"
-        : "请先登录后查看账户和额度。",
+        : "当前会话已过期，请重新登录。",
   };
 }
 

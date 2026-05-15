@@ -1,6 +1,6 @@
 # Web Baseline Adaptation Plan
 
-> **Status**: `CURRENT` | **Last updated**: 2026-05-14
+> **Status**: `CURRENT` | **Last updated**: 2026-05-15
 
 This document defines the first Web milestone: match the verified miniprogram MVP business baseline through the shared FastAPI backend, while giving Web a production-grade information architecture and interaction model.
 
@@ -12,7 +12,7 @@ Web first needs a real, debuggable baseline, not a polished final redesign. The 
 - Keep Web behind Next.js BFF / RSC, never direct browser-to-FastAPI DTO consumption.
 - Match the miniprogram MVP capabilities before adding Web-only features.
 - Replace user-visible mock data with authenticated, empty, loading, error, and unavailable states.
-- Follow Claread's editorial reading language: paper surface, semantic marks, light marginalia, quiet app shell.
+- Follow Claread's editorial reading language: paper surface, semantic marks, original-text canvas, permanent dictionary, quiet app shell.
 
 ## Miniprogram Baseline To Match
 
@@ -22,7 +22,7 @@ The current miniprogram MVP has these verified flows:
 | --- | --- | --- | --- |
 | Input and analysis | `pages/input` -> result | `POST /analysis-tasks`, `GET /analysis-tasks/{id}`, `GET /records/{id}` | `/read` submits text, polls task, opens `/reader/[recordId]` |
 | Reader result | `pages/result` | `render_scene_json` from records | `/reader/[recordId]` renders paragraphs, sentences, translations, marks, sentence entries, warnings |
-| Dictionary lookup | `WordPopup` | `GET /dict`, `GET /dict/entry` | Reader mark/word click opens Web popover or mobile sheet |
+| Dictionary lookup | `WordPopup` | `GET /dict`, `GET /dict/entry` | Reader mark/word click shows inline light preview and updates the permanent dictionary panel |
 | History | `packageA/history` | `GET /records`, favorites state | `/library` lists cloud records, opens Reader |
 | Vocabulary | `packageA/vocab` | `GET/POST/PATCH/DELETE /vocabulary` | `/vocabulary` lists real words and source context |
 | Review | `packageA/vocab-review` | `GET /vocabulary/review/due`, `POST /vocabulary/{id}/review` | `/review` runs a simple review queue |
@@ -59,7 +59,7 @@ This version does not need final visual polish, but it must not feel like a demo
 - Empty, error, loading, unauthenticated, insufficient quota, active task conflict, and degraded analysis states must be explicit.
 - Lists should be quiet asset lists, not dashboard card grids.
 - Reader marks need semantic meaning and accessible interaction. Color is not the only signal.
-- Desktop dictionary uses anchored popover or side detail. Mobile can use a bottom sheet.
+- Desktop dictionary uses inline light preview plus a permanent left dictionary panel. Mobile can use a bottom sheet.
 - Web should adapt miniprogram long-press/tap patterns to mouse click, hover, selection toolbar, keyboard focus, and URL state.
 
 ## Mock Removal Policy
@@ -84,7 +84,7 @@ User-visible mock data should be removed from the main product path in this orde
 ### Batch 2: Vocabulary And Review
 
 - Connect `/vocabulary` to `GET /vocabulary`. `DONE`
-- Add Reader "save to vocabulary" for dictionary/inline marks.
+- Add Reader "save to vocabulary" for dictionary/inline marks. `DONE`
 - Add `/review` using `GET /vocabulary/review/due` and `POST /vocabulary/{id}/review`. `DONE`
 - Remove vocabulary mock from user-visible pages. `DONE`
 
@@ -109,7 +109,7 @@ User-visible mock data should be removed from the main product path in this orde
 ### Batch 4: Web-Specific Enhancements
 
 - Reader density controls and preferences.
-- Grammar X-Ray schema proposal and high-fidelity view.
+- Grammar X-Ray schema proposal and high-fidelity view are future Web enhancement topics; the baseline adapts existing `grammar_note` and `sentence_analysis` only.
 - Share page and export/artifact studio.
 - Search/filter in library and vocabulary.
 

@@ -117,7 +117,7 @@ export async function getReviewQueue(limit?: number): Promise<ReviewQueueVm> {
       total: 0,
       limit: normalizedLimit,
       status: 401,
-      message: "请先登录后查看真实复习队列。",
+      message: "当前会话已过期，请重新登录。",
     };
   }
 

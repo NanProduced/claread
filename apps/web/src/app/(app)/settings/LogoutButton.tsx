@@ -19,7 +19,7 @@ export function LogoutButton() {
 
   return (
     <button
-      className="text-sm font-semibold text-error-red hover:opacity-80 disabled:opacity-50"
+      className="focus-ring inline-flex min-h-10 items-center rounded-pill border border-error-red/25 bg-surface px-4 text-sm font-semibold text-error-red transition-colors hover:bg-error-red/5 disabled:cursor-not-allowed disabled:opacity-50"
       disabled={pending}
       onClick={handleLogout}
       type="button"

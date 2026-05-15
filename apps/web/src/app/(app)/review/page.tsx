@@ -13,8 +13,8 @@ const reviewLimit = 20;
 const stateTitle: Record<ReviewQueueVm["state"], string> = {
   ready: "待复习",
   empty: "暂无待复习",
-  anonymous: "需要登录",
-  mock_session: "登录态不可用",
+  anonymous: "会话已过期",
+  mock_session: "会话不可用",
   upstream_unavailable: "复习服务不可用",
   error: "复习队列读取失败",
 };
@@ -30,7 +30,7 @@ function statusPanel(queue: ReviewQueueVm) {
         href={loginRoute}
         className="rounded-pill border border-hairline bg-surface px-4 py-2 text-sm font-semibold text-ink transition-colors hover:border-muted"
       >
-        去登录
+        重新登录
       </Link>
     ) : queue.state === "empty" ? (
       <Link
