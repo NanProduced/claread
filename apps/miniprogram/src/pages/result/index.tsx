@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { View, Text, ScrollView } from '@tarojs/components'
 import Taro, { useShareAppMessage } from '@tarojs/taro'
+import { buildMultiTextTargetKey, buildSentenceTargetKey, buildTextRangeTargetKey } from '@claread/contracts'
 import { ROUTES } from '../../config/routes'
 import { PageMode, AnyRenderSceneVm, AcademicRenderSceneVm, AnySentenceEntryModel } from '../../types/view/render-scene.vm'
 import { getSafeDisplayLabel } from '../../config/purpose'
@@ -21,6 +22,7 @@ import ReadingSelectionToolbar, { SelectionContext } from '../../components/Read
 import UserNoteSheet from '../../components/UserNoteSheet'
 import { useReadingPreferencesStore } from '../../stores/reading-preferences'
 import { UserAnnotationDto, listUserAnnotations, createUserAnnotation, updateUserAnnotation, deleteUserAnnotation } from '../../services/api/user-annotations.client'
+import type { UserAnnotationColor } from '@claread/contracts'
 import { addFavoriteToCloud, removeFavoriteFromCloud, fetchCloudFavoriteItems, FavoriteItemDto } from '../../services/api/favorites.client'
 import FeedbackSheet from '../../components/FeedbackSystem/FeedbackSheet'
 import { useResultState } from './hooks/useResultState'
@@ -36,12 +38,13 @@ import './index.scss'
 
 function buildTargetKey(
   recordId: string,
-  anchorType: 'sentence' | 'paragraph' | 'text_range',
-  opts: { sentenceId?: string; paragraphId?: string; startOffset?: number; endOffset?: number; textHash?: string }
+  anchorType: 'sentence' | 'paragraph' | 'text_range' | 'multi_text',
+  opts: { sentenceId?: string; paragraphId?: string; startOffset?: number; endOffset?: number; textHash?: string; segments?: Array<{ paragraphId?: string; sentenceId: string; startOffset: number; endOffset: number; textHash: string }> }
 ): string {
-  if (anchorType === 'sentence') return `record:${recordId}:sentence:${opts.sentenceId}`
+  if (anchorType === 'sentence') return buildSentenceTargetKey(recordId, opts.sentenceId || '')
   if (anchorType === 'paragraph') return `record:${recordId}:paragraph:${opts.paragraphId}`
-  return `record:${recordId}:range:${opts.sentenceId}:${opts.startOffset}:${opts.endOffset}:${opts.textHash}`
+  if (anchorType === 'multi_text') return buildMultiTextTargetKey(recordId, opts.segments || [])
+  return buildTextRangeTargetKey(recordId, opts.sentenceId || '', opts.startOffset || 0, opts.endOffset || 0, opts.textHash || '')
 }
 
 function trimReviewText(text: string | undefined, max = 54): string | undefined {
@@ -49,6 +52,133 @@ function trimReviewText(text: string | undefined, max = 54): string | undefined 
   const normalized = text.replace(/[#>*_`-]/g, '').replace(/\s+/g, ' ').trim()
   if (!normalized) return undefined
   return normalized.length > max ? `${normalized.slice(0, max)}...` : normalized
+}
+
+function getPayloadSegments(payload: Record<string, unknown> | undefined) {
+  const raw = payload?.segments
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map(item => {
+      if (!item || typeof item !== 'object') return null
+      const segment = item as Record<string, unknown>
+      const sentenceId = typeof segment.sentence_id === 'string' ? segment.sentence_id : ''
+      const startOffset = typeof segment.start_offset === 'number' ? segment.start_offset : NaN
+      const endOffset = typeof segment.end_offset === 'number' ? segment.end_offset : NaN
+      const textHash = typeof segment.text_hash === 'string' ? segment.text_hash : ''
+      if (!sentenceId || !Number.isFinite(startOffset) || !Number.isFinite(endOffset) || !textHash) return null
+      return {
+        sentenceId,
+        startOffset,
+        endOffset,
+        textHash,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+}
+
+interface RouteFocusRange {
+  start: number
+  end: number
+}
+
+interface RouteFocusState {
+  targetKey: string
+  anchorType: 'sentence' | 'text_range' | 'multi_text'
+  sentenceIds: string[]
+  rangesBySentence: Record<string, RouteFocusRange[]>
+}
+
+function buildRouteFocusState(
+  targetKey: string,
+  anchorType: RouteFocusState['anchorType'],
+  sentenceIds: string[],
+  rangesBySentence: Record<string, RouteFocusRange[]>
+): RouteFocusState | null {
+  const normalizedSentenceIds = Array.from(new Set(sentenceIds.filter(Boolean)))
+  const normalizedRanges = Object.fromEntries(
+    Object.entries(rangesBySentence)
+      .map(([sentenceId, ranges]) => {
+        const accepted = ranges
+          .filter(range => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
+          .sort((a, b) => a.start - b.start || b.end - a.end)
+          .reduce<RouteFocusRange[]>((list, current) => {
+            const previous = list[list.length - 1]
+            if (previous && current.start < previous.end) return list
+            list.push(current)
+            return list
+          }, [])
+        return accepted.length > 0 ? [sentenceId, accepted] : null
+      })
+      .filter((item): item is [string, RouteFocusRange[]] => Boolean(item))
+  )
+
+  if (normalizedSentenceIds.length === 0 && Object.keys(normalizedRanges).length === 0) {
+    return null
+  }
+
+  return {
+    targetKey,
+    anchorType,
+    sentenceIds: normalizedSentenceIds,
+    rangesBySentence: normalizedRanges,
+  }
+}
+
+function buildRouteFocusFromFavorite(
+  targetKey: string,
+  favorite: FavoriteItemDto | null,
+  fallbackSentenceId: string | null,
+  fallbackRange: { start: number; end: number } | null
+): RouteFocusState | null {
+  const sentenceIds: string[] = []
+  const rangesBySentence: Record<string, RouteFocusRange[]> = {}
+
+  const appendRange = (sentenceId: string, range: RouteFocusRange) => {
+    sentenceIds.push(sentenceId)
+    rangesBySentence[sentenceId] = [...(rangesBySentence[sentenceId] || []), range]
+  }
+
+  if (!favorite) {
+    if (fallbackSentenceId && fallbackRange) {
+      appendRange(fallbackSentenceId, fallbackRange)
+      return buildRouteFocusState(targetKey, 'text_range', sentenceIds, rangesBySentence)
+    }
+    if (fallbackSentenceId) {
+      return buildRouteFocusState(targetKey, 'sentence', [fallbackSentenceId], {})
+    }
+    return null
+  }
+
+  if (favorite.target_type === 'multi_text') {
+    const segments = getPayloadSegments(favorite.payload_json)
+    segments.forEach(segment => appendRange(segment.sentenceId, { start: segment.startOffset, end: segment.endOffset }))
+    return buildRouteFocusState(targetKey, 'multi_text', sentenceIds, rangesBySentence)
+  }
+
+  if (favorite.target_type === 'text_range') {
+    const sentenceId = typeof favorite.payload_json?.sentence_id === 'string'
+      ? favorite.payload_json.sentence_id as string
+      : fallbackSentenceId
+    const startOffset = typeof favorite.payload_json?.start_offset === 'number'
+      ? favorite.payload_json.start_offset as number
+      : fallbackRange?.start
+    const endOffset = typeof favorite.payload_json?.end_offset === 'number'
+      ? favorite.payload_json.end_offset as number
+      : fallbackRange?.end
+    const resolvedStart = typeof startOffset === 'number' ? startOffset : NaN
+    const resolvedEnd = typeof endOffset === 'number' ? endOffset : NaN
+    if (sentenceId && Number.isFinite(resolvedStart) && Number.isFinite(resolvedEnd) && resolvedEnd > resolvedStart) {
+      appendRange(sentenceId, { start: resolvedStart, end: resolvedEnd })
+    }
+    return buildRouteFocusState(targetKey, 'text_range', sentenceIds, rangesBySentence)
+  }
+
+  const sentenceId = typeof favorite.payload_json?.sentence_id === 'string'
+    ? favorite.payload_json.sentence_id as string
+    : fallbackSentenceId
+  return sentenceId
+    ? buildRouteFocusState(targetKey, 'sentence', [sentenceId], {})
+    : null
 }
 
 function getReviewAssetLabel(entryType: string): string | null {
@@ -116,6 +246,7 @@ export default function Result() {
   const [selectionContext, setSelectionContext] = useState<SelectionContext | null>(null)
   const [selectionSentenceId, setSelectionSentenceId] = useState<string | null>(null)
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null)
+  const [routeFocus, setRouteFocus] = useState<RouteFocusState | null>(null)
   const [userAnnotations, setUserAnnotations] = useState<UserAnnotationDto[]>([])
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItemDto[]>([])
   const [showNoteSheet, setShowNoteSheet] = useState(false)
@@ -123,6 +254,8 @@ export default function Result() {
   const [scrollIntoViewId, setScrollIntoViewId] = useState('')
   const [articleScrollTop, setArticleScrollTop] = useState(0)
   const routeSentenceIdRef = useRef<string | null>(null)
+  const routeTargetKeyRef = useRef<string | null>(null)
+  const routeRangeRef = useRef<{ start: number; end: number; textHash?: string } | null>(null)
   const scrolledSentenceIdRef = useRef<string | null>(null)
   const articleScrollTopRef = useRef(0)
   const { preferences } = useReadingPreferencesStore()
@@ -131,6 +264,17 @@ export default function Result() {
   if (routeSentenceIdRef.current === null) {
     const params = Taro.getCurrentInstance().router?.params || {}
     routeSentenceIdRef.current = typeof params.sentenceId === 'string' ? params.sentenceId : ''
+    routeTargetKeyRef.current = typeof params.targetKey === 'string' ? params.targetKey : ''
+    const anchorType = typeof params.anchorType === 'string' ? params.anchorType : ''
+    const startOffset = typeof params.startOffset === 'string' ? Number(params.startOffset) : NaN
+    const endOffset = typeof params.endOffset === 'string' ? Number(params.endOffset) : NaN
+    routeRangeRef.current = anchorType === 'text_range' && Number.isFinite(startOffset) && Number.isFinite(endOffset) && startOffset >= 0 && endOffset > startOffset
+      ? {
+          start: startOffset,
+          end: endOffset,
+          textHash: typeof params.textHash === 'string' ? params.textHash : undefined,
+        }
+      : null
   }
 
   const articleTitleForAssets = useMemo(() => {
@@ -187,6 +331,41 @@ export default function Result() {
   }, [pageState, isLoggedIn])
 
   useEffect(() => {
+    const targetKey = routeTargetKeyRef.current
+    if (!targetKey) return
+
+    const matchedAnnotation = userAnnotations.find(item => item.target_key === targetKey)
+    const matchedFavorite = favoriteItems.find(item => item.target_key === targetKey)
+    const matchedSegments = matchedAnnotation?.segments?.map(segment => ({
+      sentenceId: segment.sentence_id,
+      start: segment.start_offset,
+      end: segment.end_offset,
+    })) || getPayloadSegments(matchedFavorite?.payload_json)?.map(segment => ({
+      sentenceId: segment.sentenceId,
+      start: segment.startOffset,
+      end: segment.endOffset,
+    })) || []
+
+    if (!routeSentenceIdRef.current && matchedSegments[0]?.sentenceId) {
+      routeSentenceIdRef.current = matchedSegments[0].sentenceId
+    }
+    if (!routeRangeRef.current && matchedSegments[0]) {
+      routeRangeRef.current = { start: matchedSegments[0].start, end: matchedSegments[0].end }
+    }
+
+    setRouteFocus(
+      matchedAnnotation
+        ? null
+        : buildRouteFocusFromFavorite(
+            targetKey,
+            matchedFavorite || null,
+            routeSentenceIdRef.current || null,
+            routeRangeRef.current ? { start: routeRangeRef.current.start, end: routeRangeRef.current.end } : null,
+          ),
+    )
+  }, [favoriteItems, userAnnotations])
+
+  useEffect(() => {
     const targetSentenceId = routeSentenceIdRef.current
     if (!targetSentenceId || pageState !== 'normal' || !sceneData?.article?.sentences?.length) return
     if (scrolledSentenceIdRef.current === targetSentenceId) return
@@ -225,6 +404,15 @@ export default function Result() {
     return () => clearTimeout(timer)
   }, [pageState, sceneData, setActiveSentenceId, navBarHeight])
 
+  useEffect(() => {
+    if (!routeFocus) return
+    const targetKey = routeFocus.targetKey
+    const timer = setTimeout(() => {
+      setRouteFocus(current => current?.targetKey === targetKey ? null : current)
+    }, 4200)
+    return () => clearTimeout(timer)
+  }, [routeFocus])
+
   const clearSelection = useCallback(() => {
     setSelectionContext(null)
     setSelectionSentenceId(null)
@@ -249,8 +437,11 @@ export default function Result() {
       paragraphId: selectionContext.paragraphId,
       startOffset: selectionContext.startOffset,
       endOffset: selectionContext.endOffset,
+      textHash: selectionContext.textHash,
     })
   }, [selectionContext, cloudId, recordId])
+  const routeFocusSentenceIds = useMemo(() => new Set(routeFocus?.sentenceIds || []), [routeFocus])
+  const routeFocusRangesBySentence = useMemo(() => routeFocus?.rangesBySentence || {}, [routeFocus])
 
   const annotationsByTargetKey = useMemo(() => {
     const map = new Map<string, UserAnnotationDto>()
@@ -262,9 +453,27 @@ export default function Result() {
 
   const favoriteTargetKeys = useMemo(() => new Set(
     favoriteItems
-      .filter(item => item.target_type === 'sentence' || item.target_type === 'paragraph')
+      .filter(item => item.target_type === 'sentence' || item.target_type === 'paragraph' || item.target_type === 'text_range')
       .map(item => item.target_key)
   ), [favoriteItems])
+  const favoritedSentenceIds = useMemo(() => {
+    const ids = new Set<string>()
+    favoriteItems.forEach(item => {
+      if (item.target_type === 'multi_text') {
+        getPayloadSegments(item.payload_json).forEach(segment => {
+          ids.add(segment.sentenceId)
+        })
+        return
+      }
+      const sentenceId = typeof item.payload_json?.sentence_id === 'string'
+        ? item.payload_json.sentence_id as string
+        : ''
+      if (sentenceId) {
+        ids.add(sentenceId)
+      }
+    })
+    return ids
+  }, [favoriteItems])
 
   const currentSelectionAnnotation = activeSelectionTargetKey
     ? annotationsByTargetKey.get(activeSelectionTargetKey)
@@ -321,6 +530,8 @@ export default function Result() {
           article_title: articleTitleForAssets,
           start_offset: selectionContext.startOffset,
           end_offset: selectionContext.endOffset,
+          selected_text: selectionContext.selectedText,
+          text_hash: selectionContext.textHash,
           anchor_type: selectionContext.anchorType,
           review_assets: reviewAssets,
         }
@@ -339,6 +550,10 @@ export default function Result() {
             translation: selectionContext.translation,
             article_title: articleTitleForAssets,
             anchor_type: selectionContext.anchorType,
+            start_offset: selectionContext.startOffset,
+            end_offset: selectionContext.endOffset,
+            selected_text: selectionContext.selectedText,
+            text_hash: selectionContext.textHash,
             review_assets: reviewAssets,
           },
           note: null,
@@ -368,6 +583,7 @@ export default function Result() {
 
     try {
       const reviewAssets = buildReviewAssets(sceneData, selectionContext.sentenceId)
+      const annotationColor = color as UserAnnotationColor
       Taro.showLoading({ title: '保存中...' })
       const res = currentSelectionAnnotation
         ? await updateUserAnnotation(currentSelectionAnnotation.id, { color, note })
@@ -379,13 +595,18 @@ export default function Result() {
           paragraph_id: selectionContext.paragraphId,
           sentence_id: selectionContext.sentenceId,
           selected_text: selectionContext.selectedText,
-          color,
+          start_offset: selectionContext.anchorType === 'text_range' ? selectionContext.startOffset : undefined,
+          end_offset: selectionContext.anchorType === 'text_range' ? selectionContext.endOffset : undefined,
+          text_hash: selectionContext.anchorType === 'text_range' ? selectionContext.textHash : undefined,
+          color: annotationColor,
           note,
           payload_json: {
             source: 'result_page',
             client_record_id: recordId,
             translation: selectionContext.translation,
             article_title: articleTitleForAssets,
+            offset_unit: selectionContext.anchorType === 'text_range' ? 'utf16' : undefined,
+            text_hash_algorithm: selectionContext.anchorType === 'text_range' ? 'fnv1a32-utf16' : undefined,
             review_assets: reviewAssets,
           },
         })
@@ -410,6 +631,7 @@ export default function Result() {
 
     try {
       const reviewAssets = buildReviewAssets(sceneData, selectionContext.sentenceId)
+      const annotationColor = color as UserAnnotationColor
       Taro.showLoading({ title: '保存中...' })
       const res = currentSelectionAnnotation
         ? await updateUserAnnotation(currentSelectionAnnotation.id, { color, note: '' })
@@ -421,12 +643,17 @@ export default function Result() {
           paragraph_id: selectionContext.paragraphId,
           sentence_id: selectionContext.sentenceId,
           selected_text: selectionContext.selectedText,
-          color,
+          start_offset: selectionContext.anchorType === 'text_range' ? selectionContext.startOffset : undefined,
+          end_offset: selectionContext.anchorType === 'text_range' ? selectionContext.endOffset : undefined,
+          text_hash: selectionContext.anchorType === 'text_range' ? selectionContext.textHash : undefined,
+          color: annotationColor,
           payload_json: {
             source: 'result_page',
             client_record_id: recordId,
             translation: selectionContext.translation,
             article_title: articleTitleForAssets,
+            offset_unit: selectionContext.anchorType === 'text_range' ? 'utf16' : undefined,
+            text_hash_algorithm: selectionContext.anchorType === 'text_range' ? 'fnv1a32-utf16' : undefined,
             review_assets: reviewAssets,
           },
         })
@@ -557,8 +784,10 @@ export default function Result() {
           activeSentenceId={activeSentenceId}
           selectionSentenceId={selectionSentenceId}
           selectionRange={selectionRange}
+          routeFocusSentenceIds={routeFocusSentenceIds}
+          routeFocusRangesBySentence={routeFocusRangesBySentence}
           userAnnotations={userAnnotations}
-          favoriteTargetKeys={favoriteTargetKeys}
+          favoritedSentenceIds={favoritedSentenceIds}
           onWordClick={actions.handleWordClick}
           onSentenceClick={actions.handleSentenceClick}
           onSelectionContext={handleSelectionContext}
@@ -566,7 +795,7 @@ export default function Result() {
         />
       )
     })
-  }, [sceneData, activeMarkId, selectedWord, vocabList, vocabSavedMap, pageMode, isAcademicMode, recordId, cloudId, activeSentenceId, selectionSentenceId, selectionRange, handleSelectionContext, userAnnotations, favoriteTargetKeys])
+  }, [sceneData, activeMarkId, selectedWord, vocabList, vocabSavedMap, pageMode, isAcademicMode, recordId, cloudId, activeSentenceId, selectionSentenceId, selectionRange, handleSelectionContext, userAnnotations, favoriteTargetKeys, favoritedSentenceIds, routeFocusSentenceIds, routeFocusRangesBySentence])
 
   if (!sceneData) {
     if (pageState === 'loading') {

@@ -15,6 +15,7 @@
   ],
   "dependencies": {
     "@babel/runtime": "^7.7.7",
+    "@claread/contracts": "workspace:*",
     "@tarojs/components": "3.6.8",
     "@tarojs/helper": "3.6.8",
     "@tarojs/plugin-framework-react": "3.6.8",

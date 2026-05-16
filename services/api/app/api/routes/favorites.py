@@ -40,6 +40,8 @@ async def add_favorite(
             note=body.note,
         )
         return {"id": str(fav_id), "ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("add_favorite failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -58,6 +60,8 @@ async def list_favorites(
             items=[FavoriteResponse(**row) for row in items],
             total=len(items),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("list_favorites failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -77,6 +81,8 @@ async def remove_favorite_by_target(
             target_key=target_key,
         )
         return FavoriteDeleteResponse(deleted=deleted)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("remove_favorite_by_target failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -94,6 +100,8 @@ async def remove_favorite(
             analysis_record_id=analysis_record_id,
         )
         return FavoriteDeleteResponse(deleted=count > 0)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("remove_favorite failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e

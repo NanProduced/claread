@@ -22,6 +22,17 @@ const colorOptions: Array<{ value: UserAnnotationColorDto; label: string; classN
   { value: "sage_green", label: "鼠尾草", className: "bg-structure-green/30" },
 ];
 
+function annotationSummaryLabel(item: WebAnnotationVm) {
+  const scopeLabel = item.anchorType === "text_range" ? "选区" : item.anchorType === "paragraph" ? "段落" : "整句";
+  if (item.note && item.type === "highlight") {
+    return `${scopeLabel}高亮 + 笔记`;
+  }
+  if (item.note) {
+    return `${scopeLabel}笔记`;
+  }
+  return `${scopeLabel}高亮`;
+}
+
 export interface ReaderContextPanelProps {
   mode: LowerPanelMode;
   sentence: SentenceModel | null;
@@ -307,7 +318,10 @@ export function ReaderContextPanel({
                   <div className="mt-2 space-y-2">
                     {sentenceAnnotations.slice(0, 3).map((item) => (
                       <p key={item.id} className="text-sm leading-6 text-ink-soft">
-                        <span className="font-semibold text-ink">{item.type === "note" ? "笔记" : "高亮"}</span>
+                        <span className="font-semibold text-ink">{annotationSummaryLabel(item)}</span>
+                        {item.anchorType === "text_range" ? (
+                          <span className="ml-2 text-muted">“{item.selectedText}”</span>
+                        ) : null}
                         {item.note ? <span className="ml-2 text-muted">{item.note}</span> : null}
                       </p>
                     ))}

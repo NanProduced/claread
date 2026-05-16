@@ -50,10 +50,11 @@ export interface SelectionToolbarDisabledStates {
 
 export interface SelectionToolbarProps {
   selectedText: string;
-  selectionMode?: "text_range" | "sentence";
+  selectionMode?: "text_range" | "sentence" | "multi_text";
   colorOptions?: SelectionToolbarColorOption[];
   activeColor?: SelectionToolbarColorValue | null;
   hasAnnotation?: boolean;
+  hasHighlight?: boolean;
   hasNote?: boolean;
   favorited?: boolean;
   disabled?: SelectionToolbarDisabledStates;
@@ -122,6 +123,16 @@ function selectedTextSummary(selectedText: string) {
   return `${normalized.slice(0, 54)}...`;
 }
 
+function selectionModeLabel(selectionMode: NonNullable<SelectionToolbarProps["selectionMode"]>) {
+  if (selectionMode === "sentence") {
+    return "整句";
+  }
+  if (selectionMode === "multi_text") {
+    return "跨句选区";
+  }
+  return "局部选区";
+}
+
 function ToolbarDivider() {
   return <span aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-hairline sm:inline-flex" />;
 }
@@ -165,6 +176,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     colorOptions = defaultSelectionToolbarColorOptions,
     activeColor = null,
     hasAnnotation = false,
+    hasHighlight = false,
     hasNote = false,
     favorited = false,
     disabled,
@@ -196,7 +208,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
   const askComingSoon = disabled?.ask ?? true;
   const askDisabled = !hasSelection || askComingSoon || !onAsk;
   const selectSentenceDisabled =
-    selectionMode === "sentence" || !hasSelection || Boolean(disabled?.selectSentence) || !onSelectSentence;
+    selectionMode !== "text_range" || !hasSelection || Boolean(disabled?.selectSentence) || !onSelectSentence;
   const highlightDisabled = !hasSelection || Boolean(disabled?.highlight) || !onHighlight;
   const noteDisabled = !hasSelection || Boolean(disabled?.note) || !onNote;
   const favoriteDisabled = !hasSelection || Boolean(disabled?.favorite) || !onFavorite;
@@ -237,6 +249,10 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           ) : null}
         </button>
 
+        <span className="inline-flex h-9 shrink-0 items-center rounded-[9px] border border-hairline bg-surface px-3 text-xs font-semibold text-ink-soft">
+          {selectionModeLabel(selectionMode)}
+        </span>
+
         <ToolbarDivider />
 
         <ToolbarButton
@@ -257,7 +273,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           </span>
           {colorOptions.map((option) => {
             const colorDisabled = highlightDisabled || Boolean(option.disabled);
-            const active = activeColor === option.value && hasAnnotation;
+            const active = activeColor === option.value && hasHighlight;
 
             return (
               <button

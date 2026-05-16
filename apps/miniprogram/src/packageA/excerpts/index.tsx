@@ -29,10 +29,18 @@ interface SentenceAsset {
   recordId?: string | null
   cloudRecordId?: string | null
   sentenceId?: string
-  anchorType?: string
+  anchorType?: 'sentence' | 'text_range' | 'multi_text'
   startOffset?: number
   endOffset?: number
   textHash?: string
+  segments?: Array<{
+    paragraphId?: string
+    sentenceId: string
+    selectedText: string
+    startOffset: number
+    endOffset: number
+    textHash: string
+  }>
   sourceTitle: string
   sourceSubtitle?: string
   sourceRank?: number
@@ -75,6 +83,32 @@ function getPayloadNumber(payload: Record<string, unknown> | undefined, key: str
   if (!payload) return undefined
   const value = payload[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function getPayloadSegments(payload: Record<string, unknown> | undefined): SentenceAsset['segments'] {
+  const raw = payload?.segments
+  if (!Array.isArray(raw)) return undefined
+  const items = raw
+    .map(item => {
+      if (!item || typeof item !== 'object') return null
+      const segment = item as Record<string, unknown>
+      const sentenceId = typeof segment.sentence_id === 'string' ? segment.sentence_id : ''
+      const selectedText = typeof segment.selected_text === 'string' ? segment.selected_text : ''
+      const startOffset = typeof segment.start_offset === 'number' ? segment.start_offset : NaN
+      const endOffset = typeof segment.end_offset === 'number' ? segment.end_offset : NaN
+      const textHash = typeof segment.text_hash === 'string' ? segment.text_hash : ''
+      if (!sentenceId || !selectedText || !Number.isFinite(startOffset) || !Number.isFinite(endOffset) || !textHash) return null
+      return {
+        paragraphId: typeof segment.paragraph_id === 'string' ? segment.paragraph_id : undefined,
+        sentenceId,
+        selectedText,
+        startOffset,
+        endOffset,
+        textHash,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+  return items.length > 0 ? items : undefined
 }
 
 function trimText(text: string | undefined, max = 54): string | undefined {
@@ -285,6 +319,7 @@ function upsertAsset(map: Map<string, SentenceAsset>, key: string, patch: Partia
     startOffset: patch.startOffset ?? current?.startOffset,
     endOffset: patch.endOffset ?? current?.endOffset,
     textHash: patch.textHash ?? current?.textHash,
+    segments: patch.segments ?? current?.segments,
     sourceTitle: patch.sourceTitle || current?.sourceTitle || '未命名文章',
     sourceSubtitle: patch.sourceSubtitle ?? current?.sourceSubtitle,
     sourceRank: patch.sourceRank ?? current?.sourceRank,
@@ -306,26 +341,30 @@ function buildSentenceAssets(favorites: FavoriteItemDto[], annotations: UserAnno
   const recordsById = buildRecordLookup(records)
 
   favorites.forEach(item => {
-    if (item.target_type !== 'sentence' && item.target_type !== 'text_range') return
+    if (item.target_type !== 'sentence' && item.target_type !== 'text_range' && item.target_type !== 'multi_text') return
     const isTextRange = item.target_type === 'text_range'
+    const isMultiText = item.target_type === 'multi_text'
+    const segments = getPayloadSegments(item.payload_json)
     const text = getPayloadString(item.payload_json, isTextRange ? 'selected_text' : 'text')
       || getPayloadString(item.payload_json, 'text')
+      || (isMultiText ? getPayloadString(item.payload_json, 'selected_text') : undefined)
     if (!text) return
     const key = getFavoriteSentenceKey(item)
     const clientRecordId = getPayloadString(item.payload_json, 'client_record_id')
     const recordMatch = recordsById.get(item.analysis_record_id || '') || recordsById.get(clientRecordId || '')
     const record = recordMatch?.record
-    const sentenceId = getPayloadString(item.payload_json, 'sentence_id')
+    const sentenceId = getPayloadString(item.payload_json, 'sentence_id') || segments?.[0]?.sentenceId
     const articleTitle = getArticleTitle(item.payload_json, record)
     const recordInsights = extractSentenceInsights(record, sentenceId)
     upsertAsset(map, key, {
       recordId: record?.recordId || clientRecordId || item.analysis_record_id,
       cloudRecordId: item.analysis_record_id,
       sentenceId,
-      anchorType: isTextRange ? 'text_range' : 'sentence',
+      anchorType: isTextRange ? 'text_range' : isMultiText ? 'multi_text' : 'sentence',
       startOffset: isTextRange ? getPayloadNumber(item.payload_json, 'start_offset') : undefined,
       endOffset: isTextRange ? getPayloadNumber(item.payload_json, 'end_offset') : undefined,
       textHash: isTextRange ? getPayloadString(item.payload_json, 'text_hash') : undefined,
+      segments,
       sourceTitle: articleTitle.title,
       sourceSubtitle: articleTitle.subtitle,
       sourceRank: recordMatch?.rank,
@@ -338,21 +377,30 @@ function buildSentenceAssets(favorites: FavoriteItemDto[], annotations: UserAnno
   })
 
   annotations.forEach(item => {
-    if (item.anchor_type !== 'sentence' && item.anchor_type !== 'text_range') return
+    if (item.anchor_type !== 'sentence' && item.anchor_type !== 'text_range' && item.anchor_type !== 'multi_text') return
     const key = getAnnotationSentenceKey(item)
     const clientRecordId = getPayloadString(item.payload_json, 'client_record_id')
     const recordMatch = recordsById.get(item.analysis_record_id || '') || recordsById.get(clientRecordId || '')
     const record = recordMatch?.record
     const articleTitle = getArticleTitle(item.payload_json, record)
     const recordInsights = extractSentenceInsights(record, item.sentence_id)
+    const segments = item.segments?.length ? item.segments.map(segment => ({
+      paragraphId: segment.paragraph_id,
+      sentenceId: segment.sentence_id,
+      selectedText: segment.selected_text,
+      startOffset: segment.start_offset,
+      endOffset: segment.end_offset,
+      textHash: segment.text_hash,
+    })) : undefined
     upsertAsset(map, key, {
       recordId: record?.recordId || clientRecordId || item.analysis_record_id,
       cloudRecordId: item.analysis_record_id,
-      sentenceId: item.sentence_id,
+      sentenceId: item.sentence_id || segments?.[0]?.sentenceId,
       anchorType: item.anchor_type,
       startOffset: item.start_offset,
       endOffset: item.end_offset,
       textHash: item.text_hash,
+      segments,
       sourceTitle: articleTitle.title,
       sourceSubtitle: articleTitle.subtitle,
       sourceRank: recordMatch?.rank,
@@ -472,7 +520,13 @@ export default function ExcerptsPage() {
       return
     }
     const sentenceQuery = item.sentenceId ? `&sentenceId=${encodeURIComponent(item.sentenceId)}` : ''
-    Taro.navigateTo({ url: `${ROUTES.RESULT}?recordId=${encodeURIComponent(targetId)}&mode=replay${sentenceQuery}` })
+    const targetKeyQuery = item.key ? `&targetKey=${encodeURIComponent(item.key)}` : ''
+    const rangeQuery = item.anchorType === 'text_range' && typeof item.startOffset === 'number' && typeof item.endOffset === 'number'
+      ? `&anchorType=text_range&startOffset=${encodeURIComponent(String(item.startOffset))}&endOffset=${encodeURIComponent(String(item.endOffset))}${item.textHash ? `&textHash=${encodeURIComponent(item.textHash)}` : ''}`
+      : item.anchorType === 'multi_text'
+        ? '&anchorType=multi_text'
+      : ''
+    Taro.navigateTo({ url: `${ROUTES.RESULT}?recordId=${encodeURIComponent(targetId)}&mode=replay${sentenceQuery}${targetKeyQuery}${rangeQuery}` })
   }
 
   return (
@@ -538,7 +592,7 @@ export default function ExcerptsPage() {
                           {item.isHighlighted && (
                             <View className='asset-chip asset-chip--highlight'>
                               <LucideIcon name='highlighter' size={15} color='currentColor' />
-                              <Text>{item.anchorType === 'text_range' ? '局部高亮' : '高亮'}</Text>
+                              <Text>{item.anchorType === 'multi_text' ? '跨句高亮' : item.anchorType === 'text_range' ? '局部高亮' : '高亮'}</Text>
                             </View>
                           )}
                           {item.note && (

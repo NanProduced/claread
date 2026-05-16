@@ -11,7 +11,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
+
 from app.database import connection as db_connection
+from app.services.text_anchors import (
+    load_render_scene,
+    validate_multi_text_against_render_scene,
+    validate_text_range_against_render_scene,
+)
 
 
 def _ensure_payload_dict(row: dict) -> dict:
@@ -48,6 +55,18 @@ async def add_favorite(
         raise RuntimeError("Database pool not initialized")
 
     async with pool.acquire() as conn:
+        if target_type in {"text_range", "multi_text"}:
+            if analysis_record_id is None:
+                raise HTTPException(status_code=400, detail="analysis_record_id is required for text anchors")
+            render_scene = await load_render_scene(conn, user_id, analysis_record_id)
+            if target_type == "multi_text":
+                segments = payload_json.get("segments")
+                if not isinstance(segments, list):
+                    raise HTTPException(status_code=400, detail="payload_json.segments is required for multi_text favorites")
+                validate_multi_text_against_render_scene(render_scene, segments)
+            else:
+                validate_text_range_against_render_scene(render_scene, payload_json)
+
         row = await conn.fetchrow(
             """
             INSERT INTO favorite_records
@@ -67,7 +86,7 @@ async def add_favorite(
             target_type,
             target_key,
             analysis_record_id,
-            json.dumps(payload_json, ensure_ascii=False),
+            payload_json,
             note,
             datetime.now(UTC),
         )

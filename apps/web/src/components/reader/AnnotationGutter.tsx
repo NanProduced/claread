@@ -1,17 +1,19 @@
-import { Bookmark, Highlighter } from "lucide-react";
+import { Bookmark, Highlighter, PenLine } from "lucide-react";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 
 export interface AnnotationGutterProps {
   annotations: WebAnnotationVm[];
+  favoriteCount?: number;
 }
 
-export function AnnotationGutter({ annotations }: AnnotationGutterProps) {
-  if (annotations.length === 0) {
+export function AnnotationGutter({ annotations, favoriteCount = 0 }: AnnotationGutterProps) {
+  if (annotations.length === 0 && favoriteCount === 0) {
     return null;
   }
 
   const hasNote = annotations.some((item) => item.note);
   const hasHighlight = annotations.some((item) => item.type === "highlight");
+  const hasFavorite = favoriteCount > 0;
 
   return (
     <div
@@ -20,9 +22,15 @@ export function AnnotationGutter({ annotations }: AnnotationGutterProps) {
     >
       {hasNote ? (
         <div className="reader-annotation-gutter-marker reader-annotation-gutter-marker--note relative text-vocab-amber drop-shadow-sm transition-transform hover:-translate-y-0.5">
+          <PenLine className="h-5 w-5" />
+        </div>
+      ) : null}
+      {hasFavorite ? (
+        <div className="reader-annotation-gutter-marker reader-annotation-gutter-marker--favorite relative text-vocab-amber drop-shadow-sm transition-transform hover:-translate-y-0.5">
           <Bookmark className="h-5 w-5 fill-current" />
         </div>
-      ) : hasHighlight ? (
+      ) : null}
+      {hasHighlight ? (
         <div className="reader-annotation-gutter-marker reader-annotation-gutter-marker--highlight relative text-structure-green drop-shadow-sm opacity-80">
           <Highlighter className="h-4 w-4" />
         </div>

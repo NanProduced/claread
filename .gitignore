@@ -50,6 +50,7 @@ services/api/config/model-presets.json
 
 # Local design captures and UI review screenshots
 reader-*.png
+apps/web/test-results/
 apps/web/docs/design/**/*.png
 
 # Local AI/tool state

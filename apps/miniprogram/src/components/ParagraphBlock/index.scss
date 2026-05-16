@@ -116,6 +116,15 @@
         }
       }
 
+      &.route-focus-sentence {
+        .sentence-text {
+          border-radius: 4rpx;
+          background: linear-gradient(to top, rgba(181, 138, 77, 0.22) 42%, transparent 42%);
+          box-decoration-break: clone;
+          -webkit-box-decoration-break: clone;
+        }
+      }
+
       /* side margin stroke for sentences with notes (intensive mode) */
       &.has-user-note::after {
         content: '';
@@ -313,6 +322,14 @@
       box-decoration-break: clone;
       -webkit-box-decoration-break: clone;
     }
+
+    &.route-focus-sentence {
+      position: relative;
+      background: linear-gradient(to top, rgba(181, 138, 77, 0.22) 42%, transparent 42%);
+      border-radius: 4rpx;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
   }
 
   .sentence-bookmark-mark {
@@ -336,6 +353,11 @@
     &--soft_green { background-color: rgba(168, 216, 185, 0.30); border-radius: 4rpx; }
     &--soft_blue { background-color: rgba(169, 203, 232, 0.28); border-radius: 4rpx; }
     &--soft_purple { background-color: rgba(199, 185, 230, 0.26); border-radius: 4rpx; }
+  }
+
+  .route-focus-overlay {
+    background-color: rgba(226, 194, 142, 0.24);
+    border-radius: 4rpx;
   }
 
   .sentence-text {

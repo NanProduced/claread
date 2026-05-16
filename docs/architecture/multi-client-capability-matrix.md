@@ -47,22 +47,20 @@
 
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
-| 选中整句后高亮 | 已接入 | 已接入：长按/句子级操作 | `user_annotations.anchor_type=sentence` | baseline 共享能力 |
-| 选中整句后写笔记 | 已接入 | 已接入 | `user_annotations` | 双端都应能展示句子级笔记 |
-| 选择句内局部文本高亮 | 已接入：Web 支持单句内 `text_range` 创建、渲染、反显和取消 | 仅展示：不主动创建局部选区，但应显示 Web 产生的局部高亮 | `anchor_type=text_range`、`start_offset`、`end_offset`、`text_hash` | 小程序平台不擅长精确选择，但数据层必须兼容 |
-| 选择句内局部文本写笔记 | 已接入：Web toolbar 下轻量输入，保存为 `text_range` note | 仅展示：应能在摘录/结果页复现 Web 局部笔记 | `user_annotations` | 局部笔记归属于同一篇文章下的 text range anchor |
-| 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 部分接入：按已有句子级操作为主 | `/user-annotations/{id}` | 小程序可先展示局部资产，不必提供同等编辑入口 |
-| 选择当前句子 | 已接入：Web toolbar 可从局部选区切换整句操作 | 已接入：小程序天然以整句为主 | sentence anchor | Web 点击空白不再隐式弹笔记，由明确 toolbar 操作触发 |
 | 收藏整篇文章 | 已接入 | 已接入 | `favorite_records.target_type=analysis_record` | 双端共享记录收藏 |
-| 收藏句子 | 部分接入/按场景消费 | 已接入学习摘录链路 | `favorite_records.target_type=sentence` | 资产展示需按文章聚合 |
-| 收藏局部选区 | 已接入：Web toolbar 以 `target_type=text_range` 收藏/取消 | 仅展示：不主动创建，但可在摘录中复现 | `favorite_records.target_type=text_range` | migration、客户端 DTO、BFF 和小程序摘录展示已打通 |
+| 整句选择后高亮/笔记/收藏 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、收藏、反显和取消 | 已接入：长按/句子级操作为主 | `anchor_type=sentence`；`target_type=sentence` | baseline 共享能力，双端都可操作和展示 |
+| 句内局部文本高亮/笔记/收藏 | 已接入：Web 支持单句内精确选区创建、渲染、反显、取消和资产聚合 | 仅展示：不主动创建局部选区，但结果页和摘录跳转可复现 Web 局部资产 | `anchor_type=text_range`、`target_type=text_range`、`start_offset`、`end_offset`、`text_hash` | 坐标系为 UTF-16 code unit；后端校验 render scene sentence 切片和 `fnv1a32-utf16` hash |
+| 选中文本查词/查短语 | 已接入：selection toolbar 触发 | 未接入选区操作；保留点词查词路径 | `/dict` | Web 选区能力增强，不要求小程序复刻交互 |
+| 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 部分接入：按已有句子级操作为主；局部资产先只展示 | `/user-annotations/{id}` | 小程序可先展示局部资产，不必提供同等编辑入口 |
+| 跨句/跨段选择后批注 | 已接入：Web 可创建、渲染、回跳 `multi_text` 选区 | 仅展示：结果页和摘录页可兼容显示并回跳 Web 创建的跨句资产 | `anchor_type=multi_text`、`target_type=multi_text`、`payload_json.segments[]` | 每段使用 UTF-16 offset + hash；后端按 render scene 顺序和切片校验 |
+| 段落级选择后批注 | 未接入 UI | 未接入 | `anchor_type=paragraph` 字段预留 | 当前没有产品化操作入口，不能视作已完成能力 |
 
 ## 查词、生词与词典
 
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
 | 点击词汇查词 | 已接入：原文词/短语可查 | 已接入：ClickableWord/WordPopup | `/dict`、`/dict/entry` | baseline 共享能力 |
-| 选中文本后查词/查短语 | 已接入：selection toolbar 触发 | 未接入操作；可继续保留点词路径 | `/dict` | Web 选区能力增强，不要求小程序复刻交互 |
+| 选中文本后查词/查短语 | 已接入：selection toolbar 触发 | 未接入操作；可继续保留点词路径 | `/dict` | 选区能力状态见“文本选择、批注与收藏” |
 | 搜索框手动查词 | 部分接入：Web 词典面板已有手动查询入口，体验未完整产品化 | 未接入 | `/dict` | 这是 Web 端可增强能力 |
 | 查词历史记录 | 端内能力：Web Reader 维护 lookup trail | 未接入 | 当前主要是客户端状态 | 若未来跨设备同步，再抽象为后端数据 |
 | 保存到生词本 | 已接入 | 已接入 | `/vocabulary` | 双端共享生词资产 |
@@ -72,9 +70,10 @@
 
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
-| 按文章查看学习资产 | 部分接入：Reader/Library 消费资产，尚无完整 Web 摘录聚合页 | 已接入：`packageA/excerpts` 以文章为父级聚合 | records + annotations + favorites + vocabulary | 用户视角父级是解析文章，子项是句子或局部 anchor |
-| 展示句子级高亮/收藏/笔记 | 部分接入 | 已接入 | sentence anchor | 当前主资产形态来自小程序 baseline |
-| 展示局部 text_range 高亮/笔记/收藏 | 已接入 Reader 展示；Web 摘录聚合页仍待做 | 仅展示：结果页/摘录页可复现 Web 局部资产 | text_range anchor + favorite target | 这是多端能力分叉的核心追踪点 |
+| 按文章查看学习资产 | 已接入：`/library/assets` 按解析文章聚合收藏和批注 | 已接入：`packageA/excerpts` 以文章为父级聚合 | records + annotations + favorites + vocabulary | 用户视角父级是解析文章，子项是句子或局部 anchor |
+| 展示句子级高亮/收藏/笔记 | 已接入 | 已接入 | sentence anchor | 句子级资产是双端 baseline |
+| 展示句内局部文本高亮/笔记/收藏 | 已接入：Reader 和 `/library/assets` 都能展示 | 仅展示：结果页/摘录页可复现 Web 局部资产 | `text_range` anchor + favorite target | 这是多端能力分叉的核心追踪点 |
+| 展示跨句/跨段高亮/笔记/收藏 | 已接入：Reader、`/library/assets` 和 targetKey 回跳可识别 `multi_text` | 已接入展示：结果页/摘录页可渲染多段高亮并按 targetKey 回跳首段 | `multi_text` anchor + favorite target + segment payload | 小程序当前不创建 `multi_text`，但需要接得住 Web 资产 |
 | 跨端编辑同一资产 | 部分接入：Web 支持编辑/删除批注和局部收藏，跨端管理页待做 | 部分接入：句子级路径为主 | 共享 id、target_key、anchor metadata | 小程序可先只显示局部资产，不必提供编辑入口 |
 
 ## 历史、资料库与记录管理
@@ -101,17 +100,14 @@
 | 小程序平台分享 | 不适用 | 已接入或保留平台路径 | 共享 record/share metadata 预留 | 平台能力不写成全局限制 |
 | Web 分享页/OG/PDF/Markdown/图片导出 | 未接入，属于后续 Web 增强 | 不适用或只展示导出结果 | 未来 share snapshot/export job | 应复用 records/render profile，不复制业务后端 |
 
-## `text_range` 当前状态
+## 共享契约当前状态
 
-| 层 | 状态 | 备注 |
-|----|------|------|
-| 数据库/Schema | `user_annotations` 已支持 `anchor_type/start_offset/end_offset/text_hash`；`favorite_records.target_type` 已扩展 `text_range` | 条件约束和严格校验仍需持续收紧 |
-| 后端 API | `/user-annotations` 支持创建、更新、删除；`/favorites` 支持 `text_range` target | 仍需评估 selected text 与 record render scene 的严格一致性 |
-| Web | 支持局部 selection 创建高亮/笔记/收藏，toolbar 可反显、取消、查词和选择当前句子 | Web 是 `text_range` 的主要操作端 |
-| 小程序 | 不主动创建局部 selection；应显示 Web 产生的局部高亮/笔记/收藏 | 展示兼容优先于操作复刻 |
-| 学习资产 | 小程序摘录页已兼容局部批注/收藏；Web 仍缺完整摘录聚合页 | 避免只适配 Reader，不适配跨文章资产管理 |
-
-Offset 坐标系按前端 JavaScript 字符串 offset 理解，即 UTF-16 code unit。后端在做严格校验前不应假设 Python 字符串切片与前端 selection 坐标天然一致。
+| 契约 | 状态 | 备注 |
+|------|------|------|
+| `@claread/contracts` | 已接入 Web 和小程序 | 当前先沉淀用户批注、收藏、颜色、offset/hash 常量；仍不是完整 OpenAPI 生成包 |
+| `TEXT_RANGE_OFFSET_UNIT` | `utf16` | 与 Web DOM Selection / JS string offset 对齐 |
+| `TEXT_RANGE_HASH_ALGORITHM` | `fnv1a32-utf16` | 前端 selected text hash 与后端校验一致 |
+| API DTO 生成 | 未接入 | 后续再评估 OpenAPI -> contracts 生成，避免继续手写漂移 |
 
 ## 文档取舍
 

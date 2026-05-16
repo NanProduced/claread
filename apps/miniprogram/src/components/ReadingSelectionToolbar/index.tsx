@@ -10,6 +10,7 @@ export interface SelectionContext {
   selectedText: string
   startOffset: number
   endOffset: number
+  textHash?: string
   translation?: string
   anchorType: 'sentence' | 'paragraph' | 'text_range'
 }

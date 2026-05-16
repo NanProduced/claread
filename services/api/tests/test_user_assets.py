@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.contracts.annotation import build_multi_text_target_key, compute_text_range_hash
 from app.schemas.user_assets.favorites import FavoriteCreateRequest
 from app.services.user_assets.vocabulary import SOURCE_REFS_MAX, _merge_payload_on_conflict
 
@@ -133,17 +134,78 @@ class TestFavoritesRoutes:
         req = FavoriteCreateRequest(target_type=target_type, target_key="legacy_target")
         assert req.target_type == target_type
 
+    def test_text_range_favorite_validates_payload_hash(self):
+        record_id = uuid4()
+        with pytest.raises(ValueError):
+            FavoriteCreateRequest(
+                analysis_record_id=record_id,
+                target_type="text_range",
+                target_key="range_target",
+                payload_json={
+                    "sentence_id": "s1",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                    "selected_text": "hello",
+                    "text_hash": "deadbeef",
+                },
+            )
+
+    def test_multi_text_favorite_validates_payload_hash(self):
+        record_id = uuid4()
+        with pytest.raises(ValueError):
+            FavoriteCreateRequest(
+                analysis_record_id=record_id,
+                target_type="multi_text",
+                target_key="multi_target",
+                payload_json={
+                    "segments": [
+                        {
+                            "paragraph_id": "p1",
+                            "sentence_id": "s1",
+                            "start_offset": 0,
+                            "end_offset": 5,
+                            "selected_text": "hello",
+                            "text_hash": compute_text_range_hash("hello"),
+                        },
+                        {
+                            "paragraph_id": "p2",
+                            "sentence_id": "s2",
+                            "start_offset": 0,
+                            "end_offset": 5,
+                            "selected_text": "world",
+                            "text_hash": "deadbeef",
+                        },
+                    ]
+                },
+            )
+
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
     def test_add_text_range_favorite(self, mock_pool, mock_auth):
         fav_id = uuid4()
         mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = {"id": fav_id}
+        mock_conn.fetchrow.side_effect = [
+            {
+                "render_scene_json": {
+                    "article": {
+                        "sentences": [
+                            {
+                                "sentence_id": "s_001",
+                                "paragraph_id": "p_001",
+                                "text": "hello range text world",
+                            }
+                        ]
+                    }
+                }
+            },
+            {"id": fav_id},
+        ]
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
         record_id = uuid4()
-        range_key = f"{record_id}:p_001:s_001:6:17:hash_abc"
+        text_hash = compute_text_range_hash("range text")
+        range_key = f"{record_id}:p_001:s_001:6:16:{text_hash}"
         response = client.post(
             "/favorites",
             json={
@@ -154,9 +216,9 @@ class TestFavoritesRoutes:
                     "paragraph_id": "p_001",
                     "sentence_id": "s_001",
                     "start_offset": 6,
-                    "end_offset": 17,
+                    "end_offset": 16,
                     "selected_text": "range text",
-                    "text_hash": "hash_abc",
+                    "text_hash": text_hash,
                 },
             },
             headers=AUTH_HEADERS,
@@ -168,7 +230,91 @@ class TestFavoritesRoutes:
         assert args[2] == "text_range"
         assert args[3] == range_key
         assert args[4] == record_id
-        assert '"selected_text": "range text"' in args[5]
+        assert args[5]["selected_text"] == "range text"
+
+    @_mock_auth()
+    @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
+    def test_add_multi_text_favorite(self, mock_pool, mock_auth):
+        fav_id = uuid4()
+        record_id = uuid4()
+        first_hash = compute_text_range_hash("range")
+        second_hash = compute_text_range_hash("text")
+        target_key = build_multi_text_target_key(
+            str(record_id),
+            [
+                {
+                    "paragraph_id": "p_001",
+                    "sentence_id": "s_001",
+                    "start_offset": 6,
+                    "end_offset": 11,
+                    "text_hash": first_hash,
+                },
+                {
+                    "paragraph_id": "p_002",
+                    "sentence_id": "s_002",
+                    "start_offset": 0,
+                    "end_offset": 4,
+                    "text_hash": second_hash,
+                },
+            ],
+        )
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.side_effect = [
+            {
+                "render_scene_json": {
+                    "article": {
+                        "sentences": [
+                            {
+                                "sentence_id": "s_001",
+                                "paragraph_id": "p_001",
+                                "text": "hello range world",
+                            },
+                            {
+                                "sentence_id": "s_002",
+                                "paragraph_id": "p_002",
+                                "text": "text after",
+                            },
+                        ]
+                    }
+                }
+            },
+            {"id": fav_id},
+        ]
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        response = client.post(
+            "/favorites",
+            json={
+                "analysis_record_id": str(record_id),
+                "target_type": "multi_text",
+                "target_key": target_key,
+                "payload_json": {
+                    "selected_text": "range text",
+                    "segments": [
+                        {
+                            "paragraph_id": "p_001",
+                            "sentence_id": "s_001",
+                            "start_offset": 6,
+                            "end_offset": 11,
+                            "selected_text": "range",
+                            "text_hash": first_hash,
+                        },
+                        {
+                            "paragraph_id": "p_002",
+                            "sentence_id": "s_002",
+                            "start_offset": 0,
+                            "end_offset": 4,
+                            "selected_text": "text",
+                            "text_hash": second_hash,
+                        },
+                    ],
+                },
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert response.status_code in (200, 201)
+        assert response.json() == {"id": str(fav_id), "ok": True}
 
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
@@ -176,7 +322,8 @@ class TestFavoritesRoutes:
         fav_id = uuid4()
         record_id = uuid4()
         now = datetime.now(UTC)
-        range_key = f"{record_id}:p_001:s_001:6:17:hash_abc"
+        text_hash = compute_text_range_hash("range text")
+        range_key = f"{record_id}:p_001:s_001:6:16:{text_hash}"
         mock_conn = AsyncMock()
         mock_conn.fetch.return_value = [
             {
@@ -189,9 +336,9 @@ class TestFavoritesRoutes:
                     "paragraph_id": "p_001",
                     "sentence_id": "s_001",
                     "start_offset": 6,
-                    "end_offset": 17,
+                    "end_offset": 16,
                     "selected_text": "range text",
-                    "text_hash": "hash_abc",
+                    "text_hash": text_hash,
                 },
                 "note": None,
                 "created_at": now,
@@ -233,7 +380,8 @@ class TestFavoritesRoutes:
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
         record_id = uuid4()
-        range_key = f"{record_id}:p_001:s_001:6:17:hash_abc"
+        text_hash = compute_text_range_hash("range text")
+        range_key = f"{record_id}:p_001:s_001:6:16:{text_hash}"
         response = client.delete(
             f"/favorites/target?target_type=text_range&target_key={range_key}",
             headers=AUTH_HEADERS,

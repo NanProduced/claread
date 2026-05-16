@@ -1,11 +1,25 @@
 import json
 from uuid import UUID
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 from fastapi import HTTPException
 
+from app.contracts.annotation import (
+    build_multi_text_target_key,
+)
 from app.database import connection as db_connect
-from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationUpdateRequest, UserAnnotationResponse
+from app.schemas.user_annotations import (
+    UserAnnotationCreateRequest,
+    UserAnnotationSegment,
+    UserAnnotationUpdateRequest,
+    UserAnnotationResponse,
+)
+from app.services.text_anchors import (
+    ensure_json_dict,
+    load_render_scene,
+    validate_multi_text_against_render_scene,
+    validate_text_range_against_render_scene,
+)
 
 _ANNOTATION_FIELDS = (
     "id, analysis_record_id, annotation_type, anchor_type, target_key, "
@@ -15,6 +29,13 @@ _ANNOTATION_FIELDS = (
 
 
 def _row_to_response(row: dict) -> UserAnnotationResponse:
+    payload_json = row["payload_json"] if isinstance(row["payload_json"], dict) else json.loads(row["payload_json"] or "{}")
+    raw_segments = payload_json.get("segments")
+    segments = []
+    if isinstance(raw_segments, list):
+        for segment in raw_segments:
+            if isinstance(segment, dict):
+                segments.append(UserAnnotationSegment(**segment))
     return UserAnnotationResponse(
         id=row["id"],
         analysis_record_id=row["analysis_record_id"],
@@ -27,9 +48,10 @@ def _row_to_response(row: dict) -> UserAnnotationResponse:
         start_offset=row["start_offset"],
         end_offset=row["end_offset"],
         text_hash=row["text_hash"],
+        segments=segments,
         color=row["color"],
         note=row["note"],
-        payload_json=row["payload_json"] if isinstance(row["payload_json"], dict) else json.loads(row["payload_json"] or "{}"),
+        payload_json=payload_json,
         created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
     )
@@ -41,12 +63,47 @@ def _build_target_key(req: UserAnnotationCreateRequest) -> str:
     record_part = req.analysis_record_id or "local"
     if req.anchor_type == "sentence":
         return f"record:{record_part}:sentence:{req.sentence_id}"
-    elif req.anchor_type == "paragraph":
+    if req.anchor_type == "paragraph":
         return f"record:{record_part}:paragraph:{req.paragraph_id or req.sentence_id}"
-    else:
-        offset_part = f"{req.start_offset}:{req.end_offset}" if req.start_offset is not None else "0:0"
-        hash_part = req.text_hash or ""
-        return f"record:{record_part}:range:{req.sentence_id}:{offset_part}:{hash_part}"
+    if req.anchor_type == "multi_text":
+        return build_multi_text_target_key(
+            record_part,
+            [segment.model_dump(mode="python") for segment in req.segments],
+        )
+    return f"record:{record_part}:range:{req.sentence_id}:{req.start_offset}:{req.end_offset}:{req.text_hash or ''}"
+
+
+def _first_segment(req: UserAnnotationCreateRequest) -> UserAnnotationSegment | None:
+    return req.segments[0] if req.segments else None
+
+
+async def _validate_text_anchor_against_record(
+    conn,
+    user_id: UUID,
+    record_id: UUID,
+    req: UserAnnotationCreateRequest,
+) -> None:
+    render_scene = await load_render_scene(conn, user_id, record_id)
+    if req.anchor_type == "multi_text":
+        validate_multi_text_against_render_scene(
+            render_scene,
+            [segment.model_dump(mode="python") for segment in req.segments],
+        )
+        return
+
+    if not req.sentence_id:
+        raise HTTPException(status_code=400, detail="sentence_id is not present in render scene")
+    validate_text_range_against_render_scene(
+        render_scene,
+        {
+            "paragraph_id": req.paragraph_id,
+            "sentence_id": req.sentence_id,
+            "selected_text": req.selected_text,
+            "start_offset": req.start_offset,
+            "end_offset": req.end_offset,
+            "text_hash": req.text_hash,
+        },
+    )
 
 
 async def create_user_annotation(user_id: UUID, req: UserAnnotationCreateRequest) -> UserAnnotationResponse:
@@ -60,6 +117,15 @@ async def create_user_annotation(user_id: UUID, req: UserAnnotationCreateRequest
             record_id = UUID(req.analysis_record_id) if req.analysis_record_id else None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="analysis_record_id must be a UUID") from exc
+        if req.anchor_type in {"text_range", "multi_text"}:
+            if record_id is None:
+                raise HTTPException(status_code=400, detail="analysis_record_id is required for text anchors")
+            await _validate_text_anchor_against_record(conn, user_id, record_id, req)
+
+        first_segment = _first_segment(req)
+        payload_json = dict(req.payload_json)
+        if req.anchor_type == "multi_text":
+            payload_json["segments"] = [segment.model_dump(mode="python") for segment in req.segments]
         row = await conn.fetchrow(
             f"""
             INSERT INTO user_annotations (
@@ -90,15 +156,15 @@ async def create_user_annotation(user_id: UUID, req: UserAnnotationCreateRequest
             annotation_type,
             req.anchor_type,
             target_key,
-            req.paragraph_id,
-            req.sentence_id,
+            first_segment.paragraph_id if first_segment else req.paragraph_id,
+            first_segment.sentence_id if first_segment else req.sentence_id,
             req.selected_text,
-            req.start_offset,
-            req.end_offset,
-            req.text_hash,
+            None if req.anchor_type == "multi_text" else req.start_offset,
+            None if req.anchor_type == "multi_text" else req.end_offset,
+            None if req.anchor_type == "multi_text" else req.text_hash,
             req.color,
             req.note,
-            json.dumps(req.payload_json),
+            payload_json,
         )
         if not row:
             raise HTTPException(status_code=500, detail="Failed to create user annotation")
@@ -154,12 +220,7 @@ async def update_user_annotation(user_id: UUID, annotation_id: UUID, req: UserAn
             f"""
             UPDATE user_annotations
             SET color = COALESCE($1, color),
-                note = CASE WHEN $2 THEN $3 ELSE note END,
-                annotation_type = CASE
-                    WHEN $2 AND COALESCE($3, '') = '' THEN 'highlight'
-                    WHEN $2 THEN 'note'
-                    ELSE annotation_type
-                END
+                note = CASE WHEN $2 THEN $3 ELSE note END
             WHERE id = $4 AND user_id = $5 AND deleted_at IS NULL
             RETURNING {_ANNOTATION_FIELDS}
             """,

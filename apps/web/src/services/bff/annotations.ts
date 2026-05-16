@@ -1,6 +1,12 @@
 import "server-only";
 
 import {
+  TEXT_RANGE_HASH_ALGORITHM,
+  TEXT_RANGE_OFFSET_UNIT,
+  USER_ANNOTATION_ANCHOR_TYPES,
+  USER_ANNOTATION_COLORS,
+} from "@claread/contracts";
+import {
   createUserAnnotation,
   deleteUserAnnotation,
   listUserAnnotations,
@@ -8,9 +14,11 @@ import {
 } from "@/services/api/annotations";
 import { getWebSession, projectSession, type WebSession } from "@/services/bff/session";
 import type {
+  UserAnchorSegmentDto,
   UserAnnotationCreateRequestDto,
   UserAnnotationUpdateRequestDto,
   UserAnnotationResponseDto,
+  WebAnchorSegmentVm,
   WebAnnotationCreateRequest,
   WebAnnotationUpdateRequest,
   WebAnnotationVm,
@@ -32,7 +40,8 @@ export interface AnnotationsBffResult {
   message?: string;
 }
 
-const annotationColorValues = new Set(["soft_green", "soft_blue", "soft_purple", "warm_yellow", "sage_green"]);
+const annotationAnchorTypeValues = new Set<string>(USER_ANNOTATION_ANCHOR_TYPES);
+const annotationColorValues = new Set<string>(USER_ANNOTATION_COLORS);
 
 function isUserAnnotationColor(value: unknown): value is NonNullable<WebAnnotationUpdateRequest["color"]> {
   return typeof value === "string" && annotationColorValues.has(value);
@@ -105,6 +114,17 @@ function authError(session: WebSession): {
   };
 }
 
+function projectSegment(segment: UserAnchorSegmentDto): WebAnchorSegmentVm {
+  return {
+    paragraphId: segment.paragraph_id ?? null,
+    sentenceId: segment.sentence_id,
+    selectedText: segment.selected_text,
+    startOffset: segment.start_offset,
+    endOffset: segment.end_offset,
+    textHash: segment.text_hash,
+  };
+}
+
 function projectAnnotation(item: UserAnnotationResponseDto): WebAnnotationVm {
   return {
     id: item.id,
@@ -118,6 +138,7 @@ function projectAnnotation(item: UserAnnotationResponseDto): WebAnnotationVm {
     startOffset: item.start_offset,
     endOffset: item.end_offset,
     textHash: item.text_hash,
+    segments: Array.isArray(item.segments) ? item.segments.map(projectSegment) : [],
     color: item.color,
     note: item.note,
     createdAt: item.created_at,
@@ -208,18 +229,30 @@ export async function createReaderSentenceAnnotation(
   const startOffset = readNumber(request.startOffset);
   const endOffset = readNumber(request.endOffset);
   const textHash = readString(request.textHash);
+  const segments = Array.isArray(request.segments)
+    ? request.segments
+        .filter((segment) => isRecord(segment))
+        .map((segment) => ({
+          paragraph_id: readString(segment.paragraphId) ?? null,
+          sentence_id: readString(segment.sentenceId) ?? "",
+          selected_text: readString(segment.selectedText) ?? "",
+          start_offset: readNumber(segment.startOffset) ?? -1,
+          end_offset: readNumber(segment.endOffset) ?? -1,
+          text_hash: readString(segment.textHash) ?? "",
+        }))
+    : [];
 
-  if (!recordId || !sentenceId || !selectedText) {
+  if (!recordId || !selectedText) {
     return {
       ok: false,
       status: "invalid_request",
-      message: "recordId、sentenceId 和 selectedText 是必填项。",
+      message: "recordId 和 selectedText 是必填项。",
       session: projectSession(session),
       httpStatus: 400,
     };
   }
 
-  if (anchorType !== "sentence" && anchorType !== "paragraph" && anchorType !== "text_range") {
+  if (!annotationAnchorTypeValues.has(anchorType)) {
     return {
       ok: false,
       status: "invalid_request",
@@ -230,6 +263,15 @@ export async function createReaderSentenceAnnotation(
   }
 
   if (anchorType === "text_range") {
+    if (!sentenceId) {
+      return {
+        ok: false,
+        status: "invalid_request",
+        message: "text_range 需要 sentenceId。",
+        session: projectSession(session),
+        httpStatus: 400,
+      };
+    }
     if (startOffset === undefined || endOffset === undefined || startOffset < 0 || startOffset >= endOffset || !textHash) {
       return {
         ok: false,
@@ -250,6 +292,28 @@ export async function createReaderSentenceAnnotation(
     }
   }
 
+  if (anchorType === "multi_text") {
+    if (
+      segments.length < 2 ||
+      segments.some(
+        (segment) =>
+          !segment.sentence_id ||
+          !segment.selected_text ||
+          segment.start_offset < 0 ||
+          segment.end_offset <= segment.start_offset ||
+          !segment.text_hash,
+      )
+    ) {
+      return {
+        ok: false,
+        status: "invalid_request",
+        message: "multi_text 需要至少两个有效 segments。",
+        session: projectSession(session),
+        httpStatus: 400,
+      };
+    }
+  }
+
   const upstreamBody: UserAnnotationCreateRequestDto = {
     analysis_record_id: recordId,
     annotation_type: note ? "note" : "highlight",
@@ -260,12 +324,20 @@ export async function createReaderSentenceAnnotation(
     start_offset: anchorType === "text_range" ? startOffset : null,
     end_offset: anchorType === "text_range" ? endOffset : null,
     text_hash: anchorType === "text_range" ? textHash : null,
+    segments: anchorType === "multi_text" ? segments : [],
     color: request.color ?? "soft_green",
     note: note || null,
     payload_json: {
       ...(isRecord(request.payloadJson) ? request.payloadJson : {}),
-      source: anchorType === "text_range" ? "web_reader_text_range_action" : "web_reader_sentence_action",
-      range_status: anchorType === "text_range" ? "text_range_anchor" : "sentence_anchor",
+      source: anchorType === "sentence" ? "web_reader_sentence_action" : "web_reader_text_action",
+      offset_unit: anchorType === "sentence" ? undefined : TEXT_RANGE_OFFSET_UNIT,
+      text_hash_algorithm: anchorType === "sentence" ? undefined : TEXT_RANGE_HASH_ALGORITHM,
+      range_status:
+        anchorType === "sentence"
+          ? "sentence_anchor"
+          : anchorType === "multi_text"
+            ? "multi_text_anchor"
+            : "text_range_anchor",
     },
   };
 

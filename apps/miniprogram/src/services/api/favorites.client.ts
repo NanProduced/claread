@@ -6,7 +6,10 @@
  */
 
 import { request } from './client'
+import type { FavoriteTargetType } from '@claread/contracts'
 import type { FavoriteRecord } from '../../types/view/favorites.vm'
+
+type MiniprogramFavoriteTargetType = FavoriteTargetType | 'daily_reader_article'
 
 // ---------------------------------------------------------------------------
 // 后端 DTO（snake_case）
@@ -15,7 +18,7 @@ import type { FavoriteRecord } from '../../types/view/favorites.vm'
 interface FavoriteResponseDto {
   id: string
   user_id: string
-  target_type: string
+  target_type: FavoriteTargetType
   target_key: string
   analysis_record_id: string | null
   payload_json: Record<string, unknown>
@@ -31,7 +34,7 @@ interface FavoriteListDto {
 
 export interface FavoriteItemDto {
   id: string
-  target_type: string
+  target_type: FavoriteTargetType
   target_key: string
   analysis_record_id: string | null
   payload_json: Record<string, unknown>
@@ -83,7 +86,7 @@ export async function fetchCloudFavoriteItems(): Promise<{ items: FavoriteItemDt
 export async function addFavoriteToCloud(
   cloudId: string | null,
   clientRecordId: string,
-  targetType: string = 'analysis_record',
+  targetType: MiniprogramFavoriteTargetType = 'analysis_record',
   payloadJson: Record<string, any> = {},
   note: string | null = null
 ): Promise<{ id: string }> {
@@ -106,7 +109,7 @@ export async function addFavoriteToCloud(
  */
 export async function removeFavoriteFromCloud(
   cloudIdOrTargetKey: string,
-  targetType: string = 'analysis_record'
+  targetType: MiniprogramFavoriteTargetType = 'analysis_record'
 ): Promise<void> {
   const encodedTargetType = encodeURIComponent(targetType)
   const encodedTargetKey = encodeURIComponent(cloudIdOrTargetKey)

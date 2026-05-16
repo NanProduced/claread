@@ -50,15 +50,22 @@ interface ParagraphBlockProps {
   vocabList?: string[]
   vocabSavedMap?: Record<string, string>
   userAnnotations?: UserAnnotationDto[]
-  favoriteTargetKeys?: Set<string>
+  favoritedSentenceIds?: ReadonlySet<string>
   recordId?: string
   cloudId?: string
   selectionSentenceId?: string | null
   selectionRange?: { start: number; end: number } | null
+  routeFocusSentenceIds?: ReadonlySet<string>
+  routeFocusRangesBySentence?: Record<string, RouteFocusRange[]>
   onWordClick?: (payload: WordClickPayload) => void
   onSentenceClick?: (sentenceId: string) => void
   onSelectionContext?: (context: SelectionContext | null) => void
   onMarkActiveChange?: (markId: string | null) => void
+}
+
+interface RouteFocusRange {
+  start: number
+  end: number
 }
 
 function findTextAnchorPosition(text: string, anchorText: string, occurrence = 1): number {
@@ -85,6 +92,7 @@ function renderPlainSegmentAsClickableWords(
   selectionRange?: { start: number; end: number } | null,
   baseOffset?: number,
   userRanges?: UserHighlightRange[],
+  routeFocusRanges?: RouteFocusRange[],
 ): React.ReactNode[] {
   if (!plainText) return []
   const tokens = tokenizeText(plainText)
@@ -96,6 +104,9 @@ function renderPlainSegmentAsClickableWords(
       : false
     const userRange = userRanges?.find(r => absStart < r.end && absEnd > r.start)
     const userHighlightClass = userRange ? `user-highlight-overlay user-highlight-overlay--${userRange.color}` : ''
+    const routeFocusClass = routeFocusRanges?.some(r => absStart < r.end && absEnd > r.start)
+      ? 'route-focus-overlay'
+      : ''
 
     if (token.type === 'word') {
       const isSaved = vocabSet?.has(token.text.toLowerCase())
@@ -107,13 +118,13 @@ function renderPlainSegmentAsClickableWords(
           isSaved={isSaved}
           savedStatus={savedStatus}
           isInSelection={isInSelection}
-          className={`${selectedWord === token.text ? 'active' : ''} ${userHighlightClass}`}
+          className={`${selectedWord === token.text ? 'active' : ''} ${userHighlightClass} ${routeFocusClass}`.trim()}
           onClick={(w, e) => onWordClick?.({ word: w, mark: null, event: e })}
           onLongPress={onTokenLongPress ? (w, e) => onTokenLongPress(w, absStart, absEnd, e) : undefined}
         />
       )
     }
-    return <Text key={`p-${idx}`} className={`${isInSelection ? 'in-selection' : ''} ${userHighlightClass}`}>{token.text}</Text>
+    return <Text key={`p-${idx}`} className={`${isInSelection ? 'in-selection' : ''} ${userHighlightClass} ${routeFocusClass}`.trim()}>{token.text}</Text>
   })
 }
 
@@ -319,8 +330,12 @@ function normalizeUserHighlightColor(color?: string): string {
   return 'soft_green'
 }
 
-function buildSentenceFavoriteKey(recordId: string | undefined, sentenceId: string): string | null {
-  return recordId ? `record:${recordId}:sentence:${sentenceId}` : null
+function rangeMatchesAnyFocus(
+  start: number,
+  end: number,
+  routeFocusRanges?: RouteFocusRange[],
+): boolean {
+  return routeFocusRanges?.some(range => start < range.end && end > range.start) ?? false
 }
 
 function buildUserHighlightRanges(
@@ -331,6 +346,17 @@ function buildUserHighlightRanges(
   if (!annotations?.length) return []
   const ranges: UserHighlightRange[] = []
   annotations.forEach(a => {
+    if (a.anchor_type === 'multi_text' && Array.isArray(a.segments)) {
+      a.segments.forEach(segment => {
+        if (segment.sentence_id !== sentenceId) return
+        const start = Math.max(0, segment.start_offset)
+        const end = Math.min(text.length, segment.end_offset)
+        if (end > start) {
+          ranges.push({ start, end, color: normalizeUserHighlightColor(a.color), hasNote: !!a.note, annotationId: a.id })
+        }
+      })
+      return
+    }
     if (a.sentence_id !== sentenceId) return
     // text_range with valid offsets
     if (a.anchor_type === 'text_range' && typeof a.start_offset === 'number' && typeof a.end_offset === 'number') {
@@ -375,6 +401,7 @@ function renderTextWithMarks(
   selectionRange?: { start: number; end: number } | null,
   userAnnotations?: UserAnnotationDto[],
   sentenceId?: string,
+  routeFocusRanges?: RouteFocusRange[],
 ) {
   // 用于追踪单词在整句中的出现次数
   const wordOccurrenceMap: Record<string, number> = {}
@@ -513,7 +540,7 @@ function renderTextWithMarks(
             {renderPlainSegmentAsClickableWords(restText, selectedWord, vocabSet, (p) => {
               const occ = getNextOccurrence(p.word)
               onWordClick?.({ ...p, contextSentence: text, occurrence: occ })
-            }, vocabSavedMap, onTokenLongPress, selectionRange, seg.start + offsetAdjust, userRanges)}
+            }, vocabSavedMap, onTokenLongPress, selectionRange, seg.start + offsetAdjust, userRanges, routeFocusRanges)}
           </Text>
         ))
       )
@@ -523,6 +550,9 @@ function renderTextWithMarks(
     const item = seg.item
     const userRange = userRanges.find(r => item.start < r.end && item.end > r.start)
     const userHighlightClass = userRange ? `user-highlight-overlay user-highlight-overlay--${userRange.color}` : ''
+    const routeFocusClass = rangeMatchesAnyFocus(item.start, item.end, routeFocusRanges)
+      ? 'route-focus-overlay'
+      : ''
 
     if (!item.mark.clickable) {
       const isActive = !!(
@@ -548,7 +578,7 @@ function renderTextWithMarks(
             role={role}
             contextSentence={text}
             isInSelection={markInSelection}
-            userHighlightClass={userHighlightClass}
+            userHighlightClass={`${userHighlightClass} ${routeFocusClass}`.trim()}
             onWordClick={onWordClick}
             onTokenLongPress={onTokenLongPress ? (w, e) => onTokenLongPress(w, item.start + offsetAdjust, item.end + offsetAdjust, e) : undefined}
             getNextOccurrence={getNextOccurrence}
@@ -592,7 +622,7 @@ function renderTextWithMarks(
           savedStatus={savedStatus}
           isAcademicMode={isAcademicMode}
           isInSelection={markInSelection}
-          userHighlightClass={userHighlightClass}
+          userHighlightClass={`${userHighlightClass} ${routeFocusClass}`.trim()}
           onWordClick={(p) => onWordClick?.({ ...p, contextSentence: text, occurrence: markOcc })}
           onLongPress={onTokenLongPress ? (t, e) => onTokenLongPress(t, item.start + offsetAdjust, item.end + offsetAdjust, e) : undefined}
         />
@@ -617,12 +647,14 @@ const ParagraphBlock = memo(function ParagraphBlock({
   vocabList,
   vocabSavedMap,
   userAnnotations,
-  favoriteTargetKeys,
+  favoritedSentenceIds,
   recordId,
   cloudId,
   activeSentenceId,
   selectionSentenceId,
   selectionRange,
+  routeFocusSentenceIds,
+  routeFocusRangesBySentence,
   onWordClick,
   onSentenceClick,
   onSelectionContext,
@@ -631,11 +663,9 @@ const ParagraphBlock = memo(function ParagraphBlock({
   const vocabSet = useMemo(() => new Set(vocabList ?? []), [vocabList])
   const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null)
   const [groupActiveMarkIds, setGroupActiveMarkIds] = useState<Set<string>>(new Set())
-  const activeRecordId = cloudId || recordId
   const isSentenceFavorited = useCallback((sentenceId: string) => {
-    const key = buildSentenceFavoriteKey(activeRecordId, sentenceId)
-    return !!key && !!favoriteTargetKeys?.has(key)
-  }, [activeRecordId, favoriteTargetKeys])
+    return favoritedSentenceIds?.has(sentenceId) ?? false
+  }, [favoritedSentenceIds])
   const [feedbackTarget, setFeedbackTarget] = useState<{
     targetId: string
     annotationType: string
@@ -708,6 +738,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
   const annotationBySentenceId = useMemo(() => {
     const map = new Map<string, UserAnnotationDto>()
     userAnnotations?.forEach(a => {
+      if (a.anchor_type !== 'sentence') return
       if (!map.has(a.sentence_id)) map.set(a.sentence_id, a)
     })
     return map
@@ -748,12 +779,14 @@ const ParagraphBlock = memo(function ParagraphBlock({
 
               const isSentenceSelected = selectionSentenceId === sentence.sentenceId
               const currentSelectionRange = isSentenceSelected ? selectionRange : null
+              const currentRouteFocusRanges = routeFocusRangesBySentence?.[sentence.sentenceId] || []
+              const isSentenceRouteFocused = routeFocusSentenceIds?.has(sentence.sentenceId) ?? false
 
               return (
                 <Text
                   id={getSentenceAnchorId(sentence.sentenceId)}
                   key={sentence.sentenceId}
-                  className={`sentence-span sentence-${sentence.sentenceId} ${activeSentenceId === sentence.sentenceId ? 'is-highlighted-source' : ''} ${isWholeSentenceHighlight && userAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(userAnno.color)}` : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''}`}
+                  className={`sentence-span sentence-${sentence.sentenceId} ${activeSentenceId === sentence.sentenceId ? 'is-highlighted-source' : ''} ${isWholeSentenceHighlight && userAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(userAnno.color)}` : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
                   onClick={() => {
                     if (selectionSentenceId) {
                       onSelectionContext?.(null)
@@ -763,7 +796,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
                   }}
                   onLongPress={(e: CommonEvent) => handleSentenceLongPress(sentence, e)}
                 >
-                  {renderTextWithMarks(sentenceText, sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, true, activeSentenceId === sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(sentence, ev), currentSelectionRange, userAnnotations, sentence.sentenceId)}
+                  {renderTextWithMarks(sentenceText, sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, true, activeSentenceId === sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(sentence, ev), currentSelectionRange, userAnnotations, sentence.sentenceId, currentRouteFocusRanges)}
                   {isFavorited && <Text className='sentence-bookmark-mark'>⌑</Text>}
                   {idx < sentences.length - 1 ? <Text className='space-char'> </Text> : ''}
                 </Text>
@@ -903,6 +936,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
           const item = chunk.items[0]
           const isSentenceSelected = selectionSentenceId === item.sentence.sentenceId
           const currentSelectionRange = isSentenceSelected ? selectionRange : null
+          const currentRouteFocusRanges = routeFocusRangesBySentence?.[item.sentence.sentenceId] || []
+          const isSentenceRouteFocused = routeFocusSentenceIds?.has(item.sentence.sentenceId) ?? false
           const sentenceAnno = annotationBySentenceId.get(item.sentence.sentenceId)
           // whole-sentence fallback: no valid offset
           const isWholeSentenceHighlight = sentenceAnno
@@ -913,7 +948,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
           return (
             <View key={`chunk-${chunk.id}-${cIdx}`} id={getSentenceAnchorId(item.sentence.sentenceId)} className='sentence-block'>
               <View
-                className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''}`}
+                className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
                 onClick={() => {
                   if (selectionSentenceId) {
                     onSelectionContext?.(null)
@@ -928,7 +963,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
                   )
                 ) : (
                   <Text className='english-flow'>
-                    {renderTextWithMarks(item.sentence.text, item.sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, false, activeSentenceId === item.sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(item.sentence, ev), currentSelectionRange, userAnnotations, item.sentence.sentenceId)}
+                    {renderTextWithMarks(item.sentence.text, item.sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, false, activeSentenceId === item.sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(item.sentence, ev), currentSelectionRange, userAnnotations, item.sentence.sentenceId, currentRouteFocusRanges)}
                   </Text>
                 )}
                 {isFavorited && (
@@ -1022,6 +1057,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
               {chunk.items.map(item => {
                 const isSentenceSelected = selectionSentenceId === item.sentence.sentenceId
                 const currentSelectionRange = isSentenceSelected ? selectionRange : null
+                const currentRouteFocusRanges = routeFocusRangesBySentence?.[item.sentence.sentenceId] || []
+                const isSentenceRouteFocused = routeFocusSentenceIds?.has(item.sentence.sentenceId) ?? false
                 const sentenceAnno = annotationBySentenceId.get(item.sentence.sentenceId)
                 const isWholeSentenceHighlight = sentenceAnno
                   ? sentenceAnno.anchor_type !== 'text_range' || typeof sentenceAnno.start_offset !== 'number' || typeof sentenceAnno.end_offset !== 'number'
@@ -1032,7 +1069,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
                 return (
                   <View key={`plain-${item.sentence.sentenceId}`} id={getSentenceAnchorId(item.sentence.sentenceId)} className='sentence-block sentence-block--plain'>
                     <View
-                      className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''}`}
+                      className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
                       onClick={() => {
                         if (selectionSentenceId) {
                           onSelectionContext?.(null)
@@ -1043,7 +1080,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
                       onLongPress={(e: CommonEvent) => handleSentenceLongPress(item.sentence, e)}
                     >
                       <Text className='english-flow'>
-                        {renderTextWithMarks(item.sentence.text, item.sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, false, activeSentenceId === item.sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(item.sentence, ev), currentSelectionRange, userAnnotations, item.sentence.sentenceId)}
+                        {renderTextWithMarks(item.sentence.text, item.sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, false, activeSentenceId === item.sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(item.sentence, ev), currentSelectionRange, userAnnotations, item.sentence.sentenceId, currentRouteFocusRanges)}
                       </Text>
                       {isFavorited && (
                         <View className='sentence-bookmark-corner'>

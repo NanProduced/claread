@@ -1,9 +1,19 @@
 import { request } from './client'
+import type { UserAnnotationAnchorType, UserAnnotationColor, UserAnnotationType } from '@claread/contracts'
+
+export interface UserAnchorSegmentDto {
+  paragraph_id?: string
+  sentence_id: string
+  selected_text: string
+  start_offset: number
+  end_offset: number
+  text_hash: string
+}
 
 export interface UserAnnotationCreateDto {
   analysis_record_id?: string
-  annotation_type?: 'highlight' | 'note'
-  anchor_type?: 'sentence' | 'paragraph' | 'text_range'
+  annotation_type?: UserAnnotationType
+  anchor_type?: UserAnnotationAnchorType
   target_key?: string
   paragraph_id?: string
   sentence_id: string
@@ -11,7 +21,8 @@ export interface UserAnnotationCreateDto {
   start_offset?: number
   end_offset?: number
   text_hash?: string
-  color?: string
+  segments?: UserAnchorSegmentDto[]
+  color?: UserAnnotationColor
   note?: string
   payload_json?: Record<string, unknown>
 }
@@ -24,8 +35,8 @@ export interface UserAnnotationUpdateDto {
 export interface UserAnnotationDto {
   id: string
   analysis_record_id?: string
-  annotation_type: string
-  anchor_type: string
+  annotation_type: UserAnnotationType
+  anchor_type: UserAnnotationAnchorType
   target_key: string
   paragraph_id?: string
   sentence_id: string
@@ -33,7 +44,8 @@ export interface UserAnnotationDto {
   start_offset?: number
   end_offset?: number
   text_hash?: string
-  color: string
+  segments?: UserAnchorSegmentDto[]
+  color: UserAnnotationColor
   note?: string
   payload_json: Record<string, unknown>
   created_at: string

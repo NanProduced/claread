@@ -1,11 +1,21 @@
-export type UserAnnotationTypeDto = "highlight" | "note";
-export type UserAnnotationAnchorTypeDto = "sentence" | "paragraph" | "text_range";
-export type UserAnnotationColorDto =
-  | "soft_green"
-  | "soft_blue"
-  | "soft_purple"
-  | "warm_yellow"
-  | "sage_green";
+import type {
+  UserAnnotationAnchorType,
+  UserAnnotationColor,
+  UserAnnotationType,
+} from "@claread/contracts";
+
+export type UserAnnotationTypeDto = UserAnnotationType;
+export type UserAnnotationAnchorTypeDto = UserAnnotationAnchorType;
+export type UserAnnotationColorDto = UserAnnotationColor;
+
+export interface UserAnchorSegmentDto {
+  paragraph_id?: string | null;
+  sentence_id: string;
+  selected_text: string;
+  start_offset: number;
+  end_offset: number;
+  text_hash: string;
+}
 
 export interface UserAnnotationCreateRequestDto {
   analysis_record_id?: string | null;
@@ -18,6 +28,7 @@ export interface UserAnnotationCreateRequestDto {
   start_offset?: number | null;
   end_offset?: number | null;
   text_hash?: string | null;
+  segments?: UserAnchorSegmentDto[];
   color?: UserAnnotationColorDto;
   note?: string | null;
   payload_json?: Record<string, unknown>;
@@ -40,6 +51,7 @@ export interface UserAnnotationResponseDto {
   start_offset: number | null;
   end_offset: number | null;
   text_hash: string | null;
+  segments: UserAnchorSegmentDto[];
   color: UserAnnotationColorDto;
   note: string | null;
   payload_json: Record<string, unknown>;
@@ -54,12 +66,13 @@ export interface UserAnnotationListResponseDto {
 export interface WebAnnotationCreateRequest {
   recordId: string;
   paragraphId?: string;
-  sentenceId: string;
+  sentenceId?: string;
   selectedText: string;
   anchorType?: UserAnnotationAnchorTypeDto;
   startOffset?: number | null;
   endOffset?: number | null;
   textHash?: string | null;
+  segments?: WebAnchorSegmentVm[];
   color?: UserAnnotationColorDto;
   note?: string;
   payloadJson?: Record<string, unknown>;
@@ -82,8 +95,18 @@ export interface WebAnnotationVm {
   startOffset: number | null;
   endOffset: number | null;
   textHash: string | null;
+  segments: WebAnchorSegmentVm[];
   color: UserAnnotationColorDto;
   note: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WebAnchorSegmentVm {
+  paragraphId?: string | null;
+  sentenceId: string;
+  selectedText: string;
+  startOffset: number;
+  endOffset: number;
+  textHash: string;
 }

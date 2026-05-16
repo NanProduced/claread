@@ -9,7 +9,7 @@
 
 - 原文画布、句子、段落、译文。
 - 机器标注：`vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`term_note`、`logic_note`。
-- 用户批注：句子级 highlight / note，以及单句内 `text_range` highlight / note / favorite。
+- 用户批注：句子级 highlight / note、单句内 `text_range`，以及跨句/跨段 `multi_text` highlight / note / favorite。
 - 画布左侧词典详情层、浮动上下文/阅读设置面板、右侧 AI 工作区 shell。
 - `grammar_note` / `sentence_analysis` 句后卡。
 
@@ -28,7 +28,7 @@
 5. **右侧不是批注仓库。** 右侧只保留 AI chatbox 和后续 AI 能力落地区，围绕当前句子、选区或全文上下文。
 6. **用户批注和机器标注分层。** 机器标注解释文本，用户批注表达个人资产；两者可以叠加，但视觉语言必须不同。
 7. **颜色必须语义化。** 不为了装饰新增随机颜色。
-8. **首版支持受控精确选区。** Web 可操作单句内 `text_range`，小程序可展示 Web 创建的局部资产但不必复刻精确选择。
+8. **选区能力按 anchor 明确分层。** Web 可操作句子、单句内 `text_range` 和跨句/跨段 `multi_text`；小程序当前以展示和回跳 Web 资产为主，不必复刻同等创建交互。
 
 ### Reader Page Alignment
 
@@ -40,7 +40,7 @@
 - **轻浮层只做轻释义。** 原文附近 `ReaderLookupPreview` 只展示 surface form、类型、一个简短中文释义和必要提示，并支持再次点击同词、关闭按钮、点击正文或 `Esc` 收起；完整释义、例句、短语、消歧义、加入生词本只放 `DictionaryPanel`。
 - **Slot 先于组件。** 新增常驻或可钉住视窗前必须先声明 slot：画布左侧工具层、画布右侧工具层、正文内卡片、核心区短时浮层或移动端 bottom sheet，并检查与词典、AI、上下文面板和底部导航的冲突。
 - **用户界面不用 raw schema 文案。** 组件内部可以消费 `entryType`、`annotation_type` 等字段，但用户可见标签应是“语法旁注”“句子拆解”“词汇”“短语”“语境”等自然文案；`entryType: grammar_note` 这类调试字段只允许出现在开发诊断模式。
-- **不可用能力不能占据主视觉。** AI 对话、导出、跨句选区、Grammar X-Ray 等未接入能力可以保留入口或占位，但默认视觉权重必须低，且不能挤压当前可用的阅读、词典、标注和句子卡。
+- **不可用能力不能占据主视觉。** AI 对话、导出、Grammar X-Ray 等未接入能力可以保留入口或占位，但默认视觉权重必须低，且不能挤压当前可用的阅读、词典、标注和句子卡。
 - **可访问性是组件规范的一部分。** 句子可键盘聚焦；可点击查词 token 后续应提供键盘路径；色点、图标按钮和面板切换目标应达到 40-44px 的可触控尺寸或有等价键盘/菜单入口。
 
 ### Confirmed Infrastructure
@@ -49,7 +49,7 @@
 
 1. **Claread Paper theme.** 现有暖纸、墨色、`lens-blue` 和语义标注色是 Claread 的主视觉基础。Vintage Paper 等 shadcn theme 只作为 moodboard，不直接套用。后续正式初始化 shadcn/ui 时，应把现有 token 映射到 shadcn semantic tokens，而不是用第三方主题覆盖 Claread 视觉。
 2. **Reader Floating Layer.** 所有锚定原文 token、句子或 DOM selection 的短时浮层统一走 Floating UI。Radix / shadcn Popover 继续用于按钮触发的常规菜单；原文画布上的轻释义、选区工具栏、语法 hover、二级操作菜单归入 Reader floating layer。
-3. **Annotation Anchor Model.** 当前已支持句子级批注和单句内 `text_range`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id`、句内 offset 和 anchor text 等锚点属性；后续重点是跨句选区、严格校验和跨文章资产索引。
+3. **Annotation Anchor Model.** 当前已支持句子级批注、单句内 `text_range` 和跨句/跨段 `multi_text`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id` 和原文 selection 锚点；后端已按 UTF-16 offset、hash、render scene 切片和 sentence 顺序做严格校验。后续重点是资产跳转强调和跨文章资产索引。
 
 ## 3. Stack Rules
 
@@ -148,7 +148,7 @@
 | `AnnotationGutter` | 句子边缘 marker，显示本句有高亮/笔记 |
 | `AnnotationSlip` | 句后用户笔记纸条 |
 | `AnnotationColorSwatch` | 高亮颜色选择 |
-| `SelectionToolbar` | text-range 选区工具栏，使用 Floating UI virtual element 和 live DOM Range |
+| `SelectionToolbar` | sentence / `text_range` / `multi_text` 选区工具栏，使用 Floating UI virtual element 和 live DOM Range |
 | `reader-anchors` | Reader DOM 锚点属性生成器；先输出句子和句内 text range 属性 |
 
 ### Layer D: Explanation Cards
@@ -188,7 +188,7 @@
 | --- | --- | --- |
 | sentence highlight | wide translucent highlighter behind the sentence text | stronger edge marker + subtle sentence background |
 | text range highlight | inline paper marker on selected text | toolbar反显颜色，可取消或更新 |
-| note | gutter marker + sentence-side paper slip | slip lift + current sentence dot |
+| note | gutter marker + sentence-side paper slip with scope label (`整句` / `局部选区` / `跨句选区`) | slip lift + current sentence dot |
 | favorite | small bookmark marker near sentence or header | warm amber icon fill |
 
 Rules:
@@ -207,8 +207,9 @@ Rules:
 1. Click inline mark or plain word.
 2. `ReaderLookupPreview` appears near original text.
 3. `DictionaryPanel` opens in the left canvas tool layer and receives full lookup state.
-4. The lightweight preview can be dismissed without clearing the left dictionary detail.
-5. History chips update only for current session.
+4. The lightweight preview floats over the reader surface and must not change sentence line-height or paragraph spacing.
+5. The lightweight preview can be dismissed without clearing the left dictionary detail.
+6. History chips update only for current session.
 
 ### Sentence Action
 
@@ -226,14 +227,18 @@ Rules:
 
 ### Text Range Selection
 
-`SelectionToolbar` is enabled for single-sentence selections. It must use:
+`SelectionToolbar` is enabled for sentence, single-sentence `text_range`, and cross-sentence `multi_text` selections. It must use:
 
 - DOM `Selection` / `Range`
 - `data-paragraph-id`, `data-sentence-id`, `data-start`, `data-end`
 - Floating UI virtual element with `range.getBoundingClientRect()` and `range.getClientRects()`
 - backend `anchor_type="text_range"`, `start_offset`, `end_offset`, and `text_hash`
+- backend `anchor_type="multi_text"` with `payload_json.segments[]` for cross-sentence persistence
 
 It must not force ordinary words into separate interactive DOM nodes. Plain text should remain selectable as continuous text; click-to-lookup can be implemented from sentence-level hit testing.
+If a manual DOM selection exactly covers the full sentence text, the client should normalize it to a sentence anchor instead of persisting a fake full-length `text_range`.
+If a manual DOM selection crosses sentence or paragraph boundaries, the client should preserve it as `multi_text` and expose the mode explicitly in the toolbar instead of silently collapsing it into a sentence or partial `text_range`.
+When `/library/assets` or miniprogram excerpts jump into a favorite-only anchor, Reader should use a short-lived route focus layer for sentence / `text_range` / `multi_text` segments instead of reusing the live selection state.
 
 ## 8. File Ownership
 
@@ -245,11 +250,15 @@ apps/web/src/components/reader/
   AnnotationSlip.tsx
   ReaderFloatingLayer.tsx
   ReaderContextPanel.tsx
+  ReaderCanvas.tsx
+  ReaderSentenceRow.tsx
+  ReaderAnnotationOverlay.tsx
   SelectionToolbar.tsx
   SentenceEntryCard.tsx
   AiWorkspacePanel.tsx
   reader-anchors.ts
   reader-entry-utils.ts
+  reader-selection.ts
   index.ts
 ```
 
@@ -258,14 +267,13 @@ Keep in `ReaderWorkbench.tsx` during first pass:
 - top-level state
 - fetch/mutation functions
 - maps derived from record data
-- inline token rendering, lightweight lookup preview, dictionary detail panel, and integration between panels
+- inline token rendering, lightweight lookup preview, dictionary detail panel, toolbar mutations, and integration between panels
 
 Move later:
 
 - Zustand store for Reader UI state
-- Reader canvas / sentence rendering extraction
 - persisted Reader preferences
-- `DictionaryPanel`, `ReaderLookupPreview`, `InlineMarkToken`, `ReaderCanvas`, and `ReaderSentence` extraction once behavior stabilizes
+- `DictionaryPanel`, `ReaderLookupPreview`, `InlineMarkToken`, entry card rendering, and toolbar mutation wiring once behavior stabilizes
 
 ## 9. Component Preview Policy
 

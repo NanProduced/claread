@@ -15,6 +15,7 @@ from app.schemas.user_annotations import (
     UserAnnotationResponse,
     UserAnnotationListResponse,
 )
+from app.contracts.annotation import build_multi_text_target_key, compute_text_range_hash
 from app.services.user_annotations import _build_target_key, _row_to_response
 
 client = TestClient(app)
@@ -104,24 +105,67 @@ class TestSchemaValidation:
         req = UserAnnotationCreateRequest(
             selected_text="hello",
             anchor_type="text_range",
+            analysis_record_id=RECORD_ID,
             sentence_id="s1",
-            start_offset=2,
-            end_offset=7,
-            text_hash="abc123",
+            start_offset=0,
+            end_offset=5,
+            text_hash=compute_text_range_hash("hello"),
         )
         assert req.anchor_type == "text_range"
-        assert req.start_offset == 2
-        assert req.end_offset == 7
+        assert req.start_offset == 0
+        assert req.end_offset == 5
+
+    def test_create_request_accepts_valid_multi_text_anchor(self):
+        first_text = "hello"
+        second_text = "world"
+        req = UserAnnotationCreateRequest(
+            selected_text="hello world",
+            anchor_type="multi_text",
+            analysis_record_id=RECORD_ID,
+            segments=[
+                {
+                    "paragraph_id": "p1",
+                    "sentence_id": "s1",
+                    "selected_text": first_text,
+                    "start_offset": 0,
+                    "end_offset": 5,
+                    "text_hash": compute_text_range_hash(first_text),
+                },
+                {
+                    "paragraph_id": "p1",
+                    "sentence_id": "s2",
+                    "selected_text": second_text,
+                    "start_offset": 1,
+                    "end_offset": 6,
+                    "text_hash": compute_text_range_hash(second_text),
+                },
+            ],
+        )
+        assert req.anchor_type == "multi_text"
+        assert len(req.segments) == 2
 
     def test_create_request_rejects_incomplete_text_range_anchor(self):
         with pytest.raises(ValidationError):
             UserAnnotationCreateRequest(
                 selected_text="hello",
                 anchor_type="text_range",
+                analysis_record_id=RECORD_ID,
                 sentence_id="s1",
                 start_offset=7,
                 end_offset=2,
-                text_hash="abc123",
+                text_hash=compute_text_range_hash("hello"),
+            )
+
+    def test_create_request_rejects_text_range_hash_mismatch(self):
+        with pytest.raises(ValidationError):
+            UserAnnotationCreateRequest(
+                selected_text="hello",
+                anchor_type="text_range",
+                analysis_record_id=RECORD_ID,
+                sentence_id="s1",
+                start_offset=0,
+                end_offset=5,
+                text_hash="deadbeef",
             )
 
     def test_update_request_allows_none(self):
@@ -147,6 +191,38 @@ class TestSchemaValidation:
         row = _make_row(payload_json=None)
         resp = _row_to_response(row)
         assert resp.payload_json == {}
+
+    def test_response_parses_multi_text_segments(self):
+        row = _make_row(
+            anchor_type="multi_text",
+            sentence_id="s1",
+            start_offset=None,
+            end_offset=None,
+            text_hash=None,
+            payload_json={
+                "segments": [
+                    {
+                        "paragraph_id": "p1",
+                        "sentence_id": "s1",
+                        "selected_text": "hello",
+                        "start_offset": 0,
+                        "end_offset": 5,
+                        "text_hash": compute_text_range_hash("hello"),
+                    },
+                    {
+                        "paragraph_id": "p1",
+                        "sentence_id": "s2",
+                        "selected_text": "world",
+                        "start_offset": 1,
+                        "end_offset": 6,
+                        "text_hash": compute_text_range_hash("world"),
+                    },
+                ]
+            },
+        )
+        resp = _row_to_response(row)
+        assert len(resp.segments) == 2
+        assert resp.segments[1].sentence_id == "s2"
 
 
 class TestBuildTargetKey:
@@ -182,11 +258,40 @@ class TestBuildTargetKey:
             anchor_type="text_range",
             analysis_record_id=RECORD_ID,
             sentence_id="s3",
-            start_offset=5,
-            end_offset=10,
-            text_hash="abc123",
+            start_offset=0,
+            end_offset=5,
+            text_hash=compute_text_range_hash("hello"),
         )
-        assert _build_target_key(req) == f"record:{RECORD_ID}:range:s3:5:10:abc123"
+        assert _build_target_key(req) == f"record:{RECORD_ID}:range:s3:0:5:{compute_text_range_hash('hello')}"
+
+    def test_multi_text_anchor(self):
+        req = UserAnnotationCreateRequest(
+            selected_text="hello world",
+            anchor_type="multi_text",
+            analysis_record_id=RECORD_ID,
+            segments=[
+                {
+                    "paragraph_id": "p1",
+                    "sentence_id": "s1",
+                    "selected_text": "hello",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                    "text_hash": compute_text_range_hash("hello"),
+                },
+                {
+                    "paragraph_id": "p2",
+                    "sentence_id": "s2",
+                    "selected_text": "world",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                    "text_hash": compute_text_range_hash("world"),
+                },
+            ],
+        )
+        assert _build_target_key(req) == build_multi_text_target_key(
+            RECORD_ID,
+            [segment.model_dump(mode="python") for segment in req.segments],
+        )
 
     def test_no_record_id_uses_local(self):
         req = UserAnnotationCreateRequest(
@@ -221,6 +326,8 @@ class TestCreateAnnotation:
         data = resp.json()
         assert data["annotation_type"] == "highlight"
         assert data["target_key"] == f"record:{RECORD_ID}:sentence:s1"
+        args = conn.fetchrow.call_args.args
+        assert args[14] == {}
 
     @_mock_auth()
     @patch("app.services.user_annotations.db_connect.DB_POOL")
@@ -245,6 +352,200 @@ class TestCreateAnnotation:
         assert resp.status_code == 200
         data = resp.json()
         assert data["annotation_type"] == "note"
+
+    @_mock_auth()
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
+    def test_create_text_range_validates_render_scene(self, mock_pool, mock_auth):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        selected_text = "range text"
+        text_hash = compute_text_range_hash(selected_text)
+        row = _make_row(
+            annotation_type="highlight",
+            anchor_type="text_range",
+            selected_text=selected_text,
+            start_offset=2,
+            end_offset=12,
+            text_hash=text_hash,
+            target_key=f"record:{RECORD_ID}:range:s1:2:12:{text_hash}",
+        )
+        conn.fetchrow.side_effect = [
+            {
+                "render_scene_json": {
+                    "article": {
+                        "sentences": [
+                            {
+                                "sentence_id": "s1",
+                                "paragraph_id": "p1",
+                                "text": "a range text here",
+                            }
+                        ]
+                    }
+                }
+            },
+            row,
+        ]
+
+        resp = client.post(
+            "/user-annotations",
+            json={
+                "analysis_record_id": RECORD_ID,
+                "anchor_type": "text_range",
+                "sentence_id": "s1",
+                "selected_text": selected_text,
+                "start_offset": 2,
+                "end_offset": 12,
+                "text_hash": text_hash,
+                "color": "warm_yellow",
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["anchor_type"] == "text_range"
+
+    @_mock_auth()
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
+    def test_create_text_range_rejects_render_scene_mismatch(self, mock_pool, mock_auth):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        selected_text = "range text"
+        conn.fetchrow.return_value = {
+            "render_scene_json": {
+                "article": {
+                    "sentences": [
+                        {
+                            "sentence_id": "s1",
+                            "paragraph_id": "p1",
+                            "text": "a different text here",
+                        }
+                    ]
+                }
+            }
+        }
+
+        resp = client.post(
+            "/user-annotations",
+            json={
+                "analysis_record_id": RECORD_ID,
+                "anchor_type": "text_range",
+                "sentence_id": "s1",
+                "selected_text": selected_text,
+                "start_offset": 2,
+                "end_offset": 12,
+                "text_hash": compute_text_range_hash(selected_text),
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 400
+
+    @_mock_auth()
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
+    def test_create_multi_text_validates_render_scene(self, mock_pool, mock_auth):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        first_text = "range"
+        second_text = "text"
+        row = _make_row(
+            anchor_type="multi_text",
+            sentence_id="s1",
+            selected_text="range text",
+            start_offset=None,
+            end_offset=None,
+            text_hash=None,
+            target_key=build_multi_text_target_key(
+                RECORD_ID,
+                [
+                    {
+                        "paragraph_id": "p1",
+                        "sentence_id": "s1",
+                        "start_offset": 2,
+                        "end_offset": 7,
+                        "text_hash": compute_text_range_hash(first_text),
+                    },
+                    {
+                        "paragraph_id": "p2",
+                        "sentence_id": "s2",
+                        "start_offset": 0,
+                        "end_offset": 4,
+                        "text_hash": compute_text_range_hash(second_text),
+                    },
+                ],
+            ),
+            payload_json={
+                "segments": [
+                    {
+                        "paragraph_id": "p1",
+                        "sentence_id": "s1",
+                        "selected_text": first_text,
+                        "start_offset": 2,
+                        "end_offset": 7,
+                        "text_hash": compute_text_range_hash(first_text),
+                    },
+                    {
+                        "paragraph_id": "p2",
+                        "sentence_id": "s2",
+                        "selected_text": second_text,
+                        "start_offset": 0,
+                        "end_offset": 4,
+                        "text_hash": compute_text_range_hash(second_text),
+                    },
+                ]
+            },
+        )
+        conn.fetchrow.side_effect = [
+            {
+                "render_scene_json": {
+                    "article": {
+                        "sentences": [
+                            {
+                                "sentence_id": "s1",
+                                "paragraph_id": "p1",
+                                "text": "a range here",
+                            },
+                            {
+                                "sentence_id": "s2",
+                                "paragraph_id": "p2",
+                                "text": "text only",
+                            },
+                        ]
+                    }
+                }
+            },
+            row,
+        ]
+
+        resp = client.post(
+            "/user-annotations",
+            json={
+                "analysis_record_id": RECORD_ID,
+                "anchor_type": "multi_text",
+                "sentence_id": "s1",
+                "selected_text": "range text",
+                "segments": [
+                    {
+                        "paragraph_id": "p1",
+                        "sentence_id": "s1",
+                        "selected_text": first_text,
+                        "start_offset": 2,
+                        "end_offset": 7,
+                        "text_hash": compute_text_range_hash(first_text),
+                    },
+                    {
+                        "paragraph_id": "p2",
+                        "sentence_id": "s2",
+                        "selected_text": second_text,
+                        "start_offset": 0,
+                        "end_offset": 4,
+                        "text_hash": compute_text_range_hash(second_text),
+                    },
+                ],
+                "color": "soft_blue",
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["anchor_type"] == "multi_text"
+        assert len(resp.json()["segments"]) == 2
 
     def test_create_requires_auth(self):
         resp = client.post(
@@ -319,6 +620,42 @@ class TestUpdateAnnotation:
         )
         assert resp.status_code == 200
         assert resp.json()["color"] == "soft_blue"
+
+    @_mock_auth()
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
+    def test_update_note_keeps_existing_annotation_type(self, mock_pool, mock_auth):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        ann_id = uuid4()
+        row = _make_row(id=ann_id, annotation_type="highlight", note="saved note")
+        conn.fetchrow.return_value = row
+
+        resp = client.patch(
+            f"/user-annotations/{ann_id}",
+            json={"note": "saved note"},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["annotation_type"] == "highlight"
+        sql = conn.fetchrow.call_args.args[0]
+        assert "annotation_type = CASE" not in sql
+
+    @_mock_auth()
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
+    def test_clear_note_keeps_highlight_type(self, mock_pool, mock_auth):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        ann_id = uuid4()
+        row = _make_row(id=ann_id, annotation_type="highlight", note=None)
+        conn.fetchrow.return_value = row
+
+        resp = client.patch(
+            f"/user-annotations/{ann_id}",
+            json={"note": None},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["annotation_type"] == "highlight"
 
     @_mock_auth()
     @patch("app.services.user_annotations.db_connect.DB_POOL")

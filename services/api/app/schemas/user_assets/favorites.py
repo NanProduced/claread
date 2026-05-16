@@ -11,6 +11,9 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic import model_validator
+
+from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
 
 FavoriteTargetType = Literal[
     "analysis_record",
@@ -19,6 +22,7 @@ FavoriteTargetType = Literal[
     "phrase",
     "vocab",
     "text_range",
+    "multi_text",
 ]
 
 
@@ -35,6 +39,63 @@ class FavoriteCreateRequest(BaseModel):
     target_key: str = Field(min_length=1, max_length=256)
     payload_json: dict = Field(default_factory=dict)
     note: str | None = Field(default=None, max_length=1024)
+
+    @model_validator(mode="after")
+    def validate_text_range_payload(self):
+        if self.target_type not in {"text_range", "multi_text"}:
+            return self
+        if self.analysis_record_id is None:
+            raise ValueError("analysis_record_id is required for text anchors")
+
+        if self.target_type == "multi_text":
+            segments = self.payload_json.get("segments")
+            if not isinstance(segments, list) or len(segments) < 2:
+                raise ValueError("payload_json.segments is required for multi_text favorites")
+            for segment in segments:
+                if not isinstance(segment, dict):
+                    raise ValueError("payload_json.segments must contain objects")
+                sentence_id = segment.get("sentence_id")
+                selected_text = segment.get("selected_text")
+                start_offset = segment.get("start_offset")
+                end_offset = segment.get("end_offset")
+                text_hash = segment.get("text_hash")
+                if not isinstance(sentence_id, str) or not sentence_id.strip():
+                    raise ValueError("multi_text segment sentence_id is required")
+                if not isinstance(selected_text, str) or not selected_text.strip():
+                    raise ValueError("multi_text segment selected_text is required")
+                if not isinstance(start_offset, int) or not isinstance(end_offset, int):
+                    raise ValueError("multi_text segment offsets are required")
+                if start_offset < 0 or start_offset >= end_offset:
+                    raise ValueError("multi_text segment offsets are invalid")
+                if not isinstance(text_hash, str) or not text_hash.strip():
+                    raise ValueError("multi_text segment text_hash is required")
+                if utf16_code_unit_length(selected_text) != end_offset - start_offset:
+                    raise ValueError("multi_text segment selected_text UTF-16 length must match offsets")
+                if text_hash != compute_text_range_hash(selected_text):
+                    raise ValueError("multi_text segment text_hash must match selected_text")
+            return self
+
+        sentence_id = self.payload_json.get("sentence_id")
+        selected_text = self.payload_json.get("selected_text")
+        start_offset = self.payload_json.get("start_offset")
+        end_offset = self.payload_json.get("end_offset")
+        text_hash = self.payload_json.get("text_hash")
+
+        if not isinstance(sentence_id, str) or not sentence_id.strip():
+            raise ValueError("payload_json.sentence_id is required for text_range favorites")
+        if not isinstance(selected_text, str) or not selected_text.strip():
+            raise ValueError("payload_json.selected_text is required for text_range favorites")
+        if not isinstance(start_offset, int) or not isinstance(end_offset, int):
+            raise ValueError("payload_json.start_offset and payload_json.end_offset are required for text_range favorites")
+        if start_offset < 0 or start_offset >= end_offset:
+            raise ValueError("text_range favorite offsets are invalid")
+        if not isinstance(text_hash, str) or not text_hash.strip():
+            raise ValueError("payload_json.text_hash is required for text_range favorites")
+        if utf16_code_unit_length(selected_text) != end_offset - start_offset:
+            raise ValueError("payload_json.selected_text UTF-16 length must match offsets")
+        if text_hash != compute_text_range_hash(selected_text):
+            raise ValueError("payload_json.text_hash must match selected_text")
+        return self
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 
 - Web 后续可以增加字段、adapter 和 render profile。
 - 不能破坏小程序当前依赖的字段、状态码和 ID 语义。
-- OpenAPI 后续应作为 `packages/contracts` 的来源。
+- `@claread/contracts` 当前先承载跨端常量和轻量类型；OpenAPI 后续应作为完整 DTO 生成来源。
 
 ## 小程序强依赖接口
 
@@ -35,6 +35,10 @@
 | Vocabulary | `POST /vocabulary/highlights` | 结果页高亮和已收藏生词匹配 |
 | Vocabulary | `GET /vocabulary/review/due` | 生词复习 |
 | Feedback | `POST /feedback` | 用户反馈 |
+| User Annotations | `POST /user-annotations` | 用户高亮/笔记，支持句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
+| User Annotations | `GET /user-annotations` | 用户批注列表 |
+| Favorites | `POST /favorites` | 收藏文章、句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
+| Favorites | `GET /favorites` | 收藏列表 |
 | Daily Reader | `GET /daily-reader/today` | 今日精读 |
 | Daily Reader | `GET /daily-reader` | 往期精读列表 |
 | Daily Reader | `GET /daily-reader/{article_id}` | 精读详情 |
@@ -55,6 +59,10 @@
 - `source_type` 统一为 `user_input / daily_article / imported / ocr`。
 - `RecordCreateRequest.source_type` 使用统一枚举。
 - `TaskSubmitResponse` / `TaskStatusResponse` 兼容只传 `record_id` 时自动补 `cloud_record_id`。
+- `user_annotations.anchor_type='text_range'` 使用 UTF-16 code unit offset，要求 `analysis_record_id`、`sentence_id`、`selected_text`、`start_offset`、`end_offset`、`text_hash`，并校验 render scene sentence 切片。
+- `user_annotations.anchor_type='multi_text'` 使用 `payload_json.segments[]` 保存多段 anchor；每段都按同一套 UTF-16 offset 和 `fnv1a32-utf16` hash 校验，并要求顺序与 render scene article sentence 顺序一致。
+- `favorite_records.target_type='text_range'` 使用同一套 `selected_text`、offset 和 hash payload。
+- `favorite_records.target_type='multi_text'` 复用 `payload_json.segments[]`，并执行与 annotations 相同的 render scene 校验。
 - `vocabulary_book.dict_entry_id` 指向 `dict_entries.id`；词典重导前必须处理 ID 稳定性。
 - `VocabHighlight` 拒绝未知字段，避免 LLM 草稿把旧字段静默带入 canonical annotation。
 
