@@ -10,7 +10,7 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 
 - 微信小程序仍是稳定客户端，继续作为回归约束。
 - Web baseline 已接入真实 FastAPI BFF/API 链路，不再依赖产品路径 mock/demo fixture。
-- Web 已开始 Web 端能力增强：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 批注/收藏和学习资产聚合页已落地；Reader 自动化回归仍待补齐。
+- Web 已开始 Web 端能力增强：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 批注/收藏，以及按文章聚合的“摘录与批注”页已落地；Reader 自动化回归仍待补齐。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
 - 本地开发基线使用 PostgreSQL、Redis、词典数据和受控测试手机号链路。

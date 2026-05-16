@@ -39,7 +39,7 @@ Ask Claread | 高亮颜色 | 笔记 | 收藏 | 查词 | 反馈 | ...
 - 机器标注和用户标注已分层：固定搭配改为紫色高亮，语法保持细线标注；用户高亮使用独立的纸面 marker 视觉。
 - Web、微信小程序已通过 `@claread/contracts` 共享批注/收藏 target、颜色、offset/hash 常量；`text_range` 坐标统一为 UTF-16 code unit。
 - 后端已按 render scene 校验 `selected_text`、`start_offset/end_offset` 和 `text_hash`，避免 Web 写入漂移锚点。
-- Web 已新增 `/library/assets` 学习资产页，按解析文章聚合句子与 `text_range` 高亮、笔记和收藏。
+- Web 已新增 `/library/assets` 摘录与批注页，按解析文章聚合句子与 `text_range` / `multi_text` 的高亮、笔记和收藏。
 - Web `/library/assets` 与小程序摘录页都已接入 `targetKey` 回跳；跨句资产使用 `multi_text` target key 和 segment payload 保持一致。
 - 小程序摘录跳回结果页时可携带 `anchorType=text_range`、offset 和 hash，用于复现 Web 局部资产。
 - 小程序结果页和摘录页已兼容显示 Web 创建的 `multi_text` 资产；当前仍不主动创建跨句选区。
@@ -76,12 +76,13 @@ Ask Claread | 高亮颜色 | 笔记 | 收藏 | 查词 | 反馈 | ...
 
 ## Current Learning Asset Model
 
-当前“学习资产”不是独立顶级对象表，而是由文章记录下的收藏、批注和解析要点聚合出来：
+当前“学习资产”不是独立顶级对象表，而是 umbrella 概念。本轮正式化的是“摘录资产”：由文章记录下的收藏、批注和解析 sidecar 聚合出来：
 
 - 顶级父级是 `analysis_record` / 解析文章。
 - 资产子项当前是 anchor asset，而不再默认等同于句子：`sentence`、`text_range`、`multi_text` 都是一级资产子项。
 - `user_annotations` 承载高亮和笔记，`favorite_records` 承载收藏。
-- 小程序 `packageA/excerpts` 会把收藏和批注合并成 `SentenceAsset`，再按文章分组展示“学习摘录”。
+- `GET /excerpt-assets` 会按 canonical `target_key` 合并 favorites 和 annotations，再按文章分组返回给 Web `/library/assets` 与小程序 `packageA/excerpts`。
+- `vocabulary_book` 不并入本轮摘录聚合；词汇资产仍走独立入口。
 
 当前关键实现状态：
 
@@ -91,7 +92,7 @@ Ask Claread | 高亮颜色 | 笔记 | 收藏 | 查词 | 反馈 | ...
   - 收藏接收 `target_type === 'sentence' | 'text_range' | 'multi_text'`。
   - 批注接收 `anchor_type === 'sentence' | 'text_range' | 'multi_text'`。
   因此 Web 局部/跨句高亮、笔记和收藏都可以作为同一篇文章下的 anchor asset 展示。
-- Web `/library` 是阅读记录索引；`/library/assets` 是学习资产聚合页，按文章合并句子级、`text_range` 和 `multi_text` 的收藏、highlight、note。
+- Web `/library` 是阅读记录索引；`/library/assets` 是摘录与批注聚合页，按文章合并句子级、`text_range` 和 `multi_text` 的收藏、highlight、note。
 - `favorite_records.target_type` 与 `user_annotations.anchor_type` 已通过 `0004_add_multi_text_anchor_types.sql` 扩展 `multi_text`。
 
 因此，`text_range` 不是只改 Reader 的锚点问题。完整闭环必须同时覆盖：
@@ -231,7 +232,7 @@ Toolbar v1 包含“收藏”，但 favorites 当前不同于 annotations：
 目标：让“学习摘录”能看见 Web 局部批注。
 
 - 当前已做兼容：小程序摘录页允许 `anchor_type='text_range'` 的 user annotations 进入 `SentenceAsset`，使用 `selected_text` 展示，并保留 `startOffset/endOffset/textHash`。
-- Web 已新增 `/library/assets`，以解析文章为父级聚合 sentence 和 text range anchor。
+- Web 已新增 `/library/assets`，以解析文章为父级聚合 sentence、text range 和 multi_text anchor。
 - 后续如果资产模型继续扩展，可将小程序 `SentenceAsset` 改名或泛化为 `AnchorAsset`：
   - `anchorType: 'sentence' | 'text_range'`
   - `sentenceId`
@@ -260,6 +261,7 @@ target type、anchor type、颜色、offset unit 和 hash algorithm 已先沉淀
 - 后端按 render scene 校验 `selected_text`、`start_offset/end_offset` 和 `text_hash` 的一致性。
 - Web 端拆出 `ReaderCanvas`、`ReaderSentenceRow`、`ReaderAnnotationOverlay` 和 `reader-selection`，降低 `ReaderWorkbench` 后续迭代风险。
 - Web 本轮已通过本地浏览器回归核对 SelectionToolbar 滚动跟随、lookup preview 锚定和 `multi_text` 选区识别；提交到仓库的真实记录自动化仍需要稳定登录态或 debug session。
+- Web `/library/assets` 已改为消费后端 `/excerpt-assets` 正式聚合接口，不再由 Web BFF 临时 fan-out 拼接 records/favorites/annotations。
 - Web `/library/assets` 现会明确展示 `multi_text` 的 segment 数和句子/offset 信息，避免整句与跨句资产混在一个模糊文案里。
 - Web 与小程序回跳 favorite-only `text_range` / `multi_text` 时，都会使用独立 route focus 状态做短时强调，不再复用 `selectionRange`。
 - Web 手动 selection 若刚好覆盖整句，现已归一化为 `anchorType='sentence'`；与 toolbar“选择当前句子”保持同一底层语义和同一显示状态。

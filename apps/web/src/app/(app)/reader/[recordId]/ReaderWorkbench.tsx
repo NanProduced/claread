@@ -293,6 +293,61 @@ function routeFocusClassForSpan(ranges: RouteFocusSegment[], start: number, end:
     : "";
 }
 
+function routeFocusStateFromAnnotation(annotation: WebAnnotationVm): RouteFocusState | null {
+  if (annotation.anchorType === "multi_text") {
+    const segments = annotation.segments
+      .map((segment) => ({
+        sentenceId: segment.sentenceId,
+        startOffset: segment.startOffset,
+        endOffset: segment.endOffset,
+      }))
+      .filter((segment) => segment.sentenceId && segment.startOffset < segment.endOffset);
+    if (segments.length === 0) {
+      return null;
+    }
+    return {
+      targetKey: annotation.targetKey,
+      anchorType: "multi_text",
+      sentenceIds: Array.from(new Set(segments.map((segment) => segment.sentenceId))),
+      segments,
+    };
+  }
+
+  if (annotation.anchorType === "text_range") {
+    if (
+      !annotation.sentenceId ||
+      typeof annotation.startOffset !== "number" ||
+      typeof annotation.endOffset !== "number" ||
+      annotation.startOffset >= annotation.endOffset
+    ) {
+      return null;
+    }
+    return {
+      targetKey: annotation.targetKey,
+      anchorType: "text_range",
+      sentenceIds: [annotation.sentenceId],
+      segments: [
+        {
+          sentenceId: annotation.sentenceId,
+          startOffset: annotation.startOffset,
+          endOffset: annotation.endOffset,
+        },
+      ],
+    };
+  }
+
+  if (!annotation.sentenceId) {
+    return null;
+  }
+
+  return {
+    targetKey: annotation.targetKey,
+    anchorType: "sentence",
+    sentenceIds: [annotation.sentenceId],
+    segments: [],
+  };
+}
+
 function routeFocusStateFromFavoriteTarget(target: WebFavoriteTargetVm): RouteFocusState | null {
   if (target.anchorType === "multi_text") {
     const segments = target.segments
@@ -1769,7 +1824,13 @@ export function ReaderWorkbench({
     if (!target) {
       return;
     }
-    setRouteFocus(annotation ? null : favorite ? routeFocusStateFromFavoriteTarget(favorite) : null);
+    setRouteFocus(
+      annotation
+        ? routeFocusStateFromAnnotation(annotation)
+        : favorite
+          ? routeFocusStateFromFavoriteTarget(favorite)
+          : null,
+    );
 
     const targetSentenceId =
       target.anchorType === "multi_text"

@@ -84,9 +84,15 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
 | `POST /favorites` | ✅ `FavoriteCreateResponse` | 🟢 稳定 | 支持 `target_type='text_range' / 'multi_text'`，并校验 selected text、UTF-16 offset、hash 与 multi_text segments |
-| `GET /favorites` | ✅ `FavoriteListResponse` | 🟡 需增强 | Web Reader 已接入；后续需要分页/target filter |
+| `GET /favorites` | ✅ `FavoriteListResponse` | 🟡 需增强 | Web Reader 已接入；摘录页已不再依赖它做前端 fan-out 聚合 |
 | `DELETE /favorites/target` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web Reader 取消收藏使用此接口 |
 | `DELETE /favorites/{analysis_record_id}` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | 兼容按分析记录取消收藏 |
+
+### 摘录资产
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `GET /excerpt-assets` | ✅ `ExcerptAssetsResponse` | 🟢 已落地 | 正式摘录聚合接口；按文章分组返回 merged anchor asset，保留 `target_key` / `sentence_id` / `start_offset` / `end_offset` / `segments[]` 和 `insights[]` sidecar，供 Web `/library/assets` 与小程序 `packageA/excerpts` 共用 |
 
 ### 反馈
 
@@ -195,7 +201,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
    - 当前只有 `page`/`limit`/`include_render_scene` 参数
    - 建议新增：`reading_goal`/`source_type`/`date_from`/`date_to`/`search` 参数
 
-3. **Favorites 列表增强** — Web 需要按 `target_type` / `target_key` 查询收藏状态，当前只能拉全量后在 BFF 侧过滤
+3. **Favorites 列表增强** — Web Reader 仍需要按 `target_type` / `target_key` 查询收藏状态；摘录页已改走 `/excerpt-assets`
 
 4. **Contracts 生成策略** — `@claread/contracts` 已先承载批注/收藏/text range 常量，后续应评估 OpenAPI -> `packages/contracts` 生成完整 DTO 的方式
 

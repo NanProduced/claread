@@ -269,12 +269,13 @@ v1 操作流程：
 - `user_annotations` 是用户手动创建的批注（highlight / note）
 - 两者独立存在，UI 上可叠加显示
 - inline_marks 不可编辑，user_annotations 可编辑/删除
+- 从 `/library/assets` 或小程序摘录页带 `targetKey` 回到 Reader 时，favorites、annotations 和 mixed asset 共用同一套 route focus 语义：先滚到对应句子，再根据 sentence / `text_range` / `multi_text` 对目标资产做短时强调。
 
 ## 历史回看设计
 
 ### 列表页
 
-Library 第一版是安静的阅读资产索引，不做卡片墙或后台 dashboard。默认以列表方式呈现标题、状态、时间、阅读目标、收藏状态和少量资产摘要；搜索框只做客户端标题和原文片段搜索，后端语义搜索后置。
+Library 第一版保持安静的摘录资产索引，不做卡片墙或后台 dashboard。`/library/assets` 当前定位为“摘录与批注”：左侧是文章索引，右侧是当前文章下的摘录列表；它不承担整个“学习资产中心”的语义，`/vocabulary` 继续是独立词汇资产入口。
 
 ### 筛选维度
 

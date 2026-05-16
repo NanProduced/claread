@@ -412,4 +412,18 @@ async def delete_record(user_id: UUID, record_id: UUID) -> str:
                 user_id,
                 now,
             )
+            await conn.execute(
+                """
+                UPDATE user_annotations
+                SET deleted_at = $3,
+                    deleted_by = $2,
+                    updated_at = $3
+                WHERE analysis_record_id = $1
+                  AND user_id = $2
+                  AND deleted_at IS NULL
+                """,
+                record_id,
+                user_id,
+                now,
+            )
     return "deleted"

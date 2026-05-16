@@ -70,10 +70,11 @@
 
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
-| 按文章查看学习资产 | 已接入：`/library/assets` 按解析文章聚合收藏和批注 | 已接入：`packageA/excerpts` 以文章为父级聚合 | records + annotations + favorites + vocabulary | 用户视角父级是解析文章，子项是句子或局部 anchor |
+| 按文章查看摘录与批注 | 已接入：`/library/assets` 作为摘录资产索引页 | 已接入：`packageA/excerpts` 以文章为父级聚合 | `GET /excerpt-assets` + favorites + annotations | 本轮边界明确为摘录资产，不把 `vocabulary` 混入该聚合页 |
 | 展示句子级高亮/收藏/笔记 | 已接入 | 已接入 | sentence anchor | 句子级资产是双端 baseline |
 | 展示句内局部文本高亮/笔记/收藏 | 已接入：Reader 和 `/library/assets` 都能展示 | 仅展示：结果页/摘录页可复现 Web 局部资产 | `text_range` anchor + favorite target | 这是多端能力分叉的核心追踪点 |
 | 展示跨句/跨段高亮/笔记/收藏 | 已接入：Reader、`/library/assets` 和 targetKey 回跳可识别 `multi_text` | 已接入展示：结果页/摘录页可渲染多段高亮并按 targetKey 回跳首段 | `multi_text` anchor + favorite target + segment payload | 小程序当前不创建 `multi_text`，但需要接得住 Web 资产 |
+| 查看解析 sidecar / insight | 低调展示：摘录页只作为补充标签显示 | 已接入筛选：`解析` 过滤保留 | `/excerpt-assets.insights[]` | insight 是 excerpt sidecar，不等同于用户资产本体 |
 | 跨端编辑同一资产 | 部分接入：Web 支持编辑/删除批注和局部收藏，跨端管理页待做 | 部分接入：句子级路径为主 | 共享 id、target_key、anchor metadata | 小程序可先只显示局部资产，不必提供编辑入口 |
 
 ## 历史、资料库与记录管理
