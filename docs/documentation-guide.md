@@ -1,6 +1,6 @@
 # Claread 文档管理指南
 
-> **状态**: `CURRENT` | **最后验证**: 2026-05-13 | **下一检查点**: 2026-06-13
+> **状态**: `CURRENT` | **最后验证**: 2026-05-16 | **下一检查点**: 2026-06-16
 >
 > 本文档是 Claread monorepo 的文档管理入口。用户要求"整理文档"、阶段里程碑后，或定时巡检任务触发时，agent 按此检查全库文档，防止过期信息导致开发漂移。
 
@@ -31,8 +31,9 @@
 ├── services/api/     # 后端：README + AGENTS
 ├── services/worker/  # Worker 预留（仅有 README.md）
 └── packages/
+    ├── contracts/      # 已落地：跨端契约常量和类型，后续接 OpenAPI 生成
     ├── design-tokens/  # 已落地：品牌资产、logo、icon
-    └── (contracts/、shared-utils/ 预留，尚未落地)
+    └── shared-utils/   # 预留，尚未落地
 ```
 
 **关键原则**：
@@ -111,7 +112,9 @@
 ### 4. 共享包检查
 - [ ] `packages/design-tokens/`（已落地）的实际内容与 `packages/README.md` 描述是否匹配。
       验证：README 中描述的目录结构与 `assets/brand/`、`assets/icons/`、`assets/logos/` 一致。
-- [ ] `packages/contracts/`、`packages/shared-utils/`（预留，尚未落地）是否仍为空目录或不存在。
+- [ ] `packages/contracts/` 是否仍只承载跨端契约常量和类型，未混入客户端 UI 或平台 runtime。
+      验证：检查导出内容是否为平台无关的枚举、常量、类型；若接入 OpenAPI 生成，更新 `packages/README.md` 和客户端导入说明。
+- [ ] `packages/shared-utils/`（预留，尚未落地）是否仍为空目录或不存在。
       验证：如果已创建目录且有内容，更新 README；如果仍为空，跳过。
 
 ### 5. TMP 与过期清理

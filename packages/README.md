@@ -2,20 +2,27 @@
 
 `packages/` 用于放置 Claread 跨端非 UI 共享包。
 
-当前这些目录是预留结构，具体实现后续按需求逐步建立。不要为了填目录而提前抽象。
+当前已落地 `design-tokens/` 和第一版 `contracts/`。其他目录按需求逐步建立，不为了填目录而提前抽象。
 
 ## contracts
 
-`packages/contracts/` 用于 API 契约和生成类型。
+`packages/contracts/` 用于 API 契约、跨端枚举和生成类型。
 
-未来可能包含：
+当前已包含：
+
+- 用户批注类型、anchor type、颜色常量。
+- 收藏 target type 常量。
+- `text_range` offset unit 与 hash algorithm 常量。
+- Web / 小程序复用的 TypeScript 字面量类型。
+
+未来可能继续包含：
 
 - OpenAPI 生成的 TypeScript 类型。
 - 后端响应 DTO。
 - 跨端请求/响应类型。
 - 错误码、状态码和枚举。
 
-它解决的问题是：小程序、Web、Directus 或未来 App 调用同一套后端时，不需要各自手写接口结构。
+它解决的问题是：小程序、Web、Directus 或未来 App 调用同一套后端时，不需要各自手写容易漂移的接口结构和字符串常量。当前版本仍是轻量共享常量包，不是完整 SDK。
 
 ## shared-utils
 

@@ -14,7 +14,7 @@
 
 ## 已验证事实
 
-- 2026-05-16 验证：Web typecheck / build 通过；Web Reader Playwright smoke harness 已补齐 selection toolbar、lookup preview 和 `multi_text` 用例，但当前环境缺少可复用登录态，因此真实记录用例按预期 skip；小程序 typecheck / build 通过；`services/api/tests/test_user_assets.py` 和 `services/api/tests/test_user_annotations.py` 通过。
+- 2026-05-16 验证：Web typecheck / build 通过；本轮通过本地浏览器回归核对 Reader 的 selection toolbar、lookup preview 和 `multi_text` 交互表现；小程序 typecheck / build 通过；`services/api/tests/test_user_assets.py` 和 `services/api/tests/test_user_annotations.py` 通过。
 - Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、收藏、句子级批注、单句内 `text_range` 批注/收藏、跨句/跨段 `multi_text` 批注/收藏、学习资产聚合页、反馈和设置/配额。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - ReaderWorkbench 已拆出 Reader canvas、sentence row、annotation overlay 和 selection helper，后续 Reader UI 迭代应优先沿这些边界推进。
@@ -50,7 +50,7 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 ## 当前主要方向
 
-1. 继续稳定 Web Reader UI/UX：补足带登录态的真实数据 Playwright smoke、资产跳转短时强调和移动 Web 形态。
+1. 继续稳定 Web Reader UI/UX：补足带登录态的真实数据浏览器自动化回归、资产跳转短时强调和移动 Web 形态。
 2. 完善学习资产闭环：Web 资产筛选/搜索、按文章/句子/text range/multi_text 聚合管理，以及小程序局部 range 跳转后的强调体验。
 3. 收紧数据层长期约束：`text_range` / `multi_text` 条件 CHECK、局部索引、annotations/favorites 分页和完整 OpenAPI contracts 生成。
 4. 确认 Web 增强能力优先级：Ask Claread、Reader 反馈、查词历史/手动查词、生词资产管理、分享/导出等。

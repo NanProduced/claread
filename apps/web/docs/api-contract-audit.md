@@ -83,7 +83,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /favorites` | ✅ `FavoriteCreateResponse` | 🟡 可清理 | 已声明 response_model，当前返回兼容裸 dict，可改为 model 实例提升一致性 |
+| `POST /favorites` | ✅ `FavoriteCreateResponse` | 🟢 稳定 | 支持 `target_type='text_range' / 'multi_text'`，并校验 selected text、UTF-16 offset、hash 与 multi_text segments |
 | `GET /favorites` | ✅ `FavoriteListResponse` | 🟡 需增强 | Web Reader 已接入；后续需要分页/target filter |
 | `DELETE /favorites/target` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web Reader 取消收藏使用此接口 |
 | `DELETE /favorites/{analysis_record_id}` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | 兼容按分析记录取消收藏 |
@@ -107,7 +107,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /user-annotations` | ✅ `UserAnnotationResponse` | 🟢 稳定 | Web 批注核心，`text_range` anchor_type 是 Web 独有增强点 |
+| `POST /user-annotations` | ✅ `UserAnnotationResponse` | 🟢 稳定 | Web 批注核心；`text_range` / `multi_text` 会校验 selected text、UTF-16 offset、hash、segments 和 render scene sentence 切片 |
 | `GET /user-annotations` | ✅ `UserAnnotationListResponse` | 🟢 稳定 | Web 复用 |
 | `PATCH /user-annotations/{id}` | ✅ `UserAnnotationResponse` | 🟢 稳定 | Web 复用 |
 | `DELETE /user-annotations/{id}` | ✅ `{"ok": True}` | 🟢 稳定 | Web 复用 |
@@ -130,9 +130,10 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 | `TaskStatus` | `queued / running / finalizing / succeeded / failed / cancelled / expired` | `schemas/tasks.py` |
 | `UserFacingState` | `normal / degraded_light / degraded_heavy` | `schemas/analysis.py` |
 | `MasteryStatus` | `new / learning / review / mastered / archived` | DB CHECK |
-| `AnnotationType` | `highlight / note` | DB CHECK |
-| `AnchorType` | `sentence / paragraph / text_range` | DB CHECK |
-| `AnnotationColor` | `soft_green / soft_blue / soft_purple / warm_yellow / sage_green` | DB CHECK |
+| `AnnotationType` | `highlight / note` | DB CHECK + `@claread/contracts` |
+| `AnchorType` | `sentence / paragraph / text_range / multi_text` | DB CHECK + `@claread/contracts` |
+| `AnnotationColor` | `soft_green / soft_blue / soft_purple / warm_yellow / sage_green` | DB CHECK + `@claread/contracts` |
+| `FavoriteTargetType` | `analysis_record / sentence / paragraph / phrase / vocab / text_range / multi_text` | DB CHECK + `@claread/contracts` |
 | `FeedbackScope` | `analysis_result / annotation / sentence / dictionary / app` | `schemas/feedback.py` |
 | `Sentiment` | `positive / negative / neutral` | `schemas/feedback.py` |
 | `InlineMarkRenderType` | `background / underline` | `schemas/analysis.py` |
@@ -196,9 +197,9 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 3. **Favorites 列表增强** — Web 需要按 `target_type` / `target_key` 查询收藏状态，当前只能拉全量后在 BFF 侧过滤
 
-4. **Contracts 生成策略** — 当前 Web DTO 仍为手写，后续应评估 OpenAPI -> `packages/contracts` 生成方式
+4. **Contracts 生成策略** — `@claread/contracts` 已先承载批注/收藏/text range 常量，后续应评估 OpenAPI -> `packages/contracts` 生成完整 DTO 的方式
 
-5. **Delete / create response model 代码风格清理** — records / favorites 等少数路由已声明 response_model 但返回裸 dict，可改为 Pydantic model 实例
+5. **Delete / create response model 代码风格清理** — records 等少数路由已声明 response_model 但返回裸 dict，可改为 Pydantic model 实例
 
 ### 🟢 可选增强（后续优化）
 

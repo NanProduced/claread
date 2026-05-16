@@ -213,7 +213,7 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 - `multi_text` 结构线索不要伪装成连续高亮，应按 parts 分段标记并用编号、颜色或 hover 联动表达同一条解释。
 - PDF / 外部网页批注如果后续进入 Web，需要单独设计 anchor resolver；不要直接复用文本 Reader 的 DOM offset 实现。
 
-当前代码层已落地句子和句内 text-range 的 DOM 锚点属性。`SelectionToolbar` 已开放单句内 `anchor_type="text_range"`、`start_offset`、`end_offset` 和 `text_hash` 的创建、反显和取消；跨句选区仍后置。
+当前代码层已落地句子、句内 `text_range` 和跨句/跨段 `multi_text` 的 DOM 锚点属性。`SelectionToolbar` 已开放 `anchor_type="text_range"` / `anchor_type="multi_text"` 的创建、反显和取消；局部选区通过 `start_offset`、`end_offset` 和 `text_hash` 锚定，多段选区通过 `segments[]` 锚定。
 
 ### 数据模型
 
@@ -222,7 +222,7 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 | 字段 | 说明 | Web 增强 |
 |------|------|---------|
 | `annotation_type` | `highlight / note` | Web 完整支持 |
-| `anchor_type` | `sentence / paragraph / text_range` | Web v1 支持句子级和单句内 `text_range` |
+| `anchor_type` | `sentence / paragraph / text_range / multi_text` | Web v1 支持句子级、单句内 `text_range` 和跨句/跨段 `multi_text` |
 | `selected_text` | 选中文本 | Web 用浏览器 Selection API 获取 |
 | `start_offset / end_offset` | 字符偏移 | Web v1 使用句子内 JavaScript UTF-16 offset |
 | `color` | 5 色高亮 | Web 完整支持 |

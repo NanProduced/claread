@@ -13,7 +13,7 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 | `tech-stack-options.md` | 技术栈备选对比、推荐方案、依赖清单、OpenAPI 类型生成策略 |
 | `api-contract-audit.md` | Web 首期接口审计、枚举审计、错误态审计、需后端新增/增强清单 |
 | `reader-ia.md` | Web Reader 信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统、历史回看 |
-| `../../../docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、分叉点、`text_range` 与学习资产差异 |
+| `../../../docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
 | `design/` | Web 端 UI 方向探索、视觉参考、设计纲要草案 |
 
 ## 文档边界
@@ -29,6 +29,6 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 
 - 不把小程序 UI 拉伸成 Web 版。
 - 不为 Web 复制一套业务后端。
-- Web 首期先依赖现有 Claread API，再逐步推动 `packages/contracts/` 生成类型。
+- Web 首期先依赖现有 Claread API；`@claread/contracts` 当前承载跨端常量和轻量类型，后续再推动 OpenAPI 生成类型。
 - Web 端能力增强通过客户端 UI、auth adapter、render profile 和后端通用能力协作完成。
 - Web 临时任务文档必须标注 TMP，阶段完成后删除或压缩为稳定结论。

@@ -16,7 +16,7 @@ Ask Claread | 高亮颜色 | 笔记 | 收藏 | 查词 | 反馈 | ...
 - `Ask Claread`：先占位，视觉上保留主入口，但 disabled / coming soon，不触发真实 AI 对话。
 - 高亮颜色：使用用户批注专属 marker 视觉，不复用机器标注的 vocab / phrase / context / grammar 色块语义。toolbar v1 只暴露 3 个不与机器标注冲突的用户色，底层继续兼容现有 `warm_yellow / soft_green / soft_blue / soft_purple / sage_green`。
 - `笔记`：打开轻量 note popover 或移动端 bottom sheet，保存为 user annotation。
-- `收藏`：按当前 toolbar 选区保存。局部选区写入 `target_type='text_range'`，整句模式写入 `target_type='sentence'`。
+- `收藏`：按当前 toolbar 选区保存。局部选区写入 `target_type='text_range'`，跨句/跨段选区写入 `target_type='multi_text'`，整句模式写入 `target_type='sentence'`。
 - `查词`：仅当选区像单词或短语时可用；长选区优先引导到 Ask / 解释。
 - `反馈`：针对当前句子或选区上下文打开 feedback 入口。
 - `...`：后续容纳复制、删除批注、复制原文+译文、展开句子解析等低频操作。
@@ -47,7 +47,7 @@ Ask Claread | 高亮颜色 | 笔记 | 收藏 | 查词 | 反馈 | ...
   - 默认态：正文只显示轻量机器标注。
   - 激活态：点击解析 chip/card 后，卡片 active，关联原文加重显示。
 - 小程序摘录页已允许 `anchor_type='text_range'` 的批注进入学习资产列表，并标记为“局部高亮”。
-- 小程序摘录页已允许 `target_type='text_range'` 的收藏进入学习资产列表，作为局部摘录展示。
+- 小程序摘录页已允许 `target_type='text_range'` / `target_type='multi_text'` 的收藏进入学习资产列表，作为局部摘录或跨句摘录展示。
 
 仍未启用：
 
@@ -249,7 +249,7 @@ Toolbar v1 包含“收藏”，但 favorites 当前不同于 annotations：
 - 已完成 FastAPI favorites schema/API/service 和测试覆盖。
 - 已完成 Web BFF `/api/web/favorites/target`。
 - 已完成 Web toolbar 局部收藏操作。
-- 已完成小程序摘录页接收 `target_type='text_range'` favorites。
+- 已完成小程序摘录页接收 `target_type='text_range'` / `target_type='multi_text'` favorites。
 
 target type、anchor type、颜色、offset unit 和 hash algorithm 已先沉淀到 `@claread/contracts`，后续仍需评估是否从 OpenAPI 生成完整 DTO。
 
@@ -259,7 +259,7 @@ target type、anchor type、颜色、offset unit 和 hash algorithm 已先沉淀
 
 - 后端按 render scene 校验 `selected_text`、`start_offset/end_offset` 和 `text_hash` 的一致性。
 - Web 端拆出 `ReaderCanvas`、`ReaderSentenceRow`、`ReaderAnnotationOverlay` 和 `reader-selection`，降低 `ReaderWorkbench` 后续迭代风险。
-- Web 增加 Reader Playwright smoke，覆盖 SelectionToolbar 滚动跟随、lookup preview 锚定和 `multi_text` 选区识别；真实记录链路仍需要登录态或 debug session。
+- Web 本轮已通过本地浏览器回归核对 SelectionToolbar 滚动跟随、lookup preview 锚定和 `multi_text` 选区识别；提交到仓库的真实记录自动化仍需要稳定登录态或 debug session。
 - Web `/library/assets` 现会明确展示 `multi_text` 的 segment 数和句子/offset 信息，避免整句与跨句资产混在一个模糊文案里。
 - Web 与小程序回跳 favorite-only `text_range` / `multi_text` 时，都会使用独立 route focus 状态做短时强调，不再复用 `selectionRange`。
 - Web 手动 selection 若刚好覆盖整句，现已归一化为 `anchorType='sentence'`；与 toolbar“选择当前句子”保持同一底层语义和同一显示状态。

@@ -22,7 +22,7 @@ claread/
 └── docs/
 ```
 
-其中 `apps/miniprogram/`、`apps/web/`、`services/api/`、`infra/`、`docs/` 已进入当前可运行基线。`apps/directus/`、`services/worker/`、`packages/contracts/`、`packages/shared-utils/`、`evals/` 是后续扩展位置。
+其中 `apps/miniprogram/`、`apps/web/`、`services/api/`、`infra/`、`packages/contracts/`、`packages/design-tokens/`、`docs/` 已进入当前可运行基线。`apps/directus/`、`services/worker/`、`packages/shared-utils/`、`evals/` 是后续扩展位置。
 
 ## 核心边界
 
@@ -31,6 +31,7 @@ claread/
 | `services/api` | 通用后端 API、认证、分析任务、用户资产、词典、Daily Reader |
 | `apps/miniprogram` | 微信小程序客户端，当前稳定基线 |
 | `apps/web` | Web baseline 与后续高保真阅读体验 |
+| `packages/contracts` | 跨端契约常量和类型，当前覆盖批注/收藏/text range 基础常量 |
 | `apps/directus` | 后续内部数据面板和运营工具 |
 | `infra` | Docker、migration、数据库脚本、部署材料 |
 | `evals` | 后续 LLM-as-a-Judge、数据集、rubric、运行记录 |
