@@ -203,3 +203,40 @@ class TestPipelineSelection:
         result = select_diverse_candidates(articles, max_count=5, max_same_source=2)
         sources = [a.source for a, _ in result]
         assert sources.count("SameSource") <= 2
+
+
+@pytest.mark.anyio
+async def test_score_article_records_skipped_event_when_model_unavailable():
+    from app.services.daily_reader.discovery import DiscoveredArticle
+    from app.services.daily_reader.scoring import score_article
+
+    article = DiscoveredArticle(
+        title="Test article",
+        url="https://example.com/test",
+        source="The Guardian",
+        description="Desc",
+        tags=["science"],
+        text="This is a sufficiently long test article. " * 40,
+        word_count=500,
+    )
+
+    with (
+        patch("app.config.settings.get_settings", return_value=MagicMock()),
+        patch("app.llm.router.build_model_for_route", return_value=(None, None)),
+        patch(
+            "app.services.daily_reader.scoring.record_ai_usage_event",
+            AsyncMock(return_value=True),
+        ) as usage_mock,
+        patch("app.services.daily_reader.scoring.get_prompt_version", return_value="test-prompts"),
+    ):
+        score = await score_article(article)
+
+    assert score is not None
+    event = usage_mock.await_args.args[0]
+    assert event.status == "skipped"
+    assert event.usage_scope == "system_internal"
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"

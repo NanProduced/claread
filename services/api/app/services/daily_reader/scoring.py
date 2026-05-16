@@ -8,12 +8,26 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from time import perf_counter
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from langsmith import traceable
 
+from app.llm.routes import MODEL_ROUTE_DAILY_ANALYSIS
+from app.services.ai_usage import (
+    AIUsageEventCreate,
+    BILLING_MODE_INTERNAL_ONLY,
+    CAPABILITY_DAILY_READER_SCORING,
+    STATUS_FALLBACK,
+    STATUS_SKIPPED,
+    STATUS_SUCCEEDED,
+    USAGE_SCOPE_SYSTEM_INTERNAL,
+    build_model_metadata,
+    record_ai_usage_event,
+)
+from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.daily_reader.discovery import DiscoveredArticle
 
 logger = logging.getLogger(__name__)
@@ -22,6 +36,8 @@ MIN_WORD_COUNT = 400
 MAX_WORD_COUNT = 2500
 SCORE_THRESHOLD = 7.0
 HEURISTIC_THRESHOLD = 6.0
+DAILY_READER_WORKFLOW_NAME = "daily_reader"
+DAILY_READER_WORKFLOW_VERSION = "2.0.0"
 
 
 @dataclass
@@ -40,14 +56,48 @@ def filter_by_word_count(articles: list[DiscoveredArticle]) -> list[DiscoveredAr
 
 
 async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
+    started_at = perf_counter()
+    model_metadata = build_model_metadata(None)
+    fallback_model_metadata = {
+        **model_metadata,
+        "model_route": MODEL_ROUTE_DAILY_ANALYSIS,
+    }
+    metadata_json = {
+        "article_title": article.title[:80],
+        "article_source": article.source,
+        "article_word_count": article.word_count,
+    }
     try:
         from app.llm.router import build_model_for_route
         from app.config.settings import get_settings
 
         settings = get_settings()
-        model, model_config = build_model_for_route(settings, "daily_analysis")
+        model, model_config = build_model_for_route(settings, MODEL_ROUTE_DAILY_ANALYSIS)
+        model_metadata = build_model_metadata(model_config)
+        fallback_model_metadata = {
+            **model_metadata,
+            "model_route": model_metadata.get("model_route") or MODEL_ROUTE_DAILY_ANALYSIS,
+        }
         if model is None:
             logger.warning("daily_analysis model not available, using heuristic scoring")
+            await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                    capability_code=CAPABILITY_DAILY_READER_SCORING,
+                    billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                    status=STATUS_SKIPPED,
+                    request_id=article.url,
+                    workflow_name=DAILY_READER_WORKFLOW_NAME,
+                    workflow_version=DAILY_READER_WORKFLOW_VERSION,
+                    prompt_version=get_prompt_version(),
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    metadata_json={
+                        **metadata_json,
+                        "reason": "model_unavailable",
+                    },
+                    **fallback_model_metadata,
+                )
+            )
             return heuristic_score(article)
 
         model_name = model_config.model_name if model_config else "unknown"
@@ -75,9 +125,42 @@ async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
             provider=provider,
             langsmith_extra={"metadata": metadata},
         )
+        await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_DAILY_READER_SCORING,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=STATUS_SUCCEEDED,
+                request_id=article.url,
+                workflow_name=DAILY_READER_WORKFLOW_NAME,
+                workflow_version=DAILY_READER_WORKFLOW_VERSION,
+                prompt_version=get_prompt_version(),
+                usage_data=trace_result.get("usage_metadata"),
+                latency_ms=int((perf_counter() - started_at) * 1000),
+                metadata_json=metadata_json,
+                **model_metadata,
+            )
+        )
         return trace_result.get("output")
     except Exception as e:
         logger.warning("LLM scoring failed, falling back to heuristic: %s", e)
+        await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_DAILY_READER_SCORING,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=STATUS_FALLBACK,
+                request_id=article.url,
+                workflow_name=DAILY_READER_WORKFLOW_NAME,
+                workflow_version=DAILY_READER_WORKFLOW_VERSION,
+                prompt_version=get_prompt_version(),
+                latency_ms=int((perf_counter() - started_at) * 1000),
+                error_code=type(e).__name__,
+                error_message=str(e),
+                metadata_json=metadata_json,
+                **fallback_model_metadata,
+            )
+        )
         return heuristic_score(article)
 
 

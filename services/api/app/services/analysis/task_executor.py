@@ -12,11 +12,30 @@ import asyncio
 from contextlib import suppress
 import logging
 from datetime import datetime, timedelta, timezone
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.config.settings import get_settings
+from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.schemas.analysis import AnalyzeRequest
+from app.services.ai_usage import (
+    AIUsageEventCreate,
+    ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION,
+    BILLING_MODE_USER_POINTS,
+    CAPABILITY_ANALYSIS_FULL,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    USAGE_SCOPE_USER_BILLED,
+    build_analysis_billing_metadata,
+    compute_analysis_cost_points,
+    extract_request_id_from_render_scene,
+    extract_schema_version_from_render_scene,
+    record_ai_usage_event,
+    resolve_model_metadata,
+)
 from app.services.analysis.credit_service import deduct_credits
+from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.analysis.task_service import (
     TaskExecutionPayload,
     claim_next_queued_task,
@@ -28,18 +47,12 @@ from app.services.analysis.task_service import (
 from app.services.user_assets import records as records_svc
 from app.workflow.analyze import (
     ANALYZE_SCHEMA_VERSION,
+    WORKFLOW_NAME,
     WORKFLOW_VERSION,
     run_article_analysis_with_state,
 )
 
 logger = logging.getLogger(__name__)
-
-# Points conversion: 1 point = 1000 weighted tokens
-# Weighted token formula: input_tokens * 1 + output_tokens * 5
-# Cost in points: ceil(weighted_tokens / 1000)
-MULTIPLIER_INPUT = 1
-MULTIPLIER_OUTPUT = 5
-TOKENS_PER_POINT = 1000
 
 # Worker behavior
 QUEUED_STALE_AFTER = timedelta(minutes=5)
@@ -66,40 +79,13 @@ class UnrenderableAnalysisError(RuntimeError):
 
 
 def compute_cost_points(usage_summary: dict[str, Any] | None) -> int:
-    """
-    Compute cost points from usage summary.
-
-    Formula: ceil((input_tokens * 1 + output_tokens * 5) / 1000)
-    1 point = 1000 weighted tokens. Daily quota = 1000 points.
-    Returns 0 if usage data is unavailable.
-    """
-    if not usage_summary:
-        return 0
-
-    aggregate = usage_summary.get("aggregate")
-    if not aggregate:
-        return 0
-
-    input_tokens = int(aggregate.get("input_tokens") or 0)
-    output_tokens = int(aggregate.get("output_tokens") or 0)
-
-    weighted = input_tokens * MULTIPLIER_INPUT + output_tokens * MULTIPLIER_OUTPUT
-    return (weighted + TOKENS_PER_POINT - 1) // TOKENS_PER_POINT
+    """Backward-compatible wrapper around the capability billing policy."""
+    return compute_analysis_cost_points(usage_summary)
 
 
 def _build_deduction_metadata(usage_summary: dict[str, Any] | None) -> dict[str, Any]:
     """Build metadata dict for credit ledger entry."""
-    if not usage_summary:
-        return {}
-    aggregate = usage_summary.get("aggregate", {})
-    return {
-        "input_tokens": aggregate.get("input_tokens", 0),
-        "output_tokens": aggregate.get("output_tokens", 0),
-        "total_tokens": aggregate.get("total_tokens", 0),
-        "multiplier_input": MULTIPLIER_INPUT,
-        "multiplier_output": MULTIPLIER_OUTPUT,
-        "tokens_per_point": TOKENS_PER_POINT,
-    }
+    return build_analysis_billing_metadata(usage_summary)
 
 
 def _extract_list(payload: dict[str, Any], *keys: str) -> list[Any]:
@@ -187,8 +173,12 @@ async def execute_task(
     """
     heartbeat_task: asyncio.Task | None = None
     start_time = datetime.now(timezone.utc)
+    start_perf = perf_counter()
     usage_summary: dict[str, Any] | None = None
     payload: AnalyzeRequest | None = None
+    render_scene_dict: dict[str, Any] | None = None
+    request_id: str | None = None
+    model_metadata = resolve_model_metadata(get_settings(), MODEL_ROUTE_ANNOTATION_GENERATION)
 
     try:
         active_worker_token = worker_token or f"worker-{uuid4()}"
@@ -252,6 +242,7 @@ async def execute_task(
             if hasattr(render_scene, "model_dump")
             else render_scene
         )
+        request_id = extract_request_id_from_render_scene(render_scene_dict)
         user_facing_state = getattr(render_scene, "user_facing_state", "normal")
         if (
             isinstance(render_scene_dict, dict)
@@ -303,6 +294,39 @@ async def execute_task(
                 cost_points=cost_points,
                 metadata=_build_deduction_metadata(usage_summary),
             )
+
+        await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_USER_BILLED,
+                capability_code=CAPABILITY_ANALYSIS_FULL,
+                billing_mode=BILLING_MODE_USER_POINTS,
+                status=STATUS_SUCCEEDED,
+                user_id=user_id,
+                task_id=task_id,
+                record_id=record_id,
+                request_id=request_id,
+                workflow_name=WORKFLOW_NAME,
+                workflow_version=WORKFLOW_VERSION,
+                schema_version=extract_schema_version_from_render_scene(render_scene_dict)
+                or ANALYZE_SCHEMA_VERSION,
+                prompt_version=get_prompt_version(),
+                usage_data=usage_summary,
+                latency_ms=int((perf_counter() - start_perf) * 1000),
+                billed_points=actual_deducted,
+                billing_policy_version=ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION,
+                metadata_json={
+                    "entrypoint": "/analysis-tasks",
+                    "task_execution_mode": "worker",
+                    "source_type": source_type,
+                    "reading_goal": reading_goal,
+                    "reading_variant": reading_variant,
+                    "extended": extended,
+                    "user_facing_state": user_facing_state,
+                    "computed_cost_points": cost_points,
+                },
+                **model_metadata,
+            )
+        )
 
         # 4. Increment Achievement Stats
         await records_svc.increment_user_reading_count(user_id)
@@ -366,6 +390,42 @@ async def execute_task(
                     cost_points=cost_points,
                     processing_ms=processing_ms,
                 )
+
+            await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope=USAGE_SCOPE_USER_BILLED,
+                    capability_code=CAPABILITY_ANALYSIS_FULL,
+                    billing_mode=BILLING_MODE_USER_POINTS,
+                    status=STATUS_FAILED,
+                    user_id=user_id,
+                    task_id=task_id,
+                    record_id=record_id,
+                    request_id=request_id
+                    or extract_request_id_from_render_scene(render_scene_dict or {}),
+                    workflow_name=WORKFLOW_NAME,
+                    workflow_version=WORKFLOW_VERSION,
+                    schema_version=extract_schema_version_from_render_scene(render_scene_dict or {})
+                    or ANALYZE_SCHEMA_VERSION,
+                    prompt_version=get_prompt_version(),
+                    usage_data=usage_summary,
+                    latency_ms=int((perf_counter() - start_perf) * 1000),
+                    billed_points=0,
+                    billing_policy_version=ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION,
+                    error_code=failure_code,
+                    error_message=failure_message,
+                    metadata_json={
+                        "entrypoint": "/analysis-tasks",
+                        "task_execution_mode": "worker",
+                        "source_type": source_type,
+                        "reading_goal": reading_goal,
+                        "reading_variant": reading_variant,
+                        "extended": extended,
+                        "computed_cost_points": cost_points,
+                        "record_status_after_failure": "failed",
+                    },
+                    **model_metadata,
+                )
+            )
 
             await insert_task_event(
                 task_id,

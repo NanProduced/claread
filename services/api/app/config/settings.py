@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     default_model_profile: str = ""
     annotation_model_profile: str = ""
+    daily_annotation_model_profile: str = ""
+    daily_analysis_model_profile: str = ""
+    daily_review_model_profile: str = ""
     model_profiles_json: str = ""
     model_presets_json: str = ""
     langsmith_enabled: bool = False

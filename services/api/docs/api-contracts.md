@@ -16,7 +16,7 @@
 | Auth | `GET /auth/session/me` | 登录态恢复和用户资料 |
 | Auth | `PATCH /auth/profile` | 用户资料和阅读偏好更新 |
 | Auth | `POST /auth/session/logout` | 退出登录 |
-| Analyze | `POST /analyze` | 匿名用户直连分析 / 调试兼容 |
+| Analyze | `POST /analyze` | 匿名试用 / 调试兼容直连；不走正式任务与积分结算主链路 |
 | Tasks | `POST /analysis-tasks` | 登录用户主分析链路 |
 | Tasks | `GET /analysis-tasks/current` | 恢复活跃任务 |
 | Tasks | `GET /analysis-tasks/{task_id}` | 任务轮询 |
@@ -56,6 +56,7 @@
 
 - `/dict` 和 `/dict/entry` 声明了 response model。
 - 手机号验证码登录已通过 `provider=phone` 和 `client_platform=web` 接入统一身份模型。
+- `POST /analyze` 明确定义为兼容入口，保留给匿名试用和调试评测；新的正式 AI 能力不应继续直接挂在该路由上。
 - `source_type` 统一为 `user_input / daily_article / imported / ocr`。
 - `RecordCreateRequest.source_type` 使用统一枚举。
 - `TaskSubmitResponse` / `TaskStatusResponse` 兼容只传 `record_id` 时自动补 `cloud_record_id`。

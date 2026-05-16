@@ -3,7 +3,10 @@ import json
 from app.config.settings import Settings
 from app.llm.provider_factory import build_model_instance
 from app.llm.router import ModelSelectionError, resolve_model_config
-from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
+from app.llm.routes import (
+    MODEL_ROUTE_ANNOTATION_GENERATION,
+    MODEL_ROUTE_DAILY_ANALYSIS,
+)
 from app.llm.types import ModelSelection, ResolvedModelConfig, RouteModelSelection, RunModelSettings
 
 
@@ -76,6 +79,35 @@ def test_resolve_model_config_supports_runtime_overrides_and_presets() -> None:
 
     assert annotation_model is not None
     assert annotation_model.profile_name == "minimax_m27"
+
+
+def test_resolve_model_config_uses_daily_route_default() -> None:
+    settings = Settings(
+        default_model_profile="shared_default",
+        daily_analysis_model_profile="daily_quality",
+        model_profiles_json=json.dumps(
+            {
+                "shared_default": {
+                    "provider": "openai_compatible",
+                    "model_name": "shared-default",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "key",
+                },
+                "daily_quality": {
+                    "provider": "openai_compatible",
+                    "model_name": "daily-quality-model",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "key",
+                },
+            }
+        ),
+    )
+
+    daily_model = resolve_model_config(settings, MODEL_ROUTE_DAILY_ANALYSIS)
+
+    assert daily_model is not None
+    assert daily_model.profile_name == "daily_quality"
+    assert daily_model.model_name == "daily-quality-model"
 
 
 def test_resolve_model_config_uses_preset_when_no_route_override_exists() -> None:

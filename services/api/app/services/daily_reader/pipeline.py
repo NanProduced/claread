@@ -12,10 +12,30 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from time import perf_counter
 
 import orjson
 
+from app.config.settings import get_settings
 from app.database import connection as db_connection
+from app.llm.router import resolve_model_config
+from app.llm.routes import (
+    MODEL_ROUTE_DAILY_ANALYSIS,
+    MODEL_ROUTE_DAILY_ANNOTATION,
+    MODEL_ROUTE_DAILY_REVIEW,
+)
+from app.services.ai_usage import (
+    AIUsageEventCreate,
+    BILLING_MODE_INTERNAL_ONLY,
+    CAPABILITY_DAILY_READER_PIPELINE,
+    STATUS_FAILED,
+    STATUS_SKIPPED,
+    STATUS_SUCCEEDED,
+    USAGE_SCOPE_SYSTEM_INTERNAL,
+    record_ai_usage_event,
+    resolve_model_metadata,
+)
+from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.daily_reader.discovery import DiscoveredArticle, discover_guardian, discover_rss_sources
 from app.services.daily_reader.extraction import apply_extraction_to_article, extract_with_trafilatura
 from app.services.daily_reader.cover_download import download_cover_image
@@ -36,6 +56,9 @@ SOURCE_ROTATION_POLICY = {
 }
 
 SCORING_MAX_CANDIDATES = 15
+DAILY_READER_WORKFLOW_NAME = "daily_reader"
+DAILY_READER_WORKFLOW_VERSION = "2.0.0"
+DAILY_READER_SCHEMA_VERSION = "1.0.0"
 
 
 @dataclass
@@ -46,6 +69,72 @@ class PipelineResult:
     candidates_scored: int = 0
     candidates_selected: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+def _resolve_daily_workflow_model_metadata() -> tuple[dict[str, str | None], dict[str, dict[str, str]]]:
+    settings = get_settings()
+    resolved_models: dict[str, dict[str, str]] = {}
+    primary_model_metadata = {
+        "model_route": MODEL_ROUTE_DAILY_ANALYSIS,
+        "model_profile": None,
+        "model_provider": None,
+        "model_name": None,
+    }
+
+    for route in (
+        MODEL_ROUTE_DAILY_ANNOTATION,
+        MODEL_ROUTE_DAILY_ANALYSIS,
+        MODEL_ROUTE_DAILY_REVIEW,
+    ):
+        metadata = resolve_model_metadata(settings, route)
+        if metadata["model_profile"] is None:
+            continue
+        resolved_models[route] = {
+            "profile": metadata["model_profile"] or "",
+            "provider": metadata["model_provider"] or "",
+            "model_name": metadata["model_name"] or "",
+        }
+        if route == MODEL_ROUTE_DAILY_ANALYSIS:
+            primary_model_metadata = metadata
+
+    return primary_model_metadata, resolved_models
+
+
+async def _record_daily_pipeline_event(
+    *,
+    request_id: str,
+    status: str,
+    usage_data: dict | None,
+    latency_ms: int,
+    daily_reader_article_id: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    metadata_json: dict | None = None,
+) -> None:
+    primary_model_metadata, resolved_models = _resolve_daily_workflow_model_metadata()
+    payload_metadata = dict(metadata_json or {})
+    payload_metadata.setdefault("resolved_models", resolved_models)
+
+    await record_ai_usage_event(
+        AIUsageEventCreate(
+            usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+            capability_code=CAPABILITY_DAILY_READER_PIPELINE,
+            billing_mode=BILLING_MODE_INTERNAL_ONLY,
+            status=status,
+            request_id=request_id,
+            daily_reader_article_id=daily_reader_article_id,
+            workflow_name=DAILY_READER_WORKFLOW_NAME,
+            workflow_version=DAILY_READER_WORKFLOW_VERSION,
+            schema_version=DAILY_READER_SCHEMA_VERSION,
+            prompt_version=get_prompt_version(),
+            usage_data=usage_data,
+            latency_ms=latency_ms,
+            error_code=error_code,
+            error_message=error_message,
+            metadata_json=payload_metadata,
+            **primary_model_metadata,
+        )
+    )
 
 
 async def run_daily_pipeline(
@@ -243,6 +332,7 @@ async def _run_workflow_and_store(
     }
 
     logger.info("Workflow starting for: %s", article.title[:60])
+    started_at = perf_counter()
     try:
         final_state = await graph.ainvoke(
             input_state,
@@ -270,6 +360,21 @@ async def _run_workflow_and_store(
         logger.error("Daily Reader Workflow execution failed: %s", e)
         if tracker:
             await tracker.add_error("workflow", f"Workflow failed: {article.title[:40]}: {e}")
+        await _record_daily_pipeline_event(
+            request_id=article.url,
+            status=STATUS_FAILED,
+            usage_data=None,
+            latency_ms=int((perf_counter() - started_at) * 1000),
+            error_code=type(e).__name__,
+            error_message=str(e),
+            metadata_json={
+                "entrypoint": "daily_reader_pipeline",
+                "article_title": article.title[:80],
+                "article_source": article.source,
+                "article_word_count": article.word_count,
+                "pipeline_score": score.score,
+            },
+        )
         return None
 
     if final_state.get("abort"):
@@ -278,6 +383,21 @@ async def _run_workflow_and_store(
         logger.info("Workflow aborted for: %s (reason: %s)", article.title[:50], abort_reason)
         if tracker:
             await tracker.add_error("workflow_abort", f"Aborted: {article.title[:40]}: {abort_reason}")
+        await _record_daily_pipeline_event(
+            request_id=article.url,
+            status=STATUS_SKIPPED,
+            usage_data=final_state.get("usage_summary"),
+            latency_ms=int((perf_counter() - started_at) * 1000),
+            error_code="workflow_abort",
+            error_message=str(abort_reason),
+            metadata_json={
+                "entrypoint": "daily_reader_pipeline",
+                "article_title": article.title[:80],
+                "article_source": article.source,
+                "article_word_count": article.word_count,
+                "pipeline_score": score.score,
+            },
+        )
         return None
 
     paragraph_notes = final_state.get("paragraph_notes_json", {})
@@ -286,16 +406,51 @@ async def _run_workflow_and_store(
                 list(paragraph_notes.keys()) if isinstance(paragraph_notes, dict) else type(paragraph_notes),
                 list(takeaways.keys()) if isinstance(takeaways, dict) else type(takeaways))
 
-    if tracker:
-        await tracker.update_stage("cover_download")
-    local_cover_url = None
-    if article.cover_image_url:
-        local_cover_url = await download_cover_image(article.cover_image_url)
+    try:
+        if tracker:
+            await tracker.update_stage("cover_download")
+        local_cover_url = None
+        if article.cover_image_url:
+            local_cover_url = await download_cover_image(article.cover_image_url)
 
-    if tracker:
-        await tracker.update_stage("storing")
-    payload = await _assemble_payload(article, score, final_state, local_cover_url)
-    await _store_daily_reader(payload)
+        if tracker:
+            await tracker.update_stage("storing")
+        payload = await _assemble_payload(article, score, final_state, local_cover_url)
+        await _store_daily_reader(payload)
+    except Exception as e:
+        await _record_daily_pipeline_event(
+            request_id=article.url,
+            status=STATUS_FAILED,
+            usage_data=final_state.get("usage_summary"),
+            latency_ms=int((perf_counter() - started_at) * 1000),
+            error_code=type(e).__name__,
+            error_message=str(e),
+            metadata_json={
+                "entrypoint": "daily_reader_pipeline",
+                "article_title": article.title[:80],
+                "article_source": article.source,
+                "article_word_count": article.word_count,
+                "pipeline_score": score.score,
+            },
+        )
+        raise
+
+    await _record_daily_pipeline_event(
+        request_id=article.url,
+        daily_reader_article_id=payload["id"],
+        status=STATUS_SUCCEEDED,
+        usage_data=final_state.get("usage_summary"),
+        latency_ms=int((perf_counter() - started_at) * 1000),
+        metadata_json={
+            "entrypoint": "daily_reader_pipeline",
+            "article_title": article.title[:80],
+            "article_source": article.source,
+            "article_word_count": article.word_count,
+            "pipeline_score": score.score,
+            "stored_article_id": payload["id"],
+            "stored_status": payload["status"],
+        },
+    )
     logger.info("Article stored: %s (cover=%s)", article.title[:50], bool(local_cover_url))
     return payload
 
@@ -340,6 +495,7 @@ async def run_workflow_only(article_id: str) -> dict | None:
         "pipeline_meta": _decode_jsonb(row["pipeline_meta"], {}),
     }
 
+    started_at = perf_counter()
     try:
         final_state = await graph.ainvoke(
             input_state,
@@ -360,10 +516,36 @@ async def run_workflow_only(article_id: str) -> dict | None:
         )
     except Exception as e:
         logger.error("Retry workflow execution failed for %s: %s", article_id, e)
+        await _record_daily_pipeline_event(
+            request_id=article_id,
+            daily_reader_article_id=article_id,
+            status=STATUS_FAILED,
+            usage_data=None,
+            latency_ms=int((perf_counter() - started_at) * 1000),
+            error_code=type(e).__name__,
+            error_message=str(e),
+            metadata_json={
+                "entrypoint": "daily_reader_retry",
+                "article_id": article_id,
+            },
+        )
         raise
 
     if final_state.get("abort"):
         logger.info("Retry workflow aborted for: %s", article_id)
+        await _record_daily_pipeline_event(
+            request_id=article_id,
+            daily_reader_article_id=article_id,
+            status=STATUS_SKIPPED,
+            usage_data=final_state.get("usage_summary"),
+            latency_ms=int((perf_counter() - started_at) * 1000),
+            error_code="workflow_abort",
+            error_message="quality_review_rejected",
+            metadata_json={
+                "entrypoint": "daily_reader_retry",
+                "article_id": article_id,
+            },
+        )
         return None
 
     async with pool.acquire() as conn:
@@ -380,6 +562,22 @@ async def run_workflow_only(article_id: str) -> dict | None:
             final_state.get("takeaways_json", {}),
             article_id,
         )
+
+    await _record_daily_pipeline_event(
+        request_id=article_id,
+        daily_reader_article_id=article_id,
+        status=STATUS_SUCCEEDED,
+        usage_data=final_state.get("usage_summary"),
+        latency_ms=int((perf_counter() - started_at) * 1000),
+        metadata_json={
+            "entrypoint": "daily_reader_retry",
+            "article_id": article_id,
+            "body_updated": True,
+            "highlights_updated": True,
+            "paragraph_notes_updated": True,
+            "takeaways_updated": True,
+        },
+    )
 
     return {
         "id": article_id,

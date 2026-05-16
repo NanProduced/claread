@@ -598,9 +598,17 @@ class TestTaskExecutorCharging:
                 AsyncMock(),
             ),
             patch(
+                "app.services.analysis.task_executor.records_svc.increment_user_reading_count",
+                AsyncMock(return_value=True),
+            ),
+            patch(
                 "app.services.analysis.task_executor.deduct_credits",
                 AsyncMock(return_value=17),
             ) as deduct_mock,
+            patch(
+                "app.services.analysis.task_executor.record_ai_usage_event",
+                AsyncMock(return_value=True),
+            ) as usage_event_mock,
         ):
             await execute_task(
                 task_id=task_id,
@@ -615,6 +623,10 @@ class TestTaskExecutorCharging:
 
         deduct_mock.assert_awaited_once()
         assert deduct_mock.await_args.kwargs["cost_points"] == 17
+        event = usage_event_mock.await_args.args[0]
+        assert event.status == "succeeded"
+        assert event.usage_scope == "user_billed"
+        assert event.billed_points == 17
 
     @pytest.mark.anyio
     async def test_execute_task_does_not_charge_unrenderable_heavy_result(self):
@@ -698,6 +710,10 @@ class TestTaskExecutorCharging:
                 "app.services.analysis.task_executor.deduct_credits",
                 AsyncMock(return_value=4),
             ) as deduct_mock,
+            patch(
+                "app.services.analysis.task_executor.record_ai_usage_event",
+                AsyncMock(return_value=True),
+            ) as usage_event_mock,
         ):
             await execute_task(
                 task_id=task_id,
@@ -715,6 +731,9 @@ class TestTaskExecutorCharging:
         assert status_mock.await_args_list[-1].kwargs["status"] == "failed"
         assert update_record_mock.await_args_list[-1].kwargs["analysis_status"] == "failed"
         assert event_mock.await_args_list[-1].args[1] == "task_failed"
+        usage_event = usage_event_mock.await_args.args[0]
+        assert usage_event.status == "failed"
+        assert usage_event.billed_points == 0
 
 
 class TestWorkerLoop:
