@@ -6,6 +6,7 @@ from app.llm.router import ModelSelectionError, resolve_model_config
 from app.llm.routes import (
     MODEL_ROUTE_ANNOTATION_GENERATION,
     MODEL_ROUTE_DAILY_ANALYSIS,
+    MODEL_ROUTE_DICT_AI,
 )
 from app.llm.types import ModelSelection, ResolvedModelConfig, RouteModelSelection, RunModelSettings
 
@@ -108,6 +109,36 @@ def test_resolve_model_config_uses_daily_route_default() -> None:
     assert daily_model is not None
     assert daily_model.profile_name == "daily_quality"
     assert daily_model.model_name == "daily-quality-model"
+
+
+def test_resolve_model_config_uses_dict_ai_route_default_with_annotation_fallback() -> None:
+    settings = Settings(
+        default_model_profile="shared_default",
+        annotation_model_profile="annotation_quality",
+        dict_ai_model_profile="",
+        model_profiles_json=json.dumps(
+            {
+                "shared_default": {
+                    "provider": "openai_compatible",
+                    "model_name": "shared-default",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "key",
+                },
+                "annotation_quality": {
+                    "provider": "openai_compatible",
+                    "model_name": "annotation-quality-model",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "key",
+                },
+            }
+        ),
+    )
+
+    dict_ai_model = resolve_model_config(settings, MODEL_ROUTE_DICT_AI)
+
+    assert dict_ai_model is not None
+    assert dict_ai_model.profile_name == "annotation_quality"
+    assert dict_ai_model.model_name == "annotation-quality-model"
 
 
 def test_resolve_model_config_uses_preset_when_no_route_override_exists() -> None:

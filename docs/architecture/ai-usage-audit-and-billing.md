@@ -61,6 +61,7 @@
 |------|------|------|------|------|
 | `POST /analysis-tasks` worker 执行 | `user_billed` | `user_points` | `analysis_full` | 登录用户正式分析主链路 |
 | `POST /analyze` | `anonymous_trial` / `eval_debug` | `trial` / `no_charge` | `analysis_full` | 兼容匿名试用与调试直连，不应扩展成新能力总入口 |
+| `POST /dict/ai` | `user_billed` | `user_points` | `dict_ai_lookup` | 登录用户的词典 AI 能力；支持 `context_explain` 与 `missing_fallback` |
 | Daily Reader scoring | `system_internal` | `internal_only` | `daily_reader_scoring` | 候选文章 LLM 评分 |
 | Daily Reader workflow / retry | `system_internal` | `internal_only` | `daily_reader_pipeline` | 精读正文生成与重跑 |
 
@@ -75,15 +76,19 @@
 
 ## 计费策略现状
 
-当前只有 `analysis_full` 已接入用户积分策略：
+当前已接入用户积分策略的 capability 包括：
 
-- policy: `analysis_weighted_tokens_v1`
-- 公式: `ceil((input_tokens * 1 + output_tokens * 5) / 1000)`
+- `analysis_full`
+  - policy: `analysis_weighted_tokens_v1`
+  - 公式: `ceil((input_tokens * 1 + output_tokens * 5) / 1000)`
+- `dict_ai_lookup`
+  - policy: `dict_ai_fixed_points_v1`
+  - 固定价格: 每次 `5` 点
+  - 真实 token usage 仍写入 `ai_usage_events` 与 billing metadata，仅用于审计和后续定价回看
 
-该策略已经从任务执行器中抽离到统一的 `app/services/ai_usage/billing.py`，后续词典 AI、Ask Claread、Grammar X-Ray 等能力应按 capability 独立扩展。
+该策略已经从任务执行器中抽离到统一的 `app/services/ai_usage/billing.py`，后续 Ask Claread、Grammar X-Ray 等能力应按 capability 独立扩展。
 
 ## 下一步建议
 
-- 为词典 AI 定义独立 capability code 和 billing policy。
 - 为用户设置页和运营后台补 usage 查询接口。
 - 在长任务场景上补充预估 / 预扣 / 结算闭环。

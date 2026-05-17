@@ -1,7 +1,11 @@
 from .billing import (
     ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION,
+    DICT_AI_FIXED_POINTS,
+    DICT_AI_FIXED_POINTS_POLICY_VERSION,
     build_analysis_billing_metadata,
+    build_dict_ai_billing_metadata,
     compute_analysis_cost_points,
+    compute_dict_ai_cost_points,
 )
 from .capabilities import (
     CAPABILITY_ANALYSIS_FULL,
@@ -37,6 +41,8 @@ from .types import (
 __all__ = [
     "AIUsageEventCreate",
     "ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION",
+    "DICT_AI_FIXED_POINTS",
+    "DICT_AI_FIXED_POINTS_POLICY_VERSION",
     "BILLING_MODE_INTERNAL_ONLY",
     "BILLING_MODE_NO_CHARGE",
     "BILLING_MODE_TRIAL",
@@ -58,7 +64,9 @@ __all__ = [
     "USAGE_SCOPE_SYSTEM_INTERNAL",
     "USAGE_SCOPE_USER_BILLED",
     "build_analysis_billing_metadata",
+    "build_dict_ai_billing_metadata",
     "compute_analysis_cost_points",
+    "compute_dict_ai_cost_points",
     "extract_request_id_from_render_scene",
     "extract_schema_version_from_render_scene",
     "record_ai_usage_event",

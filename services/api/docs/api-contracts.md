@@ -30,6 +30,7 @@
 | Credit | `GET /me/credit/ledger` | 积分流水 |
 | Dict | `GET /dict` | 查词 |
 | Dict | `GET /dict/entry` | 词条详情 |
+| Dict AI | `POST /dict/ai` | 词典 AI 增强；登录用户的正式 AI 能力入口，支持 `context_explain` 与 `missing_fallback` |
 | Vocabulary | `POST /vocabulary` | 生词同步 |
 | Vocabulary | `GET /vocabulary` | 生词列表 |
 | Vocabulary | `POST /vocabulary/highlights` | 结果页高亮和已收藏生词匹配 |
@@ -55,9 +56,11 @@
 
 ## 当前契约状态
 
-- `/dict` 和 `/dict/entry` 声明了 response model。
+- `/dict`、`/dict/entry` 和 `POST /dict/ai` 都声明了 response model。
 - 手机号验证码登录已通过 `provider=phone` 和 `client_platform=web` 接入统一身份模型。
 - `POST /analyze` 明确定义为兼容入口，保留给匿名试用和调试评测；新的正式 AI 能力不应继续直接挂在该路由上。
+- `POST /dict/ai` 是首个正式用户侧词典 AI 能力入口；要求登录态、参与积分结算、写入统一 AI usage 审计，并在 `missing_fallback` 成功后把 AI 输出写入候选池 `dict_ai_candidate_entries`。
+- `POST /dict/ai` 当前按固定价格结算：`context_explain` 与 `missing_fallback` 都是每次 `5` 点；真实 token usage 只用于审计，不直接映射用户侧扣点。
 - `source_type` 统一为 `user_input / daily_article / imported / ocr`。
 - `RecordCreateRequest.source_type` 使用统一枚举。
 - `TaskSubmitResponse` / `TaskStatusResponse` 兼容只传 `record_id` 时自动补 `cloud_record_id`。

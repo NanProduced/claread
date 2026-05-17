@@ -12,10 +12,11 @@ from app.database import connection as db_connection
 
 ENTRY_TYPE_DESCRIPTIONS: dict[str, str] = {
     "analysis_deduct": "分析扣减",
+    "ai_capability_deduct": "AI 能力扣减",
     "feedback_reward": "反馈奖励 · 你的反馈已被采纳",
     "daily_grant": "每日常规额度刷新",
     "bonus_grant": "奖励积分到账",
-    "refund": "分析失败 · 积分退回",
+    "refund": "能力失败 · 积分退回",
     "manual_adjust": "管理员调整",
 }
 
@@ -63,9 +64,20 @@ async def get_credit_ledger(
         entry_type = row["entry_type"]
         description = ENTRY_TYPE_DESCRIPTIONS.get(entry_type, entry_type)
         article_title = row.get("article_title")
+        metadata = row.get("metadata_json") or {}
 
         if entry_type == "analysis_deduct" and article_title:
             description = f"分析扣减 · {article_title[:30]}"
+        elif entry_type == "ai_capability_deduct":
+            capability_code = metadata.get("capability_code")
+            query = metadata.get("query")
+            if capability_code == "dict_ai_lookup" and query:
+                description = f"AI 词典能力扣减 · {str(query)[:30]}"
+        elif entry_type == "refund":
+            capability_code = metadata.get("capability_code")
+            query = metadata.get("query")
+            if capability_code == "dict_ai_lookup" and query:
+                description = f"AI 词典能力退款 · {str(query)[:30]}"
 
         items.append({
             "id": str(row["id"]),

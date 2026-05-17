@@ -59,6 +59,9 @@ class DictionaryService:
         except ValueError:
             raise WordNotFoundError(f"Entry not found: {entry_id}") from None
 
+    def normalize_query(self, word: str) -> str:
+        return self._normalize(word)
+
     def _normalize(self, word: str) -> str:
         normalized = word.strip().translate(self._TRANSLATION_MAP).lower()
         normalized = normalized.replace("·", "").replace("•", "")

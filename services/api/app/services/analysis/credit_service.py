@@ -1,14 +1,17 @@
 """
 Credit Service.
 
-Handles quota checking, credit deduction, daily reset, and ledger entries.
-Integrated with task submission (pre-check) and task execution (post-deduct).
+Handles quota checking, credit deduction, fixed-cost reservation/refund,
+daily reset, and ledger entries.
+Integrated with task submission (pre-check), task execution (post-deduct),
+and synchronous AI capabilities that need upfront reservation.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -19,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 # Default daily free points for new accounts
 DEFAULT_DAILY_FREE_POINTS = 1000
+LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT = "analysis_deduct"
+LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT = "ai_capability_deduct"
+LEDGER_ENTRY_TYPE_REFUND = "refund"
 
 
 class InsufficientCredits(Exception):
@@ -30,6 +36,13 @@ class InsufficientCredits(Exception):
         super().__init__(
             f"Insufficient credits: remaining={remaining}, required>={required}"
         )
+
+
+@dataclass(slots=True)
+class CreditReservation:
+    total_points: int
+    deducted_from_daily: int
+    deducted_from_bonus: int
 
 
 async def ensure_credit_account(user_id: UUID) -> None:
@@ -115,10 +128,12 @@ async def check_quota(user_id: UUID) -> int:
             return (daily_free - daily_used) + bonus
 
 
-async def deduct_credits(
+async def deduct_points(
     user_id: UUID,
-    task_id: UUID,
     cost_points: int,
+    *,
+    task_id: UUID | None = None,
+    entry_type: str = LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
     metadata: dict[str, Any] | None = None,
 ) -> int:
     """
@@ -130,8 +145,9 @@ async def deduct_credits(
 
     Args:
         user_id: User to deduct from
-        task_id: Associated task ID
         cost_points: Points to deduct (must be > 0)
+        task_id: Optional associated task ID
+        entry_type: Ledger entry type
         metadata: Extra metadata (token counts, multipliers, etc.)
 
     Returns:
@@ -212,10 +228,11 @@ async def deduct_credits(
                     """
                     INSERT INTO user_credit_ledger
                         (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, 'analysis_deduct', $3, 'daily_free', $4, $5, $6)
+                    VALUES ($1, $2, $3, $4, 'daily_free', $5, $6, $7)
                     """,
                     user_id,
                     task_id,
+                    entry_type,
                     -deduct_from_daily,
                     balance_after,
                     json.dumps(metadata or {}),
@@ -227,10 +244,11 @@ async def deduct_credits(
                     """
                     INSERT INTO user_credit_ledger
                         (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, 'analysis_deduct', $3, 'bonus', $4, $5, $6)
+                    VALUES ($1, $2, $3, $4, 'bonus', $5, $6, $7)
                     """,
                     user_id,
                     task_id,
+                    entry_type,
                     -deduct_from_bonus,
                     balance_after,
                     json.dumps(metadata or {}),
@@ -244,6 +262,260 @@ async def deduct_credits(
             )
 
             return actual_total
+
+
+async def reserve_points(
+    user_id: UUID,
+    cost_points: int,
+    *,
+    task_id: UUID | None = None,
+    entry_type: str = LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+    metadata: dict[str, Any] | None = None,
+) -> CreditReservation | None:
+    """
+    Reserve a fixed amount of credits upfront.
+
+    Unlike `deduct_points`, this only succeeds when the full amount is available.
+    It is intended for short synchronous capabilities that should charge a fixed
+    price or not run at all.
+    """
+    if cost_points <= 0:
+        return CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    now = datetime.now(timezone.utc)
+    today = date.today()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT daily_free_points, daily_used_points, bonus_points, last_reset_on
+                FROM user_credit_accounts
+                WHERE user_id = $1
+                FOR UPDATE
+                """,
+                user_id,
+            )
+
+            if row is None:
+                logger.error("Cannot reserve credits: no account for user %s", user_id)
+                return None
+
+            daily_free = row["daily_free_points"]
+            daily_used = row["daily_used_points"]
+            bonus = row["bonus_points"]
+            last_reset = row["last_reset_on"]
+
+            if last_reset < today:
+                daily_used = 0
+
+            daily_remaining = max(daily_free - daily_used, 0)
+            available_bonus = max(bonus, 0)
+            available_total = daily_remaining + available_bonus
+            if available_total < cost_points:
+                return None
+
+            deduct_from_daily = min(cost_points, daily_remaining)
+            deduct_from_bonus = cost_points - deduct_from_daily
+
+            new_daily_used = daily_used + deduct_from_daily
+            new_bonus = bonus - deduct_from_bonus
+
+            await conn.execute(
+                """
+                UPDATE user_credit_accounts
+                SET daily_used_points = $2,
+                    bonus_points = $3,
+                    last_reset_on = $4,
+                    updated_at = $5
+                WHERE user_id = $1
+                """,
+                user_id,
+                new_daily_used,
+                new_bonus,
+                today,
+                now,
+            )
+
+            balance_after = (daily_free - new_daily_used) + new_bonus
+
+            if deduct_from_daily > 0:
+                await conn.execute(
+                    """
+                    INSERT INTO user_credit_ledger
+                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
+                    VALUES ($1, $2, $3, $4, 'daily_free', $5, $6, $7)
+                    """,
+                    user_id,
+                    task_id,
+                    entry_type,
+                    -deduct_from_daily,
+                    balance_after,
+                    json.dumps(metadata or {}),
+                    now,
+                )
+
+            if deduct_from_bonus > 0:
+                await conn.execute(
+                    """
+                    INSERT INTO user_credit_ledger
+                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
+                    VALUES ($1, $2, $3, $4, 'bonus', $5, $6, $7)
+                    """,
+                    user_id,
+                    task_id,
+                    entry_type,
+                    -deduct_from_bonus,
+                    balance_after,
+                    json.dumps(metadata or {}),
+                    now,
+                )
+
+            logger.info(
+                "Reserved %d points from user %s (daily=%d, bonus=%d, remaining=%d)",
+                cost_points,
+                user_id,
+                deduct_from_daily,
+                deduct_from_bonus,
+                balance_after,
+            )
+
+            return CreditReservation(
+                total_points=cost_points,
+                deducted_from_daily=deduct_from_daily,
+                deducted_from_bonus=deduct_from_bonus,
+            )
+
+
+async def refund_reserved_points(
+    user_id: UUID,
+    reservation: CreditReservation,
+    *,
+    task_id: UUID | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> int:
+    """Refund a prior fixed reservation back to the appropriate buckets."""
+    if reservation.total_points <= 0:
+        return 0
+
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    now = datetime.now(timezone.utc)
+    today = date.today()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT daily_free_points, daily_used_points, bonus_points, last_reset_on
+                FROM user_credit_accounts
+                WHERE user_id = $1
+                FOR UPDATE
+                """,
+                user_id,
+            )
+
+            if row is None:
+                logger.error("Cannot refund credits: no account for user %s", user_id)
+                return 0
+
+            daily_free = row["daily_free_points"]
+            daily_used = row["daily_used_points"]
+            bonus = row["bonus_points"]
+            last_reset = row["last_reset_on"]
+
+            bonus_refund = reservation.deducted_from_bonus
+            refund_to_daily = 0
+
+            if last_reset >= today:
+                refund_to_daily = min(reservation.deducted_from_daily, max(daily_used, 0))
+                bonus_refund += reservation.deducted_from_daily - refund_to_daily
+            else:
+                bonus_refund += reservation.deducted_from_daily
+                daily_used = 0
+
+            new_daily_used = max(daily_used - refund_to_daily, 0)
+            new_bonus = bonus + bonus_refund
+
+            await conn.execute(
+                """
+                UPDATE user_credit_accounts
+                SET daily_used_points = $2,
+                    bonus_points = $3,
+                    updated_at = $4
+                WHERE user_id = $1
+                """,
+                user_id,
+                new_daily_used,
+                new_bonus,
+                now,
+            )
+
+            balance_after = (daily_free - new_daily_used) + new_bonus
+
+            if refund_to_daily > 0:
+                await conn.execute(
+                    """
+                    INSERT INTO user_credit_ledger
+                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
+                    VALUES ($1, $2, $3, $4, 'daily_free', $5, $6, $7)
+                    """,
+                    user_id,
+                    task_id,
+                    LEDGER_ENTRY_TYPE_REFUND,
+                    refund_to_daily,
+                    balance_after,
+                    json.dumps(metadata or {}),
+                    now,
+                )
+
+            if bonus_refund > 0:
+                await conn.execute(
+                    """
+                    INSERT INTO user_credit_ledger
+                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
+                    VALUES ($1, $2, $3, $4, 'bonus', $5, $6, $7)
+                    """,
+                    user_id,
+                    task_id,
+                    LEDGER_ENTRY_TYPE_REFUND,
+                    bonus_refund,
+                    balance_after,
+                    json.dumps(metadata or {}),
+                    now,
+                )
+
+            refunded_total = refund_to_daily + bonus_refund
+            logger.info(
+                "Refunded %d points to user %s (daily=%d, bonus=%d, remaining=%d)",
+                refunded_total,
+                user_id,
+                refund_to_daily,
+                bonus_refund,
+                balance_after,
+            )
+            return refunded_total
+
+
+async def deduct_credits(
+    user_id: UUID,
+    task_id: UUID,
+    cost_points: int,
+    metadata: dict[str, Any] | None = None,
+) -> int:
+    return await deduct_points(
+        user_id,
+        cost_points,
+        task_id=task_id,
+        entry_type=LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
+        metadata=metadata,
+    )
 
 
 async def grant_bonus_credits(

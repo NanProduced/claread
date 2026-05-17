@@ -89,14 +89,14 @@ def _extract_usage_totals(usage_data: dict[str, Any] | None) -> dict[str, int]:
     }
 
 
-async def record_ai_usage_event(event: AIUsageEventCreate) -> bool:
+async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
     """
     Persist an AI usage audit event without interrupting the main business flow.
     """
     pool = db_connection.DB_POOL
     if pool is None:
         logger.warning("Skipping ai_usage_event because database pool is not initialized")
-        return False
+        return None
 
     usage_totals = _extract_usage_totals(event.usage_data)
     metadata_json = dict(event.metadata_json)
@@ -105,7 +105,7 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> bool:
 
     try:
         async with pool.acquire() as conn:
-            await conn.execute(
+            inserted_id = await conn.fetchval(
                 """
                 INSERT INTO ai_usage_events (
                     usage_scope, capability_code, billing_mode, status,
@@ -129,6 +129,7 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> bool:
                     $24, $25, $26,
                     $27, $28, $29::jsonb, $30
                 )
+                RETURNING id
                 """,
                 event.usage_scope,
                 event.capability_code,
@@ -161,7 +162,7 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> bool:
                 json.dumps(metadata_json, ensure_ascii=False),
                 datetime.now(timezone.utc),
             )
-        return True
+        return inserted_id if isinstance(inserted_id, UUID) else None
     except Exception:
         logger.exception(
             "Failed to record ai_usage_event(scope=%s, capability=%s, status=%s)",
@@ -169,4 +170,4 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> bool:
             event.capability_code,
             event.status,
         )
-        return False
+        return None

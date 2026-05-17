@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION = "analysis_weighted_tokens_v1"
+DICT_AI_FIXED_POINTS_POLICY_VERSION = "dict_ai_fixed_points_v1"
+DICT_AI_FIXED_POINTS = 5
 
 MULTIPLIER_INPUT = 1
 MULTIPLIER_OUTPUT = 5
@@ -44,4 +46,20 @@ def build_analysis_billing_metadata(usage_summary: dict[str, Any] | None) -> dic
         "multiplier_output": MULTIPLIER_OUTPUT,
         "tokens_per_point": TOKENS_PER_POINT,
         "billing_policy_version": ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION,
+    }
+
+
+def compute_dict_ai_cost_points(usage_summary: dict[str, Any] | None) -> int:
+    _ = usage_summary
+    return DICT_AI_FIXED_POINTS
+
+
+def build_dict_ai_billing_metadata(usage_summary: dict[str, Any] | None) -> dict[str, Any]:
+    aggregate = _extract_usage_aggregate(usage_summary)
+    return {
+        "input_tokens": int(aggregate.get("input_tokens") or 0),
+        "output_tokens": int(aggregate.get("output_tokens") or 0),
+        "total_tokens": int(aggregate.get("total_tokens") or 0),
+        "fixed_points": DICT_AI_FIXED_POINTS,
+        "billing_policy_version": DICT_AI_FIXED_POINTS_POLICY_VERSION,
     }
