@@ -6,7 +6,9 @@ import { TEXT_RANGE_HASH_ALGORITHM, TEXT_RANGE_OFFSET_UNIT, USER_ANNOTATION_COLO
 import {
   BookOpen,
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   MoreHorizontal,
   Pin,
   Search,
@@ -46,7 +48,7 @@ import type {
   WebAnnotationVm,
 } from "@/types/api/annotations";
 import type { WebFavoriteTargetVm } from "@/types/api/favorites";
-import type { WebDictResult } from "@/types/api/dict";
+import type { WebDictCandidate, WebDictDisambiguationResult, WebDictEntry, WebDictResult } from "@/types/api/dict";
 import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
 import type { InlineGlossary, InlineMarkModel, SentenceEntryModel, SentenceModel } from "@/types/view/ReaderMockVm";
 import {
@@ -69,6 +71,7 @@ type ReadingDensity = "calm" | "roomy";
 type ReaderTheme = "paper" | "white" | "green";
 type MarkVisibility = "full" | "quiet";
 type ReaderFontSize = "compact" | "normal" | "large";
+type DictionaryContentTab = "meanings" | "examples" | "phrases" | "forms";
 type DictionaryEntryResult = Extract<WebDictResult, { kind: "entry" }>;
 type RouteFocusSegment = {
   sentenceId: string;
@@ -699,37 +702,246 @@ function splitDictionaryField(value?: string) {
     .filter(Boolean);
 }
 
-function dictionaryExampleItems(entry: DictionaryEntryResult["entry"]) {
-  const items: Array<{ example: string; exampleTranslation?: string }> = [];
-  const seen = new Set<string>();
+type DictionarySenseExample = {
+  key: string;
+  example: string;
+  exampleTranslation?: string;
+};
 
-  function add(example?: string, exampleTranslation?: string) {
-    const normalized = example?.trim();
-    if (!normalized || seen.has(normalized.toLowerCase())) {
-      return;
+type DictionarySenseItem = {
+  key: string;
+  number: number;
+  partOfSpeech: string;
+  meaning: string;
+  examples: DictionarySenseExample[];
+};
+
+type DictionaryExampleGroup = {
+  key: string;
+  number?: number;
+  partOfSpeech?: string;
+  meaning: string;
+  examples: DictionarySenseExample[];
+  supplemental?: boolean;
+};
+
+type DictionaryCandidateGroup = {
+  key: string;
+  label: string;
+  hint: string;
+  candidates: WebDictCandidate[];
+};
+
+function dictionarySenseItems(entry: WebDictEntry): DictionarySenseItem[] {
+  let senseNumber = 0;
+
+  return entry.meanings.flatMap((meaning, meaningIndex) =>
+    meaning.definitions.map((definition, definitionIndex) => {
+      senseNumber += 1;
+      const examples = splitDictionaryField(definition.example);
+      const translations = splitDictionaryField(definition.exampleTranslation);
+      const seenExamples = new Set<string>();
+      const definitionExamples = examples.flatMap((example, exampleIndex) => {
+        const normalized = example.trim();
+        if (!normalized) {
+          return [];
+        }
+        const dedupeKey = normalized.toLowerCase();
+        if (seenExamples.has(dedupeKey)) {
+          return [];
+        }
+        seenExamples.add(dedupeKey);
+        return [
+          {
+            key: `${entry.id}-${meaningIndex}-${definitionIndex}-example-${exampleIndex}`,
+            example: normalized,
+            exampleTranslation: translations[exampleIndex]?.trim() || undefined,
+          },
+        ];
+      });
+
+      return {
+        key: `${entry.id}-${meaningIndex}-${definitionIndex}-${definition.meaning}`,
+        number: senseNumber,
+        partOfSpeech: meaning.partOfSpeech,
+        meaning: definition.meaning,
+        examples: definitionExamples,
+      };
+    }),
+  );
+}
+
+function dictionaryExampleGroups(entry: WebDictEntry, senseItems: DictionarySenseItem[]): DictionaryExampleGroup[] {
+  const seenExamples = new Set(
+    senseItems.flatMap((sense) => sense.examples.map((example) => example.example.trim().toLowerCase())),
+  );
+
+  const groups: DictionaryExampleGroup[] = senseItems
+    .filter((sense) => sense.examples.length > 0)
+    .map((sense) => ({
+      key: sense.key,
+      number: sense.number,
+      partOfSpeech: sense.partOfSpeech,
+      meaning: sense.meaning,
+      examples: sense.examples,
+    }));
+
+  const supplementalExamples = entry.examples.flatMap((example, index) => {
+    const normalized = example.example.trim();
+    if (!normalized) {
+      return [];
     }
-    seen.add(normalized.toLowerCase());
-    items.push({
-      example: normalized,
-      exampleTranslation: exampleTranslation?.trim() || undefined,
-    });
-  }
-
-  entry.examples.forEach((example) => {
-    add(example.example, example.exampleTranslation);
+    const dedupeKey = normalized.toLowerCase();
+    if (seenExamples.has(dedupeKey)) {
+      return [];
+    }
+    seenExamples.add(dedupeKey);
+    return [
+      {
+        key: `${entry.id}-supplemental-example-${index}`,
+        example: normalized,
+        exampleTranslation: example.exampleTranslation?.trim() || undefined,
+      },
+    ];
   });
 
-  if (items.length === 0) {
-    entry.meanings.forEach((meaning) => {
-      meaning.definitions.forEach((definition) => {
-        const examples = splitDictionaryField(definition.example);
-        const translations = splitDictionaryField(definition.exampleTranslation);
-        examples.forEach((example, index) => add(example, translations[index]));
-      });
+  if (supplementalExamples.length > 0) {
+    groups.push({
+      key: `${entry.id}-supplemental`,
+      meaning: "补充例句",
+      examples: supplementalExamples,
+      supplemental: true,
     });
   }
 
-  return items;
+  return groups;
+}
+
+function dictionaryPartOfSpeechItems(entry: WebDictEntry) {
+  const seen = new Set<string>();
+  return entry.meanings
+    .map((meaning) => meaning.partOfSpeech.trim())
+    .filter((partOfSpeech) => {
+      if (!partOfSpeech) {
+        return false;
+      }
+      const normalized = partOfSpeech.toLowerCase();
+      if (seen.has(normalized)) {
+        return false;
+      }
+      seen.add(normalized);
+      return true;
+    });
+}
+
+const dictionaryTagLabelMap: Record<string, string> = {
+  cet: "大学四六级",
+  cet4: "大学四级",
+  cet6: "大学六级",
+  gaokao: "高考",
+  gmat: "GMAT",
+  gre: "GRE",
+  ielts: "雅思",
+  ielts_toefl: "雅思托福",
+  kaoyan: "考研",
+  sat: "SAT",
+  tem: "专业英语",
+  tem4: "专业英语",
+  tem8: "专业英语",
+  toefl: "托福",
+};
+
+function dictionaryDisplayTags(tags: string[], readingGoal: string) {
+  if (readingGoal !== "exam") {
+    return [];
+  }
+  const values = tags
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => dictionaryTagLabelMap[tag.toLowerCase()] ?? tag.toUpperCase());
+  return Array.from(new Set(values));
+}
+
+function dictionaryLookupHistoryKey(lookup: DictionaryLookupSnapshot) {
+  return `${lookup.query}-${lookup.sentenceId}-${lookup.anchorText}`;
+}
+
+function dictionaryEntrySummary(result: DictionaryEntryResult, lookup?: DictionaryLookupSnapshot | null) {
+  return contextualGlossaryText(lookup?.glossary) || firstMeaning(result) || "";
+}
+
+function dictionaryLookupHistorySummary(lookup: DictionaryLookupSnapshot) {
+  if (lookup.state.kind === "loading") {
+    return "查询中";
+  }
+
+  if (lookup.state.kind !== "ready") {
+    return "词典暂不可用";
+  }
+
+  const result = lookup.state.result;
+
+  if (result.kind === "entry") {
+    return dictionaryEntrySummary(result, lookup) || "已打开词条";
+  }
+
+  if (result.kind === "disambiguation") {
+    return result.candidates[0]?.preview || result.candidates[0]?.label || "有多个候选词义";
+  }
+
+  if (result.kind === "not_found") {
+    return "词典暂未收录";
+  }
+
+  return result.message || "词典暂不可用";
+}
+
+function disambiguationGroupMeta(
+  candidate: WebDictCandidate,
+  ambiguityKind: WebDictDisambiguationResult["ambiguityKind"],
+) {
+  if (candidate.candidateKind === "phrase") {
+    return { key: "phrase", label: "完整短语", hint: "优先按固定表达区分" };
+  }
+  if (candidate.candidateKind === "proper_noun") {
+    return { key: "proper_noun", label: "专有名词", hint: "区分专名与普通词义" };
+  }
+  if (candidate.candidateKind === "fragment" || candidate.entryKind === "fragment") {
+    return { key: "fragment", label: "片段释义", hint: "更像局部搭配或片段命中" };
+  }
+  if (candidate.candidateKind === "variant") {
+    return { key: "variant", label: "词形 / 变体", hint: "同源词形或变体词条" };
+  }
+  if (ambiguityKind === "proper_vs_common") {
+    return { key: "common_word", label: "普通词", hint: "和专名相对的普通义项" };
+  }
+  return { key: "common_word", label: "普通词", hint: "按常见词义查看" };
+}
+
+function groupDisambiguationCandidates(result: WebDictDisambiguationResult) {
+  const groups = new Map<string, DictionaryCandidateGroup>();
+
+  result.candidates.forEach((candidate) => {
+    const meta = disambiguationGroupMeta(candidate, result.ambiguityKind);
+    const current = groups.get(meta.key);
+    if (current) {
+      current.candidates.push(candidate);
+      return;
+    }
+    groups.set(meta.key, {
+      ...meta,
+      candidates: [candidate],
+    });
+  });
+
+  const order = ["proper_noun", "common_word", "phrase", "fragment", "variant"];
+  return Array.from(groups.values()).sort((left, right) => {
+    const leftIndex = order.indexOf(left.key);
+    const rightIndex = order.indexOf(right.key);
+    const safeLeft = leftIndex === -1 ? order.length : leftIndex;
+    const safeRight = rightIndex === -1 ? order.length : rightIndex;
+    return safeLeft - safeRight;
+  });
 }
 
 function InlineLookupPreview({
@@ -1177,12 +1389,15 @@ function renderSentenceText({
 
 function DictionaryDetailPanel({
   lookup,
+  readingGoal,
   saveState,
   searchQuery,
+  searchExpanded,
   onSave,
   onSearchQueryChange,
   onSearchSubmit,
   onSelectCandidate,
+  onToggleSearchExpanded,
   onDismiss,
   pinned = false,
   onTogglePinned,
@@ -1190,12 +1405,15 @@ function DictionaryDetailPanel({
   canSaveVocabulary = true,
 }: {
   lookup: DictionaryLookupSnapshot | null;
+  readingGoal: string;
   saveState: SaveState;
   searchQuery: string;
+  searchExpanded: boolean;
   onSave: () => void;
   onSearchQueryChange: (value: string) => void;
   onSearchSubmit: (query: string) => void;
   onSelectCandidate: (entryId: number) => void;
+  onToggleSearchExpanded: () => void;
   onDismiss?: () => void;
   pinned?: boolean;
   onTogglePinned?: () => void;
@@ -1207,25 +1425,287 @@ function DictionaryDetailPanel({
   const disambiguationResult = lookupResult?.kind === "disambiguation" ? lookupResult : null;
   const notFoundResult = lookupResult?.kind === "not_found" ? lookupResult : null;
   const errorResult = lookupResult?.kind === "error" ? lookupResult : null;
-  const glossaryTitle = lookup ? contextualGlossaryTitle(lookup) : null;
-  const glossaryText = contextualGlossaryText(lookup?.glossary);
   const isCard = variant === "card";
-  const examples = entryResult ? dictionaryExampleItems(entryResult.entry) : [];
+  const [meaningsExpanded, setMeaningsExpanded] = useState(false);
+  const [expandedMeaningKeys, setExpandedMeaningKeys] = useState<string[]>([]);
+  const [phrasesExpanded, setPhrasesExpanded] = useState(false);
+  const [formsExpanded, setFormsExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<DictionaryContentTab>("meanings");
+  const senseItems = entryResult ? dictionarySenseItems(entryResult.entry) : [];
+  const exampleGroups = entryResult ? dictionaryExampleGroups(entryResult.entry, senseItems) : [];
+  const exampleCount = exampleGroups.reduce((total, group) => total + group.examples.length, 0);
+  const displayTags = entryResult ? dictionaryDisplayTags(entryResult.entry.tags, readingGoal) : [];
+  const visibleTags = displayTags.slice(0, 3);
+  const hiddenTagCount = Math.max(displayTags.length - visibleTags.length, 0);
+  const candidateGroups = disambiguationResult ? groupDisambiguationCandidates(disambiguationResult) : [];
   const panelSizing = isCard
-    ? "h-full min-h-[22rem]"
-    : lookup
-      ? onDismiss
-        ? "h-full min-h-[18rem]"
-        : "min-h-[18rem] xl:max-h-[calc(100vh-1.5rem)]"
-      : onDismiss
-        ? "h-full min-h-[13.5rem]"
-        : "min-h-[13.5rem]";
-  const contentClass =
-    isCard && entryResult
-      ? "min-h-0 flex-1 overflow-hidden px-5 py-4"
-      : "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4";
+    ? "h-full min-h-[23rem]"
+    : onDismiss
+      ? "h-full min-h-[18rem]"
+      : lookup
+        ? "min-h-[18rem] xl:max-h-[calc(100vh-1.5rem)]"
+        : "min-h-[14rem]";
+  const contentClass = entryResult
+    ? "min-h-0 flex-1 overflow-hidden px-5 py-4"
+    : "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4";
   const saveDisabled =
     saveState.kind === "saving" || saveState.kind === "saved" || !canSaveVocabulary;
+  const primaryMeaning =
+    (entryResult ? dictionaryEntrySummary(entryResult, lookup) : "") ||
+    (entryResult ? "当前词条暂无简短释义。" : "") ||
+    (notFoundResult ? "当前词典没有匹配到这个词条。" : "");
+  const lemmaWord =
+    entryResult?.entry.baseWord && entryResult.entry.baseWord.trim().toLowerCase() !== entryResult.entry.word.trim().toLowerCase()
+      ? entryResult.entry.baseWord.trim()
+      : null;
+  const phoneticLabel = entryResult?.entry.phonetic?.trim() || null;
+  const lemmaLabel = lemmaWord ? `原形 ${lemmaWord}` : null;
+  const homographLabel = entryResult?.entry.homographNo ? `义项 ${entryResult.entry.homographNo}` : null;
+  const tabItems = [
+    { id: "meanings" as const, label: "释义", count: senseItems.length },
+    { id: "examples" as const, label: "例句", count: exampleCount },
+    { id: "phrases" as const, label: "搭配", count: entryResult?.entry.phrases.length ?? 0 },
+    { id: "forms" as const, label: "词形", count: entryResult?.entry.exchange.length ?? 0 },
+  ].filter((item) => item.count > 0);
+  const activeTabItem = tabItems.find((item) => item.id === activeTab) ?? tabItems[0] ?? null;
+
+  useEffect(() => {
+    setMeaningsExpanded(false);
+    setPhrasesExpanded(false);
+    setFormsExpanded(false);
+    setExpandedMeaningKeys([]);
+    setActiveTab("meanings");
+  }, [lookup?.query, lookupResult?.kind]);
+
+  useEffect(() => {
+    if (!entryResult || !tabItems.length) {
+      return;
+    }
+    if (!tabItems.some((item) => item.id === activeTab)) {
+      setActiveTab(tabItems[0].id);
+    }
+  }, [activeTab, entryResult, tabItems]);
+
+  function toggleMeaningExpanded(key: string) {
+    setExpandedMeaningKeys((value) => (value.includes(key) ? value.filter((item) => item !== key) : [...value, key]));
+  }
+
+  function renderEntryTabContent() {
+    if (!entryResult || !activeTabItem) {
+      return null;
+    }
+
+    if (activeTabItem.id === "meanings") {
+      const visibleItems = meaningsExpanded ? senseItems : senseItems.slice(0, 5);
+
+      return (
+        <div className="space-y-3">
+          {senseItems.length > 5 ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="focus-ring inline-flex items-center gap-1 rounded-pill px-2 py-1 text-xs font-semibold text-muted transition-colors hover:bg-reader-paper hover:text-ink"
+                onClick={() => setMeaningsExpanded((value) => !value)}
+                aria-expanded={meaningsExpanded}
+              >
+                {meaningsExpanded ? "收起" : `更多 ${senseItems.length - 5} 条`}
+                {meaningsExpanded ? (
+                  <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+          ) : null}
+          <ol className="overflow-hidden rounded-[16px] border border-hairline/85 bg-surface/60">
+            {visibleItems.map((sense) => {
+              const expanded = expandedMeaningKeys.includes(sense.key);
+              const hasExamples = sense.examples.length > 0;
+
+              return (
+                <li key={sense.key} className="border-t border-hairline/70 first:border-t-0">
+                  <button
+                    type="button"
+                    className={`focus-ring block w-full px-3.5 py-3 text-left transition-colors ${
+                      hasExamples ? "hover:bg-reader-paper/60" : "cursor-default"
+                    }`}
+                    onClick={hasExamples ? () => toggleMeaningExpanded(sense.key) : undefined}
+                    aria-expanded={hasExamples ? expanded : undefined}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="inline-flex min-w-[3rem] items-center justify-center rounded-pill bg-structure-green/10 px-2 py-1 text-[0.68rem] font-semibold text-structure-green">
+                        {sense.partOfSpeech || "词性"}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm leading-6 text-ink-soft">{sense.meaning}</p>
+                          <div className="flex shrink-0 items-center gap-2 pl-2">
+                            {hasExamples ? (
+                              <span className="rounded-pill bg-reader-paper px-2 py-0.5 text-[0.68rem] font-semibold text-muted">
+                                {sense.examples.length} 例句
+                              </span>
+                            ) : null}
+                            <span className="text-[0.68rem] font-semibold text-subtle">{sense.number}</span>
+                            {hasExamples ? (
+                              expanded ? (
+                                <ChevronUp aria-hidden="true" className="h-3.5 w-3.5 text-subtle" />
+                              ) : (
+                                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 text-subtle" />
+                              )
+                            ) : null}
+                          </div>
+                        </div>
+                        {expanded ? (
+                          <div className="mt-3 space-y-2 border-t border-hairline/60 pt-3">
+                            {sense.examples.slice(0, 2).map((example) => (
+                              <figure key={example.key} className="space-y-1">
+                                <blockquote className="reader-serif text-[0.9rem] leading-6 text-ink-soft">
+                                  {example.example}
+                                </blockquote>
+                                {example.exampleTranslation ? (
+                                  <figcaption className="text-xs leading-5 text-muted">
+                                    {example.exampleTranslation}
+                                  </figcaption>
+                                ) : null}
+                              </figure>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      );
+    }
+
+    if (activeTabItem.id === "examples") {
+      return (
+        <div className="overflow-hidden rounded-[16px] border border-hairline/85 bg-surface/60">
+          {exampleGroups.map((group) => (
+            <section key={group.key} className="border-t border-hairline/70 px-3.5 py-3 first:border-t-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {group.supplemental ? (
+                      <span className="rounded-pill bg-reader-paper px-2 py-0.5 text-[0.68rem] font-semibold text-muted">
+                        补充
+                      </span>
+                    ) : (
+                      <>
+                        <span className="rounded-pill bg-structure-green/10 px-2 py-0.5 text-[0.68rem] font-semibold text-structure-green">
+                          {group.partOfSpeech || "词性"}
+                        </span>
+                        {group.number ? (
+                          <span className="text-[0.68rem] font-semibold text-subtle">{group.number}</span>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-ink-soft">{group.meaning}</p>
+                </div>
+                <span className="shrink-0 rounded-pill bg-reader-paper px-2 py-0.5 text-[0.68rem] font-semibold text-muted">
+                  {group.examples.length}
+                </span>
+              </div>
+              <ol className="mt-3 space-y-2.5">
+                {group.examples.map((example) => (
+                  <li key={example.key} className="rounded-[12px] bg-reader-paper/74 px-3 py-2.5">
+                    <blockquote className="reader-serif text-[0.92rem] leading-6 text-ink-soft">
+                      {example.example}
+                    </blockquote>
+                    {example.exampleTranslation ? (
+                      <p className="mt-1 text-xs leading-5 text-muted">{example.exampleTranslation}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ))}
+        </div>
+      );
+    }
+
+    if (activeTabItem.id === "phrases") {
+      const visibleItems = phrasesExpanded ? entryResult.entry.phrases : entryResult.entry.phrases.slice(0, 6);
+
+      return (
+        <div className="space-y-3">
+          {entryResult.entry.phrases.length > 6 ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="focus-ring inline-flex items-center gap-1 rounded-pill px-2 py-1 text-xs font-semibold text-muted transition-colors hover:bg-reader-paper hover:text-ink"
+                onClick={() => setPhrasesExpanded((value) => !value)}
+                aria-expanded={phrasesExpanded}
+              >
+                {phrasesExpanded ? "收起" : `更多 ${entryResult.entry.phrases.length - 6} 条`}
+                {phrasesExpanded ? (
+                  <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+          ) : null}
+          <div className="overflow-hidden rounded-[16px] border border-hairline/85 bg-surface/60">
+            {visibleItems.map((phrase) => (
+              <div
+                key={phrase.phrase}
+                className="flex items-start justify-between gap-3 border-t border-hairline/70 px-3.5 py-3 first:border-t-0"
+              >
+                <p className="min-w-0 text-sm font-semibold leading-6 text-ink">{phrase.phrase}</p>
+                {phrase.meaning ? (
+                  <p className="max-w-[60%] text-right text-xs leading-5 text-muted">{phrase.meaning}</p>
+                ) : (
+                  <span className="text-[0.72rem] text-subtle">搭配</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    const visibleItems = formsExpanded ? entryResult.entry.exchange : entryResult.entry.exchange.slice(0, 8);
+
+    return (
+      <div className="space-y-3">
+        {entryResult.entry.exchange.length > 8 ? (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="focus-ring inline-flex items-center gap-1 rounded-pill px-2 py-1 text-xs font-semibold text-muted transition-colors hover:bg-reader-paper hover:text-ink"
+              onClick={() => setFormsExpanded((value) => !value)}
+              aria-expanded={formsExpanded}
+            >
+              {formsExpanded ? "收起" : `更多 ${entryResult.entry.exchange.length - 8} 项`}
+              {formsExpanded ? (
+                <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+        ) : null}
+        <div className="rounded-[14px] border border-hairline/80 bg-surface/62 px-3.5 py-3">
+          <div className="flex flex-wrap gap-1.5">
+            {visibleItems.map((form) => (
+              <span
+                key={form}
+                className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-xs font-semibold text-ink-soft"
+              >
+                {form}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1238,23 +1718,33 @@ function DictionaryDetailPanel({
         isCard ? "reader-dictionary-card" : ""
       } flex flex-col overflow-hidden ${panelSizing}`}
     >
-      <div className={`border-b border-hairline px-5 ${isCard ? "py-3" : "py-4"}`}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
+      <div className="border-b border-hairline px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-base font-semibold text-ink">词典</h2>
-            <p className="mt-1 text-xs leading-5 text-muted">
-              {isCard ? "完整词条与当前语境" : "完整词条"}
-            </p>
           </div>
           <div className="flex items-center gap-2">
-            {onTogglePinned ? (
               <button
                 type="button"
-                className={`focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
-                  pinned
+                className={`focus-ring inline-flex h-11 w-11 items-center justify-center rounded-full border transition-colors md:h-9 md:w-9 ${
+                  searchExpanded
                     ? "border-lens-blue/25 bg-lens-blue-soft text-lens-blue"
                     : "border-hairline bg-surface text-muted hover:border-muted hover:text-ink"
                 }`}
+              onClick={onToggleSearchExpanded}
+              aria-expanded={searchExpanded}
+              aria-label={searchExpanded ? "收起手动搜索" : "展开手动搜索"}
+            >
+              <Search aria-hidden="true" className="h-4 w-4" />
+            </button>
+            {onTogglePinned ? (
+                <button
+                  type="button"
+                  className={`focus-ring inline-flex h-11 w-11 items-center justify-center rounded-full border transition-colors md:h-9 md:w-9 ${
+                    pinned
+                      ? "border-lens-blue/25 bg-lens-blue-soft text-lens-blue"
+                      : "border-hairline bg-surface text-muted hover:border-muted hover:text-ink"
+                  }`}
                 onClick={onTogglePinned}
                 aria-pressed={pinned}
                 aria-label={pinned ? "取消钉住词典" : "钉住词典"}
@@ -1265,7 +1755,7 @@ function DictionaryDetailPanel({
             {onDismiss ? (
               <button
                 type="button"
-                className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
+                className="focus-ring inline-flex h-11 w-11 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink md:h-9 md:w-9"
                 onClick={onDismiss}
                 aria-label="收起词典"
               >
@@ -1274,288 +1764,275 @@ function DictionaryDetailPanel({
             ) : null}
           </div>
         </div>
+        {searchExpanded ? (
+          <div className="mt-4 border-t border-hairline pt-4">
+            <form
+              className="rounded-[16px] border border-hairline/85 bg-surface/80 px-3.5 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
+              onSubmit={handleSearchSubmit}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[12px] border border-hairline bg-reader-paper px-3 py-2 transition-colors focus-within:border-lens-blue/35 focus-within:bg-surface">
+                  <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted" />
+                  <input
+                    className="min-w-0 flex-1 bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-subtle"
+                    value={searchQuery}
+                    onChange={(event) => onSearchQueryChange(event.target.value)}
+                    placeholder="输入单词或短语"
+                    aria-label="输入单词或短语"
+                  />
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface hover:text-ink"
+                      onClick={() => onSearchQueryChange("")}
+                      aria-label="清空词典搜索"
+                    >
+                      <X aria-hidden="true" className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+                <button
+                  type="submit"
+                  className="focus-ring inline-flex min-h-11 items-center justify-center rounded-pill bg-ink px-4 text-xs font-semibold text-surface transition-colors hover:bg-ink-soft md:min-h-10"
+                >
+                  查询
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : null}
       </div>
-
-      <form className="border-b border-hairline px-5 py-3" onSubmit={handleSearchSubmit}>
-        <div className="flex items-center gap-2 rounded-[12px] border border-hairline bg-reader-paper px-3 py-2 transition-colors focus-within:border-lens-blue/35 focus-within:bg-surface">
-          <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted" />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-subtle"
-            value={searchQuery}
-            onChange={(event) => onSearchQueryChange(event.target.value)}
-            placeholder="输入单词或短语"
-            aria-label="输入单词或短语"
-          />
-          <button
-            type="submit"
-            className="focus-ring rounded-pill bg-ink px-3 py-1.5 text-xs font-semibold text-surface transition-colors hover:bg-ink-soft"
-          >
-            查询
-          </button>
-        </div>
-      </form>
 
       <div className={contentClass}>
         {!lookup ? (
-          <div className="flex min-h-32 flex-col justify-center">
-            <Search aria-hidden="true" className="mb-4 h-5 w-5 text-lens-blue" />
-            <p className="text-sm font-semibold text-ink">从原文或搜索框开始查词</p>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              点击正文保留语境，手动输入适合快速查一个独立词条。
-            </p>
-          </div>
-        ) : null}
-
-        {lookup && glossaryTitle && glossaryText && (!entryResult || !isCard) ? (
-          <div className="mb-5 rounded-[10px] bg-lens-blue-soft/70 px-3 py-3 ring-1 ring-lens-blue/15">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold text-lens-blue">{glossaryTitle}</p>
-              {lookup.label && lookup.label !== glossaryTitle ? (
-                <span className="text-[0.7rem] font-semibold text-muted">{lookup.label}</span>
-              ) : null}
-            </div>
-            <p className="mt-2 text-sm leading-6 text-ink">{glossaryText}</p>
-            {lookup.glossary?.reason ? (
-              <p className="mt-2 text-xs leading-5 text-muted">{lookup.glossary.reason}</p>
-            ) : null}
+          <div className="flex min-h-40 flex-col justify-center">
+            <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">默认状态</p>
+            <h3 className="mt-2 reader-serif text-[1.8rem] leading-tight text-ink">先从正文点一个词</h3>
+            <p className="mt-3 max-w-[24ch] text-sm leading-6 text-muted">点正文中的词，或直接搜索。</p>
           </div>
         ) : null}
 
         {lookup?.state.kind === "loading" ? (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div>
-              <p className="text-xs font-semibold text-muted">正在查询</p>
-              <h3 className="mt-2 reader-serif text-3xl text-ink">{lookup.query}</h3>
+              <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">正在查询</p>
+              <h3 className="mt-2 reader-serif text-[1.95rem] leading-tight text-ink">{lookup.query}</h3>
+            </div>
+            <div className="rounded-[16px] border border-hairline bg-surface/72 px-4 py-4">
+              <div className="h-3 w-24 rounded-full bg-reader-paper" />
+              <div className="mt-3 space-y-2">
+                <div className="h-3 w-5/6 rounded-full bg-reader-paper" />
+                <div className="h-3 w-4/5 rounded-full bg-reader-paper" />
+                <div className="h-3 w-2/3 rounded-full bg-reader-paper" />
+              </div>
             </div>
             <div className="space-y-2">
-              <div className="h-3 w-2/3 rounded-full bg-reader-paper" />
-              <div className="h-3 w-5/6 rounded-full bg-reader-paper" />
-              <div className="h-3 w-1/2 rounded-full bg-reader-paper" />
+              <div className="h-12 rounded-[14px] bg-reader-paper/90" />
+              <div className="h-12 rounded-[14px] bg-reader-paper/90" />
             </div>
           </div>
         ) : null}
 
         {lookup?.state.kind === "error" ? (
-          <div>
-            <p className="text-xs font-semibold text-muted">查询失败</p>
-            <h3 className="mt-2 reader-serif text-3xl text-ink">{lookup.query}</h3>
-            <p className="mt-3 text-sm leading-6 text-error-red">{lookup.state.message}</p>
+          <div className="space-y-4">
+            <div>
+              <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">查询失败</p>
+              <h3 className="mt-2 reader-serif text-[1.95rem] leading-tight text-ink">{lookup.query}</h3>
+            </div>
+            <div className="rounded-[16px] border border-error-red/18 bg-error-red/6 px-4 py-4">
+              <p className="text-sm leading-6 text-error-red">{lookup.state.message}</p>
+            </div>
           </div>
         ) : null}
 
         {lookup && entryResult ? (
-          <div
-            className={
-              isCard
-                ? "grid h-full min-h-0 gap-5 lg:grid-cols-[minmax(12.5rem,0.68fr)_minmax(0,1.32fr)]"
-                : "space-y-5"
-            }
-          >
-            <div className={isCard ? "flex min-h-0 flex-col gap-4" : "space-y-5"}>
-              <div>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3
-                      className={`reader-serif font-semibold leading-tight text-ink ${
-                        isCard ? "text-[1.9rem]" : "text-[2.05rem]"
-                      }`}
-                    >
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="shrink-0 space-y-3 border-b border-hairline pb-4">
+              <section className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="reader-serif text-[clamp(2.05rem,3.15vw,2.55rem)] leading-[0.97] tracking-[-0.025em] text-ink">
                       {entryResult.entry.word}
                     </h3>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
-                      {entryResult.entry.phonetic ? <span>{entryResult.entry.phonetic}</span> : null}
-                      {entryResult.entry.baseWord && entryResult.entry.baseWord !== entryResult.entry.word ? (
-                        <span>原形 {entryResult.entry.baseWord}</span>
-                      ) : null}
-                      {entryResult.entry.homographNo ? <span>义项 {entryResult.entry.homographNo}</span> : null}
-                      <span>{entryResult.provider}</span>
-                      <span>{entryResult.cached ? "缓存" : "实时查询"}</span>
-                    </div>
+                    {lemmaLabel || phoneticLabel || homographLabel ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8rem] leading-5 text-muted">
+                        {lemmaLabel ? (
+                          <span className="rounded-pill border border-hairline/90 bg-reader-paper/84 px-2 py-0.5 text-[0.72rem] font-semibold text-muted">
+                            {lemmaLabel}
+                          </span>
+                        ) : null}
+                        {phoneticLabel ? <span>{phoneticLabel}</span> : null}
+                        {homographLabel ? (
+                          <span className="rounded-pill border border-hairline/90 bg-reader-paper/84 px-2 py-0.5 text-[0.72rem] font-semibold text-muted">
+                            {homographLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <p className="mt-3 max-w-[32ch] text-[0.98rem] leading-7 text-ink-soft">{primaryMeaning}</p>
                   </div>
                   <Volume2 aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted" />
                 </div>
-                {entryResult.entry.tags.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {entryResult.entry.tags.slice(0, 8).map((tag) => (
+                {displayTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {visibleTags.map((item) => (
                       <span
-                        key={tag}
-                        className="rounded-pill border border-hairline bg-reader-paper px-2 py-1 text-[0.7rem] font-semibold uppercase text-muted"
+                        key={item}
+                        className="rounded-pill border border-structure-green/10 bg-structure-green/5 px-1.5 py-0.5 text-[0.68rem] font-medium text-structure-green"
                       >
-                        {tag}
+                        {item}
                       </span>
                     ))}
-                  </div>
-                ) : null}
-                {entryResult.entry.exchange.length > 0 ? (
-                  <div className="mt-3">
-                    <p className="text-xs font-semibold text-muted">词形</p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {entryResult.entry.exchange.slice(0, 8).map((form) => (
-                        <span
-                          key={form}
-                          className="rounded-pill bg-surface px-2 py-1 text-xs font-semibold text-ink-soft ring-1 ring-hairline"
-                        >
-                          {form}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              {glossaryTitle && glossaryText ? (
-                <div
-                  className={
-                    isCard
-                      ? "rounded-[14px] bg-lens-blue-soft/70 px-4 py-3 ring-1 ring-lens-blue/15"
-                      : "rounded-[10px] bg-lens-blue-soft/70 px-3 py-3 ring-1 ring-lens-blue/15"
-                  }
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold text-lens-blue">{glossaryTitle}</p>
-                    {lookup.label && lookup.label !== glossaryTitle ? (
-                      <span className="text-[0.7rem] font-semibold text-muted">{lookup.label}</span>
+                    {hiddenTagCount > 0 ? (
+                      <span className="rounded-pill border border-hairline/85 bg-reader-paper/72 px-1.5 py-0.5 text-[0.68rem] font-medium text-muted">
+                        +{hiddenTagCount}
+                      </span>
                     ) : null}
                   </div>
-                  <p className="mt-2 text-sm leading-6 text-ink">{glossaryText}</p>
-                  {lookup.glossary?.reason ? (
-                    <p className="mt-2 text-xs leading-5 text-muted">{lookup.glossary.reason}</p>
-                  ) : null}
+                ) : null}
+              </section>
+
+              {activeTabItem ? (
+                <div className="rounded-[12px] border border-hairline/85 bg-reader-paper/76 p-0.5">
+                  <div className="flex flex-wrap gap-1">
+                    {tabItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`focus-ring inline-flex min-h-11 min-w-[4.9rem] flex-1 items-center justify-center gap-1.5 rounded-[10px] px-3 py-2 text-xs font-semibold transition-colors md:min-h-9 md:py-1.5 ${
+                          item.id === activeTab
+                            ? "bg-surface text-ink shadow-[0_1px_2px_rgba(17,17,17,0.06)]"
+                            : "text-muted hover:bg-surface/80 hover:text-ink"
+                        }`}
+                        onClick={() => setActiveTab(item.id)}
+                        aria-pressed={item.id === activeTab}
+                      >
+                        <span>{item.label}</span>
+                        <span className="text-[0.68rem] text-subtle">{item.count}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : null}
-
-              <div className="border-t border-hairline pt-4">
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-ink px-4 text-sm font-semibold text-surface transition-colors hover:bg-ink-soft disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={onSave}
-                  disabled={saveDisabled}
-                  title={!canSaveVocabulary ? "手动查词需要先选中正文句子，才能保存到生词本。" : undefined}
-                >
-                  {!canSaveVocabulary
-                    ? "选中句子后保存"
-                    : saveState.kind === "saving"
-                      ? "写入中"
-                      : "加入生词本"}
-                </button>
-                {saveState.kind === "saved" ? (
-                  <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-structure-green">
-                    <Check aria-hidden="true" className="h-3.5 w-3.5" />
-                    {saveState.message}
-                  </span>
-                ) : null}
-                {saveState.kind === "error" ? (
-                  <span className="mt-2 block text-xs font-semibold text-error-red">{saveState.message}</span>
-                ) : null}
-              </div>
             </div>
 
-            <div className={isCard ? "min-h-0 overflow-y-auto overscroll-contain pr-2" : "space-y-5"}>
-              <div className={isCard ? "" : "border-t border-hairline py-4"}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-ink">详细释义</p>
-                  <span className="text-xs font-semibold text-muted">
-                    {entryResult.entry.meanings.reduce((count, meaning) => count + meaning.definitions.length, 0)} 条
-                  </span>
-                </div>
-                <div className="mt-3 space-y-5">
-                  {entryResult.entry.meanings.map((meaning) => (
-                    <section key={`${entryResult.entry.id}-${meaning.partOfSpeech}`} className="border-t border-hairline pt-4 first:border-t-0 first:pt-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold text-structure-green">{meaning.partOfSpeech}</p>
-                        <span className="text-[0.7rem] font-semibold text-subtle">
-                          {meaning.definitions.length}
-                        </span>
-                      </div>
-                      <ol className="mt-2 space-y-2.5">
-                        {meaning.definitions.map((definition, index) => (
-                          <li
-                            key={`${entryResult.entry.id}-${meaning.partOfSpeech}-${definition.meaning}`}
-                            className="grid grid-cols-[1.65rem_1fr] gap-2 text-sm leading-6 text-ink-soft"
-                          >
-                            <span className="pt-0.5 text-xs font-semibold text-subtle">{index + 1}</span>
-                            <span>{definition.meaning}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </section>
-                  ))}
-                </div>
-              </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pt-4 pr-1">
+              {renderEntryTabContent()}
+            </div>
 
-              {entryResult.entry.phrases.length > 0 || examples.length > 0 ? (
-                <div className="mt-5 space-y-5">
-                  {entryResult.entry.phrases.length > 0 ? (
-                    <div className="border-t border-hairline pt-4">
-                      <p className="text-sm font-semibold text-ink">短语与搭配</p>
-                      <div className="mt-2 space-y-2">
-                        {entryResult.entry.phrases.map((phrase) => (
-                          <p key={phrase.phrase} className="text-sm leading-6 text-ink-soft">
-                            <span className="font-semibold text-ink">{phrase.phrase}</span>
-                            {phrase.meaning ? <span className="ml-2 text-muted">{phrase.meaning}</span> : null}
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {examples.length > 0 ? (
-                    <div className="border-t border-hairline pt-4">
-                      <p className="text-sm font-semibold text-ink">例句</p>
-                      <div className="mt-2 space-y-3">
-                        {examples.map((example) => (
-                          <figure key={example.example}>
-                            <blockquote className="reader-serif text-sm leading-6 text-ink-soft">
-                              {example.example}
-                            </blockquote>
-                            {example.exampleTranslation ? (
-                              <figcaption className="mt-1 text-xs leading-5 text-muted">
-                                {example.exampleTranslation}
-                              </figcaption>
-                            ) : null}
-                          </figure>
-                        ))}
-                      </div>
-                    </div>
+            <div className="mt-4 shrink-0 border-t border-hairline pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  {saveState.kind === "saved" ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-structure-green">
+                      <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                      {saveState.message}
+                    </span>
+                  ) : saveState.kind === "error" ? (
+                    <span className="block text-xs font-semibold text-error-red">{saveState.message}</span>
+                  ) : !canSaveVocabulary ? (
+                    <span className="block text-xs leading-5 text-muted">需要从正文点词后再保存。</span>
                   ) : null}
                 </div>
-              ) : null}
+                <button
+                  type="button"
+                  className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-pill bg-ink px-3.5 text-xs font-semibold text-surface transition-colors hover:bg-ink-soft disabled:cursor-not-allowed disabled:opacity-60 md:min-h-9"
+                  onClick={onSave}
+                  disabled={saveDisabled}
+                  title={!canSaveVocabulary ? "需要从正文点词后，才能加入生词本。" : undefined}
+                >
+                  {saveState.kind === "saving" ? "写入中" : "加入生词本"}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
 
         {lookup && disambiguationResult ? (
-          <div>
-            <p className="text-xs font-semibold text-muted">需要选择词条</p>
-            <h3 className="mt-2 reader-serif text-3xl text-ink">{lookup.query}</h3>
-            <div className="mt-4 divide-y divide-hairline border-y border-hairline">
-              {disambiguationResult.candidates.slice(0, 6).map((candidate) => (
-                <button
-                  key={candidate.entryId}
-                  type="button"
-                  className="focus-ring block w-full py-3 text-left transition-colors hover:bg-reader-paper"
-                  onClick={() => onSelectCandidate(candidate.entryId)}
-                >
-                  <p className="text-sm font-semibold text-ink">{candidate.label}</p>
-                  {candidate.preview ? <p className="mt-1 text-sm leading-6 text-muted">{candidate.preview}</p> : null}
-                </button>
+          <div className="space-y-5">
+            <div>
+              <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">歧义选择</p>
+              <h3 className="mt-2 reader-serif text-[1.95rem] leading-tight text-ink">{lookup.query}</h3>
+            </div>
+            <div className="space-y-4">
+              {candidateGroups.map((group) => (
+                <section key={group.key} className="border-t border-hairline pt-4 first:border-t-0 first:pt-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-ink">{group.label}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted">{group.hint}</p>
+                    </div>
+                    <span className="rounded-pill bg-reader-paper px-2.5 py-1 text-[0.68rem] font-semibold text-muted">
+                      {group.candidates.length}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2.5">
+                    {group.candidates.map((candidate) => (
+                      <button
+                        key={candidate.entryId}
+                        type="button"
+                        className="focus-ring block w-full rounded-[14px] border border-hairline bg-surface/75 px-4 py-3 text-left transition-colors hover:bg-reader-paper"
+                        onClick={() => onSelectCandidate(candidate.entryId)}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-ink">{candidate.label}</p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <span className="rounded-pill bg-lens-blue-soft px-2 py-0.5 text-[0.68rem] font-semibold text-lens-blue">
+                                {candidate.lookupType === "phrase" ? "短语" : "单词"}
+                              </span>
+                              {candidate.candidateKind === "proper_noun" ? (
+                                <span className="rounded-pill bg-structure-green/10 px-2 py-0.5 text-[0.68rem] font-semibold text-structure-green">
+                                  专名
+                                </span>
+                              ) : null}
+                              {candidate.entryKind === "fragment" ? (
+                                <span className="rounded-pill bg-reader-paper px-2 py-0.5 text-[0.68rem] font-semibold text-muted">
+                                  片段
+                                </span>
+                              ) : null}
+                              {candidate.partOfSpeech ? (
+                                <span className="rounded-pill bg-reader-paper px-2 py-0.5 text-[0.68rem] font-semibold text-muted">
+                                  {candidate.partOfSpeech}
+                                </span>
+                              ) : null}
+                            </div>
+                            {candidate.preview ? (
+                              <p className="mt-2 text-sm leading-6 text-muted">{candidate.preview}</p>
+                            ) : null}
+                          </div>
+                          <ChevronRight aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-subtle" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           </div>
         ) : null}
 
         {lookup && notFoundResult ? (
-          <div>
-            <p className="text-xs font-semibold text-muted">未收录</p>
-            <h3 className="mt-2 reader-serif text-3xl text-ink">{lookup.query}</h3>
-            <p className="mt-3 text-sm leading-6 text-muted">当前词典暂未收录这个词条。</p>
+          <div className="space-y-5">
+            <div>
+              <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">未收录结果</p>
+              <h3 className="mt-2 reader-serif text-[1.95rem] leading-tight text-ink">{lookup.query}</h3>
+            </div>
+            <div className="rounded-[16px] border border-hairline bg-surface/78 px-4 py-4">
+              <p className="text-sm font-semibold text-ink">当前词典没有匹配到这个词条。</p>
+            </div>
           </div>
         ) : null}
 
         {lookup && errorResult ? (
-          <div>
-            <p className="text-xs font-semibold text-muted">查询失败</p>
-            <h3 className="mt-2 reader-serif text-3xl text-ink">{lookup.query}</h3>
-            <p className="mt-3 text-sm leading-6 text-error-red">{errorResult.message}</p>
+          <div className="space-y-4">
+            <div>
+              <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">词典暂不可用</p>
+              <h3 className="mt-2 reader-serif text-[1.95rem] leading-tight text-ink">{lookup.query}</h3>
+            </div>
+            <div className="rounded-[16px] border border-error-red/18 bg-error-red/6 px-4 py-4">
+              <p className="text-sm leading-6 text-error-red">{errorResult.message}</p>
+            </div>
           </div>
         ) : null}
 
@@ -1564,50 +2041,68 @@ function DictionaryDetailPanel({
   );
 }
 
-function LookupTrail({
+function DictionaryRecentStrip({
   history,
   activeLookup,
-  onSelect,
+  onSelectHistory,
 }: {
   history: DictionaryLookupSnapshot[];
   activeLookup: DictionaryLookupSnapshot | null;
-  onSelect: (lookup: DictionaryLookupSnapshot) => void;
+  onSelectHistory: (lookup: DictionaryLookupSnapshot) => void;
 }) {
-  if (history.length < 2) {
+  const recentItems = history.slice(0, 6);
+  const [collapsed, setCollapsed] = useState(true);
+
+  if (recentItems.length <= 1) {
     return null;
   }
 
   return (
-    <nav
-      className="reader-tool-panel reader-lookup-trail px-4 py-3"
-      aria-label="本次查词轨迹"
-    >
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className="text-xs font-semibold text-muted">查询轨迹</p>
-        <span className="text-[0.7rem] font-semibold text-subtle">{history.length}</span>
-      </div>
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {history.slice(0, 8).map((item) => {
-          const active =
-            activeLookup?.query.toLowerCase() === item.query.toLowerCase() &&
-            activeLookup?.sentenceId === item.sentenceId;
-          return (
-            <button
-              key={`${item.query}-${item.sentenceId}-${item.anchorText}`}
-              type="button"
-              className={`focus-ring shrink-0 rounded-pill border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                active
-                  ? "border-lens-blue/30 bg-lens-blue-soft text-lens-blue"
-                  : "border-hairline bg-reader-paper text-ink-soft hover:border-muted hover:text-ink"
-              }`}
-              onClick={() => onSelect(item)}
-            >
-              {item.query}
-            </button>
-          );
-        })}
-      </div>
-    </nav>
+    <section className="reader-tool-panel border border-hairline/90 bg-surface/88 px-4 py-3.5">
+      <button
+        type="button"
+        className="focus-ring flex min-h-11 w-full items-center justify-between gap-3 text-left"
+        onClick={() => setCollapsed((value) => !value)}
+        aria-expanded={!collapsed}
+      >
+        <span className="text-[0.72rem] font-semibold tracking-[0.06em] text-muted">查过历史</span>
+        <span className="inline-flex items-center gap-2 text-[0.68rem] font-semibold text-subtle">
+          {recentItems.length}
+          {collapsed ? (
+            <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+          )}
+        </span>
+      </button>
+      {!collapsed ? (
+        <div className="mt-3 overflow-hidden rounded-[14px] border border-hairline/80 bg-surface/56">
+          {recentItems.map((item) => {
+            const active =
+              activeLookup?.query.toLowerCase() === item.query.toLowerCase() &&
+                activeLookup?.sentenceId === item.sentenceId;
+            const summary = dictionaryLookupHistorySummary(item);
+            return (
+              <button
+                key={dictionaryLookupHistoryKey(item)}
+                type="button"
+                className={`focus-ring block w-full border-t border-hairline/70 px-3 py-2 text-left transition-colors first:border-t-0 md:py-2.5 ${
+                  active ? "bg-reader-paper/92" : "hover:bg-reader-paper/74"
+                }`}
+                onClick={() => onSelectHistory(item)}
+              >
+                <div className="grid grid-cols-[minmax(0,5.75rem)_minmax(0,1fr)] items-center gap-3 md:grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)]">
+                  <p className={`truncate text-sm font-semibold ${active ? "text-lens-blue" : "text-ink"}`}>
+                    {item.query}
+                  </p>
+                  <p className="line-clamp-1 text-[0.8rem] leading-5 text-muted md:text-xs">{summary}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -1684,6 +2179,7 @@ export function ReaderWorkbench({
   const [aiOpen, setAiOpen] = useState(false);
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
   const [dictionaryQuery, setDictionaryQuery] = useState("");
+  const [dictionarySearchExpanded, setDictionarySearchExpanded] = useState(false);
   const articleRef = useRef<HTMLElement | null>(null);
   const focusedRouteTargetKeyRef = useRef<string | null>(null);
 
@@ -1989,6 +2485,9 @@ export function ReaderWorkbench({
 
   const lookupPlainText = useCallback(
     async (base: LookupBase, options?: { showPreview?: boolean; anchorRect?: DOMRect | null }) => {
+      if (options?.showPreview !== false) {
+        setDictionarySearchExpanded(false);
+      }
       setLookupPreviewOpen(options?.showPreview ?? true);
       setLookupPreviewAnchorRect(options?.anchorRect ? copyDomRect(options.anchorRect) : null);
       const loadingState = { kind: "loading" } satisfies DictionaryLookupSnapshot["state"];
@@ -2033,22 +2532,22 @@ export function ReaderWorkbench({
       return;
     }
 
-    const sentence = activeSentence;
+    setDictionarySearchExpanded(true);
     void lookupPlainText(
       {
         query: trimmed,
         lookupType: trimmed.includes(" ") ? "phrase" : "word",
-        contextSentence: sentence?.text ?? "",
-        sourceContext: sentence ? translationBySentence.get(sentence.sentenceId) : undefined,
+        contextSentence: "",
+        sourceContext: undefined,
         recordId: record.id,
-        sentenceId: sentence?.sentenceId ?? "__manual__",
+        sentenceId: "__manual__",
         anchorText: trimmed,
         title: "手动查词",
-        label: sentence ? "当前句查词" : "手动查词",
+        label: "手动查词",
       },
       { showPreview: false },
     );
-  }, [activeSentence, lookupPlainText, record.id, translationBySentence]);
+  }, [lookupPlainText, record.id]);
 
   const selectLookupFromTrail = useCallback((lookup: DictionaryLookupSnapshot) => {
     setActiveLookup(lookup);
@@ -3044,16 +3543,19 @@ export function ReaderWorkbench({
       </div>
 
       {dictionaryPanelVisible ? (
-        <div className="fixed left-[calc(84px+5rem)] top-[clamp(7rem,13vh,9rem)] z-40 hidden w-[clamp(27rem,calc((100vw-84px-7rem-96ch)/2+3rem),32.5rem)] flex-col gap-3 2xl:flex">
-          <div className="h-[min(54vh,36rem)] overflow-hidden rounded-panel">
+        <div className="reader-dictionary-dock fixed z-40 hidden flex-col 2xl:flex">
+          <div className="h-[clamp(29rem,58vh,42rem)] overflow-hidden rounded-panel">
             <DictionaryDetailPanel
               lookup={activeLookup}
+              readingGoal={record.readingGoal}
               saveState={dictionarySaveState}
               searchQuery={dictionaryQuery}
+              searchExpanded={dictionarySearchExpanded}
               onSave={saveVocabularyFromDictionary}
               onSearchQueryChange={setDictionaryQuery}
               onSearchSubmit={lookupDictionaryQuery}
               onSelectCandidate={selectDictionaryCandidate}
+              onToggleSearchExpanded={() => setDictionarySearchExpanded((value) => !value)}
               onDismiss={closeDictionaryPanel}
               pinned={dictionaryPinned}
               onTogglePinned={() => setDictionaryPinned((value) => !value)}
@@ -3061,34 +3563,41 @@ export function ReaderWorkbench({
               canSaveVocabulary={Boolean(activeLookup?.contextSentence.trim())}
             />
           </div>
-          <LookupTrail
-            history={lookupHistory}
-            activeLookup={activeLookup}
-            onSelect={selectLookupFromTrail}
-          />
+          <div className="mt-3">
+            <DictionaryRecentStrip
+              history={lookupHistory}
+              activeLookup={activeLookup}
+              onSelectHistory={selectLookupFromTrail}
+            />
+          </div>
         </div>
       ) : null}
 
       {activeLookup && !aiOpen && !contextPanelVisible ? (
-        <div className="fixed inset-x-3 bottom-[5.25rem] z-50 flex max-h-[62vh] flex-col gap-2 md:bottom-6 2xl:hidden">
-          <div className="h-[min(44vh,29rem)] overflow-hidden rounded-panel md:h-[min(48vh,31rem)]">
+        <div className="fixed inset-x-3 bottom-[5.25rem] z-50 flex max-h-[62vh] flex-col md:bottom-6 2xl:hidden">
+          <div className="h-[min(41vh,26rem)] overflow-hidden rounded-panel md:h-[min(45vh,29rem)]">
             <DictionaryDetailPanel
               lookup={activeLookup}
+              readingGoal={record.readingGoal}
               saveState={dictionarySaveState}
               searchQuery={dictionaryQuery}
+              searchExpanded={dictionarySearchExpanded}
               onSave={saveVocabularyFromDictionary}
               onSearchQueryChange={setDictionaryQuery}
               onSearchSubmit={lookupDictionaryQuery}
               onSelectCandidate={selectDictionaryCandidate}
+              onToggleSearchExpanded={() => setDictionarySearchExpanded((value) => !value)}
               onDismiss={clearLookup}
               canSaveVocabulary={Boolean(activeLookup?.contextSentence.trim())}
             />
           </div>
-          <LookupTrail
-            history={lookupHistory}
-            activeLookup={activeLookup}
-            onSelect={selectLookupFromTrail}
-          />
+          <div className="mt-2">
+            <DictionaryRecentStrip
+              history={lookupHistory}
+              activeLookup={activeLookup}
+              onSelectHistory={selectLookupFromTrail}
+            />
+          </div>
         </div>
       ) : null}
 
