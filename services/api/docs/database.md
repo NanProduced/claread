@@ -4,13 +4,22 @@ Claread 后端使用 PostgreSQL 作为业务事实源。Redis 用于缓存和任
 
 ## Migration Baseline
 
-当前只保留一个 pre-release baseline：
+当前 schema 基线由 `0001` 加后续增量 migration 共同构成：
 
 ```text
 infra/migrations/0001_initial_schema.sql
+infra/migrations/0002_add_text_range_favorites_target_type.sql
+infra/migrations/0003_normalize_payload_jsonb_objects.sql
+infra/migrations/0004_add_multi_text_anchor_types.sql
+infra/migrations/0005_add_ai_usage_events.sql
+infra/migrations/0006_excerpt_assets_constraints_and_indexes.sql
+infra/migrations/0007_add_dict_ai_candidates_and_credit_ledger_entry_type.sql
 ```
 
-旧 `0002_add_paragraph_notes_and_takeaways.sql` 已压回 `0001`，新仓库不迁移独立 `0002`。
+其中：
+
+- `0001` 是可重建业务表的初始基线
+- `0002` - `0007` 是当前开发阶段必须继续顺序应用的增量变更
 
 `0001` 必须包含：
 
@@ -59,7 +68,7 @@ infra/scripts/reset_full_keep_dict.sql
 - `dict_*` 相关索引和 `idx_vocabulary_book_dict_entry_id` 必须使用 `CREATE INDEX IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT EXISTS`。
 - `vocabulary_book.dict_entry_id` 外键使用 `DO` block 处理重复约束，避免 keep-dict 场景重复执行失败。
 
-PostgreSQL Docker init 脚本只在 volume 首次创建时执行。已有 volume 不会因为修改 `0001` 自动升级。
+PostgreSQL Docker init 脚本只在 volume 首次创建时执行。已有 volume 不会因为修改 `0001` 自动升级；现有开发库如果已经创建过，后续表结构变更必须继续顺序执行 `0002` - `0007`。
 
 ## 验收 SQL
 

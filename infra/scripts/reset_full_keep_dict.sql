@@ -16,6 +16,8 @@ BEGIN;
 
 DROP TABLE IF EXISTS
   user_annotations,
+  dict_ai_candidate_entries,
+  ai_usage_events,
   analysis_audit_logs,
   analysis_task_events,
   analysis_tasks,

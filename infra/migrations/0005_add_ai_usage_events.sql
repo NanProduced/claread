@@ -67,5 +67,5 @@ COMMENT ON COLUMN ai_usage_events.status IS '事件状态，建议使用 succeed
 COMMENT ON COLUMN ai_usage_events.model_route IS '主要模型路由；多路由工作流的完整映射放入 metadata_json。';
 COMMENT ON COLUMN ai_usage_events.metadata_json IS '扩展审计上下文 JSON，包括 usage 快照、entrypoint、对象标识和多模型映射。';
 
-COMMENT ON TABLE analysis_audit_logs IS '旧分析审计日志表。当前继续保留作兼容与排障，新的统一 AI 审计以 ai_usage_events 为准。';
+COMMENT ON TABLE analysis_audit_logs IS '旧分析审计日志表。当前仅临时保留作兼容与排障，新的统一 AI 审计以 ai_usage_events 为准；下次重置本地开发数据库时应删除该表。';
 COMMENT ON TABLE user_credit_ledger IS '用户积分结算账本。负责余额变动，不再承担统一 AI 调用审计职责。';
