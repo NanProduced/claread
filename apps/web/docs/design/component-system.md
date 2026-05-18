@@ -1,9 +1,9 @@
-# Claread Web Component System
+# Claread Web Reader Component System
 
-> Reader 专项规范。全站功能页组件库、token、theme、目录结构和第三方准入流程请先参考 `component-library-v0.md`，本文只处理 Reader 专项组件与交互约束。
+> Reader 专项规范。全站功能页组件库、token、theme、目录结构和第三方准入流程请先参考 `component-library-v0.md`。本文只保留 Reader 画布、工具层、锚点和交互特例。
 
 > **状态**: `CURRENT` | **最后更新**: 2026-05-18
-> 本文把 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md` 和 `reader-ia.md` 中已经确认的方向落成组件使用规范。它不替代产品/架构文档，只规定 Web UI/UX 推进时如何组织组件、样式和交互。
+> 本文把 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md` 和 `reader-ia.md` 中已经确认的方向落成 Reader 组件使用规范。方向探索和过程判断已吸收到正式文档，不再在这里重复保留。
 
 ## 1. Scope
 
@@ -55,27 +55,22 @@
 
 ## 3. Stack Rules
 
-当前项目已经安装：
+当前 Reader 依赖的基础设施：
 
-- Tailwind CSS v4
-- Radix Dialog / Popover / Tabs / Tooltip
+- Tailwind CSS v4 和 Claread Web token
+- Radix primitives
 - Floating UI
 - Motion
 - lucide-react
 - TanStack Query
 - Zustand
 
-当前项目尚未正式初始化：
-
-- `components.json`
-- `apps/web/src/components/ui/`
-
-因此第一轮组件化采用：
+当前 Reader 组件组织方式：
 
 - Reader 专属组件放在 `apps/web/src/components/reader/`。
 - 暂不新增第三方批注/富文本编辑器依赖。
-- 暂不引入社区 shadcn registry block。
-- 如果需要正式 shadcn 组件，先补 `components.json` 决策，再通过 CLI 添加基础组件，不能手抄 registry 文件。
+- Ask Claread 的 compatibility layer 仍在 `apps/web/src/components/ui/`，但它不是 Reader 或功能页新的通用入口。
+- 通用能力优先从 `primitives/`、`composed/`、`layout/` 取，Reader 只保留画布和锚点特例。
 - 新增通用 Reader 基础设施先放在 `apps/web/src/components/reader/`，等交互稳定后再决定是否上移到 `packages/`。
 
 后续推荐正式化的 shadcn 基础组件：

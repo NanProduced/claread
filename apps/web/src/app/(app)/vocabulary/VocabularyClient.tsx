@@ -1,9 +1,15 @@
 "use client";
 
-import { ArrowRight, Check, Search, X } from "lucide-react";
+import { ArrowRight, Check, Search } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { Button } from "@/components/primitives/button";
+import { IconButton } from "@/components/primitives/icon-button";
+import { EmptyState } from "@/components/composed/empty-state";
+import { FilterBar } from "@/components/composed/filter-bar";
+import { ListRow } from "@/components/composed/list-row";
+import { SearchField } from "@/components/composed/search-field";
 import type { VocabularyBffStatus } from "@/services/bff/vocabulary";
 import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 
@@ -33,32 +39,6 @@ function formatDate(value: string): string {
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
-}
-
-function EmptyState({
-  status,
-  hasQuery,
-}: {
-  status: VocabularyBffStatus;
-  hasQuery: boolean;
-}) {
-  return (
-    <section className="border-t border-hairline py-10">
-      <div className="max-w-xl">
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-vocab-amber/20 text-ink">
-          <Search aria-hidden="true" className="h-5 w-5" />
-        </div>
-        <h2 className="mt-4 font-headline text-2xl font-semibold text-ink">
-          {hasQuery ? "没有匹配的生词" : statusTitle[status]}
-        </h2>
-        <p className="mt-3 text-sm leading-6 text-muted">
-          {hasQuery
-            ? "换一个单词、释义或上下文片段再试。"
-            : "在 Reader 中把词加入生词本后，这里会显示来源句和复习状态。"}
-        </p>
-      </div>
-    </section>
-  );
 }
 
 export function VocabularyClient({
@@ -104,110 +84,82 @@ export function VocabularyClient({
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 border-b border-hairline pb-4 lg:flex-row lg:items-center lg:justify-between">
-        <label className="focus-within:border-muted flex min-h-11 flex-1 items-center gap-3 rounded-pill border border-hairline bg-surface px-4 transition-colors lg:max-w-xl">
-          <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted" />
-          <span className="sr-only">搜索生词</span>
-          <input
-            className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-subtle"
-            placeholder="搜索单词、释义或上下文"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          {normalizedQuery ? (
-            <button
-              type="button"
-              className="focus-ring -mr-1 flex h-7 w-7 items-center justify-center rounded-full text-muted transition-colors hover:bg-reader-paper hover:text-ink"
-              onClick={() => setQuery("")}
-              aria-label="清空搜索"
-            >
-              <X aria-hidden="true" className="h-4 w-4" />
-            </button>
-          ) : null}
-        </label>
+      <SearchField
+        label="搜索生词"
+        placeholder="搜索单词、释义或上下文"
+        value={query}
+        onValueChange={setQuery}
+      />
 
-        <div className="flex flex-wrap gap-2">
-          {filterOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`focus-ring min-h-9 rounded-pill border px-3 text-xs font-semibold transition-colors ${
-                filterMode === option.value
-                  ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                  : "border-hairline bg-surface text-muted hover:border-muted hover:text-ink"
-              }`}
-              onClick={() => setFilterMode(option.value)}
-              aria-pressed={filterMode === option.value}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <FilterBar
+        items={filterOptions.map((option) => ({ value: option.value, label: option.label }))}
+        activeValue={filterMode}
+        onValueChange={(nextValue) => setFilterMode(nextValue as FilterMode)}
+      />
 
       {filteredItems.length > 0 ? (
-        <section className="divide-y divide-hairline border-y border-hairline">
+        <section className="overflow-hidden rounded-panel border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(251,250,246,0.985))] shadow-surface-quiet">
           {filteredItems.map((item) => (
-            <article
+            <ListRow
               key={item.id}
-              className="grid gap-4 py-5 transition-colors hover:bg-reader-paper/55 lg:grid-cols-[minmax(13rem,0.35fr)_minmax(0,1fr)_auto] lg:items-center lg:px-3"
-            >
-              <div className="min-w-0">
+              className="lg:items-start lg:px-6"
+              contentClassName="lg:grid lg:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)] lg:items-start lg:gap-x-8"
+              titleClassName="text-[1.7rem] leading-none lg:pr-3"
+              title={
                 <div className="flex flex-wrap items-baseline gap-2">
-                  <h2 className="font-headline text-[1.35rem] font-semibold leading-tight text-ink">
-                    {item.word}
-                  </h2>
-                  {item.phonetic ? (
-                    <span className="text-xs text-muted">{item.phonetic}</span>
-                  ) : null}
+                  <span>{item.word}</span>
+                  {item.phonetic ? <span className="text-xs text-muted">{item.phonetic}</span> : null}
                 </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted">
+              }
+              description={
+                <div>
+                  <p className="text-sm font-semibold leading-6 text-ink-soft">{item.shortMeaning ?? "暂无释义"}</p>
+                  {item.contextSentence ? <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted">{item.contextSentence}</p> : null}
+                </div>
+              }
+              bodyClassName="lg:mt-0"
+              meta={
+                <>
                   <span>{formatDate(item.createdAt)} 加入</span>
                   {item.partOfSpeech ? (
-                    <span className="rounded-pill border border-hairline bg-surface px-2 py-0.5">
-                      {item.partOfSpeech}
-                    </span>
+                    <span className="rounded-pill border border-hairline bg-surface px-2 py-0.5">{item.partOfSpeech}</span>
                   ) : null}
-                </div>
-              </div>
-
-              <div className="min-w-0">
-                <p className="text-sm font-semibold leading-6 text-ink-soft">
-                  {item.shortMeaning ?? "暂无释义"}
-                </p>
-                {item.contextSentence ? (
-                  <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted">
-                    {item.contextSentence}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="flex items-center gap-2 lg:justify-end">
-                <span
-                  className={`inline-flex min-h-8 items-center gap-1 rounded-pill border px-3 text-xs font-semibold ${
-                    item.mastered
-                      ? "border-structure-green/35 bg-structure-green/10 text-ink"
-                      : "border-vocab-amber/45 bg-vocab-amber/15 text-ink"
-                  }`}
-                >
-                  {item.mastered ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : null}
-                  {item.mastered ? "已掌握" : "学习中"}
-                </span>
-                {item.sourceRecordId ? (
-                  <Link
-                    href={readerRoute(item.sourceRecordId)}
-                    className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-pill border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
-                    aria-label={`回到 ${item.word} 的来源文章`}
+                </>
+              }
+              trailing={
+                <>
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    className={
+                      item.mastered
+                        ? "border-structure-green/35 bg-structure-green/10 text-ink hover:bg-structure-green/15"
+                        : "border-vocab-amber/45 bg-vocab-amber/15 text-ink hover:bg-vocab-amber/20"
+                    }
                   >
-                    <ArrowRight aria-hidden="true" className="h-4 w-4" />
-                  </Link>
-                ) : null}
-              </div>
-            </article>
+                    {item.mastered ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : null}
+                    {item.mastered ? "已掌握" : "学习中"}
+                  </Button>
+                  {item.sourceRecordId ? (
+                    <IconButton asChild aria-label={`回到 ${item.word} 的来源文章`}>
+                      <Link href={readerRoute(item.sourceRecordId)}>
+                        <ArrowRight aria-hidden="true" className="h-4 w-4" />
+                      </Link>
+                    </IconButton>
+                  ) : null}
+                </>
+              }
+            />
           ))}
         </section>
       ) : (
-        <EmptyState status={status} hasQuery={hasQuery} />
+        <EmptyState
+          icon={Search}
+          title={hasQuery ? "没有匹配的生词" : statusTitle[status]}
+          description={
+            hasQuery ? "换一个单词、释义或上下文片段再试。" : "在 Reader 中把词加入生词本后，这里会显示来源句和复习状态。"
+          }
+        />
       )}
     </div>
   );

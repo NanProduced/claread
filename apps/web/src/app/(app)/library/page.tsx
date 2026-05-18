@@ -1,6 +1,8 @@
 import { Plus, Search } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
+import { Button } from "@/components/primitives/button";
+import { InfoCard, PageHeader, StatCard, TopActionBar } from "@/components/composed";
 import { getRecordList, type RecordsBffStatus } from "@/services/bff/records";
 import { LibraryClient } from "./LibraryClient";
 
@@ -22,63 +24,44 @@ export default async function HistoryPage() {
     <main className="paper-grain min-h-screen px-5 py-7 text-ink sm:px-8 lg:px-10">
       <div className="mx-auto grid max-w-7xl gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="min-w-0">
-          <header className="mb-7 flex flex-col gap-5 border-b border-hairline pb-6 md:flex-row md:items-end md:justify-between">
-            <div className="max-w-2xl">
-              <p className="mb-3 text-xs font-semibold text-muted">阅读档案</p>
-              <h1 className="font-headline text-[2.15rem] font-semibold leading-tight tracking-normal text-ink sm:text-[2.65rem]">
-                阅读记录
-              </h1>
-              <p className="mt-3 text-sm leading-6 text-muted">
-                回到读过的文章，继续阅读、找回收藏和批注。第一版先做标题与原文片段搜索。
-              </p>
-              {result.message ? (
-                <p className="mt-3 text-sm leading-6 text-muted">{result.message}</p>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Link
-                href={readRoute}
-                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
-              >
-                <Plus aria-hidden="true" className="h-4 w-4" />
-                新解读
-              </Link>
-              <Link
-                href={assetsRoute}
-                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-pill border border-hairline bg-surface px-5 text-sm font-semibold text-ink transition-colors hover:border-muted"
-              >
-                学习资产
-              </Link>
-            </div>
-          </header>
+          <PageHeader
+            eyebrow="阅读档案"
+            title="阅读记录"
+            description="回到读过的文章，继续阅读、找回收藏和批注。第一版先做标题与原文片段搜索。"
+            message={result.message}
+            actions={
+              <TopActionBar>
+                <Button asChild variant="primary">
+                  <Link href={readRoute}>
+                    <Plus aria-hidden="true" className="h-4 w-4" />
+                    新解读
+                  </Link>
+                </Button>
+                <Button asChild variant="outline">
+                  <Link href={assetsRoute}>学习资产</Link>
+                </Button>
+              </TopActionBar>
+            }
+          />
 
           <LibraryClient records={result.records} status={result.status} />
         </section>
 
         <aside className="space-y-5 xl:pt-[7.4rem]">
-          <section className="rounded-panel border border-hairline bg-surface p-5 shadow-surface-quiet">
-            <h2 className="text-sm font-semibold text-ink">档案状态</h2>
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-              <div>
-                <dt className="text-xs text-muted">总记录</dt>
-                <dd className="mt-1 font-semibold text-ink">{result.total}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted">同步</dt>
-                <dd className="mt-1 font-semibold text-ink">{statusLabel[result.status]}</dd>
-              </div>
-            </dl>
-          </section>
+          <StatCard
+            title="档案状态"
+            items={[
+              { label: "总记录", value: result.total },
+              { label: "同步", value: statusLabel[result.status] },
+            ]}
+          />
 
-          <section className="rounded-panel border border-hairline bg-reader-paper p-5">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
-              <Search aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-              搜索范围
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              当前只在已加载记录的标题和原文片段中查找。后续语义搜索归入后端能力评审。
-            </p>
-          </section>
+          <InfoCard
+            title="搜索范围"
+            icon={Search}
+            description="当前只在已加载记录的标题和原文片段中查找。后续语义搜索归入后端能力评审。"
+            tone="paper"
+          />
         </aside>
       </div>
     </main>

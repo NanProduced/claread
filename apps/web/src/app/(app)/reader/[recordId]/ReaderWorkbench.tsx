@@ -4437,34 +4437,58 @@ export function ReaderWorkbench({
                   <span>{reader.article.sentences.length} 句</span>
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-start gap-2">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 lg:gap-3">
                 <FavoriteButton recordId={record.id} />
-                <button
-                  type="button"
-                  className={`focus-ring inline-flex h-10 items-center rounded-pill border px-3.5 text-xs font-semibold transition-colors ${
-                    showTranslation
-                      ? "border-lens-blue/30 bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-surface-warm text-muted hover:border-muted hover:text-ink"
-                  }`}
-                  onClick={() => setShowTranslation((value) => !value)}
-                >
-                  {showTranslation ? "原文+译文" : "原文"}
-                </button>
-                <button
-                  type="button"
-                  className="focus-ring inline-flex h-10 items-center gap-1 rounded-pill border border-hairline bg-surface-warm px-3.5 text-xs font-semibold text-ink-soft transition-colors hover:border-muted hover:text-ink"
-                  onClick={openSettingsPanel}
-                >
-                  <Type aria-hidden="true" className="h-3.5 w-3.5" />
-                  Aa
-                </button>
-                <button
-                  type="button"
-                  className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-pill border border-hairline bg-surface-warm text-muted transition-colors hover:border-muted hover:text-ink"
-                  aria-label="更多阅读操作"
-                >
-                  <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
-                </button>
+                <div className="flex items-stretch gap-1 rounded-[1.1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(248,245,238,0.96))] p-1 shadow-[0_10px_24px_rgba(17,17,17,0.05),inset_0_1px_0_rgba(255,255,255,0.74)]">
+                  <button
+                    type="button"
+                    className={`focus-ring inline-flex min-h-[3.25rem] min-w-[7.8rem] items-center gap-2 rounded-[0.95rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
+                      showTranslation
+                        ? "border-lens-blue/18 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(234,241,255,0.92))] text-ink shadow-[0_8px_18px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.7)]"
+                        : "border-transparent bg-transparent text-ink-soft hover:border-hairline hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
+                    }`}
+                    onClick={() => setShowTranslation((value) => !value)}
+                  >
+                    <BookOpen
+                      aria-hidden="true"
+                      className={`h-4 w-4 shrink-0 ${showTranslation ? "text-lens-blue" : "text-muted"}`}
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="text-[0.86rem] font-semibold leading-none">
+                        {showTranslation ? "原文 + 译文" : "仅看原文"}
+                      </span>
+                      <span className="mt-1 text-[0.66rem] leading-none text-subtle">
+                        {showTranslation ? "双语对照已开" : "安静阅读视图"}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`focus-ring inline-flex min-h-[3.25rem] min-w-[6.5rem] items-center gap-2 rounded-[0.95rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
+                      lowerPanelMode === "settings" && contextPanelOpen
+                        ? "border-lens-blue/18 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(234,241,255,0.92))] text-ink shadow-[0_8px_18px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.7)]"
+                        : "border-transparent bg-transparent text-ink-soft hover:border-hairline hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
+                    }`}
+                    onClick={openSettingsPanel}
+                  >
+                    <Type
+                      aria-hidden="true"
+                      className={`h-4 w-4 shrink-0 ${lowerPanelMode === "settings" && contextPanelOpen ? "text-lens-blue" : "text-muted"}`}
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="text-[0.86rem] font-semibold leading-none">阅读显示</span>
+                      <span className="mt-1 text-[0.66rem] leading-none text-subtle">字号、行距、底色</span>
+                    </span>
+                  </button>
+                  <div className="mx-0.5 my-1 hidden w-px bg-[linear-gradient(180deg,rgba(232,228,218,0),rgba(232,228,218,0.92),rgba(232,228,218,0))] sm:block" />
+                  <button
+                    type="button"
+                    className="focus-ring inline-flex h-[3.25rem] w-[3.25rem] items-center justify-center rounded-[0.95rem] border border-transparent bg-transparent text-muted transition-[background-color,border-color,color,box-shadow] hover:border-hairline hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
+                    aria-label="更多阅读操作"
+                  >
+                    <MoreHorizontal aria-hidden="true" className="h-4.5 w-4.5" />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -4749,12 +4773,6 @@ export function ReaderWorkbench({
             density={density}
             theme={theme}
             markVisibility={markVisibility}
-            onModeChange={(mode) => {
-              if (mode === "sentence" && !activeSentence) {
-                return;
-              }
-              setLowerPanelMode(mode);
-            }}
             onNoteChange={setNote}
             onColorChange={setAnnotationColor}
             onSaveAnnotation={saveSentenceAnnotation}

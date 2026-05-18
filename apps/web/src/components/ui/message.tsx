@@ -4,7 +4,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
@@ -16,7 +15,7 @@ export interface MessageProps extends React.ComponentPropsWithoutRef<"div"> {
 
 function Message({ children, className, ...props }: MessageProps) {
   return (
-    <div className={cn("flex gap-3", className)} {...props}>
+    <div className={cn("flex gap-3.5", className)} {...props}>
       {children}
     </div>
   );
@@ -59,7 +58,7 @@ function MessageContent({
   ...props
 }: MessageContentProps) {
   const classNames = cn(
-    "rounded-lg bg-secondary p-2 text-foreground break-words whitespace-normal",
+    "break-words whitespace-normal rounded-[var(--cl-radius-surface-sm)] border border-hairline/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(251,249,243,0.98))] px-4 py-3 text-ink-soft shadow-[0_12px_32px_rgba(17,17,17,0.05)]",
     className,
   );
 
@@ -84,7 +83,7 @@ export interface MessageActionsProps extends React.ComponentPropsWithoutRef<"div
 
 function MessageActions({ children, className, ...props }: MessageActionsProps) {
   return (
-    <div className={cn("text-muted-foreground flex items-center gap-2", className)} {...props}>
+    <div className={cn("flex items-center gap-2 text-muted", className)} {...props}>
       {children}
     </div>
   );
@@ -105,14 +104,12 @@ function MessageAction({
   ...props
 }: MessageActionProps) {
   return (
-    <TooltipProvider>
-      <Tooltip {...props}>
-        <TooltipTrigger asChild>{children}</TooltipTrigger>
-        <TooltipContent side={side} className={className}>
-          {tooltip}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip {...props}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side={side} className={className}>
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

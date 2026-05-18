@@ -1,8 +1,8 @@
 import { MessageSquare, SlidersHorizontal, UserRound } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { Select } from "@/components/primitives/select";
+import { Button } from "@/components/primitives/button";
+import { InfoCard, PageHeader, SectionCard, SelectField } from "@/components/composed";
 import { getProfileSettings, type ProfileBffStatus } from "@/services/bff/profile";
 import { FeedbackForm } from "./FeedbackForm";
 import { LogoutButton } from "./LogoutButton";
@@ -34,26 +34,6 @@ const translationToneItems = [
   { label: "隐藏", value: "hidden" },
 ];
 
-function PreferenceRow({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid gap-3 border-t border-hairline py-5 md:grid-cols-[minmax(0,1fr)_220px] md:items-center">
-      <div>
-        <h3 className="text-sm font-semibold text-ink">{title}</h3>
-        <p className="mt-1 text-xs leading-5 text-muted">{description}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 export default async function SettingsPage() {
   const settings = await getProfileSettings();
   const quota = settings.quota;
@@ -67,21 +47,16 @@ export default async function SettingsPage() {
     <main className="paper-grain min-h-screen px-5 py-7 text-ink sm:px-8 lg:px-10">
       <div className="mx-auto grid max-w-7xl gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="min-w-0">
-          <header className="mb-7 max-w-3xl border-b border-hairline pb-6">
-            <p className="mb-3 text-xs font-semibold text-muted">账户与偏好</p>
-            <h1 className="font-headline text-[2.15rem] font-semibold leading-tight tracking-normal text-ink sm:text-[2.65rem]">
-              设置
-            </h1>
-            <p className="mt-3 text-sm leading-6 text-muted">
-              查看账户状态、解析额度和阅读偏好。反馈入口放在这里，不打断阅读链路。
-            </p>
-            {settings.message ? (
-              <p className="mt-3 text-sm leading-6 text-muted">{settings.message}</p>
-            ) : null}
-          </header>
+          <PageHeader
+            eyebrow="账户与偏好"
+            title="设置"
+            description="查看账户状态、解析额度和阅读偏好。反馈入口放在这里，不打断阅读链路。"
+            message={settings.message}
+            className="max-w-3xl"
+          />
 
           <div className="space-y-8">
-            <section className="rounded-panel border border-hairline bg-surface p-5 shadow-surface-quiet sm:p-6">
+            <SectionCard>
               <div className="flex items-start gap-4">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-lens-blue-soft font-headline text-xl font-semibold text-lens-blue">
                   {avatarText}
@@ -116,66 +91,49 @@ export default async function SettingsPage() {
                   <div className="h-full rounded-full bg-lens-blue" style={{ width: `${quotaPercent}%` }} />
                 </div>
               </div>
-            </section>
+            </SectionCard>
 
-            <section className="rounded-panel border border-hairline bg-surface p-5 shadow-surface-quiet sm:p-6">
-              <div className="mb-1 flex items-center gap-2">
-                <SlidersHorizontal aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-                <h2 className="text-base font-semibold text-ink">阅读偏好</h2>
-              </div>
-              <PreferenceRow title="背景纸色" description="选择 Reader 模式的默认底色。">
-                <Select items={paperToneItems} defaultValue="warm" />
-              </PreferenceRow>
-              <PreferenceRow title="字号与行距" description="影响英文正文显示。">
-                <Select items={readingDensityItems} defaultValue="standard" />
-              </PreferenceRow>
-              <PreferenceRow title="默认翻译显示" description="进入 Reader 时译文的可见性。">
-                <Select items={translationToneItems} defaultValue="muted" />
-              </PreferenceRow>
-              <p className="border-t border-hairline pt-5 text-xs leading-5 text-muted">
-                偏好保存能力后续接入。当前控件先确定 Web 端阅读设置的形态。
-              </p>
-            </section>
+            <SectionCard
+              title="阅读偏好"
+              icon={SlidersHorizontal}
+              footer={
+                <p className="text-xs leading-5 text-muted">
+                  偏好保存能力后续接入。当前控件先确定 Web 端阅读设置的形态。
+                </p>
+              }
+            >
+              <SelectField label="背景纸色" description="选择 Reader 模式的默认底色。" items={paperToneItems} defaultValue="warm" />
+              <SelectField label="字号与行距" description="影响英文正文显示。" items={readingDensityItems} defaultValue="standard" />
+              <SelectField label="默认翻译显示" description="进入 Reader 时译文的可见性。" items={translationToneItems} defaultValue="muted" />
+            </SectionCard>
 
-            <section className="rounded-panel border border-hairline bg-surface p-5 shadow-surface-quiet sm:p-6">
-              <div className="mb-5 flex items-center gap-2">
-                <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-                <h2 className="text-base font-semibold text-ink">反馈</h2>
-              </div>
+            <SectionCard title="反馈" icon={MessageSquare}>
               <FeedbackForm />
-            </section>
+            </SectionCard>
           </div>
         </section>
 
         <aside className="space-y-5 xl:pt-[7.4rem]">
-          <section className="rounded-panel border border-hairline bg-surface p-5 shadow-surface-quiet">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
-              <UserRound aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-              当前会话
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              {settings.session.phone ? `已登录手机号 ${settings.session.phone}` : "当前会话不可用。"}
-            </p>
-            <div className="mt-5 border-t border-hairline pt-4">
-              {settings.status === "unauthenticated" || settings.status === "mock_session" ? (
-                <Link
-                  href={loginRoute}
-                  className="focus-ring inline-flex min-h-10 items-center rounded-pill border border-hairline bg-surface px-4 text-sm font-semibold text-ink transition-colors hover:border-muted"
-                >
-                  重新登录
-                </Link>
+          <InfoCard
+            title="当前会话"
+            icon={UserRound}
+            description={settings.session.phone ? `已登录手机号 ${settings.session.phone}` : "当前会话不可用。"}
+            footer={
+              settings.status === "unauthenticated" || settings.status === "mock_session" ? (
+                <Button asChild variant="outline">
+                  <Link href={loginRoute}>重新登录</Link>
+                </Button>
               ) : (
                 <LogoutButton />
-              )}
-            </div>
-          </section>
+              )
+            }
+          />
 
-          <section className="rounded-panel border border-hairline bg-reader-paper p-5">
-            <h2 className="text-sm font-semibold text-ink">订阅升级</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              暂未开放。第一版只展示可用额度，不引入付费配置流程。
-            </p>
-          </section>
+          <InfoCard
+            title="订阅升级"
+            tone="paper"
+            description="暂未开放。第一版只展示可用额度，不引入付费配置流程。"
+          />
         </aside>
       </div>
     </main>

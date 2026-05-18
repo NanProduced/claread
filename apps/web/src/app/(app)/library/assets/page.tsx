@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
+import { Button } from "@/components/primitives/button";
+import { FilterBar, EmptyState, ListRow, PageHeader, SectionCard } from "@/components/composed";
 
 import { getExcerptAssets, type ExcerptAssetItemVm } from "@/services/bff/excerpt-assets";
 import type { ExcerptAssetStateDto } from "@/types/api/excerpt-assets";
@@ -151,109 +153,77 @@ export default async function LearningAssetsPage({
   return (
     <main className="paper-grain min-h-screen px-4 py-6 text-ink sm:px-8 lg:px-10">
       <div className="mx-auto max-w-7xl">
-        <header className="border-b border-hairline pb-7">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-            <div className="max-w-3xl">
-              <p className="mb-3 text-xs font-semibold text-muted">
-                阅读记录 / 摘录与批注
-              </p>
-              <h1 className="font-headline text-[2.15rem] font-semibold leading-tight tracking-normal text-ink sm:text-[2.65rem]">
-                摘录与批注
-              </h1>
-              <p className="mt-3 text-sm leading-6 text-muted">
-                这里收起的是你在阅读里主动留下的阅读痕迹。它按文章归档，方便你回看重点句子、笔记和系统提炼出的复习要点。
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href={libraryRoute}
-                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-pill border border-hairline bg-surface px-5 text-sm font-semibold text-ink transition-colors hover:border-muted"
-              >
+        <PageHeader
+          eyebrow="阅读记录 / 摘录与批注"
+          title="摘录与批注"
+          description="这里收起的是你在阅读里主动留下的阅读痕迹。它按文章归档，方便你回看重点句子、笔记和系统提炼出的复习要点。"
+          actions={
+            <Button asChild variant="outline">
+              <Link href={libraryRoute}>
                 <BookOpen aria-hidden="true" className="h-4 w-4" />
                 返回阅读记录
               </Link>
+            </Button>
+          }
+          className="mb-0 border-b-0 pb-0"
+        />
+        <div className="border-b border-hairline pb-7">
+          <FilterBar
+            className="space-y-4"
+            activeValue={activeFilter}
+            items={assetFilters.map((filter) => ({
+              value: filter.key,
+              label: filter.label,
+              href: assetFilterHref(filter.key),
+            }))}
+            summary={
+              <>
+                <div className="flex flex-wrap items-center gap-3 text-sm leading-6">
+                  <span className="rounded-pill border border-hairline bg-surface px-3 py-1.5 font-semibold text-ink shadow-surface-quiet">
+                    {result.totalGroups} 篇文章 · {result.totalAssets} 条摘录
+                  </span>
+                  <span className="text-muted">
+                    收藏 {favoriteCount} · 高亮 {highlightedCount} · 笔记 {noteCount} · 解析 {insightCount}
+                  </span>
+                </div>
+                <p className="text-xs text-muted">
+                  当前视图：{activeFilterMeta.label}，{activeFilterMeta.description}
+                </p>
+              </>
+            }
+          />
+
+          {activeFilter === "insight" ? (
+            <div className="mt-4 rounded-note border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
+              “解析”是系统从句子里提取出的复习要点，用来帮助你回看重点，不等同于你手动保存的收藏或笔记。
             </div>
-          </div>
-          <div className="mt-6 space-y-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-wrap items-center gap-3 text-sm leading-6">
-                <span className="rounded-pill border border-hairline bg-surface px-3 py-1.5 font-semibold text-ink shadow-surface-quiet">
-                  {result.totalGroups} 篇文章 · {result.totalAssets} 条摘录
-                </span>
-                <span className="text-muted">
-                  收藏 {favoriteCount} · 高亮 {highlightedCount} · 笔记 {noteCount} · 解析 {insightCount}
-                </span>
-              </div>
-              <p className="text-xs text-muted">
-                当前视图：{activeFilterMeta.label}，{activeFilterMeta.description}
-              </p>
+          ) : null}
+
+          {result.message ? (
+            <div className="mt-4 rounded-note border border-hairline bg-surface px-4 py-3 text-sm leading-6 text-muted shadow-surface-quiet">
+              {result.message}
             </div>
-
-            <nav
-              aria-label="摘录筛选"
-              className="flex flex-wrap items-center gap-2"
-            >
-              {assetFilters.map((filter) => {
-                const active = filter.key === activeFilter;
-                return (
-                  <Link
-                    key={filter.key}
-                    href={assetFilterHref(filter.key)}
-                    className={`focus-ring inline-flex min-h-10 items-center rounded-pill border px-4 text-sm font-semibold transition-colors ${
-                      active
-                        ? "border-ink bg-ink"
-                        : "border-hairline bg-surface text-ink-soft hover:border-muted hover:text-ink"
-                    }`}
-                    style={active ? { color: "var(--surface)" } : undefined}
-                  >
-                    {filter.label}
-                  </Link>
-                );
-              })}
-            </nav>
-
-            {activeFilter === "insight" ? (
-              <div className="rounded-note border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
-                “解析”是系统从句子里提取出的复习要点，用来帮助你回看重点，不等同于你手动保存的收藏或笔记。
-              </div>
-            ) : null}
-
-            {result.message ? (
-              <div className="rounded-note border border-hairline bg-surface px-4 py-3 text-sm leading-6 text-muted shadow-surface-quiet">
-                {result.message}
-              </div>
-            ) : null}
-          </div>
-        </header>
+          ) : null}
+        </div>
 
         {!hasAssets ? (
-          <section className="border-t border-hairline py-12">
-            <div className="max-w-xl">
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-lens-blue-soft text-lens-blue">
-                <Search aria-hidden="true" className="h-5 w-5" />
-              </div>
-              <h2 className="mt-4 font-headline text-2xl font-semibold text-ink">
-                {activeFilter === "all"
-                  ? "还没有摘录与批注"
-                  : `${activeFilterMeta.label} 里还没有内容`}
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-muted">
-                {activeFilter === "all"
-                  ? "在 Reader 里收藏、划线或写笔记后，这里会按文章归档，方便你回看和继续读。"
-                  : "换一个筛选继续看，或者回到正文里继续留下新的阅读痕迹。"}
-              </p>
-              {activeFilter !== "all" ? (
-                <div className="mt-5">
-                  <Link
-                    href={assetFilterHref("all")}
-                    className="focus-ring inline-flex min-h-11 items-center rounded-pill border border-hairline bg-surface px-5 text-sm font-semibold text-ink transition-colors hover:border-muted"
-                  >
-                    查看全部摘录
-                  </Link>
-                </div>
-              ) : null}
-            </div>
-          </section>
+          <EmptyState
+            icon={Search}
+            title={activeFilter === "all" ? "还没有摘录与批注" : `${activeFilterMeta.label} 里还没有内容`}
+            description={
+              activeFilter === "all"
+                ? "在 Reader 里收藏、划线或写笔记后，这里会按文章归档，方便你回看和继续读。"
+                : "换一个筛选继续看，或者回到正文里继续留下新的阅读痕迹。"
+            }
+            action={
+              activeFilter !== "all" ? (
+                <Button asChild variant="outline">
+                  <Link href={assetFilterHref("all")}>查看全部摘录</Link>
+                </Button>
+              ) : undefined
+            }
+            className="py-12"
+          />
         ) : (
           <div className="mt-8 grid gap-10 xl:grid-cols-[18rem_minmax(0,1fr)]">
             <aside className="xl:sticky xl:top-6 xl:self-start">
@@ -262,7 +232,7 @@ export default async function LearningAssetsPage({
                   <h2 className="text-sm font-semibold text-ink">文章索引</h2>
                   <span className="text-xs text-muted">{result.totalGroups} 篇</span>
                 </div>
-                <div className="mt-4 overflow-hidden rounded-panel border border-hairline bg-surface shadow-surface-quiet">
+                <SectionCard className="mt-4 overflow-hidden p-0">
                   {result.articles.map((article) => {
                     const articleHighlights = article.items.filter((item) => item.isHighlighted).length;
                     const articleNotes = article.items.filter((item) => item.isNoted).length;
@@ -297,17 +267,17 @@ export default async function LearningAssetsPage({
                       </a>
                     );
                   })}
-                </div>
+                </SectionCard>
               </div>
             </aside>
 
             <section className="min-w-0">
               <div className="space-y-8">
                 {result.articles.map((article) => (
-                  <section
+                  <SectionCard
                     id={articleAnchorId(article.key)}
                     key={article.key}
-                    className="scroll-mt-6 rounded-panel border border-hairline bg-surface px-4 py-5 shadow-surface-quiet sm:px-6"
+                    className="scroll-mt-6 px-4 py-5 sm:px-6"
                   >
                     <div className="flex flex-col gap-3 border-b border-hairline pb-4 md:flex-row md:items-start md:justify-between">
                       <div className="min-w-0">
@@ -332,98 +302,90 @@ export default async function LearningAssetsPage({
 
                     <div className="mt-4 divide-y divide-hairline/80">
                       {article.items.map((item) => (
-                        <article
+                        <ListRow
                           key={item.key}
-                          className="grid gap-4 py-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start"
-                        >
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted">
+                          className="lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start"
+                          titleClassName="reader-serif text-[1.12rem] font-normal leading-8"
+                          title={item.selectedText}
+                          description={
+                            <div className="max-w-[72ch]">
+                              {item.translation ? (
+                                <p className="text-sm leading-6 text-muted">{item.translation}</p>
+                              ) : null}
+                              {itemStatusSummary(item) ? <p className="mt-3 text-xs leading-5 text-muted">{itemStatusSummary(item)}</p> : null}
+                              {item.note ? (
+                                <div className="mt-4 rounded-note border border-hairline bg-reader-paper px-3 py-3">
+                                  <p className="text-xs font-semibold text-muted">笔记</p>
+                                  <p className="mt-2 text-sm leading-6 text-ink-soft">{item.note}</p>
+                                </div>
+                              ) : null}
+                              {item.insights.length > 0 ? (
+                                <div className="mt-4">
+                                  <p className="text-xs font-semibold text-muted">解析要点</p>
+                                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                    {item.insights.slice(0, 3).map((insight) => (
+                                      <span
+                                        key={`${item.key}-${insight.id}`}
+                                        className="rounded-pill border border-hairline bg-lens-blue-soft px-2.5 py-1 text-ink-soft"
+                                      >
+                                        {insight.label} · {insight.title}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          }
+                          meta={
+                            <>
                               <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-1 font-semibold text-ink-soft">
                                 {assetLabel(item)}
                               </span>
-                              {item.anchorType !== "multi_text" && sentenceLabel(item.sentenceId) ? (
-                                <span>{sentenceLabel(item.sentenceId)}</span>
-                              ) : null}
+                              {item.anchorType !== "multi_text" && sentenceLabel(item.sentenceId) ? <span>{sentenceLabel(item.sentenceId)}</span> : null}
                               {segmentSummary(item) ? <span>{segmentSummary(item)}</span> : null}
                               <span>{formatDate(item.updatedAt)}</span>
-                            </div>
-                            <p className="mt-3 reader-serif max-w-[70ch] text-[1.12rem] leading-8 text-ink">
-                              {item.selectedText}
-                            </p>
-                            {item.translation ? (
-                              <p className="mt-3 max-w-[72ch] text-sm leading-6 text-muted">
-                                {item.translation}
-                              </p>
-                            ) : null}
-                            {itemStatusSummary(item) ? (
-                              <p className="mt-3 text-xs leading-5 text-muted">
-                                {itemStatusSummary(item)}
-                              </p>
-                            ) : null}
-                            {item.note ? (
-                              <div className="mt-4 rounded-note border border-hairline bg-reader-paper px-3 py-3">
-                                <p className="text-xs font-semibold text-muted">笔记</p>
-                                <p className="mt-2 text-sm leading-6 text-ink-soft">
-                                  {item.note}
-                                </p>
+                            </>
+                          }
+                          trailing={
+                            <div className="flex flex-col items-start gap-3 lg:items-end">
+                              <Button asChild variant="secondary" size="sm">
+                                <Link href={readerHref(item)}>
+                                  回到原文
+                                  <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5" />
+                                </Link>
+                              </Button>
+                              <div className="flex flex-wrap gap-2 text-xs text-muted lg:justify-end">
+                                {item.isFavorited ? (
+                                  <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
+                                    <Bookmark aria-hidden="true" className="h-3.5 w-3.5" />
+                                    收藏
+                                  </span>
+                                ) : null}
+                                {item.isHighlighted ? (
+                                  <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
+                                    <Highlighter aria-hidden="true" className="h-3.5 w-3.5" />
+                                    高亮
+                                  </span>
+                                ) : null}
+                                {item.isNoted ? (
+                                  <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
+                                    <NotebookPen aria-hidden="true" className="h-3.5 w-3.5" />
+                                    笔记
+                                  </span>
+                                ) : null}
+                                {item.insights.length > 0 ? (
+                                  <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
+                                    <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+                                    解析
+                                  </span>
+                                ) : null}
                               </div>
-                            ) : null}
-                            {item.insights.length > 0 ? (
-                              <div className="mt-4">
-                                <p className="text-xs font-semibold text-muted">解析要点</p>
-                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                                  {item.insights.slice(0, 3).map((insight) => (
-                                    <span
-                                      key={`${item.key}-${insight.id}`}
-                                      className="rounded-pill border border-hairline bg-lens-blue-soft px-2.5 py-1 text-ink-soft"
-                                    >
-                                      {insight.label} · {insight.title}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="flex flex-col items-start gap-3 lg:items-end">
-                            <Link
-                              href={readerHref(item)}
-                              className="focus-ring inline-flex min-h-11 items-center gap-1 rounded-pill bg-ink px-4 text-sm font-semibold transition-colors hover:bg-ink-soft"
-                              style={{ color: "var(--surface)" }}
-                            >
-                              回到原文
-                              <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5" />
-                            </Link>
-                            <div className="flex flex-wrap gap-2 text-xs text-muted lg:justify-end">
-                              {item.isFavorited ? (
-                                <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
-                                  <Bookmark aria-hidden="true" className="h-3.5 w-3.5" />
-                                  收藏
-                                </span>
-                              ) : null}
-                              {item.isHighlighted ? (
-                                <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
-                                  <Highlighter aria-hidden="true" className="h-3.5 w-3.5" />
-                                  高亮
-                                </span>
-                              ) : null}
-                              {item.isNoted ? (
-                                <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
-                                  <NotebookPen aria-hidden="true" className="h-3.5 w-3.5" />
-                                  笔记
-                                </span>
-                              ) : null}
-                              {item.insights.length > 0 ? (
-                                <span className="inline-flex min-h-8 items-center gap-1 rounded-pill border border-hairline bg-reader-paper px-3">
-                                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
-                                  解析
-                                </span>
-                              ) : null}
                             </div>
-                          </div>
-                        </article>
+                          }
+                        />
                       ))}
                     </div>
-                  </section>
+                  </SectionCard>
                 ))}
               </div>
             </section>

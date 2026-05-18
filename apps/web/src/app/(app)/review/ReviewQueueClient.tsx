@@ -1,6 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Button } from "@/components/primitives/button";
+import { EmptyState, SectionCard } from "@/components/composed";
+import { BookOpenCheck } from "lucide-react";
 
 import type { ReviewAction, ReviewItemVm } from "@/types/view/ReviewItemVm";
 import type { ReviewSubmitResultVm } from "@/types/view/ReviewQueueVm";
@@ -87,12 +90,12 @@ export function ReviewQueueClient({ initialItems }: ReviewQueueClientProps) {
 
   if (!activeItem) {
     return (
-      <section className="rounded-note border border-hairline bg-surface p-8 text-center shadow-surface-quiet">
-        <h2 className="font-headline text-xl font-semibold text-ink">本轮完成</h2>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          当前队列已清空。稍后会根据复习计划生成新的待复习词条。
-        </p>
-      </section>
+      <EmptyState
+        icon={BookOpenCheck}
+        title="本轮完成"
+        description="当前队列已清空。稍后会根据复习计划生成新的待复习词条。"
+        className="border-t-0 py-0"
+      />
     );
   }
 
@@ -102,17 +105,17 @@ export function ReviewQueueClient({ initialItems }: ReviewQueueClientProps) {
     <section className="flex flex-col gap-4">
       {submitState.kind !== "idle" ? (
         <div
-          className={`rounded-md border px-4 py-3 text-sm leading-6 ${
+          className={`rounded-note border px-4 py-3 text-sm leading-6 shadow-surface-quiet ${
             submitState.kind === "success"
-              ? "border-structure-green/30 bg-structure-green/10 text-ink-soft"
-              : "border-vocab-amber/40 bg-vocab-amber/10 text-ink-soft"
+              ? "border-structure-green/30 bg-[linear-gradient(180deg,rgba(240,253,244,0.92),rgba(255,255,255,0.98))] text-ink-soft"
+              : "border-vocab-amber/40 bg-[linear-gradient(180deg,rgba(255,251,235,0.94),rgba(255,255,255,0.98))] text-ink-soft"
           }`}
         >
           {submitState.message}
         </div>
       ) : null}
 
-      <article className="rounded-note border border-hairline bg-surface p-6 shadow-surface-quiet md:p-8">
+      <SectionCard className="p-6 md:p-8">
         <div className="flex flex-col gap-6">
           <div className="flex flex-col gap-2 border-b border-hairline pb-5">
             <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
@@ -149,25 +152,27 @@ export function ReviewQueueClient({ initialItems }: ReviewQueueClientProps) {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="lg"
               disabled={disabled}
               onClick={() => submit(activeItem.id, "unfamiliar")}
-              className="rounded-md border border-hairline bg-surface-warm px-4 py-3 text-sm font-semibold text-ink transition-colors hover:border-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
               不熟，明天再来
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="primary"
+              size="lg"
               disabled={disabled}
               onClick={() => submit(activeItem.id, "known")}
-              className="rounded-md border border-lens-blue bg-lens-blue px-4 py-3 text-sm font-semibold text-surface transition-colors hover:bg-lens-blue/90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               认识，进入下一阶段
-            </button>
+            </Button>
           </div>
         </div>
-      </article>
+      </SectionCard>
 
       <div className="text-center text-xs font-semibold text-muted">
         队列剩余 {remainingCount} 个

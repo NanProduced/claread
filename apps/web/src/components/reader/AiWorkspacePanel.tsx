@@ -32,6 +32,7 @@ import {
   PromptInputTextarea,
 } from "@/components/ui/prompt-input";
 import { Tool, type ToolPart } from "@/components/ui/tool";
+import { IconButton } from "@/components/primitives/icon-button";
 import { cn } from "@/lib/cn";
 import type {
   ReaderAskActionProposalDto,
@@ -72,6 +73,10 @@ function taskModeLabel(mode: ReaderAskTaskModeDto | null | undefined) {
   return TASK_PRESETS.find((item) => item.mode === mode)?.label ?? "讲解";
 }
 
+function taskModeDescription(mode: ReaderAskTaskModeDto | null | undefined) {
+  return TASK_PRESETS.find((item) => item.mode === mode)?.description ?? TASK_PRESETS[0].description;
+}
+
 function taskModePlaceholder(mode: ReaderAskTaskModeDto) {
   switch (mode) {
     case "breakdown":
@@ -101,7 +106,7 @@ function formatThreadLabel(thread: ReaderAskThreadSummaryDto, index: number) {
   if (thread.is_default) {
     return "继续对话";
   }
-  if (!thread.title || thread.title === "New chat" || thread.title === "Ask Claread") {
+  if (!thread.title || thread.title === "New chat" || thread.title === "新对话" || thread.title === "Ask Claread") {
     return `会话 ${index + 1}`;
   }
   return thread.title;
@@ -322,7 +327,7 @@ function TaskPresetStrip({
   onSelect: (mode: ReaderAskTaskModeDto) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid gap-2 sm:grid-cols-2">
       {TASK_PRESETS.map((preset) => {
         const active = preset.mode === activeMode;
         return (
@@ -330,15 +335,15 @@ function TaskPresetStrip({
             key={preset.mode}
             type="button"
             className={cn(
-              "focus-ring inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold transition-all",
+              "focus-ring rounded-[var(--cl-radius-control-md)] border px-3 py-2.5 text-left transition-colors",
               active
-                ? "border-ink bg-ink text-surface shadow-[0_10px_24px_rgba(17,17,17,0.12)]"
-                : "border-hairline bg-surface/90 text-muted hover:border-muted hover:bg-reader-paper hover:text-ink",
+                ? "border-lens-blue/30 bg-lens-blue-soft text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]"
+                : "border-hairline bg-surface/92 text-muted hover:border-muted hover:bg-reader-paper hover:text-ink",
             )}
             onClick={() => onSelect(preset.mode)}
-            title={preset.description}
           >
-            {preset.label}
+            <span className="block text-xs font-semibold text-ink">{preset.label}</span>
+            <span className="mt-1 block text-[11px] leading-5 text-muted">{preset.description}</span>
           </button>
         );
       })}
@@ -384,15 +389,15 @@ function DisclosureSection({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="rounded-2xl border border-hairline/80 bg-reader-paper/70">
+      <div className="rounded-[var(--cl-radius-surface-sm)] border border-hairline/80 bg-[linear-gradient(180deg,rgba(251,249,243,0.88),rgba(255,255,255,0.96))]">
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="focus-ring flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+            className="focus-ring flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left"
           >
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</p>
-              {summary ? <p className="mt-0.5 truncate text-xs text-subtle">{summary}</p> : null}
+              <p className="text-xs font-semibold text-ink">{label}</p>
+              {summary ? <p className="mt-1 truncate text-[11px] leading-5 text-subtle">{summary}</p> : null}
             </div>
             <ChevronDown
               className={cn(
@@ -403,7 +408,7 @@ function DisclosureSection({
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
-          <div className="border-t border-hairline/80 px-3 py-3">{children}</div>
+          <div className="border-t border-hairline/80 px-3.5 py-3">{children}</div>
         </CollapsibleContent>
       </div>
     </Collapsible>
@@ -427,7 +432,7 @@ function ContextSummaryDisclosure({
         {chips.map((chip) => (
           <span
             key={chip}
-            className="rounded-full border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted"
+            className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted"
           >
             {chip}
           </span>
@@ -611,7 +616,7 @@ function ConfirmActionCard({
   onReject: (confirmed: boolean) => void;
 }) {
   return (
-    <div className="mt-3 rounded-note border border-hairline bg-reader-paper px-3 py-3">
+    <div className="mt-3 rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-[linear-gradient(180deg,rgba(251,249,243,0.92),rgba(255,255,255,0.98))] px-3.5 py-3.5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-ink">{proposal.label}</p>
@@ -625,22 +630,12 @@ function ConfirmActionCard({
       </div>
       {proposal.status === "pending" ? (
         <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            className="focus-ring inline-flex h-8 items-center justify-center rounded-pill bg-ink px-3 text-xs font-semibold text-surface disabled:opacity-50"
-            disabled={busy}
-            onClick={() => onConfirm(true)}
-          >
+          <Button type="button" variant="secondary" size="sm" density="compact" disabled={busy} onClick={() => onConfirm(true)}>
             确认
-          </button>
-          <button
-            type="button"
-            className="focus-ring inline-flex h-8 items-center justify-center rounded-pill border border-hairline px-3 text-xs font-semibold text-muted disabled:opacity-50"
-            disabled={busy}
-            onClick={() => onReject(false)}
-          >
+          </Button>
+          <Button type="button" variant="quiet" size="sm" density="compact" disabled={busy} onClick={() => onReject(false)}>
             取消
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>
@@ -653,36 +648,56 @@ function ThreadSwitcher({
   open,
   onToggle,
   onSelect,
+  onCreate,
+  busy = false,
 }: {
   threads: ReaderAskThreadSummaryDto[];
   activeThreadId: string | null;
   open: boolean;
   onToggle: () => void;
   onSelect: (threadId: string) => void;
+  onCreate: () => void;
+  busy?: boolean;
 }) {
-  if (threads.length <= 1) {
-    return null;
-  }
-
   const activeIndex = threads.findIndex((thread) => thread.id === activeThreadId);
-  const activeThread = activeIndex >= 0 ? threads[activeIndex] : threads[0];
+  const activeThread = activeIndex >= 0 ? threads[activeIndex] : threads[0] ?? null;
 
   return (
     <div className="relative">
-      <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full px-2.5 text-xs text-muted" onClick={onToggle}>
+      <Button
+        type="button"
+        variant="quiet"
+        size="sm"
+        density="compact"
+        className="h-9 rounded-[var(--cl-radius-control-md)] px-3 text-xs text-ink-soft"
+        onClick={onToggle}
+      >
         <span className="max-w-28 truncate">
-          {formatThreadLabel(activeThread, activeIndex >= 0 ? activeIndex : 0)}
+          {activeThread ? formatThreadLabel(activeThread, activeIndex >= 0 ? activeIndex : 0) : "当前对话"}
         </span>
         <ChevronDown className="h-3.5 w-3.5" />
       </Button>
       {open ? (
-        <div className="absolute right-0 top-10 z-10 min-w-52 rounded-2xl border border-hairline bg-surface/98 p-1.5 shadow-[0_18px_40px_rgba(17,17,17,0.14)] backdrop-blur-sm">
+        <div className="absolute right-0 top-11 z-10 min-w-56 rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,247,239,0.98))] p-1.5 shadow-[0_18px_40px_rgba(17,17,17,0.12)]">
+          <button
+            type="button"
+            className="focus-ring flex w-full items-center justify-between rounded-[var(--cl-radius-control-md)] px-3 py-2.5 text-left text-xs transition-colors hover:bg-reader-paper"
+            onClick={onCreate}
+            disabled={busy}
+          >
+            <span className="inline-flex items-center gap-2 font-semibold text-ink">
+              <Plus className="h-3.5 w-3.5 text-lens-blue" />
+              新对话
+            </span>
+            <span className="text-[11px] text-subtle">重新开始</span>
+          </button>
+          {threads.length > 0 ? <div className="my-1 border-t border-hairline/80" /> : null}
           {threads.map((thread, index) => (
             <button
               key={thread.id}
               type="button"
               className={cn(
-                "flex w-full items-center justify-between rounded-[14px] px-3 py-2.5 text-left text-xs transition-colors hover:bg-reader-paper",
+                "flex w-full items-center justify-between rounded-[var(--cl-radius-control-md)] px-3 py-2.5 text-left text-xs transition-colors hover:bg-reader-paper",
                 thread.id === activeThreadId && "bg-reader-paper text-ink",
               )}
               onClick={() => onSelect(thread.id)}
@@ -733,7 +748,7 @@ function MessageBubble({
             </Avatar>
             <div className="min-w-0 max-w-[calc(100%-3rem)] flex-1">
               <div className="mb-2 flex items-center gap-2">
-                <span className="rounded-full border border-hairline bg-reader-paper px-2 py-0.5 text-[11px] font-semibold text-muted">
+                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[11px] font-semibold text-muted">
                   {taskModeLabel(message.task_mode)}
                 </span>
                 {message.status === "streaming" ? (
@@ -743,10 +758,10 @@ function MessageBubble({
                   </span>
                 ) : null}
               </div>
-              <div className="rounded-[24px] rounded-tl-md border border-hairline bg-surface px-4 py-3.5 shadow-[0_14px_36px_rgba(17,17,17,0.08)]">
+              <div className="rounded-[var(--cl-radius-surface-md)] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,247,239,0.98))] px-4 py-3.5 shadow-[0_14px_30px_rgba(17,17,17,0.05)]">
                 <MessageContent
                   markdown
-                  className="bg-transparent p-0 text-[15px] leading-7 text-ink-soft prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
+                  className="border-0 bg-transparent p-0 shadow-none text-[15px] leading-7 text-ink-soft prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
                 >
                   {message.content_md || "…"}
                 </MessageContent>
@@ -790,11 +805,11 @@ function MessageBubble({
         ) : (
           <div className="max-w-[85%]">
             <div className="mb-2 flex justify-end">
-              <span className="rounded-full border border-hairline bg-reader-paper px-2 py-0.5 text-[11px] font-semibold text-muted">
+              <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[11px] font-semibold text-muted">
                 {taskModeLabel(message.task_mode)}
               </span>
             </div>
-            <MessageContent className="rounded-[22px] rounded-tr-md bg-ink px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_14px_32px_rgba(17,17,17,0.12)]">
+            <MessageContent className="rounded-[var(--cl-radius-surface-sm)] border-[rgba(30,31,37,0.82)] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(21,22,28,0.98))] px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_12px_28px_rgba(17,17,17,0.12)]">
               {message.content_md}
             </MessageContent>
           </div>
@@ -853,24 +868,24 @@ function StarterState({
   const prompts = starterPromptsForTask(taskMode);
 
   return (
-    <div className="rounded-[28px] border border-dashed border-hairline bg-reader-paper/65 px-4 py-4">
+    <div className="rounded-[var(--cl-radius-surface-md)] border border-dashed border-hairline bg-reader-paper/65 px-4 py-4">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-surface shadow-[0_10px_24px_rgba(17,17,17,0.06)]">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--cl-radius-control-md)] bg-surface shadow-[0_10px_24px_rgba(17,17,17,0.06)]">
           <Sparkles className="h-4.5 w-4.5 text-lens-blue" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-ink">围绕当前文章继续问</p>
+          <p className="text-sm font-semibold text-ink">围绕当前文章继续追问</p>
           <p className="mt-1 text-sm leading-6 text-muted">
             {activeSentence?.text
               ? "当前句焦点已就绪。你可以直接追问，也可以从下面的起手问题开始。"
-              : "从当前文章、选区或已附加的上下文开始提问，Ask Claread 会优先在本文范围内回答。"}
+              : "从当前文章、选区或已附加的上下文开始提问。Ask Claread 会先像英语老师一样解释本文，再按需扩展。"}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {prompts.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
-                className="focus-ring rounded-full border border-hairline bg-surface px-3 py-2 text-left text-xs font-medium text-ink-soft transition-colors hover:border-muted hover:bg-reader-paper hover:text-ink"
+                className="focus-ring rounded-pill border border-hairline bg-surface px-3 py-2 text-left text-xs font-medium text-ink-soft transition-colors hover:border-muted hover:bg-reader-paper hover:text-ink"
                 onClick={() => onPickPrompt(prompt)}
               >
                 {prompt}
@@ -931,6 +946,7 @@ export function AiWorkspacePanel({
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [threadMenuOpen, setThreadMenuOpen] = useState(false);
+  const [modePickerOpen, setModePickerOpen] = useState(false);
   const hydrationRef = useRef(0);
 
   async function fetchThreadList() {
@@ -1017,7 +1033,7 @@ export function AiWorkspacePanel({
     setErrorMessage(null);
     setLoading(true);
     try {
-      const createdThread = await createThread("new_chat", "New chat");
+      const createdThread = await createThread("new_chat", "新对话");
       const nextThreads = [createdThread, ...threads];
       await loadThread(createdThread.id, nextThreads);
       setThreadMenuOpen(false);
@@ -1254,7 +1270,7 @@ export function AiWorkspacePanel({
     return (
       <button
         type="button"
-        className={`focus-ring fixed bottom-[5.25rem] right-4 z-40 min-h-12 items-center gap-2 rounded-pill border border-hairline bg-surface/96 px-4 text-sm font-semibold text-ink shadow-surface-quiet backdrop-blur-sm transition-colors hover:border-muted md:bottom-6 md:right-6 ${launcherVisibilityClass}`}
+        className={`focus-ring fixed bottom-[5.25rem] right-4 z-40 min-h-11 items-center gap-2 rounded-pill border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(249,247,241,0.98))] px-4 text-sm font-semibold text-ink shadow-[0_12px_28px_rgba(17,17,17,0.06)] transition-colors hover:border-muted hover:bg-reader-paper md:bottom-6 md:right-6 ${launcherVisibilityClass}`}
         onClick={onToggle}
         aria-label="打开 AI 工作区"
       >
@@ -1265,26 +1281,31 @@ export function AiWorkspacePanel({
   }
 
   return (
-    <aside className="fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[30px] border border-hairline bg-surface/98 shadow-[0_30px_90px_rgba(17,17,17,0.18)] backdrop-blur-sm 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none">
-      <div className="border-b border-hairline px-5 py-4">
+    <aside className="fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[var(--cl-radius-surface-md)] border border-hairline bg-[linear-gradient(180deg,rgba(252,251,247,0.98),rgba(255,255,255,0.98))] shadow-[0_22px_64px_rgba(17,17,17,0.11)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none">
+      <div className="border-b border-hairline/90 px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold text-ink">Ask Claread</h2>
-              <span className="max-w-48 truncate rounded-full border border-hairline bg-reader-paper px-2.5 py-1 text-[11px] font-medium text-muted">
+              <span className="max-w-48 truncate rounded-pill border border-hairline bg-reader-paper px-2.5 py-1 text-[11px] font-medium text-muted">
                 {recordTitle || "当前文章"}
               </span>
             </div>
-            <p className="mt-1.5 text-xs leading-5 text-muted">
-              围绕当前文章继续提问；只有明确问到历史时才会扩展资产检索。
+            <p className="mt-1.5 text-[11px] leading-5 text-muted">
+              先解释本文，再按需追问词义、语法和练习。
             </p>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <ThreadSwitcher
               threads={threads}
               activeThreadId={activeThreadId}
               open={threadMenuOpen}
               onToggle={() => setThreadMenuOpen((value) => !value)}
+              onCreate={() => {
+                setThreadMenuOpen(false);
+                void handleNewChat();
+              }}
+              busy={loading}
               onSelect={(threadId) => {
                 setThreadMenuOpen(false);
                 setLoading(true);
@@ -1298,27 +1319,9 @@ export function AiWorkspacePanel({
                   });
               }}
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 rounded-full px-3 text-xs text-muted"
-              onClick={handleNewChat}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>New chat</span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              density="compact"
-              className="size-8 rounded-full px-0 text-muted"
-              onClick={onToggle}
-              aria-label="收起 AI 工作区"
-            >
+            <IconButton variant="quiet" size="sm" onClick={onToggle} aria-label="收起 AI 工作区">
               <X aria-hidden="true" className="h-4 w-4" />
-            </Button>
+            </IconButton>
           </div>
         </div>
       </div>
@@ -1361,36 +1364,10 @@ export function AiWorkspacePanel({
         )}
       </div>
 
-      <div className="border-t border-hairline bg-reader-paper/55 px-5 py-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Quick mode</p>
-            <p className="mt-1 text-xs text-subtle">
-              {TASK_PRESETS.find((item) => item.mode === taskMode)?.description}
-            </p>
-          </div>
-        </div>
-        <TaskPresetStrip activeMode={taskMode} onSelect={setTaskMode} />
-
+      <div className="border-t border-hairline/90 bg-reader-paper/55 px-5 py-4">
         {errorMessage ? (
-          <div className="mb-3 rounded-2xl border border-destructive/20 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
+          <div className="mb-3 rounded-[var(--cl-radius-surface-sm)] border border-destructive/20 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
             {errorMessage}
-          </div>
-        ) : null}
-
-        {draftAnchors.length > 0 ? (
-          <div className="mb-3 rounded-[22px] border border-hairline bg-surface px-3 py-3 shadow-[0_10px_24px_rgba(17,17,17,0.05)]">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Attached context</p>
-              <button
-                type="button"
-                className="focus-ring text-[11px] font-semibold text-muted transition-colors hover:text-ink"
-                onClick={onClearDraftAnchors}
-              >
-                清空
-              </button>
-            </div>
-            <AnchorChips anchors={draftAnchors} removable onRemove={onRemoveDraftAnchor} />
           </div>
         ) : null}
 
@@ -1400,17 +1377,61 @@ export function AiWorkspacePanel({
           onSubmit={handleSend}
           isLoading={sending}
           maxHeight={220}
-          className="rounded-[26px] border-hairline bg-surface px-3 py-3 shadow-[0_14px_36px_rgba(17,17,17,0.08)]"
+          className="border-hairline bg-surface px-4 py-3"
         >
+          <Collapsible open={modePickerOpen} onOpenChange={setModePickerOpen}>
+            <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline/80 bg-reader-paper/70">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="focus-ring flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold text-muted">当前讲解方式</p>
+                    <p className="mt-1 text-xs leading-5 text-ink">
+                      {taskModeLabel(taskMode)}
+                      <span className="ml-2 text-subtle">{taskModeDescription(taskMode)}</span>
+                    </p>
+                  </div>
+                  <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted transition-transform", modePickerOpen && "rotate-180")} />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+                <div className="border-t border-hairline/80 px-3 py-3">
+                  <TaskPresetStrip activeMode={taskMode} onSelect={(mode) => {
+                    setTaskMode(mode);
+                    setModePickerOpen(false);
+                  }} />
+                </div>
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
+
+          {draftAnchors.length > 0 ? (
+            <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-[11px] font-semibold text-muted">附加上下文</p>
+                <button
+                  type="button"
+                  className="focus-ring text-[11px] font-semibold text-muted transition-colors hover:text-ink"
+                  onClick={onClearDraftAnchors}
+                >
+                  清空
+                </button>
+              </div>
+              <AnchorChips anchors={draftAnchors} removable onRemove={onRemoveDraftAnchor} />
+            </div>
+          ) : null}
+
           <PromptInputTextarea placeholder={taskModePlaceholder(taskMode)} />
-          <div className="mt-3 flex items-end justify-between gap-3">
-            <p className="text-[11px] leading-5 text-muted">
+          <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline/80 pt-3">
+            <p className="max-w-[18rem] text-[11px] leading-5 text-muted">
               默认只围绕当前文章；只有问到“以前 / 之前 / 见过”时才会扩展历史资产。
             </p>
             <PromptInputActions className="shrink-0">
               <button
                 type="button"
-                className="focus-ring inline-flex size-11 items-center justify-center rounded-full bg-ink text-surface shadow-[0_10px_24px_rgba(17,17,17,0.16)] disabled:opacity-40"
+                className="focus-ring inline-flex h-10 min-w-10 items-center justify-center rounded-[var(--cl-radius-control-md)] border border-[rgba(46,89,219,0.72)] bg-[linear-gradient(180deg,rgba(72,117,255,0.98),rgba(47,92,232,0.98))] px-3 text-surface shadow-[0_10px_24px_rgba(47,92,232,0.2)] disabled:opacity-40"
                 disabled={sending || composer.trim().length === 0}
                 onClick={handleSend}
                 aria-label="发送"

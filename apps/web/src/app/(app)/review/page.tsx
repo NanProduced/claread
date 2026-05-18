@@ -1,7 +1,10 @@
 import Link from "next/link";
 import type { Route } from "next";
+import { FileText } from "lucide-react";
 
 import { getReviewQueue } from "@/services/bff/review";
+import { Button } from "@/components/primitives/button";
+import { EmptyState, PageHeader } from "@/components/composed";
 import type { ReviewQueueVm } from "@/types/view/ReviewQueueVm";
 
 import { ReviewQueueClient } from "./ReviewQueueClient";
@@ -26,35 +29,23 @@ function statusPanel(queue: ReviewQueueVm) {
 
   const action =
     queue.state === "anonymous" ? (
-      <Link
-        href={loginRoute}
-        className="rounded-pill border border-hairline bg-surface px-4 py-2 text-sm font-semibold text-ink transition-colors hover:border-muted"
-      >
-        重新登录
-      </Link>
+      <Button asChild variant="outline">
+        <Link href={loginRoute}>重新登录</Link>
+      </Button>
     ) : queue.state === "empty" ? (
-      <Link
-        href={readRoute}
-        className="rounded-pill border border-hairline bg-surface px-4 py-2 text-sm font-semibold text-ink transition-colors hover:border-muted"
-      >
-        解析新文章
-      </Link>
+      <Button asChild variant="outline">
+        <Link href={readRoute}>解析新文章</Link>
+      </Button>
     ) : null;
 
   return (
-    <section className="rounded-note border border-hairline bg-surface p-8 shadow-surface-quiet">
-      <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="font-headline text-xl font-semibold text-ink">
-            {stateTitle[queue.state]}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-muted">
-            {queue.message ?? "没有可展示的复习项目。"}
-          </p>
-        </div>
-        {action}
-      </div>
-    </section>
+    <EmptyState
+      icon={FileText}
+      title={stateTitle[queue.state]}
+      description={queue.message ?? "没有可展示的复习项目。"}
+      action={action}
+      className="border-t-0 py-0"
+    />
   );
 }
 
@@ -62,21 +53,18 @@ export default async function ReviewPage() {
   const queue = await getReviewQueue(reviewLimit);
 
   return (
-    <main className="flex-1 px-6 py-10">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
-        <header className="flex items-start justify-between gap-4 border-b border-hairline pb-4">
-          <div>
-            <h1 className="font-headline text-[1.75rem] font-semibold text-ink">
-              复习
-            </h1>
-            <p className="mt-1 text-sm leading-6 text-muted">
-              复习从真实生词本生成，按熟悉程度推进下一次复习时间。
-            </p>
-          </div>
-          <div className="shrink-0 rounded-pill border border-hairline bg-surface px-3 py-1 text-xs font-semibold text-muted">
-            {queue.total} / {queue.limit}
-          </div>
-        </header>
+    <main className="paper-grain min-h-screen px-5 py-7 text-ink sm:px-8 lg:px-10">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
+        <PageHeader
+          eyebrow="间隔复习"
+          title="复习"
+          description="复习从真实生词本生成，按熟悉程度推进下一次复习时间。"
+          actions={
+            <div className="shrink-0 rounded-pill border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(251,250,246,0.985))] px-3 py-1 text-xs font-semibold text-muted shadow-surface-quiet">
+              {queue.total} / {queue.limit}
+            </div>
+          }
+        />
 
         {queue.state === "ready" ? (
           <ReviewQueueClient initialItems={queue.items} />

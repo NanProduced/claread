@@ -1,32 +1,13 @@
-import { Inter, Newsreader, Noto_Sans_SC, Noto_Serif_SC } from "next/font/google";
+export const clareadFontVariableNames = {
+  uiEn: "--font-ui-en",
+  readingEn: "--font-reading-en",
+  uiZh: "--font-ui-zh",
+  readingZh: "--font-reading-zh",
+} as const;
 
-export const clareadUiSans = Inter({
-  subsets: ["latin"],
-  variable: "--font-ui-en",
-  display: "swap",
-});
-
-export const clareadReadingSerif = Newsreader({
-  subsets: ["latin"],
-  variable: "--font-reading-en",
-  display: "swap",
-});
-
-export const clareadUiZh = Noto_Sans_SC({
-  variable: "--font-ui-zh",
-  display: "swap",
-  weight: ["400", "500", "600", "700"],
-});
-
-export const clareadReadingZh = Noto_Serif_SC({
-  variable: "--font-reading-zh",
-  display: "swap",
-  weight: ["400", "500", "600", "700"],
-});
-
-export const clareadFontVariables = [
-  clareadUiSans.variable,
-  clareadReadingSerif.variable,
-  clareadUiZh.variable,
-  clareadReadingZh.variable,
-].join(" ");
+export const clareadFontStacks = {
+  uiEn: ["Inter", "system-ui", "sans-serif"],
+  readingEn: ["Newsreader", "Georgia", "Times New Roman", "serif"],
+  uiZh: ["PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "sans-serif"],
+  readingZh: ["Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", "serif"],
+} as const;

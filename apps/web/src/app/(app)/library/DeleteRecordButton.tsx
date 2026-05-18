@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
+import { IconButton } from "@/components/primitives/icon-button";
 
 type DeleteState = "idle" | "deleting" | "error";
 
@@ -78,16 +79,15 @@ export function DeleteRecordButton({ recordId, title }: DeleteRecordButtonProps)
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
+      <IconButton
         disabled={state === "deleting"}
         onClick={deleteRecord}
         aria-label={`删除 ${title}`}
         title="删除记录"
-        className="inline-flex h-9 w-9 items-center justify-center rounded-pill border border-hairline bg-surface text-muted transition-colors hover:border-error-red/40 hover:text-error-red disabled:cursor-not-allowed disabled:opacity-60"
+        variant="danger"
       >
         <Trash2 aria-hidden="true" className="h-4 w-4" />
-      </button>
+      </IconButton>
       {state === "error" && message ? (
         <p className="max-w-44 text-right text-[0.6875rem] leading-4 text-error-red">{message}</p>
       ) : null}

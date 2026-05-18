@@ -1,6 +1,9 @@
 import { ArrowRight, BookOpen } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
+import { Button } from "@/components/primitives/button";
+import { InfoCard } from "@/components/composed/info-card";
+import { PageHeader } from "@/components/composed/page-header";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
 import type { DailyReaderArticle, DailyReaderListItem } from "@/types/view/DailyReaderVm";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
@@ -49,11 +52,12 @@ export default async function PasteToReadPage() {
   return (
     <main className="min-h-screen bg-[oklch(96.8%_0.012_84)] px-4 py-6 text-ink sm:px-6 lg:px-8">
       <div className="mx-auto max-w-[1340px]">
-        <header className="mb-6 border-b border-hairline pb-5">
-          <h1 className="font-headline text-[2.35rem] font-semibold leading-[1.04] tracking-normal text-ink sm:text-[3.25rem]">
-            打开一篇文章
-          </h1>
-        </header>
+        <PageHeader
+          eyebrow="透读入口"
+          title="打开一篇文章"
+          description="从一段英文原文开始，进入 Claread 的深度阅读链路。模式和场景在进入时定好，正文仍然是主角。"
+          className="mb-6"
+        />
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.78fr)_300px]">
           <div className="min-w-0">
@@ -61,16 +65,25 @@ export default async function PasteToReadPage() {
           </div>
 
           <aside className="min-w-0 xl:pt-1">
-            <section className="rounded-[1.5rem] border border-hairline bg-surface-raised/92 px-5 py-5 shadow-surface-quiet xl:sticky xl:top-6">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold text-ink">今日精读</h2>
-                <Link
-                  href={dailyRoute}
-                  className="focus-ring inline-flex items-center gap-1 text-xs font-semibold text-lens-blue"
-                >
-                  全部
-                  <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                </Link>
+            <InfoCard
+              title="今日精读"
+              className="bg-surface-raised/92 xl:sticky xl:top-6"
+              footer={
+                <Button asChild variant="ghost" size="sm" className="justify-start px-0 text-muted hover:bg-transparent hover:text-ink">
+                  <Link href={dailyRoute}>
+                    <BookOpen aria-hidden="true" className="h-4 w-4 text-lens-blue" />
+                    浏览精读列表
+                  </Link>
+                </Button>
+              }
+            >
+              <div className="flex items-center justify-end">
+                <Button asChild variant="ghost" size="sm" className="h-auto min-h-0 px-0 text-lens-blue hover:bg-transparent">
+                  <Link href={dailyRoute}>
+                    全部
+                    <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
               </div>
 
               {todayArticle ? (
@@ -87,13 +100,12 @@ export default async function PasteToReadPage() {
                   {todayArticle.subtitle ? (
                     <p className="mt-2 text-sm leading-6 text-muted">{todayArticle.subtitle}</p>
                   ) : null}
-                  <Link
-                    href={dailyArticleRoute(todayArticle.id)}
-                    className="focus-ring mt-3 inline-flex items-center gap-1 text-sm font-semibold text-lens-blue"
-                  >
-                    打开精读
-                    <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                  </Link>
+                  <Button asChild variant="ghost" size="sm" className="mt-3 h-auto min-h-0 px-0 text-lens-blue hover:bg-transparent">
+                    <Link href={dailyArticleRoute(todayArticle.id)}>
+                      打开精读
+                      <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
                 </article>
               ) : fallbackLead ? (
                 <article className="mt-4 border-t border-hairline pt-4">
@@ -105,13 +117,12 @@ export default async function PasteToReadPage() {
                     {fallbackLead.title}
                   </Link>
                   <p className="mt-2 text-xs leading-5 text-muted">{featureMeta(fallbackLead)}</p>
-                  <Link
-                    href={dailyArticleRoute(fallbackLead.id)}
-                    className="focus-ring mt-3 inline-flex items-center gap-1 text-sm font-semibold text-lens-blue"
-                  >
-                    从往期开始
-                    <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                  </Link>
+                  <Button asChild variant="ghost" size="sm" className="mt-3 h-auto min-h-0 px-0 text-lens-blue hover:bg-transparent">
+                    <Link href={dailyArticleRoute(fallbackLead.id)}>
+                      从往期开始
+                      <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
                 </article>
               ) : (
                 <p className="mt-4 border-t border-hairline pt-4 text-sm leading-6 text-muted">
@@ -141,17 +152,7 @@ export default async function PasteToReadPage() {
                   </div>
                 </div>
               ) : null}
-
-              <div className="mt-6 border-t border-hairline pt-4">
-                <Link
-                  href={dailyRoute}
-                  className="focus-ring inline-flex items-center gap-2 text-sm font-semibold text-muted transition-colors hover:text-ink"
-                >
-                  <BookOpen aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-                  浏览精读列表
-                </Link>
-              </div>
-            </section>
+            </InfoCard>
           </aside>
         </div>
       </div>

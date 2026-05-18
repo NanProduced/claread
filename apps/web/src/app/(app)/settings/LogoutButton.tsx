@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/primitives/button";
 
 const loginRoute = "/login" as Route;
 
@@ -18,13 +19,8 @@ export function LogoutButton() {
   }
 
   return (
-    <button
-      className="focus-ring inline-flex min-h-10 items-center rounded-pill border border-error-red/25 bg-surface px-4 text-sm font-semibold text-error-red transition-colors hover:bg-error-red/5 disabled:cursor-not-allowed disabled:opacity-50"
-      disabled={pending}
-      onClick={handleLogout}
-      type="button"
-    >
+    <Button variant="danger" disabled={pending} onClick={handleLogout} type="button">
       {pending ? "正在退出..." : "退出登录"}
-    </button>
+    </Button>
   );
 }

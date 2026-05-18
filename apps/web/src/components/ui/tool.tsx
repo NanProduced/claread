@@ -11,6 +11,7 @@ import {
   CheckCircle,
   ChevronDown,
   Loader2,
+  NotebookPen,
   Settings,
   XCircle,
 } from "lucide-react"
@@ -43,30 +44,30 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
   const getStateIcon = () => {
     switch (state) {
       case "input-streaming":
-        return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+        return <Loader2 className="h-4 w-4 animate-spin text-lens-blue" />
       case "input-available":
-        return <Settings className="h-4 w-4 text-orange-500" />
+        return <NotebookPen className="h-4 w-4 text-grammar-violet" />
       case "output-available":
-        return <CheckCircle className="h-4 w-4 text-green-500" />
+        return <CheckCircle className="h-4 w-4 text-structure-green" />
       case "output-error":
-        return <XCircle className="h-4 w-4 text-red-500" />
+        return <XCircle className="h-4 w-4 text-error-red" />
       default:
         return <Settings className="text-muted-foreground h-4 w-4" />
     }
   }
 
   const getStateBadge = () => {
-    const baseClasses = "px-2 py-1 rounded-full text-xs font-medium"
+    const baseClasses = "rounded-pill border px-2 py-1 text-[11px] font-semibold"
     switch (state) {
       case "input-streaming":
         return (
           <span
             className={cn(
               baseClasses,
-              "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+              "border-[rgba(37,99,235,0.18)] bg-lens-blue-soft text-lens-blue"
             )}
           >
-            Processing
+            处理中
           </span>
         )
       case "input-available":
@@ -74,10 +75,10 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+              "border-[rgba(116,102,148,0.16)] bg-[rgba(116,102,148,0.08)] text-grammar-violet"
             )}
           >
-            Ready
+            已准备
           </span>
         )
       case "output-available":
@@ -85,10 +86,10 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              "border-[rgba(60,140,104,0.16)] bg-[rgba(60,140,104,0.08)] text-structure-green"
             )}
           >
-            Completed
+            已完成
           </span>
         )
       case "output-error":
@@ -96,10 +97,10 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              "border-[rgba(190,18,60,0.16)] bg-[rgba(190,18,60,0.08)] text-error-red"
             )}
           >
-            Error
+            出错
           </span>
         )
       default:
@@ -107,10 +108,10 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400"
+              "border-hairline bg-reader-paper text-muted"
             )}
           >
-            Pending
+            待处理
           </span>
         )
     }
@@ -129,7 +130,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
   return (
     <div
       className={cn(
-        "border-border mt-3 overflow-hidden rounded-lg border",
+        "mt-3 overflow-hidden rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,247,239,0.94))]",
         className
       )}
     >
@@ -137,11 +138,11 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
         <CollapsibleTrigger asChild>
           <Button
             variant="ghost"
-            className="bg-background h-auto w-full justify-between rounded-b-none px-3 py-2 font-normal"
+            className="h-auto w-full justify-between rounded-none border-0 bg-transparent px-3.5 py-3 font-normal shadow-none hover:bg-reader-paper/80"
           >
             <div className="flex items-center gap-2">
               {getStateIcon()}
-              <span className="font-mono text-sm font-medium">
+              <span className="text-sm font-semibold text-ink-soft">
                 {toolPart.type}
               </span>
               {getStateBadge()}
@@ -151,20 +152,20 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
         </CollapsibleTrigger>
         <CollapsibleContent
           className={cn(
-            "border-border border-t",
+            "border-t border-hairline/80",
             "data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down overflow-hidden"
           )}
         >
-          <div className="bg-background space-y-3 p-3">
+          <div className="space-y-3 bg-reader-paper/70 p-3.5">
             {input && Object.keys(input).length > 0 && (
               <div>
-                <h4 className="text-muted-foreground mb-2 text-sm font-medium">
-                  Input
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                  输入
                 </h4>
-                <div className="bg-background rounded border p-2 font-mono text-sm">
+                <div className="rounded-[var(--cl-radius-control-md)] border border-hairline bg-surface px-3 py-2 text-sm leading-6 text-ink-soft">
                   {Object.entries(input).map(([key, value]) => (
                     <div key={key} className="mb-1">
-                      <span className="text-muted-foreground">{key}:</span>{" "}
+                      <span className="text-muted">{key}:</span>{" "}
                       <span>{formatValue(value)}</span>
                     </div>
                   ))}
@@ -174,10 +175,10 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 
             {output && (
               <div>
-                <h4 className="text-muted-foreground mb-2 text-sm font-medium">
-                  Output
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                  输出
                 </h4>
-                <div className="bg-background max-h-60 overflow-auto rounded border p-2 font-mono text-sm">
+                <div className="max-h-60 overflow-auto rounded-[var(--cl-radius-control-md)] border border-hairline bg-surface px-3 py-2 text-sm leading-6 text-ink-soft">
                   <pre className="whitespace-pre-wrap">
                     {formatValue(output)}
                   </pre>
@@ -187,22 +188,22 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 
             {state === "output-error" && toolPart.errorText && (
               <div>
-                <h4 className="mb-2 text-sm font-medium text-red-500">Error</h4>
-                <div className="bg-background rounded border border-red-200 p-2 text-sm dark:border-red-950 dark:bg-red-900/20">
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-error-red">错误</h4>
+                <div className="rounded-[var(--cl-radius-control-md)] border border-[rgba(190,18,60,0.14)] bg-[rgba(190,18,60,0.05)] px-3 py-2 text-sm text-error-red">
                   {toolPart.errorText}
                 </div>
               </div>
             )}
 
             {state === "input-streaming" && (
-              <div className="text-muted-foreground text-sm">
-                Processing tool call...
+              <div className="text-sm text-muted">
+                正在整理这一步的结果。
               </div>
             )}
 
             {toolCallId && (
-              <div className="text-muted-foreground border-t border-blue-200 pt-2 text-xs">
-                <span className="font-mono">Call ID: {toolCallId}</span>
+              <div className="border-t border-hairline/80 pt-2 text-xs text-subtle">
+                <span>步骤 ID：{toolCallId}</span>
               </div>
             )}
           </div>

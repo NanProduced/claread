@@ -38,4 +38,3 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 
 - `design/component-library-v0.md` 是 Claread Web 组件库主规范。
 - `design/component-system.md` 只处理 Reader 专项组件和交互规则。
-- `design/direction-exploration.md` 只保留页面形态探索结论和上游 rationale，不再承担当前规范职责。

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Heart } from "lucide-react";
+import { Button } from "@/components/primitives/button";
 
 type FavoriteState = "loading" | "ready" | "saving" | "error";
 
@@ -124,25 +125,44 @@ export function FavoriteButton({ recordId }: FavoriteButtonProps) {
   }
 
   const disabled = state === "loading" || state === "saving";
+  const statusLabel =
+    state === "loading"
+      ? "同步中"
+      : state === "saving"
+        ? (favorited ? "保存中" : "移除中")
+        : state === "error"
+          ? "稍后重试"
+          : favorited
+            ? "已收入阅读资产"
+            : "加入阅读资产";
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <button
+    <div className="flex min-w-[8.75rem] flex-col gap-1.5">
+      <Button
         type="button"
         aria-pressed={favorited}
         disabled={disabled}
         onClick={toggleFavorite}
-        className="inline-flex h-9 items-center gap-2 rounded-pill border border-hairline bg-surface-warm px-3 text-xs font-semibold text-ink-soft transition hover:border-lens-blue/40 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+        variant="quiet"
+        size="sm"
+        className={`min-h-[3.25rem] justify-start rounded-[1rem] px-3.5 py-2 text-left ${
+          favorited
+            ? "border-[rgba(228,176,0,0.3)] bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,250,235,0.98))] text-ink shadow-[0_10px_22px_rgba(166,121,0,0.08)]"
+            : "border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.72)]"
+        }`}
       >
         <Heart
           aria-hidden="true"
-          className={`h-4 w-4 ${favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted"}`}
+          className={`h-4 w-4 shrink-0 ${favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted"}`}
         />
-        <span>{favorited ? "已收藏" : "收藏"}</span>
-      </button>
+        <span className="flex min-w-0 flex-col items-start">
+          <span className="text-[0.92rem] font-semibold leading-none">{favorited ? "已收藏" : "收藏"}</span>
+          <span className="mt-1 text-[0.68rem] font-medium leading-none text-subtle">{statusLabel}</span>
+        </span>
+      </Button>
       <p
         aria-live="polite"
-        className={`max-w-40 text-right text-[0.6875rem] leading-4 ${
+        className={`sr-only max-w-40 text-right text-[0.6875rem] leading-4 ${
           state === "error" ? "text-red-600" : "text-subtle"
         }`}
       >

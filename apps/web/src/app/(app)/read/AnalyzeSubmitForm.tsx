@@ -4,6 +4,9 @@ import { Loader2, Send } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Button } from "@/components/primitives/button";
+import { SectionCard } from "@/components/composed/section-card";
+import { SegmentedControl } from "@/components/composed/segmented-control";
 import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 
 const readingOptions = [
@@ -176,57 +179,29 @@ export function AnalyzeSubmitForm() {
   const showVariantOptions = activeVariantOptions.length > 1;
 
   return (
-    <section className="overflow-hidden rounded-[2rem] border border-hairline bg-reader-paper shadow-[0_24px_76px_rgba(35,28,18,0.11)]">
+    <SectionCard
+      className="overflow-hidden border-none bg-reader-paper p-0 shadow-[0_24px_76px_rgba(35,28,18,0.11)]"
+      contentClassName="space-y-0"
+    >
       <div className="border-b border-hairline bg-surface-warm/60 px-5 py-5 sm:px-7">
-        <fieldset className="min-w-0">
-          <legend className="mb-3 text-xs font-semibold text-muted">
-            透读模式
-          </legend>
-          <div className="flex flex-wrap gap-2">
-            {readingOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`focus-ring min-h-10 rounded-pill border px-3.5 text-sm font-semibold transition-colors ${
-                  readingGoal === option.value
-                    ? "border-ink bg-ink text-surface"
-                    : "border-hairline bg-reader-paper text-ink hover:border-muted"
-                }`}
-                onClick={() => {
-                  setReadingGoal(option.value);
-                  setReadingVariant(defaultVariantByGoal[option.value]);
-                }}
-                aria-pressed={readingGoal === option.value}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        <SegmentedControl
+          label="透读模式"
+          value={readingGoal}
+          onValueChange={(nextGoal) => {
+            setReadingGoal(nextGoal);
+            setReadingVariant(defaultVariantByGoal[nextGoal]);
+          }}
+          options={readingOptions}
+        />
 
         {showVariantOptions ? (
-          <fieldset className="mt-5 border-t border-hairline pt-4">
-            <legend className="mb-3 text-xs font-semibold text-muted">
-              细分场景
-            </legend>
-            <div className="flex flex-wrap gap-2.5">
-              {activeVariantOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`focus-ring min-h-10 rounded-pill border px-3.5 text-sm font-semibold transition-colors ${
-                    readingVariant === option.value
-                      ? "border-ink bg-surface text-ink"
-                      : "border-hairline bg-reader-paper text-muted hover:border-muted hover:text-ink"
-                  }`}
-                  onClick={() => setReadingVariant(option.value)}
-                  aria-pressed={readingVariant === option.value}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
+          <SegmentedControl
+            className="mt-5 border-t border-hairline pt-4"
+            label="细分场景"
+            value={readingVariant}
+            onValueChange={setReadingVariant}
+            options={activeVariantOptions}
+          />
         ) : null}
       </div>
 
@@ -263,19 +238,14 @@ Cities are not only built to be crossed, but also to be read through signs, corn
       </div>
 
       <div className="flex justify-end border-t border-hairline bg-surface-warm/72 px-5 py-4 sm:px-7">
-        <button
-          type="button"
-          className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isPending}
-          onClick={handleSubmit}
-        >
+        <Button variant="primary" size="lg" disabled={isPending} onClick={handleSubmit}>
           {isPending ? (
             <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
           ) : (
             <Send aria-hidden className="h-4 w-4" />
           )}
           {isPending ? "透读中" : "开始透读"}
-        </button>
+        </Button>
       </div>
 
       {state.kind !== "idle" ? (
@@ -296,6 +266,6 @@ Cities are not only built to be crossed, but also to be read through signs, corn
           ) : null}
         </div>
       ) : null}
-    </section>
+    </SectionCard>
   );
 }

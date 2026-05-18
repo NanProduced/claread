@@ -234,7 +234,11 @@ importers:
 
   packages/contracts: {}
 
-  packages/design-tokens: {}
+  packages/design-tokens:
+    dependencies:
+      next:
+        specifier: ^16.2.2
+        version: 16.2.6(@babel/core@7.29.0)(@playwright/test@1.60.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(sass@1.99.0)
 
 packages:
 
@@ -12963,7 +12967,7 @@ snapshots:
       - supports-color
       - vue
 
-  '@tarojs/plugin-platform-alipay@3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))':
+  '@tarojs/plugin-platform-alipay@3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)':
     dependencies:
       '@tarojs/components': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
       '@tarojs/service': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))
@@ -12973,6 +12977,7 @@ snapshots:
       - '@types/react-native'
       - '@types/webpack'
       - '@types/webpack-dev-server'
+      - react
       - supports-color
       - vue
 
@@ -13001,7 +13006,7 @@ snapshots:
       - supports-color
       - vue
 
-  '@tarojs/plugin-platform-swan@3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))':
+  '@tarojs/plugin-platform-swan@3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)':
     dependencies:
       '@tarojs/components': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
       '@tarojs/service': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))
@@ -13011,10 +13016,11 @@ snapshots:
       - '@types/react-native'
       - '@types/webpack'
       - '@types/webpack-dev-server'
+      - react
       - supports-color
       - vue
 
-  '@tarojs/plugin-platform-tt@3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))':
+  '@tarojs/plugin-platform-tt@3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)':
     dependencies:
       '@tarojs/components': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
       '@tarojs/service': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))
@@ -13024,6 +13030,7 @@ snapshots:
       - '@types/react-native'
       - '@types/webpack'
       - '@types/webpack-dev-server'
+      - react
       - supports-color
       - vue
 
@@ -13170,11 +13177,11 @@ snapshots:
     dependencies:
       '@parcel/css': 1.14.0
       '@tarojs/helper': 3.6.8
-      '@tarojs/plugin-platform-alipay': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))
+      '@tarojs/plugin-platform-alipay': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
       '@tarojs/plugin-platform-jd': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))
       '@tarojs/plugin-platform-qq': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
-      '@tarojs/plugin-platform-swan': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))
-      '@tarojs/plugin-platform-tt': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))
+      '@tarojs/plugin-platform-swan': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
+      '@tarojs/plugin-platform-tt': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
       '@tarojs/plugin-platform-weapp': 3.6.8(@types/react@18.3.28)(@types/webpack@5.28.5(@swc/core@1.3.23)(postcss@8.5.14))(react@18.3.1)
       '@tarojs/runner-utils': 3.6.8
       '@tarojs/runtime': 3.6.8

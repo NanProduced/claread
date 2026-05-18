@@ -1,4 +1,4 @@
-import { MessageSquare, PenLine, Type, X } from "lucide-react";
+import { MessageSquare, X } from "lucide-react";
 import type { UserAnnotationColorDto, WebAnnotationVm } from "@/types/api/annotations";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 
@@ -33,6 +33,14 @@ function annotationSummaryLabel(item: WebAnnotationVm) {
   return `${scopeLabel}高亮`;
 }
 
+function readerPanelOptionClass(active: boolean) {
+  return `focus-ring min-h-11 rounded-[0.9rem] border px-3.5 py-2 text-left transition-[background-color,border-color,color,box-shadow] ${
+    active
+      ? "border-lens-blue/18 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(234,241,255,0.94))] text-ink shadow-[0_8px_18px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.75)]"
+      : "border-transparent bg-transparent text-ink-soft hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
+  }`;
+}
+
 export interface ReaderContextPanelProps {
   mode: LowerPanelMode;
   sentence: SentenceModel | null;
@@ -47,7 +55,6 @@ export interface ReaderContextPanelProps {
   density: ReadingDensity;
   theme: ReaderTheme;
   markVisibility: MarkVisibility;
-  onModeChange: (mode: LowerPanelMode) => void;
   onNoteChange: (value: string) => void;
   onColorChange: (value: UserAnnotationColorDto) => void;
   onSaveAnnotation: (useNote: boolean) => void;
@@ -74,7 +81,6 @@ export function ReaderContextPanel({
   density,
   theme,
   markVisibility,
-  onModeChange,
   onNoteChange,
   onColorChange,
   onSaveAnnotation,
@@ -89,46 +95,25 @@ export function ReaderContextPanel({
   const activeSelectedText = selectedText?.trim() ? selectedText : null;
   const previewText = activeSelectedText ?? sentence?.text ?? "";
   const isTextRange = annotationScope === "text_range" && Boolean(activeSelectedText);
+  const settingsSectionClass =
+    "rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.58),rgba(248,245,238,0.8))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]";
 
   return (
     <section className="reader-tool-panel flex max-h-[min(42vh,22rem)] flex-col overflow-hidden md:max-h-[min(54vh,22rem)]">
       <div className="flex items-start justify-between gap-3 border-b border-hairline px-5 py-3">
         <div>
           <h2 className="text-base font-semibold text-ink">
-            {mode === "settings" ? "显示" : isTextRange ? "当前选区" : "当前句"}
+            {mode === "settings" ? "阅读显示" : isTextRange ? "当前选区" : "当前句"}
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted">
-            {mode === "settings" ? "只影响本地阅读视图。" : "笔记和高亮会回到原文。"}
+            {mode === "settings" ? "只影响本地阅读视图，不改动文章内容。" : "笔记和高亮会回到原文。"}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="grid grid-cols-2 rounded-pill border border-hairline bg-reader-paper p-1">
-            <button
-              type="button"
-              className={`focus-ring inline-flex h-9 w-10 items-center justify-center rounded-pill text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 ${
-                mode === "sentence" ? "bg-surface text-ink shadow-surface-quiet" : ""
-              }`}
-              onClick={() => onModeChange("sentence")}
-              disabled={!sentence}
-              aria-label="句子操作"
-            >
-              <PenLine aria-hidden="true" className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              className={`focus-ring inline-flex h-9 w-10 items-center justify-center rounded-pill text-muted transition-colors hover:text-ink ${
-                mode === "settings" ? "bg-surface text-ink shadow-surface-quiet" : ""
-              }`}
-              onClick={() => onModeChange("settings")}
-              aria-label="阅读显示"
-            >
-              <Type aria-hidden="true" className="h-4 w-4" />
-            </button>
-          </div>
           {onClose ? (
             <button
               type="button"
-              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
+              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(249,247,241,0.98))] text-muted shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.76)] transition-colors hover:border-muted hover:text-ink"
               onClick={onClose}
               aria-label="关闭面板"
             >
@@ -139,102 +124,110 @@ export function ReaderContextPanel({
       </div>
 
       {mode === "settings" ? (
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-4">
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">译文</legend>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
+          <fieldset className={settingsSectionClass}>
+            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">译文</legend>
+            <p className="mt-1 text-xs leading-5 text-muted">控制中文解释是否常显，适合切换纯阅读和双语对照。</p>
+            <div className="mt-3 inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
               {[true, false].map((value) => (
                 <button
                   key={String(value)}
                   type="button"
-                  className={`focus-ring min-h-10 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    showTranslation === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
+                  className={`${readerPanelOptionClass(showTranslation === value)} flex-1`}
                   onClick={() => onShowTranslationChange(value)}
                 >
-                  {value ? "显示译文" : "原文模式"}
+                  <span className="block text-sm font-semibold">{value ? "显示译文" : "原文模式"}</span>
+                  <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
+                    {value ? "句后保留中文解释" : "只留下英文原文"}
+                  </span>
                 </button>
               ))}
             </div>
           </fieldset>
 
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">字号</legend>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {(["compact", "normal", "large"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`focus-ring min-h-10 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    fontSize === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
-                  onClick={() => onFontSizeChange(value)}
-                >
-                  {value === "compact" ? "小" : value === "normal" ? "中" : "大"}
-                </button>
-              ))}
+          <fieldset className={settingsSectionClass}>
+            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">字号与行距</legend>
+            <p className="mt-1 text-xs leading-5 text-muted">只调整当前本地阅读视图，不影响文章内容本身。</p>
+            <div className="mt-3 grid gap-3">
+              <div>
+                <div className="mb-2 text-[0.68rem] font-semibold tracking-[0.08em] text-subtle">字号</div>
+                <div className="inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+                  {(["compact", "normal", "large"] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`${readerPanelOptionClass(fontSize === value)} flex-1`}
+                      onClick={() => onFontSizeChange(value)}
+                    >
+                      <span className="block text-sm font-semibold">
+                        {value === "compact" ? "小" : value === "normal" ? "中" : "大"}
+                      </span>
+                      <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
+                        {value === "compact" ? "更紧凑" : value === "normal" ? "默认阅读" : "更宽松"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 text-[0.68rem] font-semibold tracking-[0.08em] text-subtle">行距</div>
+                <div className="inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+                  {(["calm", "roomy"] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`${readerPanelOptionClass(density === value)} flex-1`}
+                      onClick={() => onDensityChange(value)}
+                    >
+                      <span className="block text-sm font-semibold">{value === "calm" ? "标准" : "舒展"}</span>
+                      <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
+                        {value === "calm" ? "日常阅读" : "留出更多呼吸"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </fieldset>
 
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">行距</legend>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {(["calm", "roomy"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`focus-ring min-h-10 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    density === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
-                  onClick={() => onDensityChange(value)}
-                >
-                  {value === "calm" ? "标准" : "舒展"}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">阅读背景</legend>
-            <div className="mt-2 grid grid-cols-3 gap-2">
+          <fieldset className={settingsSectionClass}>
+            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">阅读背景</legend>
+            <p className="mt-1 text-xs leading-5 text-muted">选择纸面基调，保持正文版心不变。</p>
+            <div className="mt-3 inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
               {(["paper", "white", "green"] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
-                  className={`focus-ring min-h-10 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    theme === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
+                  className={`${readerPanelOptionClass(theme === value)} flex-1`}
                   onClick={() => onThemeChange(value)}
                 >
-                  {value === "paper" ? "纸张" : value === "white" ? "纯白" : "护眼"}
+                  <span className="block text-sm font-semibold">
+                    {value === "paper" ? "纸张" : value === "white" ? "纯白" : "护眼"}
+                  </span>
+                  <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
+                    {value === "paper" ? "暖纸质感" : value === "white" ? "更干净" : "更柔和"}
+                  </span>
                 </button>
               ))}
             </div>
           </fieldset>
 
-          <fieldset>
-            <legend className="text-xs font-semibold text-muted">标注显示</legend>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+          <fieldset className={settingsSectionClass}>
+            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">标注显示</legend>
+            <p className="mt-1 text-xs leading-5 text-muted">决定词汇、短语和语法标记在正文里的存在感。</p>
+            <div className="mt-3 inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
               {(["full", "quiet"] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
-                  className={`focus-ring min-h-10 rounded-pill border px-3 text-sm font-semibold transition-colors ${
-                    markVisibility === value
-                      ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                      : "border-hairline bg-reader-paper text-ink-soft hover:border-muted"
-                  }`}
+                  className={`${readerPanelOptionClass(markVisibility === value)} flex-1`}
                   onClick={() => onMarkVisibilityChange(value)}
                 >
-                  {value === "full" ? "完整" : "安静"}
+                  <span className="block text-sm font-semibold">{value === "full" ? "完整" : "安静"}</span>
+                  <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
+                    {value === "full" ? "保留完整提示" : "减少视觉干扰"}
+                  </span>
                 </button>
               ))}
             </div>

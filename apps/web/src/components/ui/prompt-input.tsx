@@ -4,7 +4,6 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
@@ -77,31 +76,29 @@ function PromptInput({
   }
 
   return (
-    <TooltipProvider>
-      <PromptInputContext.Provider
-        value={{
-          isLoading,
-          value: value ?? internalValue,
-          setValue: onValueChange ?? handleChange,
-          maxHeight,
-          onSubmit,
-          disabled,
-          textareaRef,
-        }}
+    <PromptInputContext.Provider
+      value={{
+        isLoading,
+        value: value ?? internalValue,
+        setValue: onValueChange ?? handleChange,
+        maxHeight,
+        onSubmit,
+        disabled,
+        textareaRef,
+      }}
+    >
+      <div
+        onClick={handleClick}
+        className={cn(
+          "cursor-text rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,247,239,0.98))] px-4 py-3 shadow-[0_14px_34px_rgba(17,17,17,0.06)]",
+          disabled && "cursor-not-allowed opacity-60",
+          className
+        )}
+        {...props}
       >
-        <div
-          onClick={handleClick}
-          className={cn(
-            "border-input bg-background cursor-text rounded-3xl border p-2 shadow-xs",
-            disabled && "cursor-not-allowed opacity-60",
-            className
-          )}
-          {...props}
-        >
-          {children}
-        </div>
-      </PromptInputContext.Provider>
-    </TooltipProvider>
+        {children}
+      </div>
+    </PromptInputContext.Provider>
   )
 }
 
@@ -169,7 +166,7 @@ function PromptInputTextarea({
       onChange={handleChange}
       onKeyDown={handleKeyDown}
       className={cn(
-        "text-primary min-h-[44px] w-full resize-none border-none bg-transparent shadow-none outline-none focus-visible:ring-0 focus-visible:ring-offset-0",
+        "min-h-[44px] w-full resize-none border-none bg-transparent px-0 py-0 text-[15px] leading-7 text-ink shadow-none outline-none placeholder:text-muted focus-visible:ring-0 focus-visible:ring-offset-0",
         className
       )}
       rows={1}
@@ -187,7 +184,7 @@ function PromptInputActions({
   ...props
 }: PromptInputActionsProps) {
   return (
-    <div className={cn("flex items-center gap-2", className)} {...props}>
+    <div className={cn("flex items-center gap-2.5", className)} {...props}>
       {children}
     </div>
   )
@@ -214,7 +211,7 @@ function PromptInputAction({
       <TooltipTrigger
         asChild
         disabled={disabled}
-        onClick={(event) => event.stopPropagation()}
+        onClick={(event: React.MouseEvent) => event.stopPropagation()}
       >
         {children}
       </TooltipTrigger>

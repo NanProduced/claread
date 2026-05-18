@@ -1,4 +1,9 @@
 :root {
+  --font-ui-en: Inter;
+  --font-reading-en: Newsreader;
+  --font-ui-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-reading-zh: "Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", serif;
+
   --cl-color-web-canvas: #f7f6f2;
   --cl-color-reader-paper: #faf9f6;
   --cl-color-surface: #ffffff;

@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { clareadFontVariables } from "@claread/design-tokens/web/fonts";
 import { ClareadToaster } from "@/components/primitives/toast";
 import { TooltipProvider } from "@/components/primitives/tooltip";
+import { clareadFontVariables } from "./claread-fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
