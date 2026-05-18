@@ -66,6 +66,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 |------|---------------|---------|-------------|
 | `GET /dict` | ✅ `DictionaryLookupResult` | 🟢 稳定 | Web 浮层高频调用，已有 Cache-Control: max-age=3600 |
 | `GET /dict/entry` | ✅ `DictionaryEntryResult` | 🟢 稳定 | Web 词典详情页 |
+| `POST /dict/ai` | ✅ `DictionaryAIResponse` | 🟢 已接入 | Web Reader 通过同源 `/api/web/dict/ai` 调用；`context_explain` 仅用于正文点词后的 canonical entry，`missing_fallback` 仅用于正文点词后的 canonical not_found；`401 / 402 / 404 / 409 / 502 / 503` 需在词典卡内局部处理，不污染 canonical `/dict` 主状态 |
 
 ### 生词本
 

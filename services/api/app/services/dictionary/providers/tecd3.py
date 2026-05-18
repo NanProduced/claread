@@ -14,6 +14,7 @@ Lookup 优先级：
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.services.dictionary import cache as dict_cache
@@ -36,7 +37,7 @@ PROPER_NOUN_POS = {"pn", "propn", "proper_noun", "proper noun", "专名", "专�
 
 class Tecd3Provider:
     source = "tecd3"
-    cache_version = "v4"
+    cache_version = "v5"
 
     async def fetch(self, request: DictionaryLookupRequest) -> dict[str, Any]:
         import hashlib
@@ -102,6 +103,17 @@ class Tecd3Provider:
                 all_forms.append(f)
 
         candidates = await lookup_candidates_batch(all_forms, source=self.source)
+
+        if (
+            candidates
+            and request.query_type == "word"
+            and " " not in request.query
+            and len(candidates) == 1
+            and candidates[0].entry_kind == "fragment"
+        ):
+            fragment_entry = await fetch_entry(candidates[0].entry_id, source=self.source)
+            if fragment_entry and self._is_low_quality_fragment_entry(request.query, fragment_entry):
+                candidates = []
 
         # 4. Lemma fallback
         is_lemma_fallback = False
@@ -205,6 +217,39 @@ class Tecd3Provider:
 
     async def _lemma_fallback(self, query: str) -> list[CandidateRow]:
         pass
+
+    def _is_low_quality_fragment_entry(self, query: str, entry: EntryRow) -> bool:
+        """Detect degenerate fragment rows such as 'released released'."""
+        if entry.entry_kind != "fragment":
+            return False
+        if entry.phonetic or entry.examples_json or entry.phrases_json:
+            return False
+
+        meanings = self._parse_meanings(entry)
+        if len(meanings) != 1:
+            return False
+
+        meaning = meanings[0]
+        if meaning.part_of_speech.strip() or len(meaning.definitions) != 1:
+            return False
+
+        definition_text = meaning.definitions[0].meaning.strip()
+        if not definition_text:
+            return False
+
+        normalized_query = self._normalize_fragment_text(query)
+        definition_tokens = [
+            token
+            for token in self._normalize_fragment_text(definition_text).split(" ")
+            if token
+        ]
+        if not normalized_query or not definition_tokens:
+            return False
+
+        return all(token == normalized_query for token in definition_tokens)
+
+    def _normalize_fragment_text(self, value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip().lower()
 
     def _drop_capitalized_proper_noise(self, query: str, candidates: list[CandidateRow]) -> list[CandidateRow]:
         """Keep ordinary lowercase entries ahead of same-spelling proper names.

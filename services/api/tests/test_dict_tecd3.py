@@ -10,9 +10,19 @@ from app.services.dictionary.providers.tecd3 import Tecd3Provider
 from app.services.dictionary.schemas import DictionaryLookupRequest
 
 
-def _make_candidate(entry_id: int, target_label: str) -> object:
+def _make_candidate(
+    entry_id: int,
+    target_label: str,
+    entry_kind: str = "entry",
+    has_meanings: bool = True,
+) -> object:
     """Create a mock CandidateRow-like object."""
-    return _CandidateMock(entry_id=entry_id, target_label=target_label)
+    return _CandidateMock(
+        entry_id=entry_id,
+        target_label=target_label,
+        entry_kind=entry_kind,
+        has_meanings=has_meanings,
+    )
 
 
 def _make_entry(entry_id: int, word: str) -> object:
@@ -257,6 +267,70 @@ class TestTecd3ProviderLemmaFallback:
             assert result["result_type"] == "entry"
             assert result["entry"]["word"] == "crewed"
             assert result["entry"]["base_word"] == "crew"
+
+    @pytest.mark.asyncio
+    async def test_low_quality_fragment_falls_back_to_lemma_entry(
+        self, provider: Tecd3Provider
+    ) -> None:
+        """Degenerate fragment rows should not block lemma fallback."""
+        with patch(
+            "app.services.dictionary.providers.tecd3.lookup_candidates_batch",
+            new_callable=AsyncMock,
+        ) as mock_lookup, patch(
+            "app.services.dictionary.providers.tecd3.fetch_entry",
+            new_callable=AsyncMock,
+        ) as mock_fetch, patch(
+            "app.services.dictionary.providers.tecd3.get_lemma_candidates",
+            return_value=["release"],
+        ):
+            async def fake_lookup(forms: list[str], source: str = "tecd3"):
+                if forms == ["released"]:
+                    return [_make_candidate(entry_id=11, target_label="released", entry_kind="fragment")]
+                if forms == ["release"]:
+                    return [_make_candidate(entry_id=12, target_label="release", entry_kind="entry")]
+                return []
+
+            async def fake_fetch(entry_id: int, source: str = "tecd3"):
+                if entry_id == 11:
+                    return _EntryMock(
+                        id=11,
+                        source="tecd3",
+                        source_entry_key="released",
+                        entry_kind="fragment",
+                        display_headword="released",
+                        base_headword="released",
+                        homograph_no=None,
+                        phonetic=None,
+                        meanings_json=[
+                            {
+                                "part_of_speech": "",
+                                "definitions": [
+                                    {
+                                        "meaning": "released released",
+                                        "example": None,
+                                        "example_translation": None,
+                                    }
+                                ],
+                            }
+                        ],
+                        examples_json=[],
+                        phrases_json=[],
+                        sections_json=[],
+                        raw_html=None,
+                        parse_version="1",
+                    )
+                return _make_entry(entry_id=12, word="release")
+
+            mock_lookup.side_effect = fake_lookup
+            mock_fetch.side_effect = fake_fetch
+
+            result = await provider.fetch(DictionaryLookupRequest(query="released", query_type="word"))
+            assert result["result_type"] == "entry"
+            assert result["entry"]["word"] == "released"
+            assert result["entry"]["base_word"] == "release"
+            assert mock_lookup.call_count == 2
+            assert mock_lookup.call_args_list[0][0][0] == ["released"]
+            assert mock_lookup.call_args_list[1][0][0] == ["release"]
 
     @pytest.mark.asyncio
     async def test_disambiguation_not_disrupted_by_lemma_fallback(

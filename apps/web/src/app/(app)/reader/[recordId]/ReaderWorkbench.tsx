@@ -49,6 +49,13 @@ import type {
 } from "@/types/api/annotations";
 import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import type { WebDictCandidate, WebDictDisambiguationResult, WebDictEntry, WebDictResult } from "@/types/api/dict";
+import type {
+  DictionaryAIViewState,
+  DictAISourceDto,
+  WebDictAIErrorResult,
+  WebDictAIRequest,
+  WebDictAIResult,
+} from "@/types/api/dict-ai";
 import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
 import type { InlineGlossary, InlineMarkModel, SentenceEntryModel, SentenceModel } from "@/types/view/ReaderMockVm";
 import {
@@ -732,8 +739,208 @@ type DictionaryCandidateGroup = {
   candidates: WebDictCandidate[];
 };
 
-function dictionarySenseItems(entry: WebDictEntry): DictionarySenseItem[] {
+type DictionaryRenderableEntry = Pick<
+  WebDictEntry,
+  "word" | "baseWord" | "phonetic" | "meanings" | "examples" | "phrases" | "entryKind" | "exchange" | "tags"
+> & {
+  id?: number;
+  homographNo?: number;
+};
+
+const dictionaryAIConfidenceLabelMap: Record<NonNullable<WebDictAIResult["confidence"]>, string> = {
+  high: "高置信",
+  medium: "中置信",
+  low: "低置信",
+};
+
+const dictionaryAIClassificationLabelMap = {
+  valid_word: "可识别词条",
+  slang_or_informal: "俚语/口语",
+  proper_noun: "专有名词",
+  domain_term: "领域术语",
+  variant_or_inflection: "词形/变体",
+  possible_typo_or_ocr: "拼写或 OCR 偏差",
+  unrecognized_noise: "噪声串",
+} satisfies Record<Extract<WebDictAIResult, { mode: "missing_fallback" }>["classification"], string>;
+
+function dictionaryRenderableEntryKey(entry: DictionaryRenderableEntry) {
+  return entry.id ?? `${entry.word.toLowerCase()}-${entry.baseWord?.toLowerCase() ?? "entry"}`;
+}
+
+function dictionaryAIConfidenceLabel(confidence?: WebDictAIResult["confidence"]) {
+  return confidence ? dictionaryAIConfidenceLabelMap[confidence] : null;
+}
+
+function dictionaryAIClassificationLabel(
+  classification?: Extract<WebDictAIResult, { mode: "missing_fallback" }>["classification"],
+) {
+  return classification ? dictionaryAIClassificationLabelMap[classification] : null;
+}
+
+function normalizeDictionaryText(value?: string) {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function dictionaryAITranslationVisible(translation: string | undefined, primaryMeaning: string) {
+  if (!translation) {
+    return false;
+  }
+  return normalizeDictionaryText(translation) !== normalizeDictionaryText(primaryMeaning);
+}
+
+function dictionaryResolvedQuery(lookup: DictionaryLookupSnapshot) {
+  if (lookup.state.kind === "ready") {
+    return lookup.state.result.query.trim() || lookup.query;
+  }
+  return lookup.query;
+}
+
+function dictionaryContextExplainQuery(result: Extract<WebDictResult, { kind: "entry" }>, fallbackQuery: string) {
+  return result.entry.baseWord?.trim() || result.query.trim() || result.entry.word.trim() || fallbackQuery;
+}
+
+function dictionaryIsManualLookup(lookup: DictionaryLookupSnapshot | null) {
+  if (!lookup) {
+    return false;
+  }
+  return lookup.sentenceId === "__manual__" || lookup.label === "手动查词";
+}
+
+function dictionaryAILookupSource(lookup: DictionaryLookupSnapshot): DictAISourceDto {
+  if (dictionaryIsManualLookup(lookup)) {
+    return "manual_search";
+  }
+  if (lookup.label === "选区查词" || lookup.title === "选区查词") {
+    return "selection";
+  }
+  return "reader_click";
+}
+
+function dictionaryAIRequestForLookup(
+  lookup: DictionaryLookupSnapshot | null,
+  mode: WebDictAIRequest["mode"],
+): WebDictAIRequest | null {
+  if (!lookup || !lookup.contextSentence.trim() || dictionaryIsManualLookup(lookup)) {
+    return null;
+  }
+
+  const resolvedQuery = dictionaryResolvedQuery(lookup);
+
+  if (mode === "context_explain") {
+    const result = lookup.state.kind === "ready" ? lookup.state.result : null;
+    if (!result || result.kind !== "entry") {
+      return null;
+    }
+    return {
+      mode,
+      query: dictionaryContextExplainQuery(result, resolvedQuery),
+      queryType: lookup.lookupType,
+      contextSentence: lookup.contextSentence,
+      occurrence: lookup.occurrence,
+      recordId: lookup.recordId,
+      sentenceId: lookup.sentenceId,
+      source: dictionaryAILookupSource(lookup),
+      entryId: result.entry.id,
+    };
+  }
+
+  return {
+    mode,
+    query: resolvedQuery,
+    queryType: lookup.lookupType,
+    contextSentence: lookup.contextSentence,
+    occurrence: lookup.occurrence,
+    recordId: lookup.recordId,
+    sentenceId: lookup.sentenceId,
+    source: dictionaryAILookupSource(lookup),
+  };
+}
+
+function dictionaryAIRequestKey(request: WebDictAIRequest) {
+  const entryIdPart = request.mode === "context_explain" ? String(request.entryId) : "missing";
+  return [
+    request.mode,
+    request.query.toLowerCase(),
+    request.queryType,
+    request.contextSentence.trim().toLowerCase(),
+    entryIdPart,
+  ].join("::");
+}
+
+function dictionaryAIContextKey(lookup: DictionaryLookupSnapshot | null) {
+  if (!lookup) {
+    return null;
+  }
+
+  const base = [
+    lookup.query.toLowerCase(),
+    lookup.lookupType,
+    lookup.contextSentence.trim().toLowerCase(),
+    lookup.sentenceId,
+    lookup.anchorText.toLowerCase(),
+    lookup.occurrence ?? "",
+  ].join("::");
+
+  if (lookup.state.kind !== "ready") {
+    return `${base}::${lookup.state.kind}`;
+  }
+
+  if (lookup.state.result.kind === "entry") {
+    return `${base}::entry::${lookup.state.result.entry.id}`;
+  }
+
+  return `${base}::${lookup.state.result.kind}`;
+}
+
+function dictionaryLookupBase(lookup: DictionaryLookupSnapshot): LookupBase {
+  const { state: _state, ...base } = lookup;
+  return base;
+}
+
+function isDictionaryAIErrorResult(value: unknown): value is WebDictAIErrorResult {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const payload = value as Record<string, unknown>;
+  return (
+    payload.kind === "error" &&
+    typeof payload.query === "string" &&
+    typeof payload.status === "number" &&
+    typeof payload.code === "string" &&
+    typeof payload.message === "string"
+  );
+}
+
+function dictionaryAIActionLabel(
+  mode: WebDictAIRequest["mode"],
+  state: DictionaryAIViewState,
+  panelOpen: boolean,
+) {
+  const baseLabel = mode === "context_explain" ? "AI 语境解读" : "词典未收录，试试 AI";
+
+  if (state.kind === "loading" && state.mode === mode) {
+    return mode === "context_explain" ? "AI 解读中..." : "AI 生成中...";
+  }
+
+  if (state.kind === "ready" && state.mode === mode) {
+    return panelOpen
+      ? mode === "context_explain"
+        ? "收起 AI 语境解读"
+        : "收起 AI 结果"
+      : baseLabel;
+  }
+
+  if (state.kind === "error" && state.mode === mode) {
+    return mode === "context_explain" ? "重试 AI 语境解读" : "重试 AI 补充";
+  }
+
+  return baseLabel;
+}
+
+function dictionarySenseItems(entry: DictionaryRenderableEntry): DictionarySenseItem[] {
   let senseNumber = 0;
+  const entryKey = dictionaryRenderableEntryKey(entry);
 
   return entry.meanings.flatMap((meaning, meaningIndex) =>
     meaning.definitions.map((definition, definitionIndex) => {
@@ -753,7 +960,7 @@ function dictionarySenseItems(entry: WebDictEntry): DictionarySenseItem[] {
         seenExamples.add(dedupeKey);
         return [
           {
-            key: `${entry.id}-${meaningIndex}-${definitionIndex}-example-${exampleIndex}`,
+            key: `${entryKey}-${meaningIndex}-${definitionIndex}-example-${exampleIndex}`,
             example: normalized,
             exampleTranslation: translations[exampleIndex]?.trim() || undefined,
           },
@@ -761,7 +968,7 @@ function dictionarySenseItems(entry: WebDictEntry): DictionarySenseItem[] {
       });
 
       return {
-        key: `${entry.id}-${meaningIndex}-${definitionIndex}-${definition.meaning}`,
+        key: `${entryKey}-${meaningIndex}-${definitionIndex}-${definition.meaning}`,
         number: senseNumber,
         partOfSpeech: meaning.partOfSpeech,
         meaning: definition.meaning,
@@ -771,10 +978,14 @@ function dictionarySenseItems(entry: WebDictEntry): DictionarySenseItem[] {
   );
 }
 
-function dictionaryExampleGroups(entry: WebDictEntry, senseItems: DictionarySenseItem[]): DictionaryExampleGroup[] {
+function dictionaryExampleGroups(
+  entry: DictionaryRenderableEntry,
+  senseItems: DictionarySenseItem[],
+): DictionaryExampleGroup[] {
   const seenExamples = new Set(
     senseItems.flatMap((sense) => sense.examples.map((example) => example.example.trim().toLowerCase())),
   );
+  const entryKey = dictionaryRenderableEntryKey(entry);
 
   const groups: DictionaryExampleGroup[] = senseItems
     .filter((sense) => sense.examples.length > 0)
@@ -798,7 +1009,7 @@ function dictionaryExampleGroups(entry: WebDictEntry, senseItems: DictionarySens
     seenExamples.add(dedupeKey);
     return [
       {
-        key: `${entry.id}-supplemental-example-${index}`,
+        key: `${entryKey}-supplemental-example-${index}`,
         example: normalized,
         exampleTranslation: example.exampleTranslation?.trim() || undefined,
       },
@@ -807,7 +1018,7 @@ function dictionaryExampleGroups(entry: WebDictEntry, senseItems: DictionarySens
 
   if (supplementalExamples.length > 0) {
     groups.push({
-      key: `${entry.id}-supplemental`,
+      key: `${entryKey}-supplemental`,
       meaning: "补充例句",
       examples: supplementalExamples,
       supplemental: true,
@@ -1391,12 +1602,17 @@ function DictionaryDetailPanel({
   lookup,
   readingGoal,
   saveState,
+  dictionaryAI,
+  dictionaryAIPanelOpen,
   searchQuery,
   searchExpanded,
   onSave,
+  onRequestAI,
+  onSelectAISuggestedQuery,
   onSearchQueryChange,
   onSearchSubmit,
   onSelectCandidate,
+  onToggleAIPanel,
   onToggleSearchExpanded,
   onDismiss,
   pinned = false,
@@ -1407,12 +1623,17 @@ function DictionaryDetailPanel({
   lookup: DictionaryLookupSnapshot | null;
   readingGoal: string;
   saveState: SaveState;
+  dictionaryAI: DictionaryAIViewState;
+  dictionaryAIPanelOpen: boolean;
   searchQuery: string;
   searchExpanded: boolean;
   onSave: () => void;
+  onRequestAI: (mode: WebDictAIRequest["mode"]) => void;
+  onSelectAISuggestedQuery: (query: string) => void;
   onSearchQueryChange: (value: string) => void;
   onSearchSubmit: (query: string) => void;
   onSelectCandidate: (entryId: number) => void;
+  onToggleAIPanel: () => void;
   onToggleSearchExpanded: () => void;
   onDismiss?: () => void;
   pinned?: boolean;
@@ -1438,6 +1659,21 @@ function DictionaryDetailPanel({
   const visibleTags = displayTags.slice(0, 3);
   const hiddenTagCount = Math.max(displayTags.length - visibleTags.length, 0);
   const candidateGroups = disambiguationResult ? groupDisambiguationCandidates(disambiguationResult) : [];
+  const contextExplainResult =
+    dictionaryAI.kind === "ready" && dictionaryAI.result.mode === "context_explain"
+      ? dictionaryAI.result
+      : null;
+  const missingFallbackResult =
+    dictionaryAI.kind === "ready" && dictionaryAI.result.mode === "missing_fallback"
+      ? dictionaryAI.result
+      : null;
+  const aiEntry = missingFallbackResult?.kind === "ai_entry" ? missingFallbackResult.entry : null;
+  const aiEntrySenseItems = aiEntry ? dictionarySenseItems(aiEntry) : [];
+  const aiEntryExampleGroups = aiEntry ? dictionaryExampleGroups(aiEntry, aiEntrySenseItems) : [];
+  const aiEntryTags = aiEntry ? dictionaryDisplayTags(aiEntry.tags, readingGoal) : [];
+  const isManualLookup = dictionaryIsManualLookup(lookup);
+  const canRequestContextExplain = Boolean(entryResult && lookup?.contextSentence.trim() && !isManualLookup);
+  const canRequestMissingFallback = Boolean(notFoundResult && lookup?.contextSentence.trim() && !isManualLookup);
   const panelSizing = isCard
     ? "h-full min-h-[23rem]"
     : onDismiss
@@ -1488,6 +1724,388 @@ function DictionaryDetailPanel({
 
   function toggleMeaningExpanded(key: string) {
     setExpandedMeaningKeys((value) => (value.includes(key) ? value.filter((item) => item !== key) : [...value, key]));
+  }
+
+  function renderAIStatusCard(mode: WebDictAIRequest["mode"]) {
+    if (!dictionaryAIPanelOpen || dictionaryAI.kind === "idle" || dictionaryAI.mode !== mode) {
+      return null;
+    }
+
+    if (dictionaryAI.kind === "loading") {
+      return (
+        <div className="rounded-[16px] border border-lens-blue/16 bg-lens-blue-soft/70 px-4 py-3">
+          <div className="flex items-center gap-2 text-[0.72rem] font-semibold tracking-[0.04em] text-lens-blue">
+            <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+            <span>{mode === "context_explain" ? "AI 语境解读" : "AI 补充结果"}</span>
+          </div>
+          <div className="mt-3 space-y-2">
+            <div className="h-3.5 w-24 rounded-full bg-surface/70" />
+            <div className="h-3.5 w-5/6 rounded-full bg-surface/70" />
+            <div className="h-3.5 w-2/3 rounded-full bg-surface/70" />
+          </div>
+        </div>
+      );
+    }
+
+    if (dictionaryAI.kind !== "error") {
+      return null;
+    }
+
+    const canRetry =
+      dictionaryAI.error.code === "upstream_unavailable" || dictionaryAI.error.code === "upstream_error";
+
+    return (
+      <div className="rounded-[16px] border border-error-red/16 bg-error-red/6 px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[0.72rem] font-semibold tracking-[0.04em] text-error-red">
+              <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+              <span>{mode === "context_explain" ? "AI 语境解读" : "AI 补充结果"}</span>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-error-red">{dictionaryAI.error.message}</p>
+          </div>
+          {canRetry ? (
+            <button
+              type="button"
+              className="focus-ring inline-flex shrink-0 items-center rounded-pill border border-error-red/18 bg-surface px-3 py-1.5 text-[0.72rem] font-semibold text-error-red transition-colors hover:bg-error-red/8"
+              onClick={() => onRequestAI(mode)}
+            >
+              重试
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  function renderContextExplainCard() {
+    if (!dictionaryAIPanelOpen) {
+      return null;
+    }
+
+    if (dictionaryAI.kind !== "ready" || dictionaryAI.result.mode !== "context_explain" || !contextExplainResult) {
+      return renderAIStatusCard("context_explain");
+    }
+
+    const details = [
+      { label: "词义", value: contextExplainResult.bestFitSense },
+      { label: "语境", value: contextExplainResult.whyHere },
+      { label: "线索", value: contextExplainResult.cue },
+      {
+        label: "译法",
+        value: dictionaryAITranslationVisible(contextExplainResult.translation, primaryMeaning)
+          ? contextExplainResult.translation
+          : undefined,
+      },
+      { label: "易混", value: contextExplainResult.contrast },
+      { label: "记忆点", value: contextExplainResult.learningTip },
+    ].filter((item) => item.value);
+    const confidenceLabel = dictionaryAIConfidenceLabel(contextExplainResult.confidence);
+
+    return (
+      <div className="overflow-hidden rounded-[16px] border border-lens-blue/16 bg-lens-blue-soft/70 px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold tracking-[0.04em] text-lens-blue">
+              <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+              <span>语境解读</span>
+              {confidenceLabel ? (
+                <span className="rounded-pill border border-lens-blue/14 bg-surface/70 px-2 py-0.5 text-[0.68rem] text-lens-blue">
+                  {confidenceLabel}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-lens-blue/14 bg-surface/72 text-lens-blue transition-colors hover:bg-surface"
+            onClick={onToggleAIPanel}
+            aria-label="收起 AI 语境解读"
+          >
+            <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="mt-3 max-h-[min(18rem,42vh)] overflow-y-auto overscroll-contain pr-1">
+          <p className="text-sm leading-6 text-ink-soft">{contextExplainResult.summary}</p>
+          {details.length > 0 ? (
+            <div className="mt-3 border-t border-lens-blue/12 pt-3">
+              <dl className="space-y-2.5">
+                {details.map((item) => (
+                  <div key={item.label}>
+                    <dt className="text-[0.68rem] font-semibold tracking-[0.04em] text-subtle">{item.label}</dt>
+                    <dd className="mt-1 text-sm leading-6 text-ink-soft">{item.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  function renderMissingFallbackCard() {
+    if (!dictionaryAIPanelOpen) {
+      return null;
+    }
+
+    if (dictionaryAI.kind !== "ready" || dictionaryAI.result.mode !== "missing_fallback" || !missingFallbackResult) {
+      return renderAIStatusCard("missing_fallback");
+    }
+
+    const confidenceLabel = dictionaryAIConfidenceLabel(missingFallbackResult.confidence);
+    const classificationLabel = dictionaryAIClassificationLabel(missingFallbackResult.classification);
+
+    if (missingFallbackResult.kind === "ai_unresolved") {
+      return (
+        <div className="rounded-[16px] border border-hairline/85 bg-surface/78 px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold tracking-[0.04em] text-lens-blue">
+                <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+                <span>未识别结果</span>
+                <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
+                  未验证
+                </span>
+                {classificationLabel ? (
+                  <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
+                    {classificationLabel}
+                  </span>
+                ) : null}
+                {confidenceLabel ? (
+                  <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
+                    {confidenceLabel}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-ink-soft">{missingFallbackResult.summary}</p>
+              {missingFallbackResult.reason ? (
+                <p className="mt-2 text-xs leading-5 text-muted">{missingFallbackResult.reason}</p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:text-ink"
+              onClick={onToggleAIPanel}
+              aria-label="收起未识别结果"
+            >
+              <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {missingFallbackResult.suggestedQuery.length > 0 ? (
+            <div className="mt-3 border-t border-hairline pt-3">
+              <p className="text-[0.68rem] font-semibold tracking-[0.04em] text-subtle">换个词再查</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {missingFallbackResult.suggestedQuery.map((query) => (
+                  <button
+                    key={query}
+                    type="button"
+                    className="focus-ring rounded-pill border border-lens-blue/18 bg-lens-blue-soft px-2.5 py-1 text-[0.72rem] font-semibold text-lens-blue transition-colors hover:border-lens-blue/28 hover:bg-lens-blue-soft/80"
+                    onClick={() => onSelectAISuggestedQuery(query)}
+                  >
+                    {query}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-[16px] border border-structure-green/14 bg-surface/82 px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold tracking-[0.04em] text-structure-green">
+              <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+              <span>未验证词条</span>
+              <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
+                未验证
+              </span>
+              {classificationLabel ? (
+                <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
+                  {classificationLabel}
+                </span>
+              ) : null}
+              {confidenceLabel ? (
+                <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
+                  {confidenceLabel}
+                </span>
+              ) : null}
+            </div>
+            <h4 className="mt-3 reader-serif text-[1.55rem] leading-[1.02] tracking-[-0.02em] text-ink">
+              {missingFallbackResult.entry.word}
+            </h4>
+            {missingFallbackResult.entry.baseWord || missingFallbackResult.entry.phonetic ? (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8rem] leading-5 text-muted">
+                {missingFallbackResult.entry.baseWord &&
+                normalizeDictionaryText(missingFallbackResult.entry.baseWord) !==
+                  normalizeDictionaryText(missingFallbackResult.entry.word) ? (
+                  <span className="rounded-pill border border-hairline/90 bg-reader-paper/84 px-2 py-0.5 text-[0.72rem] font-semibold text-muted">
+                    原形 {missingFallbackResult.entry.baseWord}
+                  </span>
+                ) : null}
+                {missingFallbackResult.entry.phonetic ? <span>{missingFallbackResult.entry.phonetic}</span> : null}
+              </div>
+            ) : null}
+            {!aiEntrySenseItems.length ? (
+              <p className="mt-3 text-sm leading-6 text-ink-soft">{missingFallbackResult.summary}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:text-ink"
+            onClick={onToggleAIPanel}
+            aria-label="收起未验证词条"
+          >
+            <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {aiEntryTags.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-1">
+            {aiEntryTags.slice(0, 3).map((item) => (
+              <span
+                key={item}
+                className="rounded-pill border border-structure-green/10 bg-structure-green/5 px-1.5 py-0.5 text-[0.68rem] font-medium text-structure-green"
+              >
+                {item}
+              </span>
+            ))}
+            {aiEntryTags.length > 3 ? (
+              <span className="rounded-pill border border-hairline/85 bg-reader-paper/72 px-1.5 py-0.5 text-[0.68rem] font-medium text-muted">
+                +{aiEntryTags.length - 3}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {missingFallbackResult.suggestedQuery.length > 0 ? (
+          <div className="mt-3 border-t border-hairline pt-3">
+            <p className="text-[0.68rem] font-semibold tracking-[0.04em] text-subtle">换个词再查</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {missingFallbackResult.suggestedQuery.map((query) => (
+                <button
+                  key={query}
+                  type="button"
+                  className="focus-ring rounded-pill border border-lens-blue/18 bg-lens-blue-soft px-2.5 py-1 text-[0.72rem] font-semibold text-lens-blue transition-colors hover:border-lens-blue/28 hover:bg-lens-blue-soft/80"
+                  onClick={() => onSelectAISuggestedQuery(query)}
+                >
+                  {query}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {aiEntrySenseItems.length > 0 ? (
+          <div className="mt-4 border-t border-hairline pt-3">
+            <p className="text-[0.68rem] font-semibold tracking-[0.04em] text-subtle">释义</p>
+            <ol className="mt-2 overflow-hidden rounded-[14px] border border-hairline/80 bg-surface/70">
+              {aiEntrySenseItems.slice(0, 4).map((sense) => (
+                <li key={sense.key} className="border-t border-hairline/70 px-3.5 py-3 first:border-t-0">
+                  <div className="flex items-start gap-3">
+                    <span className="inline-flex min-w-[3rem] items-center justify-center rounded-pill bg-structure-green/10 px-2 py-1 text-[0.68rem] font-semibold text-structure-green">
+                      {sense.partOfSpeech || "词性"}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm leading-6 text-ink-soft">{sense.meaning}</p>
+                        <span className="shrink-0 text-[0.68rem] font-semibold text-subtle">{sense.number}</span>
+                      </div>
+                      {sense.examples[0] ? (
+                        <div className="mt-2 border-t border-hairline/60 pt-2">
+                          <blockquote className="reader-serif text-[0.9rem] leading-6 text-ink-soft">
+                            {sense.examples[0].example}
+                          </blockquote>
+                          {sense.examples[0].exampleTranslation ? (
+                            <p className="mt-1 text-xs leading-5 text-muted">
+                              {sense.examples[0].exampleTranslation}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+
+        {aiEntryExampleGroups.length > 0 ? (
+          <div className="mt-4 border-t border-hairline pt-3">
+            <p className="text-[0.68rem] font-semibold tracking-[0.04em] text-subtle">例句</p>
+            <div className="mt-2 overflow-hidden rounded-[14px] border border-hairline/80 bg-surface/70">
+              {aiEntryExampleGroups.slice(0, 2).map((group) => (
+                <section key={group.key} className="border-t border-hairline/70 px-3.5 py-3 first:border-t-0">
+                  <div className="flex items-center gap-2">
+                    {group.partOfSpeech ? (
+                      <span className="rounded-pill bg-structure-green/10 px-2 py-0.5 text-[0.68rem] font-semibold text-structure-green">
+                        {group.partOfSpeech}
+                      </span>
+                    ) : null}
+                    {group.number ? (
+                      <span className="text-[0.68rem] font-semibold text-subtle">{group.number}</span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-ink-soft">{group.meaning}</p>
+                  {group.examples[0] ? (
+                    <div className="mt-2 rounded-[12px] bg-reader-paper/74 px-3 py-2.5">
+                      <blockquote className="reader-serif text-[0.92rem] leading-6 text-ink-soft">
+                        {group.examples[0].example}
+                      </blockquote>
+                      {group.examples[0].exampleTranslation ? (
+                        <p className="mt-1 text-xs leading-5 text-muted">
+                          {group.examples[0].exampleTranslation}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </section>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {missingFallbackResult.entry.phrases.length > 0 ? (
+          <div className="mt-4 border-t border-hairline pt-3">
+            <p className="text-[0.68rem] font-semibold tracking-[0.04em] text-subtle">搭配</p>
+            <div className="mt-2 overflow-hidden rounded-[14px] border border-hairline/80 bg-surface/70">
+              {missingFallbackResult.entry.phrases.slice(0, 4).map((phrase) => (
+                <div
+                  key={phrase.phrase}
+                  className="flex items-start justify-between gap-3 border-t border-hairline/70 px-3.5 py-3 first:border-t-0"
+                >
+                  <p className="min-w-0 text-sm font-semibold leading-6 text-ink">{phrase.phrase}</p>
+                  {phrase.meaning ? (
+                    <p className="max-w-[60%] text-right text-xs leading-5 text-muted">{phrase.meaning}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {missingFallbackResult.entry.exchange.length > 0 ? (
+          <div className="mt-4 border-t border-hairline pt-3">
+            <p className="text-[0.68rem] font-semibold tracking-[0.04em] text-subtle">词形</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {missingFallbackResult.entry.exchange.slice(0, 6).map((form) => (
+                <span
+                  key={form}
+                  className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-xs font-semibold text-ink-soft"
+                >
+                  {form}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+      </div>
+    );
   }
 
   function renderEntryTabContent() {
@@ -1870,9 +2488,27 @@ function DictionaryDetailPanel({
                       </div>
                     ) : null}
                     <p className="mt-3 max-w-[32ch] text-[0.98rem] leading-7 text-ink-soft">{primaryMeaning}</p>
+                    {canRequestContextExplain ? (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          className={`focus-ring inline-flex min-h-10 items-center gap-2 rounded-pill border px-3.5 text-xs font-semibold transition-colors md:min-h-9 ${
+                            dictionaryAI.kind === "loading" && dictionaryAI.mode === "context_explain"
+                              ? "cursor-wait border-lens-blue/16 bg-lens-blue-soft text-lens-blue"
+                              : "border-lens-blue/18 bg-lens-blue-soft text-lens-blue hover:border-lens-blue/28 hover:bg-lens-blue-soft/80"
+                          }`}
+                          onClick={() => onRequestAI("context_explain")}
+                          disabled={dictionaryAI.kind === "loading" && dictionaryAI.mode === "context_explain"}
+                        >
+                          <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+                          <span>{dictionaryAIActionLabel("context_explain", dictionaryAI, dictionaryAIPanelOpen)}</span>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <Volume2 aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted" />
                 </div>
+                {canRequestContextExplain ? <div className="mt-3">{renderContextExplainCard()}</div> : null}
                 {displayTags.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {visibleTags.map((item) => (
@@ -2018,8 +2654,26 @@ function DictionaryDetailPanel({
               <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">未收录结果</p>
               <h3 className="mt-2 reader-serif text-[1.95rem] leading-tight text-ink">{lookup.query}</h3>
             </div>
-            <div className="rounded-[16px] border border-hairline bg-surface/78 px-4 py-4">
+            <div className="space-y-3 rounded-[16px] border border-hairline bg-surface/78 px-4 py-4">
               <p className="text-sm font-semibold text-ink">当前词典没有匹配到这个词条。</p>
+              {canRequestMissingFallback ? (
+                <div className="space-y-3 border-t border-hairline pt-3">
+                  <button
+                    type="button"
+                    className={`focus-ring inline-flex min-h-10 items-center gap-2 rounded-pill border px-3.5 text-xs font-semibold transition-colors md:min-h-9 ${
+                      dictionaryAI.kind === "loading" && dictionaryAI.mode === "missing_fallback"
+                        ? "cursor-wait border-lens-blue/16 bg-lens-blue-soft text-lens-blue"
+                        : "border-lens-blue/18 bg-lens-blue-soft text-lens-blue hover:border-lens-blue/28 hover:bg-lens-blue-soft/80"
+                    }`}
+                    onClick={() => onRequestAI("missing_fallback")}
+                    disabled={dictionaryAI.kind === "loading" && dictionaryAI.mode === "missing_fallback"}
+                  >
+                    <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+                    <span>{dictionaryAIActionLabel("missing_fallback", dictionaryAI, dictionaryAIPanelOpen)}</span>
+                  </button>
+                  {renderMissingFallbackCard()}
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -2180,8 +2834,11 @@ export function ReaderWorkbench({
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
   const [dictionaryQuery, setDictionaryQuery] = useState("");
   const [dictionarySearchExpanded, setDictionarySearchExpanded] = useState(false);
+  const [dictionaryAI, setDictionaryAI] = useState<DictionaryAIViewState>({ kind: "idle" });
+  const [dictionaryAIPanelOpen, setDictionaryAIPanelOpen] = useState(false);
   const articleRef = useRef<HTMLElement | null>(null);
   const focusedRouteTargetKeyRef = useRef<string | null>(null);
+  const dictionaryAIRequestKeyRef = useRef<string | null>(null);
 
   const {
     refs: {
@@ -2294,6 +2951,7 @@ export function ReaderWorkbench({
     () => new Set(routeFocus?.sentenceIds ?? []),
     [routeFocus],
   );
+  const activeLookupAIContextKey = useMemo(() => dictionaryAIContextKey(activeLookup), [activeLookup]);
 
   const selectedAnnotation = useMemo(() => {
     if (!textSelection) {
@@ -2374,12 +3032,21 @@ export function ReaderWorkbench({
     setLookupPreviewOpen(false);
     setLookupPreviewAnchorRect(null);
     setActiveLookup(null);
+    dictionaryAIRequestKeyRef.current = null;
+    setDictionaryAI({ kind: "idle" });
+    setDictionaryAIPanelOpen(false);
   }, []);
 
   const closeDictionaryPanel = useCallback(() => {
     setDictionaryPinned(false);
     clearLookup();
   }, [clearLookup]);
+
+  useEffect(() => {
+    dictionaryAIRequestKeyRef.current = null;
+    setDictionaryAI({ kind: "idle" });
+    setDictionaryAIPanelOpen(false);
+  }, [activeLookupAIContextKey]);
 
   useEffect(() => {
     function handleCreated(event: Event) {
@@ -2602,6 +3269,145 @@ export function ReaderWorkbench({
       });
     }
   }, [activeLookup, handleLookupSnapshot]);
+
+  const toggleDictionaryAIPanel = useCallback(() => {
+    setDictionaryAIPanelOpen((value) => !value);
+  }, []);
+
+  const requestDictionaryAI = useCallback(
+    async (mode: WebDictAIRequest["mode"]) => {
+      if (!activeLookup) {
+        return;
+      }
+
+      const requestBody = dictionaryAIRequestForLookup(activeLookup, mode);
+      if (!requestBody) {
+        return;
+      }
+
+      const requestKey = dictionaryAIRequestKey(requestBody);
+      if (
+        dictionaryAI.kind === "ready" &&
+        dictionaryAI.mode === mode &&
+        dictionaryAI.requestKey === requestKey
+      ) {
+        setDictionaryAIPanelOpen((value) => !value);
+        return;
+      }
+
+      if (
+        dictionaryAI.kind === "loading" &&
+        dictionaryAI.mode === mode &&
+        dictionaryAI.requestKey === requestKey
+      ) {
+        return;
+      }
+
+      const lookupAtRequest = activeLookup;
+      dictionaryAIRequestKeyRef.current = requestKey;
+      setDictionaryAI({ kind: "loading", mode, requestKey });
+      setDictionaryAIPanelOpen(true);
+
+      try {
+        const response = await fetch("/api/web/dict/ai", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        const payload = (await response.json().catch(() => null)) as WebDictAIResult | { kind: "error"; [key: string]: unknown } | null;
+
+        if (dictionaryAIRequestKeyRef.current !== requestKey) {
+          return;
+        }
+
+        if (!response.ok || !payload || payload.kind === "error") {
+          const fallbackError: WebDictAIErrorResult = {
+            kind: "error",
+            query: requestBody.query,
+            mode,
+            status: response.status || 503,
+            code:
+              response.status >= 500 || response.status === 0
+                ? "upstream_unavailable"
+                : "upstream_error",
+            message:
+              response.status >= 500 || response.status === 0
+                ? "AI 查词暂时不可用，请稍后再试。"
+                : "AI 查词失败。",
+          };
+          const errorResult =
+            payload && isDictionaryAIErrorResult(payload) ? payload : fallbackError;
+
+          setDictionaryAI({ kind: "error", mode, requestKey, error: errorResult });
+          setDictionaryAIPanelOpen(true);
+
+          if (errorResult.code === "canonical_dictionary_available") {
+            void lookupPlainText(dictionaryLookupBase(lookupAtRequest), { showPreview: false });
+          }
+
+          return;
+        }
+
+        setDictionaryAI({
+          kind: "ready",
+          mode,
+          requestKey,
+          result: payload,
+        });
+        setDictionaryAIPanelOpen(true);
+      } catch {
+        if (dictionaryAIRequestKeyRef.current !== requestKey) {
+          return;
+        }
+
+        setDictionaryAI({
+          kind: "error",
+          mode,
+          requestKey,
+          error: {
+            kind: "error",
+            query: requestBody.query,
+            mode,
+            status: 503,
+            code: "upstream_unavailable",
+            message: "AI 查词暂时不可用，请稍后再试。",
+          },
+        });
+        setDictionaryAIPanelOpen(true);
+      }
+    },
+    [activeLookup, dictionaryAI, lookupPlainText],
+  );
+
+  const selectAISuggestedQuery = useCallback(
+    (query: string) => {
+      if (!activeLookup) {
+        return;
+      }
+
+      const trimmed = query.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      dictionaryAIRequestKeyRef.current = null;
+      setDictionaryAI({ kind: "idle" });
+      setDictionaryAIPanelOpen(false);
+
+      void lookupPlainText(
+        {
+          ...dictionaryLookupBase(activeLookup),
+          query: trimmed,
+          anchorText: trimmed,
+          lookupType: trimmed.includes(" ") ? "phrase" : "word",
+          title: "AI 建议查词",
+          label: "AI 建议",
+        },
+        { showPreview: false },
+      );
+    },
+    [activeLookup, lookupPlainText],
+  );
 
   const updateTextSelectionFromDom = useCallback(() => {
     const nextSelection = readReaderSelection(articleRef.current, sentenceById);
@@ -3549,12 +4355,17 @@ export function ReaderWorkbench({
               lookup={activeLookup}
               readingGoal={record.readingGoal}
               saveState={dictionarySaveState}
+              dictionaryAI={dictionaryAI}
+              dictionaryAIPanelOpen={dictionaryAIPanelOpen}
               searchQuery={dictionaryQuery}
               searchExpanded={dictionarySearchExpanded}
               onSave={saveVocabularyFromDictionary}
+              onRequestAI={requestDictionaryAI}
+              onSelectAISuggestedQuery={selectAISuggestedQuery}
               onSearchQueryChange={setDictionaryQuery}
               onSearchSubmit={lookupDictionaryQuery}
               onSelectCandidate={selectDictionaryCandidate}
+              onToggleAIPanel={toggleDictionaryAIPanel}
               onToggleSearchExpanded={() => setDictionarySearchExpanded((value) => !value)}
               onDismiss={closeDictionaryPanel}
               pinned={dictionaryPinned}
@@ -3580,12 +4391,17 @@ export function ReaderWorkbench({
               lookup={activeLookup}
               readingGoal={record.readingGoal}
               saveState={dictionarySaveState}
+              dictionaryAI={dictionaryAI}
+              dictionaryAIPanelOpen={dictionaryAIPanelOpen}
               searchQuery={dictionaryQuery}
               searchExpanded={dictionarySearchExpanded}
               onSave={saveVocabularyFromDictionary}
+              onRequestAI={requestDictionaryAI}
+              onSelectAISuggestedQuery={selectAISuggestedQuery}
               onSearchQueryChange={setDictionaryQuery}
               onSearchSubmit={lookupDictionaryQuery}
               onSelectCandidate={selectDictionaryCandidate}
+              onToggleAIPanel={toggleDictionaryAIPanel}
               onToggleSearchExpanded={() => setDictionarySearchExpanded((value) => !value)}
               onDismiss={clearLookup}
               canSaveVocabulary={Boolean(activeLookup?.contextSentence.trim())}
