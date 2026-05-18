@@ -181,24 +181,252 @@ select {
     0 26px 78px rgba(28, 24, 18, 0.11);
 }
 
-.reader-dictionary-dock {
-  top: clamp(6.5rem, 10vh, 8rem);
-  left: calc(84px + clamp(1rem, 1.6vw, 2.25rem));
-  width: min(29rem, calc((100vw - 84px - 104ch) / 2 - 1rem));
+.reader-dictionary-toolbar-button {
+  border-color: rgba(232, 228, 218, 0.96);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(250, 249, 246, 0.95)),
+    var(--surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 4px 12px rgba(17, 17, 17, 0.04);
+  color: var(--muted);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
-@media (min-width: 2400px) {
-  .reader-dictionary-dock {
-    left: calc(84px + clamp(4rem, 7vw, 9rem));
-    width: min(32rem, calc((100vw - 84px - 104ch) / 2 - 3.5rem));
-  }
+.reader-dictionary-toolbar-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(98, 101, 109, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    0 8px 18px rgba(17, 17, 17, 0.06);
+  color: var(--ink);
 }
 
-@media (min-width: 3200px) {
-  .reader-dictionary-dock {
-    left: calc(84px + clamp(24rem, 22vw, 35rem));
-    width: min(35rem, calc((100vw - 84px - 104ch) / 2 - 10rem));
-  }
+.reader-dictionary-toolbar-button--active {
+  border-color: rgba(37, 99, 235, 0.2);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(234, 241, 255, 0.95)),
+    var(--lens-blue-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 8px 18px rgba(37, 99, 235, 0.08);
+  color: var(--lens-blue);
+}
+
+.reader-dictionary-meta-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(60, 140, 104, 0.12);
+  background: rgba(60, 140, 104, 0.06);
+  padding: 0.1rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--structure-green);
+}
+
+.reader-dictionary-meta-tag--count {
+  border-color: rgba(232, 228, 218, 0.88);
+  background: rgba(250, 249, 246, 0.78);
+  color: var(--muted);
+}
+
+.reader-dictionary-secondary-button {
+  border-color: rgba(37, 99, 235, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(234, 241, 255, 0.92)),
+    var(--lens-blue-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 6px 16px rgba(37, 99, 235, 0.08);
+  color: var(--lens-blue);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.reader-dictionary-secondary-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 10px 22px rgba(37, 99, 235, 0.1);
+}
+
+.reader-dictionary-secondary-button:disabled {
+  transform: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 4px 12px rgba(37, 99, 235, 0.05);
+}
+
+.reader-dictionary-secondary-button--active {
+  border-color: rgba(37, 99, 235, 0.24);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(224, 235, 255, 0.96)),
+    var(--lens-blue-soft);
+}
+
+.reader-dictionary-segmented {
+  border: 1px solid rgba(232, 228, 218, 0.86);
+  border-radius: 0.9rem;
+  background:
+    linear-gradient(180deg, rgba(247, 246, 242, 0.84), rgba(255, 255, 255, 0.7)),
+    var(--reader-paper);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.reader-dictionary-tab {
+  color: var(--muted);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.reader-dictionary-tab:hover {
+  color: var(--ink);
+}
+
+.reader-dictionary-tab--active {
+  border: 1px solid rgba(232, 228, 218, 0.96);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(251, 250, 246, 0.98)),
+    var(--surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    0 8px 18px rgba(17, 17, 17, 0.05);
+  color: var(--ink);
+}
+
+.reader-dictionary-tab-count {
+  color: var(--subtle);
+}
+
+.reader-dictionary-tab-count--active {
+  color: var(--muted);
+}
+
+.reader-dictionary-tertiary-button {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.reader-dictionary-tertiary-button:hover {
+  border-color: rgba(232, 228, 218, 0.84);
+  background: rgba(250, 249, 246, 0.86);
+  color: var(--ink);
+}
+
+.reader-dictionary-history-row {
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+
+.reader-dictionary-history-row:hover {
+  background: rgba(250, 249, 246, 0.9);
+}
+
+.reader-dictionary-history-row--active {
+  border-color: rgba(37, 99, 235, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(234, 241, 255, 0.9)),
+    var(--lens-blue-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    0 8px 18px rgba(37, 99, 235, 0.06);
+}
+
+.reader-dictionary-primary-button {
+  background:
+    linear-gradient(180deg, rgba(34, 34, 34, 0.98), rgba(17, 17, 17, 1)),
+    var(--ink);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 12px 24px rgba(17, 17, 17, 0.18);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.reader-dictionary-primary-button:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 16px 28px rgba(17, 17, 17, 0.22);
+}
+
+.reader-dictionary-inline-action {
+  border-color: rgba(232, 228, 218, 0.92);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 249, 246, 0.96)),
+    var(--surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    0 6px 16px rgba(17, 17, 17, 0.05);
+  color: var(--muted);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.reader-dictionary-inline-action:hover {
+  transform: translateY(-1px);
+  border-color: rgba(98, 101, 109, 0.26);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 10px 20px rgba(17, 17, 17, 0.08);
+  color: var(--ink);
+}
+
+.reader-dictionary-inline-action--accent {
+  border-color: rgba(37, 99, 235, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(234, 241, 255, 0.94)),
+    var(--lens-blue-soft);
+  color: var(--lens-blue);
+}
+
+.reader-dictionary-inline-action--saved {
+  border-color: rgba(60, 140, 104, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(239, 248, 244, 0.96)),
+    rgba(60, 140, 104, 0.08);
+  color: var(--structure-green);
+}
+
+.reader-dictionary-inline-action--error {
+  border-color: rgba(190, 18, 60, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 243, 246, 0.96)),
+    rgba(190, 18, 60, 0.06);
+  color: var(--error-red);
 }
 
 .reader-paragraph {
