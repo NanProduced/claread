@@ -10,7 +10,7 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 |------|------|
 | `../PRODUCT.md` | Web 端 impeccable 产品上下文，限定 Web 功能优先、Reader 优先、兼容多端总纲 |
 | `../DESIGN.md` | Web 端 impeccable 设计系统，限定 Reader 工作台、当前语法/句析 baseline、AI 工作区和后续 Artifact Studio / Grammar X-Ray 方向 |
-| `tech-stack-options.md` | 技术栈备选对比、推荐方案、依赖清单、OpenAPI 类型生成策略 |
+| `tech-stack-options.md` | 技术栈清单、依赖用途、数据与状态管理、字体策略、API Contracts 策略 |
 | `api-contract-audit.md` | Web 首期接口审计、枚举审计、错误态审计、需后端新增/增强清单 |
 | `reader-ia.md` | Web Reader 信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统、历史回看 |
 | `../../../docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
