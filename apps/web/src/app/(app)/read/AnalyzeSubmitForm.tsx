@@ -1,10 +1,9 @@
 "use client";
 
-import { Loader2, Send, Sparkles } from "lucide-react";
+import { Loader2, Send } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ApertureWatermark, ClareadStamp } from "@/components/brand/BrandMarks";
 import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 
 const readingOptions = [
@@ -174,128 +173,96 @@ export function AnalyzeSubmitForm() {
   const isPending = state.kind === "pending";
   const errorRecordId = state.kind === "error" ? state.recordId : undefined;
   const activeVariantOptions = readingVariantOptions[readingGoal];
+  const showVariantOptions = activeVariantOptions.length > 1;
 
   return (
-    <section className="relative overflow-hidden rounded-[2rem] border border-hairline bg-reader-paper shadow-[0_24px_76px_rgba(35,28,18,0.11)]">
-      <ApertureWatermark
-        size={360}
-        className="absolute -right-32 top-28 h-80 w-80 opacity-[0.045]"
-      />
-
-      <div className="relative border-b border-hairline bg-surface-warm/65 px-5 py-4 sm:px-7">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <ClareadStamp label="ARTICLE CANVAS" className="bg-reader-paper/80" />
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
-              把英文文章放到纸面上。复杂选项收在后面，正文先成为中心。
-            </p>
+    <section className="overflow-hidden rounded-[2rem] border border-hairline bg-reader-paper shadow-[0_24px_76px_rgba(35,28,18,0.11)]">
+      <div className="border-b border-hairline bg-surface-warm/60 px-5 py-5 sm:px-7">
+        <fieldset className="min-w-0">
+          <legend className="mb-3 text-xs font-semibold text-muted">
+            透读模式
+          </legend>
+          <div className="flex flex-wrap gap-2">
+            {readingOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`focus-ring min-h-10 rounded-pill border px-3.5 text-sm font-semibold transition-colors ${
+                  readingGoal === option.value
+                    ? "border-ink bg-ink text-surface"
+                    : "border-hairline bg-reader-paper text-ink hover:border-muted"
+                }`}
+                onClick={() => {
+                  setReadingGoal(option.value);
+                  setReadingVariant(defaultVariantByGoal[option.value]);
+                }}
+                aria-pressed={readingGoal === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
+        </fieldset>
 
-          <fieldset className="min-w-0">
-            <legend className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
-              阅读目标
+        {showVariantOptions ? (
+          <fieldset className="mt-5 border-t border-hairline pt-4">
+            <legend className="mb-3 text-xs font-semibold text-muted">
+              细分场景
             </legend>
-            <div className="flex flex-wrap gap-2">
-              {readingOptions.map((option) => (
+            <div className="flex flex-wrap gap-2.5">
+              {activeVariantOptions.map((option) => (
                 <button
                   key={option.value}
                   type="button"
-                  className={`focus-ring min-h-10 rounded-pill border px-3 text-xs font-semibold transition-colors ${
-                    readingGoal === option.value
-                      ? "border-lens-blue bg-lens-blue text-surface"
-                      : "border-hairline bg-reader-paper text-ink hover:border-muted"
+                  className={`focus-ring min-h-10 rounded-pill border px-3.5 text-sm font-semibold transition-colors ${
+                    readingVariant === option.value
+                      ? "border-ink bg-surface text-ink"
+                      : "border-hairline bg-reader-paper text-muted hover:border-muted hover:text-ink"
                   }`}
-                  onClick={() => {
-                    setReadingGoal(option.value);
-                    setReadingVariant(defaultVariantByGoal[option.value]);
-                  }}
-                  aria-pressed={readingGoal === option.value}
+                  onClick={() => setReadingVariant(option.value)}
+                  aria-pressed={readingVariant === option.value}
                 >
                   {option.label}
                 </button>
               ))}
             </div>
           </fieldset>
-        </div>
-        <fieldset className="mt-4 border-t border-hairline pt-4">
-          <legend className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
-            细分场景
-          </legend>
-          <div className="flex flex-wrap gap-2">
-            {activeVariantOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`focus-ring min-h-10 rounded-pill border px-3 text-left text-xs font-semibold transition-colors ${
-                  readingVariant === option.value
-                    ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
-                    : "border-hairline bg-reader-paper text-ink hover:border-muted"
-                }`}
-                onClick={() => setReadingVariant(option.value)}
-                aria-pressed={readingVariant === option.value}
-              >
-                <span>{option.label}</span>
-                <span className="ml-2 font-normal text-muted">{option.helper}</span>
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        ) : null}
       </div>
 
-      <div className="relative grid min-h-[590px] md:grid-cols-[68px_minmax(0,1fr)]">
-        <div className="hidden border-r border-hairline bg-[linear-gradient(180deg,rgba(37,99,235,0.035),transparent_46%,rgba(17,17,17,0.025))] md:block">
-          <div className="sticky top-8 flex justify-center pt-9 font-reading text-sm text-subtle">
-            01
+      <div className="px-5 py-6 sm:px-8 lg:px-10 lg:py-8">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <label htmlFor="analysis-text" className="text-sm font-semibold text-ink">
+            正文
+          </label>
+          <div className="flex items-center gap-3 text-xs text-muted">
+            <span>{text.trim().length.toLocaleString("zh-CN")} 字符</span>
+            {text.length > 0 ? (
+              <button
+                type="button"
+                className="focus-ring rounded-pill transition-colors hover:text-ink"
+                onClick={() => setText("")}
+              >
+                清空
+              </button>
+            ) : null}
           </div>
         </div>
 
-        <div className="px-5 py-7 sm:px-8 lg:px-12 lg:py-10">
-          <div className="mb-7 flex flex-col gap-3 border-b border-hairline pb-5 sm:flex-row sm:items-end sm:justify-between">
-            <label
-              htmlFor="analysis-text"
-              className="inline-flex items-center gap-2 text-sm font-semibold text-ink"
-            >
-              <Sparkles aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-              草稿正文
-            </label>
-            <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-              <span>{text.trim().length.toLocaleString("zh-CN")} 字符</span>
-              <span aria-hidden="true" className="h-1 w-1 rounded-full bg-hairline" />
-              <span>解析后写入阅读记录</span>
-            </div>
-          </div>
-
+        <div className="rounded-[1.35rem] border border-hairline bg-surface px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] sm:px-5 sm:py-5">
           <textarea
             id="analysis-text"
-            className="min-h-[420px] w-full resize-none bg-transparent font-reading text-[1.18rem] leading-[1.95] text-ink outline-none placeholder:text-[#736f66] sm:text-[1.32rem]"
-            placeholder={`Paste or write an English article here...
+            className="min-h-[480px] w-full resize-none bg-transparent font-reading text-[1.16rem] leading-[1.95] text-ink outline-none placeholder:text-[#736f66] sm:text-[1.28rem]"
+            placeholder={`在这里粘贴英文正文……
 
 Cities are not only built to be crossed, but also to be read through signs, corners, and quiet habits.`}
             value={text}
             onChange={(event) => setText(event.target.value)}
           />
         </div>
-
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-pill border border-hairline bg-surface-warm/85 px-2.5 py-4 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-muted shadow-surface-quiet xl:block [writing-mode:vertical-rl]"
-        >
-          Marginalia
-        </div>
       </div>
 
-      <div className="relative flex flex-col gap-4 border-t border-hairline bg-surface-warm/70 px-5 py-4 sm:px-7 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
-          <span className="rounded-pill border border-hairline bg-reader-paper px-3 py-2">
-            原文 / 译文可切换
-          </span>
-          <span className="rounded-pill border border-hairline bg-reader-paper px-3 py-2">
-            标注层默认开启
-          </span>
-          <span className="rounded-pill border border-hairline bg-reader-paper px-3 py-2">
-            轻旁注按需唤起
-          </span>
-        </div>
+      <div className="flex justify-end border-t border-hairline bg-surface-warm/72 px-5 py-4 sm:px-7">
         <button
           type="button"
           className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
@@ -313,7 +280,7 @@ Cities are not only built to be crossed, but also to be read through signs, corn
 
       {state.kind !== "idle" ? (
         <div
-          className={`relative border-t border-hairline bg-surface-warm px-5 py-3 text-[0.8125rem] ${
+          className={`border-t border-hairline bg-surface-warm px-5 py-3 text-[0.8125rem] ${
             state.kind === "error" ? "text-red-700" : "text-muted"
           }`}
         >
