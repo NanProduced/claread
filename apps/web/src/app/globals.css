@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "@claread/design-tokens/web/tokens.css";
+
+@custom-variant dark (&:is(.dark *));
 
 @theme {
   --color-web-canvas: var(--web-canvas);
@@ -20,7 +23,6 @@
   --color-structure-green: var(--structure-green);
   --color-error-red: var(--error-red);
 
-  /* shadcn-compatible semantic aliases for the Claread Paper theme. */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -32,6 +34,7 @@
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -39,10 +42,10 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --font-display: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
-  --font-headline: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
-  --font-reading: "Source Serif Pro", Georgia, "Times New Roman", serif;
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
+  --font-headline: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
+  --font-reading: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-ui-en), var(--font-ui-zh), -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
 
   --radius-xs: 4px;
   --radius-sm: 8px;
@@ -50,48 +53,6 @@
   --radius-note: 16px;
   --radius-panel: 20px;
   --radius-sheet: 28px;
-}
-
-:root {
-  --web-canvas: #F7F6F2;
-  --reader-paper: #FAF9F6;
-  --surface: #FFFFFF;
-  --surface-warm: #FBFAF6;
-  --surface-raised: #FDFCF8;
-  --ink: #111111;
-  --ink-soft: #1A1A1A;
-  --muted: #62656D;
-  --subtle: #858A92;
-  --hairline: #E8E4DA;
-  --lens-blue: #2563EB;
-  --lens-blue-soft: #EAF1FF;
-  --vocab-amber: #E4B000;
-  --phrase-lavender: #B9A8E6;
-  --context-blue: #4C91C2;
-  --grammar-violet: #746694;
-  --structure-green: #3C8C68;
-  --error-red: #BE123C;
-
-  /* Semantic aliases consumed by shadcn-style primitives and future ui components. */
-  --background: var(--web-canvas);
-  --foreground: var(--ink);
-  --card: var(--surface);
-  --card-foreground: var(--ink);
-  --popover: var(--surface-raised);
-  --popover-foreground: var(--ink);
-  --primary: var(--lens-blue);
-  --primary-foreground: var(--surface);
-  --secondary: var(--reader-paper);
-  --secondary-foreground: var(--ink-soft);
-  --muted-foreground: var(--muted);
-  --border: var(--hairline);
-  --input: var(--hairline);
-  --ring: var(--lens-blue);
-  --accent: var(--lens-blue-soft);
-  --accent-foreground: var(--lens-blue);
-  --destructive: var(--error-red);
-  --destructive-foreground: var(--surface);
-  --radius: var(--radius-md);
 }
 
 * {

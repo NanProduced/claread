@@ -24,23 +24,26 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 
 | 轨道 | 方向 | 当前边界 |
 | --- | --- | --- |
-| AI 能力接入 | 先做词典 AI，再接基于用户资产的 AI 上下文和 grounded Ask Claread | 不先做泛聊天；能力必须走统一审计/结算与资产闭环 |
+| AI 能力接入 | 先做词典 AI，再做解析页内 grounded Ask Claread | 不先做泛聊天；用户资产上下文作为 Ask Claread 的 grounding 能力随同推进，能力必须走统一审计/结算与资产闭环 |
 | 阅读器与多端稳定性 | 持续补 Reader 自动化、摘录回跳、移动 Web 和小程序 DevTools 人工回归 | AI 接入不应破坏当前小程序和 Web 主链路 |
 | 质量与内部运营底座 | 明确 Directus/evals/RAG 的边界，并在首个 AI 能力纵切之后启动内部工具建设 | 先收口契约和真实需求，再开 Directus 正式开发 |
 
 ## 近期工作顺序
 
 1. 接入第一个正式用户侧 AI 能力纵切：词典 AI。
-2. 在词典 AI 之后补“基于用户资产的 AI 上下文层”，为后续 Ask Claread 提供个性化输入，不先做重画像系统。
-3. 再接 grounded Ask Claread：围绕当前句子、选区、全文和用户资产上下文，用 tool-calls 编排能力，而不是先做通用聊天框。
+2. 推进解析页内 grounded Ask Claread：以 Reader 右侧 AI 工作区为入口，围绕当前句子、选区、全文和按需获取的用户资产做对话与解释，用 tool-calls 编排能力，而不是先做通用聊天框。
+3. 用户资产上下文作为 Ask Claread 的内建 grounding 能力一并建设：先服务当前阅读与摘录资产召回，不先独立产品化，也不先做 AI 整合总结用户历史数据。
 4. 持续补 Reader 真实数据自动化和小程序 DevTools 人工回归，避免 AI 接入把摘录、回跳、词典和批注主链路带崩。
-5. Directus 当前只进入边界设计和 schema 准备；等“词典 AI -> 资产上下文 -> Ask Claread”里至少第一条纵切跑通后，再启动正式内部工具开发。
+5. Directus 当前只进入边界设计和 schema 准备；等“词典 AI -> Reader 内 Ask Claread”这条用户侧 AI 纵切跑通后，再启动正式内部工具开发。
+
+当前 Ask Claread 的稳定功能定义见 `docs/product/ask-claread-v1.md`；开发期进度只记录在 `docs/product/tmp/ask-claread-v1-tracker.md`。
 
 ## 暂不拍板
 
 以下事项仍需产品、业务和技术评估，不在本文做决定性描述：
 
 - Grammar X-Ray、分享页、导出和 AI 侧栏的具体先后仍可微调，但不应早于词典 AI 和 grounded Ask Claread。
+- 是否在 Ask Claread 之外单独产品化“AI 整合总结用户历史数据”能力，以及是否做跨文章/跨资产的长期学习画像。
 - Directus 内部工具的具体第一批模块：Daily Reader 运营、评测样本、prompt 审核，还是 usage/feedback 观察面板。
 - render snapshot / render profile 是否立即建表，以及与现有 `render_scene_json` 的迁移方式。
 - contracts 生成方式、共享包边界和 CI 门槛。

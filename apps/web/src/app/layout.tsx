@@ -1,4 +1,7 @@
 import type { Metadata, Viewport } from "next";
+import { clareadFontVariables } from "@claread/design-tokens/web/fonts";
+import { ClareadToaster } from "@/components/primitives/toast";
+import { TooltipProvider } from "@/components/primitives/tooltip";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,7 +25,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <body>{children}</body>
+      <body className={clareadFontVariables}>
+        <TooltipProvider>
+          {children}
+          <ClareadToaster />
+        </TooltipProvider>
+      </body>
     </html>
   );
 }

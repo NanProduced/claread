@@ -15,6 +15,7 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 | `reader-ia.md` | Web Reader 信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统、历史回看 |
 | `../../../docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
 | `design/` | Web 端 UI 方向探索、视觉参考、设计纲要草案 |
+| `design/component-library-v0.md` | Claread Web 组件库统一规范，覆盖 token、theme、目录、组件来源和分阶段路线 |
 
 ## 文档边界
 
@@ -32,3 +33,9 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 - Web 首期先依赖现有 Claread API；`@claread/contracts` 当前承载跨端常量和轻量类型，后续再推动 OpenAPI 生成类型。
 - Web 端能力增强通过客户端 UI、auth adapter、render profile 和后端通用能力协作完成。
 - Web 临时任务文档必须标注 TMP，阶段完成后删除或压缩为稳定结论。
+
+## 设计文档层级
+
+- `design/component-library-v0.md` 是 Claread Web 组件库主规范。
+- `design/component-system.md` 只处理 Reader 专项组件和交互规则。
+- `design/direction-exploration.md` 只保留页面形态探索结论和上游 rationale，不再承担当前规范职责。

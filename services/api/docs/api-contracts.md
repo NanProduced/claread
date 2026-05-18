@@ -31,6 +31,11 @@
 | Dict | `GET /dict` | 查词 |
 | Dict | `GET /dict/entry` | 词条详情 |
 | Dict AI | `POST /dict/ai` | 词典 AI 增强；登录用户的正式 AI 能力入口，支持 `context_explain` 与 `missing_fallback` |
+| Reader Ask | `GET /reader-ask/threads?record_id=...` | 当前文章 Ask 线程列表；Web Reader 内使用 |
+| Reader Ask | `POST /reader-ask/threads` | 创建默认线程或 `New chat` |
+| Reader Ask | `GET /reader-ask/threads/{thread_id}` | Ask 线程详情与最近消息 |
+| Reader Ask | `POST /reader-ask/threads/{thread_id}/messages/stream` | Ask Claread 流式回复；SSE，要求登录态与积分预留 |
+| Reader Ask | `POST /reader-ask/threads/{thread_id}/actions/{action_id}/confirm` | 确认执行 Ask 提议的写操作 |
 | Vocabulary | `POST /vocabulary` | 生词同步 |
 | Vocabulary | `GET /vocabulary` | 生词列表 |
 | Vocabulary | `POST /vocabulary/highlights` | 结果页高亮和已收藏生词匹配 |
@@ -61,6 +66,9 @@
 - `POST /analyze` 明确定义为兼容入口，保留给匿名试用和调试评测；新的正式 AI 能力不应继续直接挂在该路由上。
 - `POST /dict/ai` 是首个正式用户侧词典 AI 能力入口；要求登录态、参与积分结算、写入统一 AI usage 审计，并在 `missing_fallback` 成功后把 AI 输出写入候选池 `dict_ai_candidate_entries`。
 - `POST /dict/ai` 当前按固定价格结算：`context_explain` 与 `missing_fallback` 都是每次 `5` 点；真实 token usage 只用于审计，不直接映射用户侧扣点。
+- `POST /reader-ask/threads/{thread_id}/messages/stream` 是 Reader 内 Ask Claread 的正式用户侧 AI 能力入口；要求登录态、默认绑定当前文章线程、支持 SSE 流式 markdown 输出，并接入统一 AI usage 审计与积分预留/退回闭环。
+- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前事件合同包括：`thread.ready`、`message.started`、`message.delta`、`tool.started`、`tool.completed`、`tool.failed`、`message.completed`、`error`。Web 通过 Next.js BFF 代理消费 SSE，不直接让浏览器拼装 FastAPI 原始实现细节。
+- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前已经切到模型侧 tool-call runtime；`message.completed` canonical payload 固定返回 `content_md`、`citations`、`action_proposals`、`tool_trace`、`usage_summary`、`billed_points` 和 `resolved_context`。
 - `source_type` 统一为 `user_input / daily_article / imported / ocr`。
 - `RecordCreateRequest.source_type` 使用统一枚举。
 - `TaskSubmitResponse` / `TaskStatusResponse` 兼容只传 `record_id` 时自动补 `cloud_record_id`。

@@ -1,0 +1,1758 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from time import perf_counter
+from typing import Any
+from uuid import UUID, uuid4
+
+from fastapi import HTTPException
+
+from app.agents.reader_ask_agent import (
+    ReaderAskAgentDeps,
+    ReaderAskRuntimeActionRequest,
+    ReaderAskRuntimeState,
+    build_reader_ask_prompt,
+    get_reader_ask_agent,
+)
+from app.config.settings import get_settings
+from app.contracts.annotation import build_multi_text_target_key
+from app.llm.router import build_model_for_route
+from app.llm.routes import MODEL_ROUTE_READER_ASK
+from app.llm.types import RunModelSettings
+from app.schemas.reader_ask import (
+    ReaderAskActionConfirmRequest,
+    ReaderAskActionConfirmResponse,
+    ReaderAskActionProposal,
+    ReaderAskAnchorRef,
+    ReaderAskCitation,
+    ReaderAskCompletedPayload,
+    ReaderAskMessage,
+    ReaderAskMessageStreamRequest,
+    ReaderAskReaderFocus,
+    ReaderAskResolvedContextSummary,
+    ReaderAskThreadCreateRequest,
+    ReaderAskThreadDetail,
+    ReaderAskThreadListResponse,
+    ReaderAskThreadSummary,
+    ReaderAskToolTraceEntry,
+)
+from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
+from app.services import excerpt_assets as excerpt_assets_svc
+from app.services.ai_usage import (
+    AIUsageEventCreate,
+    BILLING_MODE_USER_POINTS,
+    CAPABILITY_READER_ASK,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    USAGE_SCOPE_USER_BILLED,
+    build_model_metadata,
+    build_reader_ask_billing_metadata,
+    compute_reader_ask_cost_points,
+    record_ai_usage_event,
+    READER_ASK_RESERVED_POINTS,
+)
+from app.services.ai_usage.billing import MULTIPLIER_OUTPUT, TOKENS_PER_POINT
+from app.services.analysis.credit_service import (
+    CreditReservation,
+    LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+    check_quota,
+    ensure_credit_account,
+    refund_reserved_points,
+    reserve_points,
+)
+from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.dictionary import get_service as get_dictionary_service
+from app.services.dictionary.errors import ServiceUnavailableError, WordNotFoundError
+from app.services.dictionary.schemas import DictionaryLookupRequest
+from app.services.dictionary_ai.schemas import DictionaryAIContextExplainRequest
+from app.services.dictionary_ai.service import get_service as get_dictionary_ai_service
+from app.services.reader_ask import repository as repo
+from app.services.text_anchors import ensure_json_dict, sentence_map
+from app.services.user_assets import favorites as favorites_svc
+from app.services.user_assets import vocabulary as vocabulary_svc
+from app.services import user_annotations as user_annotations_svc
+from app.workflow.tracing import build_usage_metadata
+
+_HISTORY_INTENT_RE = re.compile(r"(以前|之前|记过|收藏过|在哪见过|before|previous|earlier|history|seen this)")
+_SAVE_NOTE_RE = re.compile(r"(保存.*笔记|记成笔记|save.*note|save this explanation)", re.IGNORECASE)
+_SAVE_EXCERPT_RE = re.compile(r"(保存.*摘录|高亮一下|save.*excerpt|highlight this)", re.IGNORECASE)
+_FAVORITE_RE = re.compile(r"(收藏|favorite|bookmark)", re.IGNORECASE)
+_AMBIGUOUS_REF_RE = re.compile(r"(这里|这句|这段|刚刚那段|上一段|this|that|here|it)", re.IGNORECASE)
+_MAX_HISTORY_MESSAGES = 8
+_MAX_CONTEXT_TEXT = 1200
+_MAX_MESSAGE_TEXT = 800
+_MAX_PROMPT_ASSET_ITEMS = 5
+_DEFAULT_MAX_OUTPUT_TOKENS = 700
+_MIN_MAX_OUTPUT_TOKENS = 160
+_PROMPT_BUDGET_BUFFER_TOKENS = 800
+_WORKFLOW_NAME = "reader_ask"
+_WORKFLOW_VERSION = "1.0.0"
+_SCHEMA_VERSION = "reader-ask-v1"
+
+
+@dataclass(slots=True)
+class _RecordBundle:
+    record_id: UUID
+    title: str | None
+    source_text: str
+    render_scene: dict[str, Any]
+    workflow_version: str | None
+    schema_version: str | None
+
+
+def _iso_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _normalize_text(value: str | None) -> str:
+    if not value:
+        return ""
+    return " ".join(value.split()).strip()
+
+
+def _truncate_text(value: str | None, limit: int) -> str:
+    normalized = _normalize_text(value)
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
+
+
+def _parse_uuid(value: str, detail: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=detail) from exc
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _anchor_to_citation(anchor: ReaderAskAnchorRef, *, record_id: str, record_title: str | None) -> ReaderAskCitation:
+    label = anchor.label or anchor.selected_text or anchor.entry_type or anchor.anchor_type
+    return ReaderAskCitation(
+        citation_id=str(uuid4()),
+        kind="anchor",
+        label=_truncate_text(label, 80) or anchor.anchor_type,
+        anchor_type=anchor.anchor_type,
+        sentence_id=anchor.sentence_id,
+        target_key=anchor.target_key,
+        selected_text=_truncate_text(anchor.selected_text, 180) or None,
+        record_id=record_id,
+        source_article_title=record_title,
+        metadata_json={"anchor_id": anchor.anchor_id, "entry_type": anchor.entry_type},
+    )
+
+
+def _sentence_ids_from_anchor(anchor: ReaderAskAnchorRef) -> list[str]:
+    if anchor.anchor_type == "multi_text":
+        return [segment.sentence_id for segment in anchor.segments]
+    if anchor.sentence_id:
+        return [anchor.sentence_id]
+    return []
+
+
+def _first_anchor_text(anchor: ReaderAskAnchorRef) -> str:
+    if anchor.selected_text:
+        return anchor.selected_text
+    if anchor.segments:
+        return " ... ".join(segment.selected_text for segment in anchor.segments[:3])
+    return anchor.label or anchor.entry_type or anchor.anchor_type
+
+
+def _matches_history_intent(content: str) -> bool:
+    return bool(_HISTORY_INTENT_RE.search(content))
+
+
+def _needs_clarification(content: str, anchors: list[ReaderAskAnchorRef], focus: ReaderAskReaderFocus | None) -> bool:
+    if anchors:
+        return False
+    if focus and (focus.sentence_id or focus.selected_text):
+        return False
+    return bool(_AMBIGUOUS_REF_RE.search(content))
+
+
+def _query_seed(content: str, anchors: list[ReaderAskAnchorRef]) -> str:
+    for anchor in anchors:
+        selected = _first_anchor_text(anchor)
+        if selected:
+            return selected
+    return _truncate_text(content, 80)
+
+
+def _build_unused_reservation(reservation: CreditReservation, actual_cost_points: int) -> CreditReservation:
+    if actual_cost_points >= reservation.total_points:
+        return CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+
+    used_daily = min(actual_cost_points, reservation.deducted_from_daily)
+    used_bonus = max(actual_cost_points - used_daily, 0)
+    refund_daily = reservation.deducted_from_daily - used_daily
+    refund_bonus = reservation.deducted_from_bonus - used_bonus
+    refund_total = max(refund_daily, 0) + max(refund_bonus, 0)
+    return CreditReservation(
+        total_points=refund_total,
+        deducted_from_daily=max(refund_daily, 0),
+        deducted_from_bonus=max(refund_bonus, 0),
+    )
+
+
+def _make_tool_trace(tool_name: str, status: str, *, summary: str | None = None, metadata: dict[str, Any] | None = None) -> ReaderAskToolTraceEntry:
+    now = _iso_now()
+    if status == "started":
+        return ReaderAskToolTraceEntry(
+            tool_name=tool_name,
+            status="started",
+            started_at=now,
+            metadata_json=metadata or {},
+        )
+    return ReaderAskToolTraceEntry(
+        tool_name=tool_name,
+        status=status,  # type: ignore[arg-type]
+        started_at=now,
+        completed_at=now,
+        summary=summary,
+        metadata_json=metadata or {},
+    )
+
+
+def _estimate_token_count(payload: dict[str, Any]) -> int:
+    serialized = json.dumps(payload, ensure_ascii=False)
+    return max((len(serialized) + 3) // 4, 1)
+
+
+def _compact_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    compact = json.loads(json.dumps(payload, ensure_ascii=False))
+    history = compact.get("history")
+    if isinstance(history, list) and len(history) > 4:
+        compact["history"] = history[-4:]
+
+    record_assets = compact.get("record_assets")
+    if isinstance(record_assets, list) and len(record_assets) > 3:
+        compact["record_assets"] = record_assets[:3]
+
+    history_assets = compact.get("history_assets")
+    if isinstance(history_assets, list) and len(history_assets) > 2:
+        compact["history_assets"] = history_assets[:2]
+
+    vocabulary_items = compact.get("vocabulary_items")
+    if isinstance(vocabulary_items, list) and len(vocabulary_items) > 3:
+        compact["vocabulary_items"] = vocabulary_items[:3]
+
+    record_insights = compact.get("record_insights")
+    if isinstance(record_insights, list) and len(record_insights) > 3:
+        compact["record_insights"] = record_insights[:3]
+
+    record_context = compact.get("record_context")
+    if isinstance(record_context, dict):
+        sentence_windows = record_context.get("sentence_windows")
+        if isinstance(sentence_windows, list) and len(sentence_windows) > 3:
+            record_context["sentence_windows"] = sentence_windows[:3]
+        source_excerpt = record_context.get("source_excerpt")
+        if isinstance(source_excerpt, str) and len(source_excerpt) > 800:
+            record_context["source_excerpt"] = _truncate_text(source_excerpt, 800)
+    return compact
+
+
+def _prepare_prompt_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    prompt_payload = payload
+    estimated_input_tokens = _estimate_token_count(prompt_payload)
+    if estimated_input_tokens > 4500:
+        prompt_payload = _compact_prompt_payload(payload)
+        estimated_input_tokens = _estimate_token_count(prompt_payload)
+
+    weighted_budget = READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
+    weighted_remaining = max(weighted_budget - estimated_input_tokens - _PROMPT_BUDGET_BUFFER_TOKENS, 0)
+    budgeted_output_tokens = max(
+        _MIN_MAX_OUTPUT_TOKENS,
+        min(_DEFAULT_MAX_OUTPUT_TOKENS, weighted_remaining // MULTIPLIER_OUTPUT if weighted_remaining else 0),
+    )
+    return prompt_payload, budgeted_output_tokens
+
+
+async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
+    pool = repo.db_connection.DB_POOL if hasattr(repo, "db_connection") else None
+    if pool is None:
+        from app.database import connection as db_connection
+
+        pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT r.id, r.title, r.source_text, a.render_scene_json, a.workflow_version, a.schema_version
+            FROM analysis_records r
+            LEFT JOIN analysis_results a ON a.record_id = r.id
+            WHERE r.id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL
+            """,
+            record_id,
+            user_id,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Analysis record not found")
+    return _RecordBundle(
+        record_id=row["id"],
+        title=row["title"],
+        source_text=row["source_text"] or "",
+        render_scene=ensure_json_dict(row["render_scene_json"]),
+        workflow_version=row["workflow_version"],
+        schema_version=row["schema_version"],
+    )
+
+
+def _render_scene_sentence_text(record: _RecordBundle, sentence_id: str | None) -> str | None:
+    if not sentence_id:
+        return None
+    sentence = sentence_map(record.render_scene).get(sentence_id)
+    text = sentence.get("text") if sentence else None
+    return text if isinstance(text, str) and text.strip() else None
+
+
+def _translations_map(record: _RecordBundle) -> dict[str, str]:
+    translations: dict[str, str] = {}
+    raw = record.render_scene.get("translations")
+    if not isinstance(raw, list):
+        return translations
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        sentence_id = item.get("sentence_id") or item.get("sentenceId")
+        translation = item.get("translation_zh") or item.get("translationZh")
+        if isinstance(sentence_id, str) and isinstance(translation, str) and translation.strip():
+            translations[sentence_id] = translation.strip()
+    return translations
+
+
+async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
+    if not anchor.anchor_id and not anchor.target_key:
+        return anchor
+
+    row = await conn.fetchrow(
+        """
+        SELECT id, annotation_type, anchor_type, target_key, paragraph_id, sentence_id,
+               selected_text, start_offset, end_offset, text_hash, note, payload_json
+        FROM user_annotations
+        WHERE user_id = $1
+          AND deleted_at IS NULL
+          AND (($2::uuid IS NOT NULL AND id = $2) OR ($3::text IS NOT NULL AND target_key = $3))
+        LIMIT 1
+        """,
+        user_id,
+        UUID(anchor.anchor_id) if anchor.anchor_id else None,
+        anchor.target_key,
+    )
+    if row is None:
+        return anchor
+
+    payload = row["payload_json"] or {}
+    segments = payload.get("segments") if isinstance(payload, dict) else []
+    return anchor.model_copy(
+        update={
+            "anchor_id": str(row["id"]),
+            "anchor_type": "user_annotation",
+            "target_key": row["target_key"],
+            "sentence_id": row["sentence_id"],
+            "paragraph_id": row["paragraph_id"],
+            "selected_text": row["selected_text"],
+            "start_offset": row["start_offset"],
+            "end_offset": row["end_offset"],
+            "text_hash": row["text_hash"],
+            "note": row["note"],
+            "payload_json": payload,
+            "segments": segments or [],
+            "label": row["annotation_type"],
+        }
+    )
+
+
+async def _resolve_favorite_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
+    if not anchor.anchor_id and not anchor.target_key:
+        return anchor
+
+    row = await conn.fetchrow(
+        """
+        SELECT id, target_type, target_key, payload_json, note
+        FROM favorite_records
+        WHERE user_id = $1
+          AND deleted_at IS NULL
+          AND (($2::uuid IS NOT NULL AND id = $2) OR ($3::text IS NOT NULL AND target_key = $3))
+        LIMIT 1
+        """,
+        user_id,
+        UUID(anchor.anchor_id) if anchor.anchor_id else None,
+        anchor.target_key,
+    )
+    if row is None:
+        return anchor
+
+    payload = row["payload_json"] or {}
+    segments = payload.get("segments") if isinstance(payload, dict) else []
+    return anchor.model_copy(
+        update={
+            "anchor_id": str(row["id"]),
+            "anchor_type": "favorite",
+            "target_key": row["target_key"],
+            "target_type": row["target_type"],
+            "sentence_id": payload.get("sentence_id"),
+            "paragraph_id": payload.get("paragraph_id"),
+            "selected_text": payload.get("selected_text"),
+            "start_offset": payload.get("start_offset"),
+            "end_offset": payload.get("end_offset"),
+            "text_hash": payload.get("text_hash"),
+            "note": row["note"],
+            "payload_json": payload,
+            "segments": segments or [],
+        }
+    )
+
+
+def _resolve_sentence_entry_anchor(record: _RecordBundle, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
+    entries_raw = record.render_scene.get("sentence_entries") or record.render_scene.get("sentenceEntries")
+    if not isinstance(entries_raw, list):
+        return anchor
+    for entry in entries_raw:
+        if not isinstance(entry, dict):
+            continue
+        sentence_id = entry.get("sentence_id") or entry.get("sentenceId")
+        entry_type = entry.get("entry_type") or entry.get("entryType")
+        if sentence_id != anchor.sentence_id:
+            continue
+        if anchor.entry_type and entry_type != anchor.entry_type:
+            continue
+        return anchor.model_copy(
+            update={
+                "label": entry.get("title") or entry.get("label") or entry_type,
+                "entry_type": entry_type,
+                "note": entry.get("content"),
+                "selected_text": anchor.selected_text or _render_scene_sentence_text(record, anchor.sentence_id),
+                "payload_json": entry,
+            }
+        )
+    return anchor
+
+
+def _resolve_sentence_anchor(record: _RecordBundle, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
+    if anchor.anchor_type not in {"sentence", "text_range"}:
+        return anchor
+    if anchor.selected_text:
+        return anchor
+    sentence_text = _render_scene_sentence_text(record, anchor.sentence_id)
+    if sentence_text:
+        return anchor.model_copy(update={"selected_text": sentence_text})
+    return anchor
+
+
+def _resolve_reader_focus(record: _RecordBundle, focus: ReaderAskReaderFocus) -> ReaderAskAnchorRef:
+    if focus.selected_text and focus.sentence_id and focus.text_hash:
+        return ReaderAskAnchorRef(
+            anchor_type="text_range",
+            sentence_id=focus.sentence_id,
+            paragraph_id=focus.paragraph_id,
+            selected_text=focus.selected_text,
+            start_offset=focus.start_offset,
+            end_offset=focus.end_offset,
+            text_hash=focus.text_hash,
+        )
+    if focus.sentence_id:
+        return ReaderAskAnchorRef(
+            anchor_type="sentence",
+            sentence_id=focus.sentence_id,
+            paragraph_id=focus.paragraph_id,
+            selected_text=_render_scene_sentence_text(record, focus.sentence_id),
+        )
+    raise HTTPException(status_code=400, detail="reader_focus is missing a usable sentence reference")
+
+
+def _citation_to_anchor(citation: dict[str, Any]) -> ReaderAskAnchorRef | None:
+    anchor_type = citation.get("anchor_type")
+    if anchor_type not in {"sentence", "text_range", "multi_text", "sentence_entry"}:
+        return None
+    return ReaderAskAnchorRef(
+        anchor_type=anchor_type,
+        sentence_id=citation.get("sentence_id"),
+        target_key=citation.get("target_key"),
+        selected_text=citation.get("selected_text"),
+    )
+
+
+async def _resolve_anchor_refs(
+    user_id: UUID,
+    record: _RecordBundle,
+    *,
+    anchors: list[ReaderAskAnchorRef],
+    reader_focus: ReaderAskReaderFocus | None,
+    fallback_citation: dict[str, Any] | None,
+) -> list[ReaderAskAnchorRef]:
+    from app.database import connection as db_connection
+
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    resolved: list[ReaderAskAnchorRef] = []
+    async with pool.acquire() as conn:
+        for raw_anchor in anchors:
+            anchor = raw_anchor
+            if anchor.anchor_type == "user_annotation":
+                anchor = await _resolve_annotation_anchor(conn, user_id, anchor)
+            elif anchor.anchor_type == "favorite":
+                anchor = await _resolve_favorite_anchor(conn, user_id, anchor)
+            elif anchor.anchor_type == "sentence_entry":
+                anchor = _resolve_sentence_entry_anchor(record, anchor)
+            elif anchor.anchor_type in {"sentence", "text_range"}:
+                anchor = _resolve_sentence_anchor(record, anchor)
+            resolved.append(anchor)
+
+    if resolved:
+        return resolved
+    if reader_focus is not None:
+        return [_resolve_reader_focus(record, reader_focus)]
+    if fallback_citation:
+        fallback_anchor = _citation_to_anchor(fallback_citation)
+        if fallback_anchor is not None:
+            return [_resolve_sentence_anchor(record, fallback_anchor)]
+    return []
+
+
+def _collect_sentence_windows(record: _RecordBundle, anchors: list[ReaderAskAnchorRef]) -> list[dict[str, Any]]:
+    sentences = record.render_scene.get("article", {}).get("sentences")
+    if not isinstance(sentences, list):
+        return []
+    translations = _translations_map(record)
+    sentence_ids: list[str] = []
+    for anchor in anchors:
+        sentence_ids.extend(_sentence_ids_from_anchor(anchor))
+    sentence_id_set = {sentence_id for sentence_id in sentence_ids if sentence_id}
+    if not sentence_id_set:
+        return []
+
+    ordered: list[dict[str, Any]] = []
+    for index, item in enumerate(sentences):
+        if not isinstance(item, dict):
+            continue
+        current_id = item.get("sentence_id")
+        if current_id not in sentence_id_set:
+            continue
+        window_items = []
+        for candidate in sentences[max(index - 1, 0):min(index + 2, len(sentences))]:
+            if not isinstance(candidate, dict):
+                continue
+            sentence_id = candidate.get("sentence_id")
+            if not isinstance(sentence_id, str):
+                continue
+            window_items.append(
+                {
+                    "sentence_id": sentence_id,
+                    "paragraph_id": candidate.get("paragraph_id"),
+                    "text": _truncate_text(candidate.get("text"), 240),
+                    "translation_zh": _truncate_text(translations.get(sentence_id), 180) or None,
+                }
+            )
+        ordered.append(
+            {
+                "sentence_id": current_id,
+                "anchor_text": _truncate_text(item.get("text"), 240),
+                "window": window_items,
+            }
+        )
+    return ordered
+
+
+def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnchorRef]) -> list[dict[str, Any]]:
+    entries_raw = record.render_scene.get("sentence_entries") or record.render_scene.get("sentenceEntries")
+    if not isinstance(entries_raw, list):
+        return []
+    sentence_ids = {sentence_id for anchor in anchors for sentence_id in _sentence_ids_from_anchor(anchor)}
+    results: list[dict[str, Any]] = []
+    for entry in entries_raw:
+        if not isinstance(entry, dict):
+            continue
+        sentence_id = entry.get("sentence_id") or entry.get("sentenceId")
+        if sentence_id not in sentence_ids:
+            continue
+        results.append(
+            {
+                "id": entry.get("id"),
+                "sentence_id": sentence_id,
+                "entry_type": entry.get("entry_type") or entry.get("entryType"),
+                "title": _truncate_text(entry.get("title") or entry.get("label"), 80),
+                "content": _truncate_text(entry.get("content"), 220),
+            }
+        )
+    return results[:_MAX_PROMPT_ASSET_ITEMS]
+
+
+def _flatten_excerpt_items(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for group in groups:
+        group_title = group.get("title")
+        group_record_id = group.get("record_id")
+        for item in group.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            enriched = dict(item)
+            enriched["record_id"] = group_record_id
+            enriched["source_article_title"] = group_title
+            items.append(enriched)
+    return items
+
+
+def _score_excerpt_item(item: dict[str, Any], *, sentence_ids: set[str], query: str) -> int:
+    score = 0
+    if sentence_ids and item.get("sentence_id") in sentence_ids:
+        score += 5
+    haystack = " ".join(
+        _normalize_text(part)
+        for part in (
+            item.get("selected_text"),
+            item.get("translation"),
+            item.get("note"),
+            item.get("source_article_title"),
+        )
+    ).lower()
+    for token in _normalize_text(query).lower().split():
+        if token and token in haystack:
+            score += 2
+    return score
+
+
+async def _tool_get_record_excerpt_assets(
+    user_id: UUID,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    query: str,
+) -> list[dict[str, Any]]:
+    response = await excerpt_assets_svc.list_excerpt_assets(
+        user_id=user_id,
+        page=1,
+        limit=20,
+        record_id=str(record.record_id),
+    )
+    items = _flatten_excerpt_items(response.model_dump(mode="python")["groups"])
+    sentence_ids = {sentence_id for anchor in anchors for sentence_id in _sentence_ids_from_anchor(anchor)}
+    items.sort(key=lambda item: _score_excerpt_item(item, sentence_ids=sentence_ids, query=query), reverse=True)
+    selected = [item for item in items if _score_excerpt_item(item, sentence_ids=sentence_ids, query=query) > 0]
+    return selected[:_MAX_PROMPT_ASSET_ITEMS] or items[: min(_MAX_PROMPT_ASSET_ITEMS, len(items))]
+
+
+async def _tool_search_user_excerpt_assets(
+    user_id: UUID,
+    current_record_id: UUID,
+    query: str,
+) -> list[dict[str, Any]]:
+    response = await excerpt_assets_svc.list_excerpt_assets(
+        user_id=user_id,
+        page=1,
+        limit=40,
+        record_id=None,
+    )
+    items = [
+        item for item in _flatten_excerpt_items(response.model_dump(mode="python")["groups"])
+        if item.get("record_id") != str(current_record_id)
+    ]
+    items.sort(key=lambda item: _score_excerpt_item(item, sentence_ids=set(), query=query), reverse=True)
+    return [item for item in items if _score_excerpt_item(item, sentence_ids=set(), query=query) > 0][:_MAX_PROMPT_ASSET_ITEMS]
+
+
+async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[str, Any]]:
+    items, _ = await vocabulary_svc.list_vocabulary(
+        user_id=user_id,
+        page=1,
+        limit=200,
+        lite=False,
+    )
+    query_lower = _normalize_text(query).lower()
+    matches: list[dict[str, Any]] = []
+    for item in items:
+        lemma = str(item.get("lemma") or "")
+        display_word = str(item.get("display_word") or "")
+        source_sentence = str(item.get("source_sentence") or "")
+        if query_lower and query_lower not in lemma.lower() and query_lower not in display_word.lower() and query_lower not in source_sentence.lower():
+            continue
+        matches.append(
+            {
+                "id": str(item.get("id")),
+                "lemma": lemma,
+                "display_word": display_word,
+                "short_meaning": _truncate_text(item.get("short_meaning"), 80),
+                "source_sentence": _truncate_text(source_sentence, 120),
+                "mastery_status": item.get("mastery_status"),
+            }
+        )
+    return matches[:_MAX_PROMPT_ASSET_ITEMS]
+
+
+async def _tool_lookup_dictionary_entry(
+    *,
+    query: str | None,
+    entry_id: int | None,
+    query_type: str | None,
+    context_sentence: str | None,
+    occurrence: int | None,
+) -> dict[str, Any] | None:
+    service = get_dictionary_service()
+    try:
+        if entry_id is not None:
+            result = await service.lookup_entry(entry_id)
+        elif query:
+            result = await service.lookup(
+                DictionaryLookupRequest(
+                    query=query,
+                    query_type=query_type if query_type in {"word", "phrase"} else ("phrase" if " " in query else "word"),
+                    context_sentence=context_sentence,
+                    occurrence=occurrence,
+                )
+            )
+        else:
+            return None
+    except (WordNotFoundError, ServiceUnavailableError):
+        return None
+
+    entry = result.get("entry") if isinstance(result, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "id": entry.get("id"),
+        "word": entry.get("word"),
+        "base_word": entry.get("base_word"),
+        "phonetic": entry.get("phonetic"),
+        "meanings": entry.get("meanings", [])[:2],
+        "query": result.get("query") if isinstance(result, dict) else query,
+    }
+
+
+async def _tool_run_dictionary_ai_context_explain(
+    *,
+    query: str,
+    entry_id: int,
+    context_sentence: str,
+    query_type: str,
+    occurrence: int | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    service = get_dictionary_ai_service()
+    result = await service.run_context_explain(
+        DictionaryAIContextExplainRequest(
+            query=query,
+            query_type=query_type if query_type in {"word", "phrase"} else ("phrase" if " " in query else "word"),
+            context_sentence=context_sentence,
+            occurrence=occurrence,
+            entry_id=entry_id,
+        )
+    )
+    response = result.response
+    return (
+        {
+            "mode": response.mode,
+            "query": response.query,
+            "summary": response.summary,
+            "best_fit_sense": response.best_fit_sense,
+            "why_here": response.why_here,
+            "cue": response.cue,
+            "translation": response.translation,
+            "contrast": response.contrast,
+            "learning_tip": response.learning_tip,
+            "confidence": response.confidence,
+            "entry_id": entry_id,
+        },
+        result.usage_data,
+    )
+
+
+def _excerpt_item_to_citation(item: dict[str, Any], *, kind: str) -> ReaderAskCitation:
+    return ReaderAskCitation(
+        citation_id=str(uuid4()),
+        kind=kind,  # type: ignore[arg-type]
+        label=_truncate_text(item.get("selected_text"), 80) or _truncate_text(item.get("source_article_title"), 80) or "摘录资产",
+        anchor_type=item.get("anchor_type"),
+        sentence_id=item.get("sentence_id"),
+        target_key=item.get("target_key"),
+        selected_text=_truncate_text(item.get("selected_text"), 180) or None,
+        record_id=item.get("record_id"),
+        source_article_title=item.get("source_article_title"),
+        metadata_json={
+            "note": _truncate_text(item.get("note"), 120),
+            "is_favorited": item.get("is_favorited"),
+            "is_noted": item.get("is_noted"),
+            "is_highlighted": item.get("is_highlighted"),
+        },
+    )
+
+
+def _vocabulary_item_to_citation(item: dict[str, Any]) -> ReaderAskCitation:
+    return ReaderAskCitation(
+        citation_id=str(uuid4()),
+        kind="vocabulary",
+        label=item.get("display_word") or item.get("lemma") or "生词本",
+        selected_text=item.get("source_sentence"),
+        metadata_json={
+            "vocab_id": item.get("id"),
+            "lemma": item.get("lemma"),
+            "mastery_status": item.get("mastery_status"),
+            "short_meaning": item.get("short_meaning"),
+        },
+    )
+
+
+def _dictionary_item_to_citation(item: dict[str, Any]) -> ReaderAskCitation:
+    return ReaderAskCitation(
+        citation_id=str(uuid4()),
+        kind="dictionary_entry",
+        label=item.get("word") or item.get("base_word") or "词典词条",
+        metadata_json={
+            "dict_entry_id": item.get("id"),
+            "phonetic": item.get("phonetic"),
+            "meanings": item.get("meanings"),
+        },
+    )
+
+
+def _dictionary_ai_to_citation(item: dict[str, Any], query: str, entry_id: int) -> ReaderAskCitation:
+    return ReaderAskCitation(
+        citation_id=str(uuid4()),
+        kind="dictionary_ai",
+        label=query or "词典 AI 解释",
+        metadata_json={
+            "dict_entry_id": entry_id,
+            "summary": _truncate_text(item.get("summary"), 160),
+            "best_fit_sense": item.get("best_fit_sense"),
+            "translation": item.get("translation"),
+            "confidence": item.get("confidence"),
+        },
+    )
+
+
+def _build_prompt_payload(
+    *,
+    thread: dict[str, Any],
+    record: _RecordBundle,
+    user_message: str,
+    history_messages: list[dict[str, Any]],
+    anchors: list[ReaderAskAnchorRef],
+    history_lookup_allowed: bool,
+) -> dict[str, Any]:
+    history = [
+        {
+            "role": item["role"],
+            "content_md": _truncate_text(item["content_md"], _MAX_MESSAGE_TEXT),
+        }
+        for item in history_messages[-_MAX_HISTORY_MESSAGES:]
+    ]
+    anchor_payload = [
+        {
+            "anchor_type": anchor.anchor_type,
+            "label": anchor.label,
+            "sentence_id": anchor.sentence_id,
+            "selected_text": _truncate_text(_first_anchor_text(anchor), 200),
+            "note": _truncate_text(anchor.note, 180) or None,
+            "entry_type": anchor.entry_type,
+        }
+        for anchor in anchors
+    ]
+    return {
+        "thread": {
+            "id": thread["id"],
+            "title": thread.get("title"),
+        },
+        "record": {
+            "record_id": str(record.record_id),
+            "title": record.title,
+            "workflow_version": record.workflow_version,
+            "schema_version": record.schema_version,
+        },
+        "user_message": user_message,
+        "history": history,
+        "anchors": anchor_payload,
+        "history_lookup_allowed": history_lookup_allowed,
+        "tooling_contract": {
+            "call_tools_on_demand": True,
+            "history_lookup_requires_explicit_intent": history_lookup_allowed,
+            "writes_require_confirmation": True,
+            "dictionary_context_explain_available": True,
+        },
+        "response_contract": {
+            "format": "markdown",
+            "be_concise": True,
+            "article_bound": True,
+            "do_not_claim_unknown_history": True,
+        },
+    }
+
+
+def _build_action_proposals(
+    *,
+    user_message: str,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    assistant_content_md: str,
+) -> list[ReaderAskActionProposal]:
+    proposals: list[ReaderAskActionProposal] = []
+    primary_anchor = anchors[0] if anchors else None
+    if primary_anchor is None:
+        return proposals
+
+    if _SAVE_NOTE_RE.search(user_message):
+        proposals.append(
+            ReaderAskActionProposal(
+                id=str(uuid4()),
+                action_type="save_answer_note",
+                label="保存为笔记",
+                description="把本条解释保存到当前锚点笔记",
+                payload_json={
+                    "record_id": str(record.record_id),
+                    "anchor": primary_anchor.model_dump(mode="json"),
+                    "note_text": assistant_content_md,
+                },
+            )
+        )
+    if _SAVE_EXCERPT_RE.search(user_message):
+        proposals.append(
+            ReaderAskActionProposal(
+                id=str(uuid4()),
+                action_type="save_excerpt",
+                label="保存为高亮",
+                description="把当前锚点保存成高亮/摘录",
+                payload_json={
+                    "record_id": str(record.record_id),
+                    "anchor": primary_anchor.model_dump(mode="json"),
+                },
+            )
+        )
+    if _FAVORITE_RE.search(user_message):
+        proposals.append(
+            ReaderAskActionProposal(
+                id=str(uuid4()),
+                action_type="favorite_anchor",
+                label="加入收藏",
+                description="收藏当前锚点",
+                payload_json={
+                    "record_id": str(record.record_id),
+                    "anchor": primary_anchor.model_dump(mode="json"),
+                },
+            )
+        )
+    return proposals
+
+
+def _build_action_proposals_from_runtime(
+    *,
+    record: _RecordBundle,
+    action_requests: list[ReaderAskRuntimeActionRequest],
+    assistant_content_md: str,
+) -> list[ReaderAskActionProposal]:
+    proposals: list[ReaderAskActionProposal] = []
+    for request in action_requests:
+        payload_json = dict(request.payload_json)
+        if request.action_type == "save_answer_note" and not str(payload_json.get("note_text") or "").strip():
+            payload_json["note_text"] = assistant_content_md
+        proposals.append(
+            ReaderAskActionProposal(
+                id=str(uuid4()),
+                action_type=request.action_type,
+                label=request.label,
+                description=request.description,
+                requires_confirmation=request.requires_confirmation,
+                payload_json={
+                    "record_id": str(record.record_id),
+                    **payload_json,
+                },
+            )
+        )
+    return proposals
+
+
+def _merge_action_proposals(
+    runtime_proposals: list[ReaderAskActionProposal],
+    fallback_proposals: list[ReaderAskActionProposal],
+) -> list[ReaderAskActionProposal]:
+    merged = list(runtime_proposals)
+    seen = {
+        (
+            proposal.action_type,
+            proposal.payload_json.get("anchor", {}).get("target_key"),
+            proposal.payload_json.get("anchor", {}).get("sentence_id"),
+        )
+        for proposal in runtime_proposals
+    }
+    for proposal in fallback_proposals:
+        signature = (
+            proposal.action_type,
+            proposal.payload_json.get("anchor", {}).get("target_key"),
+            proposal.payload_json.get("anchor", {}).get("sentence_id"),
+        )
+        if signature in seen:
+            continue
+        merged.append(proposal)
+    return merged
+
+
+def _merge_usage_summaries(base_usage: dict[str, Any] | None, extra_usages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not base_usage and not extra_usages:
+        return None
+
+    aggregate = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    details: dict[str, Any] = {"subtasks": []}
+
+    def add_usage(item: dict[str, Any] | None, *, tool_name: str | None = None) -> None:
+        if not item:
+            return
+        current = item.get("aggregate") if isinstance(item.get("aggregate"), dict) else item
+        aggregate["input_tokens"] += int(current.get("input_tokens") or 0)
+        aggregate["output_tokens"] += int(current.get("output_tokens") or 0)
+        aggregate["total_tokens"] += int(current.get("total_tokens") or 0)
+        if tool_name:
+            details["subtasks"].append({"tool_name": tool_name, **current})
+
+    add_usage(base_usage)
+    for item in extra_usages:
+        tool_name = str(item.get("tool_name") or "tool")
+        usage = item.get("usage_summary")
+        if isinstance(usage, dict):
+            add_usage(usage, tool_name=tool_name)
+
+    return {"aggregate": aggregate, **details}
+
+
+def _resolved_context_summary(
+    *,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    used_history_lookup: bool,
+    citations: list[ReaderAskCitation],
+) -> ReaderAskResolvedContextSummary:
+    labels = []
+    if anchors:
+        labels.append("current_anchor")
+    labels.append("current_record")
+    if used_history_lookup:
+        labels.append("history_assets")
+    if any(citation.kind == "vocabulary" for citation in citations):
+        labels.append("vocabulary")
+    if any(citation.kind in {"dictionary_entry", "dictionary_ai"} for citation in citations):
+        labels.append("dictionary")
+    return ReaderAskResolvedContextSummary(
+        record_id=str(record.record_id),
+        record_title=record.title,
+        anchor_count=len(anchors),
+        used_history_lookup=used_history_lookup,
+        source_labels=labels,
+    )
+
+
+async def list_threads(user_id: UUID, record_id: str) -> ReaderAskThreadListResponse:
+    record_uuid = _parse_uuid(record_id, "record_id must be a UUID")
+    await repo.ensure_record_access(user_id, record_uuid)
+    items = await repo.list_threads(user_id, record_uuid)
+    return ReaderAskThreadListResponse(items=[ReaderAskThreadSummary.model_validate(item) for item in items])
+
+
+async def create_thread(user_id: UUID, body: ReaderAskThreadCreateRequest) -> ReaderAskThreadSummary:
+    record_uuid = _parse_uuid(body.record_id, "record_id must be a UUID")
+    record = await repo.ensure_record_access(user_id, record_uuid)
+    if body.mode == "default":
+        thread = await repo.get_or_create_default_thread(
+            user_id,
+            record_uuid,
+            title=body.title or record.get("title") or "Ask Claread",
+        )
+    else:
+        thread = await repo.create_new_chat_thread(
+            user_id,
+            record_uuid,
+            title=body.title or "New chat",
+        )
+    return ReaderAskThreadSummary.model_validate(thread)
+
+
+async def get_thread_detail(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
+    thread = await repo.get_thread(user_id, thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Reader ask thread not found")
+    messages = await repo.list_messages(thread_id, limit=100)
+    return ReaderAskThreadDetail.model_validate({**thread, "messages": messages})
+
+
+async def _record_failure_event(
+    *,
+    user_id: UUID,
+    record_id: UUID,
+    thread_id: UUID,
+    user_message: str,
+    start_perf: float,
+    error_code: str,
+    error_message: str,
+    metadata_json: dict[str, Any],
+) -> None:
+    await record_ai_usage_event(
+        AIUsageEventCreate(
+            usage_scope=USAGE_SCOPE_USER_BILLED,
+            capability_code=CAPABILITY_READER_ASK,
+            billing_mode=BILLING_MODE_USER_POINTS,
+            status=STATUS_FAILED,
+            user_id=user_id,
+            record_id=record_id,
+            workflow_name=_WORKFLOW_NAME,
+            workflow_version=_WORKFLOW_VERSION,
+            schema_version=_SCHEMA_VERSION,
+            prompt_version=get_prompt_version(),
+            latency_ms=int((perf_counter() - start_perf) * 1000),
+            error_code=error_code,
+            error_message=error_message,
+            metadata_json={
+                "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
+                "thread_id": str(thread_id),
+                "user_message": _truncate_text(user_message, 200),
+                **metadata_json,
+            },
+        )
+    )
+
+
+async def stream_thread_message(
+    user_id: UUID,
+    thread_id: UUID,
+    body: ReaderAskMessageStreamRequest,
+) -> AsyncIterator[str]:
+    start_perf = perf_counter()
+    thread: dict[str, Any] | None = None
+    record: _RecordBundle | None = None
+    history_messages: list[dict[str, Any]] = []
+    resolved_anchors: list[ReaderAskAnchorRef] = []
+    anchor_payload: list[dict[str, Any]] = []
+    reservation: CreditReservation | None = None
+    user_message: dict[str, Any] | None = None
+    assistant_message: dict[str, Any] | None = None
+    runtime_state = ReaderAskRuntimeState()
+    nested_tool_usages: list[dict[str, Any]] = []
+
+    try:
+        thread = await repo.get_thread(user_id, thread_id)
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Reader ask thread not found")
+
+        record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
+        record = await _load_record_bundle(user_id, record_id)
+        history_messages = await repo.list_messages(thread_id, limit=100)
+        fallback_citation = None
+        for message in reversed(history_messages):
+            if message["role"] == "assistant" and message["citations"]:
+                fallback_citation = message["citations"][0]
+                break
+
+        resolved_anchors = await _resolve_anchor_refs(
+            user_id,
+            record,
+            anchors=body.anchors,
+            reader_focus=body.reader_focus,
+            fallback_citation=fallback_citation,
+        )
+        anchor_payload = [anchor.model_dump(mode="json") for anchor in resolved_anchors]
+
+        clarification_only = _needs_clarification(body.content, resolved_anchors, body.reader_focus)
+        if clarification_only:
+            user_message = await repo.create_message(
+                thread_id=thread_id,
+                role="user",
+                status="completed",
+                content_md=body.content,
+                context_anchors=anchor_payload,
+            )
+            yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
+
+            assistant_md = (
+                "我还不能确定你说的“这里/这句”具体指哪一处。"
+                "请先在正文里选中一句或把相关解析卡片加入对话上下文后再问我。"
+            )
+            assistant_message = await repo.create_message(
+                thread_id=thread_id,
+                role="assistant",
+                status="completed",
+                content_md=assistant_md,
+                context_anchors=anchor_payload,
+            )
+            citations = [
+                _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
+                for anchor in resolved_anchors
+            ]
+            payload = ReaderAskCompletedPayload(
+                id=assistant_message["id"],
+                thread_id=str(thread_id),
+                content_md=assistant_md,
+                citations=citations,
+                action_proposals=[],
+                tool_trace=[],
+                usage_summary=None,
+                billed_points=0,
+                resolved_context=_resolved_context_summary(
+                    record=record,
+                    anchors=resolved_anchors,
+                    used_history_lookup=False,
+                    citations=citations,
+                ),
+            )
+            yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
+            yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
+            yield _sse("message.completed", payload.model_dump(mode="json"))
+            return
+
+        await ensure_credit_account(user_id)
+        remaining = await check_quota(user_id)
+        if remaining < READER_ASK_RESERVED_POINTS:
+            yield _sse(
+                "error",
+                {
+                    "code": "INSUFFICIENT_CREDITS",
+                    "detail": "Not enough credits for this Ask Claread request.",
+                    "remaining_points": remaining,
+                    "required_points": READER_ASK_RESERVED_POINTS,
+                },
+            )
+            return
+
+        reservation_metadata = {
+            "capability_code": CAPABILITY_READER_ASK,
+            "thread_id": str(thread_id),
+            "record_id": str(record.record_id),
+            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
+            "reserved_points": READER_ASK_RESERVED_POINTS,
+            "user_message": _truncate_text(body.content, 200),
+        }
+        reservation = await reserve_points(
+            user_id,
+            READER_ASK_RESERVED_POINTS,
+            task_id=None,
+            entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+            metadata=reservation_metadata,
+        )
+        if reservation is None:
+            remaining = await check_quota(user_id)
+            yield _sse(
+                "error",
+                {
+                    "code": "INSUFFICIENT_CREDITS",
+                    "detail": "Not enough credits for this Ask Claread request.",
+                    "remaining_points": remaining,
+                    "required_points": READER_ASK_RESERVED_POINTS,
+                },
+            )
+            return
+
+        user_message = await repo.create_message(
+            thread_id=thread_id,
+            role="user",
+            status="completed",
+            content_md=body.content,
+            context_anchors=anchor_payload,
+        )
+        yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
+
+        assistant_message = await repo.create_message(
+            thread_id=thread_id,
+            role="assistant",
+            status="streaming",
+            content_md="",
+            context_anchors=anchor_payload,
+        )
+        yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
+
+        base_citations = [
+            _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
+            for anchor in resolved_anchors
+        ]
+        runtime_state = ReaderAskRuntimeState(
+            citations=list(base_citations),
+            source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+        )
+        query_seed = _query_seed(body.content, resolved_anchors)
+        history_lookup_allowed = _matches_history_intent(body.content)
+
+        prompt_payload = _build_prompt_payload(
+            thread=thread,
+            record=record,
+            user_message=body.content,
+            history_messages=history_messages,
+            anchors=resolved_anchors,
+            history_lookup_allowed=history_lookup_allowed,
+        )
+        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
+
+        agent = get_reader_ask_agent()
+        model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
+        if model is None:
+            raise RuntimeError("model route is not configured: reader_ask")
+
+        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=45.0)
+        if model_config and model_config.model_settings is not None:
+            route_settings = route_settings.merged_with(model_config.model_settings)
+        route_settings = RunModelSettings(
+            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            temperature=route_settings.temperature,
+            timeout=route_settings.timeout,
+        )
+
+        event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+        primary_anchor = resolved_anchors[0] if resolved_anchors else None
+        dictionary_anchor = next((anchor for anchor in resolved_anchors if anchor.anchor_type == "dictionary_entry"), None)
+
+        async def get_record_context_cb() -> dict[str, Any]:
+            return {
+                "title": record.title,
+                "source_excerpt": _truncate_text(record.source_text, _MAX_CONTEXT_TEXT),
+                "sentence_windows": _collect_sentence_windows(record, resolved_anchors),
+            }
+
+        async def get_record_insights_cb() -> list[dict[str, Any]]:
+            return _collect_sentence_entries(record, resolved_anchors)
+
+        async def get_record_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
+            return await _tool_get_record_excerpt_assets(user_id, record, resolved_anchors, query)
+
+        async def search_user_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
+            return await _tool_search_user_excerpt_assets(user_id, record.record_id, query)
+
+        async def search_user_vocabulary_cb(query: str) -> list[dict[str, Any]]:
+            return await _tool_search_user_vocabulary(user_id, query)
+
+        async def lookup_dictionary_entry_cb(
+            query: str | None,
+            entry_id: int | None,
+            query_type: str | None,
+            context_sentence: str | None,
+            occurrence: int | None,
+        ) -> dict[str, Any] | None:
+            fallback_query = query
+            fallback_entry_id = entry_id
+            if dictionary_anchor is not None:
+                fallback_query = fallback_query or dictionary_anchor.query
+                fallback_entry_id = fallback_entry_id or dictionary_anchor.dict_entry_id
+            return await _tool_lookup_dictionary_entry(
+                query=fallback_query,
+                entry_id=fallback_entry_id,
+                query_type=query_type,
+                context_sentence=context_sentence,
+                occurrence=occurrence,
+            )
+
+        async def run_dictionary_ai_context_explain_cb(
+            query: str,
+            entry_id: int,
+            context_sentence: str,
+            query_type: str,
+            occurrence: int | None,
+        ) -> dict[str, Any] | None:
+            result, usage = await _tool_run_dictionary_ai_context_explain(
+                query=query,
+                entry_id=entry_id,
+                context_sentence=context_sentence,
+                query_type=query_type,
+                occurrence=occurrence,
+            )
+            if usage:
+                nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
+            return result
+
+        deps = ReaderAskAgentDeps(
+            payload=prompt_payload,
+            event_queue=event_queue,
+            state=runtime_state,
+            query_seed=query_seed,
+            record_id=str(record.record_id),
+            record_title=record.title,
+            primary_anchor=primary_anchor,
+            history_lookup_allowed=history_lookup_allowed,
+            get_record_context_fn=get_record_context_cb,
+            get_record_insights_fn=get_record_insights_cb,
+            get_record_excerpt_assets_fn=get_record_excerpt_assets_cb,
+            search_user_excerpt_assets_fn=search_user_excerpt_assets_cb,
+            search_user_vocabulary_fn=search_user_vocabulary_cb,
+            lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
+            run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+            excerpt_item_to_citation_fn=lambda item, kind: _excerpt_item_to_citation(item, kind=kind),
+            vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
+            dictionary_item_to_citation_fn=_dictionary_item_to_citation,
+            dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+        )
+
+        content_parts: list[str] = []
+        usage_summary: dict[str, Any] | None = None
+        producer_done = asyncio.Event()
+        producer_error: Exception | None = None
+
+        async def run_agent_stream() -> None:
+            nonlocal usage_summary, producer_error
+            try:
+                async with agent.run_stream(
+                    build_reader_ask_prompt(deps),
+                    deps=deps,
+                    model=model,
+                    model_settings=route_settings.to_pydantic_ai(),
+                ) as result:
+                    async for delta in result.stream_text(delta=True, debounce_by=None):
+                        if not delta:
+                            continue
+                        content_parts.append(delta)
+                        await event_queue.put(
+                            (
+                                "message.delta",
+                                {"message_id": assistant_message["id"], "delta": delta},
+                            )
+                        )
+                    usage_summary = build_usage_metadata(result.usage())
+            except Exception as exc:
+                producer_error = exc
+            finally:
+                producer_done.set()
+
+        producer_task = asyncio.create_task(run_agent_stream())
+        try:
+            while not producer_done.is_set() or not event_queue.empty():
+                try:
+                    event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                except TimeoutError:
+                    continue
+                yield _sse(event_name, event_payload)
+        finally:
+            await producer_task
+
+        if producer_error is not None:
+            raise producer_error
+
+        final_content_md = "".join(content_parts).strip()
+        runtime_proposals = _build_action_proposals_from_runtime(
+            record=record,
+            action_requests=runtime_state.action_requests,
+            assistant_content_md=final_content_md,
+        )
+        fallback_proposals = _build_action_proposals(
+            user_message=body.content,
+            record=record,
+            anchors=resolved_anchors,
+            assistant_content_md=final_content_md,
+        )
+        action_proposals = _merge_action_proposals(runtime_proposals, fallback_proposals)
+        usage_summary = _merge_usage_summaries(usage_summary, nested_tool_usages)
+
+        computed_cost_points = compute_reader_ask_cost_points(usage_summary)
+        billed_points = min(computed_cost_points, reservation.total_points)
+        unused_reservation = _build_unused_reservation(reservation, billed_points)
+        if unused_reservation.total_points > 0:
+            await refund_reserved_points(
+                user_id,
+                unused_reservation,
+                metadata={
+                    "reason": "reader_ask_unused_reservation",
+                    "thread_id": str(thread_id),
+                    "record_id": str(record.record_id),
+                },
+            )
+            reservation = billed_points and CreditReservation(
+                total_points=billed_points,
+                deducted_from_daily=min(billed_points, reservation.deducted_from_daily),
+                deducted_from_bonus=max(billed_points - min(billed_points, reservation.deducted_from_daily), 0),
+            ) or CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+        else:
+            reservation = CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+
+        usage_event_id = await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_USER_BILLED,
+                capability_code=CAPABILITY_READER_ASK,
+                billing_mode=BILLING_MODE_USER_POINTS,
+                status=STATUS_SUCCEEDED,
+                user_id=user_id,
+                record_id=record.record_id,
+                workflow_name=_WORKFLOW_NAME,
+                workflow_version=_WORKFLOW_VERSION,
+                schema_version=_SCHEMA_VERSION,
+                prompt_version=get_prompt_version(),
+                usage_data=usage_summary,
+                latency_ms=int((perf_counter() - start_perf) * 1000),
+                billed_points=billed_points,
+                billing_policy_version=build_reader_ask_billing_metadata(usage_summary).get("billing_policy_version"),
+                metadata_json={
+                    "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
+                    "thread_id": str(thread_id),
+                    "message_id": assistant_message["id"],
+                    "history_lookup_used": runtime_state.used_history_lookup,
+                    "anchor_count": len(resolved_anchors),
+                    "tool_names": [entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
+                    "reservation_points": READER_ASK_RESERVED_POINTS,
+                    "computed_cost_points": computed_cost_points,
+                    "clamped_to_reservation": computed_cost_points > READER_ASK_RESERVED_POINTS,
+                },
+                **build_model_metadata(model_config),
+            )
+        )
+
+        updated = await repo.update_message(
+            message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+            status="completed",
+            content_md=final_content_md,
+            context_anchors=anchor_payload,
+            citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
+            action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
+            tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+            usage_event_id=usage_event_id,
+        )
+        payload = ReaderAskCompletedPayload(
+            id=updated["id"],
+            thread_id=str(thread_id),
+            content_md=final_content_md,
+            citations=runtime_state.citations,
+            action_proposals=action_proposals,
+            tool_trace=runtime_state.tool_trace,
+            usage_summary=usage_summary,
+            billed_points=billed_points,
+            resolved_context=_resolved_context_summary(
+                record=record,
+                anchors=resolved_anchors,
+                used_history_lookup=runtime_state.used_history_lookup,
+                citations=runtime_state.citations,
+            ),
+        )
+        yield _sse("message.completed", payload.model_dump(mode="json"))
+    except Exception as exc:
+        if reservation is not None and reservation.total_points > 0 and record is not None:
+            await refund_reserved_points(
+                user_id,
+                reservation,
+                metadata={
+                    "reason": "reader_ask_failed",
+                    "thread_id": str(thread_id),
+                    "record_id": str(record.record_id),
+                },
+            )
+        if assistant_message is not None:
+            await repo.update_message(
+                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+                status="failed",
+                content_md="",
+                context_anchors=anchor_payload,
+                citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
+                action_proposals=[],
+                tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+                usage_event_id=None,
+            )
+        if record is not None and thread is not None:
+            await _record_failure_event(
+                user_id=user_id,
+                record_id=record.record_id,
+                thread_id=thread_id,
+                user_message=body.content,
+                start_perf=start_perf,
+                error_code="reader_ask_failed",
+                error_message=str(exc),
+                metadata_json={
+                    "anchor_count": len(resolved_anchors),
+                    "tool_names": [entry.tool_name for entry in runtime_state.tool_trace],
+                },
+            )
+        if isinstance(exc, HTTPException):
+            yield _sse("error", {"code": str(exc.status_code), "detail": exc.detail})
+            return
+        if "model route is not configured" in str(exc):
+            yield _sse("error", {"code": "MODEL_UNAVAILABLE", "detail": "Ask Claread is temporarily unavailable."})
+            return
+        detail = str(exc) if get_settings().app_env != "production" else "Ask Claread is temporarily unavailable."
+        yield _sse("error", {"code": "READER_ASK_FAILED", "detail": detail})
+
+
+def _favorite_payload_from_anchor(record_id: UUID, anchor: ReaderAskAnchorRef) -> tuple[str, str, dict[str, Any]]:
+    if anchor.anchor_type == "sentence":
+        sentence_id = anchor.sentence_id
+        if not sentence_id:
+            raise HTTPException(status_code=400, detail="sentence anchor is missing sentence_id")
+        target_key = anchor.target_key or f"record:{record_id}:sentence:{sentence_id}"
+        payload = {
+            "sentence_id": sentence_id,
+            "paragraph_id": anchor.paragraph_id,
+            "selected_text": anchor.selected_text,
+        }
+        return "sentence", target_key, payload
+    if anchor.anchor_type == "text_range":
+        if not anchor.sentence_id or anchor.start_offset is None or anchor.end_offset is None or not anchor.text_hash:
+            raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
+        target_key = anchor.target_key or (
+            f"record:{record_id}:range:{anchor.sentence_id}:{anchor.start_offset}:{anchor.end_offset}:{anchor.text_hash}"
+        )
+        payload = {
+            "sentence_id": anchor.sentence_id,
+            "paragraph_id": anchor.paragraph_id,
+            "selected_text": anchor.selected_text,
+            "start_offset": anchor.start_offset,
+            "end_offset": anchor.end_offset,
+            "text_hash": anchor.text_hash,
+        }
+        return "text_range", target_key, payload
+    if anchor.anchor_type == "multi_text":
+        segments = [segment.model_dump(mode="json") for segment in anchor.segments]
+        target_key = anchor.target_key or build_multi_text_target_key(str(record_id), segments)
+        return "multi_text", target_key, {"segments": segments, "selected_text": anchor.selected_text}
+    raise HTTPException(status_code=400, detail="favorite action only supports sentence/text anchors in V1")
+
+
+def _annotation_request_from_anchor(
+    *,
+    record_id: UUID,
+    anchor: ReaderAskAnchorRef,
+    annotation_type: str,
+    note: str | None,
+) -> UserAnnotationCreateRequest:
+    if anchor.anchor_type == "sentence":
+        if not anchor.sentence_id or not anchor.selected_text:
+            raise HTTPException(status_code=400, detail="sentence anchor is incomplete")
+        return UserAnnotationCreateRequest(
+            analysis_record_id=str(record_id),
+            annotation_type=annotation_type,
+            anchor_type="sentence",
+            sentence_id=anchor.sentence_id,
+            paragraph_id=anchor.paragraph_id,
+            selected_text=anchor.selected_text,
+            note=note,
+            payload_json=anchor.payload_json,
+        )
+    if anchor.anchor_type == "text_range":
+        if (
+            not anchor.sentence_id
+            or not anchor.selected_text
+            or anchor.start_offset is None
+            or anchor.end_offset is None
+            or not anchor.text_hash
+        ):
+            raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
+        return UserAnnotationCreateRequest(
+            analysis_record_id=str(record_id),
+            annotation_type=annotation_type,
+            anchor_type="text_range",
+            sentence_id=anchor.sentence_id,
+            paragraph_id=anchor.paragraph_id,
+            selected_text=anchor.selected_text,
+            start_offset=anchor.start_offset,
+            end_offset=anchor.end_offset,
+            text_hash=anchor.text_hash,
+            note=note,
+            payload_json=anchor.payload_json,
+        )
+    if anchor.anchor_type == "multi_text":
+        if len(anchor.segments) < 2:
+            raise HTTPException(status_code=400, detail="multi_text anchor is incomplete")
+        return UserAnnotationCreateRequest(
+            analysis_record_id=str(record_id),
+            annotation_type=annotation_type,
+            anchor_type="multi_text",
+            sentence_id=anchor.segments[0].sentence_id,
+            selected_text=anchor.selected_text or " ... ".join(segment.selected_text for segment in anchor.segments),
+            segments=[UserAnnotationSegment.model_validate(segment.model_dump(mode="json")) for segment in anchor.segments],
+            note=note,
+            payload_json=anchor.payload_json,
+        )
+    raise HTTPException(status_code=400, detail="annotation action only supports sentence/text anchors in V1")
+
+
+async def confirm_action(
+    user_id: UUID,
+    thread_id: UUID,
+    action_id: str,
+    body: ReaderAskActionConfirmRequest,
+) -> ReaderAskActionConfirmResponse:
+    message_dict, proposal_dict = await repo.find_action_proposal(
+        user_id=user_id,
+        thread_id=thread_id,
+        action_id=action_id,
+    )
+    if message_dict is None or proposal_dict is None:
+        raise HTTPException(status_code=404, detail="Reader ask action proposal not found")
+
+    message = ReaderAskMessage.model_validate(message_dict)
+    proposal = ReaderAskActionProposal.model_validate(proposal_dict)
+    if not body.confirmed:
+        updated_proposals = [
+            proposal_item.model_copy(update={"status": "rejected"}) if proposal_item.id == action_id else proposal_item
+            for proposal_item in message.action_proposals
+        ]
+        await repo.update_message(
+            message_id=_parse_uuid(message.id, "message id is invalid"),
+            status=message.status,
+            content_md=message.content_md,
+            context_anchors=[anchor.model_dump(mode="json") for anchor in message.context_anchors],
+            citations=[citation.model_dump(mode="json") for citation in message.citations],
+            action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
+            tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
+            usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+        )
+        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="rejected", result={})
+
+    thread = await repo.get_thread(user_id, thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Reader ask thread not found")
+    record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
+
+    anchor_payload = proposal.payload_json.get("anchor")
+    if not isinstance(anchor_payload, dict):
+        raise HTTPException(status_code=400, detail="Action proposal is missing anchor payload")
+    anchor = ReaderAskAnchorRef.model_validate(anchor_payload)
+
+    result: dict[str, Any]
+    if proposal.action_type == "favorite_anchor":
+        target_type, target_key, payload_json = _favorite_payload_from_anchor(record_id, anchor)
+        favorite_id = await favorites_svc.add_favorite(
+            user_id=user_id,
+            target_type=target_type,
+            target_key=target_key,
+            analysis_record_id=record_id,
+            payload_json=payload_json,
+            note=None,
+        )
+        result = {"favorite_id": str(favorite_id), "target_key": target_key}
+    elif proposal.action_type == "save_excerpt":
+        annotation = await user_annotations_svc.create_user_annotation(
+            user_id,
+            _annotation_request_from_anchor(
+                record_id=record_id,
+                anchor=anchor,
+                annotation_type="highlight",
+                note=None,
+            ),
+        )
+        result = {"annotation_id": str(annotation.id), "annotation_type": annotation.annotation_type}
+    elif proposal.action_type in {"save_note", "save_answer_note"}:
+        note_text = proposal.payload_json.get("note_text")
+        if not isinstance(note_text, str) or not note_text.strip():
+            raise HTTPException(status_code=400, detail="Action proposal is missing note_text")
+        annotation = await user_annotations_svc.create_user_annotation(
+            user_id,
+            _annotation_request_from_anchor(
+                record_id=record_id,
+                anchor=anchor,
+                annotation_type="note",
+                note=note_text,
+            ),
+        )
+        result = {"annotation_id": str(annotation.id), "annotation_type": annotation.annotation_type}
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported action type: {proposal.action_type}")
+
+    updated_proposals = [
+        proposal_item.model_copy(update={"status": "executed"}) if proposal_item.id == action_id else proposal_item
+        for proposal_item in message.action_proposals
+    ]
+    await repo.update_message(
+        message_id=_parse_uuid(message.id, "message id is invalid"),
+        status=message.status,
+        content_md=message.content_md,
+        context_anchors=[anchor_item.model_dump(mode="json") for anchor_item in message.context_anchors],
+        citations=[citation.model_dump(mode="json") for citation in message.citations],
+        action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
+        tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
+        usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+    )
+    return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)

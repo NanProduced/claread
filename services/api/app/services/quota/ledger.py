@@ -73,11 +73,15 @@ async def get_credit_ledger(
             query = metadata.get("query")
             if capability_code == "dict_ai_lookup" and query:
                 description = f"AI 词典能力扣减 · {str(query)[:30]}"
+            elif capability_code == "reader_ask":
+                description = f"Ask Claread 扣减 · {str(article_title or '当前文章')[:30]}"
         elif entry_type == "refund":
             capability_code = metadata.get("capability_code")
             query = metadata.get("query")
             if capability_code == "dict_ai_lookup" and query:
                 description = f"AI 词典能力退款 · {str(query)[:30]}"
+            elif capability_code == "reader_ask":
+                description = f"Ask Claread 退款 · {str(article_title or '当前文章')[:30]}"
 
         items.append({
             "id": str(row["id"]),

@@ -62,6 +62,7 @@
 | `POST /analysis-tasks` worker 执行 | `user_billed` | `user_points` | `analysis_full` | 登录用户正式分析主链路 |
 | `POST /analyze` | `anonymous_trial` / `eval_debug` | `trial` / `no_charge` | `analysis_full` | 兼容匿名试用与调试直连，不应扩展成新能力总入口 |
 | `POST /dict/ai` | `user_billed` | `user_points` | `dict_ai_lookup` | 登录用户的词典 AI 能力；支持 `context_explain` 与 `missing_fallback` |
+| `POST /reader-ask/threads/{thread_id}/messages/stream` | `user_billed` | `user_points` | `reader_ask` | Reader 内 Ask Claread 流式对话；当前文章为默认上下文，按需扩展到历史资产 |
 | Daily Reader scoring | `system_internal` | `internal_only` | `daily_reader_scoring` | 候选文章 LLM 评分 |
 | Daily Reader workflow / retry | `system_internal` | `internal_only` | `daily_reader_pipeline` | 精读正文生成与重跑 |
 
@@ -85,6 +86,13 @@
   - policy: `dict_ai_fixed_points_v1`
   - 固定价格: 每次 `5` 点
   - 真实 token usage 仍写入 `ai_usage_events` 与 billing metadata，仅用于审计和后续定价回看
+- `reader_ask`
+  - policy: `analysis_weighted_tokens_v1`
+  - 预留: 每轮默认先预扣 `10` 点，完成后按 token 加权结果结算并退回未使用部分
+  - 公式: `ceil((input_tokens * 1 + output_tokens * 5) / 1000)`
+  - metadata 需补线程 ID、record ID、anchor 摘要、是否触发历史资产检索与工具轨迹摘要
+  - Ask 内部如果调用了 `dict_ai context_explain`，其 usage 也并入 Ask 的聚合 usage summary，不再额外暴露成用户侧独立扣点动作
+  - 实现上应同时收紧 prompt 和 output 预算，避免只在结算阶段做超额截断
 
 该策略已经从任务执行器中抽离到统一的 `app/services/ai_usage/billing.py`，后续 Ask Claread、Grammar X-Ray 等能力应按 capability 独立扩展。
 

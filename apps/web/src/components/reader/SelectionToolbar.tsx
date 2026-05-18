@@ -205,7 +205,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
 ) {
   const hasSelection = selectedText.trim().length > 0;
   const selectionLabel = selectedTextSummary(selectedText);
-  const askComingSoon = disabled?.ask ?? true;
+  const askComingSoon = Boolean(disabled?.ask);
   const askDisabled = !hasSelection || askComingSoon || !onAsk;
   const selectSentenceDisabled =
     selectionMode !== "text_range" || !hasSelection || Boolean(disabled?.selectSentence) || !onSelectSentence;

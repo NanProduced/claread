@@ -4,7 +4,9 @@ from typing import Any
 
 ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION = "analysis_weighted_tokens_v1"
 DICT_AI_FIXED_POINTS_POLICY_VERSION = "dict_ai_fixed_points_v1"
+READER_ASK_WEIGHTED_TOKENS_POLICY_VERSION = ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION
 DICT_AI_FIXED_POINTS = 5
+READER_ASK_RESERVED_POINTS = 10
 
 MULTIPLIER_INPUT = 1
 MULTIPLIER_OUTPUT = 5
@@ -47,6 +49,17 @@ def build_analysis_billing_metadata(usage_summary: dict[str, Any] | None) -> dic
         "tokens_per_point": TOKENS_PER_POINT,
         "billing_policy_version": ANALYSIS_WEIGHTED_TOKENS_POLICY_VERSION,
     }
+
+
+def compute_reader_ask_cost_points(usage_summary: dict[str, Any] | None) -> int:
+    return compute_analysis_cost_points(usage_summary)
+
+
+def build_reader_ask_billing_metadata(usage_summary: dict[str, Any] | None) -> dict[str, Any]:
+    metadata = build_analysis_billing_metadata(usage_summary)
+    metadata["billing_policy_version"] = READER_ASK_WEIGHTED_TOKENS_POLICY_VERSION
+    metadata["reserved_points"] = READER_ASK_RESERVED_POINTS
+    return metadata
 
 
 def compute_dict_ai_cost_points(usage_summary: dict[str, Any] | None) -> int:

@@ -2,6 +2,7 @@ import { MessageSquare, SlidersHorizontal, UserRound } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { Select } from "@/components/primitives/select";
 import { getProfileSettings, type ProfileBffStatus } from "@/services/bff/profile";
 import { FeedbackForm } from "./FeedbackForm";
 import { LogoutButton } from "./LogoutButton";
@@ -14,6 +15,24 @@ const statusLabel: Record<ProfileBffStatus, string> = {
   upstream_error: "账户读取失败",
 };
 const loginRoute = "/login" as Route;
+
+const paperToneItems = [
+  { label: "Warm Paper (默认)", value: "warm", description: "暖纸底色，适合长时阅读。" },
+  { label: "Clean White", value: "white", description: "更干净，更接近文档阅读器。" },
+  { label: "Sage Green", value: "sage", description: "轻微冷静感，适合注释密度高的场景。" },
+];
+
+const readingDensityItems = [
+  { label: "标准 (默认)", value: "standard" },
+  { label: "偏大", value: "large" },
+  { label: "紧凑", value: "compact" },
+];
+
+const translationToneItems = [
+  { label: "柔和 (默认)", value: "muted" },
+  { label: "清晰", value: "standard" },
+  { label: "隐藏", value: "hidden" },
+];
 
 function PreferenceRow({
   title,
@@ -105,25 +124,13 @@ export default async function SettingsPage() {
                 <h2 className="text-base font-semibold text-ink">阅读偏好</h2>
               </div>
               <PreferenceRow title="背景纸色" description="选择 Reader 模式的默认底色。">
-                <select className="focus-ring min-h-10 rounded-pill border border-hairline bg-reader-paper px-3 text-sm text-ink">
-                  <option value="warm">Warm Paper (默认)</option>
-                  <option value="white">Clean White</option>
-                  <option value="sage">Sage Green</option>
-                </select>
+                <Select items={paperToneItems} defaultValue="warm" />
               </PreferenceRow>
               <PreferenceRow title="字号与行距" description="影响英文正文显示。">
-                <select className="focus-ring min-h-10 rounded-pill border border-hairline bg-reader-paper px-3 text-sm text-ink">
-                  <option value="standard">标准 (默认)</option>
-                  <option value="large">偏大</option>
-                  <option value="compact">紧凑</option>
-                </select>
+                <Select items={readingDensityItems} defaultValue="standard" />
               </PreferenceRow>
               <PreferenceRow title="默认翻译显示" description="进入 Reader 时译文的可见性。">
-                <select className="focus-ring min-h-10 rounded-pill border border-hairline bg-reader-paper px-3 text-sm text-ink">
-                  <option value="muted">柔和 (默认)</option>
-                  <option value="standard">清晰</option>
-                  <option value="hidden">隐藏</option>
-                </select>
+                <Select items={translationToneItems} defaultValue="muted" />
               </PreferenceRow>
               <p className="border-t border-hairline pt-5 text-xs leading-5 text-muted">
                 偏好保存能力后续接入。当前控件先确定 Web 端阅读设置的形态。

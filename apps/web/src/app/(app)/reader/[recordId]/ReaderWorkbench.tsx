@@ -35,6 +35,7 @@ import {
   hashAnchorText,
   readReaderSelection,
   rectForTextOffsets,
+  targetKeyForSelection,
   textRangeAnchorAttributes,
   textOffsetWithinElement,
   type ReaderTextSelection,
@@ -47,6 +48,7 @@ import type {
   WebAnnotationCreateRequest,
   WebAnnotationVm,
 } from "@/types/api/annotations";
+import type { ReaderAskAnchorRefDto, ReaderAskReaderFocusDto } from "@/types/api/reader-ask";
 import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import type { WebDictCandidate, WebDictDisambiguationResult, WebDictEntry, WebDictResult } from "@/types/api/dict";
 import type {
@@ -2913,6 +2915,7 @@ export function ReaderWorkbench({
   const [theme, setTheme] = useState<ReaderTheme>("paper");
   const [markVisibility, setMarkVisibility] = useState<MarkVisibility>("quiet");
   const [aiOpen, setAiOpen] = useState(false);
+  const [askDraftAnchors, setAskDraftAnchors] = useState<ReaderAskAnchorRefDto[]>([]);
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
   const [dictionaryQuery, setDictionaryQuery] = useState("");
   const [dictionarySearchExpanded, setDictionarySearchExpanded] = useState(false);
@@ -4229,6 +4232,118 @@ export function ReaderWorkbench({
     setAnnotationSaveState({ kind: "error", message });
   }
 
+  function selectionToAskAnchor(selection: ReaderTextSelection): ReaderAskAnchorRefDto {
+    return {
+      anchor_type: selection.anchorType,
+      target_key: targetKeyForSelection(record.id, selection),
+      sentence_id: selection.sentence.sentenceId,
+      paragraph_id: selection.sentence.paragraphId,
+      selected_text: selection.selectedText,
+      start_offset: selection.anchorType === "text_range" ? selection.startOffset : null,
+      end_offset: selection.anchorType === "text_range" ? selection.endOffset : null,
+      text_hash: selection.anchorType === "text_range" ? selection.textHash : null,
+      segments:
+        selection.anchorType === "multi_text"
+          ? selection.segments.map((segment) => ({
+              paragraph_id: segment.paragraphId,
+              sentence_id: segment.sentenceId,
+              selected_text: segment.selectedText,
+              start_offset: segment.startOffset,
+              end_offset: segment.endOffset,
+              text_hash: segment.textHash,
+            }))
+          : [],
+      payload_json: {},
+    };
+  }
+
+  function sentenceToAskAnchor(sentence: SentenceModel): ReaderAskAnchorRefDto {
+    return {
+      anchor_type: "sentence",
+      target_key: `record:${record.id}:sentence:${sentence.sentenceId}`,
+      sentence_id: sentence.sentenceId,
+      paragraph_id: sentence.paragraphId,
+      selected_text: sentence.text,
+      segments: [],
+      payload_json: {},
+    };
+  }
+
+  function appendAskAnchors(nextAnchors: ReaderAskAnchorRefDto[]) {
+    setAskDraftAnchors((current) => {
+      const merged = [...current];
+      nextAnchors.forEach((anchor) => {
+        const exists = merged.some(
+          (item) =>
+            item.anchor_type === anchor.anchor_type &&
+            item.target_key === anchor.target_key &&
+            item.sentence_id === anchor.sentence_id &&
+            item.selected_text === anchor.selected_text,
+        );
+        if (!exists) {
+          merged.push(anchor);
+        }
+      });
+      return merged;
+    });
+  }
+
+  function openAskWithSelection() {
+    if (!textSelection) {
+      return;
+    }
+    setActiveSentence(textSelection.sentence);
+    appendAskAnchors([selectionToAskAnchor(textSelection)]);
+    setContextPanelOpen(false);
+    setAiOpen(true);
+  }
+
+  function openAskWithSentenceContext() {
+    if (!activeSentence) {
+      return;
+    }
+    appendAskAnchors([sentenceToAskAnchor(activeSentence)]);
+    setContextPanelOpen(false);
+    setAiOpen(true);
+  }
+
+  function jumpToReaderSentence(sentenceId: string) {
+    const sentence = sentenceById.get(sentenceId);
+    if (!sentence) {
+      return;
+    }
+    setActiveSentence(sentence);
+    window.requestAnimationFrame(() => {
+      articleRef.current
+        ?.querySelector<HTMLElement>(`#reader-sentence-${CSS.escape(sentenceId)}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }
+
+  const askReaderFocus: ReaderAskReaderFocusDto | null = useMemo(() => {
+    if (textSelection) {
+      return {
+        sentence_id: textSelection.sentence.sentenceId,
+        paragraph_id: textSelection.sentence.paragraphId,
+        selected_text: textSelection.selectedText,
+        start_offset: textSelection.anchorType === "text_range" ? textSelection.startOffset : null,
+        end_offset: textSelection.anchorType === "text_range" ? textSelection.endOffset : null,
+        text_hash: textSelection.anchorType === "text_range" ? textSelection.textHash : null,
+      };
+    }
+    if (activeSentence) {
+      return {
+        sentence_id: activeSentence.sentenceId,
+        paragraph_id: activeSentence.paragraphId,
+        selected_text: activeSentence.text,
+        start_offset: null,
+        end_offset: null,
+        text_hash: null,
+      };
+    }
+    return null;
+  }, [activeSentence, textSelection]);
+
   function selectSentence(sentence: SentenceModel) {
     setActiveSentence(sentence);
     setTextSelection(null);
@@ -4527,6 +4642,7 @@ export function ReaderWorkbench({
               onClearAnnotation={deleteTextSelectionAnnotation}
               onFavorite={toggleTextSelectionFavorite}
               onLookup={lookupTextSelection}
+              onAsk={openAskWithSelection}
               onFeedback={() => showSelectionActionPending("选区反馈稍后接入；当前可先用笔记记录问题。")}
               onMore={() => showSelectionActionPending("更多选区操作稍后接入。")}
             />
@@ -4642,10 +4758,7 @@ export function ReaderWorkbench({
             onNoteChange={setNote}
             onColorChange={setAnnotationColor}
             onSaveAnnotation={saveSentenceAnnotation}
-            onAsk={() => {
-              setAiOpen(true);
-              setContextPanelOpen(false);
-            }}
+            onAsk={openAskWithSentenceContext}
             onShowTranslationChange={setShowTranslation}
             onFontSizeChange={setFontSize}
             onDensityChange={setDensity}
@@ -4658,10 +4771,20 @@ export function ReaderWorkbench({
 
       {!contextPanelVisible || aiOpen ? (
         <AiWorkspacePanel
+          key={record.id}
           open={aiOpen}
+          recordId={record.id}
+          recordTitle={record.title}
           activeSentence={activeSentence}
+          draftAnchors={askDraftAnchors}
+          readerFocus={askReaderFocus}
           hideLauncherOnMobile={Boolean(activeLookup)}
           hideLauncherInCompactLayout={Boolean(activeLookup)}
+          onRemoveDraftAnchor={(index) => {
+            setAskDraftAnchors((current) => current.filter((_, currentIndex) => currentIndex !== index));
+          }}
+          onClearDraftAnchors={() => setAskDraftAnchors([])}
+          onJumpToSentence={jumpToReaderSentence}
           onToggle={toggleAiWorkspace}
         />
       ) : null}

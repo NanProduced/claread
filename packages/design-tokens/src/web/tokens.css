@@ -1,0 +1,120 @@
+:root {
+  --cl-color-web-canvas: #f7f6f2;
+  --cl-color-reader-paper: #faf9f6;
+  --cl-color-surface: #ffffff;
+  --cl-color-surface-warm: #fbfaf6;
+  --cl-color-surface-raised: #fdfcf8;
+  --cl-color-ink: #111111;
+  --cl-color-ink-soft: #1a1a1a;
+  --cl-color-muted: #62656d;
+  --cl-color-subtle: #858a92;
+  --cl-color-hairline: #e8e4da;
+  --cl-color-lens-blue: #2563eb;
+  --cl-color-lens-blue-soft: #eaf1ff;
+  --cl-color-vocab-amber: #e4b000;
+  --cl-color-phrase-lavender: #b9a8e6;
+  --cl-color-context-blue: #4c91c2;
+  --cl-color-grammar-violet: #746694;
+  --cl-color-structure-green: #3c8c68;
+  --cl-color-error-red: #be123c;
+
+  --cl-color-background: var(--cl-color-web-canvas);
+  --cl-color-foreground: var(--cl-color-ink);
+  --cl-color-card: var(--cl-color-surface);
+  --cl-color-card-foreground: var(--cl-color-ink);
+  --cl-color-popover: var(--cl-color-surface-raised);
+  --cl-color-popover-foreground: var(--cl-color-ink);
+  --cl-color-primary: var(--cl-color-lens-blue);
+  --cl-color-primary-foreground: var(--cl-color-surface);
+  --cl-color-secondary: var(--cl-color-reader-paper);
+  --cl-color-secondary-foreground: var(--cl-color-ink-soft);
+  --cl-color-muted-foreground: var(--cl-color-muted);
+  --cl-color-border: var(--cl-color-hairline);
+  --cl-color-input: var(--cl-color-hairline);
+  --cl-color-ring: var(--cl-color-lens-blue);
+  --cl-color-accent: var(--cl-color-lens-blue-soft);
+  --cl-color-accent-foreground: var(--cl-color-lens-blue);
+  --cl-color-destructive: var(--cl-color-error-red);
+  --cl-color-destructive-foreground: var(--cl-color-surface);
+
+  --cl-space-1: 4px;
+  --cl-space-2: 8px;
+  --cl-space-3: 12px;
+  --cl-space-4: 16px;
+  --cl-space-5: 24px;
+  --cl-space-6: 32px;
+  --cl-space-7: 48px;
+  --cl-space-8: 64px;
+
+  --cl-radius-control-xs: 4px;
+  --cl-radius-control-sm: 6px;
+  --cl-radius-control-md: 8px;
+  --cl-radius-surface-sm: 12px;
+  --cl-radius-surface-md: 14px;
+  --cl-radius-note: 16px;
+  --cl-radius-panel: 20px;
+  --cl-radius-sheet: 28px;
+
+  --cl-shadow-1: 0 1px 2px rgba(17, 17, 17, 0.03), 0 8px 24px rgba(17, 17, 17, 0.04);
+  --cl-shadow-2: 0 12px 32px rgba(28, 24, 18, 0.08), 0 1px 2px rgba(17, 17, 17, 0.04);
+  --cl-shadow-3: 0 18px 45px rgba(17, 17, 17, 0.14);
+
+  --cl-ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+  --cl-duration-fast: 160ms;
+  --cl-duration-base: 240ms;
+  --cl-duration-slow: 320ms;
+
+  --web-canvas: var(--cl-color-web-canvas);
+  --reader-paper: var(--cl-color-reader-paper);
+  --surface: var(--cl-color-surface);
+  --surface-warm: var(--cl-color-surface-warm);
+  --surface-raised: var(--cl-color-surface-raised);
+  --ink: var(--cl-color-ink);
+  --ink-soft: var(--cl-color-ink-soft);
+  --muted: var(--cl-color-muted);
+  --subtle: var(--cl-color-subtle);
+  --hairline: var(--cl-color-hairline);
+  --lens-blue: var(--cl-color-lens-blue);
+  --lens-blue-soft: var(--cl-color-lens-blue-soft);
+  --vocab-amber: var(--cl-color-vocab-amber);
+  --phrase-lavender: var(--cl-color-phrase-lavender);
+  --context-blue: var(--cl-color-context-blue);
+  --grammar-violet: var(--cl-color-grammar-violet);
+  --structure-green: var(--cl-color-structure-green);
+  --error-red: var(--cl-color-error-red);
+
+  --background: var(--cl-color-background);
+  --foreground: var(--cl-color-foreground);
+  --card: var(--cl-color-card);
+  --card-foreground: var(--cl-color-card-foreground);
+  --popover: var(--cl-color-popover);
+  --popover-foreground: var(--cl-color-popover-foreground);
+  --primary: var(--cl-color-primary);
+  --primary-foreground: var(--cl-color-primary-foreground);
+  --secondary: var(--cl-color-secondary);
+  --secondary-foreground: var(--cl-color-secondary-foreground);
+  --muted-foreground: var(--cl-color-muted-foreground);
+  --border: var(--cl-color-border);
+  --input: var(--cl-color-input);
+  --ring: var(--cl-color-ring);
+  --accent: var(--cl-color-accent);
+  --accent-foreground: var(--cl-color-accent-foreground);
+  --destructive: var(--cl-color-destructive);
+  --destructive-foreground: var(--cl-color-destructive-foreground);
+  --radius: var(--cl-radius-surface-sm);
+}
+
+.dark {
+  --cl-color-web-canvas: #1b1a17;
+  --cl-color-reader-paper: #24231f;
+  --cl-color-surface: #201f1b;
+  --cl-color-surface-warm: #292722;
+  --cl-color-surface-raised: #2e2c26;
+  --cl-color-ink: #f6f3ec;
+  --cl-color-ink-soft: #ece8de;
+  --cl-color-muted: #b8b0a3;
+  --cl-color-subtle: #938d83;
+  --cl-color-hairline: #3a362f;
+  --cl-color-lens-blue: #7aa2ff;
+  --cl-color-lens-blue-soft: rgba(122, 162, 255, 0.12);
+}

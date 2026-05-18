@@ -355,6 +355,31 @@ class TestCreateAnnotation:
 
     @_mock_auth()
     @patch("app.services.user_annotations.db_connect.DB_POOL")
+    def test_upsert_sql_preserves_highlight_when_note_is_added(self, mock_pool, mock_auth):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        row = _make_row(annotation_type="highlight", note="my note")
+        conn.fetchrow.return_value = row
+
+        resp = client.post(
+            "/user-annotations",
+            json={
+                "analysis_record_id": RECORD_ID,
+                "annotation_type": "note",
+                "anchor_type": "sentence",
+                "sentence_id": "s1",
+                "selected_text": "Test text",
+                "note": "my note",
+            },
+            headers=AUTH_HEADERS,
+        )
+
+        assert resp.status_code == 200
+        sql = conn.fetchrow.call_args.args[0]
+        assert "WHEN user_annotations.annotation_type = 'highlight' AND EXCLUDED.note IS NOT NULL" in sql
+
+    @_mock_auth()
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
     def test_create_text_range_validates_render_scene(self, mock_pool, mock_auth):
         pool, conn = _mock_db_pool()
         mock_pool.acquire = pool.acquire

@@ -1,0 +1,11 @@
+{
+  "name": "@claread/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./web/tokens.css": "./src/web/tokens.css",
+    "./web/fonts": "./src/web/fonts.ts",
+    "./web/tailwind-preset": "./src/web/tailwind-preset.ts"
+  }
+}

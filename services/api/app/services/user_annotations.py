@@ -135,7 +135,11 @@ async def create_user_annotation(user_id: UUID, req: UserAnnotationCreateRequest
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (user_id, target_key) DO UPDATE SET
-                annotation_type = EXCLUDED.annotation_type,
+                annotation_type = CASE
+                    WHEN user_annotations.annotation_type = 'highlight' AND EXCLUDED.note IS NOT NULL
+                        THEN 'highlight'
+                    ELSE EXCLUDED.annotation_type
+                END,
                 anchor_type = EXCLUDED.anchor_type,
                 paragraph_id = EXCLUDED.paragraph_id,
                 sentence_id = EXCLUDED.sentence_id,

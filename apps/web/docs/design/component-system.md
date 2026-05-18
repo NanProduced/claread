@@ -1,6 +1,8 @@
 # Claread Web Component System
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-16
+> Reader 专项规范。全站功能页组件库、token、theme、目录结构和第三方准入流程请先参考 `component-library-v0.md`，本文只处理 Reader 专项组件与交互约束。
+
+> **状态**: `CURRENT` | **最后更新**: 2026-05-18
 > 本文把 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md` 和 `reader-ia.md` 中已经确认的方向落成组件使用规范。它不替代产品/架构文档，只规定 Web UI/UX 推进时如何组织组件、样式和交互。
 
 ## 1. Scope
