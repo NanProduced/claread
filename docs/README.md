@@ -23,6 +23,7 @@ Claread 是一个多端英文阅读辅助产品。当前稳定基线包含微信
 | `docs/product/competitive-landscape.md` | 阅读、笔记、英语学习和 AI 竞品格局，以及 Claread 差异化 |
 | `docs/development/mainline.md` | 当前开发主线和近期方向 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
+| `docs/product/ask-claread-v2-product-spec.md` | Ask Claread 当前重构目标规范；定义目标产品模型、harness 架构和 retrieval/RAG 路线 |
 | `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
@@ -36,6 +37,8 @@ Claread 是一个多端英文阅读辅助产品。当前稳定基线包含微信
 | `services/worker/README.md` | 后台 worker 预留职责 |
 | `packages/README.md` | contracts、shared-utils、design-tokens 边界 |
 | `apps/miniprogram/README.md` | 微信小程序客户端启动、结构和平台限制 |
+
+Ask Claread 重构期间，开发期任务进度、决策和评审材料统一放在 `docs/tmp/ask-claread-rebuild/`。该目录下文档均为 `TMP`，不作为长期事实来源，功能完成后应删除或压缩回正式文档。
 
 ## 文档原则
 

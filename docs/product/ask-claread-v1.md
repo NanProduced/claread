@@ -1,5 +1,14 @@
 # Ask Claread V1
 
+## 文档状态
+
+- 状态：historical reference only
+- 日期：2026-05-18
+- 角色：第一版设计/实现对照文档
+- 当前效力：不再作为 Ask Claread 当前目标定义
+
+当前 Ask Claread 已进入重构主线。本文只保留为第一版设计与当前已实现状态的对照材料，用于帮助评估重构差距；当前目标规范以 `docs/product/ask-claread-v2-product-spec.md` 为准。待重构完成并验证后，本文应删除。
+
 `Ask Claread` 是 Claread 解析页内的 grounded AI chatbox。它不是独立 AI 页面，也不是通用聊天产品；它的目标是在 Reader 里围绕当前文章、当前选区和按需获取的用户资产，提供可回源、可保存、受控计费的多轮解释能力。
 
 ## 产品定义
@@ -171,6 +180,6 @@ Web 侧当前按以下合同实现：
 3. article-local retrieval 与 history retrieval 的质量升级，而不是先扩大全局检索面。
 4. 练习相关资产、结果接受/丢弃流程，以及更稳定的教学任务分类。
 
-## 文档状态
+## 文档状态说明
 
-本文描述的是当前稳定事实。开发期 tracker 和阶段性规划文档在功能冻结后应删除，长期有效的结论只保留在本文和相关正式架构/产品文档中。
+本文描述的是 Ask Claread 第一版设计与已实现能力边界，不再作为当前主线目标文档。开发期 tracker 和阶段性规划文档统一维护在 `docs/tmp/ask-claread-rebuild/`；长期有效结论只保留在正式产品/架构文档中。

@@ -1,6 +1,6 @@
 # 开发主线
 
-> **状态**: `CURRENT` | **最后验证**: 2026-05-17
+> **状态**: `CURRENT` | **最后验证**: 2026-05-18
 
 本文说明 Claread 当前主线方向。它不是任务流水账；已完成的阶段只保留结论，具体实现细节回到代码、测试和对应目录文档。
 
@@ -20,29 +20,36 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 
 ## 当前主线
 
-下一阶段主线可以从“资产与多端基线收口”切换到“AI 能力接入”。但这里的 AI 主线不是先做通用 chatbox，而是沿着已落地的 Reader、词典、摘录资产和审计计费底座，先做能闭环的能力纵切。当前主线分三条并行轨道推进：
+当前最主要任务已经切换为：`Ask Claread AI 助手重构`。
+
+这不是对现有 chatbox 的局部修补，而是一次可以大胆重做的主线项目。目标是把 Ask Claread 从“解析页里的 AI 控制台”重构为“像 Notion AI 一样强、但更适合 Claread 阅读场景的 article-bound assistant harness”。
+
+当前主线分三条并行轨道推进：
 
 | 轨道 | 方向 | 当前边界 |
 | --- | --- | --- |
-| AI 能力接入 | 先做词典 AI，再做解析页内 grounded Ask Claread | 不先做泛聊天；用户资产上下文作为 Ask Claread 的 grounding 能力随同推进，能力必须走统一审计/结算与资产闭环 |
-| 阅读器与多端稳定性 | 持续补 Reader 自动化、摘录回跳、移动 Web 和小程序 DevTools 人工回归 | AI 接入不应破坏当前小程序和 Web 主链路 |
-| 质量与内部运营底座 | 明确 Directus/evals/RAG 的边界，并在首个 AI 能力纵切之后启动内部工具建设 | 先收口契约和真实需求，再开 Directus 正式开发 |
+| Ask Claread 重构 | 重新定义 AI 助手的功能边界、交互形态、上下文规划、能力编排、retrieval/RAG 路线和前后端 contract | 允许推翻 V1 设计；不受现有 chatbox 形态约束；但必须保持 article-bound、可回源、可确认写入、统一审计/结算 |
+| 阅读器与多端稳定性 | 持续补 Reader 自动化、摘录回跳、移动 Web 和小程序 DevTools 人工回归 | AI 助手重构不应破坏当前小程序和 Web 主链路 |
+| 质量与内部运营底座 | Ask 重构过程中同步明确 evals、RAG、Directus 的后续边界 | 不在主线前期提前铺开泛内部工具，只为 Ask 重构提供必要底座 |
 
 ## 近期工作顺序
 
-1. 接入第一个正式用户侧 AI 能力纵切：词典 AI。
-2. 推进解析页内 grounded Ask Claread：以 Reader 右侧 AI 工作区为入口，围绕当前句子、选区、全文和按需获取的用户资产做对话与解释，用 tool-calls 编排能力，而不是先做通用聊天框。
-3. 用户资产上下文作为 Ask Claread 的内建 grounding 能力一并建设：先服务当前阅读与摘录资产召回，不先独立产品化，也不先做 AI 整合总结用户历史数据。
-4. 持续补 Reader 真实数据自动化和小程序 DevTools 人工回归，避免 AI 接入把摘录、回跳、词典和批注主链路带崩。
-5. Directus 当前只进入边界设计和 schema 准备；等“词典 AI -> Reader 内 Ask Claread”这条用户侧 AI 纵切跑通后，再启动正式内部工具开发。
+1. 统一 Ask Claread 相关文档口径，明确 V1 只作为第一版设计/实现对照，V2 作为当前重构目标规范。
+2. 先完成 Ask Claread 功能边界评审，优先回答“AI 助手能做什么、不能做什么”，再讨论具体 UI 和代码拆分。
+3. 在边界明确后，评审 harness 架构：intent、context planning、capability orchestration、retrieval/RAG、action/audit/eval。
+4. 以 Reader 右侧阅读助手为目标形态，推进前后端 contract 与 surface 重构。
+5. 持续补 Reader 真实数据自动化和小程序 DevTools 人工回归，避免 AI 重构把摘录、回跳、词典和批注主链路带崩。
+6. Directus 当前只进入边界设计和 schema 准备；等 Ask Claread 主线跑通后，再启动正式内部工具开发。
 
-当前 Ask Claread 的稳定功能定义见 `docs/product/ask-claread-v1.md`；后续增强只在正式产品/架构文档里继续收敛，不再长期保留临时 tracker。
+当前 Ask Claread 的重构目标以 `docs/product/ask-claread-v2-product-spec.md` 为准。`docs/product/ask-claread-v1.md` 仅保留为第一版设计/实现对照，待重构完成并验证后删除。开发期的进度、决策与评审材料统一放在 `docs/tmp/ask-claread-rebuild/`，这些文档均为临时文档，功能完成后删除或压缩进正式文档。
 
 ## 暂不拍板
 
 以下事项仍需产品、业务和技术评估，不在本文做决定性描述：
 
-- Grammar X-Ray、分享页、导出和 AI 侧栏的具体先后仍可微调，但不应早于词典 AI 和 grounded Ask Claread。
+- Ask Claread V2 首批功能边界：哪些能力属于“阅读助手必做”，哪些应明确延后。
+- 多解析页 / 跨文章检索何时从结构化召回升级到 hybrid retrieval / RAG。
+- Grammar X-Ray、分享页、导出和其他 AI 能力的优先级，但它们都不应抢在 Ask Claread 主线前面。
 - 是否在 Ask Claread 之外单独产品化“AI 整合总结用户历史数据”能力，以及是否做跨文章/跨资产的长期学习画像。
 - Directus 内部工具的具体第一批模块：Daily Reader 运营、评测样本、prompt 审核，还是 usage/feedback 观察面板。
 - render snapshot / render profile 是否立即建表，以及与现有 `render_scene_json` 的迁移方式。

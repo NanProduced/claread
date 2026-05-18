@@ -19,7 +19,7 @@
 - Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、收藏、句子级批注、单句内 `text_range` 批注/收藏、跨句/跨段 `multi_text` 批注/收藏、`/library/assets` 摘录与批注页、反馈和设置/配额。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
-- `Ask Claread` 已进入后端优先落地阶段：当前定义为解析页内、按文章绑定线程、默认流式 Markdown 输出、按需扩展历史资产的 grounded chatbox；稳定功能说明见 `docs/product/ask-claread-v1.md`。
+- `Ask Claread` 已有可用第一版实现，支持解析页内、按文章绑定线程、流式 Markdown、引用、结构化卡片和按需历史扩展；但当前设计已被认定不达标，现进入重构主线。`docs/product/ask-claread-v1.md` 仅保留为第一版对照，当前目标规范以 `docs/product/ask-claread-v2-product-spec.md` 为准。
 - ReaderWorkbench 已拆出 Reader canvas、sentence row、annotation overlay 和 selection helper，后续 Reader UI 迭代应优先沿这些边界推进。
 - Docker Compose project 使用 `claread`。
 - 本地 PostgreSQL volume 使用 `claread_postgres_data`。
@@ -53,11 +53,13 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 ## 当前主要方向
 
-1. 继续稳定 Web Reader UI/UX：补足带登录态的真实数据浏览器自动化回归、资产跳转短时强调和移动 Web 形态。
-2. 完善学习资产闭环：本轮先稳定“摘录资产”链路，即 Web `/library/assets` 与小程序 `packageA/excerpts` 的按文章聚合、筛选/搜索和局部 range 跳转强调；`/vocabulary` 继续保持独立词汇资产入口。
-3. 收紧数据层长期约束：`text_range` / `multi_text` 条件 CHECK、局部索引、annotations/favorites 分页和完整 OpenAPI contracts 生成。
-4. 当前下一条产品主线可切到 AI 能力接入：优先做词典 AI，再做解析页内 grounded Ask Claread；用户资产上下文作为 Ask Claread 的 grounding 能力随同推进，不单列为独立用户功能。
+1. 当前产品主线已切到 Ask Claread AI 助手重构：先明确功能边界，再重做解析页内 AI 助手的 harness、上下文、检索与 UI surface；用户资产上下文作为内建 grounding 能力随同推进，不单列为独立用户功能。
+2. 继续稳定 Web Reader UI/UX：补足带登录态的真实数据浏览器自动化回归、资产跳转短时强调和移动 Web 形态。
+3. 完善学习资产闭环：本轮先稳定“摘录资产”链路，即 Web `/library/assets` 与小程序 `packageA/excerpts` 的按文章聚合、筛选/搜索和局部 range 跳转强调；`/vocabulary` 继续保持独立词汇资产入口。
+4. 收紧数据层长期约束：`text_range` / `multi_text` 条件 CHECK、局部索引、annotations/favorites 分页和完整 OpenAPI contracts 生成。
 5. Directus 当前只适合进入边界设计和 schema 准备；等首个 AI 能力纵切跑通并出现真实运营需求后，再进入正式开发。
+
+当前 Ask Claread 的开发期决策、任务进度和评审材料统一放在 `docs/tmp/ask-claread-rebuild/`。该目录下文档均为临时文档，功能完成后应删除或压缩回正式文档。
 
 ## 已知边界
 
