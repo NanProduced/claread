@@ -10,47 +10,54 @@ import {
 import { cn } from "@/lib/cn";
 import { Markdown } from "./markdown";
 
-export type MessageProps = React.ComponentProps<"div">;
+export interface MessageProps extends React.ComponentPropsWithoutRef<"div"> {
+  children: React.ReactNode;
+}
 
-const Message = ({ children, className, ...props }: MessageProps) => (
-  <div className={cn("flex gap-3", className)} {...props}>
-    {children}
-  </div>
-);
+function Message({ children, className, ...props }: MessageProps) {
+  return (
+    <div className={cn("flex gap-3", className)} {...props}>
+      {children}
+    </div>
+  );
+}
 
 export type MessageAvatarProps = {
   src: string;
   alt: string;
   fallback?: string;
+  delayMs?: number;
   className?: string;
 };
 
-const MessageAvatar = ({
+function MessageAvatar({
   src,
   alt,
   fallback,
+  delayMs,
   className,
-}: MessageAvatarProps) => {
+}: MessageAvatarProps) {
   return (
     <Avatar className={cn("h-8 w-8 shrink-0", className)}>
       <AvatarImage src={src} alt={alt} />
-      {fallback ? <AvatarFallback>{fallback}</AvatarFallback> : null}
+      {fallback ? <AvatarFallback delayMs={delayMs}>{fallback}</AvatarFallback> : null}
     </Avatar>
   );
-};
+}
 
-export interface MessageContentProps extends React.ComponentProps<"div"> {
+export interface MessageContentProps extends React.ComponentPropsWithoutRef<"div"> {
+  children: React.ReactNode;
   markdown?: boolean;
   markdownComponents?: Partial<Components>;
 }
 
-const MessageContent = ({
+function MessageContent({
   children,
   markdown = false,
   className,
   markdownComponents,
   ...props
-}: MessageContentProps) => {
+}: MessageContentProps) {
   const classNames = cn(
     "rounded-lg bg-secondary p-2 text-foreground break-words whitespace-normal",
     className,
@@ -69,22 +76,19 @@ const MessageContent = ({
       {children}
     </div>
   );
-};
+}
 
-export type MessageActionsProps = React.ComponentProps<"div">;
+export interface MessageActionsProps extends React.ComponentPropsWithoutRef<"div"> {
+  children: React.ReactNode;
+}
 
-const MessageActions = ({
-  children,
-  className,
-  ...props
-}: MessageActionsProps) => (
-  <div
-    className={cn("text-muted-foreground flex items-center gap-2", className)}
-    {...props}
-  >
-    {children}
-  </div>
-);
+function MessageActions({ children, className, ...props }: MessageActionsProps) {
+  return (
+    <div className={cn("text-muted-foreground flex items-center gap-2", className)} {...props}>
+      {children}
+    </div>
+  );
+}
 
 export interface MessageActionProps extends React.ComponentProps<typeof Tooltip> {
   className?: string;
@@ -93,13 +97,13 @@ export interface MessageActionProps extends React.ComponentProps<typeof Tooltip>
   side?: "top" | "bottom" | "left" | "right";
 }
 
-const MessageAction = ({
+function MessageAction({
   tooltip,
   children,
   className,
   side = "top",
   ...props
-}: MessageActionProps) => {
+}: MessageActionProps) {
   return (
     <TooltipProvider>
       <Tooltip {...props}>
@@ -110,6 +114,6 @@ const MessageAction = ({
       </Tooltip>
     </TooltipProvider>
   );
-};
+}
 
-export { Message, MessageAvatar, MessageContent, MessageActions, MessageAction };
+export { Message, MessageAction, MessageActions, MessageAvatar, MessageContent };

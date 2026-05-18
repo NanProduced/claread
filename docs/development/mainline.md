@@ -36,7 +36,7 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 4. 持续补 Reader 真实数据自动化和小程序 DevTools 人工回归，避免 AI 接入把摘录、回跳、词典和批注主链路带崩。
 5. Directus 当前只进入边界设计和 schema 准备；等“词典 AI -> Reader 内 Ask Claread”这条用户侧 AI 纵切跑通后，再启动正式内部工具开发。
 
-当前 Ask Claread 的稳定功能定义见 `docs/product/ask-claread-v1.md`；开发期进度只记录在 `docs/product/tmp/ask-claread-v1-tracker.md`。
+当前 Ask Claread 的稳定功能定义见 `docs/product/ask-claread-v1.md`；后续增强只在正式产品/架构文档里继续收敛，不再长期保留临时 tracker。
 
 ## 暂不拍板
 

@@ -16,16 +16,20 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _message_row_to_dict(row: Any) -> dict[str, Any]:
+    metadata = row["metadata_json"] or {}
     return {
         "id": str(row["id"]),
         "thread_id": str(row["thread_id"]),
         "role": row["role"],
         "status": row["status"],
         "content_md": row["content_md"] or "",
+        "task_mode": metadata.get("task_mode"),
         "context_anchors": row["context_anchors_json"] or [],
         "citations": row["citations_json"] or [],
         "action_proposals": row["action_proposals_json"] or [],
         "tool_trace": row["tool_trace_json"] or [],
+        "response_cards": metadata.get("response_cards") or [],
+        "resolved_context": metadata.get("resolved_context"),
         "usage_event_id": str(row["usage_event_id"]) if row.get("usage_event_id") else None,
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),
@@ -175,7 +179,7 @@ async def list_messages(thread_id: UUID, *, limit: int | None = 50) -> list[dict
             rows = await conn.fetch(
                 """
                 SELECT id, thread_id, role, status, content_md,
-                       context_anchors_json, citations_json, action_proposals_json, tool_trace_json,
+                       context_anchors_json, citations_json, action_proposals_json, tool_trace_json, metadata_json,
                        usage_event_id, created_at, updated_at
                 FROM reader_ask_messages
                 WHERE thread_id = $1
@@ -187,7 +191,7 @@ async def list_messages(thread_id: UUID, *, limit: int | None = 50) -> list[dict
             rows = await conn.fetch(
                 """
                 SELECT id, thread_id, role, status, content_md,
-                       context_anchors_json, citations_json, action_proposals_json, tool_trace_json,
+                       context_anchors_json, citations_json, action_proposals_json, tool_trace_json, metadata_json,
                        usage_event_id, created_at, updated_at
                 FROM reader_ask_messages
                 WHERE thread_id = $1
@@ -210,6 +214,7 @@ async def create_message(
     citations: list[dict[str, Any]] | None = None,
     action_proposals: list[dict[str, Any]] | None = None,
     tool_trace: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
     usage_event_id: UUID | None = None,
 ) -> dict[str, Any]:
     pool = db_connection.DB_POOL
@@ -224,11 +229,11 @@ async def create_message(
                 INSERT INTO reader_ask_messages (
                     thread_id, role, status, content_md,
                     context_anchors_json, citations_json, action_proposals_json, tool_trace_json,
-                    usage_event_id, created_at, updated_at
+                    metadata_json, usage_event_id, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $10)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $11)
                 RETURNING id, thread_id, role, status, content_md,
-                          context_anchors_json, citations_json, action_proposals_json, tool_trace_json,
+                          context_anchors_json, citations_json, action_proposals_json, tool_trace_json, metadata_json,
                           usage_event_id, created_at, updated_at
                 """,
                 thread_id,
@@ -239,6 +244,7 @@ async def create_message(
                 citations or [],
                 action_proposals or [],
                 tool_trace or [],
+                metadata or {},
                 usage_event_id,
                 now,
             )
@@ -264,6 +270,7 @@ async def update_message(
     citations: list[dict[str, Any]] | None = None,
     action_proposals: list[dict[str, Any]] | None = None,
     tool_trace: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
     usage_event_id: UUID | None = None,
 ) -> dict[str, Any]:
     pool = db_connection.DB_POOL
@@ -280,10 +287,11 @@ async def update_message(
                 citations_json = $5::jsonb,
                 action_proposals_json = $6::jsonb,
                 tool_trace_json = $7::jsonb,
-                usage_event_id = $8
+                metadata_json = $8::jsonb,
+                usage_event_id = $9
             WHERE id = $1
             RETURNING id, thread_id, role, status, content_md,
-                      context_anchors_json, citations_json, action_proposals_json, tool_trace_json,
+                      context_anchors_json, citations_json, action_proposals_json, tool_trace_json, metadata_json,
                       usage_event_id, created_at, updated_at
             """,
             message_id,
@@ -293,6 +301,7 @@ async def update_message(
             citations or [],
             action_proposals or [],
             tool_trace or [],
+            metadata or {},
             usage_event_id,
         )
     if row is None:

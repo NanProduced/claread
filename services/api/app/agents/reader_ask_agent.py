@@ -50,6 +50,13 @@ class ReaderAskRuntimeState:
     used_history_lookup: bool = False
     tool_call_count: int = 0
     max_tool_calls: int = 5
+    latest_record_context: dict[str, Any] | None = None
+    latest_record_insights: list[dict[str, Any]] = field(default_factory=list)
+    latest_record_excerpt_assets: list[dict[str, Any]] = field(default_factory=list)
+    latest_user_excerpt_assets: list[dict[str, Any]] = field(default_factory=list)
+    latest_user_vocabulary: list[dict[str, Any]] = field(default_factory=list)
+    latest_dictionary_entry: dict[str, Any] | None = None
+    latest_dictionary_ai: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -58,6 +65,7 @@ class ReaderAskAgentDeps:
     event_queue: asyncio.Queue[tuple[_ToolEventName, dict[str, Any]]]
     state: ReaderAskRuntimeState
     query_seed: str
+    task_mode: Literal["explain", "breakdown", "vocabulary", "grammar", "practice"]
     record_id: str
     record_title: str | None
     primary_anchor: ReaderAskAnchorRef | None
@@ -156,13 +164,23 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     async def get_record_context(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
         async def runner() -> dict[str, Any]:
             ctx.deps.state.source_labels.update({"current_record", "current_anchor"})
-            return await ctx.deps.get_record_context_fn()
+            ctx.deps.state.source_labels.add("current_paragraph")
+            result = await ctx.deps.get_record_context_fn()
+            ctx.deps.state.latest_record_context = result
+            return result
 
         return await _run_tool(ctx, "get_record_context", runner)
 
     @agent.tool(name="get_record_insights")
     async def get_record_insights(ctx: RunContext[ReaderAskAgentDeps]) -> list[dict[str, Any]]:
-        return await _run_tool(ctx, "get_record_insights", ctx.deps.get_record_insights_fn)
+        async def runner() -> list[dict[str, Any]]:
+            items = await ctx.deps.get_record_insights_fn()
+            if items:
+                ctx.deps.state.source_labels.add("record_assets")
+            ctx.deps.state.latest_record_insights = items
+            return items
+
+        return await _run_tool(ctx, "get_record_insights", runner)
 
     @agent.tool(name="get_record_excerpt_assets")
     async def get_record_excerpt_assets(
@@ -171,6 +189,9 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     ) -> list[dict[str, Any]]:
         async def runner() -> list[dict[str, Any]]:
             items = await ctx.deps.get_record_excerpt_assets_fn(query or ctx.deps.query_seed)
+            if items:
+                ctx.deps.state.source_labels.add("record_assets")
+            ctx.deps.state.latest_record_excerpt_assets = items
             for item in items:
                 _append_citation(ctx.deps.state, ctx.deps.excerpt_item_to_citation_fn(item, "record_excerpt_asset"))
             return items
@@ -188,6 +209,7 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
             items = await ctx.deps.search_user_excerpt_assets_fn(query)
             ctx.deps.state.used_history_lookup = True
             ctx.deps.state.source_labels.add("history_assets")
+            ctx.deps.state.latest_user_excerpt_assets = items
             for item in items:
                 _append_citation(ctx.deps.state, ctx.deps.excerpt_item_to_citation_fn(item, "user_excerpt_asset"))
             return items
@@ -205,6 +227,7 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
             items = await ctx.deps.search_user_vocabulary_fn(query)
             if items:
                 ctx.deps.state.source_labels.add("vocabulary")
+                ctx.deps.state.latest_user_vocabulary = items
             for item in items:
                 _append_citation(ctx.deps.state, ctx.deps.vocabulary_item_to_citation_fn(item))
             return items
@@ -224,6 +247,7 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
             item = await ctx.deps.lookup_dictionary_entry_fn(query, entry_id, query_type, context_sentence, occurrence)
             if item is not None:
                 ctx.deps.state.source_labels.add("dictionary")
+                ctx.deps.state.latest_dictionary_entry = item
                 _append_citation(ctx.deps.state, ctx.deps.dictionary_item_to_citation_fn(item))
             return item
 
@@ -248,6 +272,7 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
             )
             if item is not None:
                 ctx.deps.state.source_labels.add("dictionary")
+                ctx.deps.state.latest_dictionary_ai = item
                 _append_citation(
                     ctx.deps.state,
                     ctx.deps.dictionary_ai_to_citation_fn(item, query, entry_id),

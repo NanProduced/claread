@@ -17,7 +17,7 @@ function useCollapsibleContext() {
   return context;
 }
 
-export interface CollapsibleProps extends React.ComponentProps<"div"> {
+export interface CollapsibleProps extends React.ComponentPropsWithoutRef<"div"> {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -53,7 +53,7 @@ function Collapsible({
   );
 }
 
-export interface CollapsibleTriggerProps extends React.ComponentProps<"button"> {
+export interface CollapsibleTriggerProps extends React.ComponentPropsWithoutRef<"button"> {
   asChild?: boolean;
 }
 
@@ -91,6 +91,7 @@ function CollapsibleTrigger({
 
   return (
     <button
+      type="button"
       data-slot="collapsible-trigger"
       data-state={open ? "open" : "closed"}
       onClick={handleClick}
@@ -103,17 +104,21 @@ function CollapsibleTrigger({
 
 function CollapsibleContent({
   children,
+  hidden,
   ...props
-}: React.ComponentProps<"div">) {
+}: React.ComponentPropsWithoutRef<"div">) {
   const { open } = useCollapsibleContext();
-  if (!open) {
-    return null;
-  }
+
   return (
-    <div data-slot="collapsible-content" data-state="open" {...props}>
+    <div
+      data-slot="collapsible-content"
+      data-state={open ? "open" : "closed"}
+      hidden={hidden ?? !open}
+      {...props}
+    >
       {children}
     </div>
   );
 }
 
-export { Collapsible, CollapsibleTrigger, CollapsibleContent };
+export { Collapsible, CollapsibleContent, CollapsibleTrigger };

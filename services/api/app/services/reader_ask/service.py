@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -33,13 +33,19 @@ from app.schemas.reader_ask import (
     ReaderAskCompletedPayload,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
+    ReaderAskPracticeCard,
     ReaderAskReaderFocus,
     ReaderAskResolvedContextSummary,
+    ReaderAskResponseCard,
+    ReaderAskSentenceBreakdownCard,
+    ReaderAskSentenceBreakdownPart,
     ReaderAskThreadCreateRequest,
     ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
+    ReaderAskTaskMode,
     ReaderAskToolTraceEntry,
+    ReaderAskVocabularyInContextCard,
 )
 from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
 from app.services import excerpt_assets as excerpt_assets_svc
@@ -93,6 +99,13 @@ _PROMPT_BUDGET_BUFFER_TOKENS = 800
 _WORKFLOW_NAME = "reader_ask"
 _WORKFLOW_VERSION = "1.0.0"
 _SCHEMA_VERSION = "reader-ask-v1"
+_TASK_MODE_LABELS: dict[ReaderAskTaskMode, str] = {
+    "explain": "讲解",
+    "breakdown": "拆句",
+    "vocabulary": "词义",
+    "grammar": "语法",
+    "practice": "练习",
+}
 
 
 @dataclass(slots=True)
@@ -827,6 +840,19 @@ def _dictionary_ai_to_citation(item: dict[str, Any], query: str, entry_id: int) 
     )
 
 
+def _merge_citation(citations: list[ReaderAskCitation], citation: ReaderAskCitation) -> None:
+    for existing in citations:
+        if (
+            existing.kind == citation.kind
+            and existing.label == citation.label
+            and existing.record_id == citation.record_id
+            and existing.target_key == citation.target_key
+            and existing.sentence_id == citation.sentence_id
+        ):
+            return
+    citations.append(citation)
+
+
 def _build_prompt_payload(
     *,
     thread: dict[str, Any],
@@ -834,6 +860,7 @@ def _build_prompt_payload(
     user_message: str,
     history_messages: list[dict[str, Any]],
     anchors: list[ReaderAskAnchorRef],
+    task_mode: ReaderAskTaskMode,
     history_lookup_allowed: bool,
 ) -> dict[str, Any]:
     history = [
@@ -866,6 +893,8 @@ def _build_prompt_payload(
             "schema_version": record.schema_version,
         },
         "user_message": user_message,
+        "task_mode": task_mode,
+        "task_mode_label": _TASK_MODE_LABELS[task_mode],
         "history": history,
         "anchors": anchor_payload,
         "history_lookup_allowed": history_lookup_allowed,
@@ -880,8 +909,266 @@ def _build_prompt_payload(
             "be_concise": True,
             "article_bound": True,
             "do_not_claim_unknown_history": True,
+            "structured_cards_available": [
+                "sentence_breakdown_card",
+                "vocabulary_in_context_card",
+                "practice_card",
+            ],
         },
+        "task_instructions": {
+            "explain": "优先解释这句话或这段在当前文章里的意思，回答以简洁 Markdown 为主。",
+            "breakdown": "优先拆主干、修饰和阅读顺序；需要时调用解析相关工具。",
+            "vocabulary": "优先解释词义、短语义和为什么在这里是这个意思；需要时使用词典和词典 AI。",
+            "grammar": "优先解释当前句子里的语法作用和句法关系，不要泛化成整节语法课。",
+            "practice": "优先围绕当前句子或段落生成练习，帮助用户主动复述、辨析或判断结构。",
+        }[task_mode],
     }
+
+
+def _message_metadata(
+    *,
+    task_mode: ReaderAskTaskMode | None = None,
+    resolved_context: ReaderAskResolvedContextSummary | None = None,
+    response_cards: list[ReaderAskResponseCard] | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if task_mode is not None:
+        metadata["task_mode"] = task_mode
+    if resolved_context is not None:
+        metadata["resolved_context"] = resolved_context.model_dump(mode="json")
+    if response_cards:
+        metadata["response_cards"] = [card.model_dump(mode="json") for card in response_cards]
+    return metadata
+
+
+def _extract_sentence_analysis_parts(content: str) -> tuple[str | None, list[ReaderAskSentenceBreakdownPart]]:
+    normalized = content.replace("\r\n", "\n").strip()
+    if not normalized:
+        return None, []
+    analysis_lines: list[str] = []
+    parts: list[ReaderAskSentenceBreakdownPart] = []
+    chunk_re = re.compile(r"^- \*\*(?:\d+\.\s*)?([^*]+?)\*\*：`(.+?)`$")
+    for line in normalized.split("\n"):
+        stripped = line.strip()
+        match = chunk_re.match(stripped)
+        if match:
+            parts.append(
+                ReaderAskSentenceBreakdownPart(
+                    label=match.group(1).strip(),
+                    text=match.group(2).strip(),
+                )
+            )
+            continue
+        if stripped:
+            analysis_lines.append(stripped)
+    analysis_text = "\n".join(analysis_lines).strip() or None
+    return analysis_text, parts
+
+
+def _sentence_analysis_card(
+    *,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    runtime_state: ReaderAskRuntimeState,
+) -> ReaderAskSentenceBreakdownCard | None:
+    insights = runtime_state.latest_record_insights
+    if not insights:
+        return None
+    analysis_entry = next((item for item in insights if item.get("entry_type") == "sentence_analysis"), None)
+    if not analysis_entry:
+        return None
+    analysis_text, parts = _extract_sentence_analysis_parts(str(analysis_entry.get("content") or ""))
+    if not parts:
+        return None
+    sentence_id = str(analysis_entry.get("sentence_id") or anchors[0].sentence_id or "")
+    sentence_text = _render_scene_sentence_text(record, sentence_id) or _first_anchor_text(anchors[0])
+    if not sentence_text:
+        return None
+    translations = _translations_map(record)
+    main_clause = parts[0].text if parts else None
+    return ReaderAskSentenceBreakdownCard(
+        sentence_text=sentence_text,
+        translation_zh=translations.get(sentence_id),
+        main_clause=main_clause,
+        analysis_zh=analysis_text,
+        parts=parts,
+    )
+
+
+def _vocabulary_card(
+    *,
+    runtime_state: ReaderAskRuntimeState,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+) -> ReaderAskVocabularyInContextCard | None:
+    dictionary_entry = runtime_state.latest_dictionary_entry
+    if not dictionary_entry:
+        dictionary_anchor = next((anchor for anchor in anchors if anchor.anchor_type == "dictionary_entry"), None)
+        if dictionary_anchor and dictionary_anchor.query:
+            return ReaderAskVocabularyInContextCard(
+                query=dictionary_anchor.query,
+                display_word=dictionary_anchor.query,
+                source_sentence=_render_scene_sentence_text(record, dictionary_anchor.sentence_id) if dictionary_anchor.sentence_id else None,
+            )
+        return None
+
+    meanings = dictionary_entry.get("meanings")
+    meaning_zh = None
+    if isinstance(meanings, list) and meanings:
+        first_meaning = meanings[0]
+        if isinstance(first_meaning, dict):
+            meaning_zh = _truncate_text(first_meaning.get("definition_zh") or first_meaning.get("definition"), 160) or None
+        else:
+            meaning_zh = _truncate_text(str(first_meaning), 160) or None
+
+    ai_context = runtime_state.latest_dictionary_ai
+    source_sentence = None
+    if anchors:
+        source_sentence = _render_scene_sentence_text(record, anchors[0].sentence_id) or _first_anchor_text(anchors[0])
+    return ReaderAskVocabularyInContextCard(
+        query=str(dictionary_entry.get("query") or dictionary_entry.get("word") or ""),
+        display_word=dictionary_entry.get("word") or dictionary_entry.get("base_word"),
+        phonetic=dictionary_entry.get("phonetic"),
+        meaning_zh=meaning_zh,
+        why_here=_truncate_text(ai_context.get("why_here"), 180) if ai_context else None,
+        translation_zh=_truncate_text(ai_context.get("translation"), 120) if ai_context else None,
+        learning_tip=_truncate_text(ai_context.get("learning_tip"), 160) if ai_context else None,
+        source_sentence=source_sentence,
+    )
+
+
+def _practice_card(
+    *,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    runtime_state: ReaderAskRuntimeState,
+) -> ReaderAskPracticeCard | None:
+    sentence_text = None
+    sentence_id = None
+    if anchors:
+        sentence_id = anchors[0].sentence_id
+        sentence_text = _render_scene_sentence_text(record, sentence_id) or _first_anchor_text(anchors[0])
+    if not sentence_text and runtime_state.latest_record_context:
+        windows = runtime_state.latest_record_context.get("sentence_windows")
+        if isinstance(windows, list) and windows:
+            first_window = windows[0]
+            if isinstance(first_window, dict):
+                sentence_text = first_window.get("anchor_text")
+                sentence_id = first_window.get("sentence_id")
+    if not sentence_text:
+        return None
+
+    insights = runtime_state.latest_record_insights
+    insight_labels = [
+        str(item.get("title") or item.get("entry_type"))
+        for item in insights
+        if isinstance(item, dict) and (item.get("title") or item.get("entry_type"))
+    ]
+    hints = [
+        "先用自己的话说出这句话在段落里的意思。",
+        "再指出一个关键结构或修饰关系。",
+    ]
+    if insight_labels:
+        hints.append(f"可以特别留意：{insight_labels[0]}")
+    return ReaderAskPracticeCard(
+        title="围绕当前句做一题",
+        prompt=f"请根据这句话完成练习：\n\n> {sentence_text}\n\n先解释句意，再指出一个关键结构或语法作用。",
+        expected_focus=insight_labels[0] if insight_labels else "句意理解 + 结构识别",
+        hints=hints[:3],
+        answer_guidance="回答时尽量先说整体意思，再补一句你观察到的结构线索。",
+        source_sentence=_render_scene_sentence_text(record, sentence_id) if sentence_id else sentence_text,
+    )
+
+
+def _build_response_cards(
+    *,
+    task_mode: ReaderAskTaskMode,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    runtime_state: ReaderAskRuntimeState,
+) -> list[ReaderAskResponseCard]:
+    cards: list[ReaderAskResponseCard] = []
+    if task_mode == "breakdown":
+        card = _sentence_analysis_card(record=record, anchors=anchors, runtime_state=runtime_state)
+        if card is not None:
+            cards.append(card)
+    elif task_mode == "vocabulary":
+        card = _vocabulary_card(runtime_state=runtime_state, record=record, anchors=anchors)
+        if card is not None:
+            cards.append(card)
+    elif task_mode == "practice":
+        card = _practice_card(record=record, anchors=anchors, runtime_state=runtime_state)
+        if card is not None:
+            cards.append(card)
+    return cards
+
+
+async def _ensure_task_card_data(
+    *,
+    task_mode: ReaderAskTaskMode,
+    runtime_state: ReaderAskRuntimeState,
+    get_record_context_cb: Callable[[], Any],
+    get_record_insights_cb: Callable[[], Any],
+    lookup_dictionary_entry_cb: Callable[..., Any],
+    run_dictionary_ai_context_explain_cb: Callable[..., Any],
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+) -> None:
+    if task_mode == "breakdown":
+        if not runtime_state.latest_record_insights:
+            runtime_state.latest_record_insights = await get_record_insights_cb()
+            if runtime_state.latest_record_insights:
+                runtime_state.source_labels.add("record_assets")
+        return
+    if task_mode == "practice":
+        if runtime_state.latest_record_context is None:
+            runtime_state.latest_record_context = await get_record_context_cb()
+            if runtime_state.latest_record_context is not None:
+                runtime_state.source_labels.add("current_paragraph")
+        if not runtime_state.latest_record_insights:
+            runtime_state.latest_record_insights = await get_record_insights_cb()
+            if runtime_state.latest_record_insights:
+                runtime_state.source_labels.add("record_assets")
+        return
+    if task_mode != "vocabulary":
+        return
+
+    if runtime_state.latest_dictionary_entry is None:
+        dictionary_anchor = next((anchor for anchor in anchors if anchor.anchor_type == "dictionary_entry"), None)
+        query = dictionary_anchor.query if dictionary_anchor else None
+        entry_id = dictionary_anchor.dict_entry_id if dictionary_anchor else None
+        sentence_text = None
+        if anchors:
+            sentence_text = _render_scene_sentence_text(record, anchors[0].sentence_id) or _first_anchor_text(anchors[0])
+        runtime_state.latest_dictionary_entry = await lookup_dictionary_entry_cb(
+            query,
+            entry_id,
+            "phrase" if query and " " in query else "word",
+            sentence_text,
+            None,
+        )
+        if runtime_state.latest_dictionary_entry is not None:
+            runtime_state.source_labels.add("dictionary")
+    if runtime_state.latest_dictionary_entry is None or runtime_state.latest_dictionary_ai is not None:
+        return
+    sentence_text = None
+    if anchors:
+        sentence_text = _render_scene_sentence_text(record, anchors[0].sentence_id) or _first_anchor_text(anchors[0])
+    if not sentence_text:
+        return
+    query = str(runtime_state.latest_dictionary_entry.get("query") or runtime_state.latest_dictionary_entry.get("word") or "")
+    entry_id = runtime_state.latest_dictionary_entry.get("id")
+    if not query or not isinstance(entry_id, int):
+        return
+    runtime_state.latest_dictionary_ai = await run_dictionary_ai_context_explain_cb(
+        query,
+        entry_id,
+        sentence_text,
+        "phrase" if " " in query else "word",
+        None,
+    )
+    if runtime_state.latest_dictionary_ai is not None:
+        runtime_state.source_labels.add("dictionary")
 
 
 def _build_action_proposals(
@@ -1026,6 +1313,7 @@ def _resolved_context_summary(
     *,
     record: _RecordBundle,
     anchors: list[ReaderAskAnchorRef],
+    runtime_state: ReaderAskRuntimeState,
     used_history_lookup: bool,
     citations: list[ReaderAskCitation],
 ) -> ReaderAskResolvedContextSummary:
@@ -1033,6 +1321,10 @@ def _resolved_context_summary(
     if anchors:
         labels.append("current_anchor")
     labels.append("current_record")
+    if runtime_state.latest_record_context:
+        labels.append("current_paragraph")
+    if runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets:
+        labels.append("record_assets")
     if used_history_lookup:
         labels.append("history_assets")
     if any(citation.kind == "vocabulary" for citation in citations):
@@ -1044,6 +1336,10 @@ def _resolved_context_summary(
         record_title=record.title,
         anchor_count=len(anchors),
         used_history_lookup=used_history_lookup,
+        current_sentence_used=bool(anchors),
+        current_paragraph_used=runtime_state.latest_record_context is not None,
+        used_record_assets=bool(runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets),
+        used_dictionary=any(citation.kind in {"dictionary_entry", "dictionary_ai"} for citation in citations),
         source_labels=labels,
     )
 
@@ -1165,6 +1461,7 @@ async def stream_thread_message(
                 status="completed",
                 content_md=body.content,
                 context_anchors=anchor_payload,
+                metadata=_message_metadata(task_mode=body.task_mode),
             )
             yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
 
@@ -1187,20 +1484,39 @@ async def stream_thread_message(
                 id=assistant_message["id"],
                 thread_id=str(thread_id),
                 content_md=assistant_md,
+                task_mode=body.task_mode,
                 citations=citations,
                 action_proposals=[],
                 tool_trace=[],
+                response_cards=[],
                 usage_summary=None,
                 billed_points=0,
                 resolved_context=_resolved_context_summary(
                     record=record,
                     anchors=resolved_anchors,
+                    runtime_state=ReaderAskRuntimeState(citations=list(citations)),
                     used_history_lookup=False,
                     citations=citations,
                 ),
             )
+            assistant_metadata = _message_metadata(
+                task_mode=body.task_mode,
+                resolved_context=payload.resolved_context,
+                response_cards=[],
+            )
             yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
             yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
+            await repo.update_message(
+                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+                status="completed",
+                content_md=assistant_md,
+                context_anchors=anchor_payload,
+                citations=[citation.model_dump(mode="json") for citation in citations],
+                action_proposals=[],
+                tool_trace=[],
+                metadata=assistant_metadata,
+                usage_event_id=None,
+            )
             yield _sse("message.completed", payload.model_dump(mode="json"))
             return
 
@@ -1252,6 +1568,7 @@ async def stream_thread_message(
             status="completed",
             content_md=body.content,
             context_anchors=anchor_payload,
+            metadata=_message_metadata(task_mode=body.task_mode),
         )
         yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
 
@@ -1261,6 +1578,7 @@ async def stream_thread_message(
             status="streaming",
             content_md="",
             context_anchors=anchor_payload,
+            metadata=_message_metadata(task_mode=body.task_mode),
         )
         yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
 
@@ -1281,6 +1599,7 @@ async def stream_thread_message(
             user_message=body.content,
             history_messages=history_messages,
             anchors=resolved_anchors,
+            task_mode=body.task_mode,
             history_lookup_allowed=history_lookup_allowed,
         )
         prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
@@ -1365,6 +1684,7 @@ async def stream_thread_message(
             event_queue=event_queue,
             state=runtime_state,
             query_seed=query_seed,
+            task_mode=body.task_mode,
             record_id=str(record.record_id),
             record_title=record.title,
             primary_anchor=primary_anchor,
@@ -1427,6 +1747,35 @@ async def stream_thread_message(
             raise producer_error
 
         final_content_md = "".join(content_parts).strip()
+        await _ensure_task_card_data(
+            task_mode=body.task_mode,
+            runtime_state=runtime_state,
+            get_record_context_cb=get_record_context_cb,
+            get_record_insights_cb=get_record_insights_cb,
+            lookup_dictionary_entry_cb=lookup_dictionary_entry_cb,
+            run_dictionary_ai_context_explain_cb=run_dictionary_ai_context_explain_cb,
+            record=record,
+            anchors=resolved_anchors,
+        )
+        if body.task_mode == "vocabulary":
+            if runtime_state.latest_dictionary_entry is not None:
+                runtime_state.source_labels.add("dictionary")
+                _merge_citation(
+                    runtime_state.citations,
+                    _dictionary_item_to_citation(runtime_state.latest_dictionary_entry),
+                )
+            if runtime_state.latest_dictionary_ai is not None and runtime_state.latest_dictionary_entry is not None:
+                query = str(
+                    runtime_state.latest_dictionary_entry.get("query")
+                    or runtime_state.latest_dictionary_entry.get("word")
+                    or ""
+                )
+                entry_id = runtime_state.latest_dictionary_entry.get("id")
+                if query and isinstance(entry_id, int):
+                    _merge_citation(
+                        runtime_state.citations,
+                        _dictionary_ai_to_citation(runtime_state.latest_dictionary_ai, query, entry_id),
+                    )
         runtime_proposals = _build_action_proposals_from_runtime(
             record=record,
             action_requests=runtime_state.action_requests,
@@ -1440,6 +1789,19 @@ async def stream_thread_message(
         )
         action_proposals = _merge_action_proposals(runtime_proposals, fallback_proposals)
         usage_summary = _merge_usage_summaries(usage_summary, nested_tool_usages)
+        response_cards = _build_response_cards(
+            task_mode=body.task_mode,
+            record=record,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+        )
+        resolved_context = _resolved_context_summary(
+            record=record,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+            used_history_lookup=runtime_state.used_history_lookup,
+            citations=runtime_state.citations,
+        )
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
         billed_points = min(computed_cost_points, reservation.total_points)
@@ -1501,23 +1863,25 @@ async def stream_thread_message(
             citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
             action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
             tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+            metadata=_message_metadata(
+                task_mode=body.task_mode,
+                resolved_context=resolved_context,
+                response_cards=response_cards,
+            ),
             usage_event_id=usage_event_id,
         )
         payload = ReaderAskCompletedPayload(
             id=updated["id"],
             thread_id=str(thread_id),
             content_md=final_content_md,
+            task_mode=body.task_mode,
             citations=runtime_state.citations,
             action_proposals=action_proposals,
             tool_trace=runtime_state.tool_trace,
+            response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
-            resolved_context=_resolved_context_summary(
-                record=record,
-                anchors=resolved_anchors,
-                used_history_lookup=runtime_state.used_history_lookup,
-                citations=runtime_state.citations,
-            ),
+            resolved_context=resolved_context,
         )
         yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
@@ -1540,6 +1904,7 @@ async def stream_thread_message(
                 citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
                 action_proposals=[],
                 tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+                metadata=_message_metadata(task_mode=body.task_mode),
                 usage_event_id=None,
             )
         if record is not None and thread is not None:

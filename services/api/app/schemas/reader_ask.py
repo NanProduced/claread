@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -33,6 +33,12 @@ ReaderAskActionType = Literal[
 ]
 ReaderAskActionStatus = Literal["pending", "confirmed", "executed", "rejected"]
 ReaderAskToolStatus = Literal["started", "completed", "failed"]
+ReaderAskTaskMode = Literal["explain", "breakdown", "vocabulary", "grammar", "practice"]
+ReaderAskResponseCardType = Literal[
+    "sentence_breakdown_card",
+    "vocabulary_in_context_card",
+    "practice_card",
+]
 
 
 class ReaderAskAnchorSegment(BaseModel):
@@ -126,7 +132,54 @@ class ReaderAskResolvedContextSummary(BaseModel):
     record_title: str | None = None
     anchor_count: int = 0
     used_history_lookup: bool = False
+    current_sentence_used: bool = False
+    current_paragraph_used: bool = False
+    used_record_assets: bool = False
+    used_dictionary: bool = False
     source_labels: list[str] = Field(default_factory=list)
+
+
+class ReaderAskSentenceBreakdownPart(BaseModel):
+    label: str
+    text: str
+    note: str | None = None
+
+
+class ReaderAskSentenceBreakdownCard(BaseModel):
+    card_type: Literal["sentence_breakdown_card"] = "sentence_breakdown_card"
+    sentence_text: str
+    translation_zh: str | None = None
+    main_clause: str | None = None
+    analysis_zh: str | None = None
+    parts: list[ReaderAskSentenceBreakdownPart] = Field(default_factory=list)
+
+
+class ReaderAskVocabularyInContextCard(BaseModel):
+    card_type: Literal["vocabulary_in_context_card"] = "vocabulary_in_context_card"
+    query: str
+    display_word: str | None = None
+    phonetic: str | None = None
+    meaning_zh: str | None = None
+    why_here: str | None = None
+    translation_zh: str | None = None
+    learning_tip: str | None = None
+    source_sentence: str | None = None
+
+
+class ReaderAskPracticeCard(BaseModel):
+    card_type: Literal["practice_card"] = "practice_card"
+    title: str
+    prompt: str
+    expected_focus: str | None = None
+    hints: list[str] = Field(default_factory=list)
+    answer_guidance: str | None = None
+    source_sentence: str | None = None
+
+
+ReaderAskResponseCard = Annotated[
+    ReaderAskSentenceBreakdownCard | ReaderAskVocabularyInContextCard | ReaderAskPracticeCard,
+    Field(discriminator="card_type"),
+]
 
 
 class ReaderAskMessage(BaseModel):
@@ -135,10 +188,13 @@ class ReaderAskMessage(BaseModel):
     role: ReaderAskMessageRole
     status: ReaderAskMessageStatus
     content_md: str
+    task_mode: ReaderAskTaskMode | None = None
     context_anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
     citations: list[ReaderAskCitation] = Field(default_factory=list)
     action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
     tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
+    response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
+    resolved_context: ReaderAskResolvedContextSummary | None = None
     usage_event_id: str | None = None
     created_at: str
     updated_at: str
@@ -182,6 +238,7 @@ class ReaderAskActionConfirmResponse(BaseModel):
 
 class ReaderAskMessageStreamRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
+    task_mode: ReaderAskTaskMode = "explain"
     anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
     reader_focus: ReaderAskReaderFocus | None = None
 
@@ -190,9 +247,11 @@ class ReaderAskCompletedPayload(BaseModel):
     id: str
     thread_id: str
     content_md: str
+    task_mode: ReaderAskTaskMode
     citations: list[ReaderAskCitation] = Field(default_factory=list)
     action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
     tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
+    response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     usage_summary: dict[str, Any] | None = None
     billed_points: int = 0
     resolved_context: ReaderAskResolvedContextSummary

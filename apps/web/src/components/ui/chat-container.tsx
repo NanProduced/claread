@@ -1,6 +1,5 @@
 "use client"
 
-import * as React from "react"
 import { cn } from "@/lib/cn"
 import { StickToBottom } from "use-stick-to-bottom"
 
@@ -32,7 +31,7 @@ function ChatContainerRoot({
       role="log"
       {...props}
     >
-      {children as never}
+      {children}
     </StickToBottom>
   )
 }
@@ -47,7 +46,7 @@ function ChatContainerContent({
       className={cn("flex w-full flex-col", className)}
       {...props}
     >
-      {children as never}
+      {children}
     </StickToBottom.Content>
   )
 }

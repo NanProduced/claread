@@ -23,6 +23,12 @@ export type ReaderAskActionTypeDto =
   | "save_answer_note";
 export type ReaderAskActionStatusDto = "pending" | "confirmed" | "executed" | "rejected";
 export type ReaderAskToolStatusDto = "started" | "completed" | "failed";
+export type ReaderAskTaskModeDto =
+  | "explain"
+  | "breakdown"
+  | "vocabulary"
+  | "grammar"
+  | "practice";
 
 export interface ReaderAskAnchorSegmentDto {
   paragraph_id?: string | null;
@@ -99,8 +105,54 @@ export interface ReaderAskResolvedContextSummaryDto {
   record_title?: string | null;
   anchor_count: number;
   used_history_lookup: boolean;
+  current_sentence_used: boolean;
+  current_paragraph_used: boolean;
+  used_record_assets: boolean;
+  used_dictionary: boolean;
   source_labels: string[];
 }
+
+export interface ReaderAskSentenceBreakdownPartDto {
+  label: string;
+  text: string;
+  note?: string | null;
+}
+
+export interface ReaderAskSentenceBreakdownCardDto {
+  card_type: "sentence_breakdown_card";
+  sentence_text: string;
+  translation_zh?: string | null;
+  main_clause?: string | null;
+  analysis_zh?: string | null;
+  parts: ReaderAskSentenceBreakdownPartDto[];
+}
+
+export interface ReaderAskVocabularyInContextCardDto {
+  card_type: "vocabulary_in_context_card";
+  query: string;
+  display_word?: string | null;
+  phonetic?: string | null;
+  meaning_zh?: string | null;
+  why_here?: string | null;
+  translation_zh?: string | null;
+  learning_tip?: string | null;
+  source_sentence?: string | null;
+}
+
+export interface ReaderAskPracticeCardDto {
+  card_type: "practice_card";
+  title: string;
+  prompt: string;
+  expected_focus?: string | null;
+  hints: string[];
+  answer_guidance?: string | null;
+  source_sentence?: string | null;
+}
+
+export type ReaderAskResponseCardDto =
+  | ReaderAskSentenceBreakdownCardDto
+  | ReaderAskVocabularyInContextCardDto
+  | ReaderAskPracticeCardDto;
 
 export interface ReaderAskMessageDto {
   id: string;
@@ -108,10 +160,13 @@ export interface ReaderAskMessageDto {
   role: ReaderAskMessageRoleDto;
   status: ReaderAskMessageStatusDto;
   content_md: string;
+  task_mode?: ReaderAskTaskModeDto | null;
   context_anchors: ReaderAskAnchorRefDto[];
   citations: ReaderAskCitationDto[];
   action_proposals: ReaderAskActionProposalDto[];
   tool_trace: ReaderAskToolTraceEntryDto[];
+  response_cards: ReaderAskResponseCardDto[];
+  resolved_context?: ReaderAskResolvedContextSummaryDto | null;
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -147,9 +202,11 @@ export interface ReaderAskCompletedPayloadDto {
   id: string;
   thread_id: string;
   content_md: string;
+  task_mode: ReaderAskTaskModeDto;
   citations: ReaderAskCitationDto[];
   action_proposals: ReaderAskActionProposalDto[];
   tool_trace: ReaderAskToolTraceEntryDto[];
+  response_cards: ReaderAskResponseCardDto[];
   usage_summary?: Record<string, unknown> | null;
   billed_points: number;
   resolved_context: ReaderAskResolvedContextSummaryDto;
@@ -163,6 +220,7 @@ export interface ReaderAskThreadCreateRequestDto {
 
 export interface ReaderAskMessageStreamRequestDto {
   content: string;
+  task_mode?: ReaderAskTaskModeDto;
   anchors?: ReaderAskAnchorRefDto[];
   reader_focus?: ReaderAskReaderFocusDto | null;
 }
