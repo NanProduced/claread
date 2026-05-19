@@ -1,6 +1,6 @@
 # 技术栈
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-18
+> **状态**: `CURRENT` | **最后更新**: 2026-05-19
 
 本文记录 Claread Web 端当前使用的技术栈。决策过程和备选评估已归档；路由结构见 `implementation-plan.md`；后端接口契约见 `api-contract-audit.md`；验证命令见 `AGENTS.md` 和 `README.md`。
 
@@ -69,14 +69,19 @@ httpOnly cookie   # Web session token
 
 ## Reader 与批注
 
-Reader 使用只读渲染，不使用富文本编辑器作为主渲染引擎：
+Reader 当前稳定基线仍是只读渲染；Reader 2.0 的目标形态调整为：
 
-- 后端 `AnyRenderSceneModel` 渲染只读文章结构。
-- 自建 `RenderScene -> ReaderVm -> DOM` adapter。
-- 浏览器 Selection / Range API 做选区。
-- `text_range`、`sentence_id`、`paragraph_id` 和 selected text 记录用户批注。
-- Reader Floating Layer 封装 Floating UI，定位选区工具栏、词典浮层、hover card。
-- Radix Dialog/Popover/Tooltip 处理可访问交互。
+`后端 canonical render_scene + Web 侧 Plate readOnly runtime`
+
+具体原则：
+
+- 后端 `AnyRenderSceneModel` 继续作为跨端 canonical 文章结构输出。
+- Web 不让后端直接产出 Plate AST，而是新增 `RenderScene -> Plate document` projection。
+- Web Reader 主画布采用 `Plate + readOnly`，而不是 `PlateStatic`。
+- 浏览器侧的 selection、Ask attachment、词典 hit-test 和用户资产回源，仍需尊重现有 `target_key / UTF-16 offset / text_hash / segments` 合同。
+- `text_range`、`sentence_id`、`paragraph_id` 和 selected text 继续作为用户批注与收藏的共享锚点基础。
+- Reader Floating Layer 继续封装 Floating UI，定位选区工具栏、词典浮层、hover card。
+- Radix Dialog/Popover/Tooltip 继续处理可访问交互。
 
 三层基础设施：
 
@@ -86,7 +91,7 @@ Reader 使用只读渲染，不使用富文本编辑器作为主渲染引擎：
 
 可选增强（后续按需引入）：
 
-- Tiptap / ProseMirror：用户长笔记、富文本摘录、协作批注或可编辑文档。
+- Plate `comment` / `suggestion`：更适合后续 workbook / playground beta，不作为 Reader 首批阻塞项。
 - CSS Custom Highlight API：增强层评估，不作为唯一高亮机制。
 - TanStack Virtual：长文性能问题出现后再评估。
 

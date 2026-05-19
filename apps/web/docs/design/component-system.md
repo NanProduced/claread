@@ -2,7 +2,7 @@
 
 > Reader 专项规范。全站功能页组件库、token、theme、目录结构和第三方准入流程请先参考 `component-library-v0.md`。本文只保留 Reader 画布、工具层、锚点和交互特例。
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-18
+> **状态**: `CURRENT` | **最后更新**: 2026-05-19
 > 本文把 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md` 和 `reader-ia.md` 中已经确认的方向落成 Reader 组件使用规范。方向探索和过程判断已吸收到正式文档，不再在这里重复保留。
 
 ## 1. Scope
@@ -18,8 +18,9 @@
 暂不覆盖：
 
 - 完整 landing、公开每日精读、Library/Vocabulary 全量组件。
-- Plate.js / Recogito / ProseMirror / Tiptap 等编辑器型批注系统。
 - Grammar X-Ray。当前 `grammar_note` 和 `sentence_analysis` 不得被命名或渲染为 X-Ray。
+
+当前 Reader 2.0 已确认采用 `Plate + readOnly` 作为 Web 文档 runtime 的目标方向，但本文不展开 Plate 的实施细节；具体映射、桥接层与迁移方案以对应架构文档为准。
 
 ## 2. Product Rules
 
@@ -52,6 +53,7 @@
 1. **Claread Paper theme.** 现有暖纸、墨色、`lens-blue` 和语义标注色是 Claread 的主视觉基础。Vintage Paper 等 shadcn theme 只作为 moodboard，不直接套用。后续正式初始化 shadcn/ui 时，应把现有 token 映射到 shadcn semantic tokens，而不是用第三方主题覆盖 Claread 视觉。
 2. **Reader Floating Layer.** 所有锚定原文 token、句子或 DOM selection 的短时浮层统一走 Floating UI。Radix / shadcn Popover 继续用于按钮触发的常规菜单；原文画布上的轻释义、选区工具栏、语法 hover、二级操作菜单归入 Reader floating layer。
 3. **Annotation Anchor Model.** 当前已支持句子级批注、单句内 `text_range` 和跨句/跨段 `multi_text`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id` 和原文 selection 锚点；后端已按 UTF-16 offset、hash、render scene 切片和 sentence 顺序做严格校验。后续重点是资产跳转强调和跨文章资产索引。
+4. **Plate Runtime as Web Projection.** Reader 2.0 将逐步迁移到 `canonical render_scene -> Plate document` 的投影模式；后端 canonical render scene 与小程序消费链路保持不变，Plate 只作为 Web projection/document runtime。
 
 ## 3. Stack Rules
 
@@ -68,10 +70,11 @@
 当前 Reader 组件组织方式：
 
 - Reader 专属组件放在 `apps/web/src/components/reader/`。
-- 暂不新增第三方批注/富文本编辑器依赖。
+- Reader 2.0 允许引入 Plate 作为 Web 文档 runtime，不再以“禁止编辑器底座”作为规则。
 - Ask Claread 的 compatibility layer 仍在 `apps/web/src/components/ui/`，但它不是 Reader 或功能页新的通用入口。
 - 通用能力优先从 `primitives/`、`composed/`、`layout/` 取，Reader 只保留画布和锚点特例。
 - 新增通用 Reader 基础设施先放在 `apps/web/src/components/reader/`，等交互稳定后再决定是否上移到 `packages/`。
+- 与 Plate 相关的 projection、node types、selection bridge、jump bridge、lookup bridge、asset bridge、Ask bridge 应作为 Reader 2.0 专属模块独立组织，不继续堆进 `ReaderWorkbench.tsx`。
 
 后续推荐正式化的 shadcn 基础组件：
 
@@ -271,6 +274,7 @@ Move later:
 - Zustand store for Reader UI state
 - persisted Reader preferences
 - `DictionaryPanel`, `ReaderLookupPreview`, `InlineMarkToken`, entry card rendering, and toolbar mutation wiring once behavior stabilizes
+- Reader 2.0 的 Plate projection、node components、selection bridge、lookup bridge、asset bridge、Ask bridge
 
 ## 9. Component Preview Policy
 
