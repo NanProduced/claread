@@ -6,7 +6,7 @@
 - 日期：2026-05-18
 - 适用范围：Claread Web Reader 内 Ask Claread 重构
 - 事实基线：本文以当前代码实现与可验证产品调研为依据，不以旧文档交互口径为准
-- 文档关系：`docs/product/ask-claread-v1.md` 仅保留为第一版对照；开发期进度与决策文档统一维护在 `docs/tmp/ask-claread-rebuild/`
+- 文档关系：`docs/product/ask-claread-v1.md` 仅保留为第一版对照；实施架构与迁移顺序见 `docs/architecture/ask-claread-v2-refactor-rfc.md`；开发期进度与决策文档统一维护在 `docs/tmp/ask-claread-rebuild/`
 
 ## 背景
 
@@ -139,8 +139,8 @@ Ask Claread V2 是：
 优先级应为：
 
 1. 当前显式选区或显式附加对象
-2. 当前焦点句/焦点段
-3. 当前章节或本文局部上下文
+2. 用户自然语言中可解析出的引用对象
+3. 为回答当前问题而按需扩展出的本文局部上下文
 4. 仅在必要且可解释时扩展到历史资产
 
 ### 3. 上下文必须可见
@@ -216,14 +216,21 @@ V2 保留两个主入口：
 
 ### 默认策略
 
-默认只基于当前文章工作。
+默认只基于当前文章工作，但不默认向模型注入当前句、当前段或正文内容。
 
-Ask 在一次回答中可读取：
+默认运行输入只包含：
 
-- 当前选区
-- 当前句与相邻句
-- 当前段
-- 本文章内相关解析卡、摘录、批注、收藏
+- 轻量页面身份
+- 用户显式附加的上下文对象
+- 交互来源
+
+本文正文、局部句段、批注、全文概览与跨文章资产，应通过以下路径进入：
+
+- 显式附加
+- 语义定位
+- 按需扩展
+
+而不是通过隐式 `reader_focus` 或默认“当前句焦点”进入。
 
 ### 历史扩展策略
 
@@ -363,10 +370,57 @@ working set 的输出至少应包括：
 
 这一层不等于“默认全局 RAG”。
 
+总原则是：
+
+`active-document-first, retrieval-second`
+
 它应先区分两类问题：
 
 - 当前文章内 grounding
 - 用户多解析页 / 跨文章历史 grounding
+
+其中跨文章问题应先做 `reference resolution`，再决定是否进入 retrieval。
+
+首批分层策略：
+
+1. 已知文章引用：
+   - 优先按 `title / alias / metadata` 解析
+   - 命中后作为显式上下文对象加入会话
+2. 未知范围跨文章查找：
+   - 再进入 `hybrid retrieval`
+
+当前文章内问答默认不上 RAG。
+
+### 5.1 Prompt Registry
+
+Ask Claread 不应继续在 service 代码里硬拼关键 prompt contract。
+
+建议建立独立 prompt registry，并至少分层管理：
+
+- `system`
+- `planner`
+- `answer`
+- `schema`
+- `policy/examples`
+
+要求：
+
+- 支持版本管理
+- 支持变量注入
+- 支持 eval 绑定
+- 避免用一个万能 prompt 同时承载回答、检索、schema 输出和写动作策略
+
+### 5.2 Structured Supplement Generation
+
+结构化 AI 补充写入不应继续由主回答 Markdown 链路兼任生成。
+
+推荐模式：
+
+- 主回答链路负责用户可读回答与产品化 output blocks
+- 独立 typed capability 负责生成 supplement candidate
+- candidate 经过适配性判断、schema 约束、业务校验和用户确认后写入 supplement layer
+
+这一模式尤其适用于首批的 `AI supplement grammar_note`。
 
 ### 6. Action / Audit / Eval Layer
 
@@ -461,6 +515,7 @@ Ask Claread 未来需要 retrieval layer，也大概率需要 RAG，但不是一
 即使引入 RAG，也必须遵守以下约束：
 
 - 默认不全量注入历史
+- 默认不用于当前文章内问答
 - 历史扩展必须由意图驱动
 - 回答必须标注历史来源
 - 用户必须知道“用了哪些历史材料”
@@ -592,15 +647,16 @@ Ask Claread 未来需要 retrieval layer，也大概率需要 RAG，但不是一
 
 这个主线程代表“围绕当前文章的持续阅读对话”。
 
-### New Chat
+### New Chat / Reset
 
-`New chat` 应保留，但不应作为首屏核心概念。
+首批前端不开放 `New Chat`，也不展示历史会话列表。
 
-它适用于：
+系统层可保留线程能力作为后续扩展余地，但首批对用户暴露的是：
 
-- 用户明确想换一个讨论方向
-- 用户希望断开前文影响
-- 用户开始一个新的长任务
+- 单文章单 active 会话
+- `reset conversation state`
+
+其中 `reset conversation state` 的语义是重新开始，但不删除已落地资产。
 
 ### 历史与重试
 
@@ -654,13 +710,19 @@ Ask Claread 未来需要 retrieval layer，也大概率需要 RAG，但不是一
 - 保存为笔记
 - 保存为高亮/摘录
 - 收藏当前锚点
-- 保存 assistant 回答为笔记
+- 生成 AI 补充 `grammar_note`
 
 原则不变：
 
 - 所有写动作都需要确认
 - 确认卡应尽量低打断
 - 确认目标必须清楚写明“保存到哪里、基于哪个锚点”
+
+补充约束：
+
+- 不直接保存整条 assistant 回答为笔记
+- 若需要把 Ask 结果沉淀为笔记，应走专门的笔记整理流程
+- 结构化 AI 补充结果必须与 workflow 结果区分来源、可删除、且不因 reset 消失
 
 ## 页面结构建议
 
