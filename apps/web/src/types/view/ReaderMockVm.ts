@@ -76,6 +76,17 @@ export interface WarningModel {
 
 export type ContentResultState = 'normal' | 'degraded_light' | 'degraded_heavy'
 
+export type ContentSummaryCompleteness = 'full' | 'partial' | 'minimal'
+
+export interface ContentSummaryModel {
+  completeness: ContentSummaryCompleteness
+  overview: string
+  researchQuestion?: string
+  methodology?: string
+  keyFindings: string[]
+  limitations: string[]
+}
+
 // ============ Learning 模式类型 ============
 
 export interface InlineGlossary {
@@ -139,6 +150,7 @@ export interface RenderSceneVmBase {
   request: RequestMeta
   article: ArticleModel
   userFacingState: ContentResultState
+  contentSummary?: ContentSummaryModel
   translations: TranslationModel[]
   inlineMarks: InlineMarkModel[]
   sentenceEntries: SentenceEntryModel[]

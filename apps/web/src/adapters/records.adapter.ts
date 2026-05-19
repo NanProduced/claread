@@ -2,6 +2,8 @@ import type { RecordResponseDto } from "@/types/api/records";
 import type {
   ArticleModel,
   AnnotationType,
+  ContentSummaryCompleteness,
+  ContentSummaryModel,
   ContentResultState,
   InlineGlossary,
   InlineMarkAnchor,
@@ -54,6 +56,14 @@ function readArray(value: unknown): unknown[] {
 
 function toContentResultState(value: unknown): ContentResultState {
   return value === "degraded_light" || value === "degraded_heavy" ? value : "normal";
+}
+
+function toContentSummaryCompleteness(value: unknown): ContentSummaryCompleteness {
+  if (value === "full" || value === "partial" || value === "minimal") {
+    return value;
+  }
+
+  return "minimal";
 }
 
 function toAnnotationType(value: unknown): AnnotationType {
@@ -240,6 +250,30 @@ function mapTranslations(value: unknown): TranslationModel[] {
     .filter((translation) => translation.sentenceId);
 }
 
+function mapContentSummary(value: unknown): ContentSummaryModel | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const overview = readString(value.overview).trim();
+  if (!overview) {
+    return undefined;
+  }
+
+  return {
+    completeness: toContentSummaryCompleteness(value.completeness),
+    overview,
+    researchQuestion: readOptionalString(value.research_question ?? value.researchQuestion),
+    methodology: readOptionalString(value.methodology),
+    keyFindings: readArray(value.key_findings ?? value.keyFindings)
+      .map((item) => readString(item).trim())
+      .filter(Boolean),
+    limitations: readArray(value.limitations)
+      .map((item) => readString(item).trim())
+      .filter(Boolean),
+  };
+}
+
 function mapInlineMarks(value: unknown): InlineMarkModel[] {
   return readArray(value)
     .filter(isRecord)
@@ -359,6 +393,7 @@ export function adaptRecordToReaderRecord(record: RecordResponseDto): ReaderReco
       },
       article: mapArticle(renderScene.article, record.source_text),
       userFacingState: toContentResultState(renderScene.user_facing_state ?? record.user_facing_state),
+      contentSummary: mapContentSummary(renderScene.content_summary),
       translations: mapTranslations(renderScene.translations),
       inlineMarks: mapInlineMarks(renderScene.inline_marks),
       sentenceEntries: mapSentenceEntries(renderScene.sentence_entries),

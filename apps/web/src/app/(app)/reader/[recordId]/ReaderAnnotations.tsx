@@ -27,13 +27,25 @@ function annotationLabel(item: WebAnnotationVm): string {
   return item.type === "note" ? "笔记" : "高亮";
 }
 
+function belongsToRecord(candidateRecordId: string | null | undefined, targetKey: string, recordId: string) {
+  if (candidateRecordId === recordId) {
+    return true;
+  }
+
+  if (candidateRecordId !== null) {
+    return false;
+  }
+
+  return targetKey.startsWith(`record:${recordId}:`);
+}
+
 export function ReaderAnnotationList({ recordId, initialItems }: ReaderAnnotationsProps) {
   const [items, setItems] = useState(initialItems);
 
   useEffect(() => {
     function handleCreated(event: Event) {
       const item = (event as CustomEvent<WebAnnotationVm>).detail;
-      if (item.recordId === recordId || item.recordId === null) {
+      if (belongsToRecord(item.recordId, item.targetKey, recordId)) {
         setItems((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
       }
     }
@@ -43,7 +55,7 @@ export function ReaderAnnotationList({ recordId, initialItems }: ReaderAnnotatio
   }, [recordId]);
 
   const recordItems = useMemo(
-    () => items.filter((item) => item.recordId === recordId || item.recordId === null),
+    () => items.filter((item) => belongsToRecord(item.recordId, item.targetKey, recordId)),
     [items, recordId],
   );
 

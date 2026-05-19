@@ -34,6 +34,17 @@ import {
 import { Tool, type ToolPart } from "@/components/ui/tool";
 import { IconButton } from "@/components/primitives/icon-button";
 import { cn } from "@/lib/cn";
+import {
+  askAnchorsFromAttachments,
+  askAttachmentFromAnchor,
+  askAttachmentFromRecord,
+  askAttachmentKey,
+  askAttachmentLabel,
+  askCitationViewFromDto,
+  citationCanJump,
+  type ReaderAskAttachment,
+  type ReaderAskPageIdentity,
+} from "@/lib/reader-plate";
 import type {
   ReaderAskActionProposalDto,
   ReaderAskActionStatusDto,
@@ -41,7 +52,6 @@ import type {
   ReaderAskCitationDto,
   ReaderAskCompletedPayloadDto,
   ReaderAskMessageDto,
-  ReaderAskReaderFocusDto,
   ReaderAskResolvedContextSummaryDto,
   ReaderAskResponseCardDto,
   ReaderAskStreamEnvelopeDto,
@@ -283,38 +293,53 @@ async function fetchJson<T>(url: string, init?: RequestInit, fallback = "请求�
 }
 
 function AnchorChips({
-  anchors,
+  attachments,
   removable = false,
   onRemove,
+  onJump,
 }: {
-  anchors: ReaderAskAnchorRefDto[];
+  attachments: ReaderAskAttachment[];
   removable?: boolean;
-  onRemove?: (index: number) => void;
+  onRemove?: (attachmentKey: string) => void;
+  onJump?: (attachment: ReaderAskAttachment) => void;
 }) {
-  if (anchors.length === 0) {
+  if (attachments.length === 0) {
     return null;
   }
 
   return (
     <div className="flex flex-wrap gap-2">
-      {anchors.map((anchor, index) => (
+      {attachments.map((attachment) => {
+        const attachmentKey = askAttachmentKey(attachment);
+        const clickable = Boolean(onJump && attachment.kind !== "record_ref");
+        return (
         <span
-          key={`${anchor.anchor_type}-${anchor.target_key ?? anchor.sentence_id ?? index}`}
+          key={attachmentKey}
           className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-hairline bg-surface/95 px-3 py-1.5 text-xs font-medium text-ink-soft shadow-[0_8px_24px_rgba(17,17,17,0.06)] backdrop-blur-sm"
         >
-          <span className="truncate">{formatAnchorLabel(anchor)}</span>
+          {clickable ? (
+            <button
+              type="button"
+              className="truncate text-left transition-colors hover:text-ink"
+              onClick={() => onJump?.(attachment)}
+            >
+              {askAttachmentLabel(attachment)}
+            </button>
+          ) : (
+            <span className="truncate">{askAttachmentLabel(attachment)}</span>
+          )}
           {removable ? (
             <button
               type="button"
               className="inline-flex size-4 items-center justify-center rounded-full text-muted transition-colors hover:bg-reader-paper hover:text-ink"
-              onClick={() => onRemove?.(index)}
+              onClick={() => onRemove?.(attachmentKey)}
               aria-label="移除上下文"
             >
               <X className="h-3 w-3" />
             </button>
           ) : null}
         </span>
-      ))}
+      )})}
     </div>
   );
 }
@@ -530,11 +555,11 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
 function CitationList({
   citations,
   currentRecordId,
-  onJumpToSentence,
+  onJumpToCitation,
 }: {
   citations: ReaderAskCitationDto[];
   currentRecordId: string;
-  onJumpToSentence?: (sentenceId: string) => void;
+  onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
 }) {
   if (citations.length === 0) {
     return null;
@@ -544,7 +569,8 @@ function CitationList({
     <DisclosureSection label="来源" summary={`${citations.length} 条引用`}>
       <div className="flex flex-col gap-2">
         {citations.map((citation) => {
-          const canJump = citation.record_id === currentRecordId && typeof citation.sentence_id === "string";
+          const citationView = askCitationViewFromDto(citation);
+          const canJump = citationCanJump(citation, currentRecordId);
           const sourceLabel =
             citation.source_article_title ||
             (citation.record_id === currentRecordId ? "当前文章" : "历史资产");
@@ -555,8 +581,8 @@ function CitationList({
               type="button"
               disabled={!canJump}
               onClick={() => {
-                if (canJump && citation.sentence_id) {
-                  onJumpToSentence?.(citation.sentence_id);
+                if (canJump) {
+                  onJumpToCitation?.(citation);
                 }
               }}
               className={cn(
@@ -717,25 +743,30 @@ function ThreadSwitcher({
 function MessageBubble({
   message,
   currentRecordId,
+  pageIdentity,
   pendingActionId,
   onConfirmAction,
   onRetry,
-  onJumpToSentence,
+  onJumpToAttachment,
+  onJumpToCitation,
 }: {
   message: ReaderAskMessageDto;
   currentRecordId: string;
+  pageIdentity: ReaderAskPageIdentity;
   pendingActionId: string | null;
   onConfirmAction: (actionId: string, confirmed: boolean) => void;
   onRetry: (messageId: string) => void;
-  onJumpToSentence?: (sentenceId: string) => void;
+  onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
+  onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
 }) {
   const isAssistant = message.role === "assistant";
+  const historyAttachments = message.context_anchors.map((anchor) => askAttachmentFromAnchor(anchor, pageIdentity).attachment);
 
   return (
     <div className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}>
-      {!isAssistant && message.context_anchors.length > 0 ? (
+      {!isAssistant && historyAttachments.length > 0 ? (
         <div className="flex w-full justify-end">
-          <AnchorChips anchors={message.context_anchors} />
+          <AnchorChips attachments={historyAttachments} onJump={onJumpToAttachment} />
         </div>
       ) : null}
       <ChatMessage className={cn("w-full", isAssistant ? "items-start" : "justify-end")}>
@@ -787,7 +818,7 @@ function MessageBubble({
                 <CitationList
                   citations={message.citations}
                   currentRecordId={currentRecordId}
-                  onJumpToSentence={onJumpToSentence}
+                  onJumpToCitation={onJumpToCitation}
                 />
                 {message.action_proposals.map((proposal) => (
                   <ConfirmActionCard
@@ -855,11 +886,13 @@ function starterPromptsForTask(mode: ReaderAskTaskModeDto): string[] {
 }
 
 function StarterState({
+  onAttachRecord,
   taskMode,
   recordTitle,
   activeSentence,
   onPickPrompt,
 }: {
+  onAttachRecord?: () => void;
   taskMode: ReaderAskTaskModeDto;
   recordTitle?: string | null;
   activeSentence: SentenceModel | null;
@@ -891,6 +924,15 @@ function StarterState({
                 {prompt}
               </button>
             ))}
+            {onAttachRecord ? (
+              <button
+                type="button"
+                className="focus-ring rounded-pill border border-hairline bg-surface px-3 py-2 text-left text-xs font-medium text-lens-blue transition-colors hover:border-muted hover:text-ink"
+                onClick={onAttachRecord}
+              >
+                引用整篇文章
+              </button>
+            ) : null}
           </div>
           {recordTitle ? (
             <p className="mt-3 truncate text-[11px] font-medium text-subtle">{recordTitle}</p>
@@ -903,31 +945,35 @@ function StarterState({
 
 export interface AiWorkspacePanelProps {
   open: boolean;
+  pageIdentity: ReaderAskPageIdentity;
   recordId: string;
   recordTitle?: string | null;
   activeSentence: SentenceModel | null;
-  draftAnchors: ReaderAskAnchorRefDto[];
-  readerFocus: ReaderAskReaderFocusDto | null;
+  attachments: ReaderAskAttachment[];
   hideLauncherOnMobile?: boolean;
   hideLauncherInCompactLayout?: boolean;
-  onRemoveDraftAnchor: (index: number) => void;
-  onClearDraftAnchors: () => void;
-  onJumpToSentence?: (sentenceId: string) => void;
+  onRemoveAttachment: (attachmentKey: string) => void;
+  onClearAttachments: () => void;
+  onAttachCurrentRecord?: () => void;
+  onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
+  onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
   onToggle: () => void;
 }
 
 export function AiWorkspacePanel({
+  attachments,
+  pageIdentity,
   open,
   recordId,
   recordTitle,
   activeSentence,
-  draftAnchors,
-  readerFocus,
   hideLauncherOnMobile = false,
   hideLauncherInCompactLayout = false,
-  onRemoveDraftAnchor,
-  onClearDraftAnchors,
-  onJumpToSentence,
+  onAttachCurrentRecord,
+  onClearAttachments,
+  onJumpToAttachment,
+  onJumpToCitation,
+  onRemoveAttachment,
   onToggle,
 }: AiWorkspacePanelProps) {
   const launcherVisibilityClass = hideLauncherInCompactLayout
@@ -1079,6 +1125,7 @@ export function AiWorkspacePanel({
 
   async function sendMessage(options?: {
     content?: string;
+    attachments?: ReaderAskAttachment[];
     anchors?: ReaderAskAnchorRefDto[];
     taskMode?: ReaderAskTaskModeDto;
     clearComposer?: boolean;
@@ -1097,7 +1144,8 @@ export function AiWorkspacePanel({
     }
 
     const mode = options?.taskMode ?? taskMode;
-    const usedAnchors = [...(options?.anchors ?? draftAnchors)];
+    const usedAttachments = [...(options?.attachments ?? attachments)];
+    const usedAnchors = options?.anchors ? [...options.anchors] : askAnchorsFromAttachments(usedAttachments);
     const now = Date.now();
     const tempUserId = `local-user-${now}`;
     const tempAssistantId = `local-assistant-${now}`;
@@ -1138,9 +1186,6 @@ export function AiWorkspacePanel({
 
     if (options?.clearComposer !== false) {
       setComposer("");
-      if (!options?.anchors) {
-        onClearDraftAnchors();
-      }
     }
     setSending(true);
     setErrorMessage(null);
@@ -1161,7 +1206,7 @@ export function AiWorkspacePanel({
           content,
           task_mode: mode,
           anchors: usedAnchors,
-          reader_focus: readerFocus,
+          reader_focus: null,
         }),
       });
 
@@ -1336,6 +1381,7 @@ export function AiWorkspacePanel({
             <ChatContainerContent className="gap-5 pr-1">
               {messages.length === 0 ? (
                 <StarterState
+                  onAttachRecord={onAttachCurrentRecord}
                   taskMode={taskMode}
                   recordTitle={recordTitle}
                   activeSentence={activeSentence}
@@ -1352,10 +1398,12 @@ export function AiWorkspacePanel({
                   key={message.id}
                   message={message}
                   currentRecordId={recordId}
+                  pageIdentity={pageIdentity}
                   pendingActionId={pendingActionId}
                   onConfirmAction={handleConfirmAction}
                   onRetry={handleRetry}
-                  onJumpToSentence={onJumpToSentence}
+                  onJumpToAttachment={onJumpToAttachment}
+                  onJumpToCitation={onJumpToCitation}
                 />
               ))}
               <ChatContainerScrollAnchor />
@@ -1407,21 +1455,24 @@ export function AiWorkspacePanel({
             </div>
           </Collapsible>
 
-          {draftAnchors.length > 0 ? (
+          {attachments.length > 0 ? (
             <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="text-[11px] font-semibold text-muted">附加上下文</p>
                 <button
                   type="button"
                   className="focus-ring text-[11px] font-semibold text-muted transition-colors hover:text-ink"
-                  onClick={onClearDraftAnchors}
+                  onClick={onClearAttachments}
                 >
                   清空
                 </button>
               </div>
-              <AnchorChips anchors={draftAnchors} removable onRemove={onRemoveDraftAnchor} />
+              <AnchorChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
             </div>
           ) : null}
+          <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-dashed border-hairline/80 bg-reader-paper/55 px-3 py-2.5 text-[11px] text-subtle">
+            补充候选将在这里出现。
+          </div>
 
           <PromptInputTextarea placeholder={taskModePlaceholder(taskMode)} />
           <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline/80 pt-3">

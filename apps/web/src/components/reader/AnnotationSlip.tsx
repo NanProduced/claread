@@ -3,9 +3,21 @@ import type { WebAnnotationVm } from "@/types/api/annotations";
 
 export interface AnnotationSlipProps {
   annotations: WebAnnotationVm[];
+  visible?: boolean;
+  onAnnotationJump?: (annotation: WebAnnotationVm) => void;
+  onAnnotationAsk?: (annotation: WebAnnotationVm) => void;
 }
 
-export function AnnotationSlip({ annotations }: AnnotationSlipProps) {
+export function AnnotationSlip({
+  annotations,
+  visible = true,
+  onAnnotationAsk,
+  onAnnotationJump,
+}: AnnotationSlipProps) {
+  if (!visible) {
+    return null;
+  }
+
   const noteAnnotations = annotations.filter((item) => item.note);
 
   if (noteAnnotations.length === 0) {
@@ -15,9 +27,14 @@ export function AnnotationSlip({ annotations }: AnnotationSlipProps) {
   return (
     <div className="reader-annotation-slip-list mt-4 space-y-3">
       {noteAnnotations.map((item) => (
-        <div
+        <button
+          type="button"
           key={item.id}
-          className="reader-annotation-slip relative overflow-hidden rounded-xl bg-surface-warm px-4 py-3 text-[0.9375rem] leading-[1.65] text-ink-soft shadow-surface-quiet border border-hairline/80"
+          className="reader-annotation-slip relative block w-full overflow-hidden rounded-xl bg-surface-warm px-4 py-3 text-left text-[0.9375rem] leading-[1.65] text-ink-soft shadow-surface-quiet border border-hairline/80"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAnnotationJump?.(item);
+          }}
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-2.5 flex-1">
@@ -41,12 +58,24 @@ export function AnnotationSlip({ annotations }: AnnotationSlipProps) {
               </div>
             </div>
             <div className="flex items-center gap-3 shrink-0 pt-0.5">
+              {onAnnotationAsk ? (
+                <button
+                  type="button"
+                  className="focus-ring rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[0.7rem] font-semibold text-lens-blue transition-colors hover:border-muted hover:text-ink"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAnnotationAsk(item);
+                  }}
+                >
+                  带入 Ask
+                </button>
+              ) : null}
               <span className="reader-annotation-slip-time text-xs text-muted">
                 {new Date(item.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
               </span>
             </div>
           </div>
-        </div>
+        </button>
       ))}
     </div>
   );
