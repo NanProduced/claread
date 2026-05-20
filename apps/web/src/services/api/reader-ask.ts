@@ -52,6 +52,29 @@ export function getUpstreamReaderAskThread(
   });
 }
 
+export function resetUpstreamReaderAskThread(
+  threadId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderAskThreadDetailDto>> {
+  return fastApiFetch<ReaderAskThreadDetailDto>(`/reader-ask/threads/${threadId}/reset`, {
+    method: "POST",
+    sessionToken,
+  });
+}
+
+export function deleteUpstreamReaderAskSupplement(
+  supplementId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<{ deleted: boolean; supplement_id: string; record_id: string }>> {
+  return fastApiFetch<{ deleted: boolean; supplement_id: string; record_id: string }>(
+    `/reader-ask/supplements/${supplementId}`,
+    {
+      method: "DELETE",
+      sessionToken,
+    },
+  );
+}
+
 export function confirmUpstreamReaderAskAction(
   threadId: string,
   actionId: string,
@@ -81,6 +104,21 @@ export async function createUpstreamReaderAskStream(
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
+    cache: "no-store",
+  });
+}
+
+export async function retryUpstreamReaderAskMessage(
+  threadId: string,
+  messageId: string,
+  sessionToken: string,
+): Promise<Response> {
+  return fetch(`${getBaseUrl()}/reader-ask/threads/${threadId}/messages/${messageId}/retry/stream`, {
+    method: "POST",
+    headers: {
+      accept: "text/event-stream",
+      authorization: `Bearer ${sessionToken}`,
+    },
     cache: "no-store",
   });
 }

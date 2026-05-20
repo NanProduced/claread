@@ -23,13 +23,18 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "role": row["role"],
         "status": row["status"],
         "content_md": row["content_md"] or "",
-        "task_mode": metadata.get("task_mode"),
+        "resolved_intent": metadata.get("resolved_intent"),
         "context_anchors": row["context_anchors_json"] or [],
         "citations": row["citations_json"] or [],
         "action_proposals": row["action_proposals_json"] or [],
         "tool_trace": row["tool_trace_json"] or [],
         "response_cards": metadata.get("response_cards") or [],
         "resolved_context": metadata.get("resolved_context"),
+        "context_plan": metadata.get("context_plan"),
+        "resolved_context_input": metadata.get("resolved_context_input"),
+        "run_info": metadata.get("run_info"),
+        "run_history": metadata.get("run_history") or [],
+        "supplement_candidates": metadata.get("supplement_candidates") or [],
         "usage_event_id": str(row["usage_event_id"]) if row.get("usage_event_id") else None,
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),
@@ -169,6 +174,27 @@ async def create_new_chat_thread(
     return _thread_row_to_dict(row)
 
 
+async def archive_thread(user_id: UUID, thread_id: UUID) -> dict[str, Any] | None:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    now = datetime.now(UTC)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE reader_ask_threads
+            SET archived_at = $3, updated_at = $3
+            WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
+            RETURNING id, record_id, title, is_default, archived_at, created_at, updated_at, last_message_at
+            """,
+            thread_id,
+            user_id,
+            now,
+        )
+    return _thread_row_to_dict(row) if row else None
+
+
 async def list_messages(thread_id: UUID, *, limit: int | None = 50) -> list[dict[str, Any]]:
     pool = db_connection.DB_POOL
     if pool is None:
@@ -202,6 +228,25 @@ async def list_messages(thread_id: UUID, *, limit: int | None = 50) -> list[dict
                 limit,
             )
     return [_message_row_to_dict(row) for row in rows]
+
+
+async def get_message(message_id: UUID) -> dict[str, Any] | None:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, thread_id, role, status, content_md,
+                   context_anchors_json, citations_json, action_proposals_json, tool_trace_json, metadata_json,
+                   usage_event_id, created_at, updated_at
+            FROM reader_ask_messages
+            WHERE id = $1
+            """,
+            message_id,
+        )
+    return _message_row_to_dict(row) if row else None
 
 
 async def create_message(
@@ -277,33 +322,48 @@ async def update_message(
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
+    now = datetime.now(UTC)
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            UPDATE reader_ask_messages
-            SET status = $2,
-                content_md = $3,
-                context_anchors_json = $4::jsonb,
-                citations_json = $5::jsonb,
-                action_proposals_json = $6::jsonb,
-                tool_trace_json = $7::jsonb,
-                metadata_json = $8::jsonb,
-                usage_event_id = $9
-            WHERE id = $1
-            RETURNING id, thread_id, role, status, content_md,
-                      context_anchors_json, citations_json, action_proposals_json, tool_trace_json, metadata_json,
-                      usage_event_id, created_at, updated_at
-            """,
-            message_id,
-            status,
-            content_md,
-            context_anchors or [],
-            citations or [],
-            action_proposals or [],
-            tool_trace or [],
-            metadata or {},
-            usage_event_id,
-        )
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE reader_ask_messages
+                SET status = $2,
+                    content_md = $3,
+                    context_anchors_json = $4::jsonb,
+                    citations_json = $5::jsonb,
+                    action_proposals_json = $6::jsonb,
+                    tool_trace_json = $7::jsonb,
+                    metadata_json = $8::jsonb,
+                    usage_event_id = $9,
+                    updated_at = $10
+                WHERE id = $1
+                RETURNING id, thread_id, role, status, content_md,
+                          context_anchors_json, citations_json, action_proposals_json, tool_trace_json, metadata_json,
+                          usage_event_id, created_at, updated_at
+                """,
+                message_id,
+                status,
+                content_md,
+                context_anchors or [],
+                citations or [],
+                action_proposals or [],
+                tool_trace or [],
+                metadata or {},
+                usage_event_id,
+                now,
+            )
+            if row is not None:
+                await conn.execute(
+                    """
+                    UPDATE reader_ask_threads
+                    SET updated_at = $2,
+                        last_message_at = GREATEST(COALESCE(last_message_at, $2), $2)
+                    WHERE id = $1
+                    """,
+                    row["thread_id"],
+                    now,
+                )
     if row is None:
         raise HTTPException(status_code=404, detail="Reader ask message not found")
     return _message_row_to_dict(row)

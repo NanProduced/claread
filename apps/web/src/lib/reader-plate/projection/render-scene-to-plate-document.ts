@@ -359,6 +359,10 @@ function createAnalysisBlockNode(
     label: entry.label,
     title: entry.title,
     content: entry.content,
+    sourceKind: entry.sourceKind,
+    supplementId: entry.supplementId,
+    deletable: entry.deletable,
+    createdFromTurnRunId: entry.createdFromTurnRunId,
     children: [createTextLeaf(entry.content)],
   };
 }

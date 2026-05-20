@@ -5,7 +5,6 @@ import {
   ChevronDown,
   LoaderCircle,
   MessageSquare,
-  Plus,
   RotateCcw,
   Send,
   Sparkles,
@@ -35,9 +34,7 @@ import { Tool, type ToolPart } from "@/components/ui/tool";
 import { IconButton } from "@/components/primitives/icon-button";
 import { cn } from "@/lib/cn";
 import {
-  askAnchorsFromAttachments,
   askAttachmentFromAnchor,
-  askAttachmentFromRecord,
   askAttachmentKey,
   askAttachmentLabel,
   askCitationViewFromDto,
@@ -48,14 +45,18 @@ import {
 import type {
   ReaderAskActionProposalDto,
   ReaderAskActionStatusDto,
-  ReaderAskAnchorRefDto,
+  ReaderAskAttachmentDto,
+  ReaderAskEntryActionDto,
   ReaderAskCitationDto,
   ReaderAskCompletedPayloadDto,
   ReaderAskMessageDto,
+  ReaderAskMessageStreamRequestDto,
+  ReaderAskPageIdentityDto,
   ReaderAskResolvedContextSummaryDto,
   ReaderAskResponseCardDto,
+  ReaderAskResolvedIntentDto,
+  ReaderAskSupplementCandidateDto,
   ReaderAskStreamEnvelopeDto,
-  ReaderAskTaskModeDto,
   ReaderAskThreadDetailDto,
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
@@ -71,55 +72,99 @@ type ErrorEnvelope = {
 };
 
 const IS_DEV = process.env.NODE_ENV !== "production";
-const TASK_PRESETS: Array<{ mode: ReaderAskTaskModeDto; label: string; description: string }> = [
-  { mode: "explain", label: "讲解", description: "解释这句或这段在文中的意思" },
-  { mode: "breakdown", label: "拆句", description: "拆主干、修饰和阅读顺序" },
-  { mode: "vocabulary", label: "词义", description: "解释词义和为什么这里这么用" },
-  { mode: "grammar", label: "语法", description: "解释当前句里的语法作用" },
-  { mode: "practice", label: "练习", description: "围绕当前句生成一题小练习" },
+const COMPOSER_PLACEHOLDER = "继续围绕当前文章、句子、译文或解析对象提问。";
+const STARTER_PROMPTS = [
+  "解释这句在这里的意思。",
+  "为什么作者这里这样写？",
+  "这段和前面的内容是什么关系？",
+  "围绕这一句出一道小练习。",
 ];
 
-function taskModeLabel(mode: ReaderAskTaskModeDto | null | undefined) {
-  return TASK_PRESETS.find((item) => item.mode === mode)?.label ?? "讲解";
+function serializePageIdentity(pageIdentity: ReaderAskPageIdentity): ReaderAskPageIdentityDto {
+  return {
+    record_id: pageIdentity.recordId,
+    title: pageIdentity.recordTitle ?? null,
+    surface: pageIdentity.surface,
+    source: pageIdentity.source,
+    available_context_capabilities: [
+      "record_context",
+      "record_insights",
+      "record_excerpt_assets",
+      "history_lookup",
+      "dictionary",
+    ],
+    has_article_overview: true,
+    has_sentence_entries: true,
+    has_annotations: true,
+    has_user_assets: true,
+  };
 }
 
-function taskModeDescription(mode: ReaderAskTaskModeDto | null | undefined) {
-  return TASK_PRESETS.find((item) => item.mode === mode)?.description ?? TASK_PRESETS[0].description;
+function serializeAttachment(attachment: ReaderAskAttachment): ReaderAskAttachmentDto {
+  return {
+    kind: attachment.kind,
+    subtype: attachment.subtype,
+    label: attachment.label,
+    selected_text: attachment.selectedText ?? null,
+    target_key: attachment.targetKey ?? null,
+    anchor_payload: attachment.anchorPayload
+      ? {
+          anchor_type: attachment.anchorPayload.anchorType,
+          target_key: attachment.anchorPayload.targetKey,
+          record_id: attachment.anchorPayload.recordId,
+          paragraph_id: attachment.anchorPayload.paragraphId ?? null,
+          sentence_id: attachment.anchorPayload.sentenceId ?? null,
+          selected_text: attachment.anchorPayload.selectedText,
+          start_offset: attachment.anchorPayload.startOffset ?? null,
+          end_offset: attachment.anchorPayload.endOffset ?? null,
+          text_hash: attachment.anchorPayload.textHash ?? null,
+          segments:
+            attachment.anchorPayload.segments?.map((segment) => ({
+              paragraph_id: segment.paragraphId ?? null,
+              sentence_id: segment.sentenceId,
+              selected_text: segment.selectedText ?? "",
+              start_offset: segment.startOffset,
+              end_offset: segment.endOffset,
+              text_hash: segment.textHash ?? "",
+            })) ?? [],
+        }
+      : null,
+    metadata: {
+      source_surface: attachment.metadata.sourceSurface,
+      entry_action: attachment.metadata.entryAction ?? null,
+      sentence_id: attachment.metadata.sentenceId ?? null,
+      paragraph_id: attachment.metadata.paragraphId ?? null,
+      entry_id: attachment.metadata.entryId ?? null,
+      entry_type: attachment.metadata.entryType ?? null,
+      asset_id: attachment.metadata.assetId ?? null,
+      annotation_type: attachment.metadata.annotationType ?? null,
+      start_offset: attachment.metadata.startOffset ?? null,
+      end_offset: attachment.metadata.endOffset ?? null,
+      translation_zh: attachment.metadata.translationZh ?? null,
+      note: attachment.metadata.note ?? null,
+      title: attachment.metadata.title ?? null,
+      query: attachment.metadata.query ?? null,
+      lookup_text: attachment.metadata.lookupText ?? null,
+      visual_tone: attachment.metadata.visualTone ?? null,
+    },
+  };
 }
 
-function taskModePlaceholder(mode: ReaderAskTaskModeDto) {
-  switch (mode) {
-    case "breakdown":
-      return "让我拆一下这句话的主干、修饰和阅读顺序。";
-    case "vocabulary":
-      return "问词义、短语义，或为什么这里是这个意思。";
-    case "grammar":
-      return "问这句里的语法作用、结构关系或为什么这样写。";
-    case "practice":
-      return "围绕当前句出一道练习，或继续追问练习思路。";
-    default:
-      return "继续问这句什么意思、为什么这样写，或结合本文上下文追问。";
-  }
+function defaultEntryAction(attachments: ReaderAskAttachment[]): ReaderAskEntryActionDto {
+  const fromAttachment = attachments.at(-1)?.metadata.entryAction;
+  return fromAttachment ?? "ask_about_this";
 }
 
-function formatAnchorLabel(anchor: ReaderAskAnchorRefDto) {
-  return (
-    anchor.label ||
-    anchor.selected_text ||
-    anchor.query ||
-    anchor.entry_type ||
-    anchor.anchor_type
-  );
-}
-
-function formatThreadLabel(thread: ReaderAskThreadSummaryDto, index: number) {
-  if (thread.is_default) {
-    return "继续对话";
-  }
-  if (!thread.title || thread.title === "New chat" || thread.title === "新对话" || thread.title === "Ask Claread") {
-    return `会话 ${index + 1}`;
-  }
-  return thread.title;
+function toThreadSummary(detail: ReaderAskThreadDetailDto): ReaderAskThreadSummaryDto {
+  return {
+    id: detail.id,
+    record_id: detail.record_id,
+    title: detail.title,
+    is_default: detail.is_default,
+    created_at: detail.created_at,
+    updated_at: detail.updated_at,
+    last_message_at: detail.last_message_at,
+  };
 }
 
 function formatStreamError(event: ReaderAskStreamEnvelopeDto) {
@@ -344,38 +389,6 @@ function AttachmentChips({
   );
 }
 
-function TaskPresetStrip({
-  activeMode,
-  onSelect,
-}: {
-  activeMode: ReaderAskTaskModeDto;
-  onSelect: (mode: ReaderAskTaskModeDto) => void;
-}) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {TASK_PRESETS.map((preset) => {
-        const active = preset.mode === activeMode;
-        return (
-          <button
-            key={preset.mode}
-            type="button"
-            className={cn(
-              "focus-ring rounded-[var(--cl-radius-control-md)] border px-3 py-2.5 text-left transition-colors",
-              active
-                ? "border-lens-blue/30 bg-lens-blue-soft text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]"
-                : "border-hairline bg-surface/92 text-muted hover:border-muted hover:bg-reader-paper hover:text-ink",
-            )}
-            onClick={() => onSelect(preset.mode)}
-          >
-            <span className="block text-xs font-semibold text-ink">{preset.label}</span>
-            <span className="mt-1 block text-[11px] leading-5 text-muted">{preset.description}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function contextSummaryChips(summary?: ReaderAskResolvedContextSummaryDto | null) {
   if (!summary) {
     return [];
@@ -397,6 +410,40 @@ function contextSummaryChips(summary?: ReaderAskResolvedContextSummaryDto | null
     chips.push("词典");
   }
   return chips.length > 0 ? chips : ["当前文章"];
+}
+
+function SupplementCandidateTray({
+  candidates,
+}: {
+  candidates: ReaderAskSupplementCandidateDto[];
+}) {
+  if (candidates.length === 0) {
+    return (
+      <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-dashed border-hairline/80 bg-reader-paper/55 px-3 py-2.5 text-[11px] text-subtle">
+        补充候选将在这里出现。
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold text-muted">补充候选</p>
+        <span className="text-[11px] text-subtle">确认后固定到当前页</span>
+      </div>
+      <div className="space-y-2">
+        {candidates.map((candidate) => (
+          <div
+            key={candidate.candidate_id}
+            className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5"
+          >
+            <p className="text-xs font-semibold text-ink">{candidate.title}</p>
+            <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-muted">{candidate.content}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function DisclosureSection({
@@ -668,78 +715,6 @@ function ConfirmActionCard({
   );
 }
 
-function ThreadSwitcher({
-  threads,
-  activeThreadId,
-  open,
-  onToggle,
-  onSelect,
-  onCreate,
-  busy = false,
-}: {
-  threads: ReaderAskThreadSummaryDto[];
-  activeThreadId: string | null;
-  open: boolean;
-  onToggle: () => void;
-  onSelect: (threadId: string) => void;
-  onCreate: () => void;
-  busy?: boolean;
-}) {
-  const activeIndex = threads.findIndex((thread) => thread.id === activeThreadId);
-  const activeThread = activeIndex >= 0 ? threads[activeIndex] : threads[0] ?? null;
-
-  return (
-    <div className="relative">
-      <Button
-        type="button"
-        variant="quiet"
-        size="sm"
-        density="compact"
-        className="h-9 rounded-[var(--cl-radius-control-md)] px-3 text-xs text-ink-soft"
-        onClick={onToggle}
-      >
-        <span className="max-w-28 truncate">
-          {activeThread ? formatThreadLabel(activeThread, activeIndex >= 0 ? activeIndex : 0) : "当前对话"}
-        </span>
-        <ChevronDown className="h-3.5 w-3.5" />
-      </Button>
-      {open ? (
-        <div className="absolute right-0 top-11 z-10 min-w-56 rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,247,239,0.98))] p-1.5 shadow-[0_18px_40px_rgba(17,17,17,0.12)]">
-          <button
-            type="button"
-            className="focus-ring flex w-full items-center justify-between rounded-[var(--cl-radius-control-md)] px-3 py-2.5 text-left text-xs transition-colors hover:bg-reader-paper"
-            onClick={onCreate}
-            disabled={busy}
-          >
-            <span className="inline-flex items-center gap-2 font-semibold text-ink">
-              <Plus className="h-3.5 w-3.5 text-lens-blue" />
-              新对话
-            </span>
-            <span className="text-[11px] text-subtle">重新开始</span>
-          </button>
-          {threads.length > 0 ? <div className="my-1 border-t border-hairline/80" /> : null}
-          {threads.map((thread, index) => (
-            <button
-              key={thread.id}
-              type="button"
-              className={cn(
-                "flex w-full items-center justify-between rounded-[var(--cl-radius-control-md)] px-3 py-2.5 text-left text-xs transition-colors hover:bg-reader-paper",
-                thread.id === activeThreadId && "bg-reader-paper text-ink",
-              )}
-              onClick={() => onSelect(thread.id)}
-            >
-              <span className="truncate">{formatThreadLabel(thread, index)}</span>
-              {thread.id === activeThreadId ? (
-                <span className="text-[11px] font-semibold text-lens-blue">继续</span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function MessageBubble({
   message,
   currentRecordId,
@@ -779,9 +754,6 @@ function MessageBubble({
             </Avatar>
             <div className="min-w-0 max-w-[calc(100%-3rem)] flex-1">
               <div className="mb-2 flex items-center gap-2">
-                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[11px] font-semibold text-muted">
-                  {taskModeLabel(message.task_mode)}
-                </span>
                 {message.status === "streaming" ? (
                   <span className="inline-flex items-center gap-1 text-[11px] text-subtle">
                     <LoaderCircle className="h-3 w-3 animate-spin" />
@@ -835,11 +807,6 @@ function MessageBubble({
           </>
         ) : (
           <div className="max-w-[85%]">
-            <div className="mb-2 flex justify-end">
-              <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[11px] font-semibold text-muted">
-                {taskModeLabel(message.task_mode)}
-              </span>
-            </div>
             <MessageContent className="rounded-[var(--cl-radius-surface-sm)] border-[rgba(30,31,37,0.82)] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(21,22,28,0.98))] px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_12px_28px_rgba(17,17,17,0.12)]">
               {message.content_md}
             </MessageContent>
@@ -850,56 +817,17 @@ function MessageBubble({
   );
 }
 
-function starterPromptsForTask(mode: ReaderAskTaskModeDto): string[] {
-  switch (mode) {
-    case "breakdown":
-      return [
-        "帮我拆这句的主干和修饰关系。",
-        "按阅读顺序解释这句话。",
-        "指出这句里最容易读错的部分。",
-      ];
-    case "vocabulary":
-      return [
-        "解释这里这个词为什么是这个意思。",
-        "这个短语在本文里是什么语气？",
-        "给我讲讲这句话里最关键的词义差别。",
-      ];
-    case "grammar":
-      return [
-        "解释这句里的语法作用。",
-        "这几个从句之间是什么关系？",
-        "为什么这里要这样写而不是更简单的说法？",
-      ];
-    case "practice":
-      return [
-        "围绕当前句出一道小练习。",
-        "出一道改写题，检验我是否真的读懂了。",
-        "给我一个基于这段的小问题，并提示关注点。",
-      ];
-    default:
-      return [
-        "这句在当前段里是什么意思？",
-        "结合上下文解释作者这里为什么这样写。",
-        "帮我抓出这段最值得继续追问的地方。",
-      ];
-  }
-}
-
 function StarterState({
   onAttachRecord,
-  taskMode,
   recordTitle,
   activeSentence,
   onPickPrompt,
 }: {
   onAttachRecord?: () => void;
-  taskMode: ReaderAskTaskModeDto;
   recordTitle?: string | null;
   activeSentence: SentenceModel | null;
   onPickPrompt: (prompt: string) => void;
 }) {
-  const prompts = starterPromptsForTask(taskMode);
-
   return (
     <div className="rounded-[var(--cl-radius-surface-md)] border border-dashed border-hairline bg-reader-paper/65 px-4 py-4">
       <div className="flex items-start gap-3">
@@ -914,7 +842,7 @@ function StarterState({
               : "从当前文章、选区或已附加的上下文开始提问。Ask Claread 会先像英语老师一样解释本文，再按需扩展。"}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {prompts.map((prompt) => (
+            {STARTER_PROMPTS.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
@@ -957,6 +885,7 @@ export interface AiWorkspacePanelProps {
   onAttachCurrentRecord?: () => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
+  onActionExecuted?: (result: Record<string, unknown>) => void;
   onToggle: () => void;
 }
 
@@ -973,6 +902,7 @@ export function AiWorkspacePanel({
   onClearAttachments,
   onJumpToAttachment,
   onJumpToCitation,
+  onActionExecuted,
   onRemoveAttachment,
   onToggle,
 }: AiWorkspacePanelProps) {
@@ -986,14 +916,15 @@ export function AiWorkspacePanel({
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ReaderAskMessageDto[]>([]);
   const [composer, setComposer] = useState("");
-  const [taskMode, setTaskMode] = useState<ReaderAskTaskModeDto>("explain");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [threadMenuOpen, setThreadMenuOpen] = useState(false);
-  const [modePickerOpen, setModePickerOpen] = useState(false);
   const hydrationRef = useRef(0);
+  const latestSupplementCandidates = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && (message.supplement_candidates?.length ?? 0) > 0)
+    ?.supplement_candidates ?? [];
 
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
@@ -1075,16 +1006,28 @@ export function AiWorkspacePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, recordId]);
 
-  async function handleNewChat() {
+  async function handleResetConversation() {
+    if (!activeThreadId || sending) {
+      return;
+    }
     setErrorMessage(null);
     setLoading(true);
     try {
-      const createdThread = await createThread("new_chat", "新对话");
-      const nextThreads = [createdThread, ...threads];
-      await loadThread(createdThread.id, nextThreads);
-      setThreadMenuOpen(false);
+      const detail = await fetchJson<ReaderAskThreadDetailDto>(
+        `/api/web/reader-ask/threads/${activeThreadId}/reset`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        },
+        "重置会话失败。",
+      );
+      setActiveThreadId(detail.id);
+      setMessages(detail.messages);
+      setThreads([toThreadSummary(detail)]);
+      setComposer("");
+      onClearAttachments();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "新对话创建失败。");
+      setErrorMessage(error instanceof Error ? error.message : "重置会话失败。");
     } finally {
       setLoading(false);
     }
@@ -1097,7 +1040,7 @@ export function AiWorkspacePanel({
     setPendingActionId(actionId);
     setErrorMessage(null);
     try {
-      const payload = await fetchJson<{ status?: ReaderAskActionStatusDto }>(
+      const payload = await fetchJson<{ status?: ReaderAskActionStatusDto; result?: Record<string, unknown> }>(
         `/api/web/reader-ask/threads/${activeThreadId}/actions/${actionId}/confirm`,
         {
           method: "POST",
@@ -1116,6 +1059,9 @@ export function AiWorkspacePanel({
           ),
         })),
       );
+      if (confirmed && payload.result) {
+        onActionExecuted?.(payload.result);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "动作确认失败。");
     } finally {
@@ -1126,8 +1072,7 @@ export function AiWorkspacePanel({
   async function sendMessage(options?: {
     content?: string;
     attachments?: ReaderAskAttachment[];
-    anchors?: ReaderAskAnchorRefDto[];
-    taskMode?: ReaderAskTaskModeDto;
+    entryAction?: ReaderAskEntryActionDto;
     clearComposer?: boolean;
   }) {
     const content = (options?.content ?? composer).trim();
@@ -1143,9 +1088,8 @@ export function AiWorkspacePanel({
       return;
     }
 
-    const mode = options?.taskMode ?? taskMode;
     const usedAttachments = [...(options?.attachments ?? attachments)];
-    const usedAnchors = options?.anchors ? [...options.anchors] : askAnchorsFromAttachments(usedAttachments);
+    const entryAction = options?.entryAction ?? defaultEntryAction(usedAttachments);
     const now = Date.now();
     const tempUserId = `local-user-${now}`;
     const tempAssistantId = `local-assistant-${now}`;
@@ -1155,13 +1099,17 @@ export function AiWorkspacePanel({
       role: "user",
       status: "completed",
       content_md: content,
-      task_mode: mode,
-      context_anchors: usedAnchors,
+      context_anchors: [],
       citations: [],
       action_proposals: [],
       tool_trace: [],
       response_cards: [],
       resolved_context: null,
+      resolved_intent: null,
+      context_plan: null,
+      resolved_context_input: null,
+      run_info: null,
+      supplement_candidates: [],
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1172,13 +1120,17 @@ export function AiWorkspacePanel({
       role: "assistant",
       status: "streaming",
       content_md: "",
-      task_mode: mode,
       context_anchors: [],
       citations: [],
       action_proposals: [],
       tool_trace: [],
       response_cards: [],
       resolved_context: null,
+      resolved_intent: null,
+      context_plan: null,
+      resolved_context_input: null,
+      run_info: null,
+      supplement_candidates: [],
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1199,15 +1151,16 @@ export function AiWorkspacePanel({
     );
 
     try {
+      const requestBody: ReaderAskMessageStreamRequestDto = {
+        content,
+        page_identity: serializePageIdentity(pageIdentity),
+        attachments: usedAttachments.map(serializeAttachment),
+        entry_action: entryAction,
+      };
       const response = await fetch(`/api/web/reader-ask/threads/${threadId}/messages/stream`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          content,
-          task_mode: mode,
-          anchors: usedAnchors,
-          reader_focus: null,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       await consumeReaderAskSse(response, (event) => {
@@ -1253,12 +1206,16 @@ export function AiWorkspacePanel({
                     thread_id: payload.thread_id,
                     status: "completed",
                     content_md: payload.content_md,
-                    task_mode: payload.task_mode,
+                    resolved_intent: payload.resolved_intent ?? null,
                     citations: payload.citations,
                     action_proposals: payload.action_proposals,
                     tool_trace: payload.tool_trace,
                     response_cards: payload.response_cards,
                     resolved_context: payload.resolved_context,
+                    context_plan: payload.context_plan ?? null,
+                    resolved_context_input: payload.resolved_context_input ?? null,
+                    run_info: payload.run_info ?? null,
+                    supplement_candidates: payload.supplement_candidates ?? [],
                   }
                 : message,
             ),
@@ -1292,22 +1249,111 @@ export function AiWorkspacePanel({
   }
 
   async function handleRetry(messageId: string) {
-    const assistantIndex = messages.findIndex((message) => message.id === messageId && message.role === "assistant");
-    if (assistantIndex <= 0) {
+    if (!activeThreadId || sending) {
       return;
     }
-    for (let index = assistantIndex - 1; index >= 0; index -= 1) {
-      const candidate = messages[index];
-      if (candidate.role !== "user") {
-        continue;
-      }
-      await sendMessage({
-        content: candidate.content_md,
-        anchors: candidate.context_anchors,
-        taskMode: candidate.task_mode ?? "explain",
-        clearComposer: false,
+    setSending(true);
+    setErrorMessage(null);
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              status: "streaming",
+              content_md: "",
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              supplement_candidates: [],
+            }
+          : message,
+      ),
+    );
+
+    try {
+      const response = await fetch(
+        `/api/web/reader-ask/threads/${activeThreadId}/messages/${messageId}/retry/stream`,
+        {
+          method: "POST",
+        },
+      );
+
+      await consumeReaderAskSse(response, (event) => {
+        if (event.event === "message.delta") {
+          const delta = String((event.data as { delta?: unknown }).delta ?? "");
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === messageId
+                ? { ...message, content_md: `${message.content_md}${delta}` }
+                : message,
+            ),
+          );
+          return;
+        }
+
+        if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === messageId
+                ? { ...message, tool_trace: syncToolTrace(message.tool_trace, event) }
+                : message,
+            ),
+          );
+          return;
+        }
+
+        if (event.event === "message.completed") {
+          const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === messageId
+                ? {
+                    ...message,
+                    status: "completed",
+                    content_md: payload.content_md,
+                    resolved_intent: payload.resolved_intent ?? null,
+                    citations: payload.citations,
+                    action_proposals: payload.action_proposals,
+                    tool_trace: payload.tool_trace,
+                    response_cards: payload.response_cards,
+                    resolved_context: payload.resolved_context,
+                    context_plan: payload.context_plan ?? null,
+                    resolved_context_input: payload.resolved_context_input ?? null,
+                    run_info: payload.run_info ?? null,
+                    supplement_candidates: payload.supplement_candidates ?? [],
+                  }
+                : message,
+            ),
+          );
+          return;
+        }
+
+        if (event.event === "error") {
+          setErrorMessage(formatStreamError(event));
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === messageId
+                ? { ...message, status: "failed" }
+                : message,
+            ),
+          );
+        }
       });
-      return;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Ask Claread 暂时不可用。");
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? { ...message, status: "failed" }
+            : message,
+        ),
+      );
+    } finally {
+      setSending(false);
     }
   }
 
@@ -1341,29 +1387,20 @@ export function AiWorkspacePanel({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <ThreadSwitcher
-              threads={threads}
-              activeThreadId={activeThreadId}
-              open={threadMenuOpen}
-              onToggle={() => setThreadMenuOpen((value) => !value)}
-              onCreate={() => {
-                setThreadMenuOpen(false);
-                void handleNewChat();
+            <Button
+              type="button"
+              variant="quiet"
+              size="sm"
+              density="compact"
+              className="h-9 rounded-[var(--cl-radius-control-md)] px-3 text-xs text-ink-soft"
+              onClick={() => {
+                void handleResetConversation();
               }}
-              busy={loading}
-              onSelect={(threadId) => {
-                setThreadMenuOpen(false);
-                setLoading(true);
-                setErrorMessage(null);
-                void loadThread(threadId)
-                  .catch((error) => {
-                    setErrorMessage(error instanceof Error ? error.message : "Ask Claread 加载失败。");
-                  })
-                  .finally(() => {
-                    setLoading(false);
-                  });
-              }}
-            />
+              disabled={loading || sending || !activeThreadId}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>重新开始</span>
+            </Button>
             <IconButton variant="quiet" size="sm" onClick={onToggle} aria-label="收起 AI 工作区">
               <X aria-hidden="true" className="h-4 w-4" />
             </IconButton>
@@ -1382,13 +1419,11 @@ export function AiWorkspacePanel({
               {messages.length === 0 ? (
                 <StarterState
                   onAttachRecord={onAttachCurrentRecord}
-                  taskMode={taskMode}
                   recordTitle={recordTitle}
                   activeSentence={activeSentence}
                   onPickPrompt={(prompt) => {
                     void sendMessage({
                       content: prompt,
-                      taskMode,
                     });
                   }}
                 />
@@ -1427,34 +1462,6 @@ export function AiWorkspacePanel({
           maxHeight={220}
           className="border-hairline bg-surface px-4 py-3"
         >
-          <Collapsible open={modePickerOpen} onOpenChange={setModePickerOpen}>
-            <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline/80 bg-reader-paper/70">
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  className="focus-ring flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
-                >
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold text-muted">当前讲解方式</p>
-                    <p className="mt-1 text-xs leading-5 text-ink">
-                      {taskModeLabel(taskMode)}
-                      <span className="ml-2 text-subtle">{taskModeDescription(taskMode)}</span>
-                    </p>
-                  </div>
-                  <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted transition-transform", modePickerOpen && "rotate-180")} />
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
-                <div className="border-t border-hairline/80 px-3 py-3">
-                  <TaskPresetStrip activeMode={taskMode} onSelect={(mode) => {
-                    setTaskMode(mode);
-                    setModePickerOpen(false);
-                  }} />
-                </div>
-              </CollapsibleContent>
-            </div>
-          </Collapsible>
-
           {attachments.length > 0 ? (
             <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
               <div className="mb-2 flex items-center justify-between gap-3">
@@ -1470,11 +1477,9 @@ export function AiWorkspacePanel({
               <AttachmentChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
             </div>
           ) : null}
-          <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-dashed border-hairline/80 bg-reader-paper/55 px-3 py-2.5 text-[11px] text-subtle">
-            补充候选将在这里出现。
-          </div>
+          <SupplementCandidateTray candidates={latestSupplementCandidates} />
 
-          <PromptInputTextarea placeholder={taskModePlaceholder(taskMode)} />
+          <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />
           <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline/80 pt-3">
             <p className="max-w-[18rem] text-[11px] leading-5 text-muted">
               默认只围绕当前文章；只有问到“以前 / 之前 / 见过”时才会扩展历史资产。

@@ -344,7 +344,8 @@ export function ReaderWorkbench({
   initialAnnotations,
   initialFavoriteTargets = [],
 }: ReaderWorkbenchProps) {
-  const reader = record.reader;
+  const [readerScene, setReaderScene] = useState(record.reader);
+  const reader = readerScene;
   const searchParams = useSearchParams();
   const [activeLookup, setActiveLookup] = useState<DictionaryLookupSnapshot | null>(null);
   const [activeInspect, setActiveInspect] = useState<ReaderStructuredInspectIntent | null>(null);
@@ -383,6 +384,10 @@ export function ReaderWorkbench({
   const [dictionarySearchExpanded, setDictionarySearchExpanded] = useState(false);
   const [dictionaryAI, setDictionaryAI] = useState<DictionaryAIViewState>({ kind: "idle" });
   const [dictionaryAIPanelOpen, setDictionaryAIPanelOpen] = useState(false);
+
+  useEffect(() => {
+    setReaderScene(record.reader);
+  }, [record.reader]);
   const articleRef = useRef<HTMLElement | null>(null);
   const readingColumnRef = useRef<HTMLDivElement | null>(null);
   const focusedRouteTargetKeyRef = useRef<string | null>(null);
@@ -1678,7 +1683,6 @@ export function ReaderWorkbench({
     setActiveSentence(sentence);
     setSettingsPanelOpen(false);
     setContextPanelOpen(false);
-    setAiOpen(false);
     setTextSelection({
       anchorType: "sentence",
       sentence,
@@ -1817,6 +1821,8 @@ export function ReaderWorkbench({
           label: entryLabel(entry),
           title: entryLabel(entry),
           content: entry.content,
+          sourceKind: entry.sourceKind,
+          supplementId: entry.supplementId,
         },
         {
           sourceSurface: "analysis_block",
@@ -1874,6 +1880,57 @@ export function ReaderWorkbench({
         entryAction: "ask_about_this",
       }),
     ]);
+  }
+
+  function applySupplementProjection(projection: Record<string, unknown>) {
+    setReaderScene((current) => {
+      const exists = current.sentenceEntries.some((entry) => entry.id === String(projection.id ?? ""));
+      if (exists) {
+        return current;
+      }
+      return {
+        ...current,
+        sentenceEntries: [
+          ...current.sentenceEntries,
+          {
+            id: String(projection.id ?? ""),
+            sentenceId: String(projection.sentence_id ?? ""),
+            entryType: String(projection.entry_type ?? "grammar_note") as SentenceEntryModel["entryType"],
+            label: String(projection.label ?? "AI 补充语法旁注"),
+            title: typeof projection.title === "string" ? projection.title : undefined,
+            content: String(projection.content ?? ""),
+            sourceKind: projection.source_kind === "ask_supplement" ? "ask_supplement" : "workflow",
+            supplementId: typeof projection.supplement_id === "string" ? projection.supplement_id : undefined,
+            deletable: Boolean(projection.deletable),
+            createdFromTurnRunId:
+              typeof projection.created_from_turn_run_id === "string"
+                ? projection.created_from_turn_run_id
+                : undefined,
+          },
+        ],
+      };
+    });
+  }
+
+  async function deleteAnalysisSupplement(supplementId: string) {
+    const response = await fetch(`/api/web/reader-ask/supplements/${supplementId}`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+    });
+    if (!response.ok) {
+      return;
+    }
+    setReaderScene((current) => ({
+      ...current,
+      sentenceEntries: current.sentenceEntries.filter((entry) => entry.supplementId !== supplementId),
+    }));
+  }
+
+  function handleAskActionExecuted(result: Record<string, unknown>) {
+    const projection = result.supplement_projection;
+    if (projection && typeof projection === "object" && !Array.isArray(projection)) {
+      applySupplementProjection(projection as Record<string, unknown>);
+    }
   }
 
   function jumpToAnnotation(annotation: WebAnnotationVm) {
@@ -2120,6 +2177,7 @@ export function ReaderWorkbench({
             onAnnotationJump={jumpToAnnotation}
             onAnnotationAsk={openAskWithAnnotation}
             onFavoriteJump={jumpToFavorite}
+            onDeleteAnalysisSupplement={deleteAnalysisSupplement}
             onAskTranslation={openAskWithTranslation}
             onAskAnalysis={openAskWithAnalysis}
             onAskContentSummary={openAskWithContentSummary}
@@ -2341,6 +2399,7 @@ export function ReaderWorkbench({
           onAttachCurrentRecord={attachCurrentRecordToAsk}
           onJumpToAttachment={jumpToAskAttachment}
           onJumpToCitation={jumpToAskCitation}
+          onActionExecuted={handleAskActionExecuted}
           onToggle={toggleAiWorkspace}
         />
       ) : null}

@@ -44,6 +44,34 @@ def _thread_summary() -> ReaderAskThreadSummary:
     )
 
 
+def _thread_detail() -> ReaderAskThreadDetail:
+    return ReaderAskThreadDetail(
+        **_thread_summary().model_dump(mode="json"),
+        messages=[],
+    )
+
+
+def _stream_body(**overrides):
+    body = {
+        "content": "Explain this sentence",
+        "page_identity": {
+            "record_id": RECORD_ID,
+            "title": "Ask Claread",
+            "surface": "reader",
+            "source": "reader_2_0",
+            "available_context_capabilities": ["record_context"],
+            "has_article_overview": True,
+            "has_sentence_entries": True,
+            "has_annotations": True,
+            "has_user_assets": True,
+        },
+        "attachments": [],
+        "entry_action": "ask_about_this",
+    }
+    body.update(overrides)
+    return body
+
+
 def create_client() -> TestClient:
     app = FastAPI()
     app.include_router(reader_ask_router)
@@ -90,10 +118,7 @@ class TestReaderAskRoute:
     @patch("app.api.routes.reader_ask.ask_svc.get_thread_detail", new_callable=AsyncMock)
     def test_get_thread_detail(self, mock_get_thread_detail, mock_auth) -> None:
         client = create_client()
-        mock_get_thread_detail.return_value = ReaderAskThreadDetail(
-            **_thread_summary().model_dump(mode="json"),
-            messages=[],
-        )
+        mock_get_thread_detail.return_value = _thread_detail()
 
         response = client.get(f"/reader-ask/threads/{THREAD_ID}", headers=AUTH_HEADERS)
 
@@ -115,7 +140,7 @@ class TestReaderAskRoute:
             response = client.post(
                 f"/reader-ask/threads/{THREAD_ID}/messages/stream",
                 headers=AUTH_HEADERS,
-                json={"content": "Explain this sentence"},
+                json=_stream_body(),
             )
 
         assert response.status_code == 200
@@ -137,12 +162,55 @@ class TestReaderAskRoute:
             response = client.post(
                 f"/reader-ask/threads/{THREAD_ID}/messages/stream",
                 headers=AUTH_HEADERS,
-                json={"content": "Explain this sentence"},
+                json=_stream_body(),
             )
 
         assert response.status_code == 200
         assert "event: error" in response.text
         assert "\"code\": \"READER_ASK_FAILED\"" in response.text
+
+    @_mock_auth()
+    def test_stream_message_rejects_legacy_fields(self, mock_auth) -> None:
+        client = create_client()
+
+        response = client.post(
+            f"/reader-ask/threads/{THREAD_ID}/messages/stream",
+            headers=AUTH_HEADERS,
+            json=_stream_body(task_mode="explain"),
+        )
+
+        assert response.status_code == 422
+
+    @_mock_auth()
+    def test_stream_message_rejects_extra_page_identity_fields(self, mock_auth) -> None:
+        client = create_client()
+
+        response = client.post(
+            f"/reader-ask/threads/{THREAD_ID}/messages/stream",
+            headers=AUTH_HEADERS,
+            json=_stream_body(
+                page_identity={
+                    **_stream_body()["page_identity"],
+                    "workflow_version": "3.0.0",
+                },
+            ),
+        )
+
+        assert response.status_code == 422
+
+    @_mock_auth()
+    @patch("app.api.routes.reader_ask.ask_svc.reset_thread", new_callable=AsyncMock)
+    def test_reset_thread(self, mock_reset_thread, mock_auth) -> None:
+        client = create_client()
+        mock_reset_thread.return_value = _thread_detail()
+
+        response = client.post(
+            f"/reader-ask/threads/{THREAD_ID}/reset",
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["id"] == THREAD_ID
 
     @_mock_auth()
     @patch("app.api.routes.reader_ask.ask_svc.confirm_action", new_callable=AsyncMock)
@@ -163,3 +231,23 @@ class TestReaderAskRoute:
 
         assert response.status_code == 200
         assert response.json()["status"] == "executed"
+
+    @_mock_auth()
+    def test_retry_stream_message_returns_sse_events(self, mock_auth) -> None:
+        client = create_client()
+
+        async def fake_stream(user_id: UUID, thread_id: UUID, message_id: UUID):
+            del user_id, thread_id, message_id
+            yield "event: message.started\ndata: {\"message_id\": \"200\"}\n\n"
+            yield "event: message.delta\ndata: {\"delta\": \"retry\"}\n\n"
+            yield "event: message.completed\ndata: {\"content_md\": \"retry\"}\n\n"
+
+        with patch("app.api.routes.reader_ask.ask_svc.retry_thread_message", new=fake_stream):
+            response = client.post(
+                f"/reader-ask/threads/{THREAD_ID}/messages/30000000-0000-0000-0000-000000000001/retry/stream",
+                headers=AUTH_HEADERS,
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert "event: message.delta" in response.text

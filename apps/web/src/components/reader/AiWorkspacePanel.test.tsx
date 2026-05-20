@@ -1,0 +1,271 @@
+/** @vitest-environment jsdom */
+
+import type React from "react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
+import { AiWorkspacePanel } from "./AiWorkspacePanel";
+
+vi.mock("@/components/ui/message", () => ({
+  Message: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+    <div className={className}>{children}</div>
+  ),
+  MessageContent: ({
+    children,
+    className,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+  }) => <div className={className}>{children}</div>,
+}));
+
+vi.mock("./ask/sse", () => ({
+  consumeReaderAskSse: vi.fn(async (_response: Response, onEvent: (event: { event: string; data: Record<string, unknown> }) => void) => {
+    onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+    onEvent({
+      event: "message.completed",
+      data: {
+        id: "msg-assistant-1",
+        thread_id: "thread-1",
+        content_md: "解释完成。",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        response_cards: [],
+        resolved_context: null,
+        context_plan: null,
+        resolved_context_input: null,
+      },
+    });
+  }),
+}));
+
+const pageIdentity: ReaderAskPageIdentity = {
+  recordId: "record-1",
+  recordTitle: "Test Reader",
+  surface: "reader",
+  source: "reader_2_0",
+};
+
+const attachment: ReaderAskAttachment = {
+  kind: "record_ref",
+  subtype: "current_record",
+  label: "当前文章",
+  metadata: {
+    pageIdentity,
+    sourceSurface: "ask_panel",
+    entryAction: "ask_about_this",
+  },
+};
+
+function jsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function mockFetch() {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/api/web/reader-ask/threads?recordId=")) {
+      return jsonResponse({
+        items: [
+          {
+            id: "thread-1",
+            record_id: "record-1",
+            title: "Ask Claread",
+            is_default: true,
+            archived_at: null,
+            created_at: "2026-05-20T00:00:00Z",
+            updated_at: "2026-05-20T00:00:00Z",
+            last_message_at: null,
+          },
+        ],
+      });
+    }
+    if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+      return jsonResponse({
+        id: "thread-1",
+        record_id: "record-1",
+        title: "Ask Claread",
+        is_default: true,
+        archived_at: null,
+        created_at: "2026-05-20T00:00:00Z",
+        updated_at: "2026-05-20T00:00:00Z",
+        last_message_at: null,
+        messages: [],
+      });
+    }
+    if (url.endsWith("/api/web/reader-ask/threads/thread-1/reset")) {
+      return jsonResponse({
+        id: "thread-1",
+        record_id: "record-1",
+        title: "Ask Claread",
+        is_default: true,
+        archived_at: null,
+        created_at: "2026-05-20T00:00:00Z",
+        updated_at: "2026-05-20T00:00:00Z",
+        last_message_at: null,
+        messages: [],
+      });
+    }
+    if (url.endsWith("/api/web/reader-ask/threads/thread-1/messages/stream")) {
+      return new Response("", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url} ${init?.method ?? "GET"}`);
+  });
+}
+
+describe("AiWorkspacePanel", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("removes legacy thread and task-mode controls from the Ask surface", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    expect(screen.queryByText("新对话")).toBeNull();
+    expect(screen.queryByText("当前对话")).toBeNull();
+    expect(screen.queryByText("当前讲解方式")).toBeNull();
+  });
+
+  it("sends only the V2 reader ask request shape", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[attachment]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续围绕当前文章、句子、译文或解析对象提问。"), {
+      target: { value: "解释这篇文章的核心论点" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const calls = vi.mocked(global.fetch).mock.calls;
+      expect(calls.some(([url]) => String(url).includes("/messages/stream"))).toBe(true);
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+
+    expect(body).toMatchObject({
+      content: "解释这篇文章的核心论点",
+      entry_action: "ask_about_this",
+      page_identity: {
+        record_id: "record-1",
+        title: "Test Reader",
+        surface: "reader",
+        source: "reader_2_0",
+        available_context_capabilities: [
+          "record_context",
+          "record_insights",
+          "record_excerpt_assets",
+          "history_lookup",
+          "dictionary",
+        ],
+        has_article_overview: true,
+        has_sentence_entries: true,
+        has_annotations: true,
+        has_user_assets: true,
+      },
+    });
+    expect(Object.keys(body.page_identity as Record<string, unknown>)).toEqual([
+      "record_id",
+      "title",
+      "surface",
+      "source",
+      "available_context_capabilities",
+      "has_article_overview",
+      "has_sentence_entries",
+      "has_annotations",
+      "has_user_assets",
+    ]);
+    expect(Array.isArray(body.attachments)).toBe(true);
+    expect(body).not.toHaveProperty("task_mode");
+    expect(body).not.toHaveProperty("anchors");
+    expect(body).not.toHaveProperty("reader_focus");
+  });
+
+  it("resets the active conversation and clears attachments", async () => {
+    const onClearAttachments = vi.fn();
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[attachment]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={onClearAttachments}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "重新开始" }));
+
+    await waitFor(() => {
+      expect(onClearAttachments).toHaveBeenCalled();
+    });
+    expect(
+      vi
+        .mocked(global.fetch)
+        .mock.calls.some(([url]) => String(url).endsWith("/api/web/reader-ask/threads/thread-1/reset")),
+    ).toBe(true);
+  });
+});

@@ -20,15 +20,29 @@ export type ReaderAskActionTypeDto =
   | "save_note"
   | "save_excerpt"
   | "favorite_anchor"
-  | "save_answer_note";
+  | "save_answer_note"
+  | "create_supplement_grammar_note";
 export type ReaderAskActionStatusDto = "pending" | "confirmed" | "executed" | "rejected";
 export type ReaderAskToolStatusDto = "started" | "completed" | "failed";
-export type ReaderAskTaskModeDto =
+export type ReaderAskResolvedIntentDto =
   | "explain"
   | "breakdown"
   | "vocabulary"
   | "grammar"
   | "practice";
+export type ReaderAskEntryActionDto =
+  | "ask_about_this"
+  | "explain_this"
+  | "why_here"
+  | "lookup_in_context"
+  | "compare_translation";
+export type ReaderAskAttachmentKindDto =
+  | "text_selection"
+  | "annotation_ref"
+  | "analysis_ref"
+  | "supplement_ref"
+  | "record_ref";
+export type ReaderAskSupplementTypeDto = "grammar_note";
 
 export interface ReaderAskAnchorSegmentDto {
   paragraph_id?: string | null;
@@ -59,13 +73,58 @@ export interface ReaderAskAnchorRefDto {
   payload_json: Record<string, unknown>;
 }
 
-export interface ReaderAskReaderFocusDto {
-  sentence_id?: string | null;
+export interface ReaderAskPageIdentityDto {
+  record_id: string;
+  title?: string | null;
+  surface: "reader";
+  source: "reader_2_0";
+  available_context_capabilities: string[];
+  has_article_overview: boolean;
+  has_sentence_entries: boolean;
+  has_annotations: boolean;
+  has_user_assets: boolean;
+}
+
+export interface ReaderAskAttachmentPayloadDto {
+  anchor_type: Extract<ReaderAskAnchorTypeDto, "sentence" | "text_range" | "multi_text">;
+  target_key?: string | null;
+  record_id?: string | null;
   paragraph_id?: string | null;
+  sentence_id?: string | null;
   selected_text?: string | null;
   start_offset?: number | null;
   end_offset?: number | null;
   text_hash?: string | null;
+  segments: ReaderAskAnchorSegmentDto[];
+}
+
+export interface ReaderAskAttachmentMetadataDto {
+  source_surface: string;
+  entry_action?: ReaderAskEntryActionDto | null;
+  sentence_id?: string | null;
+  paragraph_id?: string | null;
+  entry_id?: string | null;
+  entry_type?: string | null;
+  asset_id?: string | null;
+  annotation_type?: string | null;
+  start_offset?: number | null;
+  end_offset?: number | null;
+  translation_zh?: string | null;
+  note?: string | null;
+  title?: string | null;
+  query?: string | null;
+  lookup_text?: string | null;
+  visual_tone?: string | null;
+}
+
+export interface ReaderAskAttachmentDto {
+  kind: ReaderAskAttachmentKindDto;
+  subtype: string;
+  label: string;
+  selected_text?: string | null;
+  target_key?: string | null;
+  anchor_payload?: ReaderAskAttachmentPayloadDto | null;
+  metadata: ReaderAskAttachmentMetadataDto;
 }
 
 export interface ReaderAskCitationDto {
@@ -104,12 +163,53 @@ export interface ReaderAskResolvedContextSummaryDto {
   record_id: string;
   record_title?: string | null;
   anchor_count: number;
+  explicit_attachment_count: number;
   used_history_lookup: boolean;
   current_sentence_used: boolean;
   current_paragraph_used: boolean;
   used_record_assets: boolean;
   used_dictionary: boolean;
   source_labels: string[];
+}
+
+export interface ReaderAskContextPlanDto {
+  entry_action: ReaderAskEntryActionDto;
+  explicit_attachment_count: number;
+  normalized_anchor_count: number;
+  primary_anchor_type?: ReaderAskAnchorTypeDto | null;
+  used_history_lookup: boolean;
+  used_record_context: boolean;
+  used_record_insights: boolean;
+  used_dictionary: boolean;
+  source_labels: string[];
+}
+
+export interface ReaderAskResolvedContextInputDto {
+  page_identity: ReaderAskPageIdentityDto;
+  entry_action: ReaderAskEntryActionDto;
+  attachments: ReaderAskAttachmentDto[];
+  normalized_anchors: ReaderAskAnchorRefDto[];
+}
+
+export interface ReaderAskRunInfoDto {
+  turn_id: string;
+  run_id: string;
+  run_attempt: number;
+  supersedes_run_id?: string | null;
+}
+
+export interface ReaderAskSupplementCandidateDto {
+  candidate_id: string;
+  supplement_type: ReaderAskSupplementTypeDto;
+  target_key: string;
+  sentence_id: string;
+  paragraph_id?: string | null;
+  title: string;
+  content: string;
+  anchor: ReaderAskAnchorRefDto;
+  schema_version: string;
+  created_from_turn_run_id: string;
+  label: string;
 }
 
 export interface ReaderAskSentenceBreakdownPartDto {
@@ -160,13 +260,17 @@ export interface ReaderAskMessageDto {
   role: ReaderAskMessageRoleDto;
   status: ReaderAskMessageStatusDto;
   content_md: string;
-  task_mode?: ReaderAskTaskModeDto | null;
+  resolved_intent?: ReaderAskResolvedIntentDto | null;
   context_anchors: ReaderAskAnchorRefDto[];
   citations: ReaderAskCitationDto[];
   action_proposals: ReaderAskActionProposalDto[];
   tool_trace: ReaderAskToolTraceEntryDto[];
   response_cards: ReaderAskResponseCardDto[];
   resolved_context?: ReaderAskResolvedContextSummaryDto | null;
+  context_plan?: ReaderAskContextPlanDto | null;
+  resolved_context_input?: ReaderAskResolvedContextInputDto | null;
+  run_info?: ReaderAskRunInfoDto | null;
+  supplement_candidates: ReaderAskSupplementCandidateDto[];
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -202,7 +306,7 @@ export interface ReaderAskCompletedPayloadDto {
   id: string;
   thread_id: string;
   content_md: string;
-  task_mode: ReaderAskTaskModeDto;
+  resolved_intent?: ReaderAskResolvedIntentDto | null;
   citations: ReaderAskCitationDto[];
   action_proposals: ReaderAskActionProposalDto[];
   tool_trace: ReaderAskToolTraceEntryDto[];
@@ -210,6 +314,10 @@ export interface ReaderAskCompletedPayloadDto {
   usage_summary?: Record<string, unknown> | null;
   billed_points: number;
   resolved_context: ReaderAskResolvedContextSummaryDto;
+  context_plan?: ReaderAskContextPlanDto | null;
+  resolved_context_input?: ReaderAskResolvedContextInputDto | null;
+  run_info?: ReaderAskRunInfoDto | null;
+  supplement_candidates: ReaderAskSupplementCandidateDto[];
 }
 
 export interface ReaderAskThreadCreateRequestDto {
@@ -220,9 +328,10 @@ export interface ReaderAskThreadCreateRequestDto {
 
 export interface ReaderAskMessageStreamRequestDto {
   content: string;
-  task_mode?: ReaderAskTaskModeDto;
-  anchors?: ReaderAskAnchorRefDto[];
-  reader_focus?: ReaderAskReaderFocusDto | null;
+  page_identity: ReaderAskPageIdentityDto;
+  attachments: ReaderAskAttachmentDto[];
+  entry_action: ReaderAskEntryActionDto;
+  model?: string | null;
 }
 
 export interface ReaderAskActionConfirmRequestDto {

@@ -273,12 +273,12 @@ export function askAttachmentFromTranslation(
 export function askAttachmentFromAnalysisBlock(
   pageIdentity: ReaderAskPageIdentity,
   sentence: SentenceModel,
-  block: Pick<ReaderAnalysisBlockNode, "entryId" | "entryType" | "label" | "title" | "content">,
+  block: Pick<ReaderAnalysisBlockNode, "entryId" | "entryType" | "label" | "title" | "content" | "sourceKind" | "supplementId">,
   options: ReaderAskAttachmentFactoryOptions = {},
 ): ReaderAskAttachment {
   const anchorPayload = anchorPayloadFromSentence(pageIdentity.recordId, sentence);
   return buildAttachment({
-    kind: "analysis_ref",
+    kind: block.sourceKind === "ask_supplement" ? "supplement_ref" : "analysis_ref",
     subtype: block.entryType,
     label: options.label ?? block.title ?? block.label,
     selectedText: block.content,
@@ -292,7 +292,7 @@ export function askAttachmentFromAnalysisBlock(
       entryAction: options.entryAction ?? "explain_this",
       sentenceId: sentence.sentenceId,
       paragraphId: sentence.paragraphId,
-      entryId: block.entryId,
+      entryId: block.supplementId ?? block.entryId,
       entryType: block.entryType,
       title: block.title ?? block.label,
     },

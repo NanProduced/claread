@@ -143,6 +143,10 @@ export interface SentenceEntryModel {
   label: string
   title?: string
   content: string
+  sourceKind?: 'workflow' | 'ask_supplement'
+  supplementId?: string
+  deletable?: boolean
+  createdFromTurnRunId?: string
 }
 
 export interface RenderSceneVmBase {

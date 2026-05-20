@@ -303,14 +303,22 @@ function mapInlineMarks(value: unknown): InlineMarkModel[] {
 function mapSentenceEntries(value: unknown): SentenceEntryModel[] {
   return readArray(value)
     .filter(isRecord)
-    .map((entry) => ({
-      id: readString(entry.id),
-      sentenceId: readString(entry.sentence_id),
-      entryType: readString(entry.entry_type, "sentence_analysis") as SentenceEntryType,
-      label: readString(entry.label, "解析"),
-      title: readOptionalString(entry.title),
-      content: readString(entry.content),
-    }))
+    .map((entry) => {
+      const sourceKind: SentenceEntryModel["sourceKind"] =
+        entry.source_kind === "ask_supplement" ? "ask_supplement" : "workflow";
+      return {
+        id: readString(entry.id),
+        sentenceId: readString(entry.sentence_id),
+        entryType: readString(entry.entry_type, "sentence_analysis") as SentenceEntryType,
+        label: readString(entry.label, "解析"),
+        title: readOptionalString(entry.title),
+        content: readString(entry.content),
+        sourceKind,
+        supplementId: readOptionalString(entry.supplement_id),
+        deletable: readBoolean(entry.deletable, false),
+        createdFromTurnRunId: readOptionalString(entry.created_from_turn_run_id),
+      };
+    })
     .filter((entry) => entry.id && entry.sentenceId);
 }
 

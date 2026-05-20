@@ -69,6 +69,7 @@ export interface PlateReaderSurfaceProps {
   onAskTranslation?: (sentenceId: string, translationZh: string) => void;
   onAskAnalysis?: (sentenceId: string, entryId: string) => void;
   onAskContentSummary?: (summary: ReaderContentSummaryNode) => void;
+  onDeleteAnalysisSupplement?: (supplementId: string) => void;
 }
 
 export function PlateReaderSurface({
@@ -91,6 +92,7 @@ export function PlateReaderSurface({
   onAskAnalysis,
   onAskContentSummary,
   onAskTranslation,
+  onDeleteAnalysisSupplement,
   onInspectIntent,
   onLookupIntent,
   onSentenceActivate,
@@ -243,6 +245,11 @@ export function PlateReaderSurface({
               expanded={expandedAnalysisEntryId === element.entryId}
               visible={analysisEntryVisible(element.entryType, annotationVisibilityGroups)}
               onAsk={onAskAnalysis ? () => onAskAnalysis(element.sentenceId, element.entryId) : undefined}
+              onDelete={
+                onDeleteAnalysisSupplement && element.supplementId
+                  ? () => onDeleteAnalysisSupplement(String(element.supplementId))
+                  : undefined
+              }
               onFocusChange={
                 onAnalysisFocusChange
                   ? (focused) => onAnalysisFocusChange(element.entryId, focused)
@@ -266,6 +273,7 @@ export function PlateReaderSurface({
       onAskAnalysis,
       onAskContentSummary,
       onAskTranslation,
+      onDeleteAnalysisSupplement,
       onFavoriteJump,
       paragraphIndexById,
       paragraphNodes.length,

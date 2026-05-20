@@ -188,14 +188,21 @@ Ask Claread V2 采用：
 
 - `record_id`
 - `title`
-- `content_language`
-- `content_length_class`
-- `workflow_version`
+- `surface=reader`
+- `source=reader_2_0`
+- `available_context_capabilities`
 - `has_article_overview`
 - `has_sentence_entries`
 - `has_annotations`
 - `has_user_assets`
-- `available_context_capabilities`
+
+说明：
+
+- `content_language`
+- `content_length_class`
+- `workflow_version`
+
+这些字段不进入首批公开 request contract；如后续 planner / context planner 确认需要，只允许作为内部运行产物补充，而不是直接扩大 `page_identity` 对外字段集。
 
 ### 7.2 Article Overview
 

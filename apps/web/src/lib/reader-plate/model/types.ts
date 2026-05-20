@@ -89,6 +89,10 @@ export interface ReaderAnalysisBlockNode {
   label: string;
   title?: string;
   content: string;
+  sourceKind?: SentenceEntryModel["sourceKind"];
+  supplementId?: string;
+  deletable?: boolean;
+  createdFromTurnRunId?: string;
   children: ReaderPlateTextLeaf[];
 }
 

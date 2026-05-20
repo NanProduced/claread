@@ -36,6 +36,7 @@ interface ReaderAnalysisElementProps {
   expanded?: boolean;
   active?: boolean;
   onAsk?: () => void;
+  onDelete?: () => void;
   onToggle?: () => void;
   onFocusChange?: (focused: boolean) => void;
 }
@@ -44,6 +45,7 @@ export function ReaderAnalysisElement({
   active = false,
   expanded = false,
   onAsk,
+  onDelete,
   onFocusChange,
   onToggle,
   props,
@@ -119,8 +121,13 @@ export function ReaderAnalysisElement({
                     element.entryType === "sentence_analysis" ? "text-structure-green" : "text-grammar-violet"
                   }`}
                 >
-                  {category}
+              {category}
                 </p>
+                {element.sourceKind === "ask_supplement" ? (
+                  <span className="rounded-full border border-lens-blue/15 bg-lens-blue/10 px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.08em] text-lens-blue">
+                    AI 补充
+                  </span>
+                ) : null}
                 <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted">
                   <ChevronDown
                     aria-hidden="true"
@@ -139,17 +146,32 @@ export function ReaderAnalysisElement({
         </button>
 
         {onAsk ? (
-          <button
-            type="button"
-            className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue focus-visible:opacity-100 group-hover/analysis:opacity-100"
-            onClick={(event) => {
-              event.stopPropagation();
-              onAsk();
-            }}
-            aria-label="带解析进入 Ask"
-          >
-            <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity group-hover/analysis:opacity-100 focus-within:opacity-100">
+            {onDelete && element.deletable ? (
+              <button
+                type="button"
+                className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-destructive"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete();
+                }}
+                aria-label="删除 AI 补充"
+              >
+                <span className="text-sm font-semibold">-</span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAsk();
+              }}
+              aria-label="带解析进入 Ask"
+            >
+              <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          </div>
         ) : null}
       </div>
 

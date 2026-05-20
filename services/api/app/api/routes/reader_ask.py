@@ -50,6 +50,14 @@ async def get_reader_ask_thread(
     return await ask_svc.get_thread_detail(UUID(current_user.user_id), thread_id)
 
 
+@router.post("/threads/{thread_id}/reset", response_model=ReaderAskThreadDetail, summary="重置当前 Ask 会话")
+async def reset_reader_ask_thread(
+    current_user: AuthUserDep,
+    thread_id: UUID,
+) -> ReaderAskThreadDetail:
+    return await ask_svc.reset_thread(UUID(current_user.user_id), thread_id)
+
+
 @router.post("/threads/{thread_id}/messages/stream", summary="Ask Claread 流式回复")
 async def stream_reader_ask_message(
     current_user: AuthUserDep,
@@ -59,6 +67,38 @@ async def stream_reader_ask_message(
     async def event_stream():
         try:
             async for chunk in ask_svc.stream_thread_message(UUID(current_user.user_id), thread_id, body):
+                yield chunk
+        except HTTPException as exc:
+            yield (
+                f"event: error\ndata: {json.dumps({'code': str(exc.status_code), 'detail': exc.detail}, ensure_ascii=False)}\n\n"
+            )
+        except Exception as exc:
+            detail = str(exc) if _is_dev_error_mode() else "Ask Claread is temporarily unavailable."
+            yield (
+                "event: error\ndata: "
+                f"{json.dumps({'code': 'READER_ASK_FAILED', 'detail': detail}, ensure_ascii=False)}\n\n"
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/threads/{thread_id}/messages/{message_id}/retry/stream", summary="重新生成当前 Ask 回复")
+async def retry_reader_ask_message(
+    current_user: AuthUserDep,
+    thread_id: UUID,
+    message_id: UUID,
+) -> StreamingResponse:
+    async def event_stream():
+        try:
+            async for chunk in ask_svc.retry_thread_message(UUID(current_user.user_id), thread_id, message_id):
                 yield chunk
         except HTTPException as exc:
             yield (
@@ -94,3 +134,11 @@ async def confirm_reader_ask_action(
     body: ReaderAskActionConfirmRequest,
 ) -> ReaderAskActionConfirmResponse:
     return await ask_svc.confirm_action(UUID(current_user.user_id), thread_id, action_id, body)
+
+
+@router.delete("/supplements/{supplement_id}", summary="删除 Ask Claread 补充")
+async def delete_reader_ask_supplement(
+    current_user: AuthUserDep,
+    supplement_id: UUID,
+) -> dict[str, object]:
+    return await ask_svc.delete_supplement(UUID(current_user.user_id), supplement_id)

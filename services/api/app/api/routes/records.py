@@ -15,12 +15,25 @@ from app.schemas.user_assets.records import (
     RecordUpdateRequest,
     RecordUpsertResponse,
 )
+from app.services.reader_ask import supplements as ask_supplements_svc
 from app.services.auth.dependencies import AuthUserDep
 from app.services.user_assets import records as records_svc
 
 logger = getLogger("app.api")
 
 router = APIRouter(prefix="/records", tags=["records"])
+
+
+async def _merge_reader_ask_supplements(user_id: UUID, record: dict) -> dict:
+    render_scene = record.get("render_scene_json")
+    if not isinstance(render_scene, dict):
+        return record
+    supplements = await ask_supplements_svc.list_supplements_for_record(user_id, UUID(str(record["id"])))
+    if not supplements:
+        return record
+    merged = dict(record)
+    merged["render_scene_json"] = ask_supplements_svc.merge_supplements_into_render_scene(render_scene, supplements)
+    return merged
 
 
 @router.post("", response_model=RecordUpsertResponse, summary="保存分析记录")
@@ -101,6 +114,7 @@ async def get_record_by_client_id(
         )
         if record is None:
             raise HTTPException(status_code=404, detail="Record not found")
+        record = await _merge_reader_ask_supplements(UUID(current_user.user_id), record)
         return RecordResponse(**record)
     except HTTPException:
         raise
@@ -122,6 +136,7 @@ async def get_record(
         )
         if record is None:
             raise HTTPException(status_code=404, detail="Record not found")
+        record = await _merge_reader_ask_supplements(UUID(current_user.user_id), record)
         return RecordResponse(**record)
     except HTTPException:
         raise
