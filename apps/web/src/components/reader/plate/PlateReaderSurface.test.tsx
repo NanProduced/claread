@@ -281,7 +281,7 @@ describe("PlateReaderSurface", () => {
       />,
     );
 
-    expect(screen.getByText("Academic Summary")).toBeTruthy();
+    expect(screen.getByText("学术内容摘要")).toBeTruthy();
     expect(screen.getByText("本文讨论制度记忆如何影响政策解释。")).toBeTruthy();
     expect(screen.getByText("术语说明")).toBeTruthy();
     expect(screen.getByText("逻辑提示")).toBeTruthy();
@@ -561,6 +561,7 @@ describe("PlateReaderSurface", () => {
         annotationType: "vocab_highlight",
       }),
       expect.any(Object),
+      expect.any(HTMLElement),
     );
 
     fireEvent.click(container.querySelector("[data-reader-mark-id='mark-phrase']") as Element);
@@ -571,6 +572,7 @@ describe("PlateReaderSurface", () => {
         anchorText: "policy choices",
       }),
       expect.any(Object),
+      expect.any(HTMLElement),
     );
   });
 

@@ -292,7 +292,7 @@ async function fetchJson<T>(url: string, init?: RequestInit, fallback = "请求�
   return payload as T;
 }
 
-function AnchorChips({
+function AttachmentChips({
   attachments,
   removable = false,
   onRemove,
@@ -766,7 +766,7 @@ function MessageBubble({
     <div className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}>
       {!isAssistant && historyAttachments.length > 0 ? (
         <div className="flex w-full justify-end">
-          <AnchorChips attachments={historyAttachments} onJump={onJumpToAttachment} />
+          <AttachmentChips attachments={historyAttachments} onJump={onJumpToAttachment} />
         </div>
       ) : null}
       <ChatMessage className={cn("w-full", isAssistant ? "items-start" : "justify-end")}>
@@ -1467,7 +1467,7 @@ export function AiWorkspacePanel({
                   清空
                 </button>
               </div>
-              <AnchorChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
+              <AttachmentChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
             </div>
           ) : null}
           <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-dashed border-hairline/80 bg-reader-paper/55 px-3 py-2.5 text-[11px] text-subtle">

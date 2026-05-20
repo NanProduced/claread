@@ -181,30 +181,28 @@ export const ToolbarButton = withTooltip(function ToolbarButton({
 export function ToolbarSplitButton({
   className,
   ...props
-}: React.ComponentPropsWithoutRef<typeof ToolbarButton>) {
+}: React.ComponentPropsWithoutRef<'div'>) {
   return (
-    <ToolbarButton
-      className={cn('group flex gap-0 px-0 hover:bg-transparent', className)}
+    <div
+      className={cn('group inline-flex items-stretch gap-0 rounded-md', className)}
       {...props}
     />
   );
 }
 
-type ToolbarSplitButtonPrimaryProps = Omit<
-  React.ComponentPropsWithoutRef<typeof ToolbarToggleItem>,
-  'value'
-> &
+type ToolbarSplitButtonPrimaryProps = React.ComponentPropsWithoutRef<'button'> &
   VariantProps<typeof toolbarButtonVariants>;
 
 export function ToolbarSplitButtonPrimary({
   children,
   className,
   size = 'sm',
+  type = 'button',
   variant,
   ...props
 }: ToolbarSplitButtonPrimaryProps) {
   return (
-    <span
+    <button
       className={cn(
         toolbarButtonVariants({
           size,
@@ -214,22 +212,24 @@ export function ToolbarSplitButtonPrimary({
         'group-data-[pressed=true]:bg-accent group-data-[pressed=true]:text-accent-foreground',
         className
       )}
+      type={type}
       {...props}
     >
       {children}
-    </span>
+    </button>
   );
 }
 
 export function ToolbarSplitButtonSecondary({
   className,
   size,
+  type = 'button',
   variant,
   ...props
-}: React.ComponentPropsWithoutRef<'span'> &
+}: React.ComponentPropsWithoutRef<'button'> &
   VariantProps<typeof dropdownArrowVariants>) {
   return (
-    <span
+    <button
       className={cn(
         dropdownArrowVariants({
           size,
@@ -239,11 +239,11 @@ export function ToolbarSplitButtonSecondary({
         className
       )}
       onClick={(e) => e.stopPropagation()}
-      role="button"
+      type={type}
       {...props}
     >
       <ChevronDown className="size-3.5 text-muted-foreground" data-icon />
-    </span>
+    </button>
   );
 }
 

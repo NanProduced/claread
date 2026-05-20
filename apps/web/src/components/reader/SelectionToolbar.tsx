@@ -1,10 +1,8 @@
 import {
   Bookmark,
-  Check,
   Eraser,
   Heart,
   Highlighter,
-  MessageCircle,
   MessageSquare,
   MoreHorizontal,
   NotebookPen,
@@ -13,10 +11,12 @@ import {
   Send,
   Trash2,
 } from "lucide-react";
-import { forwardRef, type CSSProperties } from "react";
+import { forwardRef, useId, type CSSProperties } from "react";
 import { cn } from "../../lib/cn";
 import {
+  ReaderToolbarActionButton,
   ReaderToolbarButton,
+  ReaderToolbarIconButton,
   ReaderToolbarMenu,
   ReaderToolbarMenuContent,
   ReaderToolbarMenuItem,
@@ -25,8 +25,10 @@ import {
   ReaderToolbarMenuRadioItem,
   ReaderToolbarMenuSeparator,
   ReaderToolbarMenuTrigger,
+  ReaderToolbarPopoverCard,
   ReaderToolbarRoot,
   ReaderToolbarSeparator,
+  ReaderToolbarSplitAction,
 } from "./plate-ui-adapter";
 
 export type SelectionToolbarAction =
@@ -36,9 +38,7 @@ export type SelectionToolbarAction =
   | "note"
   | "favorite"
   | "lookup"
-  | "feedback"
-  | "clear"
-  | "more";
+  | "clear";
 
 export type SelectionToolbarColorValue = string;
 
@@ -56,9 +56,7 @@ export interface SelectionToolbarDisabledStates {
   note?: boolean;
   favorite?: boolean;
   lookup?: boolean;
-  feedback?: boolean;
   clear?: boolean;
-  more?: boolean;
 }
 
 export interface SelectionToolbarProps {
@@ -93,25 +91,23 @@ export interface SelectionToolbarProps {
   onClearAnnotation?: () => void;
   onFavorite?: (selectedText: string) => void;
   onLookup?: (selectedText: string) => void;
-  onFeedback?: (selectedText: string) => void;
-  onMore?: (selectedText: string) => void;
 }
 
 export const defaultSelectionToolbarColorOptions: SelectionToolbarColorOption[] = [
   {
     value: "warm_yellow",
-    label: "珊瑚",
-    swatchClassName: "bg-[#E8A18C]/90 ring-[#9D5F4A]/25",
+    label: "暖黄",
+    swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25",
   },
   {
     value: "soft_blue",
     label: "雾青",
-    swatchClassName: "bg-[#8ECAD0]/88 ring-[#2F747B]/25",
+    swatchClassName: "bg-context-blue/65 ring-context-blue/25",
   },
   {
     value: "sage_green",
     label: "灰绿",
-    swatchClassName: "bg-[#BCC2A3]/90 ring-[#6A704F]/25",
+    swatchClassName: "bg-structure-green/45 ring-structure-green/25",
   },
 ];
 
@@ -164,11 +160,10 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     onClearAnnotation,
     onFavorite,
     onLookup,
-    onFeedback,
-    onMore,
   },
   ref,
 ) {
+  const noteId = useId();
   const hasSelection = selectedText.trim().length > 0;
   const selectionLabel = selectedTextSummary(selectedText);
   const askComingSoon = Boolean(disabled?.ask);
@@ -179,9 +174,8 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
   const noteDisabled = !hasSelection || Boolean(disabled?.note) || !onNote;
   const favoriteDisabled = !hasSelection || Boolean(disabled?.favorite) || !onFavorite;
   const lookupDisabled = !hasSelection || Boolean(disabled?.lookup) || !onLookup;
-  const feedbackDisabled = !hasSelection || Boolean(disabled?.feedback) || !onFeedback;
   const clearDisabled = !hasAnnotation || Boolean(disabled?.clear) || !onClearAnnotation;
-  const moreDisabled = !hasSelection || Boolean(disabled?.more);
+  const moreDisabled = !hasSelection;
   const noteLength = noteValue.length;
 
   return (
@@ -193,12 +187,12 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
       className={cn("w-max max-w-[calc(100vw-1rem)] text-ink", className)}
     >
       <ReaderToolbarRoot aria-label={selectionLabel ? `选区工具栏，已选文本：${selectionLabel}` : "选区工具栏"}>
-        <span className="inline-flex h-9 shrink-0 items-center rounded-md border border-border/80 bg-background px-3 text-xs font-medium text-muted-foreground">
+        <span className="inline-flex h-10 shrink-0 items-center rounded-md border border-border/55 bg-background/56 px-2.5 text-[0.72rem] font-medium text-muted-foreground">
           {selectionModeLabel(selectionMode)}
         </span>
 
-        <ReaderToolbarButton
-          className="gap-2 px-3 font-medium"
+        <ReaderToolbarActionButton
+          className="gap-2 px-3 font-medium text-foreground/78"
           disabled={askDisabled}
           aria-label={askComingSoon ? "Ask Claread，稍后开放" : "Ask Claread"}
           title={askComingSoon ? "Ask Claread coming soon" : "Ask Claread"}
@@ -211,70 +205,65 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               soon
             </span>
           ) : null}
-        </ReaderToolbarButton>
+        </ReaderToolbarActionButton>
 
         <ReaderToolbarSeparator aria-hidden="true" />
 
-        <ReaderToolbarMenu>
-          <ReaderToolbarMenuTrigger asChild disabled={highlightDisabled}>
-              <button
-                type="button"
-                aria-label={hasHighlight ? "更换高亮颜色" : "高亮"}
-                title="高亮"
-                disabled={highlightDisabled}
-                className={cn(
-                "focus-ring inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-lg border border-transparent px-2.5 text-foreground/72 transition-colors hover:border-border/70 hover:bg-muted/65 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40",
-                hasHighlight && "border-border/80 bg-accent text-accent-foreground shadow-xs",
-              )}
-            >
-              <Highlighter aria-hidden="true" className="h-4 w-4" />
-            </button>
-          </ReaderToolbarMenuTrigger>
-          <ReaderToolbarMenuContent align="start" className="w-44">
-            <ReaderToolbarMenuLabel>选择高亮颜色</ReaderToolbarMenuLabel>
-            <ReaderToolbarMenuSeparator />
-            <ReaderToolbarMenuRadioGroup value={activeColor ?? undefined}>
-              {colorOptions.map((option) => (
-                <ReaderToolbarMenuRadioItem
-                  key={option.value}
-                  value={option.value}
-                  disabled={Boolean(option.disabled)}
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    onHighlight?.(option.value, selectedText, option);
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn("mr-1.5 h-3.5 w-3.5 rounded-[4px] ring-1 ring-inset ring-border/70", option.swatchClassName)}
-                  />
-                  {option.label}
-                </ReaderToolbarMenuRadioItem>
-              ))}
-            </ReaderToolbarMenuRadioGroup>
-          </ReaderToolbarMenuContent>
-        </ReaderToolbarMenu>
+        <ReaderToolbarSplitAction
+          active={hasHighlight}
+          disabled={highlightDisabled}
+          icon={<Highlighter aria-hidden="true" className="h-4 w-4" />}
+          label={hasHighlight ? "更换高亮颜色" : "高亮"}
+          onPrimaryClick={() => {
+            const defaultOption =
+              colorOptions.find((option) => option.value === activeColor && !option.disabled) ??
+              colorOptions.find((option) => !option.disabled);
+            if (defaultOption) {
+              onHighlight?.(defaultOption.value, selectedText, defaultOption);
+            }
+          }}
+        >
+          <ReaderToolbarMenuLabel>选择高亮颜色</ReaderToolbarMenuLabel>
+          <ReaderToolbarMenuSeparator />
+          <ReaderToolbarMenuRadioGroup value={activeColor ?? undefined}>
+            {colorOptions.map((option) => (
+              <ReaderToolbarMenuRadioItem
+                key={option.value}
+                value={option.value}
+                disabled={Boolean(option.disabled)}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  onHighlight?.(option.value, selectedText, option);
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn("mr-1.5 h-3.5 w-3.5 rounded-[4px] ring-1 ring-inset ring-border/70", option.swatchClassName)}
+                />
+                {option.label}
+              </ReaderToolbarMenuRadioItem>
+            ))}
+          </ReaderToolbarMenuRadioGroup>
+        </ReaderToolbarSplitAction>
 
-        <ReaderToolbarButton
+        <ReaderToolbarIconButton
           aria-label={hasNote ? "编辑笔记" : "笔记"}
           title={hasNote ? "编辑笔记" : "笔记"}
-          className="h-9 min-w-9 px-2.5"
           disabled={noteDisabled}
           active={noteOpen || hasNote}
           onClick={() => onNote?.(selectedText)}
         >
           <NotebookPen aria-hidden="true" className="h-4 w-4" />
-        </ReaderToolbarButton>
+        </ReaderToolbarIconButton>
 
         <ReaderToolbarMenu>
           <ReaderToolbarMenuTrigger asChild disabled={moreDisabled}>
-            <ReaderToolbarButton
+            <ReaderToolbarIconButton
               aria-label="更多选区操作"
               title="更多选区操作"
-              className="px-2"
             >
               <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
-            </ReaderToolbarButton>
+            </ReaderToolbarIconButton>
           </ReaderToolbarMenuTrigger>
           <ReaderToolbarMenuContent align="end" className="w-52">
             <ReaderToolbarMenuLabel>选区操作</ReaderToolbarMenuLabel>
@@ -294,39 +283,28 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               <Search aria-hidden="true" className="h-4 w-4" />
               查词
             </ReaderToolbarMenuItem>
-            <ReaderToolbarMenuItem disabled={feedbackDisabled} onSelect={() => onFeedback?.(selectedText)}>
-              <MessageCircle aria-hidden="true" className="h-4 w-4" />
-              反馈
-            </ReaderToolbarMenuItem>
             <ReaderToolbarMenuSeparator />
             <ReaderToolbarMenuItem disabled={clearDisabled} onSelect={onClearAnnotation}>
               <Eraser aria-hidden="true" className="h-4 w-4" />
               取消标注
             </ReaderToolbarMenuItem>
-            {onMore ? (
-              <>
-                <ReaderToolbarMenuSeparator />
-                <ReaderToolbarMenuItem onSelect={() => onMore(selectedText)}>
-                  <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
-                  更多
-                </ReaderToolbarMenuItem>
-              </>
-            ) : null}
           </ReaderToolbarMenuContent>
         </ReaderToolbarMenu>
       </ReaderToolbarRoot>
 
       {noteOpen ? (
-        <div className="mt-2 w-[min(21rem,calc(100vw-1rem))] rounded-xl border border-border/80 bg-popover/98 p-3 text-popover-foreground shadow-md">
+        <ReaderToolbarPopoverCard>
           <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-            <span className="font-medium text-foreground">笔记</span>
+            <label htmlFor={noteId} className="font-medium text-foreground">笔记</label>
             <span className={cn("text-muted-foreground", noteLength > noteMaxLength && "text-destructive")}>
               {noteLength}/{noteMaxLength}
             </span>
           </div>
           <textarea
+            id={noteId}
+            aria-label="选区笔记"
             data-selection-note-input="true"
-            className="focus-ring min-h-20 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
+            className="focus-ring min-h-18 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
             placeholder="写一句和这段文字绑定的笔记。"
             value={noteValue}
             maxLength={noteMaxLength}
@@ -349,7 +327,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               {hasNote ? (
                 <button
                   type="button"
-                  className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
+                  className="focus-ring inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
                   disabled={noteSaving || !onNoteClear}
                   onClick={onNoteClear}
                 >
@@ -359,7 +337,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               ) : null}
               <button
                 type="button"
-                className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-transparent bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="focus-ring inline-flex min-h-10 items-center gap-1.5 rounded-md border border-transparent bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={noteSaving || noteLength === 0 || noteLength > noteMaxLength || !onNoteSave}
                 onClick={onNoteSave}
               >
@@ -372,7 +350,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               </button>
             </span>
           </div>
-        </div>
+        </ReaderToolbarPopoverCard>
       ) : null}
 
       {!noteOpen && statusMessage ? (
@@ -381,7 +359,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
             "mt-2 rounded-md border px-3 py-2 text-xs font-medium shadow-sm",
             statusKind === "error"
               ? "border-destructive/20 bg-destructive/10 text-destructive"
-              : "border-border/80 bg-popover/90 text-muted-foreground",
+              : "border-border/65 bg-background/92 text-muted-foreground",
           )}
         >
           {statusMessage}

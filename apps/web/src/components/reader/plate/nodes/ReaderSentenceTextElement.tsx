@@ -11,7 +11,11 @@ interface ReaderSentenceTextElementProps {
   props: Parameters<RenderElement>[0];
   readingClassName: string;
   sourceContext?: string;
-  onLookupIntent?: (intent: ReaderLookupIntent, anchor: ReaderLookupPreviewAnchor | null) => void;
+  onLookupIntent?: (
+    intent: ReaderLookupIntent,
+    anchor: ReaderLookupPreviewAnchor | null,
+    triggerEl?: HTMLElement | null,
+  ) => void;
 }
 
 export function ReaderSentenceTextElement({
@@ -31,6 +35,7 @@ export function ReaderSentenceTextElement({
       className={readingClassName}
       data-reader-node="sentence-text"
       data-reader-sentence-text="true"
+      tabIndex={-1}
       onClick={(event) => {
         if (!onLookupIntent) {
           return;
@@ -58,7 +63,8 @@ export function ReaderSentenceTextElement({
         }
 
         event.stopPropagation();
-        onLookupIntent(result.intent, result.anchor);
+        currentTarget.focus({ preventScroll: true });
+        onLookupIntent(result.intent, result.anchor, currentTarget);
       }}
     >
       {props.children}

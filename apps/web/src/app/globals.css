@@ -74,6 +74,66 @@ body {
   font-kerning: normal;
 }
 
+:root {
+  --reader-floating-surface: rgba(255, 255, 255, 0.985);
+  --reader-floating-surface-strong: rgba(251, 250, 246, 0.965);
+  --reader-floating-border: color-mix(in srgb, var(--hairline) 86%, rgba(15, 23, 42, 0.08));
+  --reader-floating-shadow: 0 14px 38px rgba(17, 17, 17, 0.11);
+  --reader-entry-surface: rgba(255, 255, 255, 0.8);
+  --reader-entry-surface-strong: rgba(255, 255, 255, 0.92);
+  --reader-entry-shadow: 0 8px 22px rgba(28, 24, 18, 0.045);
+  --reader-selection-highlight: rgba(40, 92, 255, 0.2);
+  --reader-mark-vocab-line: rgba(166, 121, 0, 0.72);
+  --reader-mark-vocab-fill: rgba(246, 208, 95, 0.46);
+  --reader-mark-vocab-fill-soft: rgba(246, 208, 95, 0.16);
+  --reader-mark-vocab-shadow: rgba(130, 91, 0, 0.08);
+  --reader-mark-phrase-line: rgba(126, 91, 198, 0.74);
+  --reader-mark-phrase-fill: rgba(185, 168, 230, 0.46);
+  --reader-mark-phrase-fill-soft: rgba(185, 168, 230, 0.16);
+  --reader-mark-phrase-shadow: rgba(90, 70, 150, 0.08);
+  --reader-mark-context-dot: rgba(38, 105, 153, 0.64);
+  --reader-mark-context-fill: rgba(76, 145, 194, 0.12);
+  --reader-mark-context-fill-quiet: rgba(76, 145, 194, 0.08);
+  --reader-mark-grammar-line-strong: rgba(86, 72, 121, 0.78);
+  --reader-mark-grammar-line-soft: rgba(86, 72, 121, 0.48);
+  --reader-mark-grammar-fill: rgba(116, 102, 148, 0.08);
+  --reader-mark-term-line-strong: rgba(39, 108, 77, 0.58);
+  --reader-mark-term-line-soft: rgba(39, 108, 77, 0.24);
+  --reader-mark-term-fill: rgba(60, 140, 104, 0.12);
+  --reader-mark-logic-line-strong: rgba(37, 99, 235, 0.54);
+  --reader-mark-logic-line-soft: rgba(37, 99, 235, 0.22);
+  --reader-mark-logic-fill: rgba(37, 99, 235, 0.1);
+  --reader-mark-active-surface: rgba(255, 255, 255, 0.72);
+  --reader-mark-active-outline: rgba(37, 99, 235, 0.18);
+  --reader-mark-active-shadow: rgba(28, 24, 18, 0.055);
+  --reader-mark-entry-underline: rgba(86, 72, 121, 0.44);
+  --reader-mark-entry-outline: rgba(86, 72, 121, 0.12);
+  --reader-mark-entry-shadow: rgba(86, 72, 121, 0.16);
+  --reader-mark-entry-surface: rgba(255, 255, 255, 0.78);
+  --reader-mark-entry-grammar-line-strong: rgba(86, 72, 121, 0.94);
+  --reader-mark-entry-grammar-line-soft: rgba(86, 72, 121, 0.76);
+  --reader-mark-entry-grammar-fill: rgba(116, 102, 148, 0.26);
+  --reader-entry-expanded-surface: rgba(250, 248, 242, 0.96);
+  --reader-entry-active-shadow: rgba(28, 24, 18, 0.09);
+  --reader-entry-active-outline: rgba(28, 24, 18, 0.045);
+  --reader-entry-focus-outline: rgba(40, 92, 255, 0.12);
+  --reader-entry-focus-shadow: rgba(28, 24, 18, 0.06);
+  --reader-entry-active-grammar-border: rgba(116, 102, 148, 0.28);
+  --reader-entry-active-analysis-border: rgba(39, 108, 77, 0.26);
+  --reader-entry-chip-border: rgba(232, 228, 218, 0.82);
+  --reader-entry-chip-hover-border: rgba(98, 101, 109, 0.3);
+  --reader-entry-chip-surface: rgba(251, 250, 246, 0.76);
+  --reader-entry-chip-surface-hover: rgba(255, 255, 255, 0.88);
+  --reader-slip-border: rgba(232, 228, 218, 0.66);
+  --reader-slip-rail: rgba(228, 176, 0, 0.12);
+  --reader-slip-surface-top: rgba(255, 255, 255, 0.54);
+  --reader-slip-surface-bottom: rgba(251, 250, 246, 0.72);
+  --reader-slip-icon-surface: rgba(228, 176, 0, 0.1);
+  --reader-slip-icon-ink: rgba(166, 119, 0, 0.96);
+  --reader-slip-icon-ring: rgba(228, 176, 0, 0.16);
+  --reader-slip-time: rgba(98, 101, 109, 0.68);
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -488,60 +548,60 @@ select {
 .reader-mark::selection,
 .reader-plain-word::selection,
 .reader-analysis-atom::selection {
-  background: rgba(40, 92, 255, 0.22);
+  background: var(--reader-selection-highlight);
   color: var(--ink);
 }
 
 .reader-mark--vocab {
   border-radius: 0.18em 0.14em 0.2em 0.16em;
   background:
-    linear-gradient(to top, rgba(166, 121, 0, 0.72) 0 0.08em, transparent 0.08em),
-    linear-gradient(to top, rgba(246, 208, 95, 0.46) 0 62%, rgba(246, 208, 95, 0.16) 62% 82%, transparent 82%);
+    linear-gradient(to top, var(--reader-mark-vocab-line) 0 0.08em, transparent 0.08em),
+    linear-gradient(to top, var(--reader-mark-vocab-fill) 0 62%, var(--reader-mark-vocab-fill-soft) 62% 82%, transparent 82%);
   background-position: 0 84%, 0 76%;
   background-repeat: no-repeat;
   background-size: 100% 0.95em, 100% 1.05em;
-  box-shadow: 0 0.08em 0.22em rgba(130, 91, 0, 0.08);
+  box-shadow: 0 0.08em 0.22em var(--reader-mark-vocab-shadow);
 }
 
 .reader-mark--phrase {
   border-radius: 0.18em 0.14em 0.2em 0.16em;
   background:
-    linear-gradient(to top, rgba(126, 91, 198, 0.74) 0 0.08em, transparent 0.08em),
-    linear-gradient(to top, rgba(185, 168, 230, 0.46) 0 58%, rgba(185, 168, 230, 0.16) 58% 82%, transparent 82%);
+    linear-gradient(to top, var(--reader-mark-phrase-line) 0 0.08em, transparent 0.08em),
+    linear-gradient(to top, var(--reader-mark-phrase-fill) 0 58%, var(--reader-mark-phrase-fill-soft) 58% 82%, transparent 82%);
   background-position: 0 84%, 0 76%;
   background-repeat: no-repeat;
   background-size: 100% 0.92em, 100% 1.02em;
-  box-shadow: 0 0.08em 0.22em rgba(90, 70, 150, 0.08);
+  box-shadow: 0 0.08em 0.22em var(--reader-mark-phrase-shadow);
 }
 
 .reader-mark--context {
   border-radius: 0.16em;
-  background-image: radial-gradient(circle, rgba(38, 105, 153, 0.64) 1.2px, transparent 1.4px);
+  background-image: radial-gradient(circle, var(--reader-mark-context-dot) 1.2px, transparent 1.4px);
   background-position: 0 94%;
   background-repeat: repeat-x;
   background-size: 0.34em 0.18em;
-  box-shadow: inset 0 -0.42em 0 rgba(76, 145, 194, 0.12);
+  box-shadow: inset 0 -0.42em 0 var(--reader-mark-context-fill);
 }
 
 .reader-mark--grammar {
   border-radius: 0.14em;
   background:
-    linear-gradient(to right, rgba(86, 72, 121, 0.78), rgba(86, 72, 121, 0.48)) 0 100% / 100% 0.1em no-repeat,
-    linear-gradient(to top, rgba(116, 102, 148, 0.08) 0 18%, transparent 18%) 0 95% / 100% 0.42em no-repeat;
+    linear-gradient(to right, var(--reader-mark-grammar-line-strong), var(--reader-mark-grammar-line-soft)) 0 100% / 100% 0.1em no-repeat,
+    linear-gradient(to top, var(--reader-mark-grammar-fill) 0 18%, transparent 18%) 0 95% / 100% 0.42em no-repeat;
 }
 
 .reader-mark--term {
   border-radius: 0.14em;
   background:
-    linear-gradient(to right, rgba(39, 108, 77, 0.58), rgba(39, 108, 77, 0.24)) 0 100% / 100% 0.08em no-repeat,
-    linear-gradient(to top, rgba(60, 140, 104, 0.12) 0 30%, transparent 30%) 0 90% / 100% 0.62em no-repeat;
+    linear-gradient(to right, var(--reader-mark-term-line-strong), var(--reader-mark-term-line-soft)) 0 100% / 100% 0.08em no-repeat,
+    linear-gradient(to top, var(--reader-mark-term-fill) 0 30%, transparent 30%) 0 90% / 100% 0.62em no-repeat;
 }
 
 .reader-mark--logic {
   border-radius: 0.14em;
   background:
-    linear-gradient(to right, rgba(37, 99, 235, 0.54), rgba(37, 99, 235, 0.22)) 0 100% / 100% 0.08em no-repeat,
-    linear-gradient(to top, rgba(37, 99, 235, 0.1) 0 30%, transparent 30%) 0 90% / 100% 0.6em no-repeat;
+    linear-gradient(to right, var(--reader-mark-logic-line-strong), var(--reader-mark-logic-line-soft)) 0 100% / 100% 0.08em no-repeat,
+    linear-gradient(to top, var(--reader-mark-logic-fill) 0 30%, transparent 30%) 0 90% / 100% 0.6em no-repeat;
 }
 
 .reader-mark--quiet.reader-mark--vocab {
@@ -556,7 +616,7 @@ select {
 
 .reader-mark--quiet.reader-mark--context {
   background-size: 0.36em 0.14em;
-  box-shadow: inset 0 -0.32em 0 rgba(76, 145, 194, 0.08);
+  box-shadow: inset 0 -0.32em 0 var(--reader-mark-context-fill-quiet);
 }
 
 .reader-mark--quiet.reader-mark--grammar,
@@ -566,24 +626,29 @@ select {
 }
 
 .reader-mark--active {
-  background-color: rgba(255, 255, 255, 0.56);
+  background-color: var(--reader-mark-active-surface);
   box-shadow:
-    0 0 0 1px rgba(37, 99, 235, 0.16),
-    0 0.2em 0.7em rgba(28, 24, 18, 0.05);
+    0 0 0 1px var(--reader-mark-active-outline),
+    0 0.22em 0.82em var(--reader-mark-active-shadow);
 }
 
 .reader-mark--entry-active {
   color: var(--ink);
   box-shadow:
-    inset 0 -0.16em 0 rgba(86, 72, 121, 0.42),
-    0 0 0 1px rgba(86, 72, 121, 0.1),
-    0 0.22em 0.8em rgba(86, 72, 121, 0.16);
+    inset 0 -0.2em 0 var(--reader-mark-entry-underline),
+    0 0 0 1px var(--reader-mark-entry-outline),
+    0 0.28em 0.92em var(--reader-mark-entry-shadow);
 }
 
 .reader-mark--grammar.reader-mark--entry-active {
   background:
-    linear-gradient(to right, rgba(86, 72, 121, 0.92), rgba(86, 72, 121, 0.74)) 0 100% / 100% 0.14em no-repeat,
-    linear-gradient(to top, rgba(116, 102, 148, 0.24) 0 48%, transparent 48%) 0 88% / 100% 0.82em no-repeat;
+    linear-gradient(to right, var(--reader-mark-entry-grammar-line-strong), var(--reader-mark-entry-grammar-line-soft)) 0 100% / 100% 0.16em no-repeat,
+    linear-gradient(to top, var(--reader-mark-entry-grammar-fill) 0 52%, transparent 52%) 0 86% / 100% 0.88em no-repeat;
+}
+
+.reader-mark[data-reader-mark-active="true"] {
+  border-radius: 0.18em;
+  background-color: var(--reader-mark-entry-surface);
 }
 
 .reader-sentence-entry-active {
@@ -696,15 +761,17 @@ select {
   z-index: 40;
   width: min(20rem, calc(100vw - 2rem));
   max-width: 20rem;
-  border: 1px solid color-mix(in srgb, var(--hairline) 84%, rgba(15, 23, 42, 0.08));
+  border: 1px solid var(--reader-floating-border);
   border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.98);
+  background:
+    linear-gradient(180deg, var(--reader-floating-surface), var(--reader-floating-surface-strong)),
+    var(--surface);
   padding: 0.9rem;
   color: var(--ink);
   font-family: var(--font-sans);
   line-height: 1.45;
   text-align: left;
-  box-shadow: 0 12px 36px rgba(17, 17, 17, 0.12);
+  box-shadow: var(--reader-floating-shadow);
   pointer-events: auto;
 }
 
@@ -715,9 +782,9 @@ select {
   border-width: 1px;
   border-style: solid;
   border-radius: 0.85rem;
-  padding: 0.9rem 1rem;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 6px 18px rgba(28, 24, 18, 0.035);
+  padding: 0.8rem 0.95rem;
+  background: var(--reader-entry-surface);
+  box-shadow: var(--reader-entry-shadow);
   outline: none;
   transition:
     border-color 160ms ease,
@@ -727,35 +794,35 @@ select {
 }
 
 .reader-entry-note--collapsed {
-  padding-top: 0.8rem;
-  padding-bottom: 0.8rem;
+  padding-top: 0.72rem;
+  padding-bottom: 0.72rem;
 }
 
 .reader-entry-note--expanded {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(250, 248, 242, 0.96)),
+    linear-gradient(180deg, var(--reader-entry-surface-strong), var(--reader-entry-expanded-surface)),
     var(--surface-warm);
 }
 
 .reader-entry-note--active {
   transform: translateY(-1px);
   box-shadow:
-    0 12px 30px rgba(28, 24, 18, 0.09),
-    0 0 0 1px rgba(28, 24, 18, 0.04);
+    0 14px 32px var(--reader-entry-active-shadow),
+    0 0 0 1px var(--reader-entry-active-outline);
 }
 
 .reader-entry-note--active-grammar {
-  border-color: rgba(116, 102, 148, 0.34);
+  border-color: var(--reader-entry-active-grammar-border);
 }
 
 .reader-entry-note--active-analysis {
-  border-color: rgba(39, 108, 77, 0.32);
+  border-color: var(--reader-entry-active-analysis-border);
 }
 
 .reader-entry-note:focus-visible {
   box-shadow:
-    0 0 0 2px rgba(40, 92, 255, 0.14),
-    0 16px 42px rgba(28, 24, 18, 0.07);
+    0 0 0 2px var(--reader-entry-focus-outline),
+    0 16px 42px var(--reader-entry-focus-shadow);
 }
 
 .reader-entry-icon {
@@ -776,9 +843,9 @@ select {
   min-height: 2.25rem;
   align-items: center;
   gap: 0.35rem;
-  border: 1px solid rgba(232, 228, 218, 0.9);
+  border: 1px solid var(--reader-entry-chip-border);
   border-radius: 999px;
-  background: rgba(251, 250, 246, 0.76);
+  background: var(--reader-entry-chip-surface);
   padding: 0.35rem 0.75rem;
   color: var(--muted);
   font-size: 0.75rem;
@@ -791,8 +858,8 @@ select {
 }
 
 .reader-entry-chip:hover {
-  border-color: rgba(98, 101, 109, 0.38);
-  background: rgba(255, 255, 255, 0.9);
+  border-color: var(--reader-entry-chip-hover-border);
+  background: var(--reader-entry-chip-surface-hover);
   color: var(--ink);
 }
 
@@ -1012,14 +1079,13 @@ select {
 }
 
 .reader-annotation-slip {
-  border: 1px solid rgba(232, 228, 218, 0.72);
+  border: 1px solid var(--reader-slip-border);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(228, 176, 0, 0.14) 0 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(251, 250, 246, 0.76)),
+    linear-gradient(90deg, var(--reader-slip-rail) 0 1px, transparent 1px),
+    linear-gradient(180deg, var(--reader-slip-surface-top), var(--reader-slip-surface-bottom)),
     var(--surface-warm);
   padding: 0.72rem 0.86rem;
-  border: 1px solid rgba(232, 228, 218, 0.72);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
     0 0.55rem 1.4rem rgba(28, 24, 18, 0.035);
@@ -1030,9 +1096,9 @@ select {
   width: 1.45rem;
   height: 1.45rem;
   border-radius: 6px;
-  background: rgba(228, 176, 0, 0.11);
-  color: #A77700;
-  box-shadow: inset 0 0 0 1px rgba(228, 176, 0, 0.18);
+  background: var(--reader-slip-icon-surface);
+  color: var(--reader-slip-icon-ink);
+  box-shadow: inset 0 0 0 1px var(--reader-slip-icon-ring);
 }
 
 .reader-annotation-slip-text {
@@ -1040,7 +1106,7 @@ select {
 }
 
 .reader-annotation-slip-time {
-  color: rgba(98, 101, 109, 0.72);
+  color: var(--reader-slip-time);
   font-variant-numeric: tabular-nums;
 }
 

@@ -56,15 +56,16 @@ export function ReaderSentenceElement({
       {onActivate ? (
         <button
           type="button"
-          className="focus-ring absolute top-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted opacity-0 shadow-[0_8px_20px_rgba(17,17,17,0.06)] transition-[opacity,border-color,color,background-color] hover:border-muted hover:text-ink focus-visible:opacity-100 group-hover/sentence:opacity-100 group-focus-within/sentence:opacity-100"
+          className="focus-ring absolute top-2 right-2 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-hairline/70 bg-white/88 text-muted opacity-0 shadow-[0_8px_20px_rgba(17,17,17,0.05)] transition-[opacity,border-color,color,background-color] hover:border-muted hover:text-ink focus-visible:opacity-100 group-hover/sentence:opacity-100 group-focus-within/sentence:opacity-100"
           aria-label="打开当前句操作"
+          aria-haspopup="dialog"
           data-reader-sentence-handle="true"
           onClick={(event) => {
             event.stopPropagation();
             onActivate(element.sentenceId, event.currentTarget);
           }}
         >
-          <Quote aria-hidden="true" className="h-3.5 w-3.5" />
+          <Quote aria-hidden="true" className="h-4 w-4" />
         </button>
       ) : null}
       <ReaderAnnotationOverlay

@@ -1,6 +1,6 @@
 "use client";
 
-import type { AriaRole, CSSProperties, MouseEvent, PointerEvent, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import {
   flip,
   offset,
@@ -45,31 +45,24 @@ export function useReaderFloatingLayer({
 
 interface ReaderFloatingSurfaceProps {
   children: ReactNode;
-  className: string;
+  className?: string;
   floatingRef?: (node: HTMLDivElement | null) => void;
-  style?: CSSProperties;
-  role?: AriaRole;
-  onClick?: (event: MouseEvent<HTMLDivElement>) => void;
-  onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
 }
+
+type ReaderFloatingSurfaceDivProps = ReaderFloatingSurfaceProps &
+  Omit<ComponentPropsWithoutRef<"div">, "children" | "className">;
 
 export function ReaderFloatingSurface({
   children,
   className,
   floatingRef,
-  style,
-  role,
-  onClick,
-  onPointerDown,
-}: ReaderFloatingSurfaceProps) {
+  ...props
+}: ReaderFloatingSurfaceDivProps) {
   return (
     <ReaderFloatingPanel
       floatingRef={floatingRef}
       className={className}
-      role={role}
-      style={style}
-      onClick={onClick}
-      onPointerDown={onPointerDown}
+      {...props}
     >
       {children}
     </ReaderFloatingPanel>

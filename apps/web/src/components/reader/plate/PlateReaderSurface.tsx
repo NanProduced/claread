@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import {
   Plate,
-  createPlateEditor,
+  usePlateEditor,
 } from "platejs/react";
 import type {
   ReaderAnalysisBlockNode,
@@ -56,8 +56,16 @@ export interface PlateReaderSurfaceProps {
   onAnnotationJump?: (annotation: WebAnnotationVm) => void;
   onAnnotationAsk?: (annotation: WebAnnotationVm) => void;
   onFavoriteJump?: (favorite: WebFavoriteTargetVm) => void;
-  onLookupIntent?: (intent: ReaderLookupIntent, anchor: ReaderLookupPreviewAnchor | null) => void;
-  onInspectIntent?: (intent: ReaderStructuredInspectIntent, anchor: ReaderLookupPreviewAnchor | null) => void;
+  onLookupIntent?: (
+    intent: ReaderLookupIntent,
+    anchor: ReaderLookupPreviewAnchor | null,
+    triggerEl?: HTMLElement | null,
+  ) => void;
+  onInspectIntent?: (
+    intent: ReaderStructuredInspectIntent,
+    anchor: ReaderLookupPreviewAnchor | null,
+    triggerEl?: HTMLElement | null,
+  ) => void;
   onAskTranslation?: (sentenceId: string, translationZh: string) => void;
   onAskAnalysis?: (sentenceId: string, entryId: string) => void;
   onAskContentSummary?: (summary: ReaderContentSummaryNode) => void;
@@ -152,13 +160,18 @@ export function PlateReaderSurface({
     return map;
   }, [paragraphNodes]);
 
-  const editor = useMemo(
-    () =>
-      createPlateEditor({
-        value: document.children as never[],
-      }),
-    [document.children],
+  const editor = usePlateEditor(
+    {
+      value: document.children as never[],
+    },
+    [],
   );
+
+  useEffect(() => {
+    if (editor.children !== document.children) {
+      editor.tf.setValue(document.children as never[]);
+    }
+  }, [document.children, editor]);
 
   const renderElement = useCallback(
     (props: any) => {

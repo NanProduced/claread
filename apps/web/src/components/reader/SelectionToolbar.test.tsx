@@ -44,7 +44,7 @@ describe("SelectionToolbar", () => {
 
     expect(onAsk).toHaveBeenCalledWith("policy choices");
     expect(onSelectSentence).toHaveBeenCalledWith("policy choices");
-    expect(toolbar.getByRole("button", { name: /高亮/i })).toBeTruthy();
+    expect(toolbar.getByRole("button", { name: "高亮" })).toBeTruthy();
   });
 
   it("uses progressive disclosure for note editing", () => {

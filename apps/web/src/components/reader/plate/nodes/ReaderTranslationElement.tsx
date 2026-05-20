@@ -25,7 +25,7 @@ export function ReaderTranslationElement({
         {onAsk ? (
           <button
             type="button"
-            className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue focus-visible:opacity-100 group-hover/translation:opacity-100"
+            className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue focus-visible:opacity-100 group-hover/translation:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
               onAsk();

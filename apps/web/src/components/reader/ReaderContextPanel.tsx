@@ -1,20 +1,24 @@
 "use client";
 
-import { MessageSquare, Palette, Sparkles, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Highlighter, MessageSquare, MoreHorizontal, NotebookPen, Palette, X } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 import type { UserAnnotationColorDto, WebAnnotationVm } from "@/types/api/annotations";
 import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
+  ReaderToolbarActionButton,
+  ReaderToolbarIconButton,
+  ReaderToolbarMenu,
+  ReaderToolbarMenuContent,
+  ReaderToolbarMenuItem,
+  ReaderToolbarMenuLabel,
+  ReaderToolbarMenuRadioGroup,
+  ReaderToolbarMenuRadioItem,
+  ReaderToolbarMenuSeparator,
+  ReaderToolbarMenuTrigger,
+  ReaderToolbarPopoverCard,
+  ReaderToolbarRoot,
+} from "./plate-ui-adapter";
 
 export type AnnotationSaveState =
   | { kind: "idle" }
@@ -80,6 +84,9 @@ export function ReaderContextPanel({
   onFavoriteJump,
   onClose,
 }: ReaderContextPanelProps) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const noteId = useId();
   const [noteOpen, setNoteOpen] = useState(false);
   const [savedAssetsOpen, setSavedAssetsOpen] = useState(false);
   const activeSelectedText = selectedText?.trim() ? selectedText : null;
@@ -101,23 +108,33 @@ export function ReaderContextPanel({
 
   if (!sentence) {
     return (
-      <section className="w-[min(22rem,calc(100vw-1rem))] rounded-xl border border-border/80 bg-popover/98 p-4 text-popover-foreground shadow-md">
+      <section
+        role="dialog"
+        aria-modal="false"
+        className="w-[min(22rem,calc(100vw-1rem))] rounded-xl border border-border/80 bg-popover/98 p-4 text-popover-foreground shadow-md"
+      >
         <p className="text-sm leading-6 text-muted-foreground">通过句侧句柄打开当前句操作，或直接选中文本进入选区工具条。</p>
       </section>
     );
   }
 
   return (
-    <section className="w-[min(24rem,calc(100vw-1rem))] rounded-xl border border-border/80 bg-popover/98 p-4 text-popover-foreground shadow-md">
+    <section
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      className="w-[min(24rem,calc(100vw-1rem))] max-h-[min(32rem,calc(100vh-7rem))] overflow-y-auto rounded-xl border border-border/80 bg-popover/98 p-4 text-popover-foreground shadow-md"
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">{isTextRange ? "当前选区" : "当前句"}</h2>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">句级动作保持轻量，正文仍是主舞台。</p>
+          <h2 id={titleId} className="text-sm font-semibold text-foreground">{isTextRange ? "当前选区" : "当前句"}</h2>
+          <p id={descriptionId} className="mt-1 text-xs leading-5 text-muted-foreground">只保留当前句的最小动作，已保存资产放到次级层。</p>
         </div>
         {onClose ? (
           <button
             type="button"
-            className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:border-border/80 hover:bg-muted/55 hover:text-foreground"
+            className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:border-border/80 hover:bg-muted/55 hover:text-foreground"
             onClick={onClose}
             aria-label="关闭当前句操作"
           >
@@ -130,44 +147,45 @@ export function ReaderContextPanel({
         <p className="line-clamp-3 reader-serif text-[0.98rem] leading-7 text-foreground">{previewText}</p>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <button
-          type="button"
-          className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/92 disabled:cursor-not-allowed disabled:opacity-60"
+      <ReaderToolbarRoot className="mt-3 max-w-none justify-between p-1">
+        <ReaderToolbarActionButton
+          className="min-h-10 flex-1 justify-center gap-2 rounded-lg border-transparent bg-primary text-primary-foreground hover:border-transparent hover:bg-primary/92 hover:text-primary-foreground"
           disabled={saveState.kind === "saving"}
           onClick={() => onSaveAnnotation(false)}
         >
+          <Highlighter aria-hidden="true" className="h-4 w-4" />
           高亮
-        </button>
-        <button
-          type="button"
-          className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:border-border/80 hover:bg-muted/55"
+        </ReaderToolbarActionButton>
+        <ReaderToolbarActionButton
+          className="min-h-10 flex-1 justify-center gap-2 rounded-lg"
+          active={noteOpen}
           onClick={() => setNoteOpen((value) => !value)}
         >
+          <NotebookPen aria-hidden="true" className="h-4 w-4" />
           笔记
-        </button>
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-muted/55 hover:text-foreground"
+        </ReaderToolbarActionButton>
+        <ReaderToolbarMenu>
+          <ReaderToolbarMenuTrigger asChild>
+            <ReaderToolbarIconButton
+              aria-label="更多句级操作"
+              title="更多句级操作"
+              className="h-10 min-w-10 rounded-lg"
             >
-              <Sparkles aria-hidden="true" className="h-4 w-4" />
-              更多
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>句级操作</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="pb-1 text-xs font-medium text-muted-foreground">
+              <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+            </ReaderToolbarIconButton>
+          </ReaderToolbarMenuTrigger>
+          <ReaderToolbarMenuContent align="end" className="w-56">
+            <ReaderToolbarMenuLabel>句级操作</ReaderToolbarMenuLabel>
+            <ReaderToolbarMenuSeparator />
+            <ReaderToolbarMenuLabel className="pb-1 text-xs font-medium text-muted-foreground">
               <span className="inline-flex items-center gap-2">
                 <Palette aria-hidden="true" className="h-3.5 w-3.5" />
                 高亮颜色
               </span>
-            </DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={color}>
+            </ReaderToolbarMenuLabel>
+            <ReaderToolbarMenuRadioGroup value={color}>
               {colorOptions.map((option) => (
-                <DropdownMenuRadioItem
+                <ReaderToolbarMenuRadioItem
                   key={option.value}
                   value={option.value}
                   onSelect={(event) => {
@@ -180,30 +198,32 @@ export function ReaderContextPanel({
                     className={`mr-1.5 h-3.5 w-3.5 rounded-[4px] ring-1 ring-inset ring-border/60 ${option.className}`}
                   />
                   {option.label}
-                </DropdownMenuRadioItem>
+                </ReaderToolbarMenuRadioItem>
               ))}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={onAsk}>
+            </ReaderToolbarMenuRadioGroup>
+            <ReaderToolbarMenuSeparator />
+            <ReaderToolbarMenuItem onSelect={onAsk}>
               <MessageSquare aria-hidden="true" className="h-4 w-4" />
               带入 Ask
-            </DropdownMenuItem>
+            </ReaderToolbarMenuItem>
             {hasSavedAssets ? (
-              <DropdownMenuItem onSelect={() => setSavedAssetsOpen((value) => !value)}>
+              <ReaderToolbarMenuItem onSelect={() => setSavedAssetsOpen((value) => !value)}>
                 查看已保存资产
-              </DropdownMenuItem>
+              </ReaderToolbarMenuItem>
             ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+          </ReaderToolbarMenuContent>
+        </ReaderToolbarMenu>
+      </ReaderToolbarRoot>
 
       {noteOpen ? (
-        <div className="mt-3 rounded-lg border border-border/80 bg-background p-3">
+        <ReaderToolbarPopoverCard className="mt-3 w-full rounded-lg p-3">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-foreground">笔记</span>
+            <label htmlFor={noteId} className="text-xs font-medium text-foreground">笔记</label>
             <span className="text-[0.68rem] text-muted-foreground">{note.length}/500</span>
           </div>
           <textarea
+            id={noteId}
+            aria-label={isTextRange ? "当前选区笔记" : "当前句笔记"}
             className="focus-ring min-h-24 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-[0.92rem] leading-[1.65] text-foreground outline-none transition-colors focus:border-ring"
             placeholder={isTextRange ? "写一句和这个选区绑定的笔记。" : "写一句和这句话绑定的笔记。"}
             value={note}
@@ -216,14 +236,14 @@ export function ReaderContextPanel({
             </span>
             <button
               type="button"
-              className="focus-ring inline-flex min-h-8 items-center justify-center rounded-md border border-border bg-muted/45 px-3 text-xs font-medium text-foreground transition-colors hover:border-border/80 hover:bg-muted/72 disabled:cursor-not-allowed disabled:opacity-60"
+              className="focus-ring inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-muted/45 px-3 text-xs font-medium text-foreground transition-colors hover:border-border/80 hover:bg-muted/72 disabled:cursor-not-allowed disabled:opacity-60"
               disabled={saveState.kind === "saving" || note.trim().length === 0}
               onClick={() => onSaveAnnotation(true)}
             >
               保存笔记
             </button>
           </div>
-        </div>
+        </ReaderToolbarPopoverCard>
       ) : null}
 
       {hasSavedAssets && savedAssetsOpen ? (
@@ -236,7 +256,7 @@ export function ReaderContextPanel({
           </div>
           <div className="space-y-2">
             {sentenceAnnotations.map((item) => (
-              <div key={item.id} className="rounded-lg border border-border bg-background px-3 py-2.5">
+              <ReaderToolbarPopoverCard key={item.id} className="mt-0 w-full rounded-lg px-3 py-2.5">
                 <p className="text-sm leading-6 text-muted-foreground">
                   <span className="font-semibold text-foreground">{annotationSummaryLabel(item)}</span>
                   {item.anchorType === "text_range" ? <span className="ml-2 text-muted-foreground">“{item.selectedText}”</span> : null}
@@ -264,10 +284,10 @@ export function ReaderContextPanel({
                     ) : null}
                   </div>
                 ) : null}
-              </div>
+              </ReaderToolbarPopoverCard>
             ))}
             {sentenceFavorites.map((item) => (
-              <div key={item.id} className="rounded-lg border border-border bg-background px-3 py-2.5">
+              <ReaderToolbarPopoverCard key={item.id} className="mt-0 w-full rounded-lg px-3 py-2.5">
                 <p className="text-sm leading-6 text-muted-foreground">
                   <span className="font-semibold text-foreground">收藏锚点</span>
                   {item.selectedText ? <span className="ml-2 text-muted-foreground">“{item.selectedText}”</span> : null}
@@ -294,7 +314,7 @@ export function ReaderContextPanel({
                     ) : null}
                   </div>
                 ) : null}
-              </div>
+              </ReaderToolbarPopoverCard>
             ))}
           </div>
         </div>

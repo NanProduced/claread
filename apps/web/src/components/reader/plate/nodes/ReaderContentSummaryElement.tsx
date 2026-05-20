@@ -45,7 +45,7 @@ export function ReaderContentSummaryElement({
           </div>
           <div className="mt-1 flex items-start gap-3">
             <div className="min-w-0 flex-1">
-              <h2 className="text-[1rem] font-semibold leading-6 text-foreground">Academic Summary</h2>
+              <h2 className="text-[1rem] font-semibold leading-6 text-foreground">学术内容摘要</h2>
               {!expanded ? (
                 <p className="mt-1 line-clamp-2 text-[0.9rem] leading-6 text-muted-foreground">{element.overview}</p>
               ) : null}
@@ -62,7 +62,7 @@ export function ReaderContentSummaryElement({
         {onAsk ? (
           <button
             type="button"
-            className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-border hover:bg-muted/50 hover:text-lens-blue focus-visible:opacity-100 group-hover/content-summary:opacity-100"
+            className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-border hover:bg-muted/50 hover:text-lens-blue focus-visible:opacity-100 group-hover/content-summary:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
               onAsk();

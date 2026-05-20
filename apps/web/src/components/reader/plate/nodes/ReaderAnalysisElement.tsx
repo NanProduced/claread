@@ -91,7 +91,7 @@ export function ReaderAnalysisElement({
       onFocus={() => onFocusChange?.(true)}
       onBlur={() => onFocusChange?.(false)}
     >
-      <div className="flex gap-3">
+      <div className="flex items-start gap-3">
         <button
           type="button"
           className="min-w-0 flex-1 text-left"
@@ -113,7 +113,7 @@ export function ReaderAnalysisElement({
               )}
             </span>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div className="flex items-center gap-2">
                 <p
                   className={`text-[0.72rem] font-semibold uppercase tracking-[0.08em] ${
                     element.entryType === "sentence_analysis" ? "text-structure-green" : "text-grammar-violet"
@@ -121,21 +121,19 @@ export function ReaderAnalysisElement({
                 >
                   {category}
                 </p>
-                <span className="rounded-full border border-hairline bg-surface-warm px-2 py-0.5 text-[0.65rem] font-medium text-muted">
-                  {element.entryType === "sentence_analysis" ? "本句解析" : "机器解析"}
-                </span>
-              </div>
-              <div className="mt-1 flex items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-[0.95rem] font-semibold leading-6 text-ink">{label}</h3>
-                </div>
-                <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted">
+                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted">
                   <ChevronDown
                     aria-hidden="true"
                     className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
                   />
                 </span>
               </div>
+              <h3 className="mt-1 text-[0.95rem] font-semibold leading-6 text-ink">{label}</h3>
+              {!expanded ? (
+                <p className="mt-1 text-[0.78rem] leading-5 text-muted-foreground">
+                  点击展开后查看完整解释，并回指原文锚点。
+                </p>
+              ) : null}
             </div>
           </div>
         </button>
@@ -143,7 +141,7 @@ export function ReaderAnalysisElement({
         {onAsk ? (
           <button
             type="button"
-            className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue focus-visible:opacity-100 group-hover/analysis:opacity-100"
+            className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue focus-visible:opacity-100 group-hover/analysis:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
               onAsk();

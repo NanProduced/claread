@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ReaderQuickPeek } from "./ReaderQuickPeek";
 
@@ -64,15 +64,18 @@ describe("ReaderQuickPeek", () => {
       />,
     );
 
-    expect(screen.getAllByRole("dialog")[1]).toBeTruthy();
-    expect(screen.getByText("结构化解释")).toBeTruthy();
-    expect(screen.getByText("policy choices")).toBeTruthy();
-    expect(screen.getByText("政策选择")).toBeTruthy();
+    const inspectDialog = screen.getAllByRole("dialog")[1];
+    const inspectView = within(inspectDialog);
 
-    fireEvent.click(screen.getByText("查短语"));
+    expect(inspectDialog).toBeTruthy();
+    expect(inspectView.getByText("结构化解释")).toBeTruthy();
+    expect(inspectView.getAllByText("policy choices").length).toBeGreaterThan(0);
+    expect(inspectView.getByText("政策选择")).toBeTruthy();
+
+    fireEvent.click(inspectView.getByText("查短语"));
     expect(onLookupPhrase).toHaveBeenCalled();
 
-    fireEvent.click(screen.getByText("带入 Ask"));
+    fireEvent.click(inspectView.getByText("带入 Ask"));
     expect(onAttachToAsk).toHaveBeenCalled();
   });
 });

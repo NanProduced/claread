@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import type { ReactNode } from "react";
 import type { RenderLeaf } from "platejs/react";
 import {
@@ -24,8 +25,16 @@ interface ReaderMarkLeafProps {
   activeAnalysisEntryId?: string | null;
   sentenceTextBySentence?: Map<string, string>;
   sourceContextBySentence?: Map<string, string | undefined>;
-  onLookupIntent?: (intent: ReaderLookupIntent, anchor: ReaderLookupPreviewAnchor | null) => void;
-  onInspectIntent?: (intent: ReaderStructuredInspectIntent, anchor: ReaderLookupPreviewAnchor | null) => void;
+  onLookupIntent?: (
+    intent: ReaderLookupIntent,
+    anchor: ReaderLookupPreviewAnchor | null,
+    triggerEl?: HTMLElement | null,
+  ) => void;
+  onInspectIntent?: (
+    intent: ReaderStructuredInspectIntent,
+    anchor: ReaderLookupPreviewAnchor | null,
+    triggerEl?: HTMLElement | null,
+  ) => void;
 }
 
 function routeFocusSegmentsForLeaf(
@@ -167,7 +176,7 @@ function annotationSegmentsForLeaf(
     .sort((left, right) => left.startOffset - right.startOffset);
 }
 
-export function ReaderMarkLeaf({
+export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   activeAnalysisEntryId = null,
   annotationRangesBySentence,
   annotationVisibilityGroups,
@@ -192,23 +201,45 @@ export function ReaderMarkLeaf({
     readerTextEndOffset?: number;
     readerMarkVisualTone?: Parameters<typeof readerMarkClassName>[0];
   };
-  const focusedSegments = routeFocusSegmentsForLeaf(
-    leaf.readerSentenceId,
-    leaf.readerTextStartOffset,
-    leaf.readerTextEndOffset,
-    routeFocusRangesBySentence,
+  const focusedSegments = useMemo(
+    () =>
+      routeFocusSegmentsForLeaf(
+        leaf.readerSentenceId,
+        leaf.readerTextStartOffset,
+        leaf.readerTextEndOffset,
+        routeFocusRangesBySentence,
+      ),
+    [
+      leaf.readerSentenceId,
+      leaf.readerTextStartOffset,
+      leaf.readerTextEndOffset,
+      routeFocusRangesBySentence,
+    ],
   );
-  const annotationSegments = annotationSegmentsForLeaf(
-    leaf.readerSentenceId,
-    leaf.readerTextStartOffset,
-    leaf.readerTextEndOffset,
-    annotationRangesBySentence,
+  const annotationSegments = useMemo(
+    () =>
+      annotationSegmentsForLeaf(
+        leaf.readerSentenceId,
+        leaf.readerTextStartOffset,
+        leaf.readerTextEndOffset,
+        annotationRangesBySentence,
+      ),
+    [
+      leaf.readerSentenceId,
+      leaf.readerTextStartOffset,
+      leaf.readerTextEndOffset,
+      annotationRangesBySentence,
+    ],
   );
-  const content = renderLeafContent(
-    leaf.text,
-    leaf.readerTextStartOffset,
-    focusedSegments,
-    annotationSegments,
+  const content = useMemo(
+    () =>
+      renderLeafContent(
+        leaf.text,
+        leaf.readerTextStartOffset,
+        focusedSegments,
+        annotationSegments,
+      ),
+    [annotationSegments, focusedSegments, leaf.text, leaf.readerTextStartOffset],
   );
   const hasDecoratedContent = focusedSegments.length > 0 || annotationSegments.length > 0;
   const visualTone = leaf.readerMarkVisualTone;
@@ -228,6 +259,8 @@ export function ReaderMarkLeaf({
       data-reader-mark-id={leaf.readerMarkId}
       data-reader-mark-parent-id={leaf.readerMarkParentId}
       data-reader-mark-tone={visualTone}
+      data-reader-mark-active={entryActiveClass ? "true" : undefined}
+      tabIndex={isClickable ? -1 : undefined}
       onClick={(event) => {
         if (!isClickable || !leaf.readerSentenceId || leaf.readerTextStartOffset === undefined || leaf.readerTextEndOffset === undefined) {
           return;
@@ -270,6 +303,7 @@ export function ReaderMarkLeaf({
           leaf.readerMarkAnnotationType === "context_gloss";
 
         event.stopPropagation();
+        event.currentTarget.focus({ preventScroll: true });
 
         if (isStructured) {
           const intent = inspectIntentFromStructuredMark({
@@ -280,7 +314,7 @@ export function ReaderMarkLeaf({
             startOffset: leaf.readerTextStartOffset,
             endOffset: leaf.readerTextEndOffset,
           });
-          onInspectIntent?.(intent, anchor);
+          onInspectIntent?.(intent, anchor, event.currentTarget);
           return;
         }
 
@@ -292,10 +326,12 @@ export function ReaderMarkLeaf({
           startOffset: leaf.readerTextStartOffset,
           endOffset: leaf.readerTextEndOffset,
         });
-        onLookupIntent?.(intent, anchor);
+        onLookupIntent?.(intent, anchor, event.currentTarget);
       }}
     >
       {hasDecoratedContent ? content : props.children}
     </span>
   );
-}
+});
+
+ReaderMarkLeaf.displayName = "ReaderMarkLeaf";
