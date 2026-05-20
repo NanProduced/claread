@@ -38,6 +38,7 @@ from app.schemas.reader_ask import (
     ReaderAskContextPlan,
     ReaderAskCurrentRecordContext,
     ReaderAskDeleteSupplementResponse,
+    ReaderAskDisambiguation,
     ReaderAskEvidenceItem,
     ReaderAskEntryAction,
     ReaderAskExternalRecordContext,
@@ -492,6 +493,13 @@ def _current_record_source_labels(runtime_state: ReaderAskRuntimeState) -> list[
     return labels
 
 
+def _external_context_has_structured_assets(items: list[dict[str, Any]] | None) -> bool:
+    return bool(
+        items
+        and any(item.get("article_overview") or item.get("record_insights") for item in items)
+    )
+
+
 async def _load_external_record_contexts(
     user_id: UUID,
     *,
@@ -509,14 +517,21 @@ async def _load_external_record_contexts(
         if record_uuid == current_record_id:
             continue
         bundle = await _load_record_bundle(user_id, record_uuid)
-        article_overview = _render_scene_article_overview(bundle)
+        structured_assets = resolver_svc.lookup_structured_record_assets(
+            record_id=str(bundle.record_id),
+            record_title=bundle.title or item.get("title"),
+            render_scene=bundle.render_scene,
+            reason=str(item.get("reason") or "explicit_attachment"),
+            updated_at=item.get("updated_at"),
+        )
         contexts.append(
             ReaderAskExternalRecordContext(
-                record_id=str(bundle.record_id),
-                record_title=bundle.title or item.get("title"),
-                article_overview=article_overview,
-                source_labels=["external_record", *([] if article_overview else ["overview_missing"])],
-                reason=str(item.get("reason") or "explicit_attachment"),
+                record_id=str(structured_assets["record_id"]),
+                record_title=structured_assets.get("record_title"),
+                article_overview=structured_assets.get("article_overview"),
+                record_insights=list(structured_assets.get("record_insights") or []),
+                source_labels=list(structured_assets.get("source_labels") or []),
+                reason=str(structured_assets.get("reason") or "explicit_attachment"),
             )
         )
     return contexts
@@ -561,6 +576,8 @@ async def _materialize_planned_context(
         ]
         runtime_state.used_history_lookup = True
         runtime_state.source_labels.add("history_assets")
+        for item in external_record_contexts:
+            runtime_state.source_labels.update(item.source_labels)
 
     current_record_context = ReaderAskCurrentRecordContext(
         record_id=str(record.record_id),
@@ -1200,6 +1217,7 @@ def _message_metadata(
     resolved_context_input: ReaderAskResolvedContextInput | None = None,
     evidence: list[ReaderAskEvidenceItem] | None = None,
     trace_summary: ReaderAskTraceSummary | None = None,
+    disambiguation: ReaderAskDisambiguation | None = None,
     response_cards: list[ReaderAskResponseCard] | None = None,
     run_info: dict[str, Any] | None = None,
     supplement_candidates: list[dict[str, Any]] | None = None,
@@ -1219,6 +1237,8 @@ def _message_metadata(
         metadata["evidence"] = [item.model_dump(mode="json") for item in evidence]
     if trace_summary is not None:
         metadata["trace_summary"] = trace_summary.model_dump(mode="json")
+    if disambiguation is not None:
+        metadata["disambiguation"] = disambiguation.model_dump(mode="json")
     if response_cards:
         metadata["response_cards"] = [card.model_dump(mode="json") for card in response_cards]
     if run_info is not None:
@@ -1277,6 +1297,7 @@ def _visible_output_from_message(message: ReaderAskMessage, message_dict: dict[s
         "tool_trace": [item.model_dump(mode="json") for item in message.tool_trace],
         "evidence": [item.model_dump(mode="json") for item in message.evidence],
         "trace_summary": message.trace_summary.model_dump(mode="json") if message.trace_summary else None,
+        "disambiguation": message.disambiguation.model_dump(mode="json") if message.disambiguation else None,
         "response_cards": [item.model_dump(mode="json") for item in message.response_cards],
         "usage_summary": None,
         "billed_points": 0,
@@ -1323,6 +1344,9 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
         },
         "context_plan": planning_snapshot.context_plan.model_dump(mode="json"),
         "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json"),
+        "disambiguation_state": planning_snapshot.disambiguation_state.model_dump(mode="json")
+        if planning_snapshot.disambiguation_state
+        else None,
     }
 
 
@@ -1358,8 +1382,15 @@ def _capability_trace_json(
         },
         "external_record_context": {
             "used": bool(runtime_state.latest_external_record_contexts),
-            "reason": context_plan.reference_resolution_reason if context_plan else None,
+            "reason": context_plan.external_record_context_reason if context_plan else None,
             "source_labels": ["history_assets"] if runtime_state.latest_external_record_contexts else [],
+        },
+        "structured_asset_lookup": {
+            "used": _external_context_has_structured_assets(runtime_state.latest_external_record_contexts),
+            "reason": context_plan.structured_asset_lookup_reason if context_plan else None,
+            "source_labels": ["article_overview", "record_assets"]
+            if _external_context_has_structured_assets(runtime_state.latest_external_record_contexts)
+            else [],
         },
     }
 
@@ -1377,6 +1408,8 @@ def _metrics_json(
         "history_lookup_used": trace_summary.history_lookup_used if trace_summary else False,
         "used_known_reference_resolution": trace_summary.used_known_reference_resolution if trace_summary else False,
         "used_external_record_context": trace_summary.used_external_record_context if trace_summary else False,
+        "used_structured_asset_lookup": trace_summary.used_structured_asset_lookup if trace_summary else False,
+        "used_hitp_disambiguation": trace_summary.used_hitp_disambiguation if trace_summary else False,
         "billed_points": billed_points,
         "usage_event_id": str(usage_event_id) if usage_event_id else None,
         "prompt_version": get_prompt_version(),
@@ -1970,6 +2003,7 @@ def _build_evidence_items(
     external_record_contexts: list[dict[str, Any]] | None = None,
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
+    disambiguation: ReaderAskDisambiguation | None = None,
     include_clarification: bool = False,
 ) -> list[ReaderAskEvidenceItem]:
     return post_process_svc.build_evidence_items(
@@ -1980,6 +2014,7 @@ def _build_evidence_items(
         external_record_contexts=external_record_contexts,
         reference_resolution=reference_resolution,
         supplement_candidates=supplement_candidates,
+        disambiguation=disambiguation,
         include_clarification=include_clarification,
     )
 
@@ -2126,6 +2161,7 @@ async def stream_thread_message(
     run_info: dict[str, Any] | None = None
     active_turn_run_id: UUID | None = None
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
+    disambiguation: ReaderAskDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
     persisted_supplements_json: list[dict[str, Any]] = []
 
@@ -2170,6 +2206,7 @@ async def stream_thread_message(
         )
         resolved_intent = planning_snapshot.resolved_intent
         resolved_context_input = planning_snapshot.resolved_context_input
+        disambiguation = planning_snapshot.disambiguation_state
         clarification_only = planning_snapshot.clarification_only
         if clarification_only:
             user_message = await repo.create_message(
@@ -2235,6 +2272,7 @@ async def stream_thread_message(
                 current_record_id=str(record.record_id),
                 current_record_title=record.title,
                 reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
                 include_clarification=True,
             )
             trace_summary = _build_trace_summary(
@@ -2253,6 +2291,7 @@ async def stream_thread_message(
                 tool_trace=[],
                 evidence=evidence,
                 trace_summary=trace_summary,
+                disambiguation=disambiguation,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -2276,6 +2315,7 @@ async def stream_thread_message(
                 resolved_context_input=resolved_context_input,
                 evidence=evidence,
                 trace_summary=trace_summary,
+                disambiguation=disambiguation,
                 response_cards=[],
                 run_info=run_info,
                 persisted_supplements=[],
@@ -2783,6 +2823,7 @@ async def stream_thread_message(
                 trace_summary=trace_summary,
                 response_cards=response_cards,
                 run_info=run_info,
+                disambiguation=disambiguation,
                 supplement_candidates=supplement_candidates,
                 persisted_supplements=[],
             ),
@@ -2799,6 +2840,7 @@ async def stream_thread_message(
             tool_trace=runtime_state.tool_trace,
             evidence=evidence,
             trace_summary=trace_summary,
+            disambiguation=disambiguation,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
@@ -2934,6 +2976,7 @@ async def retry_thread_message(
     body: ReaderAskMessageStreamRequest | None = None
     original_user_message = ""
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
+    disambiguation: ReaderAskDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
 
     try:
@@ -3014,6 +3057,7 @@ async def retry_thread_message(
         )
         resolved_intent = planning_snapshot.resolved_intent
         resolved_context_input = planning_snapshot.resolved_context_input
+        disambiguation = planning_snapshot.disambiguation_state
         run_info, run_history = _next_run_info(assistant_message)
         turn_run = await repo.create_turn_run(
             message_id=message_id,
@@ -3072,6 +3116,7 @@ async def retry_thread_message(
                 current_record_id=str(record.record_id),
                 current_record_title=record.title,
                 reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
                 include_clarification=True,
             )
             trace_summary = _build_trace_summary(
@@ -3098,6 +3143,7 @@ async def retry_thread_message(
                     resolved_context_input=resolved_context_input,
                     evidence=evidence,
                     trace_summary=trace_summary,
+                    disambiguation=disambiguation,
                     response_cards=[],
                     run_info=run_info,
                     run_history=run_history,
@@ -3116,6 +3162,7 @@ async def retry_thread_message(
                 tool_trace=[],
                 evidence=evidence,
                 trace_summary=trace_summary,
+                disambiguation=disambiguation,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -3583,6 +3630,7 @@ async def retry_thread_message(
                 trace_summary=trace_summary,
                 response_cards=response_cards,
                 run_info=run_info,
+                disambiguation=disambiguation,
                 supplement_candidates=supplement_candidates,
                 persisted_supplements=persisted_supplements_json,
                 run_history=run_history,
@@ -3600,6 +3648,7 @@ async def retry_thread_message(
             tool_trace=runtime_state.tool_trace,
             evidence=evidence,
             trace_summary=trace_summary,
+            disambiguation=disambiguation,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,

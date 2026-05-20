@@ -21,7 +21,7 @@ const completedPayload = {
       record_id: "record-2",
       record_title: "Climate Policy",
       source_article_title: "Climate Policy",
-      reason: "known_reference_resolved",
+      reason: "structured_asset_lookup",
       target_key: null,
       metadata_json: { query: "Climate Policy" },
     },
@@ -32,6 +32,8 @@ const completedPayload = {
     working_set_mode: "known_reference",
     used_known_reference_resolution: true,
     used_external_record_context: true,
+    used_structured_asset_lookup: true,
+    used_hitp_disambiguation: false,
     supplement_generation_used: false,
     supplement_persisted_count: 0,
     supplement_deleted_count: 0,
@@ -73,6 +75,8 @@ const completedPayload = {
     article_overview_reason: null,
     used_dictionary: false,
     dictionary_reason: null,
+    external_record_context_reason: "external_record_context_loaded",
+    structured_asset_lookup_reason: "external_record_stable_assets_loaded",
     clarification_reason: null,
     source_labels: ["current_record", "history_assets"],
   },
@@ -104,6 +108,7 @@ const completedPayload = {
         record_id: "record-2",
         record_title: "Climate Policy",
         article_overview: "这篇文章讨论气候政策如何塑造制度解释。",
+        record_insights: ["主干分析: 先交代制度背景。"],
         source_labels: ["external_record"],
         reason: "known_reference_resolved",
       },
@@ -112,6 +117,7 @@ const completedPayload = {
   run_info: null,
   supplement_candidates: [],
   persisted_supplements: [],
+  disambiguation: null,
 };
 
 vi.mock("@/components/ui/message", () => ({
@@ -524,6 +530,169 @@ describe("AiWorkspacePanel", () => {
     ]);
   });
 
+  it("renders disambiguation candidate cards and re-sends the current question after selection", async () => {
+    const onAppendAttachments = vi.fn();
+
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            {
+              id: "msg-user-1",
+              thread_id: "thread-1",
+              role: "user",
+              status: "completed",
+              content_md: "我之前那篇 climate 文章里呢？",
+              resolved_intent: null,
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: null,
+              disambiguation: null,
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+            {
+              id: "msg-assistant-1",
+              thread_id: "thread-1",
+              role: "assistant",
+              status: "completed",
+              content_md: "我需要先确认你说的是哪篇文章。",
+              resolved_intent: "explain",
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [
+                {
+                  kind: "clarification",
+                  label: "引用解析需要补充",
+                  detail: "“climate”命中了多个候选，请补充更完整的标题。",
+                  scope: "current_record",
+                  record_id: null,
+                  record_title: null,
+                  source_article_title: null,
+                  reason: "clarification",
+                  target_key: null,
+                  metadata_json: {},
+                },
+              ],
+              trace_summary: {
+                planner_mode: "needs_local_clarification",
+                reference_resolution_status: "ambiguous",
+                working_set_mode: "clarification",
+                used_known_reference_resolution: false,
+                used_external_record_context: false,
+                used_structured_asset_lookup: false,
+                used_hitp_disambiguation: true,
+                supplement_generation_used: false,
+                supplement_persisted_count: 0,
+                supplement_deleted_count: 0,
+                history_lookup_allowed: false,
+                history_lookup_used: false,
+                tool_steps: [],
+                notes: [],
+              },
+              disambiguation: {
+                required: true,
+                reason: "“climate”命中了多个候选，请选择要并入当前讨论的文章。",
+                query: "climate",
+                selection_mode: "panel_cards",
+                candidates: [
+                  {
+                    record_id: "record-2",
+                    title: "Climate Policy",
+                    updated_at: "2026-05-20T00:00:00Z",
+                  },
+                ],
+              },
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+          ],
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[]}
+        onAppendAttachments={onAppendAttachments}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("候选文章")).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "加入当前讨论" }));
+
+    await waitFor(() => {
+      expect(onAppendAttachments).toHaveBeenCalledTimes(1);
+    });
+    expect(onAppendAttachments.mock.calls[0]?.[0]).toMatchObject([
+      {
+        kind: "record_ref",
+        subtype: "related_record",
+        label: "Climate Policy",
+        targetKey: "record:record-2:record",
+      },
+    ]);
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+      const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+      expect(body.content).toBe("我之前那篇 climate 文章里呢？");
+      expect(body.attachments).toMatchObject([
+        {
+          kind: "record_ref",
+          subtype: "related_record",
+          label: "Climate Policy",
+          target_key: "record:record-2:record",
+        },
+      ]);
+    });
+  });
+
   it("keeps persisted supplements in the Ask panel after confirm and supports delete", async () => {
     const onActionExecuted = vi.fn();
     const onSupplementDeleted = vi.fn();
@@ -593,6 +762,8 @@ describe("AiWorkspacePanel", () => {
                 working_set_mode: "anchor_local",
                 used_known_reference_resolution: false,
                 used_external_record_context: false,
+                used_structured_asset_lookup: false,
+                used_hitp_disambiguation: false,
                 supplement_generation_used: true,
                 supplement_persisted_count: 0,
                 supplement_deleted_count: 0,
@@ -601,6 +772,7 @@ describe("AiWorkspacePanel", () => {
                 tool_steps: [],
                 notes: [],
               },
+              disambiguation: null,
               response_cards: [],
               resolved_context: null,
               context_plan: null,

@@ -11,6 +11,8 @@ from app.schemas.reader_ask import (
     ReaderAskCitation,
     ReaderAskContextPlan,
     ReaderAskCurrentRecordContext,
+    ReaderAskDisambiguationCandidate,
+    ReaderAskDisambiguation,
     ReaderAskEntryAction,
     ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
@@ -94,6 +96,7 @@ class ReaderAskPlanningSnapshot:
     working_set: ReaderAskWorkingSet
     context_plan: ReaderAskContextPlan
     trace_summary: ReaderAskTraceSummary
+    disambiguation_state: ReaderAskDisambiguation | None = None
     clarification_only: bool = False
 
 
@@ -276,6 +279,8 @@ def _planned_context_plan(
     clarification_only: bool,
 ) -> ReaderAskContextPlan:
     clarification_reason = None
+    external_record_context_reason = None
+    structured_asset_lookup_reason = None
     if clarification_only:
         if reference_resolution.status == "ambiguous":
             clarification_reason = "ambiguous_known_reference"
@@ -283,6 +288,13 @@ def _planned_context_plan(
             clarification_reason = "known_reference_not_found"
         else:
             clarification_reason = "missing_local_anchor"
+    if working_set.external_record_refs:
+        external_record_context_reason = (
+            "known_reference_resolved"
+            if reference_resolution.status == "resolved"
+            else "explicit_external_record_context"
+        )
+        structured_asset_lookup_reason = "external_record_stable_assets_planned"
     return ReaderAskContextPlan(
         entry_action=entry_action,
         explicit_attachment_count=len(attachments),
@@ -309,6 +321,8 @@ def _planned_context_plan(
         article_overview_reason="article_level_question" if working_set.article_overview_needed else None,
         used_dictionary=working_set.dictionary_needed,
         dictionary_reason="dictionary_lookup_planned" if working_set.dictionary_needed else None,
+        external_record_context_reason=external_record_context_reason,
+        structured_asset_lookup_reason=structured_asset_lookup_reason,
         clarification_reason=clarification_reason,
         source_labels=[],
     )
@@ -319,6 +333,7 @@ def _planned_trace_summary(
     reference_resolution: ReaderAskReferenceResolution,
     working_set: ReaderAskWorkingSet,
     clarification_only: bool,
+    disambiguation_state: ReaderAskDisambiguation | None = None,
 ) -> ReaderAskTraceSummary:
     if clarification_only:
         planner_mode = "needs_local_clarification"
@@ -351,6 +366,8 @@ def _planned_trace_summary(
         ),
         used_known_reference_resolution=reference_resolution.status == "resolved",
         used_external_record_context=bool(working_set.external_record_refs),
+        used_structured_asset_lookup=bool(working_set.external_record_refs),
+        used_hitp_disambiguation=bool(disambiguation_state and disambiguation_state.required),
         supplement_generation_used=False,
         supplement_persisted_count=0,
         supplement_deleted_count=0,
@@ -358,6 +375,33 @@ def _planned_trace_summary(
         history_lookup_used=False,
         tool_steps=[],
         notes=notes,
+    )
+
+
+def _planned_disambiguation_state(
+    *,
+    reference_resolution: ReaderAskReferenceResolution,
+    clarification_only: bool,
+) -> ReaderAskDisambiguation | None:
+    if not clarification_only or reference_resolution.status != "ambiguous":
+        return None
+    candidates = [
+        ReaderAskDisambiguationCandidate(
+            record_id=item["record_id"],
+            title=item.get("title"),
+            updated_at=item.get("updated_at"),
+        )
+        for item in reference_resolution.ambiguous_records
+        if item.get("record_id")
+    ]
+    if not candidates:
+        return None
+    return ReaderAskDisambiguation(
+        required=True,
+        reason=reference_resolution.reason,
+        query=reference_resolution.query,
+        selection_mode="panel_cards",
+        candidates=candidates,
     )
 
 
@@ -460,10 +504,15 @@ def plan_request(
         reference_resolution=resolved_reference,
         clarification_only=clarification_only,
     )
+    disambiguation_state = _planned_disambiguation_state(
+        reference_resolution=resolved_reference,
+        clarification_only=clarification_only,
+    )
     trace_summary = _planned_trace_summary(
         reference_resolution=resolved_reference,
         working_set=working_set,
         clarification_only=clarification_only,
+        disambiguation_state=disambiguation_state,
     )
     return ReaderAskPlanningSnapshot(
         resolved_intent=resolved_intent,
@@ -474,6 +523,7 @@ def plan_request(
         working_set=working_set,
         context_plan=context_plan,
         trace_summary=trace_summary,
+        disambiguation_state=disambiguation_state,
         clarification_only=clarification_only,
     )
 
@@ -551,6 +601,26 @@ def build_context_plan(
             if used_dictionary
             else "dictionary_lookup_planned"
             if working_set and working_set.dictionary_needed
+            else None
+        ),
+        external_record_context_reason=(
+            "external_record_context_loaded"
+            if runtime_state.latest_external_record_contexts
+            else "known_reference_resolved"
+            if working_set and working_set.external_record_refs and reference_resolution and reference_resolution.status == "resolved"
+            else "explicit_external_record_context"
+            if working_set and working_set.external_record_refs
+            else None
+        ),
+        structured_asset_lookup_reason=(
+            "external_record_stable_assets_loaded"
+            if runtime_state.latest_external_record_contexts
+            and any(
+                item.get("article_overview") or item.get("record_insights")
+                for item in runtime_state.latest_external_record_contexts
+            )
+            else "external_record_stable_assets_planned"
+            if working_set and working_set.external_record_refs
             else None
         ),
         clarification_reason=clarification_reason,
@@ -658,6 +728,11 @@ def build_trace_summary(
         working_set_mode=working_set_mode,
         used_known_reference_resolution=context_plan.reference_resolution_status == "resolved",
         used_external_record_context=bool(runtime_state.latest_external_record_contexts),
+        used_structured_asset_lookup=bool(
+            runtime_state.latest_external_record_contexts
+            and any(item.get("article_overview") or item.get("record_insights") for item in runtime_state.latest_external_record_contexts)
+        ),
+        used_hitp_disambiguation=context_plan.reference_resolution_status == "ambiguous",
         supplement_generation_used=False,
         supplement_persisted_count=0,
         supplement_deleted_count=0,

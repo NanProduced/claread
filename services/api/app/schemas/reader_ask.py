@@ -64,6 +64,7 @@ ReaderAskEvidenceKind = Literal[
     "resolved_reference",
     "supplement_candidate",
     "clarification",
+    "disambiguation_candidate",
 ]
 ReaderAskEvidenceScope = Literal["current_record", "external_record"]
 ReaderAskWorkingSetMode = Literal[
@@ -274,6 +275,8 @@ class ReaderAskContextPlan(BaseModel):
     article_overview_reason: str | None = None
     used_dictionary: bool = False
     dictionary_reason: str | None = None
+    external_record_context_reason: str | None = None
+    structured_asset_lookup_reason: str | None = None
     clarification_reason: str | None = None
     source_labels: list[str] = Field(default_factory=list)
 
@@ -291,6 +294,7 @@ class ReaderAskExternalRecordContext(BaseModel):
     record_id: str
     record_title: str | None = None
     article_overview: str | None = None
+    record_insights: list[str] = Field(default_factory=list)
     source_labels: list[str] = Field(default_factory=list)
     reason: str | None = None
 
@@ -311,6 +315,20 @@ class ReaderAskRunInfo(BaseModel):
     supersedes_run_id: str | None = None
 
 
+class ReaderAskDisambiguationCandidate(BaseModel):
+    record_id: str
+    title: str | None = None
+    updated_at: str | None = None
+
+
+class ReaderAskDisambiguation(BaseModel):
+    required: bool = False
+    reason: str | None = None
+    query: str | None = None
+    selection_mode: Literal["panel_cards"] = "panel_cards"
+    candidates: list[ReaderAskDisambiguationCandidate] = Field(default_factory=list)
+
+
 class ReaderAskTraceSummary(BaseModel):
     planner_mode: Literal[
         "direct_answer",
@@ -323,6 +341,8 @@ class ReaderAskTraceSummary(BaseModel):
     working_set_mode: ReaderAskWorkingSetMode = "anchor_local"
     used_known_reference_resolution: bool = False
     used_external_record_context: bool = False
+    used_structured_asset_lookup: bool = False
+    used_hitp_disambiguation: bool = False
     supplement_generation_used: bool = False
     supplement_persisted_count: int = 0
     supplement_deleted_count: int = 0
@@ -430,6 +450,7 @@ class ReaderAskMessage(BaseModel):
     tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
     evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
     trace_summary: ReaderAskTraceSummary | None = None
+    disambiguation: ReaderAskDisambiguation | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     resolved_context: ReaderAskResolvedContextSummary | None = None
     context_plan: ReaderAskContextPlan | None = None
@@ -517,6 +538,7 @@ class ReaderAskCompletedPayload(BaseModel):
     tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
     evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
     trace_summary: ReaderAskTraceSummary | None = None
+    disambiguation: ReaderAskDisambiguation | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     usage_summary: dict[str, Any] | None = None
     billed_points: int = 0

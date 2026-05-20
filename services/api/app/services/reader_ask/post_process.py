@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.schemas.reader_ask import (
     ReaderAskAttachment,
     ReaderAskCitation,
+    ReaderAskDisambiguation,
     ReaderAskEvidenceItem,
     ReaderAskSupplementCandidate,
 )
@@ -35,6 +36,7 @@ def build_evidence_items(
     external_record_contexts: list[dict[str, object]] | None = None,
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
+    disambiguation: ReaderAskDisambiguation | None = None,
     include_clarification: bool = False,
 ) -> list[ReaderAskEvidenceItem]:
     evidence: list[ReaderAskEvidenceItem] = []
@@ -92,8 +94,12 @@ def build_evidence_items(
                 record_id=record_id,
                 record_title=str(record_title) if isinstance(record_title, str) else None,
                 source_article_title=str(record_title) if isinstance(record_title, str) else None,
-                reason=str(reason) if isinstance(reason, str) else "article_overview",
-                metadata_json={"source_labels": item.get("source_labels") or []},
+                reason="structured_asset_lookup",
+                metadata_json={
+                    "source_labels": item.get("source_labels") or [],
+                    "context_reason": str(reason) if isinstance(reason, str) else "article_overview",
+                    "record_insights": item.get("record_insights") or [],
+                },
             )
         )
     if reference_resolution:
@@ -123,6 +129,21 @@ def build_evidence_items(
                         "query": reference_resolution.query,
                         "ambiguous_records": reference_resolution.ambiguous_records,
                     },
+                )
+            )
+    if disambiguation and disambiguation.required:
+        for candidate in disambiguation.candidates:
+            evidence.append(
+                ReaderAskEvidenceItem(
+                    kind="disambiguation_candidate",
+                    label=candidate.title or candidate.record_id,
+                    detail="候选外部文章，可加入当前讨论。",
+                    scope="external_record",
+                    record_id=candidate.record_id,
+                    record_title=candidate.title,
+                    source_article_title=candidate.title,
+                    reason="disambiguation_candidate",
+                    metadata_json={"updated_at": candidate.updated_at, "query": disambiguation.query},
                 )
             )
     for candidate in supplement_candidates or []:

@@ -7,7 +7,9 @@ from app.schemas.reader_ask import (
     ReaderAskAttachmentMetadata,
     ReaderAskAttachmentPayload,
     ReaderAskContextPlan,
+    ReaderAskDisambiguationCandidate,
     ReaderAskCurrentRecordContext,
+    ReaderAskDisambiguation,
     ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
 )
@@ -304,6 +306,7 @@ def test_build_resolved_context_input_distinguishes_current_and_external_records
                 record_id="00000000-0000-0000-0000-000000000002",
                 record_title="Climate Policy",
                 article_overview="这篇文章讨论气候政策。",
+                record_insights=[],
                 source_labels=["external_record"],
                 reason="known_reference_resolved",
             )
@@ -502,7 +505,7 @@ def test_reference_resolution_single_hit_returns_resolved_record() -> None:
     async def finder(user_id, *, query, exclude_record_id, limit):  # type: ignore[no-untyped-def]
         del user_id, exclude_record_id, limit
         assert query == "climate policy"
-        return [{"id": "r-2", "title": "Climate Policy"}]
+        return [{"id": "r-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"}]
 
     resolution = asyncio.run(
         resolver_svc.resolve_known_references(
@@ -518,15 +521,17 @@ def test_reference_resolution_single_hit_returns_resolved_record() -> None:
     )
 
     assert resolution.status == "resolved"
-    assert resolution.resolved_records == [{"record_id": "r-2", "title": "Climate Policy"}]
+    assert resolution.resolved_records == [
+        {"record_id": "r-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"}
+    ]
 
 
 def test_reference_resolution_multiple_hits_requires_clarification() -> None:
     async def finder(user_id, *, query, exclude_record_id, limit):  # type: ignore[no-untyped-def]
         del user_id, query, exclude_record_id, limit
         return [
-            {"id": "r-2", "title": "Climate Policy"},
-            {"id": "r-3", "title": "Climate Policy Notes"},
+            {"id": "r-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"},
+            {"id": "r-3", "title": "Climate Policy Notes", "updated_at": "2026-05-19T00:00:00Z"},
         ]
 
     resolution = asyncio.run(
@@ -544,6 +549,38 @@ def test_reference_resolution_multiple_hits_requires_clarification() -> None:
 
     assert resolution.status == "ambiguous"
     assert resolution.ambiguous_records
+    assert resolution.ambiguous_records[0]["updated_at"] == "2026-05-20T00:00:00Z"
+
+
+def test_lookup_structured_record_assets_extracts_overview_and_stable_insights() -> None:
+    assets = resolver_svc.lookup_structured_record_assets(
+        record_id="r-2",
+        record_title="Climate Policy",
+        render_scene={
+            "content_summary": {"overview": "这篇文章讨论气候政策与制度解释。"},
+            "sentence_entries": [
+                {
+                    "entry_type": "grammar_note",
+                    "title": "让步从句",
+                    "content": "这里先让步再转主句判断。",
+                },
+                {
+                    "entry_type": "sentence_analysis",
+                    "title": "主干分析",
+                    "content": "主句先落判断，再补修饰层次。",
+                },
+            ],
+        },
+        reason="known_reference_resolved",
+        updated_at="2026-05-20T00:00:00Z",
+    )
+
+    assert assets["article_overview"] == "这篇文章讨论气候政策与制度解释。"
+    assert assets["record_insights"] == [
+        "让步从句: 这里先让步再转主句判断。",
+        "主干分析: 主句先落判断，再补修饰层次。",
+    ]
+    assert "record_assets" in assets["source_labels"]
 
 
 def test_build_context_plan_records_reference_resolution_reason() -> None:
@@ -568,6 +605,40 @@ def test_build_context_plan_records_reference_resolution_reason() -> None:
     assert context_plan.reference_resolution_attempted is True
     assert context_plan.reference_resolution_status == "resolved"
     assert context_plan.expanded_record_ids == ["r-2"]
+
+
+def test_plan_request_builds_disambiguation_state_for_ambiguous_known_reference() -> None:
+    snapshot = planner_svc.plan_request(
+        content="我之前那篇 climate policy 文章里也提过这个吗？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(
+            attempted=True,
+            status="ambiguous",
+            query="climate policy",
+            reason="“climate policy”命中了多个候选，请补充更完整的标题。",
+            ambiguous_records=[
+                {"record_id": "r-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"},
+                {"record_id": "r-3", "title": "Climate Policy Notes", "updated_at": "2026-05-19T00:00:00Z"},
+            ],
+        ),
+    )
+
+    assert snapshot.clarification_only is True
+    assert snapshot.disambiguation_state is not None
+    assert snapshot.disambiguation_state.required is True
+    assert len(snapshot.disambiguation_state.candidates) == 2
+    assert snapshot.trace_summary.used_hitp_disambiguation is True
 
 
 def test_build_context_plan_carries_clarification_reason_from_planning_snapshot() -> None:
@@ -706,7 +777,7 @@ def test_trace_summary_marks_external_context_limitations() -> None:
             status="resolved",
             query="Climate Policy",
             reason="已命中历史文章“Climate Policy”。",
-            resolved_records=[{"record_id": "r-2", "title": "Climate Policy"}],
+            resolved_records=[{"record_id": "r-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"}],
         ),
     )
     trace = planner_svc.build_trace_summary(
@@ -718,6 +789,7 @@ def test_trace_summary_marks_external_context_limitations() -> None:
                     "record_id": "r-2",
                     "record_title": "Climate Policy",
                     "article_overview": None,
+                    "record_insights": ["主干分析: 主句先落判断。"],
                     "source_labels": ["external_record", "overview_missing"],
                     "reason": "known_reference_resolved",
                 }
@@ -729,7 +801,7 @@ def test_trace_summary_marks_external_context_limitations() -> None:
 
     assert trace.used_known_reference_resolution is True
     assert trace.used_external_record_context is True
-    assert any("没有可用概览" in note for note in trace.notes)
+    assert trace.used_structured_asset_lookup is True
 
 
 def test_build_evidence_items_marks_external_record_scope() -> None:
@@ -743,6 +815,7 @@ def test_build_evidence_items_marks_external_record_scope() -> None:
                 "record_id": "record-2",
                 "record_title": "Climate Policy",
                 "article_overview": "这篇文章讨论气候政策。",
+                "record_insights": ["主干分析: 先交代制度背景。"],
                 "source_labels": ["external_record"],
                 "reason": "known_reference_resolved",
             }
@@ -751,7 +824,7 @@ def test_build_evidence_items_marks_external_record_scope() -> None:
 
     assert evidence[0].scope == "external_record"
     assert evidence[0].record_title == "Climate Policy"
-    assert evidence[0].reason == "known_reference_resolved"
+    assert evidence[0].reason == "structured_asset_lookup"
 
 
 def test_plan_request_uses_explicit_related_record_context() -> None:
@@ -848,8 +921,15 @@ def test_build_evidence_items_includes_clarification_signal() -> None:
             reason="“Climate Policy”命中了多个候选，请补充更完整的标题。",
             ambiguous_records=[{"record_id": "r-2", "title": "Climate Policy"}],
         ),
+        disambiguation=ReaderAskDisambiguation(
+            required=True,
+            reason="“Climate Policy”命中了多个候选，请补充更完整的标题。",
+            query="Climate Policy",
+            candidates=[ReaderAskDisambiguationCandidate(record_id="r-2", title="Climate Policy")],
+        ),
         include_clarification=True,
     )
 
-    assert len(evidence) == 1
+    assert len(evidence) == 2
     assert evidence[0].kind == "clarification"
+    assert evidence[1].kind == "disambiguation_candidate"

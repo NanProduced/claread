@@ -54,7 +54,8 @@ export type ReaderAskEvidenceKindDto =
   | "citation"
   | "resolved_reference"
   | "supplement_candidate"
-  | "clarification";
+  | "clarification"
+  | "disambiguation_candidate";
 export type ReaderAskEvidenceScopeDto = "current_record" | "external_record";
 export type ReaderAskWorkingSetModeDto =
   | "anchor_local"
@@ -224,6 +225,8 @@ export interface ReaderAskContextPlanDto {
   article_overview_reason?: string | null;
   used_dictionary: boolean;
   dictionary_reason?: string | null;
+  external_record_context_reason?: string | null;
+  structured_asset_lookup_reason?: string | null;
   clarification_reason?: string | null;
   source_labels: string[];
 }
@@ -241,6 +244,7 @@ export interface ReaderAskExternalRecordContextDto {
   record_id: string;
   record_title?: string | null;
   article_overview?: string | null;
+  record_insights: string[];
   source_labels: string[];
   reason?: string | null;
 }
@@ -261,6 +265,20 @@ export interface ReaderAskRunInfoDto {
   supersedes_run_id?: string | null;
 }
 
+export interface ReaderAskDisambiguationCandidateDto {
+  record_id: string;
+  title?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ReaderAskDisambiguationDto {
+  required: boolean;
+  reason?: string | null;
+  query?: string | null;
+  selection_mode: "panel_cards";
+  candidates: ReaderAskDisambiguationCandidateDto[];
+}
+
 export interface ReaderAskTraceSummaryDto {
   planner_mode:
     | "direct_answer"
@@ -272,6 +290,8 @@ export interface ReaderAskTraceSummaryDto {
   working_set_mode: ReaderAskWorkingSetModeDto;
   used_known_reference_resolution: boolean;
   used_external_record_context: boolean;
+  used_structured_asset_lookup: boolean;
+  used_hitp_disambiguation: boolean;
   supplement_generation_used: boolean;
   supplement_persisted_count: number;
   supplement_deleted_count: number;
@@ -378,6 +398,7 @@ export interface ReaderAskMessageDto {
   tool_trace: ReaderAskToolTraceEntryDto[];
   evidence: ReaderAskEvidenceItemDto[];
   trace_summary?: ReaderAskTraceSummaryDto | null;
+  disambiguation?: ReaderAskDisambiguationDto | null;
   response_cards: ReaderAskResponseCardDto[];
   resolved_context?: ReaderAskResolvedContextSummaryDto | null;
   context_plan?: ReaderAskContextPlanDto | null;
@@ -443,6 +464,7 @@ export interface ReaderAskCompletedPayloadDto {
   tool_trace: ReaderAskToolTraceEntryDto[];
   evidence: ReaderAskEvidenceItemDto[];
   trace_summary?: ReaderAskTraceSummaryDto | null;
+  disambiguation?: ReaderAskDisambiguationDto | null;
   response_cards: ReaderAskResponseCardDto[];
   usage_summary?: Record<string, unknown> | null;
   billed_points: number;
