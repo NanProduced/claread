@@ -25,9 +25,49 @@ function analysisCardToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) 
     case "logic_note":
       return "border-lens-blue/18";
     case "interpretation_note":
+      return "border-context-blue/18";
     default:
       return "border-hairline";
   }
+}
+
+function entryLabelToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) {
+  switch (entryType) {
+    case "sentence_analysis":
+      return "text-structure-green";
+    case "grammar_note":
+      return "text-grammar-violet";
+    case "term_note":
+      return "text-vocab-amber";
+    case "logic_note":
+      return "text-lens-blue";
+    case "interpretation_note":
+    default:
+      return "text-context-blue";
+  }
+}
+
+function collapsedPreview(
+  entry: ReaderAnalysisBlockNode,
+  parsed: ReturnType<typeof parseSentenceAnalysisContent> | null,
+) {
+  if (entry.entryType === "sentence_analysis" && parsed) {
+    const chunkLabels = parsed.chunks.slice(0, 3);
+    if (chunkLabels.length === 0) {
+      return parsed.summary || "";
+    }
+
+    return chunkLabels
+      .map((chunk, index) => `${index + 1} ${chunk.label}`)
+      .join(" · ");
+  }
+
+  const firstLine = entry.content
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  return firstLine ?? "";
 }
 
 function EnhancedText({ text }: { text: string }) {
@@ -104,20 +144,22 @@ export function ReaderAnalysisElement({
   const label = element.title ?? element.label ?? "解析";
   const iconClass = entryToneHeaderClass[element.entryType];
   const cardToneClass = analysisCardToneClass(element.entryType);
-  const activeClass =
-    active && (element.entryType === "sentence_analysis"
-      ? "reader-entry-note--active reader-entry-note--active-analysis"
-      : "reader-entry-note--active reader-entry-note--active-grammar");
+  const labelToneClass = entryLabelToneClass(element.entryType);
+  const activeClass = active
+    ? `reader-entry-note--active reader-entry-note--active-${element.entryType.replace("_", "-")}`
+    : "";
 
   const parsed = element.entryType === "sentence_analysis"
     ? parseSentenceAnalysisContent(element.content)
     : null;
+  const preview = collapsedPreview(element, parsed);
 
   return (
     <section
       {...props.attributes}
       className={[
         "reader-entry-note group/analysis",
+        `reader-entry-note--${element.entryType.replace("_", "-")}`,
         expanded ? "reader-entry-note--expanded" : "reader-entry-note--collapsed",
         cardToneClass,
         activeClass,
@@ -133,7 +175,7 @@ export function ReaderAnalysisElement({
       onFocus={() => expanded && onFocusChange?.(true)}
       onBlur={() => expanded && onFocusChange?.(false)}
     >
-      <div className="flex items-start gap-3">
+      <div className="reader-entry-note-head flex items-start gap-3">
         <button
           type="button"
           className="min-w-0 flex-1 text-left"
@@ -144,9 +186,9 @@ export function ReaderAnalysisElement({
           aria-expanded={expanded}
           aria-label={`${expanded ? "收起" : "展开"}${label}`}
         >
-          <div className="flex items-start gap-2.5">
+          <div className="reader-entry-note-trigger flex items-start gap-2.5">
             <span
-              className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
+              className={`reader-entry-note-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
             >
               {element.entryType === "sentence_analysis" ? (
                 <BookOpen aria-hidden="true" className="h-3.5 w-3.5" />
@@ -155,27 +197,30 @@ export function ReaderAnalysisElement({
               )}
             </span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
+              <div className="reader-entry-note-meta flex items-center gap-2">
                 <p
-                  className={`text-[0.72rem] font-semibold uppercase tracking-[0.08em] ${
-                    element.entryType === "sentence_analysis" ? "text-structure-green" : "text-grammar-violet"
-                  }`}
+                  className={`reader-entry-note-label text-[0.72rem] font-semibold uppercase tracking-[0.08em] ${labelToneClass}`}
                 >
-              {category}
+                  {category}
                 </p>
                 {element.sourceKind === "ask_supplement" ? (
                   <span className="rounded-full border border-lens-blue/15 bg-lens-blue/10 px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.08em] text-lens-blue">
                     AI 补充
                   </span>
                 ) : null}
-                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted">
+                <span className="reader-entry-note-toggle inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted">
                   <ChevronDown
                     aria-hidden="true"
                     className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
                   />
                 </span>
               </div>
-              <h3 className="mt-1 text-[0.95rem] font-semibold leading-6 text-ink">{label}</h3>
+              <h3 className="reader-entry-note-title mt-1 text-[0.95rem] font-semibold leading-6 text-ink">{label}</h3>
+              {!expanded && preview ? (
+                <p className="reader-entry-note-preview mt-1 text-[0.78rem] leading-5 text-muted-foreground">
+                  {preview}
+                </p>
+              ) : null}
             </div>
           </div>
         </button>
@@ -211,39 +256,45 @@ export function ReaderAnalysisElement({
       </div>
 
       {expanded ? (
-        <div className="mt-3 border-t border-hairline/80 pt-3">
+        <div className="reader-entry-note-body mt-3 border-t border-hairline/80 pt-3">
           {parsed ? (
             <>
               {parsed.summary ? (
-                <p className="mb-4 whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft"><EnhancedText text={parsed.summary} /></p>
+                <p className="reader-entry-note-summary mb-4 whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+                  <EnhancedText text={parsed.summary} />
+                </p>
               ) : null}
               {parsed.chunks.length > 0 ? (
-                <div className="overflow-hidden rounded-[10px] border border-hairline/50 bg-surface">
+                <div className="reader-entry-analysis-list">
                   {parsed.chunks.map((chunk, index) => (
                     <div
                       key={`${element.entryId}-chunk-${index}`}
-                      className={`grid grid-cols-[2.25rem_1fr] text-[0.9375rem] leading-[1.65] sm:grid-cols-[2.25rem_minmax(7rem,0.45fr)_1fr] ${
-                        index > 0 ? "border-t border-hairline/50" : ""
-                      }`}
+                      className="reader-entry-analysis-item"
                     >
-                      <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1}`}>
+                      <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1} reader-entry-analysis-index`}>
                         {index + 1}
                       </div>
-                      <div className="flex items-center px-3 py-2.5 text-sm font-semibold text-ink sm:border-r sm:border-hairline/50">
-                        {chunk.label}
-                      </div>
-                      <div className="col-span-2 flex flex-1 items-center border-t border-hairline/45 bg-surface px-4 py-2.5 text-ink-soft sm:col-span-1 sm:border-t-0">
-                        <div className="w-full"><EnhancedText text={chunk.text} /></div>
+                      <div className="reader-entry-analysis-copy">
+                        <div className="reader-entry-analysis-label">
+                          {chunk.label}
+                        </div>
+                        <div className="reader-entry-analysis-text">
+                          <EnhancedText text={chunk.text} />
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft"><EnhancedText text={element.content} /></p>
+                <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+                  <EnhancedText text={element.content} />
+                </p>
               )}
             </>
           ) : (
-            <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft"><EnhancedText text={element.content} /></p>
+            <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+              <EnhancedText text={element.content} />
+            </p>
           )}
         </div>
       ) : null}

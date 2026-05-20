@@ -83,25 +83,31 @@ body {
   --reader-entry-surface-strong: rgba(255, 255, 255, 0.92);
   --reader-entry-shadow: 0 8px 22px rgba(28, 24, 18, 0.045);
   --reader-selection-highlight: rgba(40, 92, 255, 0.2);
-  --reader-mark-vocab-line: rgba(204, 162, 61, 0.4);
-  --reader-mark-vocab-fill: rgba(244, 210, 111, 0.22);
-  --reader-mark-vocab-fill-soft: rgba(244, 210, 111, 0.08);
+  --reader-mark-vocab-line: transparent;
+  --reader-mark-vocab-fill: rgba(246, 214, 122, 0.42);
+  --reader-mark-vocab-fill-soft: rgba(246, 214, 122, 0.32);
   --reader-mark-vocab-shadow: transparent;
-  --reader-mark-vocab-hover-line: rgba(204, 162, 61, 0.85);
-  --reader-mark-vocab-hover-fill: rgba(244, 210, 111, 0.52);
-  --reader-mark-vocab-hover-fill-soft: rgba(244, 210, 111, 0.26);
-  --reader-mark-phrase-line: rgba(147, 124, 214, 0.35);
-  --reader-mark-phrase-fill: rgba(205, 191, 238, 0.2);
-  --reader-mark-phrase-fill-soft: rgba(205, 191, 238, 0.08);
+  --reader-mark-vocab-ink: rgb(140, 108, 18);
+  --reader-mark-vocab-hover-line: transparent;
+  --reader-mark-vocab-hover-fill: rgba(238, 201, 87, 0.68);
+  --reader-mark-vocab-hover-fill-soft: rgba(238, 201, 87, 0.68);
+  --reader-mark-vocab-hover-ink: rgb(116, 88, 8);
+  --reader-mark-phrase-line: transparent;
+  --reader-mark-phrase-fill: rgba(208, 191, 244, 0.42);
+  --reader-mark-phrase-fill-soft: rgba(208, 191, 244, 0.32);
   --reader-mark-phrase-shadow: transparent;
-  --reader-mark-phrase-hover-line: rgba(147, 124, 214, 0.75);
-  --reader-mark-phrase-hover-fill: rgba(205, 191, 238, 0.48);
-  --reader-mark-phrase-hover-fill-soft: rgba(205, 191, 238, 0.24);
-  --reader-mark-context-dot: rgba(49, 110, 151, 0.55);
-  --reader-mark-context-fill: rgba(137, 183, 217, 0.08);
-  --reader-mark-context-fill-quiet: rgba(137, 183, 217, 0.04);
-  --reader-mark-context-hover-dot: rgba(35, 95, 136, 0.88);
-  --reader-mark-context-hover-fill: rgba(137, 183, 217, 0.22);
+  --reader-mark-phrase-ink: rgb(106, 78, 168);
+  --reader-mark-phrase-hover-line: transparent;
+  --reader-mark-phrase-hover-fill: rgba(188, 165, 238, 0.68);
+  --reader-mark-phrase-hover-fill-soft: rgba(188, 165, 238, 0.68);
+  --reader-mark-phrase-hover-ink: rgb(90, 62, 154);
+  --reader-mark-context-dot: transparent;
+  --reader-mark-context-fill: rgba(165, 208, 239, 0.4);
+  --reader-mark-context-fill-quiet: rgba(165, 208, 239, 0.28);
+  --reader-mark-context-ink: rgb(38, 105, 153);
+  --reader-mark-context-hover-dot: transparent;
+  --reader-mark-context-hover-fill: rgba(138, 191, 232, 0.66);
+  --reader-mark-context-hover-ink: rgb(29, 89, 134);
   --reader-mark-grammar-line-strong: rgba(86, 72, 121, 0.78);
   --reader-mark-grammar-line-soft: rgba(86, 72, 121, 0.48);
   --reader-mark-grammar-fill: rgba(116, 102, 148, 0.08);
@@ -649,65 +655,50 @@ select {
 }
 
 .reader-mark--vocab {
-  border-radius: 0.22em 0.12em 0.18em 0.14em;
-  background:
-    linear-gradient(to top, var(--reader-mark-vocab-line) 0 0.07em, transparent 0.07em),
-    linear-gradient(to top, var(--reader-mark-vocab-fill) 0 60%, var(--reader-mark-vocab-fill-soft) 60% 85%, transparent 85%);
-  background-position: 0 88%, 0 78%;
+  border-radius: 0.12em;
+  color: var(--reader-mark-vocab-ink);
+  background: var(--reader-mark-vocab-fill);
   background-repeat: no-repeat;
-  background-size: 100% 0.8em, 100% 0.88em;
+  background-size: 100% 100%;
   box-shadow: none;
 }
 
-.reader-mark--vocab.reader-mark--interactive:hover {
-  background:
-    linear-gradient(to top, var(--reader-mark-vocab-hover-line) 0 0.07em, transparent 0.07em),
-    linear-gradient(to top, var(--reader-mark-vocab-hover-fill) 0 60%, var(--reader-mark-vocab-hover-fill-soft) 60% 85%, transparent 85%);
-  background-position: 0 88%, 0 78%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.8em, 100% 0.88em;
+.reader-mark--vocab.reader-mark--interactive:hover,
+.reader-mark--vocab.reader-mark--interactive:focus-visible {
+  color: var(--reader-mark-vocab-hover-ink);
+  background: var(--reader-mark-vocab-hover-fill);
   box-shadow: none;
 }
 
 .reader-mark--phrase {
-  border-radius: 0.35em 0.25em 0.3em 0.28em;
-  background:
-    linear-gradient(to top, var(--reader-mark-phrase-line) 0 0.06em, transparent 0.06em),
-    linear-gradient(to top, var(--reader-mark-phrase-fill) 0 100%);
-  background-position: 0 88%, 0 84%;
+  border-radius: 0.12em;
+  color: var(--reader-mark-phrase-ink);
+  background: var(--reader-mark-phrase-fill);
   background-repeat: no-repeat;
-  background-size: 100% 0.88em, 100% 0.94em;
+  background-size: 100% 100%;
   box-shadow: none;
 }
 
-.reader-mark--phrase.reader-mark--interactive:hover {
-  background:
-    linear-gradient(to top, var(--reader-mark-phrase-hover-line) 0 0.06em, transparent 0.06em),
-    linear-gradient(to top, var(--reader-mark-phrase-hover-fill) 0 100%);
-  background-position: 0 88%, 0 84%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.88em, 100% 0.94em;
+.reader-mark--phrase.reader-mark--interactive:hover,
+.reader-mark--phrase.reader-mark--interactive:focus-visible {
+  color: var(--reader-mark-phrase-hover-ink);
+  background: var(--reader-mark-phrase-hover-fill);
   box-shadow: none;
 }
 
 .reader-mark--context {
-  border-radius: 0.16em;
-  background:
-    radial-gradient(circle, var(--reader-mark-context-dot) 0.85px, transparent 1.05px) 0 96% / 0.32em 0.14em repeat-x,
-    linear-gradient(to top, var(--reader-mark-context-fill) 0 100%);
-  background-position: 0 96%, 0 88%;
-  background-repeat: repeat-x, no-repeat;
-  background-size: 0.32em 0.14em, 100% 0.72em;
+  border-radius: 0.12em;
+  color: var(--reader-mark-context-ink);
+  background: var(--reader-mark-context-fill);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
   box-shadow: none;
 }
 
-.reader-mark--context.reader-mark--interactive:hover {
-  background:
-    radial-gradient(circle, var(--reader-mark-context-hover-dot) 0.95px, transparent 1.15px) 0 96% / 0.32em 0.14em repeat-x,
-    linear-gradient(to top, var(--reader-mark-context-hover-fill) 0 100%);
-  background-position: 0 96%, 0 88%;
-  background-repeat: repeat-x, no-repeat;
-  background-size: 0.32em 0.14em, 100% 0.72em;
+.reader-mark--context.reader-mark--interactive:hover,
+.reader-mark--context.reader-mark--interactive:focus-visible {
+  color: var(--reader-mark-context-hover-ink);
+  background: var(--reader-mark-context-hover-fill);
   box-shadow: none;
 }
 
@@ -734,50 +725,60 @@ select {
 }
 
 .reader-mark--term {
-  border-radius: 0.14em;
+  border-radius: 0.2em 0.14em 0.18em 0.14em;
   background:
     repeating-linear-gradient(
       to right,
       var(--reader-mark-term-line-strong) 0 0.26em,
       transparent 0.26em 0.42em
     ) 0 100% / 100% 0.08em no-repeat,
-    linear-gradient(to top, var(--reader-mark-term-fill) 0 30%, transparent 30%) 0 90% / 100% 0.62em no-repeat;
+    linear-gradient(to top, var(--reader-mark-term-fill) 0 34%, transparent 34%) 0 90% / 100% 0.64em no-repeat;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.reader-mark--term.reader-mark--interactive:hover {
+  color: rgb(39, 108, 77);
+  background:
+    repeating-linear-gradient(
+      to right,
+      rgba(39, 108, 77, 0.76) 0 0.28em,
+      transparent 0.28em 0.42em
+    ) 0 100% / 100% 0.1em no-repeat,
+    linear-gradient(to top, rgba(60, 140, 104, 0.18) 0 42%, transparent 42%) 0 88% / 100% 0.72em no-repeat;
 }
 
 .reader-mark--logic {
-  border-radius: 0.14em;
+  border-radius: 0.18em 0.14em 0.18em 0.12em;
   background:
-    linear-gradient(to right, var(--reader-mark-logic-line-strong), var(--reader-mark-logic-line-soft)) 0 100% / 100% 0.08em no-repeat,
-    linear-gradient(to top, var(--reader-mark-logic-fill) 0 26%, transparent 26%) 0 88% / 100% 0.58em no-repeat;
+    linear-gradient(to right, var(--reader-mark-logic-line-strong), var(--reader-mark-logic-line-soft)) 0 calc(100% - 0.12em) / 100% 0.06em no-repeat,
+    linear-gradient(to right, var(--reader-mark-logic-line-soft), transparent) 0 100% / 100% 0.06em no-repeat,
+    linear-gradient(to top, var(--reader-mark-logic-fill) 0 26%, transparent 26%) 0 88% / 100% 0.6em no-repeat;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.reader-mark--logic.reader-mark--interactive:hover {
+  color: rgb(38, 105, 153);
+  background:
+    linear-gradient(to right, rgba(37, 99, 235, 0.84), rgba(37, 99, 235, 0.52)) 0 calc(100% - 0.14em) / 100% 0.08em no-repeat,
+    linear-gradient(to right, rgba(37, 99, 235, 0.46), transparent) 0 100% / 100% 0.08em no-repeat,
+    linear-gradient(to top, rgba(37, 99, 235, 0.16) 0 38%, transparent 38%) 0 88% / 100% 0.68em no-repeat;
 }
 
 .reader-mark--quiet.reader-mark--vocab {
-  background:
-    linear-gradient(to top, var(--reader-mark-vocab-line) 0 0.05em, transparent 0.05em),
-    linear-gradient(to top, var(--reader-mark-vocab-fill-soft) 0 60%, transparent 60%);
-  background-position: 0 88%, 0 80%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.72em, 100% 0.8em;
+  color: var(--reader-mark-vocab-ink);
+  background: var(--reader-mark-vocab-fill-soft);
   box-shadow: none;
 }
 
 .reader-mark--quiet.reader-mark--phrase {
-  background:
-    linear-gradient(to top, var(--reader-mark-phrase-line) 0 0.05em, transparent 0.05em),
-    linear-gradient(to top, var(--reader-mark-phrase-fill-soft) 0 100%);
-  background-position: 0 88%, 0 84%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.74em, 100% 0.8em;
+  color: var(--reader-mark-phrase-ink);
+  background: var(--reader-mark-phrase-fill-soft);
   box-shadow: none;
 }
 
 .reader-mark--quiet.reader-mark--context {
-  background:
-    radial-gradient(circle, var(--reader-mark-context-dot) 0.75px, transparent 0.95px) 0 96% / 0.34em 0.12em repeat-x,
-    linear-gradient(to top, var(--reader-mark-context-fill-quiet) 0 100%);
-  background-position: 0 96%, 0 88%;
-  background-repeat: repeat-x, no-repeat;
-  background-size: 0.34em 0.12em, 100% 0.68em;
+  color: var(--reader-mark-context-ink);
+  background: var(--reader-mark-context-fill-quiet);
   box-shadow: none;
 }
 
@@ -876,6 +877,28 @@ select {
   color: inherit !important;
 }
 
+.reader-sentence--analysis-expanded {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(248, 252, 249, 0.92)),
+    var(--surface);
+}
+
+.reader-sentence--analysis-expanded .reader-analysis-atom {
+  margin-inline: -0.03em;
+  padding: 0.01em 0.12em 0.1em;
+  border-radius: 0.22em;
+  background-position: 0 100%, 0 86%;
+  background-size: 100% 0.18em, 100% 0.86em;
+  box-shadow: 0 0.12em 0.42em rgba(28, 24, 18, 0.04);
+}
+
+.reader-sentence--analysis-expanded .reader-analysis-atom::before {
+  width: 1.38em;
+  height: 1.38em;
+  margin-right: 0.2em;
+  transform: translateY(-0.14em);
+  box-shadow: 0 0.14em 0.36em rgba(28, 24, 18, 0.05);
+}
 
 .reader-sentence--user-highlight {
   /* Box visual shadows stripped to maintain pure text flow */
@@ -970,13 +993,19 @@ select {
 
 .reader-analysis-row-index {
   display: flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-right: 1px solid rgba(232, 228, 218, 0.8);
-  background: color-mix(in srgb, var(--analysis-accent) 8%, white);
+  border: 1px solid color-mix(in srgb, var(--analysis-accent) 16%, white);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--analysis-accent) 10%, white);
   color: var(--analysis-accent);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0.18rem 0.45rem rgba(28, 24, 18, 0.04);
 }
 
 .reader-lookup-preview {
@@ -999,57 +1028,225 @@ select {
 }
 
 .reader-entry-note {
+  --reader-entry-accent: rgba(116, 102, 148, 0.42);
+  --reader-entry-accent-soft: rgba(116, 102, 148, 0.1);
+  --reader-entry-connector: rgba(232, 228, 218, 0.92);
+
+  position: relative;
   margin-top: 0.75rem;
   margin-right: auto;
-  max-width: 52rem;
+  margin-left: 1rem;
+  max-width: 43rem;
   border-width: 1px;
   border-style: solid;
-  border-radius: 0.85rem;
-  padding: 0.8rem 0.95rem;
-  background: var(--reader-entry-surface);
-  box-shadow: var(--reader-entry-shadow);
+  border-radius: 1rem;
+  padding: 0.82rem 0.95rem 0.84rem 1rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(251, 250, 246, 0.92)),
+    var(--reader-entry-surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    var(--reader-entry-shadow);
   outline: none;
+  overflow: visible;
   transition:
     border-color 160ms ease,
+    background 160ms ease,
     box-shadow 160ms ease,
     transform 160ms ease;
   cursor: pointer;
 }
 
+.reader-entry-note::before {
+  content: "";
+  position: absolute;
+  left: -0.82rem;
+  top: 1.15rem;
+  width: 0.62rem;
+  height: 1px;
+  background: var(--reader-entry-connector);
+}
+
+.reader-entry-note::after {
+  content: "";
+  position: absolute;
+  left: 0.52rem;
+  top: 0.88rem;
+  bottom: 0.88rem;
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--reader-entry-accent), color-mix(in srgb, var(--reader-entry-accent) 14%, white));
+  opacity: 0.8;
+}
+
+.reader-entry-note--sentence-analysis {
+  --reader-entry-accent: rgba(60, 140, 104, 0.5);
+  --reader-entry-accent-soft: rgba(60, 140, 104, 0.08);
+}
+
+.reader-entry-note--grammar-note {
+  --reader-entry-accent: rgba(116, 102, 148, 0.48);
+  --reader-entry-accent-soft: rgba(116, 102, 148, 0.09);
+}
+
+.reader-entry-note--term-note {
+  --reader-entry-accent: rgba(166, 119, 0, 0.5);
+  --reader-entry-accent-soft: rgba(228, 176, 0, 0.08);
+}
+
+.reader-entry-note--logic-note {
+  --reader-entry-accent: rgba(37, 99, 235, 0.48);
+  --reader-entry-accent-soft: rgba(37, 99, 235, 0.08);
+}
+
+.reader-entry-note--interpretation-note {
+  --reader-entry-accent: rgba(49, 110, 151, 0.48);
+  --reader-entry-accent-soft: rgba(137, 183, 217, 0.1);
+}
+
 .reader-entry-note--collapsed {
-  padding-top: 0.55rem;
-  padding-bottom: 0.55rem;
+  padding-top: 0.58rem;
+  padding-bottom: 0.6rem;
 }
 
 .reader-entry-note--expanded {
   background:
     linear-gradient(180deg, var(--reader-entry-surface-strong), var(--reader-entry-expanded-surface)),
+    linear-gradient(90deg, var(--reader-entry-accent-soft), transparent 16rem),
     var(--surface-warm);
 }
 
 .reader-entry-note--active {
   transform: translateY(-1px);
   box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84),
     0 14px 32px var(--reader-entry-active-shadow),
-    0 0 0 1px var(--reader-entry-active-outline);
+    0 0 0 1px color-mix(in srgb, var(--reader-entry-accent) 18%, white);
 }
 
-.reader-entry-note--active-grammar {
+.reader-entry-note--active-grammar,
+.reader-entry-note--active-grammar-note {
   border-color: var(--reader-entry-active-grammar-border);
 }
 
-.reader-entry-note--active-analysis {
+.reader-entry-note--active-analysis,
+.reader-entry-note--active-sentence-analysis {
   border-color: var(--reader-entry-active-analysis-border);
 }
 
-.reader-entry-note--active-analysis .reader-analysis-row-index {
-  background: color-mix(in srgb, var(--analysis-accent) 10%, white);
+.reader-entry-note--active-term-note {
+  border-color: rgba(228, 176, 0, 0.24);
+}
+
+.reader-entry-note--active-logic-note {
+  border-color: rgba(37, 99, 235, 0.22);
+}
+
+.reader-entry-note--active-interpretation-note {
+  border-color: rgba(76, 145, 194, 0.22);
+}
+
+.reader-entry-note--active-analysis .reader-analysis-row-index,
+.reader-entry-note--active-sentence-analysis .reader-analysis-row-index {
+  background: color-mix(in srgb, var(--analysis-accent) 14%, white);
 }
 
 .reader-entry-note:focus-visible {
   box-shadow:
     0 0 0 2px var(--reader-entry-focus-outline),
     0 16px 42px var(--reader-entry-focus-shadow);
+}
+
+.reader-entry-note-head {
+  position: relative;
+  z-index: 1;
+}
+
+.reader-entry-note-trigger {
+  min-height: 2.8rem;
+}
+
+.reader-entry-note-icon {
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 0.35rem 0.9rem rgba(28, 24, 18, 0.04);
+}
+
+.reader-entry-note-meta {
+  min-height: 1.4rem;
+}
+
+.reader-entry-note-label {
+  line-height: 1;
+}
+
+.reader-entry-note-title {
+  max-width: 30rem;
+  text-wrap: pretty;
+}
+
+.reader-entry-note-preview {
+  max-width: 28rem;
+  text-wrap: pretty;
+}
+
+.reader-entry-note-toggle {
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.group\/analysis:hover .reader-entry-note-toggle,
+.group\/analysis:focus-within .reader-entry-note-toggle {
+  border-color: rgba(98, 101, 109, 0.2);
+  color: var(--ink);
+}
+
+.reader-entry-note-body {
+  position: relative;
+  margin-left: 0.1rem;
+  padding-left: 0.1rem;
+}
+
+.reader-entry-note-summary,
+.reader-entry-note-prose {
+  max-width: 38rem;
+  text-wrap: pretty;
+}
+
+.reader-entry-analysis-list {
+  display: grid;
+  gap: 0.66rem;
+}
+
+.reader-entry-analysis-item {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.12rem 0 0.12rem 0.02rem;
+}
+
+.reader-entry-analysis-copy {
+  min-width: 0;
+  padding-top: 0.06rem;
+}
+
+.reader-entry-analysis-label {
+  color: var(--analysis-accent);
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reader-entry-analysis-text {
+  margin-top: 0.18rem;
+  color: var(--ink-soft);
+  font-size: 0.93rem;
+  line-height: 1.72;
 }
 
 .reader-entry-icon {
