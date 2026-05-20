@@ -343,7 +343,7 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("当前讲解方式")).toBeNull();
   });
 
-  it("sends only the V2 reader ask request shape", async () => {
+  it("sends only the current reader ask request shape", async () => {
     render(
       <AiWorkspacePanel
         open

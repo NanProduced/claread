@@ -1682,20 +1682,6 @@ def _build_action_proposals(
     if primary_anchor is None:
         return proposals
 
-    if _SAVE_NOTE_RE.search(user_message):
-        proposals.append(
-            ReaderAskActionProposal(
-                id=str(uuid4()),
-                action_type="save_answer_note",
-                label="保存为笔记",
-                description="把本条解释保存到当前锚点笔记",
-                payload_json={
-                    "record_id": str(record.record_id),
-                    "anchor": primary_anchor.model_dump(mode="json"),
-                    "note_text": assistant_content_md,
-                },
-            )
-        )
     if _SAVE_EXCERPT_RE.search(user_message):
         proposals.append(
             ReaderAskActionProposal(
@@ -3752,7 +3738,7 @@ def _favorite_payload_from_anchor(record_id: UUID, anchor: ReaderAskAnchorRef) -
         segments = [segment.model_dump(mode="json") for segment in anchor.segments]
         target_key = anchor.target_key or build_multi_text_target_key(str(record_id), segments)
         return "multi_text", target_key, {"segments": segments, "selected_text": anchor.selected_text}
-    raise HTTPException(status_code=400, detail="favorite action only supports sentence/text anchors in V1")
+    raise HTTPException(status_code=400, detail="favorite action only supports sentence/text anchors")
 
 
 def _annotation_request_from_anchor(
@@ -3810,7 +3796,7 @@ def _annotation_request_from_anchor(
             note=note,
             payload_json=anchor.payload_json,
         )
-    raise HTTPException(status_code=400, detail="annotation action only supports sentence/text anchors in V1")
+    raise HTTPException(status_code=400, detail="annotation action only supports sentence/text anchors")
 
 
 async def confirm_action(
@@ -4072,24 +4058,20 @@ async def delete_supplement(user_id: UUID, supplement_id: UUID) -> ReaderAskDele
     )
     source_turn_run = await repo.get_turn_run(source_turn_run_id)
     if source_turn_run is not None:
-        output = dict(source_turn_run.get("user_visible_output_json") or {})
-        persisted_items = list(output.get("persisted_supplements") or [])
-        next_items: list[dict[str, Any]] = []
-        replaced = False
-        for item in persisted_items:
-            if item.get("supplement_id") == persisted_supplement.supplement_id:
-                next_items.append(persisted_supplement.model_dump(mode="json"))
-                replaced = True
-            else:
-                next_items.append(item)
-        if not replaced:
-            next_items.append(persisted_supplement.model_dump(mode="json"))
-        output["persisted_supplements"] = next_items
-        await repo.update_turn_run(
-            turn_run_id=source_turn_run_id,
-            status=source_turn_run["status"],
-            user_visible_output_json=output,
-        )
+        source_message_id = _parse_uuid(source_turn_run["message_id"], "turn run message id is invalid")
+        turn_runs = await repo.list_turn_runs_for_message(source_message_id)
+        for turn_run in turn_runs:
+            turn_run_id = _parse_uuid(turn_run["id"], "turn run id is invalid")
+            output = dict(turn_run.get("user_visible_output_json") or {})
+            output["persisted_supplements"] = _mark_deleted_persisted_supplement(
+                list(output.get("persisted_supplements") or []),
+                persisted_supplement,
+            )
+            await repo.update_turn_run(
+                turn_run_id=turn_run_id,
+                status=turn_run["status"],
+                user_visible_output_json=output,
+            )
         existing_trace = await repo.get_eval_trace(source_turn_run_id)
         supplement_audit = list((existing_trace or {}).get("supplement_audit_json") or [])
         supplement_audit.append(

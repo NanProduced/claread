@@ -350,7 +350,10 @@ async def resolve_known_references(
 
     top_score = ranked[0][0]
     top_hits = [row for score, row in ranked if score == top_score]
-    if top_score < 80 or len(ranked) != 1 or len(top_hits) != 1:
+    runner_up_score = ranked[1][0] if len(ranked) > 1 else None
+    high_confidence_single_hit = top_score >= 90 and len(top_hits) == 1
+    clear_margin = runner_up_score is None or (top_score - runner_up_score) >= 20
+    if not high_confidence_single_hit or not clear_margin:
         return planner.ReaderAskReferenceResolution(
             attempted=True,
             status="ambiguous",

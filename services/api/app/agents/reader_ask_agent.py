@@ -293,21 +293,21 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
         async def runner() -> dict[str, Any]:
             if ctx.deps.primary_anchor is None:
                 return {"ok": False, "reason": "No anchor available"}
-            action_type = "save_answer_note" if use_assistant_answer else "save_note"
+            if use_assistant_answer and not str(note_text or "").strip():
+                return {"ok": False, "reason": "Saving the full assistant answer as a note is not supported"}
             ctx.deps.state.action_requests.append(
                 ReaderAskRuntimeActionRequest(
-                    action_type=action_type,
+                    action_type="save_note",
                     label="保存为笔记",
                     description="把当前解释或补充内容保存到当前锚点笔记",
                     payload_json={
                         "record_id": ctx.deps.record_id,
                         "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
                         "note_text": note_text,
-                        "use_assistant_answer": use_assistant_answer,
                     },
                 )
             )
-            return {"ok": True, "action_type": action_type}
+            return {"ok": True, "action_type": "save_note"}
 
         return await _run_tool(ctx, "propose_save_note", runner)
 

@@ -1,5 +1,5 @@
 import asyncio
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
@@ -23,6 +23,7 @@ from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner as planner_svc
 from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import resolver as resolver_svc
+from app.services.reader_ask import service as reader_ask_service
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask.service import (
     _attachment_to_anchor,
@@ -138,7 +139,7 @@ def test_build_unused_reservation_refunds_only_the_unused_tail() -> None:
     assert unused.deducted_from_bonus == 2
 
 
-def test_build_action_proposals_generates_confirmable_actions() -> None:
+def test_build_action_proposals_does_not_offer_saving_full_answer_as_note() -> None:
     anchor = ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="That there were some.")
     proposals = _build_action_proposals(
         user_message="请把这条解释保存成笔记并收藏这句",
@@ -149,8 +150,8 @@ def test_build_action_proposals_generates_confirmable_actions() -> None:
 
     proposal_types = {proposal.action_type for proposal in proposals}
 
-    assert "save_answer_note" in proposal_types
     assert "favorite_anchor" in proposal_types
+    assert "save_answer_note" not in proposal_types
     assert all(proposal.requires_confirmation for proposal in proposals)
 
 
@@ -639,6 +640,33 @@ def test_reference_resolution_multiple_hits_requires_clarification() -> None:
     assert resolution.status == "ambiguous"
     assert resolution.ambiguous_records
     assert resolution.ambiguous_records[0]["updated_at"] == "2026-05-20T00:00:00Z"
+
+
+def test_reference_resolution_resolves_single_high_confidence_hit_despite_lower_noise() -> None:
+    async def finder(user_id, *, query, exclude_record_id, limit):  # type: ignore[no-untyped-def]
+        del user_id, query, exclude_record_id, limit
+        return [
+            {"id": "r-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"},
+            {"id": "r-3", "title": "Policy Climate Debate", "updated_at": "2026-05-19T00:00:00Z"},
+        ]
+
+    resolution = asyncio.run(
+        resolver_svc.resolve_known_references(
+            user_id=uuid4(),
+            current_record_id=uuid4(),
+            reference_needs=planner_svc.ReaderAskReferenceNeeds(
+                requested=True,
+                query="Climate Policy",
+                reason="quoted_reference",
+            ),
+            finder=finder,
+        )
+    )
+
+    assert resolution.status == "resolved"
+    assert resolution.resolved_records == [
+        {"record_id": "r-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"}
+    ]
 
 
 def test_lookup_structured_record_assets_extracts_overview_and_stable_insights() -> None:
@@ -1227,3 +1255,109 @@ def test_build_resolved_context_input_carries_external_asset_contexts() -> None:
 
     assert len(context.external_asset_contexts) == 1
     assert context.external_asset_contexts[0].asset_type == "analysis"
+
+
+def test_delete_supplement_marks_all_runs_deleted(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    user_id = uuid4()
+    record_id = UUID("00000000-0000-0000-0000-0000000000ee")
+    supplement_id = UUID("00000000-0000-0000-0000-0000000000aa")
+    source_turn_run_id = UUID("00000000-0000-0000-0000-0000000000bb")
+    newer_turn_run_id = UUID("00000000-0000-0000-0000-0000000000cc")
+    message_id = UUID("00000000-0000-0000-0000-0000000000dd")
+
+    async def fake_get_supplement_projection_or_404(_user_id, _supplement_id):  # type: ignore[no-untyped-def]
+        assert _user_id == user_id
+        assert _supplement_id == supplement_id
+        return {"id": str(supplement_id), "record_id": str(record_id), "target_key": f"record:{record_id}:sentence:s1"}
+
+    async def fake_ensure_record_access(_user_id, _record_id):  # type: ignore[no-untyped-def]
+        del _user_id, _record_id
+        return {"title": "Test Reader"}
+
+    async def fake_delete_supplement(_user_id, _supplement_id):  # type: ignore[no-untyped-def]
+        del _user_id, _supplement_id
+        return {
+            "id": str(supplement_id),
+            "record_id": str(record_id),
+            "target_key": f"record:{record_id}:sentence:s1",
+            "entry_type": "grammar_note",
+            "sentence_id": "s1",
+            "paragraph_id": "p1",
+            "title": "语法旁注",
+            "content_md": "这里用了让步从句。",
+            "created_from_turn_run_id": str(source_turn_run_id),
+            "created_at": "2026-05-20T00:00:00Z",
+        }
+
+    async def fake_get_turn_run(turn_run_id):  # type: ignore[no-untyped-def]
+        assert turn_run_id == source_turn_run_id
+        return {
+            "id": str(source_turn_run_id),
+            "message_id": str(message_id),
+            "status": "completed",
+            "user_visible_output_json": {
+                "persisted_supplements": [
+                    {"supplement_id": str(supplement_id), "lifecycle_status": "persisted"},
+                ]
+            },
+        }
+
+    async def fake_list_turn_runs_for_message(_message_id):  # type: ignore[no-untyped-def]
+        assert _message_id == message_id
+        return [
+            {
+                "id": str(source_turn_run_id),
+                "status": "completed",
+                "user_visible_output_json": {
+                    "persisted_supplements": [
+                        {"supplement_id": str(supplement_id), "lifecycle_status": "persisted"},
+                    ]
+                },
+            },
+            {
+                "id": str(newer_turn_run_id),
+                "status": "completed",
+                "user_visible_output_json": {
+                    "persisted_supplements": [
+                        {"supplement_id": str(supplement_id), "lifecycle_status": "persisted"},
+                    ]
+                },
+            },
+        ]
+
+    updates: list[tuple[UUID, dict[str, object]]] = []
+
+    async def fake_update_turn_run(*, turn_run_id, status, user_visible_output_json, **kwargs):  # type: ignore[no-untyped-def]
+        del status, kwargs
+        updates.append((turn_run_id, user_visible_output_json))
+        return {"id": str(turn_run_id)}
+
+    async def fake_get_eval_trace(turn_run_id):  # type: ignore[no-untyped-def]
+        assert turn_run_id == source_turn_run_id
+        return {"supplement_audit_json": []}
+
+    audit_payload: dict[str, object] = {}
+
+    async def fake_upsert_eval_trace_record(**kwargs):  # type: ignore[no-untyped-def]
+        audit_payload.update(kwargs)
+        return None
+
+    monkeypatch.setattr(reader_ask_service.supplements_svc, "get_supplement_projection_or_404", fake_get_supplement_projection_or_404)
+    monkeypatch.setattr(reader_ask_service.repo, "ensure_record_access", fake_ensure_record_access)
+    monkeypatch.setattr(reader_ask_service.supplements_svc, "delete_supplement", fake_delete_supplement)
+    monkeypatch.setattr(reader_ask_service.repo, "get_turn_run", fake_get_turn_run)
+    monkeypatch.setattr(reader_ask_service.repo, "list_turn_runs_for_message", fake_list_turn_runs_for_message)
+    monkeypatch.setattr(reader_ask_service.repo, "update_turn_run", fake_update_turn_run)
+    monkeypatch.setattr(reader_ask_service.repo, "get_eval_trace", fake_get_eval_trace)
+    monkeypatch.setattr(reader_ask_service, "_upsert_eval_trace_record", fake_upsert_eval_trace_record)
+
+    response = asyncio.run(reader_ask_service.delete_supplement(user_id, supplement_id))
+
+    assert response.deleted is True
+    assert len(updates) == 2
+    assert {turn_run_id for turn_run_id, _ in updates} == {source_turn_run_id, newer_turn_run_id}
+    for _, output in updates:
+        persisted_items = output["persisted_supplements"]
+        assert isinstance(persisted_items, list)
+        assert persisted_items[0]["lifecycle_status"] == "deleted"
+    assert audit_payload["turn_run_id"] == source_turn_run_id

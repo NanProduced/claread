@@ -19,7 +19,7 @@
 - Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、收藏、句子级批注、单句内 `text_range` 批注/收藏、跨句/跨段 `multi_text` 批注/收藏、`/library/assets` 摘录与批注页、反馈和设置/配额。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
-- `Ask Claread` 已有可用第一版实现，支持解析页内、按文章绑定线程、流式 Markdown、引用、结构化卡片和按需历史扩展；但当前设计已被认定不达标，现进入重构主线。`docs/product/ask-claread-v1.md` 仅保留为第一版对照，当前目标规范以 `docs/product/ask-claread-v2-product-spec.md` 为准，正式实施架构以 `docs/architecture/ask-claread-v2-refactor-rfc.md` 为准。
+- `Ask Claread` 已完成 Reader 2.0 底座上的重构主线，当前进入冻结校验阶段。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 planner-first runtime、turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期和 current-run hydration。
 - ReaderWorkbench 已拆出 Reader canvas、sentence row、annotation overlay 和 selection helper，后续 Reader UI 迭代应优先沿这些边界推进。
 - Docker Compose project 使用 `claread`。
 - 本地 PostgreSQL volume 使用 `claread_postgres_data`。
@@ -53,13 +53,11 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 ## 当前主要方向
 
-1. 当前产品主线已切到 `Web Reader 2.0（Plate 底座接入） -> Ask Claread AI 助手重构`：先完成 Reader 2.0 的对象模型、selection/jump、词典/资产/Ask bridge 稳定，再重做解析页内 AI 助手的 harness、上下文、检索与 UI surface；用户资产上下文作为内建 grounding 能力随同推进，不单列为独立用户功能。
+1. 当前产品主线已从 `Web Reader 2.0（Plate 底座接入）` 进入 `Ask Claread 冻结收尾与后续产品调整评估`：Reader 2.0 已完成，当前重点是把 Ask Claread 冻结在可用正确状态，并评估“用户学习资产”相关范围是否保留、缩减或移除。
 2. 继续稳定 Web Reader UI/UX：补足带登录态的真实数据浏览器自动化回归、资产跳转短时强调和移动 Web 形态。
 3. 完善学习资产闭环：本轮先稳定“摘录资产”链路，即 Web `/library/assets` 与小程序 `packageA/excerpts` 的按文章聚合、筛选/搜索和局部 range 跳转强调；`/vocabulary` 继续保持独立词汇资产入口。
 4. 收紧数据层长期约束：`text_range` / `multi_text` 条件 CHECK、局部索引、annotations/favorites 分页和完整 OpenAPI contracts 生成。
 5. Directus 当前只适合进入边界设计和 schema 准备；等首个 AI 能力纵切跑通并出现真实运营需求后，再进入正式开发。
-
-当前 Ask Claread 的开发期决策、任务进度和评审材料统一放在 `docs/tmp/ask-claread-rebuild/`。该目录下文档均为临时文档，功能完成后应删除或压缩回正式文档。
 
 ## 已知边界
 
@@ -68,6 +66,7 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 - 小程序 UI/UX 是当前实现，不代表 Web 端体验上限。
 - 模型输出质量和结构化输出稳定性依赖 `services/api/.env` 中的模型 profile；更换模型后需要重新跑解析链路。
 - 旧脚本式 regression suite 不进入新仓库主线；评测系统后续基于 Directus + LLM-as-a-Judge 重新设计。
+- Ask Claread 当前的跨文章稳定主路径以 `record_ref / known title reference / external analysis/supplement asset` 为主；“用户学习资产自由查询”不是当前冻结态承诺。
 
 ## 文档使用规则
 
