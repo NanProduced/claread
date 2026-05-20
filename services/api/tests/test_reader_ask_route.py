@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.reader_ask import router as reader_ask_router
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
+    ReaderAskDeleteSupplementResponse,
     ReaderAskContextRecordSearchResponse,
     ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
@@ -245,7 +246,30 @@ class TestReaderAskRoute:
             ok=True,
             action_id="act-1",
             status="executed",
-            result={"favorite_id": "fav-1"},
+            result={
+                "record_id": RECORD_ID,
+                "supplement_projection": {
+                    "id": "entry-1",
+                    "sentence_id": "s1",
+                    "entry_type": "grammar_note",
+                },
+                "persisted_supplement": {
+                    "supplement_id": "supp-1",
+                    "supplement_type": "grammar_note",
+                    "lifecycle_status": "persisted",
+                    "record_id": RECORD_ID,
+                    "record_title": "Ask Claread",
+                    "target_key": "record:r1:sentence:s1",
+                    "sentence_id": "s1",
+                    "paragraph_id": "p1",
+                    "title": "语法旁注",
+                    "content": "这里用了让步从句。",
+                    "source_kind": "assistant_supplement",
+                    "schema_version": "1.0",
+                    "created_from_turn_run_id": "run-1",
+                    "created_at": "2026-05-20T00:00:00Z",
+                },
+            },
         )
 
         response = client.post(
@@ -256,6 +280,44 @@ class TestReaderAskRoute:
 
         assert response.status_code == 200
         assert response.json()["status"] == "executed"
+        assert response.json()["result"]["persisted_supplement"]["lifecycle_status"] == "persisted"
+
+    @_mock_auth()
+    @patch("app.api.routes.reader_ask.ask_svc.delete_supplement", new_callable=AsyncMock)
+    def test_delete_supplement(self, mock_delete_supplement, mock_auth) -> None:
+        client = create_client()
+        mock_delete_supplement.return_value = ReaderAskDeleteSupplementResponse(
+            deleted=True,
+            supplement_id="supp-1",
+            record_id=RECORD_ID,
+            target_key="record:r1:sentence:s1",
+            lifecycle_status="deleted",
+            persisted_supplement={
+                "supplement_id": "supp-1",
+                "supplement_type": "grammar_note",
+                "lifecycle_status": "deleted",
+                "record_id": RECORD_ID,
+                "record_title": "Ask Claread",
+                "target_key": "record:r1:sentence:s1",
+                "sentence_id": "s1",
+                "paragraph_id": "p1",
+                "title": "语法旁注",
+                "content": "这里用了让步从句。",
+                "source_kind": "assistant_supplement",
+                "schema_version": "1.0",
+                "created_from_turn_run_id": "run-1",
+                "created_at": "2026-05-20T00:00:00Z",
+            },
+        )
+
+        response = client.delete(
+            "/reader-ask/supplements/30000000-0000-0000-0000-000000000001",
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["deleted"] is True
+        assert response.json()["lifecycle_status"] == "deleted"
 
     @_mock_auth()
     def test_retry_stream_message_returns_sse_events(self, mock_auth) -> None:

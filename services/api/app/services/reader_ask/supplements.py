@@ -7,7 +7,11 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 
 from app.database import connection as db_connection
-from app.schemas.reader_ask import ReaderAskAnchorRef, ReaderAskSupplementCandidate
+from app.schemas.reader_ask import (
+    ReaderAskAnchorRef,
+    ReaderAskPersistedSupplement,
+    ReaderAskSupplementCandidate,
+)
 
 _SUPPLEMENT_SCHEMA_VERSION = "reader-ask-supplement-v1"
 
@@ -35,7 +39,63 @@ def candidate_to_projection(candidate: ReaderAskSupplementCandidate) -> dict[str
         "paragraph_id": candidate.paragraph_id,
         "created_from_turn_run_id": candidate.created_from_turn_run_id,
         "schema_version": candidate.schema_version,
+        "lifecycle_status": candidate.lifecycle_status,
     }
+
+
+def candidate_to_persisted_supplement(
+    candidate: ReaderAskSupplementCandidate,
+    *,
+    record_id: str,
+    record_title: str | None,
+    created_at: str | None = None,
+    lifecycle_status: str = "persisted",
+) -> ReaderAskPersistedSupplement:
+    return ReaderAskPersistedSupplement(
+        supplement_id=candidate.candidate_id,
+        supplement_type=candidate.supplement_type,
+        lifecycle_status=lifecycle_status,
+        record_id=record_id,
+        record_title=record_title,
+        target_key=candidate.target_key,
+        sentence_id=candidate.sentence_id,
+        paragraph_id=candidate.paragraph_id,
+        title=candidate.title,
+        content=candidate.content,
+        schema_version=candidate.schema_version,
+        created_from_turn_run_id=candidate.created_from_turn_run_id,
+        created_at=created_at,
+    )
+
+
+def row_to_persisted_supplement(
+    row: dict[str, Any],
+    *,
+    record_title: str | None = None,
+    lifecycle_status: str = "persisted",
+) -> ReaderAskPersistedSupplement:
+    created_at = row.get("created_at")
+    if hasattr(created_at, "astimezone"):
+        created_at_iso = created_at.astimezone(UTC).isoformat()
+    elif isinstance(created_at, str):
+        created_at_iso = created_at
+    else:
+        created_at_iso = None
+    return ReaderAskPersistedSupplement(
+        supplement_id=str(row["id"]),
+        supplement_type=str(row.get("supplement_type") or row.get("entry_type") or "grammar_note"),
+        lifecycle_status=lifecycle_status,
+        record_id=str(row["record_id"]),
+        record_title=record_title,
+        target_key=str(row["target_key"]),
+        sentence_id=str(row["sentence_id"]),
+        paragraph_id=str(row["paragraph_id"]) if row.get("paragraph_id") else None,
+        title=str(row.get("title") or "AI 补充语法旁注"),
+        content=str(row.get("content_md") or ""),
+        schema_version=str(row.get("schema_version") or _SUPPLEMENT_SCHEMA_VERSION),
+        created_from_turn_run_id=str(row.get("created_from_turn_run_id") or ""),
+        created_at=created_at_iso,
+    )
 
 
 async def create_supplement(
@@ -106,7 +166,7 @@ async def list_supplements_for_record(user_id: UUID, record_id: UUID) -> list[di
     return [dict(row) for row in rows]
 
 
-async def delete_supplement(user_id: UUID, supplement_id: UUID) -> bool:
+async def delete_supplement(user_id: UUID, supplement_id: UUID) -> dict[str, Any] | None:
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
@@ -118,13 +178,15 @@ async def delete_supplement(user_id: UUID, supplement_id: UUID) -> bool:
             UPDATE reader_ask_supplements
             SET deleted_at = $3, updated_at = $3
             WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-            RETURNING id
+            RETURNING id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+                      title, content_md, anchor_payload_json, metadata_json, schema_version,
+                      created_from_turn_run_id, created_at, updated_at, deleted_at
             """,
             supplement_id,
             user_id,
             now,
         )
-    return row is not None
+    return dict(row) if row is not None else None
 
 
 def supplement_projection_entry(row: dict[str, Any]) -> dict[str, Any]:
@@ -146,6 +208,7 @@ def supplement_projection_entry(row: dict[str, Any]) -> dict[str, Any]:
         "paragraph_id": row.get("paragraph_id"),
         "created_from_turn_run_id": row.get("created_from_turn_run_id"),
         "schema_version": row.get("schema_version") or _SUPPLEMENT_SCHEMA_VERSION,
+        "lifecycle_status": "persisted",
     }
 
 

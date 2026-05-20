@@ -5,6 +5,7 @@ import type {
   ReaderAskActionConfirmRequestDto,
   ReaderAskActionConfirmResponseDto,
   ReaderAskContextRecordSearchResponseDto,
+  ReaderAskDeleteSupplementResponseDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
@@ -83,8 +84,8 @@ export function resetUpstreamReaderAskThread(
 export function deleteUpstreamReaderAskSupplement(
   supplementId: string,
   sessionToken: string,
-): Promise<UpstreamResult<{ deleted: boolean; supplement_id: string; record_id: string }>> {
-  return fastApiFetch<{ deleted: boolean; supplement_id: string; record_id: string }>(
+): Promise<UpstreamResult<ReaderAskDeleteSupplementResponseDto>> {
+  return fastApiFetch<ReaderAskDeleteSupplementResponseDto>(
     `/reader-ask/supplements/${supplementId}`,
     {
       method: "DELETE",

@@ -16,6 +16,7 @@ import type {
   ReaderAskActionConfirmRequestDto,
   ReaderAskActionConfirmResponseDto,
   ReaderAskContextRecordSearchResponseDto,
+  ReaderAskDeleteSupplementResponseDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
@@ -199,7 +200,7 @@ export async function confirmReaderAskActionForWeb(
 
 export async function deleteReaderAskSupplementForWeb(
   supplementId: string,
-): Promise<{ deleted: boolean; supplement_id: string; record_id: string } | Response> {
+): Promise<ReaderAskDeleteSupplementResponseDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");

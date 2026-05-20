@@ -2401,6 +2401,7 @@ export function ReaderWorkbench({
           onJumpToAttachment={jumpToAskAttachment}
           onJumpToCitation={jumpToAskCitation}
           onActionExecuted={handleAskActionExecuted}
+          onSupplementDeleted={deleteAnalysisSupplement}
           onToggle={toggleAiWorkspace}
         />
       ) : null}

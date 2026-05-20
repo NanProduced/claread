@@ -27,6 +27,7 @@ from app.llm.types import RunModelSettings
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmRequest,
     ReaderAskActionConfirmResponse,
+    ReaderAskActionConfirmResult,
     ReaderAskActionProposal,
     ReaderAskAttachment,
     ReaderAskAttachmentPayload,
@@ -36,6 +37,7 @@ from app.schemas.reader_ask import (
     ReaderAskContextRecordSearchResponse,
     ReaderAskContextPlan,
     ReaderAskCurrentRecordContext,
+    ReaderAskDeleteSupplementResponse,
     ReaderAskEvidenceItem,
     ReaderAskEntryAction,
     ReaderAskExternalRecordContext,
@@ -43,6 +45,7 @@ from app.schemas.reader_ask import (
     ReaderAskMessageStreamRequest,
     ReaderAskPageIdentity,
     ReaderAskPracticeCard,
+    ReaderAskPersistedSupplement,
     ReaderAskReferenceResolutionStatus,
     ReaderAskResolvedContextInput,
     ReaderAskResolvedIntent,
@@ -1197,6 +1200,7 @@ def _message_metadata(
     response_cards: list[ReaderAskResponseCard] | None = None,
     run_info: dict[str, Any] | None = None,
     supplement_candidates: list[dict[str, Any]] | None = None,
+    persisted_supplements: list[dict[str, Any]] | None = None,
     run_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
@@ -1218,9 +1222,51 @@ def _message_metadata(
         metadata["run_info"] = run_info
     if supplement_candidates:
         metadata["supplement_candidates"] = supplement_candidates
+    if persisted_supplements:
+        metadata["persisted_supplements"] = persisted_supplements
     if run_history:
         metadata["run_history"] = run_history
     return metadata
+
+
+def _normalize_persisted_supplements(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items or []:
+        supplement_id = str(item.get("supplement_id") or "").strip()
+        if not supplement_id or supplement_id in seen:
+            continue
+        seen.add(supplement_id)
+        normalized.append(dict(item))
+    return normalized
+
+
+def _upsert_persisted_supplement(
+    items: list[dict[str, Any]] | None,
+    supplement: ReaderAskPersistedSupplement,
+) -> list[dict[str, Any]]:
+    supplement_json = supplement.model_dump(mode="json")
+    next_items = _normalize_persisted_supplements(items)
+    for index, item in enumerate(next_items):
+        if item.get("supplement_id") == supplement.supplement_id:
+            next_items[index] = supplement_json
+            return next_items
+    next_items.append(supplement_json)
+    return next_items
+
+
+def _mark_deleted_persisted_supplement(
+    items: list[dict[str, Any]] | None,
+    supplement: ReaderAskPersistedSupplement,
+) -> list[dict[str, Any]]:
+    supplement_json = supplement.model_dump(mode="json")
+    next_items = _normalize_persisted_supplements(items)
+    for index, item in enumerate(next_items):
+        if item.get("supplement_id") == supplement.supplement_id:
+            next_items[index] = supplement_json
+            return next_items
+    next_items.append(supplement_json)
+    return next_items
 
 
 def _new_run_info(
@@ -1879,6 +1925,7 @@ async def stream_thread_message(
     run_info: dict[str, Any] | None = None
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
+    persisted_supplements_json: list[dict[str, Any]] = []
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -2008,6 +2055,7 @@ async def stream_thread_message(
                 context_plan=context_plan,
                 resolved_context_input=resolved_context_input,
                 run_info=run_info,
+                persisted_supplements=[],
             )
             assistant_metadata = _message_metadata(
                 resolved_intent=resolved_intent,
@@ -2018,6 +2066,7 @@ async def stream_thread_message(
                 trace_summary=trace_summary,
                 response_cards=[],
                 run_info=run_info,
+                persisted_supplements=[],
             )
             yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
             yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
@@ -2399,6 +2448,13 @@ async def stream_thread_message(
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
         )
+        trace_summary = trace_summary.model_copy(
+            update={
+                "supplement_generation_used": bool(typed_supplement_candidates),
+                "supplement_persisted_count": 0,
+                "supplement_deleted_count": 0,
+            }
+        )
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
         billed_points = min(computed_cost_points, reservation.total_points)
@@ -2470,6 +2526,7 @@ async def stream_thread_message(
                 response_cards=response_cards,
                 run_info=run_info,
                 supplement_candidates=supplement_candidates,
+                persisted_supplements=[],
             ),
             usage_event_id=usage_event_id,
         )
@@ -2491,6 +2548,7 @@ async def stream_thread_message(
             resolved_context_input=resolved_context_input,
             run_info=run_info,
             supplement_candidates=supplement_candidates,
+            persisted_supplements=[],
         )
         yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
@@ -2585,6 +2643,12 @@ async def retry_thread_message(
             raise HTTPException(status_code=404, detail="Reader ask message not found")
         if assistant_message.get("role") != "assistant":
             raise HTTPException(status_code=400, detail="Only assistant messages can be regenerated")
+        assistant_message_model = ReaderAskMessage.model_validate(assistant_message)
+        persisted_supplements_json = [
+            item.model_dump(mode="json")
+            for item in assistant_message_model.persisted_supplements
+            if item.lifecycle_status != "deleted"
+        ]
 
         messages = await repo.list_messages(thread_id, limit=100)
         assistant_index = next((index for index, item in enumerate(messages) if item["id"] == str(message_id)), -1)
@@ -2714,6 +2778,7 @@ async def retry_thread_message(
                     response_cards=[],
                     run_info=run_info,
                     run_history=run_history,
+                    persisted_supplements=persisted_supplements_json,
                 ),
                 usage_event_id=None,
             )
@@ -2735,6 +2800,7 @@ async def retry_thread_message(
                 resolved_context_input=resolved_context_input,
                 run_info=run_info,
                 supplement_candidates=[],
+                persisted_supplements=persisted_supplements_json,
             )
             yield _sse("message.completed", payload.model_dump(mode="json"))
             return
@@ -2795,6 +2861,7 @@ async def retry_thread_message(
                 resolved_context_input=resolved_context_input,
                 run_info=run_info,
                 run_history=run_history,
+                persisted_supplements=persisted_supplements_json,
             ),
             usage_event_id=None,
         )
@@ -3081,6 +3148,13 @@ async def retry_thread_message(
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
         )
+        trace_summary = trace_summary.model_copy(
+            update={
+                "supplement_generation_used": bool(typed_supplement_candidates),
+                "supplement_persisted_count": 0,
+                "supplement_deleted_count": 0,
+            }
+        )
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
         billed_points = min(computed_cost_points, reservation.total_points)
@@ -3153,6 +3227,7 @@ async def retry_thread_message(
                 response_cards=response_cards,
                 run_info=run_info,
                 supplement_candidates=supplement_candidates,
+                persisted_supplements=persisted_supplements_json,
                 run_history=run_history,
             ),
             usage_event_id=usage_event_id,
@@ -3175,6 +3250,7 @@ async def retry_thread_message(
             resolved_context_input=resolved_context_input,
             run_info=run_info,
             supplement_candidates=supplement_candidates,
+            persisted_supplements=persisted_supplements_json,
         )
         yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
@@ -3205,6 +3281,7 @@ async def retry_thread_message(
                     trace_summary=trace_summary,
                     run_info=run_info,
                     run_history=run_history,
+                    persisted_supplements=persisted_supplements_json,
                 ),
                 usage_event_id=None,
             )
@@ -3342,6 +3419,9 @@ async def confirm_action(
     message = ReaderAskMessage.model_validate(message_dict)
     proposal = ReaderAskActionProposal.model_validate(proposal_dict)
     run_history = message_dict.get("run_history") or None
+    persisted_supplements = [
+        item.model_dump(mode="json") for item in message.persisted_supplements
+    ]
     if not body.confirmed:
         updated_proposals = [
             proposal_item.model_copy(update={"status": "rejected"}) if proposal_item.id == action_id else proposal_item
@@ -3365,33 +3445,67 @@ async def confirm_action(
                 response_cards=message.response_cards,
                 run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
                 supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],
+                persisted_supplements=persisted_supplements,
                 run_history=run_history,
             ),
             usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
         )
-        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="rejected", result={})
+        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="rejected")
 
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
     record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
 
-    result: dict[str, Any]
+    result = ReaderAskActionConfirmResult()
+    updated_trace_summary = message.trace_summary
+    updated_evidence = list(message.evidence)
     if proposal.action_type == "create_supplement_grammar_note":
         candidate_payload = proposal.payload_json.get("candidate")
         if not isinstance(candidate_payload, dict):
             raise HTTPException(status_code=400, detail="Action proposal is missing supplement candidate")
         candidate = ReaderAskSupplementCandidate.model_validate(candidate_payload)
+        record_summary = await repo.ensure_record_access(user_id, record_id)
         created = await supplements_svc.create_supplement(
             user_id=user_id,
             record_id=record_id,
             candidate=candidate,
         )
-        result = {
-            "supplement_id": str(created["id"]),
-            "record_id": str(created["record_id"]),
-            "supplement_projection": supplements_svc.supplement_projection_entry(created),
-        }
+        persisted_supplement = supplements_svc.row_to_persisted_supplement(
+            created,
+            record_title=record_summary.get("title"),
+        )
+        persisted_supplements = _upsert_persisted_supplement(persisted_supplements, persisted_supplement)
+        updated_evidence.append(
+            ReaderAskEvidenceItem(
+                kind="supplement_candidate",
+                label=persisted_supplement.title,
+                detail="已写入当前页",
+                scope="current_record",
+                record_id=persisted_supplement.record_id,
+                record_title=persisted_supplement.record_title,
+                reason="supplement_persisted",
+                target_key=persisted_supplement.target_key,
+                metadata_json={"supplement_id": persisted_supplement.supplement_id},
+            )
+        )
+        if updated_trace_summary is not None:
+            updated_trace_summary = updated_trace_summary.model_copy(
+                update={
+                    "supplement_persisted_count": len(
+                        [
+                            item
+                            for item in persisted_supplements
+                            if item.get("lifecycle_status") == "persisted"
+                        ]
+                    ),
+                }
+            )
+        result = ReaderAskActionConfirmResult(
+            record_id=str(created["record_id"]),
+            supplement_projection=supplements_svc.supplement_projection_entry(created),
+            persisted_supplement=persisted_supplement,
+        )
     else:
         anchor_payload = proposal.payload_json.get("anchor")
         if not isinstance(anchor_payload, dict):
@@ -3408,7 +3522,7 @@ async def confirm_action(
                 payload_json=payload_json,
                 note=None,
             )
-            result = {"favorite_id": str(favorite_id), "target_key": target_key}
+            result = ReaderAskActionConfirmResult(favorite_id=str(favorite_id), target_key=target_key)
         elif proposal.action_type == "save_excerpt":
             annotation = await user_annotations_svc.create_user_annotation(
                 user_id,
@@ -3419,7 +3533,10 @@ async def confirm_action(
                     note=None,
                 ),
             )
-            result = {"annotation_id": str(annotation.id), "annotation_type": annotation.annotation_type}
+            result = ReaderAskActionConfirmResult(
+                annotation_id=str(annotation.id),
+                annotation_type=annotation.annotation_type,
+            )
         elif proposal.action_type in {"save_note", "save_answer_note"}:
             note_text = proposal.payload_json.get("note_text")
             if not isinstance(note_text, str) or not note_text.strip():
@@ -3433,7 +3550,10 @@ async def confirm_action(
                     note=note_text,
                 ),
             )
-            result = {"annotation_id": str(annotation.id), "annotation_type": annotation.annotation_type}
+            result = ReaderAskActionConfirmResult(
+                annotation_id=str(annotation.id),
+                annotation_type=annotation.annotation_type,
+            )
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported action type: {proposal.action_type}")
 
@@ -3454,11 +3574,12 @@ async def confirm_action(
             resolved_context=message.resolved_context,
             context_plan=message.context_plan,
             resolved_context_input=message.resolved_context_input,
-            evidence=message.evidence,
-            trace_summary=message.trace_summary,
+            evidence=updated_evidence,
+            trace_summary=updated_trace_summary,
             response_cards=message.response_cards,
             run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
             supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],
+            persisted_supplements=persisted_supplements,
             run_history=run_history,
         ),
         usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
@@ -3466,13 +3587,22 @@ async def confirm_action(
     return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)
 
 
-async def delete_supplement(user_id: UUID, supplement_id: UUID) -> dict[str, Any]:
+async def delete_supplement(user_id: UUID, supplement_id: UUID) -> ReaderAskDeleteSupplementResponse:
     supplement = await supplements_svc.get_supplement_projection_or_404(user_id, supplement_id)
+    record_summary = await repo.ensure_record_access(user_id, _parse_uuid(str(supplement["record_id"]), "supplement record id is invalid"))
     deleted = await supplements_svc.delete_supplement(user_id, supplement_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Reader ask supplement not found")
-    return {
-        "deleted": True,
-        "supplement_id": str(supplement_id),
-        "record_id": str(supplement["record_id"]),
-    }
+    persisted_supplement = supplements_svc.row_to_persisted_supplement(
+        deleted,
+        record_title=record_summary.get("title"),
+        lifecycle_status="deleted",
+    )
+    return ReaderAskDeleteSupplementResponse(
+        deleted=True,
+        supplement_id=str(supplement_id),
+        record_id=str(supplement["record_id"]),
+        target_key=str(supplement.get("target_key")) if supplement.get("target_key") else None,
+        lifecycle_status="deleted",
+        persisted_supplement=persisted_supplement,
+    )

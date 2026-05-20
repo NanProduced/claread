@@ -37,6 +37,7 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "run_info": metadata.get("run_info"),
         "run_history": metadata.get("run_history") or [],
         "supplement_candidates": metadata.get("supplement_candidates") or [],
+        "persisted_supplements": metadata.get("persisted_supplements") or [],
         "usage_event_id": str(row["usage_event_id"]) if row.get("usage_event_id") else None,
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),

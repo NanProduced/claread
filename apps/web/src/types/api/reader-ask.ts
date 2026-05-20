@@ -48,6 +48,7 @@ export type ReaderAskAttachmentKindDto =
   | "supplement_ref"
   | "record_ref";
 export type ReaderAskSupplementTypeDto = "grammar_note";
+export type ReaderAskSupplementLifecycleStatusDto = "candidate" | "persisted" | "deleted";
 export type ReaderAskEvidenceKindDto =
   | "attachment"
   | "citation"
@@ -271,6 +272,9 @@ export interface ReaderAskTraceSummaryDto {
   working_set_mode: ReaderAskWorkingSetModeDto;
   used_known_reference_resolution: boolean;
   used_external_record_context: boolean;
+  supplement_generation_used: boolean;
+  supplement_persisted_count: number;
+  supplement_deleted_count: number;
   history_lookup_allowed: boolean;
   history_lookup_used: boolean;
   tool_steps: string[];
@@ -290,6 +294,7 @@ export interface ReaderAskContextRecordSearchResponseDto {
 export interface ReaderAskSupplementCandidateDto {
   candidate_id: string;
   supplement_type: ReaderAskSupplementTypeDto;
+  lifecycle_status: "candidate";
   target_key: string;
   sentence_id: string;
   paragraph_id?: string | null;
@@ -299,6 +304,23 @@ export interface ReaderAskSupplementCandidateDto {
   schema_version: string;
   created_from_turn_run_id: string;
   label: string;
+}
+
+export interface ReaderAskPersistedSupplementDto {
+  supplement_id: string;
+  supplement_type: ReaderAskSupplementTypeDto;
+  lifecycle_status: Extract<ReaderAskSupplementLifecycleStatusDto, "persisted" | "deleted">;
+  record_id: string;
+  record_title?: string | null;
+  target_key: string;
+  sentence_id: string;
+  paragraph_id?: string | null;
+  title: string;
+  content: string;
+  source_kind: "assistant_supplement";
+  schema_version: string;
+  created_from_turn_run_id: string;
+  created_at?: string | null;
 }
 
 export interface ReaderAskSentenceBreakdownPartDto {
@@ -362,6 +384,7 @@ export interface ReaderAskMessageDto {
   resolved_context_input?: ReaderAskResolvedContextInputDto | null;
   run_info?: ReaderAskRunInfoDto | null;
   supplement_candidates: ReaderAskSupplementCandidateDto[];
+  persisted_supplements: ReaderAskPersistedSupplementDto[];
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -390,7 +413,24 @@ export interface ReaderAskActionConfirmResponseDto {
   ok: boolean;
   action_id: string;
   status: ReaderAskActionStatusDto;
-  result: Record<string, unknown>;
+  result: {
+    favorite_id?: string | null;
+    annotation_id?: string | null;
+    annotation_type?: string | null;
+    target_key?: string | null;
+    record_id?: string | null;
+    supplement_projection?: Record<string, unknown> | null;
+    persisted_supplement?: ReaderAskPersistedSupplementDto | null;
+  };
+}
+
+export interface ReaderAskDeleteSupplementResponseDto {
+  deleted: boolean;
+  supplement_id: string;
+  record_id: string;
+  target_key?: string | null;
+  lifecycle_status: "deleted";
+  persisted_supplement?: ReaderAskPersistedSupplementDto | null;
 }
 
 export interface ReaderAskCompletedPayloadDto {
@@ -411,6 +451,7 @@ export interface ReaderAskCompletedPayloadDto {
   resolved_context_input?: ReaderAskResolvedContextInputDto | null;
   run_info?: ReaderAskRunInfoDto | null;
   supplement_candidates: ReaderAskSupplementCandidateDto[];
+  persisted_supplements: ReaderAskPersistedSupplementDto[];
 }
 
 export interface ReaderAskThreadCreateRequestDto {

@@ -57,6 +57,7 @@ ReaderAskResponseCardType = Literal[
     "practice_card",
 ]
 ReaderAskSupplementType = Literal["grammar_note"]
+ReaderAskSupplementLifecycleStatus = Literal["candidate", "persisted", "deleted"]
 ReaderAskEvidenceKind = Literal[
     "attachment",
     "citation",
@@ -322,6 +323,9 @@ class ReaderAskTraceSummary(BaseModel):
     working_set_mode: ReaderAskWorkingSetMode = "anchor_local"
     used_known_reference_resolution: bool = False
     used_external_record_context: bool = False
+    supplement_generation_used: bool = False
+    supplement_persisted_count: int = 0
+    supplement_deleted_count: int = 0
     history_lookup_allowed: bool = False
     history_lookup_used: bool = False
     tool_steps: list[str] = Field(default_factory=list)
@@ -341,6 +345,7 @@ class ReaderAskContextRecordSearchResponse(BaseModel):
 class ReaderAskSupplementCandidate(BaseModel):
     candidate_id: str
     supplement_type: ReaderAskSupplementType
+    lifecycle_status: Literal["candidate"] = "candidate"
     target_key: str
     sentence_id: str
     paragraph_id: str | None = None
@@ -350,6 +355,23 @@ class ReaderAskSupplementCandidate(BaseModel):
     schema_version: str
     created_from_turn_run_id: str
     label: str = "AI 补充语法旁注"
+
+
+class ReaderAskPersistedSupplement(BaseModel):
+    supplement_id: str
+    supplement_type: ReaderAskSupplementType
+    lifecycle_status: Literal["persisted", "deleted"] = "persisted"
+    record_id: str
+    record_title: str | None = None
+    target_key: str
+    sentence_id: str
+    paragraph_id: str | None = None
+    title: str
+    content: str
+    source_kind: Literal["assistant_supplement"] = "assistant_supplement"
+    schema_version: str
+    created_from_turn_run_id: str
+    created_at: str | None = None
 
 
 class ReaderAskSentenceBreakdownPart(BaseModel):
@@ -414,6 +436,7 @@ class ReaderAskMessage(BaseModel):
     resolved_context_input: ReaderAskResolvedContextInput | None = None
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
+    persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
     usage_event_id: str | None = None
     created_at: str
     updated_at: str
@@ -444,6 +467,16 @@ class ReaderAskThreadCreateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
 
 
+class ReaderAskActionConfirmResult(BaseModel):
+    favorite_id: str | None = None
+    annotation_id: str | None = None
+    annotation_type: str | None = None
+    target_key: str | None = None
+    record_id: str | None = None
+    supplement_projection: dict[str, Any] | None = None
+    persisted_supplement: ReaderAskPersistedSupplement | None = None
+
+
 class ReaderAskActionConfirmRequest(BaseModel):
     confirmed: bool = True
 
@@ -452,7 +485,16 @@ class ReaderAskActionConfirmResponse(BaseModel):
     ok: bool
     action_id: str
     status: ReaderAskActionStatus
-    result: dict[str, Any] = Field(default_factory=dict)
+    result: ReaderAskActionConfirmResult = Field(default_factory=ReaderAskActionConfirmResult)
+
+
+class ReaderAskDeleteSupplementResponse(BaseModel):
+    deleted: bool = True
+    supplement_id: str
+    record_id: str
+    target_key: str | None = None
+    lifecycle_status: Literal["deleted"] = "deleted"
+    persisted_supplement: ReaderAskPersistedSupplement | None = None
 
 
 class ReaderAskMessageStreamRequest(BaseModel):
@@ -483,6 +525,7 @@ class ReaderAskCompletedPayload(BaseModel):
     resolved_context_input: ReaderAskResolvedContextInput | None = None
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
+    persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
 
 
 class ReaderAskStreamEnvelope(BaseModel):

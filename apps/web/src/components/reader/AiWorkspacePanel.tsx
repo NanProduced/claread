@@ -45,6 +45,7 @@ import {
   type ReaderAskPageIdentity,
 } from "@/lib/reader-plate";
 import type {
+  ReaderAskActionConfirmResponseDto,
   ReaderAskActionProposalDto,
   ReaderAskActionStatusDto,
   ReaderAskAttachmentDto,
@@ -52,11 +53,13 @@ import type {
   ReaderAskCompletedPayloadDto,
   ReaderAskContextRecordItemDto,
   ReaderAskContextRecordSearchResponseDto,
+  ReaderAskDeleteSupplementResponseDto,
   ReaderAskEntryActionDto,
   ReaderAskEvidenceItemDto,
   ReaderAskMessageDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskPageIdentityDto,
+  ReaderAskPersistedSupplementDto,
   ReaderAskResolvedContextInputDto,
   ReaderAskResolvedContextSummaryDto,
   ReaderAskResponseCardDto,
@@ -539,12 +542,67 @@ function contextSummaryChips(
   return chips.length > 0 ? chips : ["当前文章"];
 }
 
+function supplementCandidateIdFromProposal(proposal: ReaderAskActionProposalDto): string | null {
+  if (proposal.action_type !== "create_supplement_grammar_note") {
+    return null;
+  }
+  const candidate = proposal.payload_json.candidate;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return null;
+  }
+  const candidateId = (candidate as { candidate_id?: unknown }).candidate_id;
+  return typeof candidateId === "string" && candidateId.trim() ? candidateId : null;
+}
+
+function supplementSourceMessage(messages: ReaderAskMessageDto[]): ReaderAskMessageDto | null {
+  return (
+    [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" &&
+          ((message.supplement_candidates?.length ?? 0) > 0 || (message.persisted_supplements?.length ?? 0) > 0),
+      ) ?? null
+  );
+}
+
+function pendingSupplementCandidates(message: ReaderAskMessageDto | null): ReaderAskSupplementCandidateDto[] {
+  if (!message) {
+    return [];
+  }
+  return message.supplement_candidates.filter((candidate) => {
+    const proposal = message.action_proposals.find(
+      (item) => supplementCandidateIdFromProposal(item) === candidate.candidate_id,
+    );
+    return !proposal || proposal.status === "pending";
+  });
+}
+
+function collectPersistedSupplements(messages: ReaderAskMessageDto[]): ReaderAskPersistedSupplementDto[] {
+  const ordered = messages
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) => message.persisted_supplements ?? []);
+  const latestById = new Map<string, ReaderAskPersistedSupplementDto>();
+  for (const item of ordered) {
+    latestById.set(item.supplement_id, item);
+  }
+  return [...latestById.values()].filter((item) => item.lifecycle_status === "persisted");
+}
+
 function SupplementCandidateTray({
   candidates,
+  persistedSupplements,
+  deletingSupplementId,
+  notice,
+  onDeletePersistedSupplement,
 }: {
   candidates: ReaderAskSupplementCandidateDto[];
+  persistedSupplements: ReaderAskPersistedSupplementDto[];
+  deletingSupplementId: string | null;
+  notice: string | null;
+  onDeletePersistedSupplement: (supplementId: string) => void;
 }) {
-  if (candidates.length === 0) {
+  if (candidates.length === 0 && persistedSupplements.length === 0 && !notice) {
     return (
       <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-dashed border-hairline/80 bg-reader-paper/55 px-3 py-2.5 text-[11px] text-subtle">
         补充候选将在这里出现。
@@ -554,21 +612,80 @@ function SupplementCandidateTray({
 
   return (
     <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className="text-[11px] font-semibold text-muted">补充候选</p>
-        <span className="text-[11px] text-subtle">确认后固定到当前页</span>
-      </div>
-      <div className="space-y-2">
-        {candidates.map((candidate) => (
-          <div
-            key={candidate.candidate_id}
-            className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5"
-          >
-            <p className="text-xs font-semibold text-ink">{candidate.title}</p>
-            <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-muted">{candidate.content}</p>
+      {notice ? (
+        <div className="mb-3 rounded-note border border-lens-blue/20 bg-lens-blue/10 px-3 py-2 text-[11px] text-lens-blue">
+          {notice}
+        </div>
+      ) : null}
+      {candidates.length > 0 ? (
+        <div className="mb-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[11px] font-semibold text-muted">待确认补充</p>
+            <span className="text-[11px] text-subtle">在回复下方确认后固定到当前页</span>
           </div>
-        ))}
-      </div>
+          <div className="space-y-2">
+            {candidates.map((candidate) => (
+              <div
+                key={candidate.candidate_id}
+                className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-ink">{candidate.title}</p>
+                  <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                    candidate
+                  </span>
+                </div>
+                <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-muted">{candidate.content}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {persistedSupplements.length > 0 ? (
+        <div className="space-y-2">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[11px] font-semibold text-muted">已写入当前页</p>
+            <span className="text-[11px] text-subtle">可从这里删除已写入补充</span>
+          </div>
+          {persistedSupplements.map((item) => (
+            <div
+              key={item.supplement_id}
+              className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-xs font-semibold text-ink">{item.title}</p>
+                    <span className="rounded-pill border border-lens-blue/20 bg-lens-blue/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-lens-blue">
+                      persisted
+                    </span>
+                  </div>
+                  <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-muted">{item.content}</p>
+                  <p className="mt-1 text-[11px] text-subtle">
+                    {item.record_title || "当前文章"} · 句子 {item.sentence_id}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  density="compact"
+                  className="h-7 rounded-full px-2.5 text-[11px] text-muted"
+                  disabled={deletingSupplementId === item.supplement_id}
+                  onClick={() => onDeletePersistedSupplement(item.supplement_id)}
+                >
+                  {deletingSupplementId === item.supplement_id ? (
+                    <LoaderCircle className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <X className="h-3 w-3" />
+                  )}
+                  <span>删除</span>
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1172,7 +1289,8 @@ export interface AiWorkspacePanelProps {
   onAttachCurrentRecord?: () => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
-  onActionExecuted?: (result: Record<string, unknown>) => void;
+  onActionExecuted?: (result: ReaderAskActionConfirmResponseDto["result"]) => void;
+  onSupplementDeleted?: (supplementId: string) => void | Promise<void>;
   onToggle: () => void;
 }
 
@@ -1191,6 +1309,7 @@ export function AiWorkspacePanel({
   onJumpToAttachment,
   onJumpToCitation,
   onActionExecuted,
+  onSupplementDeleted,
   onRemoveAttachment,
   onToggle,
 }: AiWorkspacePanelProps) {
@@ -1207,7 +1326,9 @@ export function AiWorkspacePanel({
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  const [pendingSupplementDeleteId, setPendingSupplementDeleteId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [supplementNotice, setSupplementNotice] = useState<string | null>(null);
   const [contextPickerOpen, setContextPickerOpen] = useState(false);
   const [contextSearch, setContextSearch] = useState<ContextRecordSearchState>({
     items: [],
@@ -1215,10 +1336,9 @@ export function AiWorkspacePanel({
     query: "",
   });
   const hydrationRef = useRef(0);
-  const latestSupplementCandidates = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && (message.supplement_candidates?.length ?? 0) > 0)
-    ?.supplement_candidates ?? [];
+  const latestSupplementMessage = supplementSourceMessage(messages);
+  const latestSupplementCandidates = pendingSupplementCandidates(latestSupplementMessage);
+  const persistedSupplements = collectPersistedSupplements(messages);
 
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
@@ -1261,6 +1381,7 @@ export function AiWorkspacePanel({
     const detail = await fetchThreadDetail(threadId);
     setActiveThreadId(threadId);
     setMessages(detail.messages);
+    setSupplementNotice(null);
     if (nextThreads) {
       setThreads(nextThreads);
     }
@@ -1365,6 +1486,7 @@ export function AiWorkspacePanel({
       setMessages(detail.messages);
       setThreads([toThreadSummary(detail)]);
       setComposer("");
+      setSupplementNotice(null);
       onClearAttachments();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "重置会话失败。");
@@ -1380,7 +1502,7 @@ export function AiWorkspacePanel({
     setPendingActionId(actionId);
     setErrorMessage(null);
     try {
-      const payload = await fetchJson<{ status?: ReaderAskActionStatusDto; result?: Record<string, unknown> }>(
+      const payload = await fetchJson<ReaderAskActionConfirmResponseDto>(
         `/api/web/reader-ask/threads/${activeThreadId}/actions/${actionId}/confirm`,
         {
           method: "POST",
@@ -1390,15 +1512,44 @@ export function AiWorkspacePanel({
         "动作确认失败。",
       );
       setMessages((current) =>
-        current.map((message) => ({
-          ...message,
-          action_proposals: message.action_proposals.map((proposal) =>
-            proposal.id === actionId
-              ? { ...proposal, status: payload.status ?? (confirmed ? "executed" : "rejected") }
-              : proposal,
-          ),
-        })),
+        current.map((message) => {
+          const hasProposal = message.action_proposals.some((proposal) => proposal.id === actionId);
+          if (!hasProposal) {
+            return message;
+          }
+          return {
+            ...message,
+            action_proposals: message.action_proposals.map((proposal) =>
+              proposal.id === actionId
+                ? { ...proposal, status: payload.status ?? (confirmed ? "executed" : "rejected") }
+                : proposal,
+            ),
+            persisted_supplements:
+              confirmed && payload.result?.persisted_supplement
+                ? (() => {
+                    const existing = message.persisted_supplements.filter(
+                      (item) => item.supplement_id !== payload.result.persisted_supplement?.supplement_id,
+                    );
+                    return [...existing, payload.result.persisted_supplement];
+                  })()
+                : message.persisted_supplements,
+            trace_summary:
+              confirmed && payload.result?.persisted_supplement && message.trace_summary
+                ? {
+                    ...message.trace_summary,
+                    supplement_persisted_count: message.persisted_supplements.filter(
+                      (item) => item.lifecycle_status === "persisted",
+                    ).length + 1,
+                  }
+                : message.trace_summary,
+          };
+        }),
       );
+      if (confirmed && payload.result?.persisted_supplement) {
+        setSupplementNotice("已把这条 AI 补充写入当前页。");
+      } else if (!confirmed) {
+        setSupplementNotice("已拒绝这条补充候选。");
+      }
       if (confirmed && payload.result) {
         onActionExecuted?.(payload.result);
       }
@@ -1406,6 +1557,44 @@ export function AiWorkspacePanel({
       setErrorMessage(error instanceof Error ? error.message : "动作确认失败。");
     } finally {
       setPendingActionId(null);
+    }
+  }
+
+  async function handleDeletePersistedSupplement(supplementId: string) {
+    setPendingSupplementDeleteId(supplementId);
+    setErrorMessage(null);
+    try {
+      const payload = await fetchJson<ReaderAskDeleteSupplementResponseDto>(
+        `/api/web/reader-ask/supplements/${supplementId}`,
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+        },
+        "删除补充失败。",
+      );
+      setMessages((current) =>
+        current.map((message) => ({
+          ...message,
+          persisted_supplements: message.persisted_supplements.map((item) =>
+            item.supplement_id === supplementId
+              ? payload.persisted_supplement ?? { ...item, lifecycle_status: "deleted" }
+              : item,
+          ),
+          trace_summary:
+            message.persisted_supplements.some((item) => item.supplement_id === supplementId) && message.trace_summary
+              ? {
+                  ...message.trace_summary,
+                  supplement_deleted_count: message.trace_summary.supplement_deleted_count + 1,
+                }
+              : message.trace_summary,
+        })),
+      );
+      setSupplementNotice("已从当前页移除这条 AI 补充。");
+      await onSupplementDeleted?.(supplementId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "删除补充失败。");
+    } finally {
+      setPendingSupplementDeleteId(null);
     }
   }
 
@@ -1463,6 +1652,7 @@ export function AiWorkspacePanel({
       resolved_context_input: null,
       run_info: null,
       supplement_candidates: [],
+      persisted_supplements: [],
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1486,6 +1676,7 @@ export function AiWorkspacePanel({
       resolved_context_input: null,
       run_info: null,
       supplement_candidates: [],
+      persisted_supplements: [],
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1496,6 +1687,7 @@ export function AiWorkspacePanel({
     }
     setSending(true);
     setErrorMessage(null);
+    setSupplementNotice(null);
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setThreads((current) =>
       current.map((thread) =>
@@ -1573,6 +1765,7 @@ export function AiWorkspacePanel({
                     resolved_context_input: payload.resolved_context_input ?? null,
                     run_info: payload.run_info ?? null,
                     supplement_candidates: payload.supplement_candidates ?? [],
+                    persisted_supplements: payload.persisted_supplements ?? [],
                   }
                 : message,
             ),
@@ -1611,6 +1804,7 @@ export function AiWorkspacePanel({
     }
     setSending(true);
     setErrorMessage(null);
+    setSupplementNotice(null);
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
@@ -1628,6 +1822,7 @@ export function AiWorkspacePanel({
               context_plan: null,
               resolved_context_input: null,
               supplement_candidates: [],
+              persisted_supplements: [],
             }
           : message,
       ),
@@ -1686,6 +1881,7 @@ export function AiWorkspacePanel({
                     resolved_context_input: payload.resolved_context_input ?? null,
                     run_info: payload.run_info ?? null,
                     supplement_candidates: payload.supplement_candidates ?? [],
+                    persisted_supplements: payload.persisted_supplements ?? [],
                   }
                 : message,
             ),
@@ -1852,7 +2048,15 @@ export function AiWorkspacePanel({
             onAttachCurrentRecord={onAttachCurrentRecord}
             onAttachRelatedRecord={handleAttachRelatedRecord}
           />
-          <SupplementCandidateTray candidates={latestSupplementCandidates} />
+          <SupplementCandidateTray
+            candidates={latestSupplementCandidates}
+            persistedSupplements={persistedSupplements}
+            deletingSupplementId={pendingSupplementDeleteId}
+            notice={supplementNotice}
+            onDeletePersistedSupplement={(supplementId) => {
+              void handleDeletePersistedSupplement(supplementId);
+            }}
+          />
 
           <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />
           <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline/80 pt-3">

@@ -16,6 +16,7 @@ from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import planner as planner_svc
 from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import resolver as resolver_svc
+from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask.service import (
     _attachment_to_anchor,
     _attachments_to_anchor_refs,
@@ -349,6 +350,58 @@ def test_build_grammar_note_candidate_requires_sentence_target() -> None:
     assert candidate is not None
     assert candidate.supplement_type == "grammar_note"
     assert candidate.created_from_turn_run_id == "run-1"
+    assert candidate.lifecycle_status == "candidate"
+
+
+def test_candidate_to_persisted_supplement_separates_lifecycle_contract() -> None:
+    candidate = build_grammar_note_candidate(
+        anchor=ReaderAskAnchorRef(
+            anchor_type="sentence",
+            sentence_id="s1",
+            paragraph_id="p1",
+            target_key="record:r1:sentence:s1",
+            selected_text="Even if he knew the risk",
+            label="语法旁注",
+        ),
+        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。",
+        created_from_turn_run_id="run-1",
+    )
+
+    assert candidate is not None
+    persisted = supplements_svc.candidate_to_persisted_supplement(
+        candidate,
+        record_id="record-1",
+        record_title="Test Reader",
+    )
+
+    assert persisted.lifecycle_status == "persisted"
+    assert persisted.record_id == "record-1"
+    assert persisted.record_title == "Test Reader"
+    assert persisted.source_kind == "assistant_supplement"
+    assert persisted.supplement_id == candidate.candidate_id
+
+
+def test_row_to_persisted_supplement_supports_deleted_lifecycle() -> None:
+    persisted = supplements_svc.row_to_persisted_supplement(
+        {
+            "id": "supp-1",
+            "record_id": "record-1",
+            "target_key": "record:r1:sentence:s1",
+            "entry_type": "grammar_note",
+            "sentence_id": "s1",
+            "paragraph_id": "p1",
+            "title": "语法旁注",
+            "content_md": "这里用了让步从句。",
+            "created_from_turn_run_id": "run-1",
+            "created_at": "2026-05-20T00:00:00Z",
+        },
+        record_title="Test Reader",
+        lifecycle_status="deleted",
+    )
+
+    assert persisted.supplement_id == "supp-1"
+    assert persisted.lifecycle_status == "deleted"
+    assert persisted.record_title == "Test Reader"
 
 
 def test_reference_needs_extracts_known_title_query() -> None:

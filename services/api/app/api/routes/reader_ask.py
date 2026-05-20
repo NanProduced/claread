@@ -11,6 +11,7 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmRequest,
     ReaderAskActionConfirmResponse,
     ReaderAskContextRecordSearchResponse,
+    ReaderAskDeleteSupplementResponse,
     ReaderAskMessageStreamRequest,
     ReaderAskThreadCreateRequest,
     ReaderAskThreadDetail,
@@ -154,9 +155,13 @@ async def confirm_reader_ask_action(
     return await ask_svc.confirm_action(UUID(current_user.user_id), thread_id, action_id, body)
 
 
-@router.delete("/supplements/{supplement_id}", summary="删除 Ask Claread 补充")
+@router.delete(
+    "/supplements/{supplement_id}",
+    response_model=ReaderAskDeleteSupplementResponse,
+    summary="删除 Ask Claread 补充",
+)
 async def delete_reader_ask_supplement(
     current_user: AuthUserDep,
     supplement_id: UUID,
-) -> dict[str, object]:
+) -> ReaderAskDeleteSupplementResponse:
     return await ask_svc.delete_supplement(UUID(current_user.user_id), supplement_id)

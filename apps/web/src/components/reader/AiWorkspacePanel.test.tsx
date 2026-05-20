@@ -32,6 +32,9 @@ const completedPayload = {
     working_set_mode: "known_reference",
     used_known_reference_resolution: true,
     used_external_record_context: true,
+    supplement_generation_used: false,
+    supplement_persisted_count: 0,
+    supplement_deleted_count: 0,
     history_lookup_allowed: true,
     history_lookup_used: false,
     tool_steps: [],
@@ -108,6 +111,7 @@ const completedPayload = {
   },
   run_info: null,
   supplement_candidates: [],
+  persisted_supplements: [],
 };
 
 vi.mock("@/components/ui/message", () => ({
@@ -201,6 +205,68 @@ function mockFetch() {
         updated_at: "2026-05-20T00:00:00Z",
         last_message_at: null,
         messages: [],
+      });
+    }
+    if (url.endsWith("/api/web/reader-ask/threads/thread-1/actions/act-supplement-1/confirm")) {
+      return jsonResponse({
+        ok: true,
+        action_id: "act-supplement-1",
+        status: "executed",
+        result: {
+          record_id: "record-1",
+          supplement_projection: {
+            id: "entry-supplement-1",
+            sentence_id: "s1",
+            entry_type: "grammar_note",
+            title: "AI 语法旁注",
+            content: "这里用了让步从句。",
+            source_kind: "ask_supplement",
+            supplement_id: "supp-1",
+            deletable: true,
+            created_from_turn_run_id: "run-1",
+          },
+          persisted_supplement: {
+            supplement_id: "supp-1",
+            supplement_type: "grammar_note",
+            lifecycle_status: "persisted",
+            record_id: "record-1",
+            record_title: "Test Reader",
+            target_key: "record:record-1:sentence:s1",
+            sentence_id: "s1",
+            paragraph_id: "p1",
+            title: "AI 语法旁注",
+            content: "这里用了让步从句。",
+            source_kind: "assistant_supplement",
+            schema_version: "1.0",
+            created_from_turn_run_id: "run-1",
+            created_at: "2026-05-20T00:00:00Z",
+          },
+        },
+      });
+    }
+    if (url.endsWith("/api/web/reader-ask/supplements/supp-1")) {
+      return jsonResponse({
+        deleted: true,
+        supplement_id: "supp-1",
+        record_id: "record-1",
+        target_key: "record:record-1:sentence:s1",
+        lifecycle_status: "deleted",
+        persisted_supplement: {
+          supplement_id: "supp-1",
+          supplement_type: "grammar_note",
+          lifecycle_status: "deleted",
+          record_id: "record-1",
+          record_title: "Test Reader",
+          target_key: "record:record-1:sentence:s1",
+          sentence_id: "s1",
+          paragraph_id: "p1",
+          title: "AI 语法旁注",
+          content: "这里用了让步从句。",
+          source_kind: "assistant_supplement",
+          schema_version: "1.0",
+          created_from_turn_run_id: "run-1",
+          created_at: "2026-05-20T00:00:00Z",
+        },
       });
     }
     if (url.includes("/api/web/reader-ask/context-records?")) {
@@ -456,5 +522,160 @@ describe("AiWorkspacePanel", () => {
         },
       },
     ]);
+  });
+
+  it("keeps persisted supplements in the Ask panel after confirm and supports delete", async () => {
+    const onActionExecuted = vi.fn();
+    const onSupplementDeleted = vi.fn();
+
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            {
+              id: "msg-assistant-1",
+              thread_id: "thread-1",
+              role: "assistant",
+              status: "completed",
+              content_md: "解释完成。",
+              resolved_intent: "grammar",
+              context_anchors: [],
+              citations: [],
+              action_proposals: [
+                {
+                  id: "act-supplement-1",
+                  action_type: "create_supplement_grammar_note",
+                  label: "写入语法旁注",
+                  description: "把这条解释作为 AI 语法旁注写入当前页。",
+                  requires_confirmation: true,
+                  status: "pending",
+                  payload_json: {
+                    candidate: {
+                      candidate_id: "cand-1",
+                      supplement_type: "grammar_note",
+                      lifecycle_status: "candidate",
+                      target_key: "record:record-1:sentence:s1",
+                      sentence_id: "s1",
+                      paragraph_id: "p1",
+                      title: "AI 语法旁注",
+                      content: "这里用了让步从句。",
+                      anchor: {
+                        anchor_type: "sentence",
+                        sentence_id: "s1",
+                        paragraph_id: "p1",
+                        target_key: "record:record-1:sentence:s1",
+                        label: "句子",
+                        selected_text: "Even if he knew the risk",
+                        segments: [],
+                        payload_json: {},
+                      },
+                      schema_version: "1.0",
+                      created_from_turn_run_id: "run-1",
+                      label: "AI 补充语法旁注",
+                    },
+                  },
+                },
+              ],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: {
+                planner_mode: "direct_answer",
+                reference_resolution_status: "not_needed",
+                working_set_mode: "anchor_local",
+                used_known_reference_resolution: false,
+                used_external_record_context: false,
+                supplement_generation_used: true,
+                supplement_persisted_count: 0,
+                supplement_deleted_count: 0,
+                history_lookup_allowed: false,
+                history_lookup_used: false,
+                tool_steps: [],
+                notes: [],
+              },
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [
+                {
+                  candidate_id: "cand-1",
+                  supplement_type: "grammar_note",
+                  lifecycle_status: "candidate",
+                  target_key: "record:record-1:sentence:s1",
+                  sentence_id: "s1",
+                  paragraph_id: "p1",
+                  title: "AI 语法旁注",
+                  content: "这里用了让步从句。",
+                  anchor: {
+                    anchor_type: "sentence",
+                    sentence_id: "s1",
+                    paragraph_id: "p1",
+                    target_key: "record:record-1:sentence:s1",
+                    label: "句子",
+                    selected_text: "Even if he knew the risk",
+                    segments: [],
+                    payload_json: {},
+                  },
+                  schema_version: "1.0",
+                  created_from_turn_run_id: "run-1",
+                  label: "AI 补充语法旁注",
+                },
+              ],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+          ],
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[]}
+        onActionExecuted={onActionExecuted}
+        onSupplementDeleted={onSupplementDeleted}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("待确认补充")).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("已写入当前页")).not.toBeNull();
+      expect(screen.getByText("已把这条 AI 补充写入当前页。")).not.toBeNull();
+    });
+    expect(onActionExecuted).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("已从当前页移除这条 AI 补充。")).not.toBeNull();
+    });
+    expect(onSupplementDeleted).toHaveBeenCalledWith("supp-1");
+    expect(screen.queryByText("已写入当前页")).toBeNull();
   });
 });
