@@ -10,7 +10,9 @@ from app.schemas.reader_ask import (
     ReaderAskAttachment,
     ReaderAskCitation,
     ReaderAskContextPlan,
+    ReaderAskCurrentRecordContext,
     ReaderAskEntryAction,
+    ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
     ReaderAskReferenceResolutionStatus,
     ReaderAskResolvedContextInput,
@@ -234,12 +236,16 @@ def build_resolved_context_input(
     entry_action: ReaderAskEntryAction,
     attachments: list[ReaderAskAttachment],
     anchors: list[ReaderAskAnchorRef],
+    current_record_context: ReaderAskCurrentRecordContext | None = None,
+    external_record_contexts: list[ReaderAskExternalRecordContext] | None = None,
 ) -> ReaderAskResolvedContextInput:
     return ReaderAskResolvedContextInput(
         page_identity=page_identity,
         entry_action=entry_action,
         attachments=attachments,
         normalized_anchors=anchors,
+        current_record_context=current_record_context,
+        external_record_contexts=external_record_contexts or [],
     )
 
 
@@ -251,10 +257,10 @@ def _working_set_mode(
 ) -> ReaderAskWorkingSetMode:
     if clarification_only:
         return "clarification"
-    if working_set.external_record_refs:
-        return "explicit_external_record"
     if reference_resolution.status == "resolved":
         return "known_reference"
+    if working_set.external_record_refs:
+        return "explicit_external_record"
     if working_set.article_overview_needed:
         return "article_overview"
     return "anchor_local"
@@ -267,7 +273,16 @@ def _planned_context_plan(
     anchors: list[ReaderAskAnchorRef],
     working_set: ReaderAskWorkingSet,
     reference_resolution: ReaderAskReferenceResolution,
+    clarification_only: bool,
 ) -> ReaderAskContextPlan:
+    clarification_reason = None
+    if clarification_only:
+        if reference_resolution.status == "ambiguous":
+            clarification_reason = "ambiguous_known_reference"
+        elif reference_resolution.status == "not_found":
+            clarification_reason = "known_reference_not_found"
+        else:
+            clarification_reason = "missing_local_anchor"
     return ReaderAskContextPlan(
         entry_action=entry_action,
         explicit_attachment_count=len(attachments),
@@ -294,6 +309,7 @@ def _planned_context_plan(
         article_overview_reason="article_level_question" if working_set.article_overview_needed else None,
         used_dictionary=working_set.dictionary_needed,
         dictionary_reason="dictionary_lookup_planned" if working_set.dictionary_needed else None,
+        clarification_reason=clarification_reason,
         source_labels=[],
     )
 
@@ -333,6 +349,8 @@ def _planned_trace_summary(
             working_set=working_set,
             reference_resolution=reference_resolution,
         ),
+        used_known_reference_resolution=reference_resolution.status == "resolved",
+        used_external_record_context=bool(working_set.external_record_refs),
         history_lookup_allowed=working_set.history_assets_allowed,
         history_lookup_used=False,
         tool_steps=[],
@@ -352,23 +370,34 @@ def plan_request(
     resolved_reference = reference_resolution or ReaderAskReferenceResolution()
     resolved_intent = resolve_intent(content, attachments, entry_action)
     reference_needs = build_reference_needs(content)
-    resolved_context_input = build_resolved_context_input(
-        page_identity=page_identity,
-        entry_action=entry_action,
-        attachments=attachments,
-        anchors=anchors,
-    )
 
     explicit_external_record_refs = [
         {
             "record_id": record_id,
             "title": attachment.metadata.title or attachment.label,
+            "reason": "explicit_attachment",
         }
         for attachment in attachments
         if attachment.kind == "record_ref" and attachment.subtype == "related_record"
         for record_id in [(_attachment_target_record(attachment) or "")]
         if record_id
     ]
+    resolved_external_record_refs = [
+        {
+            "record_id": item["record_id"],
+            "title": item["title"],
+            "reason": "known_reference_resolved",
+        }
+        for item in resolved_reference.resolved_records
+    ]
+    merged_external_record_refs: list[dict[str, str]] = []
+    seen_external_record_ids: set[str] = set()
+    for item in [*explicit_external_record_refs, *resolved_external_record_refs]:
+        record_id = item["record_id"]
+        if record_id in seen_external_record_ids:
+            continue
+        seen_external_record_ids.add(record_id)
+        merged_external_record_refs.append(item)
 
     local_anchor = _has_local_anchor(attachments, anchors)
     clarification_only = needs_clarification(
@@ -378,7 +407,7 @@ def plan_request(
     )
     article_overview_needed = (
         not clarification_only
-        and not explicit_external_record_refs
+        and not merged_external_record_refs
         and resolved_reference.status != "resolved"
         and _is_article_level_question(content, entry_action)
         and page_identity.has_article_overview
@@ -402,7 +431,7 @@ def plan_request(
         and local_anchor
         and not article_overview_needed
     )
-    history_assets_allowed = bool(explicit_external_record_refs) or resolved_reference.status == "resolved"
+    history_assets_allowed = bool(merged_external_record_refs) or resolved_reference.status == "resolved"
     retrieval_needs: ReaderAskRetrievalNeeds = "known_reference_only" if history_assets_allowed else "none"
 
     working_set = ReaderAskWorkingSet(
@@ -412,7 +441,13 @@ def plan_request(
         article_overview_needed=article_overview_needed,
         dictionary_needed=dictionary_needed,
         history_assets_allowed=history_assets_allowed,
-        external_record_refs=explicit_external_record_refs,
+        external_record_refs=merged_external_record_refs,
+    )
+    resolved_context_input = build_resolved_context_input(
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
     )
     context_plan = _planned_context_plan(
         entry_action=entry_action,
@@ -420,6 +455,7 @@ def plan_request(
         anchors=anchors,
         working_set=working_set,
         reference_resolution=resolved_reference,
+        clarification_only=clarification_only,
     )
     trace_summary = _planned_trace_summary(
         reference_resolution=resolved_reference,
@@ -457,6 +493,11 @@ def build_context_plan(
         planning_snapshot and planning_snapshot.working_set.external_record_refs
     )
     working_set = planning_snapshot.working_set if planning_snapshot else None
+    clarification_reason = (
+        planning_snapshot.context_plan.clarification_reason
+        if planning_snapshot and planning_snapshot.context_plan.clarification_reason
+        else None
+    )
     return ReaderAskContextPlan(
         entry_action=entry_action,
         explicit_attachment_count=len(attachments),
@@ -509,6 +550,7 @@ def build_context_plan(
             if working_set and working_set.dictionary_needed
             else None
         ),
+        clarification_reason=clarification_reason,
         source_labels=sorted(runtime_state.source_labels),
     )
 
@@ -590,6 +632,10 @@ def build_trace_summary(
         notes.append("已使用词典或词典 AI。")
     if context_plan.used_history_lookup:
         notes.append("本轮允许历史资产扩展。")
+    if runtime_state.latest_external_record_contexts and not any(
+        item.get("article_overview") for item in runtime_state.latest_external_record_contexts
+    ):
+        notes.append("已定位到外部文章，但当前只有记录级信息，没有可用概览。")
 
     working_set_mode = (
         planning_snapshot.trace_summary.working_set_mode
@@ -607,6 +653,8 @@ def build_trace_summary(
         planner_mode=planner_mode,
         reference_resolution_status=context_plan.reference_resolution_status,
         working_set_mode=working_set_mode,
+        used_known_reference_resolution=context_plan.reference_resolution_status == "resolved",
+        used_external_record_context=bool(runtime_state.latest_external_record_contexts),
         history_lookup_allowed=context_plan.reference_resolution_attempted or context_plan.used_history_lookup,
         history_lookup_used=runtime_state.used_history_lookup,
         tool_steps=[entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],

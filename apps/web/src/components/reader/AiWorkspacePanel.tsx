@@ -57,6 +57,7 @@ import type {
   ReaderAskMessageDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskPageIdentityDto,
+  ReaderAskResolvedContextInputDto,
   ReaderAskResolvedContextSummaryDto,
   ReaderAskResponseCardDto,
   ReaderAskResolvedIntentDto,
@@ -509,7 +510,10 @@ function ContextPicker({
   );
 }
 
-function contextSummaryChips(summary?: ReaderAskResolvedContextSummaryDto | null) {
+function contextSummaryChips(
+  summary?: ReaderAskResolvedContextSummaryDto | null,
+  contextInput?: ReaderAskResolvedContextInputDto | null,
+) {
   if (!summary) {
     return [];
   }
@@ -528,6 +532,9 @@ function contextSummaryChips(summary?: ReaderAskResolvedContextSummaryDto | null
   }
   if (summary.used_dictionary) {
     chips.push("词典");
+  }
+  if ((contextInput?.external_record_contexts.length ?? 0) > 0) {
+    chips.push(`外部文章 ${contextInput?.external_record_contexts.length}`);
   }
   return chips.length > 0 ? chips : ["当前文章"];
 }
@@ -609,26 +616,67 @@ function DisclosureSection({
 
 function ContextSummaryDisclosure({
   summary,
+  contextInput,
 }: {
   summary?: ReaderAskResolvedContextSummaryDto | null;
+  contextInput?: ReaderAskResolvedContextInputDto | null;
 }) {
   if (!summary) {
     return null;
   }
 
-  const chips = contextSummaryChips(summary);
+  const chips = contextSummaryChips(summary, contextInput);
+  const currentRecordContext = contextInput?.current_record_context;
+  const externalRecordContexts = contextInput?.external_record_contexts ?? [];
 
   return (
     <DisclosureSection label="使用上下文" summary={chips.join(" · ")}>
-      <div className="flex flex-wrap gap-2">
-        {chips.map((chip) => (
-          <span
-            key={chip}
-            className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted"
-          >
-            {chip}
-          </span>
-        ))}
+      <div className="space-y-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">当前文章</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {chips
+              .filter((chip) => !chip.startsWith("外部文章"))
+              .map((chip) => (
+                <span
+                  key={chip}
+                  className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted"
+                >
+                  {chip}
+                </span>
+              ))}
+            {currentRecordContext?.record_title ? (
+              <span className="rounded-pill border border-hairline bg-reader-paper px-2.5 py-1 text-[11px] font-medium text-ink-soft">
+                {currentRecordContext.record_title}
+              </span>
+            ) : null}
+          </div>
+        </div>
+        {externalRecordContexts.length > 0 ? (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">外部文章</p>
+            <div className="mt-2 space-y-2">
+              {externalRecordContexts.map((item) => (
+                <div
+                  key={item.record_id}
+                  className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-xs font-semibold text-ink">
+                      {item.record_title || item.record_id}
+                    </p>
+                    <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                      {item.reason === "known_reference_resolved" ? "自动命中" : "显式加入"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-5 text-muted">
+                    {item.article_overview ? "已并入文章概览。" : "已定位到文章，但当前没有可用概览。"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </DisclosureSection>
   );
@@ -653,19 +701,43 @@ function EvidenceDisclosure({
           >
             <div className="flex items-center justify-between gap-3">
               <p className="truncate text-xs font-semibold text-ink">{item.label}</p>
-              <span className="shrink-0 rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
-                {item.kind}
-              </span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                  {item.scope === "external_record" ? "外部" : "当前"}
+                </span>
+                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                  {item.kind}
+                </span>
+              </div>
             </div>
             {item.detail ? <p className="mt-1.5 text-[11px] leading-5 text-muted">{item.detail}</p> : null}
-            {item.source_article_title ? (
-              <p className="mt-1 text-[11px] text-subtle">{item.source_article_title}</p>
+            {item.record_title || item.source_article_title || item.reason ? (
+              <p className="mt-1 text-[11px] text-subtle">
+                {[item.record_title || item.source_article_title, item.reason].filter(Boolean).join(" · ")}
+              </p>
             ) : null}
           </div>
         ))}
       </div>
     </DisclosureSection>
   );
+}
+
+function clarificationHint(
+  traceSummary?: ReaderAskTraceSummaryDto | null,
+  evidence: ReaderAskEvidenceItemDto[] = [],
+) {
+  if (!traceSummary || traceSummary.planner_mode !== "needs_local_clarification") {
+    return null;
+  }
+  const clarification = evidence.find((item) => item.kind === "clarification");
+  if (traceSummary.reference_resolution_status === "ambiguous") {
+    return clarification?.detail || "当前引用没有唯一命中，请补充更完整的文章标题。";
+  }
+  if (traceSummary.reference_resolution_status === "not_found") {
+    return clarification?.detail || "当前没有命中可并入的历史文章，请补充更准确的标题。";
+  }
+  return "当前问题还缺少可定位锚点。先选中一句正文或加入相关解析对象，再继续问。";
 }
 
 function TraceSummaryDisclosure({
@@ -939,6 +1011,7 @@ function MessageBubble({
 }) {
   const isAssistant = message.role === "assistant";
   const historyAttachments = message.context_anchors.map((anchor) => askAttachmentFromAnchor(anchor, pageIdentity).attachment);
+  const clarificationText = clarificationHint(message.trace_summary, message.evidence);
 
   return (
     <div className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}>
@@ -965,6 +1038,11 @@ function MessageBubble({
                 ) : null}
               </div>
               <div className="rounded-[var(--cl-radius-surface-md)] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,247,239,0.98))] px-4 py-3.5 shadow-[0_14px_30px_rgba(17,17,17,0.05)]">
+                {clarificationText ? (
+                  <div className="mb-3 rounded-note border border-amber-200/70 bg-amber-50/80 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
+                    {clarificationText}
+                  </div>
+                ) : null}
                 <MessageContent
                   markdown
                   className="border-0 bg-transparent p-0 shadow-none text-[15px] leading-7 text-ink-soft prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
@@ -989,7 +1067,10 @@ function MessageBubble({
                     </Button>
                   </div>
                 ) : null}
-                <ContextSummaryDisclosure summary={message.resolved_context} />
+                <ContextSummaryDisclosure
+                  summary={message.resolved_context}
+                  contextInput={message.resolved_context_input}
+                />
                 <EvidenceDisclosure evidence={message.evidence} />
                 <TraceSummaryDisclosure traceSummary={message.trace_summary} />
                 <CitationList

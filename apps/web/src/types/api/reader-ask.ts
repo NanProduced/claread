@@ -54,6 +54,7 @@ export type ReaderAskEvidenceKindDto =
   | "resolved_reference"
   | "supplement_candidate"
   | "clarification";
+export type ReaderAskEvidenceScopeDto = "current_record" | "external_record";
 export type ReaderAskWorkingSetModeDto =
   | "anchor_local"
   | "article_overview"
@@ -180,8 +181,11 @@ export interface ReaderAskEvidenceItemDto {
   kind: ReaderAskEvidenceKindDto;
   label: string;
   detail?: string | null;
+  scope: ReaderAskEvidenceScopeDto;
   record_id?: string | null;
+  record_title?: string | null;
   source_article_title?: string | null;
+  reason?: string | null;
   target_key?: string | null;
   metadata_json: Record<string, unknown>;
 }
@@ -219,7 +223,25 @@ export interface ReaderAskContextPlanDto {
   article_overview_reason?: string | null;
   used_dictionary: boolean;
   dictionary_reason?: string | null;
+  clarification_reason?: string | null;
   source_labels: string[];
+}
+
+export interface ReaderAskCurrentRecordContextDto {
+  record_id: string;
+  record_title?: string | null;
+  local_context?: Record<string, unknown> | null;
+  record_insights: Record<string, unknown>[];
+  article_overview?: string | null;
+  source_labels: string[];
+}
+
+export interface ReaderAskExternalRecordContextDto {
+  record_id: string;
+  record_title?: string | null;
+  article_overview?: string | null;
+  source_labels: string[];
+  reason?: string | null;
 }
 
 export interface ReaderAskResolvedContextInputDto {
@@ -227,6 +249,8 @@ export interface ReaderAskResolvedContextInputDto {
   entry_action: ReaderAskEntryActionDto;
   attachments: ReaderAskAttachmentDto[];
   normalized_anchors: ReaderAskAnchorRefDto[];
+  current_record_context?: ReaderAskCurrentRecordContextDto | null;
+  external_record_contexts: ReaderAskExternalRecordContextDto[];
 }
 
 export interface ReaderAskRunInfoDto {
@@ -245,6 +269,8 @@ export interface ReaderAskTraceSummaryDto {
     | "known_reference_not_found";
   reference_resolution_status: ReaderAskReferenceResolutionStatusDto;
   working_set_mode: ReaderAskWorkingSetModeDto;
+  used_known_reference_resolution: boolean;
+  used_external_record_context: boolean;
   history_lookup_allowed: boolean;
   history_lookup_used: boolean;
   tool_steps: string[];

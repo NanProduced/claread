@@ -64,6 +64,7 @@ ReaderAskEvidenceKind = Literal[
     "supplement_candidate",
     "clarification",
 ]
+ReaderAskEvidenceScope = Literal["current_record", "external_record"]
 ReaderAskWorkingSetMode = Literal[
     "anchor_local",
     "article_overview",
@@ -230,8 +231,11 @@ class ReaderAskEvidenceItem(BaseModel):
     kind: ReaderAskEvidenceKind
     label: str
     detail: str | None = None
+    scope: ReaderAskEvidenceScope = "current_record"
     record_id: str | None = None
+    record_title: str | None = None
     source_article_title: str | None = None
+    reason: str | None = None
     target_key: str | None = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -269,7 +273,25 @@ class ReaderAskContextPlan(BaseModel):
     article_overview_reason: str | None = None
     used_dictionary: bool = False
     dictionary_reason: str | None = None
+    clarification_reason: str | None = None
     source_labels: list[str] = Field(default_factory=list)
+
+
+class ReaderAskCurrentRecordContext(BaseModel):
+    record_id: str
+    record_title: str | None = None
+    local_context: dict[str, Any] | None = None
+    record_insights: list[dict[str, Any]] = Field(default_factory=list)
+    article_overview: str | None = None
+    source_labels: list[str] = Field(default_factory=list)
+
+
+class ReaderAskExternalRecordContext(BaseModel):
+    record_id: str
+    record_title: str | None = None
+    article_overview: str | None = None
+    source_labels: list[str] = Field(default_factory=list)
+    reason: str | None = None
 
 
 class ReaderAskResolvedContextInput(BaseModel):
@@ -277,6 +299,8 @@ class ReaderAskResolvedContextInput(BaseModel):
     entry_action: ReaderAskEntryAction
     attachments: list[ReaderAskAttachment] = Field(default_factory=list)
     normalized_anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
+    current_record_context: ReaderAskCurrentRecordContext | None = None
+    external_record_contexts: list[ReaderAskExternalRecordContext] = Field(default_factory=list)
 
 
 class ReaderAskRunInfo(BaseModel):
@@ -296,6 +320,8 @@ class ReaderAskTraceSummary(BaseModel):
     ] = "direct_answer"
     reference_resolution_status: ReaderAskReferenceResolutionStatus = "not_needed"
     working_set_mode: ReaderAskWorkingSetMode = "anchor_local"
+    used_known_reference_resolution: bool = False
+    used_external_record_context: bool = False
     history_lookup_allowed: bool = False
     history_lookup_used: bool = False
     tool_steps: list[str] = Field(default_factory=list)

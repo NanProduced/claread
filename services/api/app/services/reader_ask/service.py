@@ -35,8 +35,10 @@ from app.schemas.reader_ask import (
     ReaderAskCompletedPayload,
     ReaderAskContextRecordSearchResponse,
     ReaderAskContextPlan,
+    ReaderAskCurrentRecordContext,
     ReaderAskEvidenceItem,
     ReaderAskEntryAction,
+    ReaderAskExternalRecordContext,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
     ReaderAskPageIdentity,
@@ -469,6 +471,107 @@ def _render_scene_article_overview(record: _RecordBundle) -> str | None:
         elif isinstance(current, list):
             queue.extend(current)
     return None
+
+
+def _current_record_source_labels(runtime_state: ReaderAskRuntimeState) -> list[str]:
+    labels: list[str] = []
+    if runtime_state.latest_record_context is not None:
+        labels.append("current_paragraph")
+    if runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets:
+        labels.append("record_assets")
+    if runtime_state.latest_article_overview:
+        labels.append("article_overview")
+    if runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai:
+        labels.append("dictionary")
+    return labels
+
+
+async def _load_external_record_contexts(
+    user_id: UUID,
+    *,
+    current_record_id: UUID,
+    planned_external_refs: list[dict[str, str]],
+) -> list[ReaderAskExternalRecordContext]:
+    contexts: list[ReaderAskExternalRecordContext] = []
+    seen: set[str] = set()
+    for item in planned_external_refs:
+        record_id = str(item.get("record_id") or "").strip()
+        if not record_id or record_id in seen:
+            continue
+        seen.add(record_id)
+        record_uuid = _parse_uuid(record_id, "external record id is invalid")
+        if record_uuid == current_record_id:
+            continue
+        bundle = await _load_record_bundle(user_id, record_uuid)
+        article_overview = _render_scene_article_overview(bundle)
+        contexts.append(
+            ReaderAskExternalRecordContext(
+                record_id=str(bundle.record_id),
+                record_title=bundle.title or item.get("title"),
+                article_overview=article_overview,
+                source_labels=["external_record", *([] if article_overview else ["overview_missing"])],
+                reason=str(item.get("reason") or "explicit_attachment"),
+            )
+        )
+    return contexts
+
+
+async def _materialize_planned_context(
+    *,
+    user_id: UUID,
+    record: _RecordBundle,
+    runtime_state: ReaderAskRuntimeState,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot,
+    page_identity: ReaderAskPageIdentity,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    get_record_context_cb: Callable[[], Any],
+    get_record_insights_cb: Callable[[], Any],
+) -> ReaderAskResolvedContextInput:
+    working_set = planning_snapshot.working_set
+    if working_set.local_context_window_needed and runtime_state.latest_record_context is None:
+        runtime_state.latest_record_context = await get_record_context_cb()
+        if runtime_state.latest_record_context is not None:
+            runtime_state.source_labels.update({"current_record", "current_anchor", "current_paragraph"})
+    if working_set.record_insights_needed and not runtime_state.latest_record_insights:
+        runtime_state.latest_record_insights = await get_record_insights_cb()
+        if runtime_state.latest_record_insights:
+            runtime_state.source_labels.add("record_assets")
+    if working_set.article_overview_needed and not runtime_state.latest_article_overview:
+        article_overview = _render_scene_article_overview(record)
+        if article_overview:
+            runtime_state.latest_article_overview = article_overview
+            runtime_state.source_labels.add("article_overview")
+
+    external_record_contexts = await _load_external_record_contexts(
+        user_id,
+        current_record_id=record.record_id,
+        planned_external_refs=working_set.external_record_refs,
+    )
+    if external_record_contexts:
+        runtime_state.latest_external_record_contexts = [
+            item.model_dump(mode="json") for item in external_record_contexts
+        ]
+        runtime_state.used_history_lookup = True
+        runtime_state.source_labels.add("history_assets")
+
+    current_record_context = ReaderAskCurrentRecordContext(
+        record_id=str(record.record_id),
+        record_title=record.title,
+        local_context=runtime_state.latest_record_context,
+        record_insights=runtime_state.latest_record_insights,
+        article_overview=runtime_state.latest_article_overview,
+        source_labels=_current_record_source_labels(runtime_state),
+    )
+    return planner.build_resolved_context_input(
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        current_record_context=current_record_context,
+        external_record_contexts=external_record_contexts,
+    )
 
 
 async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
@@ -965,9 +1068,9 @@ def _build_prompt_payload(
     resolved_intent: ReaderAskResolvedIntent,
     entry_action: ReaderAskEntryAction,
     history_lookup_allowed: bool,
+    resolved_context_input: ReaderAskResolvedContextInput | None = None,
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None,
-    article_overview: str | None = None,
 ) -> dict[str, Any]:
     prompt_layers = prompt_layers_svc.load_prompt_layers()
     history = [
@@ -1026,6 +1129,7 @@ def _build_prompt_payload(
             "resolved_records": reference_resolution.resolved_records if reference_resolution else [],
             "ambiguous_records": reference_resolution.ambiguous_records if reference_resolution else [],
         },
+        "resolved_context_input": resolved_context_input.model_dump(mode="json") if resolved_context_input else None,
         "planning": {
             "retrieval_needs": planning_snapshot.retrieval_needs if planning_snapshot else "none",
             "working_set": {
@@ -1054,7 +1158,6 @@ def _build_prompt_payload(
             "context_plan": planning_snapshot.context_plan.model_dump(mode="json") if planning_snapshot else None,
             "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json") if planning_snapshot else None,
         },
-        "article_overview": article_overview,
         "history_lookup_allowed": history_lookup_allowed,
         "tooling_contract": {
             "call_tools_on_demand": True,
@@ -1563,12 +1666,16 @@ def _build_resolved_context_input(
     entry_action: ReaderAskEntryAction,
     attachments: list[ReaderAskAttachment],
     anchors: list[ReaderAskAnchorRef],
+    current_record_context: ReaderAskCurrentRecordContext | None = None,
+    external_record_contexts: list[ReaderAskExternalRecordContext] | None = None,
 ) -> ReaderAskResolvedContextInput:
     return planner.build_resolved_context_input(
         page_identity=page_identity,
         entry_action=entry_action,
         attachments=attachments,
         anchors=anchors,
+        current_record_context=current_record_context,
+        external_record_contexts=external_record_contexts,
     )
 
 
@@ -1611,6 +1718,9 @@ def _build_evidence_items(
     *,
     attachments: list[ReaderAskAttachment],
     citations: list[ReaderAskCitation],
+    current_record_id: str | None = None,
+    current_record_title: str | None = None,
+    external_record_contexts: list[dict[str, Any]] | None = None,
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
     include_clarification: bool = False,
@@ -1618,6 +1728,9 @@ def _build_evidence_items(
     return post_process_svc.build_evidence_items(
         attachments=attachments,
         citations=citations,
+        current_record_id=current_record_id,
+        current_record_title=current_record_title,
+        external_record_contexts=external_record_contexts,
         reference_resolution=reference_resolution,
         supplement_candidates=supplement_candidates,
         include_clarification=include_clarification,
@@ -1860,6 +1973,8 @@ async def stream_thread_message(
             evidence = _build_evidence_items(
                 attachments=attachments,
                 citations=citations,
+                current_record_id=str(record.record_id),
+                current_record_title=record.title,
                 reference_resolution=reference_resolution,
                 include_clarification=True,
             )
@@ -2015,30 +2130,7 @@ async def stream_thread_message(
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
             raise RuntimeError("planning snapshot is required")
-        if planning_snapshot.working_set.external_record_refs:
-            runtime_state.source_labels.add("history_assets")
         history_lookup_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
-        article_overview = _render_scene_article_overview(record) if planning_snapshot.working_set.article_overview_needed else None
-        if article_overview:
-            runtime_state.latest_article_overview = article_overview
-            runtime_state.source_labels.add("article_overview")
-
-        prompt_payload = _build_prompt_payload(
-            thread=thread,
-            record=record,
-            user_message=body.content,
-            history_messages=history_messages,
-            page_identity=body.page_identity,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            resolved_intent=resolved_intent,
-            entry_action=body.entry_action,
-            history_lookup_allowed=history_lookup_allowed,
-            reference_resolution=reference_resolution,
-            planning_snapshot=planning_snapshot,
-            article_overview=article_overview,
-        )
-        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
 
         agent = get_reader_ask_agent()
         model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
@@ -2049,7 +2141,7 @@ async def stream_thread_message(
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
         route_settings = RunModelSettings(
-            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
         )
@@ -2114,6 +2206,40 @@ async def stream_thread_message(
             if usage:
                 nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
             return result
+
+        resolved_context_input = await _materialize_planned_context(
+            user_id=user_id,
+            record=record,
+            runtime_state=runtime_state,
+            planning_snapshot=planning_snapshot,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            get_record_context_cb=get_record_context_cb,
+            get_record_insights_cb=get_record_insights_cb,
+        )
+        prompt_payload = _build_prompt_payload(
+            thread=thread,
+            record=record,
+            user_message=body.content,
+            history_messages=history_messages,
+            page_identity=body.page_identity,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            resolved_intent=resolved_intent,
+            entry_action=body.entry_action,
+            history_lookup_allowed=history_lookup_allowed,
+            resolved_context_input=resolved_context_input,
+            reference_resolution=reference_resolution,
+            planning_snapshot=planning_snapshot,
+        )
+        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
+        route_settings = RunModelSettings(
+            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            temperature=route_settings.temperature,
+            timeout=route_settings.timeout,
+        )
 
         deps = ReaderAskAgentDeps(
             payload=prompt_payload,
@@ -2262,6 +2388,9 @@ async def stream_thread_message(
         evidence = _build_evidence_items(
             attachments=attachments,
             citations=runtime_state.citations,
+            current_record_id=str(record.record_id),
+            current_record_title=record.title,
+            external_record_contexts=runtime_state.latest_external_record_contexts,
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
         )
@@ -2553,6 +2682,8 @@ async def retry_thread_message(
             evidence = _build_evidence_items(
                 attachments=attachments,
                 citations=citations,
+                current_record_id=str(record.record_id),
+                current_record_title=record.title,
                 reference_resolution=reference_resolution,
                 include_clarification=True,
             )
@@ -2681,30 +2812,7 @@ async def retry_thread_message(
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
             raise RuntimeError("planning snapshot is required")
-        if planning_snapshot.working_set.external_record_refs:
-            runtime_state.source_labels.add("history_assets")
         history_lookup_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
-        article_overview = _render_scene_article_overview(record) if planning_snapshot.working_set.article_overview_needed else None
-        if article_overview:
-            runtime_state.latest_article_overview = article_overview
-            runtime_state.source_labels.add("article_overview")
-
-        prompt_payload = _build_prompt_payload(
-            thread=thread,
-            record=record,
-            user_message=body.content,
-            history_messages=history_messages,
-            page_identity=body.page_identity,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            resolved_intent=resolved_intent,
-            entry_action=body.entry_action,
-            history_lookup_allowed=history_lookup_allowed,
-            reference_resolution=reference_resolution,
-            planning_snapshot=planning_snapshot,
-            article_overview=article_overview,
-        )
-        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
 
         agent = get_reader_ask_agent()
         model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
@@ -2715,7 +2823,7 @@ async def retry_thread_message(
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
         route_settings = RunModelSettings(
-            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
         )
@@ -2780,6 +2888,40 @@ async def retry_thread_message(
             if usage:
                 nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
             return result
+
+        resolved_context_input = await _materialize_planned_context(
+            user_id=user_id,
+            record=record,
+            runtime_state=runtime_state,
+            planning_snapshot=planning_snapshot,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            get_record_context_cb=get_record_context_cb,
+            get_record_insights_cb=get_record_insights_cb,
+        )
+        prompt_payload = _build_prompt_payload(
+            thread=thread,
+            record=record,
+            user_message=body.content,
+            history_messages=history_messages,
+            page_identity=body.page_identity,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            resolved_intent=resolved_intent,
+            entry_action=body.entry_action,
+            history_lookup_allowed=history_lookup_allowed,
+            resolved_context_input=resolved_context_input,
+            reference_resolution=reference_resolution,
+            planning_snapshot=planning_snapshot,
+        )
+        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
+        route_settings = RunModelSettings(
+            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            temperature=route_settings.temperature,
+            timeout=route_settings.timeout,
+        )
 
         deps = ReaderAskAgentDeps(
             payload=prompt_payload,
@@ -2928,6 +3070,9 @@ async def retry_thread_message(
         evidence = _build_evidence_items(
             attachments=attachments,
             citations=runtime_state.citations,
+            current_record_id=str(record.record_id),
+            current_record_title=record.title,
+            external_record_contexts=runtime_state.latest_external_record_contexts,
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
         )

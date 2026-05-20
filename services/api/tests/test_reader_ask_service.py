@@ -6,6 +6,8 @@ from app.schemas.reader_ask import (
     ReaderAskAttachment,
     ReaderAskAttachmentMetadata,
     ReaderAskAttachmentPayload,
+    ReaderAskCurrentRecordContext,
+    ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
 )
 from app.services.analysis.credit_service import CreditReservation
@@ -263,6 +265,48 @@ def test_build_resolved_context_input_preserves_explicit_attachments_only() -> N
     assert len(context_input.attachments) == 1
     assert context_input.attachments[0].label == "语法旁注"
     assert context_input.normalized_anchors == []
+    assert context_input.current_record_context is None
+    assert context_input.external_record_contexts == []
+
+
+def test_build_resolved_context_input_distinguishes_current_and_external_records() -> None:
+    context_input = _build_resolved_context_input(
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            surface="reader",
+            source="reader_2_0",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        current_record_context=ReaderAskCurrentRecordContext(
+            record_id="00000000-0000-0000-0000-000000000001",
+            record_title="Test",
+            local_context={"sentence_windows": []},
+            record_insights=[],
+            article_overview="本文讨论制度记忆如何影响政策解释。",
+            source_labels=["article_overview"],
+        ),
+        external_record_contexts=[
+            ReaderAskExternalRecordContext(
+                record_id="00000000-0000-0000-0000-000000000002",
+                record_title="Climate Policy",
+                article_overview="这篇文章讨论气候政策。",
+                source_labels=["external_record"],
+                reason="known_reference_resolved",
+            )
+        ],
+    )
+
+    assert context_input.current_record_context is not None
+    assert context_input.current_record_context.record_title == "Test"
+    assert context_input.external_record_contexts[0].record_title == "Climate Policy"
 
 
 def test_build_context_plan_records_history_and_dictionary_usage() -> None:
@@ -386,6 +430,35 @@ def test_build_context_plan_records_reference_resolution_reason() -> None:
     assert context_plan.expanded_record_ids == ["r-2"]
 
 
+def test_build_context_plan_carries_clarification_reason_from_planning_snapshot() -> None:
+    snapshot = planner_svc.plan_request(
+        content="这里为什么这样写？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+    )
+
+    context_plan = _build_context_plan(
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        runtime_state=ReaderAskRuntimeState(source_labels={"current_record"}),
+        citations=[],
+        planning_snapshot=snapshot,
+    )
+
+    assert context_plan.clarification_reason == "missing_local_anchor"
+
+
 def test_plan_request_prefers_anchor_local_working_set_for_grammar() -> None:
     anchor = ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Even if he knew the risk")
     plan = planner_svc.plan_request(
@@ -433,6 +506,114 @@ def test_plan_request_prefers_article_overview_for_article_level_question() -> N
     assert plan.trace_summary.working_set_mode == "article_overview"
 
 
+def test_plan_request_tracks_explicit_related_record_as_external_context() -> None:
+    attachment = ReaderAskAttachment(
+        kind="record_ref",
+        subtype="related_record",
+        label="Climate Policy",
+        target_key="record:00000000-0000-0000-0000-000000000002:record",
+        metadata=ReaderAskAttachmentMetadata(
+            source_surface="ask_context_picker",
+            entry_action="ask_about_this",
+            asset_id="00000000-0000-0000-0000-000000000002",
+            title="Climate Policy",
+        ),
+    )
+
+    plan = planner_svc.plan_request(
+        content="我之前那篇 climate policy 也提过这个吗？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[attachment],
+        anchors=[],
+    )
+
+    assert plan.working_set.external_record_refs == [
+        {
+            "record_id": "00000000-0000-0000-0000-000000000002",
+            "title": "Climate Policy",
+            "reason": "explicit_attachment",
+        }
+    ]
+    assert plan.trace_summary.working_set_mode == "explicit_external_record"
+
+
+def test_trace_summary_marks_external_context_limitations() -> None:
+    snapshot = planner_svc.plan_request(
+        content="我之前那篇 climate policy 也提过这个吗？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(
+            attempted=True,
+            status="resolved",
+            query="Climate Policy",
+            reason="已命中历史文章“Climate Policy”。",
+            resolved_records=[{"record_id": "r-2", "title": "Climate Policy"}],
+        ),
+    )
+    trace = planner_svc.build_trace_summary(
+        runtime_state=ReaderAskRuntimeState(
+            source_labels={"current_record", "history_assets"},
+            used_history_lookup=True,
+            latest_external_record_contexts=[
+                {
+                    "record_id": "r-2",
+                    "record_title": "Climate Policy",
+                    "article_overview": None,
+                    "source_labels": ["external_record", "overview_missing"],
+                    "reason": "known_reference_resolved",
+                }
+            ],
+        ),
+        context_plan=snapshot.context_plan,
+        planning_snapshot=snapshot,
+    )
+
+    assert trace.used_known_reference_resolution is True
+    assert trace.used_external_record_context is True
+    assert any("没有可用概览" in note for note in trace.notes)
+
+
+def test_build_evidence_items_marks_external_record_scope() -> None:
+    evidence = post_process_svc.build_evidence_items(
+        attachments=[],
+        citations=[],
+        current_record_id="record-1",
+        current_record_title="Current",
+        external_record_contexts=[
+            {
+                "record_id": "record-2",
+                "record_title": "Climate Policy",
+                "article_overview": "这篇文章讨论气候政策。",
+                "source_labels": ["external_record"],
+                "reason": "known_reference_resolved",
+            }
+        ],
+    )
+
+    assert evidence[0].scope == "external_record"
+    assert evidence[0].record_title == "Climate Policy"
+    assert evidence[0].reason == "known_reference_resolved"
+
+
 def test_plan_request_uses_explicit_related_record_context() -> None:
     plan = planner_svc.plan_request(
         content="我之前那篇 climate policy 也提过这个吗？",
@@ -463,7 +644,13 @@ def test_plan_request_uses_explicit_related_record_context() -> None:
         anchors=[],
     )
 
-    assert plan.working_set.external_record_refs == [{"record_id": "record-2", "title": "Climate Policy"}]
+    assert plan.working_set.external_record_refs == [
+        {
+            "record_id": "record-2",
+            "title": "Climate Policy",
+            "reason": "explicit_attachment",
+        }
+    ]
     assert plan.retrieval_needs == "known_reference_only"
     assert plan.trace_summary.working_set_mode == "explicit_external_record"
 
