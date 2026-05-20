@@ -2846,8 +2846,9 @@ export function ReaderWorkbench({
   const [activeSentence, setActiveSentence] = useState<SentenceModel | null>(null);
   const [textSelection, setTextSelection] = useState<ReaderTextSelection | null>(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [sentencePopoverAnchorEl, setSentencePopoverAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
-  const [expandedSentenceId, setExpandedSentenceId] = useState<string | null>(null);
+  const [expandedAnalysisEntryId, setExpandedAnalysisEntryId] = useState<string | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [selectionNoteOpen, setSelectionNoteOpen] = useState(false);
@@ -2897,6 +2898,19 @@ export function ReaderWorkbench({
     offsetPx: 12,
     strategy: "fixed",
   });
+  const {
+    refs: {
+      setFloating: setSentencePopoverFloating,
+      setPositionReference: setSentencePopoverReference,
+    },
+    floatingStyles: sentencePopoverStyles,
+  } = useReaderFloatingLayer({
+    open: Boolean(contextPanelOpen && activeSentence && sentencePopoverAnchorEl),
+    placement: "bottom-end",
+    offsetPx: 10,
+    crossAxisOffsetPx: 8,
+    strategy: "fixed",
+  });
 
   useEffect(() => {
     setReaderSettings(readStoredReaderSettings());
@@ -2905,6 +2919,56 @@ export function ReaderWorkbench({
   useEffect(() => {
     persistReaderSettings(readerSettings);
   }, [readerSettings]);
+
+  useEffect(() => {
+    if (!contextPanelOpen || !sentencePopoverAnchorEl) {
+      setSentencePopoverReference(null);
+      return;
+    }
+
+    const updateReference = () => {
+      setSentencePopoverReference({
+        contextElement: sentencePopoverAnchorEl,
+        getBoundingClientRect: () => sentencePopoverAnchorEl.getBoundingClientRect(),
+      });
+    };
+
+    updateReference();
+
+    const handleWindowChange = () => updateReference();
+    window.addEventListener("resize", handleWindowChange);
+    window.addEventListener("scroll", handleWindowChange, true);
+
+    return () => {
+      window.removeEventListener("resize", handleWindowChange);
+      window.removeEventListener("scroll", handleWindowChange, true);
+    };
+  }, [contextPanelOpen, sentencePopoverAnchorEl, setSentencePopoverReference]);
+
+  useEffect(() => {
+    if (!contextPanelOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) {
+        return;
+      }
+      if (
+        target.closest("[data-reader-sentence-popover='true']") ||
+        target.closest("[data-reader-sentence-handle='true']")
+      ) {
+        return;
+      }
+      closeContextPanel();
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [contextPanelOpen]);
 
   const translationBySentence = useMemo(
     () => new Map(reader.translations.map((item) => [item.sentenceId, item.translationZh])),
@@ -3544,6 +3608,7 @@ export function ReaderWorkbench({
     (intent: ReaderLookupIntent, anchor: ReaderLookupPreviewAnchor | null, options?: { showPreview?: boolean; openRail?: boolean }) => {
       setActiveSentence(sentenceById.get(intent.sentenceId) ?? null);
       setContextPanelOpen(false);
+      setSentencePopoverAnchorEl(null);
       setAiOpen(false);
       void lookupPlainText(intent, {
         showPreview: options?.showPreview,
@@ -3574,6 +3639,7 @@ export function ReaderWorkbench({
       setDictionaryAIPanelOpen(false);
       setActiveSentence(sentenceById.get(intent.sentenceId) ?? null);
       setContextPanelOpen(false);
+      setSentencePopoverAnchorEl(null);
       setAiOpen(false);
     },
     [sentenceById],
@@ -3592,6 +3658,7 @@ export function ReaderWorkbench({
       setActiveSentence(nextSelection.sentence);
       setSettingsPanelOpen(false);
       setContextPanelOpen(false);
+      setSentencePopoverAnchorEl(null);
       setLookupPreviewOpen(false);
       setLookupPreviewAnchor(null);
       setSelectionNoteOpen(false);
@@ -3644,19 +3711,6 @@ export function ReaderWorkbench({
 
     return () => controller.abort();
   }, [record.id, textSelection]);
-
-  function openEntry(sentence: SentenceModel, entry: SentenceEntryModel) {
-    setActiveSentence(sentence);
-    setContextPanelOpen(false);
-    setExpandedSentenceId(sentence.sentenceId);
-    setActiveEntryId(entry.id);
-    setTextSelection(null);
-    setAnnotationSaveState({ kind: "idle" });
-  }
-
-  function activateEntry(entry: SentenceEntryModel) {
-    setActiveEntryId(entry.id);
-  }
 
   function mergeAnnotation(item: WebAnnotationVm) {
     setAnnotations((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
@@ -4134,6 +4188,7 @@ export function ReaderWorkbench({
     }
     appendAskAttachments(nextAttachments);
     setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
     setAiOpen(true);
   }
 
@@ -4322,12 +4377,13 @@ export function ReaderWorkbench({
     }
   }
 
-  function selectSentence(sentence: SentenceModel) {
+  function selectSentence(sentence: SentenceModel, anchorEl?: HTMLElement | null) {
     setActiveSentence(sentence);
     setTextSelection(null);
     setContextPanelOpen(true);
+    setSentencePopoverAnchorEl(anchorEl ?? null);
     setSettingsPanelOpen(false);
-    setExpandedSentenceId(null);
+    setExpandedAnalysisEntryId(null);
     setActiveEntryId(null);
     const sentenceAnnotation =
       (annotationsBySentence.get(sentence.sentenceId)?.annotations ?? []).find((item) => item.anchorType === "sentence") ?? null;
@@ -4339,6 +4395,7 @@ export function ReaderWorkbench({
   function openSettingsPanel() {
     setSettingsPanelOpen(true);
     setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
   }
 
   function toggleAiWorkspace() {
@@ -4346,6 +4403,7 @@ export function ReaderWorkbench({
       const nextValue = !value;
       if (nextValue) {
         setContextPanelOpen(false);
+        setSentencePopoverAnchorEl(null);
       }
       return nextValue;
     });
@@ -4353,10 +4411,30 @@ export function ReaderWorkbench({
 
   function closeContextPanel() {
     setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
     setActiveSentence(null);
-    setExpandedSentenceId(null);
+    setExpandedAnalysisEntryId(null);
     setActiveEntryId(null);
     setTextSelection(null);
+  }
+
+  function toggleAnalysisEntry(entryId: string) {
+    setExpandedAnalysisEntryId((current) => (current === entryId ? null : entryId));
+    setActiveEntryId(entryId);
+    setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
+  }
+
+  function setAnalysisEntryFocus(entryId: string, focused: boolean) {
+    setActiveEntryId((current) => {
+      if (focused) {
+        return entryId;
+      }
+      if (current === entryId && expandedAnalysisEntryId !== entryId) {
+        return null;
+      }
+      return current;
+    });
   }
 
   const canvasThemeClass = readerThemeClassName(readerSettings.theme);
@@ -4405,13 +4483,13 @@ export function ReaderWorkbench({
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 lg:gap-3">
                 <FavoriteButton recordId={record.id} />
-                <div className="flex items-stretch gap-1 rounded-[1.1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(248,245,238,0.96))] p-1 shadow-[0_10px_24px_rgba(17,17,17,0.05),inset_0_1px_0_rgba(255,255,255,0.74)]">
+                <div className="flex items-stretch gap-1 rounded-xl border border-border/80 bg-background/88 p-1 shadow-sm">
                   <button
                     type="button"
-                    className={`focus-ring inline-flex min-h-[3.25rem] min-w-[7.8rem] items-center gap-2 rounded-[0.95rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
+                    className={`focus-ring inline-flex min-h-[3.05rem] min-w-[7.4rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
                       readerSettings.showTranslation
-                        ? "border-lens-blue/18 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(234,241,255,0.92))] text-ink shadow-[0_8px_18px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.7)]"
-                        : "border-transparent bg-transparent text-ink-soft hover:border-hairline hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
+                        ? "border-lens-blue/18 bg-accent text-ink shadow-xs"
+                        : "border-transparent bg-transparent text-ink-soft hover:border-border/70 hover:bg-muted/55 hover:text-ink"
                     }`}
                     onClick={() =>
                       setReaderSettings((current) => ({
@@ -4435,10 +4513,10 @@ export function ReaderWorkbench({
                   </button>
                   <button
                     type="button"
-                    className={`focus-ring inline-flex min-h-[3.25rem] min-w-[6.5rem] items-center gap-2 rounded-[0.95rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
+                    className={`focus-ring inline-flex min-h-[3.05rem] min-w-[6.1rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
                       settingsPanelOpen
-                        ? "border-lens-blue/18 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(234,241,255,0.92))] text-ink shadow-[0_8px_18px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.7)]"
-                        : "border-transparent bg-transparent text-ink-soft hover:border-hairline hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
+                        ? "border-lens-blue/18 bg-accent text-ink shadow-xs"
+                        : "border-transparent bg-transparent text-ink-soft hover:border-border/70 hover:bg-muted/55 hover:text-ink"
                     }`}
                     onClick={openSettingsPanel}
                   >
@@ -4450,14 +4528,6 @@ export function ReaderWorkbench({
                       <span className="text-[0.86rem] font-semibold leading-none">阅读显示</span>
                       <span className="mt-1 text-[0.66rem] leading-none text-subtle">字号、行距、底色</span>
                     </span>
-                  </button>
-                  <div className="mx-0.5 my-1 hidden w-px bg-[linear-gradient(180deg,rgba(232,228,218,0),rgba(232,228,218,0.92),rgba(232,228,218,0))] sm:block" />
-                  <button
-                    type="button"
-                    className="focus-ring inline-flex h-[3.25rem] w-[3.25rem] items-center justify-center rounded-[0.95rem] border border-transparent bg-transparent text-muted transition-[background-color,border-color,color,box-shadow] hover:border-hairline hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
-                    aria-label="更多阅读操作"
-                  >
-                    <MoreHorizontal aria-hidden="true" className="h-4.5 w-4.5" />
                   </button>
                 </div>
               </div>
@@ -4477,9 +4547,13 @@ export function ReaderWorkbench({
             columnWidth={readerSettings.columnWidth}
             themeClassName={canvasThemeClass}
             activeSentenceId={activeSentence?.sentenceId ?? null}
+            activeAnalysisEntryId={activeEntryId}
+            expandedAnalysisEntryId={expandedAnalysisEntryId}
             jumpTarget={jumpTarget}
             assetProjection={assetProjection}
             annotationVisibilityGroups={readerSettings.annotationVisibilityGroups}
+            onAnalysisFocusChange={setAnalysisEntryFocus}
+            onAnalysisToggle={toggleAnalysisEntry}
             onAnnotationJump={jumpToAnnotation}
             onAnnotationAsk={openAskWithAnnotation}
             onFavoriteJump={jumpToFavorite}
@@ -4488,10 +4562,10 @@ export function ReaderWorkbench({
             onAskContentSummary={openAskWithContentSummary}
             onLookupIntent={(intent, anchor) => handleLookupIntent(intent, anchor, { showPreview: true })}
             onInspectIntent={(intent, anchor) => handleInspectIntent(intent, anchor, { showPreview: true })}
-            onSentenceActivate={(sentenceId) => {
+            onSentenceActivate={(sentenceId, anchorEl) => {
               const sentence = sentenceById.get(sentenceId);
               if (sentence) {
-                selectSentence(sentence);
+                selectSentence(sentence, anchorEl);
               }
             }}
           />
@@ -4629,8 +4703,16 @@ export function ReaderWorkbench({
         </div>
       ) : null}
 
-      {contextPanelVisible ? (
-        <div className="fixed inset-x-3 bottom-[5.25rem] z-50 md:bottom-6 md:left-1/2 md:right-auto md:w-[min(460px,calc(100vw-8rem))] md:-translate-x-1/2">
+      {contextPanelVisible && sentencePopoverAnchorEl ? (
+        <div
+          ref={setSentencePopoverFloating}
+          style={sentencePopoverStyles}
+          className="z-50"
+          data-reader-sentence-popover="true"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
+        >
           <ReaderContextPanel
             sentence={activeSentence}
             selectedText={textSelection?.selectedText ?? null}

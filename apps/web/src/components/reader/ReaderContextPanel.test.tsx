@@ -1,12 +1,32 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ReaderContextPanel } from "./ReaderContextPanel";
 
+async function openMenu(button: HTMLElement, itemLabel: string) {
+  fireEvent.pointerDown(button, { button: 0, ctrlKey: false });
+  if (screen.queryByText(itemLabel)) {
+    return;
+  }
+
+  fireEvent.click(button);
+  if (screen.queryByText(itemLabel)) {
+    return;
+  }
+
+  fireEvent.mouseDown(button, { button: 0 });
+  if (screen.queryByText(itemLabel)) {
+    return;
+  }
+
+  fireEvent.keyDown(button, { key: "Enter" });
+  await screen.findByText(itemLabel);
+}
+
 describe("ReaderContextPanel", () => {
   it("shows only sentence context actions and no settings controls", () => {
-    render(
+    const { container } = render(
       <ReaderContextPanel
         sentence={{
           sentenceId: "s1",
@@ -25,19 +45,22 @@ describe("ReaderContextPanel", () => {
     );
 
     expect(screen.getByText("当前句")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /追问/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "高亮" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "笔记" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /更多/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /带入 Ask/i })).toBeNull();
     expect(screen.queryByText("阅读显示")).toBeNull();
     expect(screen.queryByText("字号与行距")).toBeNull();
     expect(screen.queryByText("标注显示分组")).toBeNull();
   });
 
-  it("shows sentence asset actions for annotation and favorite ask/jump", () => {
+  it("shows sentence asset actions for annotation and favorite ask/jump", async () => {
     const onAnnotationJump = vi.fn();
     const onAnnotationAsk = vi.fn();
     const onFavoriteJump = vi.fn();
     const onFavoriteAsk = vi.fn();
 
-    render(
+    const { container } = render(
       <ReaderContextPanel
         sentence={{
           sentenceId: "s1",
@@ -92,12 +115,19 @@ describe("ReaderContextPanel", () => {
         onFavoriteAsk={onFavoriteAsk}
       />,
     );
+    const panel = within(container);
 
-    expect(screen.getByText("本句已保存")).toBeTruthy();
-    fireEvent.click(screen.getAllByText("跳转")[0] as HTMLElement);
-    fireEvent.click(screen.getAllByText("带入 Ask")[0] as HTMLElement);
-    fireEvent.click(screen.getAllByText("跳转")[1] as HTMLElement);
-    fireEvent.click(screen.getAllByText("带入 Ask")[1] as HTMLElement);
+    await openMenu(panel.getByRole("button", { name: /更多/i }), "带入 Ask");
+    expect(await screen.findByRole("menuitem", { name: "带入 Ask" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "查看已保存资产" }));
+    let jumpButtons = screen.getAllByText("跳转");
+    let askButtons = screen.getAllByText("带入 Ask");
+    fireEvent.click(jumpButtons[0] as HTMLElement);
+    fireEvent.click(askButtons[askButtons.length - 2] as HTMLElement);
+    jumpButtons = screen.getAllByText("跳转");
+    askButtons = screen.getAllByText("带入 Ask");
+    fireEvent.click(jumpButtons[1] as HTMLElement);
+    fireEvent.click(askButtons[askButtons.length - 1] as HTMLElement);
 
     expect(onAnnotationJump).toHaveBeenCalled();
     expect(onAnnotationAsk).toHaveBeenCalled();

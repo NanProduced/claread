@@ -13,8 +13,21 @@ import {
   Send,
   Trash2,
 } from "lucide-react";
-import { forwardRef, type CSSProperties, type ReactNode } from "react";
-import { cn } from "@/lib/cn";
+import { forwardRef, type CSSProperties } from "react";
+import { cn } from "../../lib/cn";
+import {
+  ReaderToolbarButton,
+  ReaderToolbarMenu,
+  ReaderToolbarMenuContent,
+  ReaderToolbarMenuItem,
+  ReaderToolbarMenuLabel,
+  ReaderToolbarMenuRadioGroup,
+  ReaderToolbarMenuRadioItem,
+  ReaderToolbarMenuSeparator,
+  ReaderToolbarMenuTrigger,
+  ReaderToolbarRoot,
+  ReaderToolbarSeparator,
+} from "./plate-ui-adapter";
 
 export type SelectionToolbarAction =
   | "ask"
@@ -102,25 +115,14 @@ export const defaultSelectionToolbarColorOptions: SelectionToolbarColorOption[] 
   },
 ];
 
-interface ToolbarButtonProps {
-  label: string;
-  icon: ReactNode;
-  disabled: boolean;
-  active?: boolean;
-  pressed?: boolean;
-  className?: string;
-  title?: string;
-  onClick?: () => void;
-}
-
 function selectedTextSummary(selectedText: string) {
   const normalized = selectedText.trim().replace(/\s+/g, " ");
 
-  if (normalized.length <= 54) {
+  if (normalized.length <= 42) {
     return normalized;
   }
 
-  return `${normalized.slice(0, 54)}...`;
+  return `${normalized.slice(0, 42)}...`;
 }
 
 function selectionModeLabel(selectionMode: NonNullable<SelectionToolbarProps["selectionMode"]>) {
@@ -128,45 +130,9 @@ function selectionModeLabel(selectionMode: NonNullable<SelectionToolbarProps["se
     return "整句";
   }
   if (selectionMode === "multi_text") {
-    return "跨句选区";
+    return "多句";
   }
-  return "局部选区";
-}
-
-function ToolbarDivider() {
-  return <span aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-hairline sm:inline-flex" />;
-}
-
-function ToolbarButton({
-  label,
-  icon,
-  disabled,
-  active = false,
-  pressed,
-  className,
-  title,
-  onClick,
-}: ToolbarButtonProps) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        "focus-ring group relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px] border border-transparent text-muted transition-colors hover:border-hairline hover:bg-reader-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
-        active && "border-hairline bg-reader-paper text-ink shadow-surface-quiet",
-        className,
-      )}
-      disabled={disabled}
-      aria-label={label}
-      aria-pressed={pressed}
-      title={title ?? label}
-      onClick={onClick}
-    >
-      {icon}
-      <span className="pointer-events-none absolute -top-9 left-1/2 z-10 hidden -translate-x-1/2 whitespace-nowrap rounded-[7px] bg-ink px-2 py-1 text-[0.68rem] font-semibold text-white shadow-surface-quiet group-hover:block group-focus-visible:block">
-        {label}
-      </span>
-    </button>
-  );
+  return "已选片段";
 }
 
 export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps>(function SelectionToolbar(
@@ -215,182 +181,207 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
   const lookupDisabled = !hasSelection || Boolean(disabled?.lookup) || !onLookup;
   const feedbackDisabled = !hasSelection || Boolean(disabled?.feedback) || !onFeedback;
   const clearDisabled = !hasAnnotation || Boolean(disabled?.clear) || !onClearAnnotation;
-  const moreDisabled = !hasSelection || Boolean(disabled?.more) || !onMore;
+  const moreDisabled = !hasSelection || Boolean(disabled?.more);
   const noteLength = noteValue.length;
 
   return (
     <div
       ref={ref}
-      role="toolbar"
       aria-label={selectionLabel ? `选区工具栏，已选文本：${selectionLabel}` : "选区工具栏"}
       title={selectionLabel ? `已选文本：${selectionLabel}` : undefined}
       style={style}
-      className={cn(
-        "w-max max-w-[calc(100vw-1rem)] rounded-[14px] border border-hairline bg-surface-warm/96 p-1.5 text-ink shadow-[0_18px_54px_rgba(28,24,18,0.14),0_1px_2px_rgba(17,17,17,0.04)] backdrop-blur-sm",
-        "supports-[backdrop-filter]:bg-surface-warm/90",
-        className,
-      )}
+      className={cn("w-max max-w-[calc(100vw-1rem)] text-ink", className)}
     >
-      <div className="flex flex-wrap items-center gap-1">
-        <button
-          type="button"
-          className="focus-ring inline-flex h-9 shrink-0 items-center gap-2 rounded-[9px] border border-hairline bg-reader-paper px-2.5 text-xs font-semibold text-muted transition-colors hover:border-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-55"
+      <ReaderToolbarRoot aria-label={selectionLabel ? `选区工具栏，已选文本：${selectionLabel}` : "选区工具栏"}>
+        <span className="inline-flex h-9 shrink-0 items-center rounded-md border border-border/80 bg-background px-3 text-xs font-medium text-muted-foreground">
+          {selectionModeLabel(selectionMode)}
+        </span>
+
+        <ReaderToolbarButton
+          className="gap-2 px-3 font-medium"
           disabled={askDisabled}
           aria-label={askComingSoon ? "Ask Claread，稍后开放" : "Ask Claread"}
           title={askComingSoon ? "Ask Claread coming soon" : "Ask Claread"}
           onClick={() => onAsk?.(selectedText)}
         >
-          <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue/70" />
-          <span>Ask Claread</span>
+          <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue/75" />
+          <span>Ask</span>
           {askComingSoon ? (
-            <span className="rounded-pill border border-hairline bg-surface px-1.5 py-0.5 text-[0.625rem] font-semibold leading-none text-subtle">
+            <span className="rounded-full border border-border bg-background px-1.5 py-0.5 text-[0.625rem] font-semibold leading-none text-muted-foreground">
               soon
             </span>
           ) : null}
-        </button>
+        </ReaderToolbarButton>
 
-        <span className="inline-flex h-9 shrink-0 items-center rounded-[9px] border border-hairline bg-surface px-3 text-xs font-semibold text-ink-soft">
-          {selectionModeLabel(selectionMode)}
-        </span>
+        <ReaderToolbarSeparator aria-hidden="true" />
 
-        <ToolbarDivider />
-
-        <ToolbarButton
-          label="选择当前句子"
-          icon={<Quote aria-hidden="true" className="h-4 w-4" />}
-          disabled={selectSentenceDisabled}
-          active={selectionMode === "sentence"}
-          onClick={() => onSelectSentence?.(selectedText)}
-        />
-
-        <div className="flex shrink-0 items-center gap-1 rounded-[10px] border border-transparent px-0.5" aria-label="用户高亮颜色">
-          <span
-            className="inline-flex h-9 w-8 items-center justify-center rounded-[9px] text-muted"
-            title="用户高亮"
-            aria-hidden="true"
-          >
-            <Highlighter className="h-4 w-4" />
-          </span>
-          {colorOptions.map((option) => {
-            const colorDisabled = highlightDisabled || Boolean(option.disabled);
-            const active = activeColor === option.value && hasHighlight;
-
-            return (
+        <ReaderToolbarMenu>
+          <ReaderToolbarMenuTrigger asChild disabled={highlightDisabled}>
               <button
-                key={option.value}
                 type="button"
+                aria-label={hasHighlight ? "更换高亮颜色" : "高亮"}
+                title="高亮"
+                disabled={highlightDisabled}
                 className={cn(
-                  "focus-ring relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px] border border-transparent bg-transparent transition-colors hover:border-hairline hover:bg-reader-paper disabled:cursor-not-allowed disabled:opacity-40",
-                  active && "border-lens-blue/35 bg-reader-paper ring-2 ring-lens-blue/15",
-                )}
-                disabled={colorDisabled}
-                aria-label={`用${option.label}标注选区`}
-                aria-pressed={active}
-                title={`${option.label}高亮`}
-                onClick={() => onHighlight?.(option.value, selectedText, option)}
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn("h-[1.125rem] w-[1.125rem] rounded-[5px] ring-1 ring-inset ring-hairline", option.swatchClassName)}
-                />
-                {active ? (
-                  <Check aria-hidden="true" className="absolute h-3 w-3 text-ink drop-shadow-[0_1px_0_rgba(255,255,255,0.8)]" />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
+                "focus-ring inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-lg border border-transparent px-2.5 text-foreground/72 transition-colors hover:border-border/70 hover:bg-muted/65 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40",
+                hasHighlight && "border-border/80 bg-accent text-accent-foreground shadow-xs",
+              )}
+            >
+              <Highlighter aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </ReaderToolbarMenuTrigger>
+          <ReaderToolbarMenuContent align="start" className="w-44">
+            <ReaderToolbarMenuLabel>选择高亮颜色</ReaderToolbarMenuLabel>
+            <ReaderToolbarMenuSeparator />
+            <ReaderToolbarMenuRadioGroup value={activeColor ?? undefined}>
+              {colorOptions.map((option) => (
+                <ReaderToolbarMenuRadioItem
+                  key={option.value}
+                  value={option.value}
+                  disabled={Boolean(option.disabled)}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    onHighlight?.(option.value, selectedText, option);
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn("mr-1.5 h-3.5 w-3.5 rounded-[4px] ring-1 ring-inset ring-border/70", option.swatchClassName)}
+                  />
+                  {option.label}
+                </ReaderToolbarMenuRadioItem>
+              ))}
+            </ReaderToolbarMenuRadioGroup>
+          </ReaderToolbarMenuContent>
+        </ReaderToolbarMenu>
 
-        <ToolbarDivider />
-
-        <ToolbarButton
-          label={hasNote ? "编辑笔记" : "笔记"}
-          icon={<NotebookPen aria-hidden="true" className="h-4 w-4" />}
+        <ReaderToolbarButton
+          aria-label={hasNote ? "编辑笔记" : "笔记"}
+          title={hasNote ? "编辑笔记" : "笔记"}
+          className="h-9 min-w-9 px-2.5"
           disabled={noteDisabled}
           active={noteOpen || hasNote}
           onClick={() => onNote?.(selectedText)}
-        />
-        <ToolbarButton
-          label={favorited ? "取消收藏" : "收藏"}
-          icon={<Heart aria-hidden="true" className={cn("h-4 w-4", favorited && "fill-vocab-amber text-vocab-amber")} />}
-          disabled={favoriteDisabled}
-          active={favorited}
-          pressed={favorited}
-          onClick={() => onFavorite?.(selectedText)}
-        />
-        <ToolbarButton
-          label="查词"
-          icon={<Search aria-hidden="true" className="h-4 w-4" />}
-          disabled={lookupDisabled}
-          onClick={() => onLookup?.(selectedText)}
-        />
-        <ToolbarButton
-          label="反馈"
-          icon={<MessageCircle aria-hidden="true" className="h-4 w-4" />}
-          disabled={feedbackDisabled}
-          onClick={() => onFeedback?.(selectedText)}
-        />
-        <ToolbarButton
-          label="取消标注"
-          icon={<Eraser aria-hidden="true" className="h-4 w-4" />}
-          disabled={clearDisabled}
-          onClick={onClearAnnotation}
-        />
-        <ToolbarButton
-          label="更多"
-          icon={<MoreHorizontal aria-hidden="true" className="h-4 w-4" />}
-          disabled={moreDisabled}
-          onClick={() => onMore?.(selectedText)}
-        />
-      </div>
+        >
+          <NotebookPen aria-hidden="true" className="h-4 w-4" />
+        </ReaderToolbarButton>
+
+        <ReaderToolbarMenu>
+          <ReaderToolbarMenuTrigger asChild disabled={moreDisabled}>
+            <ReaderToolbarButton
+              aria-label="更多选区操作"
+              title="更多选区操作"
+              className="px-2"
+            >
+              <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+            </ReaderToolbarButton>
+          </ReaderToolbarMenuTrigger>
+          <ReaderToolbarMenuContent align="end" className="w-52">
+            <ReaderToolbarMenuLabel>选区操作</ReaderToolbarMenuLabel>
+            <ReaderToolbarMenuSeparator />
+            <ReaderToolbarMenuItem disabled={selectSentenceDisabled} onSelect={() => onSelectSentence?.(selectedText)}>
+              <Quote aria-hidden="true" className="h-4 w-4" />
+              选择整句
+            </ReaderToolbarMenuItem>
+            <ReaderToolbarMenuItem disabled={favoriteDisabled} onSelect={() => onFavorite?.(selectedText)}>
+              <Heart
+                aria-hidden="true"
+                className={cn("h-4 w-4", favorited && "fill-vocab-amber text-vocab-amber")}
+              />
+              {favorited ? "取消收藏" : "收藏"}
+            </ReaderToolbarMenuItem>
+            <ReaderToolbarMenuItem disabled={lookupDisabled} onSelect={() => onLookup?.(selectedText)}>
+              <Search aria-hidden="true" className="h-4 w-4" />
+              查词
+            </ReaderToolbarMenuItem>
+            <ReaderToolbarMenuItem disabled={feedbackDisabled} onSelect={() => onFeedback?.(selectedText)}>
+              <MessageCircle aria-hidden="true" className="h-4 w-4" />
+              反馈
+            </ReaderToolbarMenuItem>
+            <ReaderToolbarMenuSeparator />
+            <ReaderToolbarMenuItem disabled={clearDisabled} onSelect={onClearAnnotation}>
+              <Eraser aria-hidden="true" className="h-4 w-4" />
+              取消标注
+            </ReaderToolbarMenuItem>
+            {onMore ? (
+              <>
+                <ReaderToolbarMenuSeparator />
+                <ReaderToolbarMenuItem onSelect={() => onMore(selectedText)}>
+                  <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+                  更多
+                </ReaderToolbarMenuItem>
+              </>
+            ) : null}
+          </ReaderToolbarMenuContent>
+        </ReaderToolbarMenu>
+      </ReaderToolbarRoot>
 
       {noteOpen ? (
-        <div className="mt-1.5 rounded-[12px] border border-hairline bg-reader-paper/92 p-2.5">
-          <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
-            <span className="font-semibold text-ink">笔记</span>
-            <span className={cn("text-subtle", noteLength > noteMaxLength && "text-destructive")}>
+        <div className="mt-2 w-[min(21rem,calc(100vw-1rem))] rounded-xl border border-border/80 bg-popover/98 p-3 text-popover-foreground shadow-md">
+          <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+            <span className="font-medium text-foreground">笔记</span>
+            <span className={cn("text-muted-foreground", noteLength > noteMaxLength && "text-destructive")}>
               {noteLength}/{noteMaxLength}
             </span>
           </div>
           <textarea
             data-selection-note-input="true"
-            className="focus-ring min-h-20 w-full resize-none rounded-[10px] border border-hairline bg-surface px-3 py-2 text-sm leading-6 text-ink outline-none placeholder:text-subtle"
+            className="focus-ring min-h-20 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
             placeholder="写一句和这段文字绑定的笔记。"
             value={noteValue}
             maxLength={noteMaxLength}
             onChange={(event) => onNoteChange?.(event.target.value)}
           />
-          <div className="mt-2 flex items-center justify-end gap-2">
-            {hasNote ? (
+          <div className="mt-3 flex items-center justify-between gap-2">
+            {statusMessage ? (
+              <span
+                className={cn(
+                  "text-xs font-medium",
+                  statusKind === "error" ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {statusMessage}
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">保存后会直接绑定到原文锚点。</span>
+            )}
+            <span className="flex items-center gap-2">
+              {hasNote ? (
+                <button
+                  type="button"
+                  className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
+                  disabled={noteSaving || !onNoteClear}
+                  onClick={onNoteClear}
+                >
+                  <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                  删除
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-hairline bg-surface px-2.5 text-xs font-semibold text-muted transition-colors hover:border-muted hover:text-ink disabled:opacity-50"
-                disabled={noteSaving || !onNoteClear}
-                onClick={onNoteClear}
+                className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-transparent bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={noteSaving || noteLength === 0 || noteLength > noteMaxLength || !onNoteSave}
+                onClick={onNoteSave}
               >
-                <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-                删除
+                {noteSaving ? (
+                  <Bookmark aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : (
+                  <Send aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+                保存
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-lens-blue/30 bg-lens-blue px-3 text-xs font-semibold text-white transition-colors hover:bg-lens-blue/90 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={noteSaving || noteLength === 0 || noteLength > noteMaxLength || !onNoteSave}
-              onClick={onNoteSave}
-            >
-              {noteSaving ? <Bookmark aria-hidden="true" className="h-3.5 w-3.5" /> : <Send aria-hidden="true" className="h-3.5 w-3.5" />}
-              保存
-            </button>
+            </span>
           </div>
         </div>
       ) : null}
+
       {!noteOpen && statusMessage ? (
         <div
           className={cn(
-            "mt-1.5 rounded-[9px] border px-2.5 py-1.5 text-xs font-medium",
+            "mt-2 rounded-md border px-3 py-2 text-xs font-medium shadow-sm",
             statusKind === "error"
               ? "border-destructive/20 bg-destructive/10 text-destructive"
-              : "border-hairline bg-reader-paper/75 text-muted",
+              : "border-border/80 bg-popover/90 text-muted-foreground",
           )}
         >
           {statusMessage}

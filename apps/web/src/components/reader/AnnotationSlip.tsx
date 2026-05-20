@@ -27,14 +27,24 @@ export function AnnotationSlip({
   return (
     <div className="reader-annotation-slip-list mt-4 space-y-3">
       {noteAnnotations.map((item) => (
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           key={item.id}
           className="reader-annotation-slip relative block w-full overflow-hidden rounded-xl bg-surface-warm px-4 py-3 text-left text-[0.9375rem] leading-[1.65] text-ink-soft shadow-surface-quiet border border-hairline/80"
           onClick={(event) => {
             event.stopPropagation();
             onAnnotationJump?.(item);
           }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            onAnnotationJump?.(item);
+          }}
+          aria-label="跳转到笔记锚点"
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-2.5 flex-1">
@@ -75,7 +85,7 @@ export function AnnotationSlip({
               </span>
             </div>
           </div>
-        </button>
+        </div>
       ))}
     </div>
   );

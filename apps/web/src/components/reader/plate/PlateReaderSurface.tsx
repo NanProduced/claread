@@ -3,7 +3,6 @@
 import { useCallback, useMemo } from "react";
 import {
   Plate,
-  PlateContent,
   createPlateEditor,
 } from "platejs/react";
 import type {
@@ -24,6 +23,7 @@ import type {
 } from "@/lib/reader-plate";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import type { WebFavoriteTargetVm } from "@/types/api/favorites";
+import { Editor, EditorContainer } from "../../ui/editor";
 import { ReaderMarkLeaf } from "./ReaderMarkLeaf";
 import { ReaderAnalysisElement } from "./nodes/ReaderAnalysisElement";
 import { ReaderContentSummaryElement } from "./nodes/ReaderContentSummaryElement";
@@ -48,7 +48,11 @@ export interface PlateReaderSurfaceProps {
   activeSentenceId?: string | null;
   jumpTarget?: ReaderJumpTarget | null;
   assetProjection?: ReaderAssetProjection | null;
-  onSentenceActivate?: (sentenceId: string) => void;
+  activeAnalysisEntryId?: string | null;
+  expandedAnalysisEntryId?: string | null;
+  onSentenceActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
+  onAnalysisFocusChange?: (entryId: string, focused: boolean) => void;
+  onAnalysisToggle?: (entryId: string) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm) => void;
   onAnnotationAsk?: (annotation: WebAnnotationVm) => void;
   onFavoriteJump?: (favorite: WebFavoriteTargetVm) => void;
@@ -61,6 +65,7 @@ export interface PlateReaderSurfaceProps {
 
 export function PlateReaderSurface({
   activeSentenceId = null,
+  activeAnalysisEntryId = null,
   annotationVisibilityGroups = {
     lexical: true,
     analysis: true,
@@ -69,7 +74,10 @@ export function PlateReaderSurface({
   assetProjection = null,
   columnWidth = "standard",
   document,
+  expandedAnalysisEntryId = null,
   jumpTarget = null,
+  onAnalysisFocusChange,
+  onAnalysisToggle,
   onAnnotationAsk,
   onAnnotationJump,
   onAskAnalysis,
@@ -218,8 +226,16 @@ export function PlateReaderSurface({
           return (
             <ReaderAnalysisElement
               props={props}
+              active={activeAnalysisEntryId === element.entryId}
+              expanded={expandedAnalysisEntryId === element.entryId}
               visible={analysisEntryVisible(element.entryType, annotationVisibilityGroups)}
               onAsk={onAskAnalysis ? () => onAskAnalysis(element.sentenceId, element.entryId) : undefined}
+              onFocusChange={
+                onAnalysisFocusChange
+                  ? (focused) => onAnalysisFocusChange(element.entryId, focused)
+                  : undefined
+              }
+              onToggle={onAnalysisToggle ? () => onAnalysisToggle(element.entryId) : undefined}
             />
           );
         default:
@@ -259,6 +275,7 @@ export function PlateReaderSurface({
         onLookupIntent={onLookupIntent}
         props={props}
         routeFocusRangesBySentence={routeFocusRangesBySentence}
+        activeAnalysisEntryId={activeAnalysisEntryId}
         sentenceTextBySentence={sentenceTextBySentence}
         sourceContextBySentence={sourceContextBySentence}
       />
@@ -278,13 +295,15 @@ export function PlateReaderSurface({
     <div className={`px-5 py-7 sm:px-8 lg:px-10 lg:py-9 ${themeClassName ?? ""}`.trim()}>
       <div className={`mx-auto ${readerColumnWidthClassName(columnWidth)}`}>
         <Plate editor={editor} readOnly>
-          <PlateContent
-            readOnly
-            disableDefaultStyles
-            className="space-y-10 outline-none"
-            renderElement={renderElement as never}
-            renderLeaf={renderLeaf as never}
-          />
+          <EditorContainer className="h-auto cursor-default overflow-visible bg-transparent px-0 py-0 [&_.slate-selection-area]:hidden">
+            <Editor
+              readOnly
+              disableDefaultStyles
+              className="space-y-10 px-0 py-0 outline-none"
+              renderElement={renderElement as never}
+              renderLeaf={renderLeaf as never}
+            />
+          </EditorContainer>
         </Plate>
       </div>
     </div>

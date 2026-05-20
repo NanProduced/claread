@@ -2,14 +2,14 @@
 
 import type { AriaRole, CSSProperties, MouseEvent, PointerEvent, ReactNode } from "react";
 import {
-  autoUpdate,
   flip,
   offset,
   shift,
-  useFloating,
+  useVirtualFloating,
   type Placement,
   type Strategy,
-} from "@floating-ui/react";
+} from "@platejs/floating";
+import { ReaderFloatingPanel } from "./plate-ui-adapter";
 
 interface ReaderFloatingLayerOptions {
   open: boolean;
@@ -28,7 +28,7 @@ export function useReaderFloatingLayer({
   collisionPadding = 16,
   strategy = "absolute",
 }: ReaderFloatingLayerOptions) {
-  return useFloating({
+  return useVirtualFloating({
     open,
     placement,
     strategy,
@@ -40,19 +40,17 @@ export function useReaderFloatingLayer({
       flip({ padding: collisionPadding }),
       shift({ padding: collisionPadding }),
     ],
-    whileElementsMounted: autoUpdate,
   });
 }
 
 interface ReaderFloatingSurfaceProps {
   children: ReactNode;
   className: string;
-  floatingRef?: (node: HTMLSpanElement | null) => void;
+  floatingRef?: (node: HTMLDivElement | null) => void;
   style?: CSSProperties;
   role?: AriaRole;
-  "aria-live"?: "off" | "polite" | "assertive";
-  onClick?: (event: MouseEvent<HTMLSpanElement>) => void;
-  onPointerDown?: (event: PointerEvent<HTMLSpanElement>) => void;
+  onClick?: (event: MouseEvent<HTMLDivElement>) => void;
+  onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
 }
 
 export function ReaderFloatingSurface({
@@ -61,21 +59,19 @@ export function ReaderFloatingSurface({
   floatingRef,
   style,
   role,
-  "aria-live": ariaLive,
   onClick,
   onPointerDown,
 }: ReaderFloatingSurfaceProps) {
   return (
-    <span
-      ref={floatingRef}
+    <ReaderFloatingPanel
+      floatingRef={floatingRef}
       className={className}
       role={role}
-      aria-live={ariaLive}
       style={style}
       onClick={onClick}
       onPointerDown={onPointerDown}
     >
       {children}
-    </span>
+    </ReaderFloatingPanel>
   );
 }

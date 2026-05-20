@@ -1,5 +1,6 @@
 "use client";
 
+import { Quote } from "lucide-react";
 import type { RenderElement } from "platejs/react";
 import type {
   ReaderSentenceAssetProjection,
@@ -16,7 +17,7 @@ interface ReaderSentenceElementProps {
   routeFocused?: boolean;
   assetProjection?: ReaderSentenceAssetProjection | null;
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
-  onActivate?: (sentenceId: string) => void;
+  onActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm) => void;
   onAnnotationAsk?: (annotation: WebAnnotationVm) => void;
   onFavoriteJump?: (favorite: WebFavoriteTargetVm) => void;
@@ -51,15 +52,21 @@ export function ReaderSentenceElement({
       data-reader-node="sentence"
       data-paragraph-id={element.paragraphId}
       data-sentence-id={element.sentenceId}
-      tabIndex={0}
-      aria-label={`句子 ${element.sentenceId}`}
-      onClick={() => onActivate?.(element.sentenceId)}
-      onFocus={(event) => {
-        if (event.target === event.currentTarget) {
-          onActivate?.(element.sentenceId);
-        }
-      }}
     >
+      {onActivate ? (
+        <button
+          type="button"
+          className="focus-ring absolute top-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted opacity-0 shadow-[0_8px_20px_rgba(17,17,17,0.06)] transition-[opacity,border-color,color,background-color] hover:border-muted hover:text-ink focus-visible:opacity-100 group-hover/sentence:opacity-100 group-focus-within/sentence:opacity-100"
+          aria-label="打开当前句操作"
+          data-reader-sentence-handle="true"
+          onClick={(event) => {
+            event.stopPropagation();
+            onActivate(element.sentenceId, event.currentTarget);
+          }}
+        >
+          <Quote aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
       <ReaderAnnotationOverlay
         annotations={assetProjection?.annotations ?? []}
         slipAnnotations={assetProjection?.slipAnnotations ?? []}

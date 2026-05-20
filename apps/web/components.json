@@ -11,14 +11,15 @@
     "prefix": ""
   },
   "iconLibrary": "lucide",
-  "registries": {
-    "@platejs": "https://platejs.org/r/{name}.json"
-  },
   "aliases": {
     "components": "@/components",
+    "utils": "@/lib/cn",
     "ui": "@/components/ui",
     "lib": "@/lib",
-    "utils": "@/lib/cn",
     "hooks": "@/hooks"
+  },
+  "registries": {
+    "@platejs": "https://platejs.org/r/{name}.json",
+    "@plate": "https://platejs.org/r/{name}.json"
   }
 }

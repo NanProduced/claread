@@ -26,6 +26,7 @@ describe("ReaderQuickPeek", () => {
       />,
     );
 
+    expect(screen.getAllByRole("dialog")[0]).toBeTruthy();
     expect(screen.getByText("memory")).toBeTruthy();
     expect(screen.getByText("正在查词...")).toBeTruthy();
 
@@ -63,6 +64,7 @@ describe("ReaderQuickPeek", () => {
       />,
     );
 
+    expect(screen.getAllByRole("dialog")[1]).toBeTruthy();
     expect(screen.getByText("结构化解释")).toBeTruthy();
     expect(screen.getByText("policy choices")).toBeTruthy();
     expect(screen.getByText("政策选择")).toBeTruthy();

@@ -97,6 +97,7 @@ describe("PlateReaderSurface", () => {
         {
           id: "mark-1",
           annotationType: "grammar_note",
+          parentId: "entry-grammar",
           anchor: {
             kind: "text",
             sentenceId: "s1",
@@ -131,7 +132,7 @@ describe("PlateReaderSurface", () => {
     const onSentenceActivate = vi.fn();
     const onAskTranslation = vi.fn();
     const onAskAnalysis = vi.fn();
-    const { container } = render(
+    const { container, rerender } = render(
       <PlateReaderSurface
         document={document}
         showTranslation
@@ -160,20 +161,51 @@ describe("PlateReaderSurface", () => {
     expect(mark?.className).toContain("reader-mark--grammar");
 
     const sentence = container.querySelector("[data-sentence-id='s1']");
+    const sentenceHandle = container.querySelector("[data-reader-sentence-handle='true']");
+    expect(sentenceHandle).toBeTruthy();
     expect(sentence?.getAttribute("data-reader-anchor")).toBe("sentence");
     expect(sentence?.className).toContain("reader-route-focus-frame");
     expect(sentence?.className).toContain("bg-surface/42");
+    expect(container.querySelector("[data-entry-id='entry-grammar']")?.getAttribute("data-entry-expanded")).toBe("false");
 
-    if (!sentence) {
-      throw new Error("Expected sentence wrapper");
+    if (!sentence || !sentenceHandle) {
+      throw new Error("Expected sentence wrapper and handle");
     }
     fireEvent.click(sentence);
-    expect(onSentenceActivate).toHaveBeenCalledWith("s1");
+    expect(onSentenceActivate).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByText("追问译文"));
+    fireEvent.click(sentenceHandle);
+    expect(onSentenceActivate).toHaveBeenCalledWith("s1", expect.any(HTMLElement));
+
+    fireEvent.click(screen.getByLabelText("带这句译文进入 Ask"));
     expect(onAskTranslation).toHaveBeenCalledWith("s1", "制度记忆会塑造政策选择。");
 
-    fireEvent.click(screen.getAllByText("带入 Ask")[0] as HTMLElement);
+    rerender(
+      <PlateReaderSurface
+        document={document}
+        showTranslation
+        readingClassName="reader-serif text-ink"
+        activeSentenceId="s1"
+        activeAnalysisEntryId="entry-grammar"
+        jumpTarget={{
+          targetType: "sentence",
+          targetKey: "record:record-1:sentence:s1",
+          sentenceIds: ["s1"],
+          primarySentenceId: "s1",
+          highlightMode: "sentence_frame",
+          scrollStrategy: "center",
+        }}
+        onSentenceActivate={onSentenceActivate}
+        onAskTranslation={onAskTranslation}
+        onAskAnalysis={onAskAnalysis}
+      />,
+    );
+    expect(mark?.className).toContain("reader-mark--entry-active");
+
+    fireEvent.click(screen.getByLabelText("展开语法"));
+    expect(container.querySelector("[data-entry-id='entry-grammar']")?.getAttribute("data-entry-expanded")).toBe("false");
+
+    fireEvent.click(screen.getAllByLabelText("带解析进入 Ask")[0] as HTMLElement);
     expect(onAskAnalysis).toHaveBeenCalledWith("s1", "entry-grammar");
   });
 
@@ -262,7 +294,10 @@ describe("PlateReaderSurface", () => {
     expect(mark?.className).toContain("reader-mark--term");
     expect(mark?.className).toContain("reader-mark--quiet");
 
-    fireEvent.click(screen.getAllByText("带入 Ask")[0] as HTMLElement);
+    fireEvent.click(screen.getByLabelText("展开内容概要"));
+    expect(screen.getByText("本文讨论制度记忆如何影响政策解释。")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("带内容概要进入 Ask"));
     expect(onAskContentSummary).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "reader_content_summary",
@@ -537,5 +572,38 @@ describe("PlateReaderSurface", () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it("keeps analysis cards collapsed by default and expands explicit entries only", () => {
+    const document = renderSceneToPlateDocument({
+      ...createBaseScene(),
+      sentenceEntries: [
+        {
+          id: "entry-grammar",
+          sentenceId: "s1",
+          entryType: "grammar_note",
+          label: "语法旁注",
+          title: "语法",
+          content: "这是一条较长的语法说明，用于测试折叠摘要。",
+        },
+      ],
+    });
+
+    const onToggle = vi.fn();
+
+    const { container } = render(
+      <PlateReaderSurface
+        document={document}
+        showTranslation
+        readingClassName="reader-serif text-ink"
+        onAnalysisToggle={onToggle}
+      />,
+    );
+
+    const card = container.querySelector("[data-entry-id='entry-grammar']");
+    expect(card?.getAttribute("data-entry-expanded")).toBe("false");
+
+    fireEvent.click(screen.getByLabelText("展开语法"));
+    expect(onToggle).toHaveBeenCalledWith("entry-grammar");
   });
 });

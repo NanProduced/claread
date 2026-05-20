@@ -21,6 +21,7 @@ interface ReaderMarkLeafProps {
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
   annotationRangesBySentence?: Map<string, ReaderAssetRange[]>;
   routeFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
+  activeAnalysisEntryId?: string | null;
   sentenceTextBySentence?: Map<string, string>;
   sourceContextBySentence?: Map<string, string | undefined>;
   onLookupIntent?: (intent: ReaderLookupIntent, anchor: ReaderLookupPreviewAnchor | null) => void;
@@ -167,6 +168,7 @@ function annotationSegmentsForLeaf(
 }
 
 export function ReaderMarkLeaf({
+  activeAnalysisEntryId = null,
   annotationRangesBySentence,
   annotationVisibilityGroups,
   onInspectIntent,
@@ -215,13 +217,16 @@ export function ReaderMarkLeaf({
   }
 
   const className = readerMarkClassName(visualTone, annotationVisibilityGroups);
+  const entryActiveClass =
+    activeAnalysisEntryId && leaf.readerMarkParentId === activeAnalysisEntryId ? "reader-mark--entry-active" : "";
   const isClickable = Boolean(className && leaf.readerMarkClickable && leaf.readerSentenceId);
 
   return (
     <span
       {...props.attributes}
-      className={className ?? undefined}
+      className={[className, entryActiveClass].filter(Boolean).join(" ") || undefined}
       data-reader-mark-id={leaf.readerMarkId}
+      data-reader-mark-parent-id={leaf.readerMarkParentId}
       data-reader-mark-tone={visualTone}
       onClick={(event) => {
         if (!isClickable || !leaf.readerSentenceId || leaf.readerTextStartOffset === undefined || leaf.readerTextEndOffset === undefined) {

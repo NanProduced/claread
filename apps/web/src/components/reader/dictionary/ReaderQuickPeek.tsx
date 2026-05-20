@@ -12,7 +12,7 @@ import { ReaderStructuredInspectCard } from "./ReaderStructuredInspectCard";
 interface ReaderQuickPeekProps {
   lookup?: DictionaryLookupSnapshot | null;
   inspect?: ReaderStructuredInspectIntent | null;
-  floatingRef?: (node: HTMLSpanElement | null) => void;
+  floatingRef?: (node: HTMLDivElement | null) => void;
   style?: CSSProperties;
   onDismiss: () => void;
   onOpenDetail?: () => void;
@@ -35,8 +35,7 @@ export function ReaderQuickPeek({
       <ReaderFloatingSurface
         floatingRef={floatingRef}
         className="reader-lookup-preview"
-        role="status"
-        aria-live="polite"
+        role="dialog"
         style={style}
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
@@ -86,8 +85,7 @@ export function ReaderQuickPeek({
     <ReaderFloatingSurface
       floatingRef={floatingRef}
       className="reader-lookup-preview"
-      role="status"
-      aria-live="polite"
+      role="dialog"
       style={style}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
