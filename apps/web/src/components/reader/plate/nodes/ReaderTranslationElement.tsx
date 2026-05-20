@@ -17,15 +17,14 @@ export function ReaderTranslationElement({
   return (
     <div
       {...props.attributes}
-      className={visible ? "group/translation mt-2" : "hidden"}
+      className={visible ? "reader-translation-layer group/translation" : "hidden"}
       data-reader-node="translation"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm leading-7 text-muted/95">{props.children}</p>
+      <div className="reader-translation-shell">
         {onAsk ? (
           <button
             type="button"
-            className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue focus-visible:opacity-100 group-hover/translation:opacity-100"
+            className="focus-ring reader-translation-action inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue focus-visible:opacity-100 group-hover/translation:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
               onAsk();
@@ -35,6 +34,9 @@ export function ReaderTranslationElement({
             <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         ) : null}
+        <p className="reader-translation-copy" data-reader-translation-text="true">
+          {props.children}
+        </p>
       </div>
     </div>
   );

@@ -41,6 +41,11 @@ export function ReaderSentenceTextElement({
           return;
         }
 
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && selection.toString().trim()) {
+          return;
+        }
+
         const currentTarget = event.currentTarget;
         const sentenceText = sentenceTextElement.children?.map((child) => child.text ?? "").join("") ?? "";
         if (!sentenceText) {

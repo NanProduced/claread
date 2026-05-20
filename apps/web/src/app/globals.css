@@ -124,6 +124,12 @@ body {
   --reader-entry-chip-hover-border: rgba(98, 101, 109, 0.3);
   --reader-entry-chip-surface: rgba(251, 250, 246, 0.76);
   --reader-entry-chip-surface-hover: rgba(255, 255, 255, 0.88);
+  --reader-translation-line: rgba(210, 204, 192, 0.92);
+  --reader-translation-line-strong: rgba(187, 178, 160, 0.9);
+  --reader-translation-copy: rgba(70, 72, 78, 0.95);
+  --reader-translation-copy-strong: rgba(48, 50, 56, 0.98);
+  --reader-translation-selection: rgba(177, 197, 233, 0.38);
+  --reader-translation-selection-ink: rgba(38, 46, 58, 0.98);
   --reader-slip-border: rgba(232, 228, 218, 0.66);
   --reader-slip-rail: rgba(228, 176, 0, 0.12);
   --reader-slip-surface-top: rgba(255, 255, 255, 0.54);
@@ -148,6 +154,10 @@ select {
 
 .reader-serif {
   font-family: var(--font-reading);
+}
+
+.reader-serif[data-reader-sentence-text="true"] {
+  text-wrap: pretty;
 }
 
 .shadow-surface-quiet {
@@ -550,6 +560,54 @@ select {
 .reader-analysis-atom::selection {
   background: var(--reader-selection-highlight);
   color: var(--ink);
+}
+
+.reader-translation-layer {
+  margin-top: 0.78rem;
+}
+
+.reader-translation-shell {
+  position: relative;
+  display: block;
+  padding-left: 1rem;
+}
+
+.reader-translation-shell::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.32rem;
+  bottom: 0.34rem;
+  width: 1px;
+  background: linear-gradient(180deg, var(--reader-translation-line-strong), var(--reader-translation-line));
+}
+
+.reader-translation-copy {
+  margin: 0;
+  color: var(--reader-translation-copy);
+  font-family: var(--font-ui-zh), var(--font-ui-en), -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.97rem;
+  line-height: 1.82;
+  letter-spacing: 0;
+  text-wrap: pretty;
+  user-select: text;
+}
+
+.reader-translation-layer:hover .reader-translation-copy,
+.reader-translation-layer:focus-within .reader-translation-copy {
+  color: var(--reader-translation-copy-strong);
+}
+
+.reader-translation-action {
+  position: absolute;
+  top: -0.1rem;
+  right: -0.2rem;
+}
+
+.reader-translation-copy::selection,
+.reader-translation-shell::selection {
+  background: var(--reader-translation-selection);
+  color: var(--reader-translation-selection-ink);
 }
 
 .reader-mark--vocab {
@@ -1131,6 +1189,19 @@ select {
 
   .reader-annotation-gutter {
     transform: translateX(0.15rem) scale(0.92);
+  }
+
+  .reader-translation-layer {
+    margin-top: 0.64rem;
+  }
+
+  .reader-translation-shell {
+    padding-left: 0.8rem;
+  }
+
+  .reader-translation-copy {
+    font-size: 0.92rem;
+    line-height: 1.74;
   }
 
   .reader-annotation-slip {

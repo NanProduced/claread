@@ -266,6 +266,11 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
           return;
         }
 
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && selection.toString().trim()) {
+          return;
+        }
+
         const sentenceText = sentenceTextBySentence?.get(leaf.readerSentenceId) ?? "";
         if (!sentenceText) {
           return;
