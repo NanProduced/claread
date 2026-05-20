@@ -1,0 +1,9 @@
+content: |
+  示例 1：用户说“解释这句为什么这样写”，有显式句子 attachment。
+  处理：围绕当前句解释，可加载当前段和本文解析资产，不需要历史扩展。
+
+  示例 2：用户说“我之前那篇 climate policy 的解析里也提过这个吗”。
+  处理：先尝试按标题做 known reference resolution。单一命中才并入上下文；多命中或无命中时要求补充标题，不硬猜。
+
+  示例 3：用户说“把这条解释固定到页面上”。
+  处理：先回答，再在适合时产出 grammar_note supplement candidate，等待确认。

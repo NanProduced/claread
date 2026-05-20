@@ -525,15 +525,22 @@ Ask Claread 未来需要 retrieval layer，也大概率需要 RAG，但不是一
 
 以下差距不是理想化要求，而是从当前实现直接推导出的重构目标。
 
-### 1. 当前是 `task_mode-first`，不是 `intent-first`
+### 1. 公开 contract 已切到 V2，但 runtime 仍需变成真正的 `intent-first`
 
-当前请求 schema 仍以 `task_mode` 为主输入，前端也以模式条驱动发送。
+当前公开请求 schema 已切到：
 
-结果：
+- `content`
+- `page_identity`
+- `attachments`
+- `entry_action`
 
-- 用户被迫先分类
-- 同一问题容易被错误模式约束
-- 系统缺少“先理解问题，再决定能力”的空间
+前端也已去掉模式条与 `task_mode` 主输入。
+
+当前剩余差距在于：
+
+- intent 判定仍主要由规则型 planner 骨架承担
+- capability 选择和部分后处理仍需要进一步从 `service.py` 中下沉
+- Ask 还没有完全进入“planner-first runtime”的最终形态
 
 ### 2. 当前是 fallback chain，不是 working set planner
 
@@ -549,27 +556,36 @@ Ask Claread 未来需要 retrieval layer，也大概率需要 RAG，但不是一
 - 系统只是在补上下文，不是在规划上下文
 - 不利于未来接入跨文章 retrieval
 
-### 3. 当前 history lookup 是 regex gate，不是 retrieval policy
+### 3. 当前 history / reference 扩展已从纯 regex 前进一步，但还不是完整 retrieval policy
 
-当前跨历史扩展主要由消息 regex 触发。
+当前 Ask 已具备：
 
-结果：
+- `known reference resolution`
+- `context_plan / trace_summary`
+- `history_lookup_allowed` 的显式运行结果
 
-- 行为脆弱
-- 命中范围不可控
-- 用户无法建立稳定预期
+但当前跨历史扩展仍偏轻量：
 
-### 4. 当前 capability contract 分裂
+- 仍以规则型意图和已知标题命中为主
+- 还没有进入完整的 `structured lookup + hybrid retrieval` 分层
+- 命中后的扩展范围和停止策略仍需继续产品化
 
-当前 tools 由 agent 侧硬编码，而部分 response cards 与 fallback proposals 又由 service 侧后处理补算。
+### 4. 当前 capability contract 已开始收口，但 typed runtime 还没完全做完
 
-结果：
+当前 Ask 已补上：
 
-- tool trace 和真实过程不完全一致
-- UI 结果与内部运行步骤耦合混乱
-- 后续新增能力时难以保持一致 contract
+- `typed supplement capability`
+- `evidence`
+- `trace_summary`
+- regenerate 的 `run_info`
 
-### 5. 当前持久化的是结果，不是决策过程
+但仍存在：
+
+- response cards 与部分 fallback proposal 仍由后处理层拼装
+- capability 之间的统一 schema 和执行边界还需要继续强化
+- tool trace 仍保留为兼容层，而不是最终产品输出中心
+
+### 5. 当前已经开始持久化决策过程，但 eval 级 trace 还不完整
 
 当前已经保存：
 
@@ -577,28 +593,35 @@ Ask Claread 未来需要 retrieval layer，也大概率需要 RAG，但不是一
 - `tool_trace`
 - `response_cards`
 - `resolved_context`
+- `context_plan`
+- `resolved_context_input`
+- `run_info`
+- `evidence`
+- `trace_summary`
 
-但还没有保存：
+但还没有完全做到：
 
-- why this intent
-- why this context
-- why history was expanded
-- why a capability was chosen
-
-结果：
-
-- 很难做高质量评测
-- 很难定位回答失误是意图错、上下文错还是检索错
-
-### 6. 当前 retry 语义与线程语义不干净
-
-当前 regenerate 会追加新回合，而不是重跑原 assistant turn。
+- planner 级 reference needs / retrieval needs
+- 更细粒度的 capability 选择理由
+- 可直接进入评测平台的独立 `turn_run / eval_trace` 结构
 
 结果：
 
-- 污染线程
-- 放大历史噪声
-- 不利于构建稳定 eval 样本
+- 已能解释大部分产品层上下文选择
+- 但要做高质量专项评测，仍需继续把运行决策结构化
+
+### 6. regenerate 已收口为同 turn 新 run，但 turn-run 持久化仍可继续独立
+
+当前 regenerate 已改为：
+
+- 对同一 assistant turn 发起新 run
+- 不新增 user turn
+- 历史 run 保存在 assistant message metadata
+
+当前剩余差距在于：
+
+- `turn_run` 仍未完全独立出单独持久化边界
+- eval trace 与 run trace 还没有彻底解耦
 
 ## 重构分期建议
 

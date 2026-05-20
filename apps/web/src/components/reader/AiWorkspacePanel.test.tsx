@@ -6,6 +6,41 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
 import { AiWorkspacePanel } from "./AiWorkspacePanel";
 
+const completedPayload = {
+  id: "msg-assistant-1",
+  thread_id: "thread-1",
+  content_md: "解释完成。",
+  resolved_intent: "explain",
+  citations: [],
+  action_proposals: [],
+  tool_trace: [],
+  evidence: [
+    {
+      kind: "resolved_reference",
+      label: "Climate Policy",
+      detail: "已命中历史文章“Climate Policy”。",
+      record_id: "record-2",
+      source_article_title: "Climate Policy",
+      target_key: null,
+      metadata_json: { query: "Climate Policy" },
+    },
+  ],
+  trace_summary: {
+    planner_mode: "known_reference_resolved",
+    reference_resolution_status: "resolved",
+    history_lookup_allowed: true,
+    history_lookup_used: false,
+    tool_steps: [],
+    notes: ["已命中历史文章。"],
+  },
+  response_cards: [],
+  resolved_context: null,
+  context_plan: null,
+  resolved_context_input: null,
+  run_info: null,
+  supplement_candidates: [],
+};
+
 vi.mock("@/components/ui/message", () => ({
   Message: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
@@ -24,19 +59,7 @@ vi.mock("./ask/sse", () => ({
     onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
     onEvent({
       event: "message.completed",
-      data: {
-        id: "msg-assistant-1",
-        thread_id: "thread-1",
-        content_md: "解释完成。",
-        resolved_intent: "explain",
-        citations: [],
-        action_proposals: [],
-        tool_trace: [],
-        response_cards: [],
-        resolved_context: null,
-        context_plan: null,
-        resolved_context_input: null,
-      },
+      data: completedPayload,
     });
   }),
 }));
@@ -267,5 +290,38 @@ describe("AiWorkspacePanel", () => {
         .mocked(global.fetch)
         .mock.calls.some(([url]) => String(url).endsWith("/api/web/reader-ask/threads/thread-1/reset")),
     ).toBe(true);
+  });
+
+  it("renders evidence and planner summary from the completed payload", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[attachment]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续围绕当前文章、句子、译文或解析对象提问。"), {
+      target: { value: "我之前那篇 climate policy 的解析里也提过这个吗？" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("证据")).not.toBeNull();
+    });
+
+    expect(screen.getAllByText("Climate Policy").length).toBeGreaterThan(0);
+    expect(screen.getByText("规划摘要")).not.toBeNull();
+    expect(screen.getByText("已命中历史文章。")).not.toBeNull();
   });
 });

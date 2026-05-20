@@ -30,6 +30,11 @@ export type ReaderAskResolvedIntentDto =
   | "vocabulary"
   | "grammar"
   | "practice";
+export type ReaderAskReferenceResolutionStatusDto =
+  | "not_needed"
+  | "resolved"
+  | "ambiguous"
+  | "not_found";
 export type ReaderAskEntryActionDto =
   | "ask_about_this"
   | "explain_this"
@@ -43,6 +48,12 @@ export type ReaderAskAttachmentKindDto =
   | "supplement_ref"
   | "record_ref";
 export type ReaderAskSupplementTypeDto = "grammar_note";
+export type ReaderAskEvidenceKindDto =
+  | "attachment"
+  | "citation"
+  | "resolved_reference"
+  | "supplement_candidate"
+  | "clarification";
 
 export interface ReaderAskAnchorSegmentDto {
   paragraph_id?: string | null;
@@ -159,6 +170,16 @@ export interface ReaderAskToolTraceEntryDto {
   metadata_json: Record<string, unknown>;
 }
 
+export interface ReaderAskEvidenceItemDto {
+  kind: ReaderAskEvidenceKindDto;
+  label: string;
+  detail?: string | null;
+  record_id?: string | null;
+  source_article_title?: string | null;
+  target_key?: string | null;
+  metadata_json: Record<string, unknown>;
+}
+
 export interface ReaderAskResolvedContextSummaryDto {
   record_id: string;
   record_title?: string | null;
@@ -177,10 +198,19 @@ export interface ReaderAskContextPlanDto {
   explicit_attachment_count: number;
   normalized_anchor_count: number;
   primary_anchor_type?: ReaderAskAnchorTypeDto | null;
+  reference_query?: string | null;
+  reference_resolution_attempted: boolean;
+  reference_resolution_status: ReaderAskReferenceResolutionStatusDto;
+  reference_resolution_reason?: string | null;
+  expanded_record_ids: string[];
   used_history_lookup: boolean;
+  history_lookup_reason?: string | null;
   used_record_context: boolean;
+  record_context_reason?: string | null;
   used_record_insights: boolean;
+  record_insights_reason?: string | null;
   used_dictionary: boolean;
+  dictionary_reason?: string | null;
   source_labels: string[];
 }
 
@@ -196,6 +226,20 @@ export interface ReaderAskRunInfoDto {
   run_id: string;
   run_attempt: number;
   supersedes_run_id?: string | null;
+}
+
+export interface ReaderAskTraceSummaryDto {
+  planner_mode:
+    | "direct_answer"
+    | "needs_local_clarification"
+    | "known_reference_resolved"
+    | "known_reference_ambiguous"
+    | "known_reference_not_found";
+  reference_resolution_status: ReaderAskReferenceResolutionStatusDto;
+  history_lookup_allowed: boolean;
+  history_lookup_used: boolean;
+  tool_steps: string[];
+  notes: string[];
 }
 
 export interface ReaderAskSupplementCandidateDto {
@@ -265,6 +309,8 @@ export interface ReaderAskMessageDto {
   citations: ReaderAskCitationDto[];
   action_proposals: ReaderAskActionProposalDto[];
   tool_trace: ReaderAskToolTraceEntryDto[];
+  evidence: ReaderAskEvidenceItemDto[];
+  trace_summary?: ReaderAskTraceSummaryDto | null;
   response_cards: ReaderAskResponseCardDto[];
   resolved_context?: ReaderAskResolvedContextSummaryDto | null;
   context_plan?: ReaderAskContextPlanDto | null;
@@ -310,6 +356,8 @@ export interface ReaderAskCompletedPayloadDto {
   citations: ReaderAskCitationDto[];
   action_proposals: ReaderAskActionProposalDto[];
   tool_trace: ReaderAskToolTraceEntryDto[];
+  evidence: ReaderAskEvidenceItemDto[];
+  trace_summary?: ReaderAskTraceSummaryDto | null;
   response_cards: ReaderAskResponseCardDto[];
   usage_summary?: Record<string, unknown> | null;
   billed_points: number;

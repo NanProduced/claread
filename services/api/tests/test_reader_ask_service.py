@@ -1,3 +1,6 @@
+import asyncio
+from uuid import uuid4
+
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
     ReaderAskAttachment,
@@ -7,6 +10,10 @@ from app.schemas.reader_ask import (
 )
 from app.services.analysis.credit_service import CreditReservation
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
+from app.services.reader_ask import capabilities as capabilities_svc
+from app.services.reader_ask import planner as planner_svc
+from app.services.reader_ask import post_process as post_process_svc
+from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask.service import (
     _attachment_to_anchor,
     _attachments_to_anchor_refs,
@@ -297,3 +304,121 @@ def test_build_grammar_note_candidate_requires_sentence_target() -> None:
     assert candidate is not None
     assert candidate.supplement_type == "grammar_note"
     assert candidate.created_from_turn_run_id == "run-1"
+
+
+def test_reference_needs_extracts_known_title_query() -> None:
+    needs = planner_svc.build_reference_needs("我之前那篇 climate policy 的解析里也提过这个吗？")
+
+    assert needs.requested is True
+    assert needs.query == "climate policy"
+
+
+def test_reference_resolution_single_hit_returns_resolved_record() -> None:
+    async def finder(user_id, *, query, exclude_record_id, limit):  # type: ignore[no-untyped-def]
+        del user_id, exclude_record_id, limit
+        assert query == "climate policy"
+        return [{"id": "r-2", "title": "Climate Policy"}]
+
+    resolution = asyncio.run(
+        resolver_svc.resolve_known_references(
+            user_id=uuid4(),
+            current_record_id=uuid4(),
+            reference_needs=planner_svc.ReaderAskReferenceNeeds(
+                requested=True,
+                query="climate policy",
+                reason="title_like_reference",
+            ),
+            finder=finder,
+        )
+    )
+
+    assert resolution.status == "resolved"
+    assert resolution.resolved_records == [{"record_id": "r-2", "title": "Climate Policy"}]
+
+
+def test_reference_resolution_multiple_hits_requires_clarification() -> None:
+    async def finder(user_id, *, query, exclude_record_id, limit):  # type: ignore[no-untyped-def]
+        del user_id, query, exclude_record_id, limit
+        return [
+            {"id": "r-2", "title": "Climate Policy"},
+            {"id": "r-3", "title": "Climate Policy Notes"},
+        ]
+
+    resolution = asyncio.run(
+        resolver_svc.resolve_known_references(
+            user_id=uuid4(),
+            current_record_id=uuid4(),
+            reference_needs=planner_svc.ReaderAskReferenceNeeds(
+                requested=True,
+                query="Climate Policy",
+                reason="quoted_reference",
+            ),
+            finder=finder,
+        )
+    )
+
+    assert resolution.status == "ambiguous"
+    assert resolution.ambiguous_records
+
+
+def test_build_context_plan_records_reference_resolution_reason() -> None:
+    runtime_state = ReaderAskRuntimeState(
+        source_labels={"current_record", "history_assets"},
+    )
+    context_plan = _build_context_plan(
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        runtime_state=runtime_state,
+        citations=[],
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(
+            attempted=True,
+            status="resolved",
+            query="Climate Policy",
+            reason="已命中历史文章“Climate Policy”。",
+            resolved_records=[{"record_id": "r-2", "title": "Climate Policy"}],
+        ),
+    )
+
+    assert context_plan.reference_resolution_attempted is True
+    assert context_plan.reference_resolution_status == "resolved"
+    assert context_plan.expanded_record_ids == ["r-2"]
+
+
+def test_typed_supplement_capability_builds_grammar_note_candidates() -> None:
+    candidates = capabilities_svc.build_supplement_candidates(
+        resolved_intent="grammar",
+        anchors=[
+            ReaderAskAnchorRef(
+                anchor_type="sentence",
+                sentence_id="s1",
+                paragraph_id="p1",
+                target_key="record:r1:sentence:s1",
+                selected_text="Even if he knew the risk",
+                label="语法旁注",
+            )
+        ],
+        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。",
+        created_from_turn_run_id="run-2",
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].created_from_turn_run_id == "run-2"
+
+
+def test_build_evidence_items_includes_clarification_signal() -> None:
+    evidence = post_process_svc.build_evidence_items(
+        attachments=[],
+        citations=[],
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(
+            attempted=True,
+            status="ambiguous",
+            query="Climate Policy",
+            reason="“Climate Policy”命中了多个候选，请补充更完整的标题。",
+            ambiguous_records=[{"record_id": "r-2", "title": "Climate Policy"}],
+        ),
+        include_clarification=True,
+    )
+
+    assert len(evidence) == 1
+    assert evidence[0].kind == "clarification"

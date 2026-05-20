@@ -46,9 +46,10 @@ import type {
   ReaderAskActionProposalDto,
   ReaderAskActionStatusDto,
   ReaderAskAttachmentDto,
-  ReaderAskEntryActionDto,
   ReaderAskCitationDto,
   ReaderAskCompletedPayloadDto,
+  ReaderAskEntryActionDto,
+  ReaderAskEvidenceItemDto,
   ReaderAskMessageDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskPageIdentityDto,
@@ -57,6 +58,7 @@ import type {
   ReaderAskResolvedIntentDto,
   ReaderAskSupplementCandidateDto,
   ReaderAskStreamEnvelopeDto,
+  ReaderAskTraceSummaryDto,
   ReaderAskThreadDetailDto,
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
@@ -514,6 +516,88 @@ function ContextSummaryDisclosure({
   );
 }
 
+function EvidenceDisclosure({
+  evidence,
+}: {
+  evidence: ReaderAskEvidenceItemDto[];
+}) {
+  if (evidence.length === 0) {
+    return null;
+  }
+
+  return (
+    <DisclosureSection label="证据" summary={`${evidence.length} 条显式依据`}>
+      <div className="space-y-2">
+        {evidence.map((item, index) => (
+          <div
+            key={`${item.kind}-${item.record_id ?? "local"}-${item.target_key ?? index}`}
+            className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <p className="truncate text-xs font-semibold text-ink">{item.label}</p>
+              <span className="shrink-0 rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                {item.kind}
+              </span>
+            </div>
+            {item.detail ? <p className="mt-1.5 text-[11px] leading-5 text-muted">{item.detail}</p> : null}
+            {item.source_article_title ? (
+              <p className="mt-1 text-[11px] text-subtle">{item.source_article_title}</p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </DisclosureSection>
+  );
+}
+
+function TraceSummaryDisclosure({
+  traceSummary,
+}: {
+  traceSummary?: ReaderAskTraceSummaryDto | null;
+}) {
+  if (!traceSummary) {
+    return null;
+  }
+
+  const summary = [
+    traceSummary.planner_mode,
+    traceSummary.reference_resolution_status !== "not_needed"
+      ? `reference:${traceSummary.reference_resolution_status}`
+      : null,
+    traceSummary.history_lookup_used ? "history:on" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <DisclosureSection label="规划摘要" summary={summary}>
+      <div className="space-y-3 text-xs text-muted">
+        {traceSummary.notes.length > 0 ? (
+          <div className="space-y-1.5">
+            {traceSummary.notes.map((note, index) => (
+              <p key={index} className="leading-5">
+                {note}
+              </p>
+            ))}
+          </div>
+        ) : null}
+        {traceSummary.tool_steps.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {traceSummary.tool_steps.map((step) => (
+              <span
+                key={step}
+                className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted"
+              >
+                {toolLabel(step)}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </DisclosureSection>
+  );
+}
+
 function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
   if (cards.length === 0) {
     return null;
@@ -787,6 +871,8 @@ function MessageBubble({
                   </div>
                 ) : null}
                 <ContextSummaryDisclosure summary={message.resolved_context} />
+                <EvidenceDisclosure evidence={message.evidence} />
+                <TraceSummaryDisclosure traceSummary={message.trace_summary} />
                 <CitationList
                   citations={message.citations}
                   currentRecordId={currentRecordId}
@@ -1103,6 +1189,8 @@ export function AiWorkspacePanel({
       citations: [],
       action_proposals: [],
       tool_trace: [],
+      evidence: [],
+      trace_summary: null,
       response_cards: [],
       resolved_context: null,
       resolved_intent: null,
@@ -1124,6 +1212,8 @@ export function AiWorkspacePanel({
       citations: [],
       action_proposals: [],
       tool_trace: [],
+      evidence: [],
+      trace_summary: null,
       response_cards: [],
       resolved_context: null,
       resolved_intent: null,
@@ -1210,6 +1300,8 @@ export function AiWorkspacePanel({
                     citations: payload.citations,
                     action_proposals: payload.action_proposals,
                     tool_trace: payload.tool_trace,
+                    evidence: payload.evidence ?? [],
+                    trace_summary: payload.trace_summary ?? null,
                     response_cards: payload.response_cards,
                     resolved_context: payload.resolved_context,
                     context_plan: payload.context_plan ?? null,
@@ -1264,6 +1356,8 @@ export function AiWorkspacePanel({
               citations: [],
               action_proposals: [],
               tool_trace: [],
+              evidence: [],
+              trace_summary: null,
               response_cards: [],
               resolved_context: null,
               context_plan: null,
@@ -1319,6 +1413,8 @@ export function AiWorkspacePanel({
                     citations: payload.citations,
                     action_proposals: payload.action_proposals,
                     tool_trace: payload.tool_trace,
+                    evidence: payload.evidence ?? [],
+                    trace_summary: payload.trace_summary ?? null,
                     response_cards: payload.response_cards,
                     resolved_context: payload.resolved_context,
                     context_plan: payload.context_plan ?? null,

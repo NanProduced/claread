@@ -36,6 +36,7 @@ ReaderAskActionStatus = Literal["pending", "confirmed", "executed", "rejected"]
 ReaderAskToolStatus = Literal["started", "completed", "failed"]
 ReaderAskTaskMode = Literal["explain", "breakdown", "vocabulary", "grammar", "practice"]
 ReaderAskResolvedIntent = ReaderAskTaskMode
+ReaderAskReferenceResolutionStatus = Literal["not_needed", "resolved", "ambiguous", "not_found"]
 ReaderAskEntryAction = Literal[
     "ask_about_this",
     "explain_this",
@@ -56,6 +57,13 @@ ReaderAskResponseCardType = Literal[
     "practice_card",
 ]
 ReaderAskSupplementType = Literal["grammar_note"]
+ReaderAskEvidenceKind = Literal[
+    "attachment",
+    "citation",
+    "resolved_reference",
+    "supplement_candidate",
+    "clarification",
+]
 
 
 class ReaderAskAnchorSegment(BaseModel):
@@ -211,6 +219,16 @@ class ReaderAskToolTraceEntry(BaseModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
+class ReaderAskEvidenceItem(BaseModel):
+    kind: ReaderAskEvidenceKind
+    label: str
+    detail: str | None = None
+    record_id: str | None = None
+    source_article_title: str | None = None
+    target_key: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
 class ReaderAskResolvedContextSummary(BaseModel):
     record_id: str
     record_title: str | None = None
@@ -229,10 +247,19 @@ class ReaderAskContextPlan(BaseModel):
     explicit_attachment_count: int = 0
     normalized_anchor_count: int = 0
     primary_anchor_type: ReaderAskAnchorType | None = None
+    reference_query: str | None = None
+    reference_resolution_attempted: bool = False
+    reference_resolution_status: ReaderAskReferenceResolutionStatus = "not_needed"
+    reference_resolution_reason: str | None = None
+    expanded_record_ids: list[str] = Field(default_factory=list)
     used_history_lookup: bool = False
+    history_lookup_reason: str | None = None
     used_record_context: bool = False
+    record_context_reason: str | None = None
     used_record_insights: bool = False
+    record_insights_reason: str | None = None
     used_dictionary: bool = False
+    dictionary_reason: str | None = None
     source_labels: list[str] = Field(default_factory=list)
 
 
@@ -248,6 +275,21 @@ class ReaderAskRunInfo(BaseModel):
     run_id: str
     run_attempt: int = 1
     supersedes_run_id: str | None = None
+
+
+class ReaderAskTraceSummary(BaseModel):
+    planner_mode: Literal[
+        "direct_answer",
+        "needs_local_clarification",
+        "known_reference_resolved",
+        "known_reference_ambiguous",
+        "known_reference_not_found",
+    ] = "direct_answer"
+    reference_resolution_status: ReaderAskReferenceResolutionStatus = "not_needed"
+    history_lookup_allowed: bool = False
+    history_lookup_used: bool = False
+    tool_steps: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class ReaderAskSupplementCandidate(BaseModel):
@@ -318,6 +360,8 @@ class ReaderAskMessage(BaseModel):
     citations: list[ReaderAskCitation] = Field(default_factory=list)
     action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
     tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
+    evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
+    trace_summary: ReaderAskTraceSummary | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     resolved_context: ReaderAskResolvedContextSummary | None = None
     context_plan: ReaderAskContextPlan | None = None
@@ -383,6 +427,8 @@ class ReaderAskCompletedPayload(BaseModel):
     citations: list[ReaderAskCitation] = Field(default_factory=list)
     action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
     tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
+    evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
+    trace_summary: ReaderAskTraceSummary | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     usage_summary: dict[str, Any] | None = None
     billed_points: int = 0

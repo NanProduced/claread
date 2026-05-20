@@ -28,4 +28,6 @@ def load_prompt_layers() -> dict[str, str]:
         "system": _load_layer("system"),
         "planner": _load_layer("planner"),
         "answer": _load_layer("answer"),
+        "schema": _load_layer("schema"),
+        "policy_examples": _load_layer("policy_examples"),
     }

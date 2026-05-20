@@ -134,7 +134,14 @@ class TestReaderAskRoute:
             yield "event: thread.ready\ndata: {\"thread_id\": \"100\"}\n\n"
             yield "event: message.started\ndata: {\"message_id\": \"200\"}\n\n"
             yield "event: message.delta\ndata: {\"delta\": \"hello\"}\n\n"
-            yield "event: message.completed\ndata: {\"content_md\": \"hello\"}\n\n"
+            yield (
+                "event: message.completed\ndata: "
+                "{\"content_md\": \"hello\", \"context_plan\": {}, \"resolved_context_input\": {}, "
+                "\"run_info\": {\"turn_id\": \"turn-1\", \"run_id\": \"run-1\", \"run_attempt\": 1}, "
+                "\"evidence\": [], \"trace_summary\": {\"planner_mode\": \"direct_answer\", "
+                "\"reference_resolution_status\": \"not_needed\", \"history_lookup_allowed\": false, "
+                "\"history_lookup_used\": false, \"tool_steps\": [], \"notes\": []}}\n\n"
+            )
 
         with patch("app.api.routes.reader_ask.ask_svc.stream_thread_message", new=fake_stream):
             response = client.post(
@@ -148,6 +155,7 @@ class TestReaderAskRoute:
         assert "event: thread.ready" in response.text
         assert "event: message.delta" in response.text
         assert "\"delta\": \"hello\"" in response.text
+        assert "\"trace_summary\"" in response.text
 
     @_mock_auth()
     def test_stream_message_wraps_unexpected_errors_as_sse_error(self, mock_auth) -> None:
@@ -240,7 +248,14 @@ class TestReaderAskRoute:
             del user_id, thread_id, message_id
             yield "event: message.started\ndata: {\"message_id\": \"200\"}\n\n"
             yield "event: message.delta\ndata: {\"delta\": \"retry\"}\n\n"
-            yield "event: message.completed\ndata: {\"content_md\": \"retry\"}\n\n"
+            yield (
+                "event: message.completed\ndata: "
+                "{\"content_md\": \"retry\", \"context_plan\": {}, \"resolved_context_input\": {}, "
+                "\"run_info\": {\"turn_id\": \"turn-1\", \"run_id\": \"run-2\", \"run_attempt\": 2}, "
+                "\"evidence\": [], \"trace_summary\": {\"planner_mode\": \"direct_answer\", "
+                "\"reference_resolution_status\": \"not_needed\", \"history_lookup_allowed\": false, "
+                "\"history_lookup_used\": false, \"tool_steps\": [], \"notes\": []}}\n\n"
+            )
 
         with patch("app.api.routes.reader_ask.ask_svc.retry_thread_message", new=fake_stream):
             response = client.post(
@@ -251,3 +266,4 @@ class TestReaderAskRoute:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         assert "event: message.delta" in response.text
+        assert "\"run_attempt\": 2" in response.text

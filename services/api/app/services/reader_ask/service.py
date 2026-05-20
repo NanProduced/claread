@@ -34,11 +34,13 @@ from app.schemas.reader_ask import (
     ReaderAskCitation,
     ReaderAskCompletedPayload,
     ReaderAskContextPlan,
+    ReaderAskEvidenceItem,
     ReaderAskEntryAction,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
     ReaderAskPageIdentity,
     ReaderAskPracticeCard,
+    ReaderAskReferenceResolutionStatus,
     ReaderAskResolvedContextInput,
     ReaderAskResolvedIntent,
     ReaderAskResolvedContextSummary,
@@ -51,6 +53,7 @@ from app.schemas.reader_ask import (
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
     ReaderAskTaskMode,
+    ReaderAskTraceSummary,
     ReaderAskToolTraceEntry,
     ReaderAskVocabularyInContextCard,
 )
@@ -84,9 +87,12 @@ from app.services.dictionary.errors import ServiceUnavailableError, WordNotFound
 from app.services.dictionary.schemas import DictionaryLookupRequest
 from app.services.dictionary_ai.schemas import DictionaryAIContextExplainRequest
 from app.services.dictionary_ai.service import get_service as get_dictionary_ai_service
+from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import planner
+from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import prompting as prompt_layers_svc
 from app.services.reader_ask import repository as repo
+from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.text_anchors import ensure_json_dict, sentence_map
 from app.services.user_assets import favorites as favorites_svc
@@ -932,6 +938,7 @@ def _build_prompt_payload(
     resolved_intent: ReaderAskResolvedIntent,
     entry_action: ReaderAskEntryAction,
     history_lookup_allowed: bool,
+    reference_resolution: planner.ReaderAskReferenceResolution | None = None,
 ) -> dict[str, Any]:
     prompt_layers = prompt_layers_svc.load_prompt_layers()
     history = [
@@ -983,6 +990,13 @@ def _build_prompt_payload(
         "history": history,
         "attachments": attachment_payload,
         "anchors": anchor_payload,
+        "reference_resolution": {
+            "status": reference_resolution.status if reference_resolution else "not_needed",
+            "query": reference_resolution.query if reference_resolution else None,
+            "reason": reference_resolution.reason if reference_resolution else None,
+            "resolved_records": reference_resolution.resolved_records if reference_resolution else [],
+            "ambiguous_records": reference_resolution.ambiguous_records if reference_resolution else [],
+        },
         "history_lookup_allowed": history_lookup_allowed,
         "tooling_contract": {
             "call_tools_on_demand": True,
@@ -1017,6 +1031,8 @@ def _message_metadata(
     resolved_context: ReaderAskResolvedContextSummary | None = None,
     context_plan: ReaderAskContextPlan | None = None,
     resolved_context_input: ReaderAskResolvedContextInput | None = None,
+    evidence: list[ReaderAskEvidenceItem] | None = None,
+    trace_summary: ReaderAskTraceSummary | None = None,
     response_cards: list[ReaderAskResponseCard] | None = None,
     run_info: dict[str, Any] | None = None,
     supplement_candidates: list[dict[str, Any]] | None = None,
@@ -1031,6 +1047,10 @@ def _message_metadata(
         metadata["context_plan"] = context_plan.model_dump(mode="json")
     if resolved_context_input is not None:
         metadata["resolved_context_input"] = resolved_context_input.model_dump(mode="json")
+    if evidence:
+        metadata["evidence"] = [item.model_dump(mode="json") for item in evidence]
+    if trace_summary is not None:
+        metadata["trace_summary"] = trace_summary.model_dump(mode="json")
     if response_cards:
         metadata["response_cards"] = [card.model_dump(mode="json") for card in response_cards]
     if run_info is not None:
@@ -1465,6 +1485,7 @@ def _build_context_plan(
     anchors: list[ReaderAskAnchorRef],
     runtime_state: ReaderAskRuntimeState,
     citations: list[ReaderAskCitation],
+    reference_resolution: planner.ReaderAskReferenceResolution | None = None,
 ) -> ReaderAskContextPlan:
     return planner.build_context_plan(
         entry_action=entry_action,
@@ -1472,6 +1493,7 @@ def _build_context_plan(
         anchors=anchors,
         runtime_state=runtime_state,
         citations=citations,
+        reference_resolution=reference_resolution,
     )
 
 
@@ -1507,6 +1529,36 @@ def _resolved_context_summary(
         runtime_state=runtime_state,
         used_history_lookup=used_history_lookup,
         citations=citations,
+    )
+
+
+def _build_trace_summary(
+    *,
+    runtime_state: ReaderAskRuntimeState,
+    context_plan: ReaderAskContextPlan,
+    clarification_only: bool = False,
+) -> ReaderAskTraceSummary:
+    return planner.build_trace_summary(
+        runtime_state=runtime_state,
+        context_plan=context_plan,
+        clarification_only=clarification_only,
+    )
+
+
+def _build_evidence_items(
+    *,
+    attachments: list[ReaderAskAttachment],
+    citations: list[ReaderAskCitation],
+    reference_resolution: planner.ReaderAskReferenceResolution | None = None,
+    supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
+    include_clarification: bool = False,
+) -> list[ReaderAskEvidenceItem]:
+    return post_process_svc.build_evidence_items(
+        attachments=attachments,
+        citations=citations,
+        reference_resolution=reference_resolution,
+        supplement_candidates=supplement_candidates,
+        include_clarification=include_clarification,
     )
 
 
@@ -1618,7 +1670,11 @@ async def stream_thread_message(
     resolved_intent: ReaderAskResolvedIntent | None = None
     resolved_context_input: ReaderAskResolvedContextInput | None = None
     context_plan: ReaderAskContextPlan | None = None
+    evidence: list[ReaderAskEvidenceItem] = []
+    trace_summary: ReaderAskTraceSummary | None = None
     run_info: dict[str, Any] | None = None
+    reference_needs = planner.ReaderAskReferenceNeeds()
+    reference_resolution = planner.ReaderAskReferenceResolution()
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -1646,8 +1702,17 @@ async def stream_thread_message(
             attachments=attachments,
             anchors=resolved_anchors,
         )
+        reference_needs = planner.build_reference_needs(body.content)
+        reference_resolution = await resolver_svc.resolve_known_references(
+            user_id=user_id,
+            current_record_id=record.record_id,
+            reference_needs=reference_needs,
+        )
 
-        clarification_only = _needs_clarification(body.content, resolved_anchors)
+        clarification_only = _needs_clarification(body.content, resolved_anchors) or reference_resolution.status in {
+            "ambiguous",
+            "not_found",
+        }
         if clarification_only:
             user_message = await repo.create_message(
                 thread_id=thread_id,
@@ -1662,9 +1727,9 @@ async def stream_thread_message(
             )
             yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
 
-            assistant_md = (
-                "我还不能确定你说的“这里/这句”具体指哪一处。"
-                "请先在正文里选中一句或把相关解析卡片加入对话上下文后再问我。"
+            assistant_md = post_process_svc.build_clarification_message(
+                local_anchor_required=_needs_clarification(body.content, resolved_anchors),
+                reference_resolution=reference_resolution,
             )
             run_info = _new_run_info()
             assistant_message = await repo.create_message(
@@ -1683,6 +1748,29 @@ async def stream_thread_message(
                 _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
                 for anchor in resolved_anchors
             ]
+            runtime_state = ReaderAskRuntimeState(
+                citations=list(citations),
+                source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+            )
+            context_plan = _build_context_plan(
+                entry_action=body.entry_action,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                runtime_state=runtime_state,
+                citations=citations,
+                reference_resolution=reference_resolution,
+            )
+            evidence = _build_evidence_items(
+                attachments=attachments,
+                citations=citations,
+                reference_resolution=reference_resolution,
+                include_clarification=True,
+            )
+            trace_summary = _build_trace_summary(
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                clarification_only=True,
+            )
             payload = ReaderAskCompletedPayload(
                 id=assistant_message["id"],
                 thread_id=str(thread_id),
@@ -1691,6 +1779,8 @@ async def stream_thread_message(
                 citations=citations,
                 action_proposals=[],
                 tool_trace=[],
+                evidence=evidence,
+                trace_summary=trace_summary,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -1698,17 +1788,11 @@ async def stream_thread_message(
                     record=record,
                     anchors=resolved_anchors,
                     explicit_attachment_count=len(attachments),
-                    runtime_state=ReaderAskRuntimeState(citations=list(citations)),
+                    runtime_state=runtime_state,
                     used_history_lookup=False,
                     citations=citations,
                 ),
-                context_plan=ReaderAskContextPlan(
-                    entry_action=body.entry_action,
-                    explicit_attachment_count=len(attachments),
-                    normalized_anchor_count=len(resolved_anchors),
-                    primary_anchor_type=resolved_anchors[0].anchor_type if resolved_anchors else None,
-                    source_labels=["current_record", *([] if not resolved_anchors else ["current_anchor"])],
-                ),
+                context_plan=context_plan,
                 resolved_context_input=resolved_context_input,
                 run_info=run_info,
             )
@@ -1717,6 +1801,8 @@ async def stream_thread_message(
                 resolved_context=payload.resolved_context,
                 context_plan=payload.context_plan,
                 resolved_context_input=resolved_context_input,
+                evidence=evidence,
+                trace_summary=trace_summary,
                 response_cards=[],
                 run_info=run_info,
             )
@@ -1829,7 +1915,7 @@ async def stream_thread_message(
             source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
         )
         query_seed = _query_seed(body.content, resolved_anchors)
-        history_lookup_allowed = _matches_history_intent(body.content)
+        history_lookup_allowed = _matches_history_intent(body.content) or reference_resolution.status == "resolved"
 
         prompt_payload = _build_prompt_payload(
             thread=thread,
@@ -1842,6 +1928,7 @@ async def stream_thread_message(
             resolved_intent=resolved_intent,
             entry_action=body.entry_action,
             history_lookup_allowed=history_lookup_allowed,
+            reference_resolution=reference_resolution,
         )
         prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
 
@@ -2050,20 +2137,29 @@ async def stream_thread_message(
             anchors=resolved_anchors,
             runtime_state=runtime_state,
             citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
         )
-        supplement_candidates: list[dict[str, Any]] = []
-        if resolved_intent == "grammar" and resolved_anchors:
-            candidate = supplements_svc.build_grammar_note_candidate(
-                anchor=resolved_anchors[0],
-                assistant_content_md=final_content_md,
-                created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
-            )
-            if candidate is not None:
-                supplement_candidates.append(candidate.model_dump(mode="json"))
+        typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
+            resolved_intent=resolved_intent,
+            anchors=resolved_anchors,
+            assistant_content_md=final_content_md,
+            created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
+        )
+        supplement_candidates = [candidate.model_dump(mode="json") for candidate in typed_supplement_candidates]
         action_proposals = [
             *action_proposals,
             *_build_supplement_action_proposals(supplement_candidates),
         ]
+        evidence = _build_evidence_items(
+            attachments=attachments,
+            citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
+            supplement_candidates=typed_supplement_candidates,
+        )
+        trace_summary = _build_trace_summary(
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+        )
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
         billed_points = min(computed_cost_points, reservation.total_points)
@@ -2130,6 +2226,8 @@ async def stream_thread_message(
                 resolved_context=resolved_context,
                 context_plan=context_plan,
                 resolved_context_input=resolved_context_input,
+                evidence=evidence,
+                trace_summary=trace_summary,
                 response_cards=response_cards,
                 run_info=run_info,
                 supplement_candidates=supplement_candidates,
@@ -2144,6 +2242,8 @@ async def stream_thread_message(
             citations=runtime_state.citations,
             action_proposals=action_proposals,
             tool_trace=runtime_state.tool_trace,
+            evidence=evidence,
+            trace_summary=trace_summary,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
@@ -2177,6 +2277,8 @@ async def stream_thread_message(
                 metadata=_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
+                    evidence=evidence,
+                    trace_summary=trace_summary,
                     run_info=run_info,
                 ),
                 usage_event_id=None,
@@ -2225,10 +2327,14 @@ async def retry_thread_message(
     resolved_intent: ReaderAskResolvedIntent | None = None
     resolved_context_input: ReaderAskResolvedContextInput | None = None
     context_plan: ReaderAskContextPlan | None = None
+    evidence: list[ReaderAskEvidenceItem] = []
+    trace_summary: ReaderAskTraceSummary | None = None
     run_info: dict[str, Any] | None = None
     run_history: list[dict[str, Any]] = []
     body: ReaderAskMessageStreamRequest | None = None
     original_user_message = ""
+    reference_needs = planner.ReaderAskReferenceNeeds()
+    reference_resolution = planner.ReaderAskReferenceResolution()
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -2287,32 +2393,57 @@ async def retry_thread_message(
             attachments=attachments,
             anchors=resolved_anchors,
         )
+        reference_needs = planner.build_reference_needs(body.content)
+        reference_resolution = await resolver_svc.resolve_known_references(
+            user_id=user_id,
+            current_record_id=record.record_id,
+            reference_needs=reference_needs,
+        )
         run_info, run_history = _next_run_info(assistant_message)
 
-        clarification_only = _needs_clarification(body.content, resolved_anchors)
+        clarification_only = _needs_clarification(body.content, resolved_anchors) or reference_resolution.status in {
+            "ambiguous",
+            "not_found",
+        }
         if clarification_only:
-            assistant_md = (
-                "我还不能确定你说的“这里/这句”具体指哪一处。"
-                "请先在正文里选中一句或把相关解析卡片加入对话上下文后再问我。"
+            assistant_md = post_process_svc.build_clarification_message(
+                local_anchor_required=_needs_clarification(body.content, resolved_anchors),
+                reference_resolution=reference_resolution,
             )
             citations = [
                 _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
                 for anchor in resolved_anchors
             ]
+            runtime_state = ReaderAskRuntimeState(
+                citations=list(citations),
+                source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+            )
             resolved_context = _resolved_context_summary(
                 record=record,
                 anchors=resolved_anchors,
                 explicit_attachment_count=len(attachments),
-                runtime_state=ReaderAskRuntimeState(citations=list(citations)),
+                runtime_state=runtime_state,
                 used_history_lookup=False,
                 citations=citations,
             )
-            context_plan = ReaderAskContextPlan(
+            context_plan = _build_context_plan(
                 entry_action=body.entry_action,
-                explicit_attachment_count=len(attachments),
-                normalized_anchor_count=len(resolved_anchors),
-                primary_anchor_type=resolved_anchors[0].anchor_type if resolved_anchors else None,
-                source_labels=["current_record", *([] if not resolved_anchors else ["current_anchor"])],
+                attachments=attachments,
+                anchors=resolved_anchors,
+                runtime_state=runtime_state,
+                citations=citations,
+                reference_resolution=reference_resolution,
+            )
+            evidence = _build_evidence_items(
+                attachments=attachments,
+                citations=citations,
+                reference_resolution=reference_resolution,
+                include_clarification=True,
+            )
+            trace_summary = _build_trace_summary(
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                clarification_only=True,
             )
             yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
             yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
@@ -2330,6 +2461,8 @@ async def retry_thread_message(
                     resolved_context=resolved_context,
                     context_plan=context_plan,
                     resolved_context_input=resolved_context_input,
+                    evidence=evidence,
+                    trace_summary=trace_summary,
                     response_cards=[],
                     run_info=run_info,
                     run_history=run_history,
@@ -2344,6 +2477,8 @@ async def retry_thread_message(
                 citations=citations,
                 action_proposals=[],
                 tool_trace=[],
+                evidence=evidence,
+                trace_summary=trace_summary,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -2427,7 +2562,7 @@ async def retry_thread_message(
             source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
         )
         query_seed = _query_seed(body.content, resolved_anchors)
-        history_lookup_allowed = _matches_history_intent(body.content)
+        history_lookup_allowed = _matches_history_intent(body.content) or reference_resolution.status == "resolved"
 
         prompt_payload = _build_prompt_payload(
             thread=thread,
@@ -2440,6 +2575,7 @@ async def retry_thread_message(
             resolved_intent=resolved_intent,
             entry_action=body.entry_action,
             history_lookup_allowed=history_lookup_allowed,
+            reference_resolution=reference_resolution,
         )
         prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
 
@@ -2648,20 +2784,29 @@ async def retry_thread_message(
             anchors=resolved_anchors,
             runtime_state=runtime_state,
             citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
         )
-        supplement_candidates: list[dict[str, Any]] = []
-        if resolved_intent == "grammar" and resolved_anchors:
-            candidate = supplements_svc.build_grammar_note_candidate(
-                anchor=resolved_anchors[0],
-                assistant_content_md=final_content_md,
-                created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
-            )
-            if candidate is not None:
-                supplement_candidates.append(candidate.model_dump(mode="json"))
+        typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
+            resolved_intent=resolved_intent,
+            anchors=resolved_anchors,
+            assistant_content_md=final_content_md,
+            created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
+        )
+        supplement_candidates = [candidate.model_dump(mode="json") for candidate in typed_supplement_candidates]
         action_proposals = [
             *action_proposals,
             *_build_supplement_action_proposals(supplement_candidates),
         ]
+        evidence = _build_evidence_items(
+            attachments=attachments,
+            citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
+            supplement_candidates=typed_supplement_candidates,
+        )
+        trace_summary = _build_trace_summary(
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+        )
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
         billed_points = min(computed_cost_points, reservation.total_points)
@@ -2729,6 +2874,8 @@ async def retry_thread_message(
                 resolved_context=resolved_context,
                 context_plan=context_plan,
                 resolved_context_input=resolved_context_input,
+                evidence=evidence,
+                trace_summary=trace_summary,
                 response_cards=response_cards,
                 run_info=run_info,
                 supplement_candidates=supplement_candidates,
@@ -2744,6 +2891,8 @@ async def retry_thread_message(
             citations=runtime_state.citations,
             action_proposals=action_proposals,
             tool_trace=runtime_state.tool_trace,
+            evidence=evidence,
+            trace_summary=trace_summary,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
@@ -2778,6 +2927,8 @@ async def retry_thread_message(
                 metadata=_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
+                    evidence=evidence,
+                    trace_summary=trace_summary,
                     run_info=run_info,
                     run_history=run_history,
                 ),
@@ -2935,6 +3086,8 @@ async def confirm_action(
                 resolved_context=message.resolved_context,
                 context_plan=message.context_plan,
                 resolved_context_input=message.resolved_context_input,
+                evidence=message.evidence,
+                trace_summary=message.trace_summary,
                 response_cards=message.response_cards,
                 run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
                 supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],
@@ -3027,6 +3180,8 @@ async def confirm_action(
             resolved_context=message.resolved_context,
             context_plan=message.context_plan,
             resolved_context_input=message.resolved_context_input,
+            evidence=message.evidence,
+            trace_summary=message.trace_summary,
             response_cards=message.response_cards,
             run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
             supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],

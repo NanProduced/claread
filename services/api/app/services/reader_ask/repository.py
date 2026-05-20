@@ -28,6 +28,8 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "citations": row["citations_json"] or [],
         "action_proposals": row["action_proposals_json"] or [],
         "tool_trace": row["tool_trace_json"] or [],
+        "evidence": metadata.get("evidence") or [],
+        "trace_summary": metadata.get("trace_summary"),
         "response_cards": metadata.get("response_cards") or [],
         "resolved_context": metadata.get("resolved_context"),
         "context_plan": metadata.get("context_plan"),
@@ -76,6 +78,49 @@ async def ensure_record_access(user_id: UUID, record_id: UUID) -> dict[str, Any]
         "title": row["title"],
         "source_text": row["source_text"] or "",
     }
+
+
+async def search_records_by_title(
+    user_id: UUID,
+    *,
+    query: str,
+    exclude_record_id: UUID | None = None,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    normalized_query = query.strip()
+    if not normalized_query:
+        return []
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, title, updated_at
+            FROM analysis_records
+            WHERE user_id = $1
+              AND deleted_at IS NULL
+              AND ($2::uuid IS NULL OR id <> $2)
+              AND title IS NOT NULL
+              AND title ILIKE $3
+            ORDER BY updated_at DESC
+            LIMIT $4
+            """,
+            user_id,
+            exclude_record_id,
+            f"%{normalized_query}%",
+            limit,
+        )
+    return [
+        {
+            "id": str(row["id"]),
+            "title": row["title"],
+            "updated_at": _iso(row["updated_at"]),
+        }
+        for row in rows
+    ]
 
 
 async def list_threads(user_id: UUID, record_id: UUID) -> list[dict[str, Any]]:
