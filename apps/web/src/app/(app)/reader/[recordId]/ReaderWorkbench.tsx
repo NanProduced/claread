@@ -362,7 +362,7 @@ export function ReaderWorkbench({
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [sentencePopoverAnchorEl, setSentencePopoverAnchorEl] = useState<HTMLElement | null>(null);
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
-  const [expandedAnalysisEntryId, setExpandedAnalysisEntryId] = useState<string | null>(null);
+  const [expandedAnalysisEntryIds, setExpandedAnalysisEntryIds] = useState<string[]>([]);
   const sentencePopoverPanelRef = useRef<HTMLDivElement | null>(null);
   const lookupPreviewPanelRef = useRef<HTMLDivElement | null>(null);
   const lastSentencePopoverTriggerRef = useRef<HTMLElement | null>(null);
@@ -1997,7 +1997,7 @@ export function ReaderWorkbench({
     setSentencePopoverAnchorEl(anchorEl ?? null);
     lastSentencePopoverTriggerRef.current = anchorEl ?? null;
     setSettingsPanelOpen(false);
-    setExpandedAnalysisEntryId(null);
+    setExpandedAnalysisEntryIds([]);
     setActiveEntryId(null);
     const sentenceAnnotation =
       (annotationsBySentence.get(sentence.sentenceId)?.annotations ?? []).find((item) => item.anchorType === "sentence") ?? null;
@@ -2028,7 +2028,7 @@ export function ReaderWorkbench({
     setContextPanelOpen(false);
     setSentencePopoverAnchorEl(null);
     setActiveSentence(null);
-    setExpandedAnalysisEntryId(null);
+    setExpandedAnalysisEntryIds([]);
     setActiveEntryId(null);
     setTextSelection(null);
     window.requestAnimationFrame(() => {
@@ -2037,7 +2037,9 @@ export function ReaderWorkbench({
   }
 
   function toggleAnalysisEntry(entryId: string) {
-    setExpandedAnalysisEntryId((current) => (current === entryId ? null : entryId));
+    setExpandedAnalysisEntryIds((current) =>
+      current.includes(entryId) ? current.filter((id) => id !== entryId) : [...current, entryId]
+    );
     setActiveEntryId(entryId);
     setContextPanelOpen(false);
     setSentencePopoverAnchorEl(null);
@@ -2048,7 +2050,7 @@ export function ReaderWorkbench({
       if (focused) {
         return entryId;
       }
-      if (current === entryId && expandedAnalysisEntryId !== entryId) {
+      if (current === entryId && !expandedAnalysisEntryIds.includes(entryId)) {
         return null;
       }
       return current;
@@ -2168,7 +2170,7 @@ export function ReaderWorkbench({
             themeClassName={canvasThemeClass}
             activeSentenceId={activeSentence?.sentenceId ?? null}
             activeAnalysisEntryId={activeEntryId}
-            expandedAnalysisEntryId={expandedAnalysisEntryId}
+            expandedAnalysisEntryIds={expandedAnalysisEntryIds}
             jumpTarget={jumpTarget}
             assetProjection={assetProjection}
             annotationVisibilityGroups={readerSettings.annotationVisibilityGroups}

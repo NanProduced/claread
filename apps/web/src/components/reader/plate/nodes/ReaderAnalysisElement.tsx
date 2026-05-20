@@ -30,6 +30,46 @@ function analysisCardToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) 
   }
 }
 
+function EnhancedText({ text }: { text: string }) {
+  if (!text) return null;
+
+  // Split by sentence punctuation: 。 and ； (retaining them)
+  const segments = text.split(/(?<=[。；])/g);
+
+  return (
+    <>
+      {segments.map((segment, sIdx) => {
+        if (!segment.trim()) return null;
+
+        // Split into runs of English phrases vs Chinese/symbols
+        const parts = segment.split(/([a-zA-Z]+(?:[\s'\-][a-zA-Z]+)*)/g);
+
+        return (
+          <span key={sIdx} className="block mt-1 first:mt-0">
+            {parts.map((part, pIdx) => {
+              if (/[a-zA-Z]/.test(part)) {
+                return (
+                  <span
+                    key={pIdx}
+                    className="font-serif font-semibold text-ink antialiased tracking-normal mx-0.5"
+                  >
+                    {part}
+                  </span>
+                );
+              }
+              return (
+                <span key={pIdx} className="font-sans text-ink-soft">
+                  {part}
+                </span>
+              );
+            })}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 interface ReaderAnalysisElementProps {
   props: Parameters<RenderElement>[0];
   visible?: boolean;
@@ -88,10 +128,10 @@ export function ReaderAnalysisElement({
       data-entry-id={element.entryId}
       data-entry-type={element.entryType}
       data-entry-expanded={expanded ? "true" : "false"}
-      onMouseEnter={() => onFocusChange?.(true)}
-      onMouseLeave={() => onFocusChange?.(false)}
-      onFocus={() => onFocusChange?.(true)}
-      onBlur={() => onFocusChange?.(false)}
+      onMouseEnter={() => expanded && onFocusChange?.(true)}
+      onMouseLeave={() => expanded && onFocusChange?.(false)}
+      onFocus={() => expanded && onFocusChange?.(true)}
+      onBlur={() => expanded && onFocusChange?.(false)}
     >
       <div className="flex items-start gap-3">
         <button
@@ -136,11 +176,6 @@ export function ReaderAnalysisElement({
                 </span>
               </div>
               <h3 className="mt-1 text-[0.95rem] font-semibold leading-6 text-ink">{label}</h3>
-              {!expanded ? (
-                <p className="mt-1 text-[0.78rem] leading-5 text-muted-foreground">
-                  点击展开后查看完整解释，并回指原文锚点。
-                </p>
-              ) : null}
             </div>
           </div>
         </button>
@@ -180,35 +215,35 @@ export function ReaderAnalysisElement({
           {parsed ? (
             <>
               {parsed.summary ? (
-                <p className="mb-4 whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">{parsed.summary}</p>
+                <p className="mb-4 whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft"><EnhancedText text={parsed.summary} /></p>
               ) : null}
               {parsed.chunks.length > 0 ? (
-                <div className="overflow-hidden rounded-[10px] border border-hairline/80 bg-surface">
+                <div className="overflow-hidden rounded-[10px] border border-hairline/50 bg-surface">
                   {parsed.chunks.map((chunk, index) => (
                     <div
                       key={`${element.entryId}-chunk-${index}`}
                       className={`grid grid-cols-[2.25rem_1fr] text-[0.9375rem] leading-[1.65] sm:grid-cols-[2.25rem_minmax(7rem,0.45fr)_1fr] ${
-                        index > 0 ? "border-t border-hairline/80" : ""
+                        index > 0 ? "border-t border-hairline/50" : ""
                       }`}
                     >
                       <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1}`}>
                         {index + 1}
                       </div>
-                      <div className="flex items-center px-3 py-2.5 text-sm font-semibold text-ink sm:border-r sm:border-hairline/80">
+                      <div className="flex items-center px-3 py-2.5 text-sm font-semibold text-ink sm:border-r sm:border-hairline/50">
                         {chunk.label}
                       </div>
-                      <div className="col-span-2 flex flex-1 items-center border-t border-hairline/60 bg-surface px-4 py-2.5 text-ink-soft sm:col-span-1 sm:border-t-0">
-                        {chunk.text}
+                      <div className="col-span-2 flex flex-1 items-center border-t border-hairline/45 bg-surface px-4 py-2.5 text-ink-soft sm:col-span-1 sm:border-t-0">
+                        <div className="w-full"><EnhancedText text={chunk.text} /></div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">{element.content}</p>
+                <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft"><EnhancedText text={element.content} /></p>
               )}
             </>
           ) : (
-            <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">{props.children}</p>
+            <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft"><EnhancedText text={element.content} /></p>
           )}
         </div>
       ) : null}

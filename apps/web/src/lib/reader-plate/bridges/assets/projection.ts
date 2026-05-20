@@ -69,6 +69,7 @@ function rangeFromAnnotation(annotation: WebAnnotationVm): ReaderAssetRange[] {
         textHash: annotation.textHash,
         color: annotation.color,
         annotationType: annotation.type,
+        hasNote: Boolean(annotation.note),
       },
     ];
   }
@@ -91,6 +92,7 @@ function rangeFromAnnotation(annotation: WebAnnotationVm): ReaderAssetRange[] {
       textHash: segment.textHash,
       color: annotation.color,
       annotationType: annotation.type,
+      hasNote: Boolean(annotation.note),
     }));
 }
 

@@ -14,6 +14,8 @@ import type { ReaderAnnotationVisibilityGroups } from "../../settings";
 interface ReaderSentenceElementProps {
   props: Parameters<RenderElement>[0];
   active?: boolean;
+  analysisActive?: boolean;
+  analysisExpanded?: boolean;
   routeFocused?: boolean;
   assetProjection?: ReaderSentenceAssetProjection | null;
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
@@ -25,6 +27,8 @@ interface ReaderSentenceElementProps {
 
 export function ReaderSentenceElement({
   active = false,
+  analysisActive = false,
+  analysisExpanded = false,
   assetProjection = null,
   annotationVisibilityGroups,
   onAnnotationAsk,
@@ -36,8 +40,15 @@ export function ReaderSentenceElement({
 }: ReaderSentenceElementProps) {
   const element = props.element as unknown as ReaderSentenceNode;
   const frameClassName = [
-    "group/sentence relative scroll-mt-8 px-2 py-2 transition-colors rounded-[8px]",
+    "group/sentence relative scroll-mt-8 pl-2 pr-12 py-2 transition-colors rounded-[8px]",
     active ? "bg-surface/42" : "hover:bg-surface/28",
+    analysisActive ? "reader-sentence--analysis-active" : "",
+    analysisExpanded ? "reader-sentence--analysis-expanded" : "",
+    annotationVisibilityGroups.userAssets && assetProjection?.hasHighlight ? "reader-sentence--user-highlight" : "",
+    annotationVisibilityGroups.userAssets && assetProjection?.hasNote ? "reader-sentence--user-note" : "",
+    annotationVisibilityGroups.userAssets && assetProjection && assetProjection.favoriteCount > 0
+      ? "reader-sentence--favorite"
+      : "",
     routeFocused ? "reader-route-focus-frame" : "",
   ]
     .filter(Boolean)

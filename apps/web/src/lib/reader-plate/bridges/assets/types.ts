@@ -67,6 +67,7 @@ export interface ReaderAssetRange extends ReaderAnchorSegment {
   targetKey: string;
   color?: WebAnnotationVm["color"] | null;
   annotationType?: WebAnnotationVm["type"];
+  hasNote?: boolean;
 }
 
 export interface ReaderSentenceAssetProjection {

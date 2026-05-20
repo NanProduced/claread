@@ -8,6 +8,7 @@ import {
 import type {
   ReaderAnalysisBlockNode,
   ReaderAssetProjection,
+  ReaderAssetRange,
   ReaderSentenceAssetProjection,
   ReaderJumpRangeSegment,
   ReaderJumpTarget,
@@ -32,6 +33,11 @@ import { ReaderSentenceElement } from "./nodes/ReaderSentenceElement";
 import { ReaderSentenceTextElement } from "./nodes/ReaderSentenceTextElement";
 import { ReaderTranslationElement } from "./nodes/ReaderTranslationElement";
 import {
+  buildSentenceAnalysisSegments,
+  parseSentenceAnalysisContent,
+  type SentenceAnalysisSegment,
+} from "../reader-entry-utils";
+import {
   analysisEntryVisible,
   readerColumnWidthClassName,
   type ReaderAnnotationVisibilityGroups,
@@ -50,6 +56,7 @@ export interface PlateReaderSurfaceProps {
   assetProjection?: ReaderAssetProjection | null;
   activeAnalysisEntryId?: string | null;
   expandedAnalysisEntryId?: string | null;
+  expandedAnalysisEntryIds?: string[];
   onSentenceActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onAnalysisFocusChange?: (entryId: string, focused: boolean) => void;
   onAnalysisToggle?: (entryId: string) => void;
@@ -84,6 +91,7 @@ export function PlateReaderSurface({
   columnWidth = "standard",
   document,
   expandedAnalysisEntryId = null,
+  expandedAnalysisEntryIds = [],
   jumpTarget = null,
   onAnalysisFocusChange,
   onAnalysisToggle,
@@ -111,6 +119,13 @@ export function PlateReaderSurface({
     [paragraphNodes],
   );
 
+  const expandedIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (expandedAnalysisEntryId) ids.add(expandedAnalysisEntryId);
+    if (expandedAnalysisEntryIds) expandedAnalysisEntryIds.forEach(id => ids.add(id));
+    return ids;
+  }, [expandedAnalysisEntryId, expandedAnalysisEntryIds]);
+
   const routeFocusSentenceIds = useMemo(
     () => new Set(jumpTarget?.sentenceIds ?? []),
     [jumpTarget],
@@ -129,6 +144,18 @@ export function PlateReaderSurface({
     () => assetProjection?.sentenceAssetProjectionBySentence ?? new Map<string, ReaderSentenceAssetProjection>(),
     [assetProjection],
   );
+
+  const assetRangesBySentence = useMemo(() => {
+    const map = new Map<string, ReaderAssetRange[]>();
+    assetProjection?.annotationRangesBySentence?.forEach((ranges, sentenceId) => {
+      map.set(sentenceId, [...ranges]);
+    });
+    assetProjection?.favoriteRangesBySentence?.forEach((ranges, sentenceId) => {
+      const current = map.get(sentenceId) ?? [];
+      map.set(sentenceId, [...current, ...ranges]);
+    });
+    return map;
+  }, [assetProjection?.annotationRangesBySentence, assetProjection?.favoriteRangesBySentence]);
 
   const sentenceTextBySentence = useMemo(() => {
     const map = new Map<string, string>();
@@ -161,6 +188,33 @@ export function PlateReaderSurface({
     });
     return map;
   }, [paragraphNodes]);
+
+  const activeSentenceAnalysisSegmentsBySentence = useMemo(() => {
+    const map = new Map<string, SentenceAnalysisSegment[]>();
+    if (!activeAnalysisEntryId) {
+      return map;
+    }
+
+    paragraphNodes.forEach((paragraph) => {
+      paragraph.children.forEach((sentenceNode) => {
+        const activeEntry = sentenceNode.children.find(
+          (child): child is ReaderAnalysisBlockNode =>
+            child.type === "reader_sentence_analysis" && child.entryId === activeAnalysisEntryId,
+        );
+        if (!activeEntry) {
+          return;
+        }
+
+        const parsed = parseSentenceAnalysisContent(activeEntry.content);
+        const segments = buildSentenceAnalysisSegments(sentenceNode.sourceText, parsed.chunks);
+        if (segments.length > 0) {
+          map.set(sentenceNode.sentenceId, segments);
+        }
+      });
+    });
+
+    return map;
+  }, [activeAnalysisEntryId, paragraphNodes]);
 
   const editor = usePlateEditor(
     {
@@ -207,6 +261,12 @@ export function PlateReaderSurface({
             <ReaderSentenceElement
               props={props}
               active={activeSentenceId === element.sentenceId}
+              analysisActive={activeSentenceAnalysisSegmentsBySentence.has(element.sentenceId)}
+              analysisExpanded={element.children.some(
+                (child: any) =>
+                  child.type === "reader_sentence_analysis" &&
+                  expandedIds.has(child.entryId)
+              )}
               annotationVisibilityGroups={annotationVisibilityGroups}
               assetProjection={sentenceAssetsBySentence.get(element.sentenceId) ?? null}
               onAnnotationAsk={onAnnotationAsk}
@@ -242,7 +302,7 @@ export function PlateReaderSurface({
             <ReaderAnalysisElement
               props={props}
               active={activeAnalysisEntryId === element.entryId}
-              expanded={expandedAnalysisEntryId === element.entryId}
+              expanded={expandedIds.has(element.entryId)}
               visible={analysisEntryVisible(element.entryType, annotationVisibilityGroups)}
               onAsk={onAskAnalysis ? () => onAskAnalysis(element.sentenceId, element.entryId) : undefined}
               onDelete={
@@ -263,7 +323,12 @@ export function PlateReaderSurface({
       }
     },
     [
+      activeAnalysisEntryId,
+      expandedAnalysisEntryId,
+      expandedAnalysisEntryIds,
+      expandedIds,
       activeSentenceId,
+      activeSentenceAnalysisSegmentsBySentence,
       annotationVisibilityGroups,
       onAnnotationAsk,
       onInspectIntent,
@@ -289,12 +354,13 @@ export function PlateReaderSurface({
     (props: any) => (
       <ReaderMarkLeaf
         annotationRangesBySentence={
-          annotationVisibilityGroups.userAssets ? assetProjection?.annotationRangesBySentence : undefined
+          annotationVisibilityGroups.userAssets ? assetRangesBySentence : undefined
         }
         annotationVisibilityGroups={annotationVisibilityGroups}
         onInspectIntent={onInspectIntent}
         onLookupIntent={onLookupIntent}
         props={props}
+        analysisSegmentsBySentence={activeSentenceAnalysisSegmentsBySentence}
         routeFocusRangesBySentence={routeFocusRangesBySentence}
         activeAnalysisEntryId={activeAnalysisEntryId}
         sentenceTextBySentence={sentenceTextBySentence}
@@ -302,7 +368,9 @@ export function PlateReaderSurface({
       />
     ),
     [
-      assetProjection?.annotationRangesBySentence,
+      activeAnalysisEntryId,
+      activeSentenceAnalysisSegmentsBySentence,
+      assetRangesBySentence,
       annotationVisibilityGroups,
       onInspectIntent,
       onLookupIntent,

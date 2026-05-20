@@ -209,6 +209,57 @@ describe("PlateReaderSurface", () => {
     expect(onAskAnalysis).toHaveBeenCalledWith("s1", "entry-grammar");
   });
 
+  it("projects active sentence analysis chunks back into the original sentence", () => {
+    const document = renderSceneToPlateDocument({
+      ...createBaseScene(),
+      article: {
+        paragraphs: [
+          {
+            paragraphId: "p1",
+            sentenceIds: ["s1"],
+          },
+        ],
+        sentences: [
+          {
+            sentenceId: "s1",
+            paragraphId: "p1",
+            text: "The world's largest ever digital camera has become operational in an observatory in Chile.",
+          },
+        ],
+      },
+      sentenceEntries: [
+        {
+          id: "entry-analysis",
+          sentenceId: "s1",
+          entryType: "sentence_analysis",
+          label: "句子拆解",
+          title: "新闻导语式的主谓宾结构",
+          content: [
+            "这是一个典型的新闻导语句。",
+            "- **1. 主语**：`The world's largest ever digital camera`",
+            "- **2. 核心谓语**：`has become operational`",
+            "- **3. 地点补充**：`in an observatory in Chile`",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    const { container } = render(
+      <PlateReaderSurface
+        document={document}
+        showTranslation
+        readingClassName="reader-serif text-ink"
+        activeAnalysisEntryId="entry-analysis"
+        expandedAnalysisEntryId="entry-analysis"
+      />,
+    );
+
+    expect(container.querySelector("[data-sentence-id='s1']")?.className).toContain("reader-sentence--analysis-active");
+    expect(container.querySelectorAll(".reader-analysis-atom").length).toBeGreaterThan(0);
+    expect(container.querySelector("[data-analysis-index='1']")?.textContent).toContain("The world's largest ever digital camera");
+    expect(container.querySelector("[data-analysis-index='2']")?.textContent).toContain("has become operational");
+  });
+
   it("renders academic content summary and hides translation when disabled", () => {
     const document = renderSceneToPlateDocument({
       ...createBaseScene(),
@@ -417,7 +468,11 @@ describe("PlateReaderSurface", () => {
     );
 
     expect(container.querySelectorAll(".reader-user-range").length).toBeGreaterThan(0);
+    expect(container.querySelector(".reader-user-range--favorite")).toBeTruthy();
     expect(screen.getByText("制度记忆是关键词。")).toBeTruthy();
+    expect(container.querySelector("[data-sentence-id='s1']")?.className).toContain("reader-sentence--user-highlight");
+    expect(container.querySelector("[data-sentence-id='s1']")?.className).toContain("reader-sentence--user-note");
+    expect(container.querySelector("[data-sentence-id='s1']")?.className).toContain("reader-sentence--favorite");
 
     const noteButton = container.querySelector(".reader-annotation-gutter-marker--note");
     const favoriteButton = container.querySelector(".reader-annotation-gutter-marker--favorite");

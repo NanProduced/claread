@@ -15,11 +15,13 @@ import {
 } from "../../../lib/reader-plate";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import type { ReaderAnnotationVisibilityGroups } from "../settings";
+import type { SentenceAnalysisSegment } from "../reader-entry-utils";
 import { readerMarkClassName } from "./shared";
 
 interface ReaderMarkLeafProps {
   props: Parameters<RenderLeaf>[0];
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
+  analysisSegmentsBySentence?: Map<string, SentenceAnalysisSegment[]>;
   annotationRangesBySentence?: Map<string, ReaderAssetRange[]>;
   routeFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   activeAnalysisEntryId?: string | null;
@@ -60,6 +62,12 @@ function renderLeafContent(
   text: string,
   leafStartOffset: number | undefined,
   focusedSegments: Array<{ startOffset: number; endOffset: number }>,
+  analysisSegments: Array<{
+    startOffset: number;
+    endOffset: number;
+    label: string;
+    index: number;
+  }>,
   annotationSegments: Array<{
     startOffset: number;
     endOffset: number;
@@ -67,12 +75,25 @@ function renderLeafContent(
   }>,
 ): ReactNode {
   if (leafStartOffset === undefined || (focusedSegments.length === 0 && annotationSegments.length === 0)) {
+    if (analysisSegments.length === 0) {
+      return text;
+    }
+  }
+
+  if (
+    leafStartOffset === undefined ||
+    (focusedSegments.length === 0 && annotationSegments.length === 0 && analysisSegments.length === 0)
+  ) {
     return text;
   }
 
   const leafEndOffset = leafStartOffset + text.length;
   const boundaries = new Set<number>([leafStartOffset, leafEndOffset]);
   focusedSegments.forEach((segment) => {
+    boundaries.add(segment.startOffset);
+    boundaries.add(segment.endOffset);
+  });
+  analysisSegments.forEach((segment) => {
     boundaries.add(segment.startOffset);
     boundaries.add(segment.endOffset);
   });
@@ -94,33 +115,61 @@ function renderLeafContent(
     const overlappingFocus = focusedSegments.some(
       (segment) => segment.startOffset < segmentEnd && segment.endOffset > segmentStart,
     );
+    const overlappingAnalysis = analysisSegments.find(
+      (segment) => segment.startOffset < segmentEnd && segment.endOffset > segmentStart,
+    );
     const overlappingAnnotations = annotationSegments.flatMap((segment) =>
       segment.startOffset < segmentEnd && segment.endOffset > segmentStart ? segment.annotations : [],
     );
 
-    if (!overlappingFocus && overlappingAnnotations.length === 0) {
+    if (!overlappingFocus && overlappingAnnotations.length === 0 && !overlappingAnalysis) {
       children.push(segmentText);
       continue;
     }
 
-    const annotationClassName = classNameForAnnotations(overlappingAnnotations);
+    const annotationClassName = classNameForRanges(overlappingAnnotations);
     const className = [annotationClassName, overlappingFocus ? "reader-route-focus-range" : ""]
       .filter(Boolean)
       .join(" ");
+
+    let content: ReactNode = segmentText;
+    if (overlappingAnalysis) {
+      content = (
+        <span
+          className={`reader-analysis-atom reader-analysis-atom--${(overlappingAnalysis.index % 6) + 1}`}
+          data-analysis-index={overlappingAnalysis.index + 1}
+          data-analysis-label={overlappingAnalysis.label}
+        >
+          {content}
+        </span>
+      );
+    }
+
+    if (!className) {
+      children.push(
+        <span key={`${segmentStart}-${segmentEnd}`}>
+          {content}
+        </span>,
+      );
+      continue;
+    }
+
     children.push(
       <span
         key={`${segmentStart}-${segmentEnd}`}
         className={className || undefined}
         data-reader-annotation-ids={
           overlappingAnnotations.length > 0
-            ? overlappingAnnotations.map((annotation) => annotation.assetId).join(",")
+            ? overlappingAnnotations.map((annotation) => `${annotation.assetKind}:${annotation.assetId}`).join(",")
             : undefined
         }
         data-reader-annotation-count={
-          overlappingAnnotations.length > 0 ? String(new Set(overlappingAnnotations.map((annotation) => annotation.assetId)).size) : undefined
+          overlappingAnnotations.length > 0
+            ? String(new Set(overlappingAnnotations.map((annotation) => `${annotation.assetKind}:${annotation.assetId}`)).size)
+            : undefined
         }
       >
-        {segmentText}
+        {content}
       </span>,
     );
   }
@@ -143,14 +192,29 @@ function annotationToneClass(color: WebAnnotationVm["color"] | null | undefined)
   }
 }
 
-function classNameForAnnotations(annotations: ReaderAssetRange[]) {
-  const uniqueAnnotations = Array.from(new Map(annotations.map((annotation) => [annotation.assetId, annotation])).values());
-  if (uniqueAnnotations.length === 0) {
+function classNameForRanges(ranges: ReaderAssetRange[]) {
+  const uniqueRanges = Array.from(new Map(ranges.map((range) => [`${range.assetKind}:${range.assetId}`, range])).values());
+  if (uniqueRanges.length === 0) {
     return "";
   }
 
-  if (uniqueAnnotations.length === 1) {
-    return `reader-user-range ${annotationToneClass(uniqueAnnotations[0]?.color ?? null)}`;
+  const primary = uniqueRanges[0];
+  if (!primary) {
+    return "";
+  }
+
+  if (uniqueRanges.length === 1) {
+    if (primary.assetKind === "favorite") {
+      return "reader-user-range reader-user-range--favorite";
+    }
+
+    return [
+      "reader-user-range",
+      annotationToneClass(primary.color ?? null),
+      primary.hasNote ? "reader-user-range--with-note" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   return "reader-user-range reader-user-range--stacked";
@@ -176,8 +240,30 @@ function annotationSegmentsForLeaf(
     .sort((left, right) => left.startOffset - right.startOffset);
 }
 
+function analysisSegmentsForLeaf(
+  sentenceId: string | undefined,
+  leafStartOffset: number | undefined,
+  leafEndOffset: number | undefined,
+  analysisSegmentsBySentence: Map<string, SentenceAnalysisSegment[]> | undefined,
+) {
+  if (!sentenceId || leafStartOffset === undefined || leafEndOffset === undefined || !analysisSegmentsBySentence) {
+    return [];
+  }
+
+  return (analysisSegmentsBySentence.get(sentenceId) ?? [])
+    .map((segment) => ({
+      startOffset: Math.max(leafStartOffset, segment.start),
+      endOffset: Math.min(leafEndOffset, segment.end),
+      label: segment.label,
+      index: segment.index,
+    }))
+    .filter((segment) => segment.startOffset < segment.endOffset)
+    .sort((left, right) => left.startOffset - right.startOffset);
+}
+
 export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   activeAnalysisEntryId = null,
+  analysisSegmentsBySentence,
   annotationRangesBySentence,
   annotationVisibilityGroups,
   onInspectIntent,
@@ -231,17 +317,33 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
       annotationRangesBySentence,
     ],
   );
+  const analysisSegments = useMemo(
+    () =>
+      analysisSegmentsForLeaf(
+        leaf.readerSentenceId,
+        leaf.readerTextStartOffset,
+        leaf.readerTextEndOffset,
+        analysisSegmentsBySentence,
+      ),
+    [
+      analysisSegmentsBySentence,
+      leaf.readerSentenceId,
+      leaf.readerTextEndOffset,
+      leaf.readerTextStartOffset,
+    ],
+  );
   const content = useMemo(
     () =>
       renderLeafContent(
         leaf.text,
         leaf.readerTextStartOffset,
         focusedSegments,
+        analysisSegments,
         annotationSegments,
       ),
-    [annotationSegments, focusedSegments, leaf.text, leaf.readerTextStartOffset],
+    [analysisSegments, annotationSegments, focusedSegments, leaf.text, leaf.readerTextStartOffset],
   );
-  const hasDecoratedContent = focusedSegments.length > 0 || annotationSegments.length > 0;
+  const hasDecoratedContent = focusedSegments.length > 0 || analysisSegments.length > 0 || annotationSegments.length > 0;
   const visualTone = leaf.readerMarkVisualTone;
   if (!visualTone) {
     return <span {...props.attributes}>{hasDecoratedContent ? content : props.children}</span>;
@@ -255,7 +357,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   return (
     <span
       {...props.attributes}
-      className={[className, entryActiveClass].filter(Boolean).join(" ") || undefined}
+      className={[className, isClickable ? "reader-mark--interactive" : "", entryActiveClass].filter(Boolean).join(" ") || undefined}
       data-reader-mark-id={leaf.readerMarkId}
       data-reader-mark-parent-id={leaf.readerMarkParentId}
       data-reader-mark-tone={visualTone}

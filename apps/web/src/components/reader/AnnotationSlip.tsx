@@ -1,4 +1,4 @@
-import { PenLine } from "lucide-react";
+import { PenLine, Sparkles } from "lucide-react";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 
 export interface AnnotationSlipProps {
@@ -46,19 +46,10 @@ export function AnnotationSlip({
                   <PenLine className="h-3.5 w-3.5" aria-hidden="true" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="text-xs font-semibold text-muted">
-                    {item.anchorType === "text_range"
-                      ? item.type === "highlight"
-                        ? "选区高亮 + 笔记"
-                        : "选区笔记"
-                      : item.type === "highlight"
-                        ? "整句高亮 + 笔记"
-                        : "整句笔记"}
+                  <span className="text-xs font-semibold text-muted block mb-0.5">
+                    读书笔记
                   </span>
-                  {item.anchorType === "text_range" ? (
-                    <span className="mt-1 block line-clamp-2 text-xs text-muted">“{item.selectedText}”</span>
-                  ) : null}
-                  <span className="reader-annotation-slip-text mt-1 block whitespace-pre-wrap">{item.note}</span>
+                  <span className="reader-annotation-slip-text block whitespace-pre-wrap">{item.note}</span>
                 </span>
               </button>
             </div>
@@ -66,13 +57,14 @@ export function AnnotationSlip({
               {onAnnotationAsk ? (
                 <button
                   type="button"
-                  className="focus-ring inline-flex min-h-10 items-center rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[0.7rem] font-semibold text-lens-blue transition-colors hover:border-muted hover:text-ink"
+                  className="focus-ring inline-flex min-h-8 items-center gap-1.5 rounded-full bg-lens-blue/5 px-3 py-1 text-[0.725rem] font-semibold text-lens-blue transition-all duration-200 hover:bg-lens-blue hover:text-white active:scale-95"
                   onClick={(event) => {
                     event.stopPropagation();
                     onAnnotationAsk(item);
                   }}
                 >
-                  带入 Ask
+                  <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>带入 Ask</span>
                 </button>
               ) : null}
               <span className="reader-annotation-slip-time text-xs text-muted">
