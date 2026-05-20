@@ -562,9 +562,7 @@ class ReaderAskMessageStreamRequest(BaseModel):
     model: str | None = None
 
 
-class ReaderAskCompletedPayload(BaseModel):
-    id: str
-    thread_id: str
+class ReaderAskUserVisibleOutput(BaseModel):
     content_md: str
     resolved_intent: ReaderAskResolvedIntent | None = None
     citations: list[ReaderAskCitation] = Field(default_factory=list)
@@ -583,6 +581,11 @@ class ReaderAskCompletedPayload(BaseModel):
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
+
+
+class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):
+    id: str
+    thread_id: str
 
 
 class ReaderAskStreamEnvelope(BaseModel):

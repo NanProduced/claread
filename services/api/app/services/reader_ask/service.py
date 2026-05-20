@@ -65,6 +65,7 @@ from app.schemas.reader_ask import (
     ReaderAskTaskMode,
     ReaderAskTraceSummary,
     ReaderAskToolTraceEntry,
+    ReaderAskUserVisibleOutput,
     ReaderAskVocabularyInContextCard,
 )
 from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
@@ -98,9 +99,9 @@ from app.services.dictionary.schemas import DictionaryLookupRequest
 from app.services.dictionary_ai.schemas import DictionaryAIContextExplainRequest
 from app.services.dictionary_ai.service import get_service as get_dictionary_ai_service
 from app.services.reader_ask import capabilities as capabilities_svc
+from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner
 from app.services.reader_ask import post_process as post_process_svc
-from app.services.reader_ask import prompting as prompt_layers_svc
 from app.services.reader_ask import repository as repo
 from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
@@ -345,63 +346,6 @@ def _make_tool_trace(tool_name: str, status: str, *, summary: str | None = None,
         summary=summary,
         metadata_json=metadata or {},
     )
-
-
-def _estimate_token_count(payload: dict[str, Any]) -> int:
-    serialized = json.dumps(payload, ensure_ascii=False)
-    return max((len(serialized) + 3) // 4, 1)
-
-
-def _compact_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    compact = json.loads(json.dumps(payload, ensure_ascii=False))
-    history = compact.get("history")
-    if isinstance(history, list) and len(history) > 4:
-        compact["history"] = history[-4:]
-
-    record_assets = compact.get("record_assets")
-    if isinstance(record_assets, list) and len(record_assets) > 3:
-        compact["record_assets"] = record_assets[:3]
-
-    history_assets = compact.get("history_assets")
-    if isinstance(history_assets, list) and len(history_assets) > 2:
-        compact["history_assets"] = history_assets[:2]
-
-    vocabulary_items = compact.get("vocabulary_items")
-    if isinstance(vocabulary_items, list) and len(vocabulary_items) > 3:
-        compact["vocabulary_items"] = vocabulary_items[:3]
-
-    record_insights = compact.get("record_insights")
-    if isinstance(record_insights, list) and len(record_insights) > 3:
-        compact["record_insights"] = record_insights[:3]
-
-    record_context = compact.get("record_context")
-    if isinstance(record_context, dict):
-        sentence_windows = record_context.get("sentence_windows")
-        if isinstance(sentence_windows, list) and len(sentence_windows) > 3:
-            record_context["sentence_windows"] = sentence_windows[:3]
-        source_excerpt = record_context.get("source_excerpt")
-        if isinstance(source_excerpt, str) and len(source_excerpt) > 800:
-            record_context["source_excerpt"] = _truncate_text(source_excerpt, 800)
-    article_overview = compact.get("article_overview")
-    if isinstance(article_overview, str) and len(article_overview) > 400:
-        compact["article_overview"] = _truncate_text(article_overview, 400)
-    return compact
-
-
-def _prepare_prompt_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    prompt_payload = payload
-    estimated_input_tokens = _estimate_token_count(prompt_payload)
-    if estimated_input_tokens > 4500:
-        prompt_payload = _compact_prompt_payload(payload)
-        estimated_input_tokens = _estimate_token_count(prompt_payload)
-
-    weighted_budget = READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
-    weighted_remaining = max(weighted_budget - estimated_input_tokens - _PROMPT_BUDGET_BUFFER_TOKENS, 0)
-    budgeted_output_tokens = max(
-        _MIN_MAX_OUTPUT_TOKENS,
-        min(_DEFAULT_MAX_OUTPUT_TOKENS, weighted_remaining // MULTIPLIER_OUTPUT if weighted_remaining else 0),
-    )
-    return prompt_payload, budgeted_output_tokens
 
 
 async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
@@ -1130,182 +1074,6 @@ def _merge_citation(citations: list[ReaderAskCitation], citation: ReaderAskCitat
     citations.append(citation)
 
 
-def _build_prompt_payload(
-    *,
-    thread: dict[str, Any],
-    record: _RecordBundle,
-    user_message: str,
-    history_messages: list[dict[str, Any]],
-    page_identity: ReaderAskPageIdentity,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    resolved_intent: ReaderAskResolvedIntent,
-    entry_action: ReaderAskEntryAction,
-    history_lookup_allowed: bool,
-    resolved_context_input: ReaderAskResolvedContextInput | None = None,
-    reference_resolution: planner.ReaderAskReferenceResolution | None = None,
-    planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None,
-) -> dict[str, Any]:
-    prompt_layers = prompt_layers_svc.load_prompt_layers()
-    history = [
-        {
-            "role": item["role"],
-            "content_md": _truncate_text(item["content_md"], _MAX_MESSAGE_TEXT),
-        }
-        for item in history_messages[-_MAX_HISTORY_MESSAGES:]
-    ]
-    anchor_payload = [
-        {
-            "anchor_type": anchor.anchor_type,
-            "label": anchor.label,
-            "sentence_id": anchor.sentence_id,
-            "selected_text": _truncate_text(_first_anchor_text(anchor), 200),
-            "note": _truncate_text(anchor.note, 180) or None,
-            "entry_type": anchor.entry_type,
-        }
-        for anchor in anchors
-    ]
-    attachment_payload = [
-        {
-            "kind": attachment.kind,
-            "subtype": attachment.subtype,
-            "label": attachment.label,
-            "selected_text": _truncate_text(attachment.selected_text, 200) or None,
-            "target_key": attachment.target_key,
-            "metadata": attachment.metadata.model_dump(mode="json"),
-        }
-        for attachment in attachments
-    ]
-    return {
-        "thread": {
-            "id": thread["id"],
-            "title": thread.get("title"),
-        },
-        "record": {
-            "record_id": str(record.record_id),
-            "title": record.title,
-            "workflow_version": record.workflow_version,
-            "schema_version": record.schema_version,
-        },
-        "page_identity": page_identity.model_dump(mode="json"),
-        "entry_action": entry_action,
-        "user_message": user_message,
-        "resolved_intent": resolved_intent,
-        "resolved_intent_label": _TASK_MODE_LABELS[resolved_intent],
-        "prompt_layers": prompt_layers,
-        "history": history,
-        "attachments": attachment_payload,
-        "anchors": anchor_payload,
-        "reference_resolution": {
-            "status": reference_resolution.status if reference_resolution else "not_needed",
-            "query": reference_resolution.query if reference_resolution else None,
-            "reason": reference_resolution.reason if reference_resolution else None,
-            "resolved_records": reference_resolution.resolved_records if reference_resolution else [],
-            "ambiguous_records": reference_resolution.ambiguous_records if reference_resolution else [],
-        },
-        "resolved_context_input": resolved_context_input.model_dump(mode="json") if resolved_context_input else None,
-        "planning": {
-            "retrieval_needs": planning_snapshot.retrieval_needs if planning_snapshot else "none",
-            "working_set": {
-                "primary_anchor_type": planning_snapshot.working_set.primary_anchor.anchor_type
-                if planning_snapshot and planning_snapshot.working_set.primary_anchor
-                else None,
-                "local_context_window_needed": planning_snapshot.working_set.local_context_window_needed
-                if planning_snapshot
-                else bool(anchors),
-                "record_insights_needed": planning_snapshot.working_set.record_insights_needed
-                if planning_snapshot
-                else False,
-                "article_overview_needed": planning_snapshot.working_set.article_overview_needed
-                if planning_snapshot
-                else False,
-                "dictionary_needed": planning_snapshot.working_set.dictionary_needed
-                if planning_snapshot
-                else False,
-                "history_assets_allowed": planning_snapshot.working_set.history_assets_allowed
-                if planning_snapshot
-                else history_lookup_allowed,
-                "external_record_refs": planning_snapshot.working_set.external_record_refs
-                if planning_snapshot
-                else [],
-            },
-            "context_plan": planning_snapshot.context_plan.model_dump(mode="json") if planning_snapshot else None,
-            "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json") if planning_snapshot else None,
-        },
-        "history_lookup_allowed": history_lookup_allowed,
-        "tooling_contract": {
-            "call_tools_on_demand": True,
-            "history_lookup_requires_explicit_intent": history_lookup_allowed,
-            "writes_require_confirmation": True,
-            "dictionary_context_explain_available": True,
-        },
-        "response_contract": {
-            "format": "markdown",
-            "be_concise": True,
-            "article_bound": True,
-            "do_not_claim_unknown_history": True,
-            "structured_cards_available": [
-                "sentence_breakdown_card",
-                "vocabulary_in_context_card",
-                "practice_card",
-            ],
-        },
-        "intent_instructions": {
-            "explain": "优先解释这句话或这段在当前文章里的意思，回答以简洁 Markdown 为主。",
-            "breakdown": "优先拆主干、修饰和阅读顺序；需要时调用解析相关工具。",
-            "vocabulary": "优先解释词义、短语义和为什么在这里是这个意思；需要时使用词典和词典 AI。",
-            "grammar": "优先解释当前句子里的语法作用和句法关系，不要泛化成整节语法课。",
-            "practice": "优先围绕当前句子或段落生成练习，帮助用户主动复述、辨析或判断结构。",
-        }[resolved_intent],
-    }
-
-
-def _message_metadata(
-    *,
-    resolved_intent: ReaderAskResolvedIntent | None = None,
-    resolved_context: ReaderAskResolvedContextSummary | None = None,
-    context_plan: ReaderAskContextPlan | None = None,
-    resolved_context_input: ReaderAskResolvedContextInput | None = None,
-    evidence: list[ReaderAskEvidenceItem] | None = None,
-    trace_summary: ReaderAskTraceSummary | None = None,
-    disambiguation: ReaderAskDisambiguation | None = None,
-    asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
-    response_cards: list[ReaderAskResponseCard] | None = None,
-    run_info: dict[str, Any] | None = None,
-    supplement_candidates: list[dict[str, Any]] | None = None,
-    persisted_supplements: list[dict[str, Any]] | None = None,
-    run_history: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    if resolved_intent is not None:
-        metadata["resolved_intent"] = resolved_intent
-    if resolved_context is not None:
-        metadata["resolved_context"] = resolved_context.model_dump(mode="json")
-    if context_plan is not None:
-        metadata["context_plan"] = context_plan.model_dump(mode="json")
-    if resolved_context_input is not None:
-        metadata["resolved_context_input"] = resolved_context_input.model_dump(mode="json")
-    if evidence:
-        metadata["evidence"] = [item.model_dump(mode="json") for item in evidence]
-    if trace_summary is not None:
-        metadata["trace_summary"] = trace_summary.model_dump(mode="json")
-    if disambiguation is not None:
-        metadata["disambiguation"] = disambiguation.model_dump(mode="json")
-    if asset_disambiguation is not None:
-        metadata["asset_disambiguation"] = asset_disambiguation.model_dump(mode="json")
-    if response_cards:
-        metadata["response_cards"] = [card.model_dump(mode="json") for card in response_cards]
-    if run_info is not None:
-        metadata["run_info"] = run_info
-    if supplement_candidates:
-        metadata["supplement_candidates"] = supplement_candidates
-    if persisted_supplements:
-        metadata["persisted_supplements"] = persisted_supplements
-    if run_history:
-        metadata["run_history"] = run_history
-    return metadata
-
-
 def _current_turn_run_id(message_dict: dict[str, Any], run_info: ReaderAskRunInfo | None = None) -> UUID | None:
     current_turn_run_id = message_dict.get("current_turn_run_id")
     if isinstance(current_turn_run_id, str) and current_turn_run_id.strip():
@@ -1337,36 +1105,90 @@ def _build_run_info(
     }
 
 
+def _user_message_metadata(
+    *,
+    resolved_intent: ReaderAskResolvedIntent | None = None,
+    resolved_context_input: ReaderAskResolvedContextInput | None = None,
+) -> dict[str, Any]:
+    return output_contract_svc.build_user_message_metadata(
+        resolved_intent=resolved_intent,
+        resolved_context_input=resolved_context_input,
+    )
+
+
+def _assistant_message_metadata(
+    *,
+    resolved_intent: ReaderAskResolvedIntent | None = None,
+    run_info: dict[str, Any] | None = None,
+    run_history: list[dict[str, Any]] | None = None,
+    resolved_context_input: ReaderAskResolvedContextInput | None = None,
+) -> dict[str, Any]:
+    return output_contract_svc.build_assistant_message_metadata(
+        resolved_intent=resolved_intent,
+        run_info=run_info,
+        run_history=run_history,
+        resolved_context_input=resolved_context_input,
+    )
+
+
+def _build_user_visible_output(
+    *,
+    content_md: str,
+    resolved_intent: ReaderAskResolvedIntent | None,
+    citations: list[ReaderAskCitation],
+    action_proposals: list[ReaderAskActionProposal],
+    tool_trace: list[ReaderAskToolTraceEntry],
+    evidence: list[ReaderAskEvidenceItem],
+    trace_summary: ReaderAskTraceSummary | None,
+    disambiguation: ReaderAskDisambiguation | None,
+    asset_disambiguation: ReaderAskAssetDisambiguation | None,
+    response_cards: list[ReaderAskResponseCard],
+    usage_summary: dict[str, Any] | None,
+    billed_points: int,
+    resolved_context: ReaderAskResolvedContextSummary,
+    context_plan: ReaderAskContextPlan | None,
+    resolved_context_input: ReaderAskResolvedContextInput | None,
+    run_info: dict[str, Any] | ReaderAskRunInfo | None,
+    supplement_candidates: list[ReaderAskSupplementCandidate] | list[dict[str, Any]],
+    persisted_supplements: list[ReaderAskPersistedSupplement] | list[dict[str, Any]],
+) -> ReaderAskUserVisibleOutput:
+    return output_contract_svc.build_user_visible_output(
+        content_md=content_md,
+        resolved_intent=resolved_intent,
+        citations=citations,
+        action_proposals=action_proposals,
+        tool_trace=tool_trace,
+        evidence=evidence,
+        trace_summary=trace_summary,
+        disambiguation=disambiguation,
+        asset_disambiguation=asset_disambiguation,
+        response_cards=response_cards,
+        usage_summary=usage_summary,
+        billed_points=billed_points,
+        resolved_context=resolved_context,
+        context_plan=context_plan,
+        resolved_context_input=resolved_context_input,
+        run_info=run_info,
+        supplement_candidates=supplement_candidates,
+        persisted_supplements=persisted_supplements,
+    )
+
+
+def _build_completed_payload(
+    *,
+    message_id: str,
+    thread_id: str,
+    output: ReaderAskUserVisibleOutput,
+) -> ReaderAskCompletedPayload:
+    return output_contract_svc.to_completed_payload(
+        message_id=message_id,
+        thread_id=thread_id,
+        output=output,
+    )
+
+
 def _visible_output_from_message(message: ReaderAskMessage, message_dict: dict[str, Any]) -> dict[str, Any]:
-    current = message_dict.get("current_user_visible_output")
-    if isinstance(current, dict):
-        return dict(current)
-    return {
-        "id": message.id,
-        "thread_id": message.thread_id,
-        "content_md": message.content_md,
-        "resolved_intent": message.resolved_intent,
-        "citations": [item.model_dump(mode="json") for item in message.citations],
-        "action_proposals": [item.model_dump(mode="json") for item in message.action_proposals],
-        "tool_trace": [item.model_dump(mode="json") for item in message.tool_trace],
-        "evidence": [item.model_dump(mode="json") for item in message.evidence],
-        "trace_summary": message.trace_summary.model_dump(mode="json") if message.trace_summary else None,
-        "disambiguation": message.disambiguation.model_dump(mode="json") if message.disambiguation else None,
-        "asset_disambiguation": message.asset_disambiguation.model_dump(mode="json")
-        if message.asset_disambiguation
-        else None,
-        "response_cards": [item.model_dump(mode="json") for item in message.response_cards],
-        "usage_summary": None,
-        "billed_points": 0,
-        "resolved_context": message.resolved_context.model_dump(mode="json") if message.resolved_context else None,
-        "context_plan": message.context_plan.model_dump(mode="json") if message.context_plan else None,
-        "resolved_context_input": message.resolved_context_input.model_dump(mode="json")
-        if message.resolved_context_input
-        else None,
-        "run_info": message.run_info.model_dump(mode="json") if message.run_info else None,
-        "supplement_candidates": [item.model_dump(mode="json") for item in message.supplement_candidates],
-        "persisted_supplements": [item.model_dump(mode="json") for item in message.persisted_supplements],
-    }
+    return output_contract_svc.visible_output_from_message(message, message_dict)
 
 
 def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot | None) -> dict[str, Any]:
@@ -2332,7 +2154,7 @@ async def stream_thread_message(
                 status="completed",
                 content_md=body.content,
                 context_anchors=anchor_payload,
-                metadata=_message_metadata(
+                metadata=_user_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
                 ),
@@ -2350,7 +2172,7 @@ async def stream_thread_message(
                 status="completed",
                 content_md=assistant_md,
                 context_anchors=anchor_payload,
-                metadata=_message_metadata(
+                metadata=_assistant_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
                 ),
@@ -2400,9 +2222,7 @@ async def stream_thread_message(
                 planning_snapshot=planning_snapshot,
                 clarification_only=True,
             )
-            payload = ReaderAskCompletedPayload(
-                id=assistant_message["id"],
-                thread_id=str(thread_id),
+            output = _build_user_visible_output(
                 content_md=assistant_md,
                 resolved_intent=resolved_intent,
                 citations=citations,
@@ -2426,20 +2246,18 @@ async def stream_thread_message(
                 context_plan=context_plan,
                 resolved_context_input=resolved_context_input,
                 run_info=run_info,
+                supplement_candidates=[],
                 persisted_supplements=[],
             )
-            assistant_metadata = _message_metadata(
+            payload = _build_completed_payload(
+                message_id=assistant_message["id"],
+                thread_id=str(thread_id),
+                output=output,
+            )
+            assistant_metadata = _assistant_message_metadata(
                 resolved_intent=resolved_intent,
-                resolved_context=payload.resolved_context,
-                context_plan=payload.context_plan,
-                resolved_context_input=resolved_context_input,
-                evidence=evidence,
-                trace_summary=trace_summary,
-                disambiguation=disambiguation,
-                asset_disambiguation=asset_disambiguation,
-                response_cards=[],
                 run_info=run_info,
-                persisted_supplements=[],
+                resolved_context_input=resolved_context_input,
             )
             yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
             yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
@@ -2459,7 +2277,7 @@ async def stream_thread_message(
                 turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
                 status="completed",
                 resolved_intent=resolved_intent,
-                user_visible_output_json=payload.model_dump(mode="json"),
+                user_visible_output_json=output.model_dump(mode="json"),
                 completed_at=datetime.now(UTC),
             )
             await _upsert_eval_trace_record(
@@ -2520,7 +2338,7 @@ async def stream_thread_message(
             status="completed",
             content_md=body.content,
             context_anchors=anchor_payload,
-            metadata=_message_metadata(
+            metadata=_user_message_metadata(
                 resolved_intent=resolved_intent,
                 resolved_context_input=resolved_context_input,
             ),
@@ -2533,7 +2351,7 @@ async def stream_thread_message(
             status="streaming",
             content_md="",
             context_anchors=anchor_payload,
-            metadata=_message_metadata(
+            metadata=_assistant_message_metadata(
                 resolved_intent=resolved_intent,
                 resolved_context_input=resolved_context_input,
             ),
@@ -2559,10 +2377,10 @@ async def stream_thread_message(
             citations=[],
             action_proposals=[],
             tool_trace=[],
-            metadata=_message_metadata(
+            metadata=_assistant_message_metadata(
                 resolved_intent=resolved_intent,
-                resolved_context_input=resolved_context_input,
                 run_info=run_info,
+                resolved_context_input=resolved_context_input,
             ),
             usage_event_id=None,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -2691,22 +2509,24 @@ async def stream_thread_message(
             trace_summary=trace_summary,
         )
         prompt_payload = runtime_contract_svc.build_prompt_payload(
-            thread=thread,
-            record=record,
-            user_message=body.content,
-            history_messages=history_messages,
-            page_identity=body.page_identity,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            resolved_intent=resolved_intent,
-            entry_action=body.entry_action,
-            history_lookup_allowed=history_lookup_allowed,
-            resolved_context_input=resolved_context_input,
-            reference_resolution=reference_resolution,
-            planning_snapshot=planning_snapshot,
-            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
-            max_history_messages=_MAX_HISTORY_MESSAGES,
-            max_message_text=_MAX_MESSAGE_TEXT,
+            runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                thread=thread,
+                record=record,
+                user_message=body.content,
+                history_messages=history_messages,
+                page_identity=body.page_identity,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                resolved_intent=resolved_intent,
+                resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                entry_action=body.entry_action,
+                history_lookup_allowed=history_lookup_allowed,
+                resolved_context_input=resolved_context_input,
+                reference_resolution=reference_resolution,
+                planning_snapshot=planning_snapshot,
+                max_history_messages=_MAX_HISTORY_MESSAGES,
+                max_message_text=_MAX_MESSAGE_TEXT,
+            )
         )
         prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
             prompt_payload,
@@ -2930,34 +2750,7 @@ async def stream_thread_message(
             )
         )
 
-        updated = await repo.update_message(
-            message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
-            status="completed",
-            content_md=final_content_md,
-            context_anchors=anchor_payload,
-            citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
-            action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
-            tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
-            metadata=_message_metadata(
-                resolved_intent=resolved_intent,
-                resolved_context=resolved_context,
-                context_plan=context_plan,
-                resolved_context_input=resolved_context_input,
-                evidence=evidence,
-                trace_summary=trace_summary,
-                response_cards=response_cards,
-                run_info=run_info,
-                disambiguation=disambiguation,
-                asset_disambiguation=asset_disambiguation,
-                supplement_candidates=supplement_candidates,
-                persisted_supplements=[],
-            ),
-            usage_event_id=usage_event_id,
-            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-        )
-        payload = ReaderAskCompletedPayload(
-            id=updated["id"],
-            thread_id=str(thread_id),
+        output = _build_user_visible_output(
             content_md=final_content_md,
             resolved_intent=resolved_intent,
             citations=runtime_state.citations,
@@ -2974,14 +2767,35 @@ async def stream_thread_message(
             context_plan=context_plan,
             resolved_context_input=resolved_context_input,
             run_info=run_info,
-            supplement_candidates=supplement_candidates,
+            supplement_candidates=typed_supplement_candidates,
             persisted_supplements=[],
+        )
+        updated = await repo.update_message(
+            message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+            status="completed",
+            content_md=final_content_md,
+            context_anchors=anchor_payload,
+            citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
+            action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
+            tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+            metadata=_assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                run_info=run_info,
+                resolved_context_input=resolved_context_input,
+            ),
+            usage_event_id=usage_event_id,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+        )
+        payload = _build_completed_payload(
+            message_id=updated["id"],
+            thread_id=str(thread_id),
+            output=output,
         )
         await repo.update_turn_run(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             status="completed",
             resolved_intent=resolved_intent,
-            user_visible_output_json=payload.model_dump(mode="json"),
+            user_visible_output_json=output.model_dump(mode="json"),
             usage_summary_json=usage_summary,
             usage_event_id=usage_event_id,
             completed_at=datetime.now(UTC),
@@ -3026,14 +2840,10 @@ async def stream_thread_message(
                 citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
                 action_proposals=[],
                 tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
-                metadata=_message_metadata(
+                metadata=_assistant_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
-                    evidence=evidence,
-                    trace_summary=trace_summary,
                     run_info=run_info,
-                    disambiguation=disambiguation,
-                    asset_disambiguation=asset_disambiguation,
                 ),
                 usage_event_id=None,
                 current_turn_run_id=active_turn_run_id,
@@ -3293,26 +3103,16 @@ async def retry_thread_message(
                 citations=[citation.model_dump(mode="json") for citation in citations],
                 action_proposals=[],
                 tool_trace=[],
-                metadata=_message_metadata(
+                metadata=_assistant_message_metadata(
                     resolved_intent=resolved_intent,
-                    resolved_context=resolved_context,
-                    context_plan=context_plan,
-                    resolved_context_input=resolved_context_input,
-                    evidence=evidence,
-                    trace_summary=trace_summary,
-                    disambiguation=disambiguation,
-                    asset_disambiguation=asset_disambiguation,
-                    response_cards=[],
                     run_info=run_info,
                     run_history=run_history,
-                    persisted_supplements=persisted_supplements_json,
+                    resolved_context_input=resolved_context_input,
                 ),
                 usage_event_id=None,
                 current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             )
-            payload = ReaderAskCompletedPayload(
-                id=str(message_id),
-                thread_id=str(thread_id),
+            output = _build_user_visible_output(
                 content_md=assistant_md,
                 resolved_intent=resolved_intent,
                 citations=citations,
@@ -3332,11 +3132,16 @@ async def retry_thread_message(
                 supplement_candidates=[],
                 persisted_supplements=persisted_supplements_json,
             )
+            payload = _build_completed_payload(
+                message_id=str(message_id),
+                thread_id=str(thread_id),
+                output=output,
+            )
             await repo.update_turn_run(
                 turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
                 status="completed",
                 resolved_intent=resolved_intent,
-                user_visible_output_json=payload.model_dump(mode="json"),
+                user_visible_output_json=output.model_dump(mode="json"),
                 completed_at=datetime.now(UTC),
             )
             await _upsert_eval_trace_record(
@@ -3400,12 +3205,11 @@ async def retry_thread_message(
             citations=[],
             action_proposals=[],
             tool_trace=[],
-            metadata=_message_metadata(
+            metadata=_assistant_message_metadata(
                 resolved_intent=resolved_intent,
-                resolved_context_input=resolved_context_input,
                 run_info=run_info,
                 run_history=run_history,
-                persisted_supplements=persisted_supplements_json,
+                resolved_context_input=resolved_context_input,
             ),
             usage_event_id=None,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3535,22 +3339,24 @@ async def retry_thread_message(
             trace_summary=trace_summary,
         )
         prompt_payload = runtime_contract_svc.build_prompt_payload(
-            thread=thread,
-            record=record,
-            user_message=body.content,
-            history_messages=history_messages,
-            page_identity=body.page_identity,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            resolved_intent=resolved_intent,
-            entry_action=body.entry_action,
-            history_lookup_allowed=history_lookup_allowed,
-            resolved_context_input=resolved_context_input,
-            reference_resolution=reference_resolution,
-            planning_snapshot=planning_snapshot,
-            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
-            max_history_messages=_MAX_HISTORY_MESSAGES,
-            max_message_text=_MAX_MESSAGE_TEXT,
+            runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                thread=thread,
+                record=record,
+                user_message=body.content,
+                history_messages=history_messages,
+                page_identity=body.page_identity,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                resolved_intent=resolved_intent,
+                resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                entry_action=body.entry_action,
+                history_lookup_allowed=history_lookup_allowed,
+                resolved_context_input=resolved_context_input,
+                reference_resolution=reference_resolution,
+                planning_snapshot=planning_snapshot,
+                max_history_messages=_MAX_HISTORY_MESSAGES,
+                max_message_text=_MAX_MESSAGE_TEXT,
+            )
         )
         prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
             prompt_payload,
@@ -3775,35 +3581,7 @@ async def retry_thread_message(
             )
         )
 
-        await repo.update_message(
-            message_id=message_id,
-            status="completed",
-            content_md=final_content_md,
-            context_anchors=anchor_payload,
-            citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
-            action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
-            tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
-            metadata=_message_metadata(
-                resolved_intent=resolved_intent,
-                resolved_context=resolved_context,
-                context_plan=context_plan,
-                resolved_context_input=resolved_context_input,
-                evidence=evidence,
-                trace_summary=trace_summary,
-                response_cards=response_cards,
-                run_info=run_info,
-                disambiguation=disambiguation,
-                asset_disambiguation=asset_disambiguation,
-                supplement_candidates=supplement_candidates,
-                persisted_supplements=persisted_supplements_json,
-                run_history=run_history,
-            ),
-            usage_event_id=usage_event_id,
-            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-        )
-        payload = ReaderAskCompletedPayload(
-            id=str(message_id),
-            thread_id=str(thread_id),
+        output = _build_user_visible_output(
             content_md=final_content_md,
             resolved_intent=resolved_intent,
             citations=runtime_state.citations,
@@ -3820,14 +3598,36 @@ async def retry_thread_message(
             context_plan=context_plan,
             resolved_context_input=resolved_context_input,
             run_info=run_info,
-            supplement_candidates=supplement_candidates,
+            supplement_candidates=typed_supplement_candidates,
             persisted_supplements=persisted_supplements_json,
+        )
+        await repo.update_message(
+            message_id=message_id,
+            status="completed",
+            content_md=final_content_md,
+            context_anchors=anchor_payload,
+            citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
+            action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
+            tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+            metadata=_assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                run_info=run_info,
+                run_history=run_history,
+                resolved_context_input=resolved_context_input,
+            ),
+            usage_event_id=usage_event_id,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+        )
+        payload = _build_completed_payload(
+            message_id=str(message_id),
+            thread_id=str(thread_id),
+            output=output,
         )
         await repo.update_turn_run(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             status="completed",
             resolved_intent=resolved_intent,
-            user_visible_output_json=payload.model_dump(mode="json"),
+            user_visible_output_json=output.model_dump(mode="json"),
             usage_summary_json=usage_summary,
             usage_event_id=usage_event_id,
             completed_at=datetime.now(UTC),
@@ -3873,16 +3673,11 @@ async def retry_thread_message(
                 citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
                 action_proposals=[],
                 tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
-                metadata=_message_metadata(
+                metadata=_assistant_message_metadata(
                     resolved_intent=resolved_intent,
-                    resolved_context_input=resolved_context_input,
-                    evidence=evidence,
-                    trace_summary=trace_summary,
                     run_info=run_info,
-                    disambiguation=disambiguation,
-                    asset_disambiguation=asset_disambiguation,
                     run_history=run_history,
-                    persisted_supplements=persisted_supplements_json,
+                    resolved_context_input=resolved_context_input,
                 ),
                 usage_event_id=None,
                 current_turn_run_id=active_turn_run_id,
@@ -4053,20 +3848,11 @@ async def confirm_action(
             citations=[citation.model_dump(mode="json") for citation in message.citations],
             action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
             tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
-            metadata=_message_metadata(
+            metadata=_assistant_message_metadata(
                 resolved_intent=message.resolved_intent,
-                resolved_context=message.resolved_context,
-                context_plan=message.context_plan,
-                resolved_context_input=message.resolved_context_input,
-                evidence=message.evidence,
-                trace_summary=message.trace_summary,
-                disambiguation=message.disambiguation,
-                asset_disambiguation=message.asset_disambiguation,
-                response_cards=message.response_cards,
                 run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
-                supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],
-                persisted_supplements=persisted_supplements,
                 run_history=run_history,
+                resolved_context_input=message.resolved_context_input,
             ),
             usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
             current_turn_run_id=turn_run_id,
@@ -4215,20 +4001,11 @@ async def confirm_action(
         citations=[citation.model_dump(mode="json") for citation in message.citations],
         action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
         tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
-        metadata=_message_metadata(
+        metadata=_assistant_message_metadata(
             resolved_intent=message.resolved_intent,
-            resolved_context=message.resolved_context,
-            context_plan=message.context_plan,
-            resolved_context_input=message.resolved_context_input,
-            evidence=updated_evidence,
-            trace_summary=updated_trace_summary,
-            disambiguation=message.disambiguation,
-            asset_disambiguation=message.asset_disambiguation,
-            response_cards=message.response_cards,
             run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
-            supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],
-            persisted_supplements=persisted_supplements,
             run_history=run_history,
+            resolved_context_input=message.resolved_context_input,
         ),
         usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
         current_turn_run_id=turn_run_id,

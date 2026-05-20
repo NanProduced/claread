@@ -19,6 +19,7 @@ from app.schemas.reader_ask import (
 from app.services.analysis.credit_service import CreditReservation
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
 from app.services.reader_ask import capabilities as capabilities_svc
+from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner as planner_svc
 from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import resolver as resolver_svc
@@ -381,6 +382,91 @@ def test_next_run_info_prefers_current_turn_run_pointer() -> None:
     assert next_run_info["run_attempt"] == 2
     assert next_run_info["supersedes_run_id"] == "run-1"
     assert run_history == [{"turn_id": "turn-1", "run_id": "run-1", "run_attempt": 1, "supersedes_run_id": None}]
+
+
+def test_assistant_message_metadata_keeps_only_minimal_turn_run_compat_fields() -> None:
+    metadata = output_contract_svc.build_assistant_message_metadata(
+        resolved_intent="grammar",
+        run_info={"turn_id": "turn-1", "run_id": "run-2", "run_attempt": 2},
+        run_history=[{"turn_id": "turn-1", "run_id": "run-1", "run_attempt": 1, "supersedes_run_id": None}],
+        resolved_context_input=planner_svc.build_resolved_context_input(
+            page_identity=ReaderAskPageIdentity(
+                record_id="record-1",
+                title="Current",
+                available_context_capabilities=["record_context"],
+                has_article_overview=True,
+                has_sentence_entries=True,
+                has_annotations=True,
+                has_user_assets=True,
+            ),
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[],
+        ),
+    )
+
+    assert metadata["resolved_intent"] == "grammar"
+    assert metadata["run_info"]["run_id"] == "run-2"
+    assert "resolved_context_input" in metadata
+    assert "evidence" not in metadata
+    assert "trace_summary" not in metadata
+    assert "persisted_supplements" not in metadata
+
+
+def test_user_visible_output_round_trips_to_completed_payload() -> None:
+    output = output_contract_svc.build_user_visible_output(
+        content_md="解释完成。",
+        resolved_intent="explain",
+        citations=[],
+        action_proposals=[],
+        tool_trace=[],
+        evidence=[],
+        trace_summary=None,
+        disambiguation=None,
+        asset_disambiguation=None,
+        response_cards=[],
+        usage_summary={"input_tokens": 10, "output_tokens": 20},
+        billed_points=3,
+        resolved_context=planner_svc.build_resolved_context_summary(
+            record_id="record-1",
+            record_title="Current",
+            anchors=[],
+            explicit_attachment_count=0,
+            runtime_state=ReaderAskRuntimeState(source_labels={"current_record"}),
+            used_history_lookup=False,
+            citations=[],
+        ),
+        context_plan=ReaderAskContextPlan(entry_action="ask_about_this"),
+        resolved_context_input=planner_svc.build_resolved_context_input(
+            page_identity=ReaderAskPageIdentity(
+                record_id="record-1",
+                title="Current",
+                available_context_capabilities=["record_context"],
+                has_article_overview=True,
+                has_sentence_entries=True,
+                has_annotations=True,
+                has_user_assets=True,
+            ),
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[],
+        ),
+        run_info={"turn_id": "turn-1", "run_id": "run-1", "run_attempt": 1},
+        supplement_candidates=[],
+        persisted_supplements=[],
+    )
+
+    payload = output_contract_svc.to_completed_payload(
+        message_id="msg-1",
+        thread_id="thread-1",
+        output=output,
+    )
+
+    assert payload.id == "msg-1"
+    assert payload.thread_id == "thread-1"
+    assert payload.content_md == "解释完成。"
+    assert payload.billed_points == 3
+    assert payload.usage_summary == {"input_tokens": 10, "output_tokens": 20}
 
 
 def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
