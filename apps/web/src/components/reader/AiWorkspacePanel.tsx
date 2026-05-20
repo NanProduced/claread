@@ -47,10 +47,9 @@ import {
 import type {
   ReaderAskActionConfirmResponseDto,
   ReaderAskActionProposalDto,
+  ReaderAskAttachmentDto,
   ReaderAskAssetDisambiguationCandidateDto,
   ReaderAskAssetDisambiguationDto,
-  ReaderAskActionStatusDto,
-  ReaderAskAttachmentDto,
   ReaderAskCitationDto,
   ReaderAskCompletedPayloadDto,
   ReaderAskContextRecordItemDto,
@@ -66,7 +65,6 @@ import type {
   ReaderAskResolvedContextInputDto,
   ReaderAskResolvedContextSummaryDto,
   ReaderAskResponseCardDto,
-  ReaderAskResolvedIntentDto,
   ReaderAskSupplementCandidateDto,
   ReaderAskStreamEnvelopeDto,
   ReaderAskTraceSummaryDto,
@@ -97,6 +95,38 @@ type ContextRecordSearchState = {
   items: ReaderAskContextRecordItemDto[];
   loading: boolean;
   query: string;
+};
+
+type AskPanelBlockKind =
+  | "answer"
+  | "response_cards"
+  | "disambiguation"
+  | "asset_disambiguation"
+  | "action_proposals"
+  | "supplement_candidates"
+  | "persisted_supplements"
+  | "context_summary"
+  | "evidence"
+  | "trace_summary"
+  | "citations"
+  | "tool_trace";
+
+type AskPanelBlock = {
+  kind: AskPanelBlockKind;
+};
+
+type AskPanelConversationItem = {
+  id: string;
+  role: ReaderAskMessageDto["role"];
+  status: ReaderAskMessageDto["status"];
+  message: ReaderAskMessageDto;
+  blocks: AskPanelBlock[];
+};
+
+type AskComposerDockState = {
+  attachmentCount: number;
+  canSend: boolean;
+  sending: boolean;
 };
 
 function serializePageIdentity(pageIdentity: ReaderAskPageIdentity): ReaderAskPageIdentityDto {
@@ -449,7 +479,7 @@ function AttachmentChips({
         return (
         <span
           key={attachmentKey}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-hairline bg-surface/95 px-3 py-1.5 text-xs font-medium text-ink-soft shadow-[0_8px_24px_rgba(17,17,17,0.06)] backdrop-blur-sm"
+          className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-hairline/80 bg-reader-paper/84 px-3 py-1.5 text-xs font-medium text-ink-soft"
         >
           {clickable ? (
             <button
@@ -498,15 +528,15 @@ function ContextPicker({
   onAttachRelatedRecord: (item: ReaderAskContextRecordItemDto) => void;
 }) {
   return (
-    <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
+    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold text-muted">上下文选择器</p>
-          <p className="mt-1 text-[11px] leading-5 text-subtle">显式并入当前文章或你自己的另一篇文章。</p>
+          <p className="text-[11px] font-semibold text-muted">上下文</p>
+          <p className="mt-1 text-[11px] leading-5 text-subtle">显式并入当前文章或你的另一篇文章。</p>
         </div>
         <button
           type="button"
-          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-[var(--cl-radius-control-md)] border border-hairline bg-surface px-2.5 text-xs font-semibold text-ink-soft transition-colors hover:text-ink disabled:opacity-50"
+          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline bg-surface px-3 text-xs font-semibold text-ink-soft transition-colors hover:text-ink disabled:opacity-50"
           onClick={onToggle}
           disabled={disabled}
         >
@@ -519,7 +549,7 @@ function ContextPicker({
           {onAttachCurrentRecord ? (
             <button
               type="button"
-              className="focus-ring flex w-full items-center justify-between rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5 text-left text-xs transition-colors hover:border-muted hover:bg-reader-paper"
+              className="focus-ring flex w-full items-center justify-between rounded-[18px] border border-hairline/80 bg-surface px-3 py-3 text-left text-xs transition-colors hover:border-muted hover:bg-reader-paper"
               onClick={onAttachCurrentRecord}
               disabled={disabled}
             >
@@ -527,9 +557,9 @@ function ContextPicker({
               <span className="max-w-[12rem] truncate text-subtle">{recordTitle || "当前文章"}</span>
             </button>
           ) : null}
-          <div className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-3">
+          <div className="rounded-[18px] border border-hairline/80 bg-surface px-3 py-3">
             <label className="mb-2 block text-[11px] font-semibold text-muted">按标题搜索并加入我的其他文章</label>
-            <div className="flex items-center gap-2 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper px-3 py-2">
+            <div className="flex items-center gap-2 rounded-[16px] border border-hairline bg-reader-paper px-3 py-2">
               <Search className="h-3.5 w-3.5 text-muted" />
               <input
                 value={search.query}
@@ -550,7 +580,7 @@ function ContextPicker({
                   <button
                     key={item.record_id}
                     type="button"
-                    className="focus-ring flex w-full items-center justify-between rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-reader-paper px-3 py-2 text-left text-xs transition-colors hover:border-muted hover:bg-white"
+                    className="focus-ring flex w-full items-center justify-between rounded-[16px] border border-hairline bg-reader-paper px-3 py-2.5 text-left text-xs transition-colors hover:border-muted hover:bg-white"
                     onClick={() => onAttachRelatedRecord(item)}
                     disabled={disabled}
                   >
@@ -611,18 +641,6 @@ function supplementCandidateIdFromProposal(proposal: ReaderAskActionProposalDto)
   return typeof candidateId === "string" && candidateId.trim() ? candidateId : null;
 }
 
-function supplementSourceMessage(messages: ReaderAskMessageDto[]): ReaderAskMessageDto | null {
-  return (
-    [...messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === "assistant" &&
-          ((message.supplement_candidates?.length ?? 0) > 0 || (message.persisted_supplements?.length ?? 0) > 0),
-      ) ?? null
-  );
-}
-
 function pendingSupplementCandidates(message: ReaderAskMessageDto | null): ReaderAskSupplementCandidateDto[] {
   if (!message) {
     return [];
@@ -635,15 +653,44 @@ function pendingSupplementCandidates(message: ReaderAskMessageDto | null): Reade
   });
 }
 
-function collectPersistedSupplements(messages: ReaderAskMessageDto[]): ReaderAskPersistedSupplementDto[] {
-  const ordered = messages
-    .filter((message) => message.role === "assistant")
-    .flatMap((message) => message.persisted_supplements ?? []);
-  const latestById = new Map<string, ReaderAskPersistedSupplementDto>();
-  for (const item of ordered) {
-    latestById.set(item.supplement_id, item);
+function buildAssistantBlocks(message: ReaderAskMessageDto): AskPanelBlock[] {
+  const blocks: AskPanelBlock[] = [{ kind: "answer" }];
+
+  if (message.response_cards.length > 0) {
+    blocks.push({ kind: "response_cards" });
   }
-  return [...latestById.values()].filter((item) => item.lifecycle_status === "persisted");
+  if (message.disambiguation?.required) {
+    blocks.push({ kind: "disambiguation" });
+  }
+  if (message.asset_disambiguation?.required) {
+    blocks.push({ kind: "asset_disambiguation" });
+  }
+  if (message.action_proposals.length > 0) {
+    blocks.push({ kind: "action_proposals" });
+  }
+  if (
+    pendingSupplementCandidates(message).length > 0 ||
+    message.persisted_supplements.some((item) => item.lifecycle_status === "persisted")
+  ) {
+    blocks.push({ kind: "supplement_candidates" });
+  }
+  if (message.resolved_context) {
+    blocks.push({ kind: "context_summary" });
+  }
+  if (message.evidence.length > 0) {
+    blocks.push({ kind: "evidence" });
+  }
+  if (message.trace_summary) {
+    blocks.push({ kind: "trace_summary" });
+  }
+  if (message.citations.length > 0) {
+    blocks.push({ kind: "citations" });
+  }
+  if (message.tool_trace.length > 0) {
+    blocks.push({ kind: "tool_trace" });
+  }
+
+  return blocks;
 }
 
 function SupplementCandidateTray({
@@ -660,36 +707,32 @@ function SupplementCandidateTray({
   onDeletePersistedSupplement: (supplementId: string) => void;
 }) {
   if (candidates.length === 0 && persistedSupplements.length === 0 && !notice) {
-    return (
-      <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-dashed border-hairline/80 bg-reader-paper/55 px-3 py-2.5 text-[11px] text-subtle">
-        补充候选将在这里出现。
-      </div>
-    );
+    return null;
   }
 
   return (
-    <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
+    <div className="space-y-3 rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
       {notice ? (
-        <div className="mb-3 rounded-note border border-lens-blue/20 bg-lens-blue/10 px-3 py-2 text-[11px] text-lens-blue">
+        <div className="rounded-[16px] border border-lens-blue/20 bg-lens-blue/10 px-3 py-2.5 text-[11px] text-lens-blue">
           {notice}
         </div>
       ) : null}
       {candidates.length > 0 ? (
-        <div className="mb-3">
+        <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <p className="text-[11px] font-semibold text-muted">待确认补充</p>
-            <span className="text-[11px] text-subtle">在回复下方确认后固定到当前页</span>
+            <span className="text-[11px] text-subtle">确认后写入当前页</span>
           </div>
           <div className="space-y-2">
             {candidates.map((candidate) => (
               <div
                 key={candidate.candidate_id}
-                className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5"
+                className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
               >
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold text-ink">{candidate.title}</p>
                   <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
-                    candidate
+                    待确认
                   </span>
                 </div>
                 <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-muted">{candidate.content}</p>
@@ -702,19 +745,19 @@ function SupplementCandidateTray({
         <div className="space-y-2">
           <div className="mb-2 flex items-center justify-between gap-3">
             <p className="text-[11px] font-semibold text-muted">已写入当前页</p>
-            <span className="text-[11px] text-subtle">可从这里删除已写入补充</span>
+            <span className="text-[11px] text-subtle">可直接移除</span>
           </div>
           {persistedSupplements.map((item) => (
             <div
               key={item.supplement_id}
-              className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5"
+              className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-xs font-semibold text-ink">{item.title}</p>
                     <span className="rounded-pill border border-lens-blue/20 bg-lens-blue/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-lens-blue">
-                      persisted
+                      已写入
                     </span>
                   </div>
                   <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-muted">{item.content}</p>
@@ -762,14 +805,14 @@ function DisclosureSection({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="rounded-[var(--cl-radius-surface-sm)] border border-hairline/80 bg-[linear-gradient(180deg,rgba(251,249,243,0.88),rgba(255,255,255,0.96))]">
+      <div className="rounded-[18px] border border-hairline/70 bg-reader-paper/56">
         <CollapsibleTrigger asChild>
           <button
             type="button"
             className="focus-ring flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left"
           >
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-ink">{label}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</p>
               {summary ? <p className="mt-1 truncate text-[11px] leading-5 text-subtle">{summary}</p> : null}
             </div>
             <ChevronDown
@@ -781,7 +824,7 @@ function DisclosureSection({
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
-          <div className="border-t border-hairline/80 px-3.5 py-3">{children}</div>
+          <div className="border-t border-hairline/60 px-3.5 py-3">{children}</div>
         </CollapsibleContent>
       </div>
     </Collapsible>
@@ -987,7 +1030,7 @@ function DisambiguationCards({
   }
 
   return (
-    <div className="mt-3 rounded-note border border-hairline bg-reader-paper/72 px-3 py-3">
+    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
       <div className="mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">候选文章</p>
         <p className="mt-1 text-[11px] leading-5 text-muted">
@@ -998,7 +1041,7 @@ function DisambiguationCards({
         {disambiguation.candidates.map((candidate) => (
           <div
             key={candidate.record_id}
-            className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+            className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1039,7 +1082,7 @@ function AssetDisambiguationCards({
   }
 
   return (
-    <div className="mt-3 rounded-note border border-hairline bg-reader-paper/72 px-3 py-3">
+    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
       <div className="mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">候选资产</p>
         <p className="mt-1 text-[11px] leading-5 text-muted">
@@ -1050,7 +1093,7 @@ function AssetDisambiguationCards({
         {assetDisambiguation.candidates.map((candidate) => (
           <div
             key={`${candidate.asset_type}:${candidate.asset_id}`}
-            className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+            className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1306,7 +1349,7 @@ function ConfirmActionCard({
   onReject: (confirmed: boolean) => void;
 }) {
   return (
-    <div className="mt-3 rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-[linear-gradient(180deg,rgba(251,249,243,0.92),rgba(255,255,255,0.98))] px-3.5 py-3.5">
+    <div className="rounded-[18px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-ink">{proposal.label}</p>
@@ -1333,22 +1376,28 @@ function ConfirmActionCard({
 }
 
 function MessageBubble({
-  message,
+  item,
   currentRecordId,
   pageIdentity,
   pendingActionId,
+  deletingSupplementId,
+  supplementNotice,
   onConfirmAction,
+  onDeletePersistedSupplement,
   onSelectDisambiguationCandidate,
   onSelectAssetDisambiguationCandidate,
   onRetry,
   onJumpToAttachment,
   onJumpToCitation,
 }: {
-  message: ReaderAskMessageDto;
+  item: AskPanelConversationItem;
   currentRecordId: string;
   pageIdentity: ReaderAskPageIdentity;
   pendingActionId: string | null;
+  deletingSupplementId: string | null;
+  supplementNotice: string | null;
   onConfirmAction: (actionId: string, confirmed: boolean) => void;
+  onDeletePersistedSupplement: (supplementId: string) => void;
   onSelectDisambiguationCandidate: (messageId: string, candidate: ReaderAskContextRecordItemDto) => void;
   onSelectAssetDisambiguationCandidate: (
     messageId: string,
@@ -1359,9 +1408,12 @@ function MessageBubble({
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
 }) {
+  const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
   const historyAttachments = message.context_anchors.map((anchor) => askAttachmentFromAnchor(anchor, pageIdentity).attachment);
   const clarificationText = clarificationHint(message.trace_summary, message.evidence);
+  const candidateSupplements = pendingSupplementCandidates(message);
+  const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
 
   return (
     <div className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}>
@@ -1373,13 +1425,14 @@ function MessageBubble({
       <ChatMessage className={cn("w-full", isAssistant ? "items-start" : "justify-end")}>
         {isAssistant ? (
           <>
-            <Avatar className="mt-1 h-8 w-8 shrink-0 border border-hairline bg-reader-paper">
+            <Avatar className="mt-1 h-8 w-8 shrink-0 border border-hairline/80 bg-reader-paper">
               <AvatarFallback className="bg-reader-paper text-ink">
                 <Bot className="h-4 w-4" />
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0 max-w-[calc(100%-3rem)] flex-1">
               <div className="mb-2 flex items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">Claread</span>
                 {message.status === "streaming" ? (
                   <span className="inline-flex items-center gap-1 text-[11px] text-subtle">
                     <LoaderCircle className="h-3 w-3 animate-spin" />
@@ -1387,73 +1440,136 @@ function MessageBubble({
                   </span>
                 ) : null}
               </div>
-              <div className="rounded-[var(--cl-radius-surface-md)] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,247,239,0.98))] px-4 py-3.5 shadow-[0_14px_30px_rgba(17,17,17,0.05)]">
-                {clarificationText ? (
-                  <div className="mb-3 rounded-note border border-amber-200/70 bg-amber-50/80 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
-                    {clarificationText}
-                  </div>
-                ) : null}
-                <MessageContent
-                  markdown
-                  className="border-0 bg-transparent p-0 shadow-none text-[15px] leading-7 text-ink-soft prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
-                >
-                  {message.content_md || "…"}
-                </MessageContent>
-                <ResponseCards cards={message.response_cards} />
-                <DisambiguationCards
-                  disambiguation={message.disambiguation}
-                  onSelectCandidate={(candidate) => onSelectDisambiguationCandidate(message.id, candidate)}
-                />
-                <AssetDisambiguationCards
-                  assetDisambiguation={message.asset_disambiguation}
-                  onSelectCandidate={(candidate, assetDisambiguation) =>
-                    onSelectAssetDisambiguationCandidate(message.id, candidate, assetDisambiguation)
+              {message.status === "completed" ? (
+                <div className="mb-2 flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    density="compact"
+                    className="h-7 rounded-full px-2.5 text-[11px] text-muted"
+                    onClick={() => onRetry(message.id)}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    <span>重新生成</span>
+                  </Button>
+                </div>
+              ) : null}
+              <div className="space-y-3">
+                {blocks.map((block, index) => {
+                  switch (block.kind) {
+                    case "answer":
+                      return (
+                        <div
+                          key={`${message.id}-${block.kind}-${index}`}
+                          className="rounded-[24px] border border-hairline/75 bg-[rgba(255,255,255,0.94)] px-4 py-3.5 shadow-[0_18px_40px_rgba(17,17,17,0.05)]"
+                        >
+                          {clarificationText ? (
+                            <div className="mb-3 rounded-[16px] border border-amber-200/70 bg-amber-50/80 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
+                              {clarificationText}
+                            </div>
+                          ) : null}
+                          <MessageContent
+                            markdown
+                            className="border-0 bg-transparent p-0 shadow-none text-[15px] leading-7 text-ink-soft prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
+                          >
+                            {message.content_md || "…"}
+                          </MessageContent>
+                        </div>
+                      );
+                    case "response_cards":
+                      return <ResponseCards key={`${message.id}-${block.kind}-${index}`} cards={message.response_cards} />;
+                    case "disambiguation":
+                      return (
+                        <DisambiguationCards
+                          key={`${message.id}-${block.kind}-${index}`}
+                          disambiguation={message.disambiguation}
+                          onSelectCandidate={(candidate) => onSelectDisambiguationCandidate(message.id, candidate)}
+                        />
+                      );
+                    case "asset_disambiguation":
+                      return (
+                        <AssetDisambiguationCards
+                          key={`${message.id}-${block.kind}-${index}`}
+                          assetDisambiguation={message.asset_disambiguation}
+                          onSelectCandidate={(candidate, assetDisambiguation) =>
+                            onSelectAssetDisambiguationCandidate(message.id, candidate, assetDisambiguation)
+                          }
+                        />
+                      );
+                    case "action_proposals":
+                      return (
+                        <div key={`${message.id}-${block.kind}-${index}`} className="space-y-3">
+                          {message.action_proposals.map((proposal) => (
+                            <ConfirmActionCard
+                              key={proposal.id}
+                              proposal={proposal}
+                              busy={pendingActionId === proposal.id}
+                              onConfirm={(confirmed) => onConfirmAction(proposal.id, confirmed)}
+                              onReject={(confirmed) => onConfirmAction(proposal.id, confirmed)}
+                            />
+                          ))}
+                        </div>
+                      );
+                    case "supplement_candidates":
+                    case "persisted_supplements":
+                      return (
+                        <SupplementCandidateTray
+                          key={`${message.id}-supplements`}
+                          candidates={candidateSupplements}
+                          persistedSupplements={persistedSupplements}
+                          deletingSupplementId={deletingSupplementId}
+                          notice={supplementNotice}
+                          onDeletePersistedSupplement={onDeletePersistedSupplement}
+                        />
+                      );
+                    case "context_summary":
+                      return (
+                        <ContextSummaryDisclosure
+                          key={`${message.id}-${block.kind}-${index}`}
+                          summary={message.resolved_context}
+                          contextInput={message.resolved_context_input}
+                        />
+                      );
+                    case "evidence":
+                      return <EvidenceDisclosure key={`${message.id}-${block.kind}-${index}`} evidence={message.evidence} />;
+                    case "trace_summary":
+                      return (
+                        <TraceSummaryDisclosure
+                          key={`${message.id}-${block.kind}-${index}`}
+                          traceSummary={message.trace_summary}
+                        />
+                      );
+                    case "citations":
+                      return (
+                        <CitationList
+                          key={`${message.id}-${block.kind}-${index}`}
+                          citations={message.citations}
+                          currentRecordId={currentRecordId}
+                          onJumpToCitation={onJumpToCitation}
+                        />
+                      );
+                    case "tool_trace":
+                      return <ToolTraceBlock key={`${message.id}-${block.kind}-${index}`} entries={message.tool_trace} />;
+                    default:
+                      return null;
                   }
-                />
-              </div>
-              <div className="mt-3 space-y-3">
-                {message.status === "completed" ? (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      density="compact"
-                      className="h-7 rounded-full px-2.5 text-[11px] text-muted"
-                      onClick={() => onRetry(message.id)}
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      <span>重新生成</span>
-                    </Button>
-                  </div>
-                ) : null}
-                <ContextSummaryDisclosure
-                  summary={message.resolved_context}
-                  contextInput={message.resolved_context_input}
-                />
-                <EvidenceDisclosure evidence={message.evidence} />
-                <TraceSummaryDisclosure traceSummary={message.trace_summary} />
-                <CitationList
-                  citations={message.citations}
-                  currentRecordId={currentRecordId}
-                  onJumpToCitation={onJumpToCitation}
-                />
-                {message.action_proposals.map((proposal) => (
-                  <ConfirmActionCard
-                    key={proposal.id}
-                    proposal={proposal}
-                    busy={pendingActionId === proposal.id}
-                    onConfirm={(confirmed) => onConfirmAction(proposal.id, confirmed)}
-                    onReject={(confirmed) => onConfirmAction(proposal.id, confirmed)}
+                })}
+                {supplementNotice && candidateSupplements.length === 0 && persistedSupplements.length === 0 ? (
+                  <SupplementCandidateTray
+                    candidates={candidateSupplements}
+                    persistedSupplements={persistedSupplements}
+                    deletingSupplementId={deletingSupplementId}
+                    notice={supplementNotice}
+                    onDeletePersistedSupplement={onDeletePersistedSupplement}
                   />
-                ))}
-                <ToolTraceBlock entries={message.tool_trace} />
+                ) : null}
               </div>
             </div>
           </>
         ) : (
           <div className="max-w-[85%]">
-            <MessageContent className="rounded-[var(--cl-radius-surface-sm)] border-[rgba(30,31,37,0.82)] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(21,22,28,0.98))] px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_12px_28px_rgba(17,17,17,0.12)]">
+            <MessageContent className="rounded-[20px] border-[rgba(30,31,37,0.82)] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(21,22,28,0.98))] px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_12px_28px_rgba(17,17,17,0.12)]">
               {message.content_md}
             </MessageContent>
           </div>
@@ -1475,41 +1591,39 @@ function StarterState({
   onPickPrompt: (prompt: string) => void;
 }) {
   return (
-    <div className="rounded-[var(--cl-radius-surface-md)] border border-dashed border-hairline bg-reader-paper/65 px-4 py-4">
-      <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--cl-radius-control-md)] bg-surface shadow-[0_10px_24px_rgba(17,17,17,0.06)]">
+    <div className="flex min-h-[42vh] flex-col justify-end pb-6 pt-10">
+      <div className="max-w-[28rem]">
+        <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-full border border-hairline/80 bg-surface shadow-[0_16px_34px_rgba(17,17,17,0.06)]">
           <Sparkles className="h-4.5 w-4.5 text-lens-blue" />
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-ink">围绕当前文章继续追问</p>
-          <p className="mt-1 text-sm leading-6 text-muted">
-            {activeSentence?.text
-              ? "当前句焦点已就绪。你可以直接追问，也可以从下面的起手问题开始。"
-              : "从当前文章、选区或已附加的上下文开始提问。Ask Claread 会先像英语老师一样解释本文，再按需扩展。"}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {STARTER_PROMPTS.map((prompt) => (
-              <button
-                key={prompt}
-                type="button"
-                className="focus-ring rounded-pill border border-hairline bg-surface px-3 py-2 text-left text-xs font-medium text-ink-soft transition-colors hover:border-muted hover:bg-reader-paper hover:text-ink"
-                onClick={() => onPickPrompt(prompt)}
-              >
-                {prompt}
-              </button>
-            ))}
-            {onAttachRecord ? (
-              <button
-                type="button"
-                className="focus-ring rounded-pill border border-hairline bg-surface px-3 py-2 text-left text-xs font-medium text-lens-blue transition-colors hover:border-muted hover:text-ink"
-                onClick={onAttachRecord}
-              >
-                引用整篇文章
-              </button>
-            ) : null}
-          </div>
-          {recordTitle ? (
-            <p className="mt-3 truncate text-[11px] font-medium text-subtle">{recordTitle}</p>
+        <p className="text-[28px] font-semibold tracking-[-0.03em] text-ink">围绕当前文章继续问</p>
+        <p className="mt-3 text-sm leading-6 text-muted">
+          {activeSentence?.text
+            ? "当前句焦点已就绪。你可以直接追问，也可以从下面的起手问题开始。"
+            : "Ask Claread 会先解释当前文章，再按需展开到上下文、历史文章和稳定资产。"}
+        </p>
+        {recordTitle ? (
+          <p className="mt-3 truncate text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">{recordTitle}</p>
+        ) : null}
+        <div className="mt-6 flex flex-wrap gap-2">
+          {STARTER_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="focus-ring rounded-full border border-hairline/80 bg-surface px-3.5 py-2 text-left text-xs font-medium text-ink-soft transition-colors hover:border-muted hover:bg-reader-paper hover:text-ink"
+              onClick={() => onPickPrompt(prompt)}
+            >
+              {prompt}
+            </button>
+          ))}
+          {onAttachRecord ? (
+            <button
+              type="button"
+              className="focus-ring rounded-full border border-hairline/80 bg-surface px-3.5 py-2 text-left text-xs font-medium text-lens-blue transition-colors hover:border-muted hover:text-ink"
+              onClick={onAttachRecord}
+            >
+              引用整篇文章
+            </button>
           ) : null}
         </div>
       </div>
@@ -1572,6 +1686,7 @@ export function AiWorkspacePanel({
   const [pendingSupplementDeleteId, setPendingSupplementDeleteId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [supplementNotice, setSupplementNotice] = useState<string | null>(null);
+  const [supplementNoticeMessageId, setSupplementNoticeMessageId] = useState<string | null>(null);
   const [contextPickerOpen, setContextPickerOpen] = useState(false);
   const [contextSearch, setContextSearch] = useState<ContextRecordSearchState>({
     items: [],
@@ -1579,9 +1694,18 @@ export function AiWorkspacePanel({
     query: "",
   });
   const hydrationRef = useRef(0);
-  const latestSupplementMessage = supplementSourceMessage(messages);
-  const latestSupplementCandidates = pendingSupplementCandidates(latestSupplementMessage);
-  const persistedSupplements = collectPersistedSupplements(messages);
+  const conversationItems: AskPanelConversationItem[] = messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    status: message.status,
+    message,
+    blocks: message.role === "assistant" ? buildAssistantBlocks(message) : [],
+  }));
+  const composerDockState: AskComposerDockState = {
+    attachmentCount: attachments.length,
+    canSend: composer.trim().length > 0 && !sending,
+    sending,
+  };
 
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
@@ -1730,6 +1854,7 @@ export function AiWorkspacePanel({
       setThreads([toThreadSummary(detail)]);
       setComposer("");
       setSupplementNotice(null);
+      setSupplementNoticeMessageId(null);
       onClearAttachments();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "重置会话失败。");
@@ -1742,6 +1867,8 @@ export function AiWorkspacePanel({
     if (!activeThreadId) {
       return;
     }
+    const targetMessageId =
+      messages.find((message) => message.action_proposals.some((proposal) => proposal.id === actionId))?.id ?? null;
     setPendingActionId(actionId);
     setErrorMessage(null);
     try {
@@ -1790,8 +1917,10 @@ export function AiWorkspacePanel({
       );
       if (confirmed && payload.result?.persisted_supplement) {
         setSupplementNotice("已把这条 AI 补充写入当前页。");
+        setSupplementNoticeMessageId(targetMessageId);
       } else if (!confirmed) {
         setSupplementNotice("已拒绝这条补充候选。");
+        setSupplementNoticeMessageId(targetMessageId);
       }
       if (confirmed && payload.result) {
         onActionExecuted?.(payload.result);
@@ -1804,6 +1933,9 @@ export function AiWorkspacePanel({
   }
 
   async function handleDeletePersistedSupplement(supplementId: string) {
+    const targetMessageId =
+      messages.find((message) => message.persisted_supplements.some((item) => item.supplement_id === supplementId))?.id ??
+      null;
     setPendingSupplementDeleteId(supplementId);
     setErrorMessage(null);
     try {
@@ -1833,6 +1965,7 @@ export function AiWorkspacePanel({
         })),
       );
       setSupplementNotice("已从当前页移除这条 AI 补充。");
+      setSupplementNoticeMessageId(targetMessageId);
       await onSupplementDeleted?.(supplementId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "删除补充失败。");
@@ -1996,6 +2129,7 @@ export function AiWorkspacePanel({
     setSending(true);
     setErrorMessage(null);
     setSupplementNotice(null);
+    setSupplementNoticeMessageId(null);
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setThreads((current) =>
       current.map((thread) =>
@@ -2115,6 +2249,7 @@ export function AiWorkspacePanel({
     setSending(true);
     setErrorMessage(null);
     setSupplementNotice(null);
+    setSupplementNoticeMessageId(null);
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
@@ -2243,27 +2378,24 @@ export function AiWorkspacePanel({
   }
 
   return (
-    <aside className="fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[var(--cl-radius-surface-md)] border border-hairline bg-[linear-gradient(180deg,rgba(252,251,247,0.98),rgba(255,255,255,0.98))] shadow-[0_22px_64px_rgba(17,17,17,0.11)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none">
-      <div className="border-b border-hairline/90 px-5 py-4">
-        <div className="flex items-start justify-between gap-3">
+    <aside className="fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[28px] border border-hairline/85 bg-[linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] shadow-[0_26px_76px_rgba(17,17,17,0.12)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none">
+      <div className="border-b border-hairline/70 px-5 py-4">
+        <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-ink">Ask Claread</h2>
-              <span className="max-w-48 truncate rounded-pill border border-hairline bg-reader-paper px-2.5 py-1 text-[11px] font-medium text-muted">
+            <div className="flex items-center gap-2">
+              <h2 className="text-[15px] font-semibold text-ink">Ask Claread</h2>
+              <span className="max-w-48 truncate rounded-full border border-hairline/80 bg-reader-paper px-2.5 py-1 text-[11px] font-medium text-subtle">
                 {recordTitle || "当前文章"}
               </span>
             </div>
-            <p className="mt-1.5 text-[11px] leading-5 text-muted">
-              先解释本文，再按需追问词义、语法和练习。
-            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <Button
               type="button"
               variant="quiet"
               size="sm"
               density="compact"
-              className="h-9 rounded-[var(--cl-radius-control-md)] px-3 text-xs text-ink-soft"
+              className="h-8 rounded-full px-3 text-xs text-ink-soft"
               onClick={() => {
                 void handleResetConversation();
               }}
@@ -2279,14 +2411,14 @@ export function AiWorkspacePanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 px-5 py-4">
+      <div className="min-h-0 flex-1 px-5 py-5">
         {loading ? (
           <div className="flex h-full items-center justify-center">
             <LoaderCircle className="h-5 w-5 animate-spin text-lens-blue" />
           </div>
         ) : (
           <ChatContainerRoot className="min-h-0 h-full w-full">
-            <ChatContainerContent className="gap-5 pr-1">
+            <ChatContainerContent className="gap-6 pr-1">
               {messages.length === 0 ? (
                 <StarterState
                   onAttachRecord={onAttachCurrentRecord}
@@ -2299,14 +2431,19 @@ export function AiWorkspacePanel({
                   }}
                 />
               ) : null}
-              {messages.map((message) => (
+              {conversationItems.map((item) => (
                 <MessageBubble
-                  key={message.id}
-                  message={message}
+                  key={item.id}
+                  item={item}
                   currentRecordId={recordId}
                   pageIdentity={pageIdentity}
                   pendingActionId={pendingActionId}
+                  deletingSupplementId={pendingSupplementDeleteId}
+                  supplementNotice={supplementNoticeMessageId === item.id ? supplementNotice : null}
                   onConfirmAction={handleConfirmAction}
+                  onDeletePersistedSupplement={(supplementId) => {
+                    void handleDeletePersistedSupplement(supplementId);
+                  }}
                   onSelectDisambiguationCandidate={handleSelectDisambiguationCandidate}
                   onSelectAssetDisambiguationCandidate={handleSelectAssetDisambiguationCandidate}
                   onRetry={handleRetry}
@@ -2320,9 +2457,9 @@ export function AiWorkspacePanel({
         )}
       </div>
 
-      <div className="border-t border-hairline/90 bg-reader-paper/55 px-5 py-4">
+      <div className="border-t border-hairline/70 bg-[rgba(247,246,242,0.84)] px-4 py-4">
         {errorMessage ? (
-          <div className="mb-3 rounded-[var(--cl-radius-surface-sm)] border border-destructive/20 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
+          <div className="mb-3 rounded-[18px] border border-destructive/20 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
             {errorMessage}
           </div>
         ) : null}
@@ -2333,63 +2470,80 @@ export function AiWorkspacePanel({
           onSubmit={handleSend}
           isLoading={sending}
           maxHeight={220}
-          className="border-hairline bg-surface px-4 py-3"
+          className="bg-surface px-4 py-3"
         >
-          {attachments.length > 0 ? (
-            <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-[11px] font-semibold text-muted">附加上下文</p>
-                <button
-                  type="button"
-                  className="focus-ring text-[11px] font-semibold text-muted transition-colors hover:text-ink"
-                  onClick={onClearAttachments}
-                >
-                  清空
-                </button>
-              </div>
-              <AttachmentChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline/80 bg-reader-paper px-3 text-xs font-semibold text-ink-soft transition-colors hover:text-ink"
+                onClick={() => {
+                  setContextPickerOpen((current) => !current);
+                }}
+                disabled={sending}
+                aria-label="上下文"
+              >
+                <BookPlus className="h-3.5 w-3.5" />
+                <span>上下文</span>
+              </button>
+              {composerDockState.attachmentCount > 0 ? (
+                <span className="text-[11px] text-subtle">
+                  已附加 {composerDockState.attachmentCount} 项
+                </span>
+              ) : (
+                <span className="text-[11px] text-subtle">默认围绕当前文章继续问</span>
+              )}
             </div>
-          ) : null}
-          <ContextPicker
-            open={contextPickerOpen}
-            disabled={sending}
-            recordTitle={recordTitle}
-            search={contextSearch}
-            onToggle={() => {
-              setContextPickerOpen((current) => !current);
-            }}
-            onSearchChange={(value) => {
-              setContextSearch((current) => ({ ...current, query: value }));
-            }}
-            onAttachCurrentRecord={onAttachCurrentRecord}
-            onAttachRelatedRecord={handleAttachRelatedRecord}
-          />
-          <SupplementCandidateTray
-            candidates={latestSupplementCandidates}
-            persistedSupplements={persistedSupplements}
-            deletingSupplementId={pendingSupplementDeleteId}
-            notice={supplementNotice}
-            onDeletePersistedSupplement={(supplementId) => {
-              void handleDeletePersistedSupplement(supplementId);
-            }}
-          />
-
-          <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />
-          <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline/80 pt-3">
-            <p className="max-w-[18rem] text-[11px] leading-5 text-muted">
-              默认只围绕当前文章；只有问到“以前 / 之前 / 见过”时才会扩展历史资产。
-            </p>
             <PromptInputActions className="shrink-0">
               <button
                 type="button"
-                className="focus-ring inline-flex h-10 min-w-10 items-center justify-center rounded-[var(--cl-radius-control-md)] border border-[rgba(46,89,219,0.72)] bg-[linear-gradient(180deg,rgba(72,117,255,0.98),rgba(47,92,232,0.98))] px-3 text-surface shadow-[0_10px_24px_rgba(47,92,232,0.2)] disabled:opacity-40"
-                disabled={sending || composer.trim().length === 0}
+                className="focus-ring inline-flex h-10 min-w-10 items-center justify-center rounded-full border border-[rgba(46,89,219,0.72)] bg-[linear-gradient(180deg,rgba(72,117,255,0.98),rgba(47,92,232,0.98))] px-3 text-surface shadow-[0_10px_24px_rgba(47,92,232,0.2)] disabled:opacity-40"
+                disabled={!composerDockState.canSend}
                 onClick={handleSend}
                 aria-label="发送"
               >
-                {sending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {composerDockState.sending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </button>
             </PromptInputActions>
+          </div>
+          {attachments.length > 0 ? (
+            <div className="mb-3 flex items-start justify-between gap-3 rounded-[18px] border border-hairline/80 bg-reader-paper/68 px-3 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="mb-2 text-[11px] font-semibold text-muted">附加上下文</p>
+                <AttachmentChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
+              </div>
+              <button
+                type="button"
+                className="focus-ring shrink-0 text-[11px] font-semibold text-muted transition-colors hover:text-ink"
+                onClick={onClearAttachments}
+              >
+                清空
+              </button>
+            </div>
+          ) : null}
+          {contextPickerOpen ? (
+            <div className="mb-3">
+              <ContextPicker
+                open={contextPickerOpen}
+                disabled={sending}
+                recordTitle={recordTitle}
+                search={contextSearch}
+                onToggle={() => {
+                  setContextPickerOpen((current) => !current);
+                }}
+                onSearchChange={(value) => {
+                  setContextSearch((current) => ({ ...current, query: value }));
+                }}
+                onAttachCurrentRecord={onAttachCurrentRecord}
+                onAttachRelatedRecord={handleAttachRelatedRecord}
+              />
+            </div>
+          ) : null}
+          <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />
+          <div className="mt-3 border-t border-hairline/70 pt-3">
+            <p className="max-w-[22rem] text-[11px] leading-5 text-muted">
+              默认只围绕当前文章；只有问到“以前 / 之前 / 见过”时才会扩展历史资产。
+            </p>
           </div>
         </PromptInput>
       </div>
