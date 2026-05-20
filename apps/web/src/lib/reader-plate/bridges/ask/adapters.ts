@@ -635,6 +635,12 @@ export function askAttachmentFromAnchor(
           (payloadJson.source_surface as string | undefined) ?? "ask_history",
         entryAction:
           (payloadJson.entry_action as ReaderAskEntryAction | undefined) ?? undefined,
+        recordId: typeof (payloadJson.attachment_metadata as Record<string, unknown> | undefined)?.recordId === "string"
+          ? ((payloadJson.attachment_metadata as Record<string, unknown>).recordId as string)
+          : null,
+        recordTitle: typeof (payloadJson.attachment_metadata as Record<string, unknown> | undefined)?.recordTitle === "string"
+          ? ((payloadJson.attachment_metadata as Record<string, unknown>).recordTitle as string)
+          : null,
         sentenceId: anchor.sentence_id ?? null,
         paragraphId: anchor.paragraph_id ?? null,
         entryType: anchor.entry_type ?? null,

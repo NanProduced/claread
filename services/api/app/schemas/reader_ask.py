@@ -169,6 +169,8 @@ class ReaderAskAttachmentMetadata(BaseModel):
 
     source_surface: str
     entry_action: ReaderAskEntryAction | None = None
+    record_id: str | None = None
+    record_title: str | None = None
     sentence_id: str | None = None
     paragraph_id: str | None = None
     entry_id: str | None = None
@@ -277,6 +279,7 @@ class ReaderAskContextPlan(BaseModel):
     dictionary_reason: str | None = None
     external_record_context_reason: str | None = None
     structured_asset_lookup_reason: str | None = None
+    external_asset_selection_reason: str | None = None
     clarification_reason: str | None = None
     source_labels: list[str] = Field(default_factory=list)
 
@@ -299,6 +302,17 @@ class ReaderAskExternalRecordContext(BaseModel):
     reason: str | None = None
 
 
+class ReaderAskExternalAssetContext(BaseModel):
+    record_id: str
+    record_title: str | None = None
+    asset_type: Literal["analysis", "supplement"]
+    asset_id: str
+    entry_type: str | None = None
+    asset_title: str | None = None
+    content_summary: str | None = None
+    reason: str | None = None
+
+
 class ReaderAskResolvedContextInput(BaseModel):
     page_identity: ReaderAskPageIdentity
     entry_action: ReaderAskEntryAction
@@ -306,6 +320,7 @@ class ReaderAskResolvedContextInput(BaseModel):
     normalized_anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
     current_record_context: ReaderAskCurrentRecordContext | None = None
     external_record_contexts: list[ReaderAskExternalRecordContext] = Field(default_factory=list)
+    external_asset_contexts: list[ReaderAskExternalAssetContext] = Field(default_factory=list)
 
 
 class ReaderAskRunInfo(BaseModel):
@@ -329,6 +344,22 @@ class ReaderAskDisambiguation(BaseModel):
     candidates: list[ReaderAskDisambiguationCandidate] = Field(default_factory=list)
 
 
+class ReaderAskAssetDisambiguationCandidate(BaseModel):
+    asset_type: Literal["analysis", "supplement"]
+    asset_id: str
+    entry_type: str | None = None
+    title: str | None = None
+    summary: str | None = None
+
+
+class ReaderAskAssetDisambiguation(BaseModel):
+    required: bool = False
+    reason: str | None = None
+    record_id: str | None = None
+    record_title: str | None = None
+    candidates: list[ReaderAskAssetDisambiguationCandidate] = Field(default_factory=list)
+
+
 class ReaderAskTraceSummary(BaseModel):
     planner_mode: Literal[
         "direct_answer",
@@ -343,6 +374,8 @@ class ReaderAskTraceSummary(BaseModel):
     used_external_record_context: bool = False
     used_structured_asset_lookup: bool = False
     used_hitp_disambiguation: bool = False
+    used_external_asset_context: bool = False
+    used_hitp_asset_disambiguation: bool = False
     supplement_generation_used: bool = False
     supplement_persisted_count: int = 0
     supplement_deleted_count: int = 0
@@ -451,6 +484,7 @@ class ReaderAskMessage(BaseModel):
     evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
     trace_summary: ReaderAskTraceSummary | None = None
     disambiguation: ReaderAskDisambiguation | None = None
+    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     resolved_context: ReaderAskResolvedContextSummary | None = None
     context_plan: ReaderAskContextPlan | None = None
@@ -539,6 +573,7 @@ class ReaderAskCompletedPayload(BaseModel):
     evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
     trace_summary: ReaderAskTraceSummary | None = None
     disambiguation: ReaderAskDisambiguation | None = None
+    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     usage_summary: dict[str, Any] | None = None
     billed_points: int = 0

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.schemas.reader_ask import (
+    ReaderAskAssetDisambiguation,
     ReaderAskAttachment,
     ReaderAskCitation,
     ReaderAskDisambiguation,
@@ -14,7 +15,12 @@ def build_clarification_message(
     *,
     local_anchor_required: bool,
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
+    structured_asset_resolution: planner.ReaderAskStructuredAssetResolution | None = None,
 ) -> str:
+    if structured_asset_resolution and structured_asset_resolution.status == "ambiguous":
+        return structured_asset_resolution.reason or "我已经定位到那篇文章，但其中有多个稳定资产可能相关，请先选一个并入当前讨论。"
+    if structured_asset_resolution and structured_asset_resolution.status == "not_found":
+        return structured_asset_resolution.reason or "我已经定位到那篇文章，但当前没有命中可并入的稳定资产。"
     if local_anchor_required:
         return (
             "我还不能确定你说的“这里/这句”具体指哪一处。"
@@ -34,16 +40,41 @@ def build_evidence_items(
     current_record_id: str | None = None,
     current_record_title: str | None = None,
     external_record_contexts: list[dict[str, object]] | None = None,
+    external_asset_contexts: list[dict[str, object]] | None = None,
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
     disambiguation: ReaderAskDisambiguation | None = None,
+    asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
     include_clarification: bool = False,
 ) -> list[ReaderAskEvidenceItem]:
     evidence: list[ReaderAskEvidenceItem] = []
     for attachment in attachments:
-        scope = "external_record" if attachment.kind == "record_ref" and attachment.subtype == "related_record" else "current_record"
-        record_id = attachment.metadata.asset_id if scope == "external_record" else current_record_id
-        record_title = attachment.metadata.title if scope == "external_record" else current_record_title
+        attachment_record_id = attachment.metadata.record_id or attachment.metadata.asset_id
+        is_external_attachment = (
+            attachment.kind == "record_ref"
+            and attachment.subtype == "related_record"
+        ) or (
+            attachment.kind in {"analysis_ref", "supplement_ref"}
+            and isinstance(attachment_record_id, str)
+            and current_record_id is not None
+            and attachment_record_id != current_record_id
+        )
+        scope = "external_record" if is_external_attachment else "current_record"
+        record_id = attachment_record_id if scope == "external_record" else current_record_id
+        record_title = (
+            attachment.metadata.record_title
+            or attachment.metadata.title
+            if scope == "external_record"
+            else current_record_title
+        )
+        reason = "local_anchor"
+        if scope == "external_record":
+            if attachment.kind == "supplement_ref":
+                reason = "external_supplement_asset"
+            elif attachment.kind == "analysis_ref":
+                reason = "external_analysis_asset"
+            else:
+                reason = "explicit_attachment"
         evidence.append(
             ReaderAskEvidenceItem(
                 kind="attachment",
@@ -52,7 +83,7 @@ def build_evidence_items(
                 scope=scope,
                 record_id=record_id,
                 record_title=record_title,
-                reason="explicit_attachment" if scope == "external_record" else "local_anchor",
+                reason=reason,
                 target_key=attachment.target_key,
                 metadata_json={"kind": attachment.kind, "subtype": attachment.subtype},
             )
@@ -102,6 +133,33 @@ def build_evidence_items(
                 },
             )
         )
+    for item in external_asset_contexts or []:
+        record_id = str(item.get("record_id") or "")
+        asset_id = str(item.get("asset_id") or "")
+        if not record_id or not asset_id:
+            continue
+        asset_type = str(item.get("asset_type") or "analysis")
+        record_title = item.get("record_title")
+        asset_title = item.get("asset_title")
+        detail = item.get("content_summary") or "已并入外部稳定资产。"
+        evidence.append(
+            ReaderAskEvidenceItem(
+                kind="citation",
+                label=str(asset_title or asset_id),
+                detail=str(detail),
+                scope="external_record",
+                record_id=record_id,
+                record_title=str(record_title) if isinstance(record_title, str) else None,
+                source_article_title=str(record_title) if isinstance(record_title, str) else None,
+                reason="external_supplement_asset" if asset_type == "supplement" else "external_analysis_asset",
+                metadata_json={
+                    "asset_id": asset_id,
+                    "asset_type": asset_type,
+                    "entry_type": item.get("entry_type"),
+                    "context_reason": item.get("reason"),
+                },
+            )
+        )
     if reference_resolution:
         for record in reference_resolution.resolved_records:
             evidence.append(
@@ -144,6 +202,25 @@ def build_evidence_items(
                     source_article_title=candidate.title,
                     reason="disambiguation_candidate",
                     metadata_json={"updated_at": candidate.updated_at, "query": disambiguation.query},
+                )
+            )
+    if asset_disambiguation and asset_disambiguation.required:
+        for candidate in asset_disambiguation.candidates:
+            evidence.append(
+                ReaderAskEvidenceItem(
+                    kind="disambiguation_candidate",
+                    label=candidate.title or candidate.asset_id,
+                    detail=candidate.summary or "候选外部稳定资产，可加入当前讨论。",
+                    scope="external_record",
+                    record_id=asset_disambiguation.record_id,
+                    record_title=asset_disambiguation.record_title,
+                    source_article_title=asset_disambiguation.record_title,
+                    reason="asset_disambiguation_candidate",
+                    metadata_json={
+                        "asset_id": candidate.asset_id,
+                        "asset_type": candidate.asset_type,
+                        "entry_type": candidate.entry_type,
+                    },
                 )
             )
     for candidate in supplement_candidates or []:

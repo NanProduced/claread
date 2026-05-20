@@ -158,7 +158,12 @@ class TestReaderAskRoute:
                 "\"run_info\": {\"turn_id\": \"turn-1\", \"run_id\": \"run-1\", \"run_attempt\": 1}, "
                 "\"evidence\": [], \"trace_summary\": {\"planner_mode\": \"direct_answer\", "
                 "\"reference_resolution_status\": \"not_needed\", \"working_set_mode\": \"anchor_local\", \"history_lookup_allowed\": false, "
-                "\"history_lookup_used\": false, \"tool_steps\": [], \"notes\": []}}\n\n"
+                "\"history_lookup_used\": false, \"used_known_reference_resolution\": false, "
+                "\"used_external_record_context\": false, \"used_structured_asset_lookup\": false, "
+                "\"used_hitp_disambiguation\": false, \"used_external_asset_context\": false, "
+                "\"used_hitp_asset_disambiguation\": false, \"supplement_generation_used\": false, "
+                "\"supplement_persisted_count\": 0, \"supplement_deleted_count\": 0, "
+                "\"tool_steps\": [], \"notes\": []}}\n\n"
             )
 
         with patch("app.api.routes.reader_ask.ask_svc.stream_thread_message", new=fake_stream):
@@ -333,7 +338,12 @@ class TestReaderAskRoute:
                 "\"run_info\": {\"turn_id\": \"turn-1\", \"run_id\": \"run-2\", \"run_attempt\": 2}, "
                 "\"evidence\": [], \"trace_summary\": {\"planner_mode\": \"direct_answer\", "
                 "\"reference_resolution_status\": \"not_needed\", \"working_set_mode\": \"anchor_local\", \"history_lookup_allowed\": false, "
-                "\"history_lookup_used\": false, \"tool_steps\": [], \"notes\": []}}\n\n"
+                "\"history_lookup_used\": false, \"used_known_reference_resolution\": false, "
+                "\"used_external_record_context\": false, \"used_structured_asset_lookup\": false, "
+                "\"used_hitp_disambiguation\": false, \"used_external_asset_context\": false, "
+                "\"used_hitp_asset_disambiguation\": false, \"supplement_generation_used\": false, "
+                "\"supplement_persisted_count\": 0, \"supplement_deleted_count\": 0, "
+                "\"tool_steps\": [], \"notes\": []}}\n\n"
             )
 
         with patch("app.api.routes.reader_ask.ask_svc.retry_thread_message", new=fake_stream):

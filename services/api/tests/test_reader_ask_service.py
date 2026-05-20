@@ -3,6 +3,8 @@ from uuid import uuid4
 
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
+    ReaderAskAssetDisambiguation,
+    ReaderAskAssetDisambiguationCandidate,
     ReaderAskAttachment,
     ReaderAskAttachmentMetadata,
     ReaderAskAttachmentPayload,
@@ -10,6 +12,7 @@ from app.schemas.reader_ask import (
     ReaderAskDisambiguationCandidate,
     ReaderAskCurrentRecordContext,
     ReaderAskDisambiguation,
+    ReaderAskExternalAssetContext,
     ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
 )
@@ -757,6 +760,55 @@ def test_plan_request_tracks_explicit_related_record_as_external_context() -> No
     assert plan.trace_summary.working_set_mode == "explicit_external_record"
 
 
+def test_plan_request_tracks_explicit_external_analysis_asset_context() -> None:
+    attachment = ReaderAskAttachment(
+        kind="analysis_ref",
+        subtype="sentence_analysis",
+        label="Concept analysis",
+        target_key="record:00000000-0000-0000-0000-000000000002:analysis:sentence_analysis:analysis-1",
+        metadata=ReaderAskAttachmentMetadata(
+            source_surface="ask_hitp_asset_picker",
+            entry_action="ask_about_this",
+            record_id="00000000-0000-0000-0000-000000000002",
+            record_title="Climate Policy",
+            entry_id="analysis-1",
+            entry_type="sentence_analysis",
+            asset_id="analysis-1",
+            title="Concept analysis",
+        ),
+    )
+
+    plan = planner_svc.plan_request(
+        content="我之前那篇 policy 文章的分析里怎么解释这个概念？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[attachment],
+        anchors=[],
+    )
+
+    assert plan.working_set.external_asset_refs == [
+        {
+            "record_id": "00000000-0000-0000-0000-000000000002",
+            "record_title": "Climate Policy",
+            "asset_type": "analysis",
+            "asset_id": "analysis-1",
+            "entry_type": "sentence_analysis",
+            "asset_title": "Concept analysis",
+            "reason": "explicit_attachment",
+        }
+    ]
+    assert plan.context_plan.external_asset_selection_reason == "explicit_external_asset"
+    assert plan.trace_summary.used_external_asset_context is True
+
+
 def test_trace_summary_marks_external_context_limitations() -> None:
     snapshot = planner_svc.plan_request(
         content="我之前那篇 climate policy 也提过这个吗？",
@@ -804,6 +856,67 @@ def test_trace_summary_marks_external_context_limitations() -> None:
     assert trace.used_structured_asset_lookup is True
 
 
+def test_plan_request_builds_asset_disambiguation_state_for_ambiguous_external_assets() -> None:
+    record_attachment = ReaderAskAttachment(
+        kind="record_ref",
+        subtype="related_record",
+        label="Climate Policy",
+        target_key="record:record-2:record",
+        metadata=ReaderAskAttachmentMetadata(
+            source_surface="ask_context_picker",
+            entry_action="ask_about_this",
+            asset_id="record-2",
+            title="Climate Policy",
+        ),
+    )
+
+    snapshot = planner_svc.plan_request(
+        content="我之前那篇 policy 文章的分析里怎么解释这个概念？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[record_attachment],
+        anchors=[],
+        structured_asset_resolution=planner_svc.ReaderAskStructuredAssetResolution(
+            attempted=True,
+            status="ambiguous",
+            requested_asset_type="analysis",
+            reason="外部文章里有多个分析对象可能相关，请先指定一个。",
+            record_id="record-2",
+            record_title="Climate Policy",
+            ambiguous_assets=[
+                {
+                    "asset_type": "analysis",
+                    "asset_id": "analysis-1",
+                    "entry_type": "sentence_analysis",
+                    "title": "Concept analysis",
+                    "summary": "解释概念的制度语境。",
+                },
+                {
+                    "asset_type": "analysis",
+                    "asset_id": "analysis-2",
+                    "entry_type": "sentence_analysis",
+                    "title": "Counterpoint analysis",
+                    "summary": "解释反论点的对照关系。",
+                },
+            ],
+        ),
+    )
+
+    assert snapshot.clarification_only is True
+    assert snapshot.asset_disambiguation_state is not None
+    assert snapshot.asset_disambiguation_state.required is True
+    assert len(snapshot.asset_disambiguation_state.candidates) == 2
+    assert snapshot.trace_summary.used_hitp_asset_disambiguation is True
+
+
 def test_build_evidence_items_marks_external_record_scope() -> None:
     evidence = post_process_svc.build_evidence_items(
         attachments=[],
@@ -825,6 +938,61 @@ def test_build_evidence_items_marks_external_record_scope() -> None:
     assert evidence[0].scope == "external_record"
     assert evidence[0].record_title == "Climate Policy"
     assert evidence[0].reason == "structured_asset_lookup"
+
+
+def test_build_evidence_items_marks_external_asset_scope_and_asset_candidates() -> None:
+    attachment = ReaderAskAttachment(
+        kind="supplement_ref",
+        subtype="grammar_note",
+        label="AI 语法旁注",
+        target_key="record:record-2:analysis:grammar_note:supp-1",
+        metadata=ReaderAskAttachmentMetadata(
+            source_surface="ask_hitp_asset_picker",
+            entry_action="ask_about_this",
+            record_id="record-2",
+            record_title="Climate Policy",
+            asset_id="supp-1",
+            entry_type="grammar_note",
+            title="AI 语法旁注",
+        ),
+    )
+    evidence = post_process_svc.build_evidence_items(
+        attachments=[attachment],
+        citations=[],
+        current_record_id="record-1",
+        current_record_title="Current",
+        external_asset_contexts=[
+            ReaderAskExternalAssetContext(
+                record_id="record-2",
+                record_title="Climate Policy",
+                asset_type="supplement",
+                asset_id="supp-1",
+                entry_type="grammar_note",
+                asset_title="AI 语法旁注",
+                content_summary="这里总结了让步从句的作用。",
+                reason="structured_asset_resolved",
+            ).model_dump(mode="json")
+        ],
+        asset_disambiguation=ReaderAskAssetDisambiguation(
+            required=True,
+            reason="外部文章里有多个稳定资产可能相关。",
+            record_id="record-2",
+            record_title="Climate Policy",
+            candidates=[
+                ReaderAskAssetDisambiguationCandidate(
+                    asset_type="supplement",
+                    asset_id="supp-1",
+                    entry_type="grammar_note",
+                    title="AI 语法旁注",
+                    summary="这里总结了让步从句的作用。",
+                )
+            ],
+        ),
+    )
+
+    assert evidence[0].reason == "external_supplement_asset"
+    assert any(item.reason == "external_supplement_asset" and item.kind == "citation" for item in evidence)
+    assert any(item.reason == "asset_disambiguation_candidate" for item in evidence)
 
 
 def test_plan_request_uses_explicit_related_record_context() -> None:
@@ -933,3 +1101,43 @@ def test_build_evidence_items_includes_clarification_signal() -> None:
     assert len(evidence) == 2
     assert evidence[0].kind == "clarification"
     assert evidence[1].kind == "disambiguation_candidate"
+
+
+def test_build_resolved_context_input_carries_external_asset_contexts() -> None:
+    context = planner_svc.build_resolved_context_input(
+        page_identity=ReaderAskPageIdentity(
+            record_id="record-1",
+            title="Current",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        current_record_context=ReaderAskCurrentRecordContext(
+            record_id="record-1",
+            record_title="Current",
+            local_context=None,
+            record_insights=[],
+            article_overview=None,
+            source_labels=[],
+        ),
+        external_asset_contexts=[
+            ReaderAskExternalAssetContext(
+                record_id="record-2",
+                record_title="Climate Policy",
+                asset_type="analysis",
+                asset_id="analysis-1",
+                entry_type="sentence_analysis",
+                asset_title="Concept analysis",
+                content_summary="解释概念的制度语境。",
+                reason="structured_asset_resolved",
+            )
+        ],
+    )
+
+    assert len(context.external_asset_contexts) == 1
+    assert context.external_asset_contexts[0].asset_type == "analysis"

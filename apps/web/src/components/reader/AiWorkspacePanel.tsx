@@ -47,6 +47,8 @@ import {
 import type {
   ReaderAskActionConfirmResponseDto,
   ReaderAskActionProposalDto,
+  ReaderAskAssetDisambiguationCandidateDto,
+  ReaderAskAssetDisambiguationDto,
   ReaderAskActionStatusDto,
   ReaderAskAttachmentDto,
   ReaderAskCitationDto,
@@ -149,6 +151,8 @@ function serializeAttachment(attachment: ReaderAskAttachment): ReaderAskAttachme
     metadata: {
       source_surface: attachment.metadata.sourceSurface,
       entry_action: attachment.metadata.entryAction ?? null,
+      record_id: attachment.metadata.recordId ?? null,
+      record_title: attachment.metadata.recordTitle ?? null,
       sentence_id: attachment.metadata.sentenceId ?? null,
       paragraph_id: attachment.metadata.paragraphId ?? null,
       entry_id: attachment.metadata.entryId ?? null,
@@ -185,8 +189,40 @@ function buildRelatedRecordAttachment(
       pageIdentity,
       sourceSurface: "ask_context_picker",
       entryAction: "ask_about_this",
+      recordId: item.record_id,
+      recordTitle: item.title?.trim() || null,
       assetId: item.record_id,
       title: item.title?.trim() || null,
+    },
+  };
+}
+
+function buildExternalAssetAttachment(
+  pageIdentity: ReaderAskPageIdentity,
+  recordId: string,
+  recordTitle: string | null | undefined,
+  candidate: ReaderAskAssetDisambiguationCandidateDto,
+): ReaderAskAttachment {
+  const entryType = (
+    candidate.entry_type?.trim() || (candidate.asset_type === "supplement" ? "grammar_note" : "sentence_analysis")
+  ) as ReaderAskAttachment["subtype"];
+  return {
+    kind: candidate.asset_type === "supplement" ? "supplement_ref" : "analysis_ref",
+    subtype: entryType,
+    label: candidate.title?.trim() || "外部稳定资产",
+    selectedText: candidate.summary ?? undefined,
+    targetKey: `record:${recordId}:analysis:${entryType}:${candidate.asset_id}`,
+    metadata: {
+      pageIdentity,
+      sourceSurface: "ask_hitp_asset_picker",
+      entryAction: "ask_about_this",
+      recordId,
+      recordTitle: recordTitle?.trim() || null,
+      entryId: candidate.asset_id,
+      entryType,
+      assetId: candidate.asset_id,
+      title: candidate.title?.trim() || null,
+      note: candidate.summary ?? null,
     },
   };
 }
@@ -557,6 +593,9 @@ function contextSummaryChips(
   if ((contextInput?.external_record_contexts.length ?? 0) > 0) {
     chips.push(`外部文章 ${contextInput?.external_record_contexts.length}`);
   }
+  if ((contextInput?.external_asset_contexts.length ?? 0) > 0) {
+    chips.push(`外部资产 ${contextInput?.external_asset_contexts.length}`);
+  }
   return chips.length > 0 ? chips : ["当前文章"];
 }
 
@@ -763,6 +802,7 @@ function ContextSummaryDisclosure({
   const chips = contextSummaryChips(summary, contextInput);
   const currentRecordContext = contextInput?.current_record_context;
   const externalRecordContexts = contextInput?.external_record_contexts ?? [];
+  const externalAssetContexts = contextInput?.external_asset_contexts ?? [];
 
   return (
     <DisclosureSection label="使用上下文" summary={chips.join(" · ")}>
@@ -771,7 +811,7 @@ function ContextSummaryDisclosure({
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">当前文章</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {chips
-              .filter((chip) => !chip.startsWith("外部文章"))
+              .filter((chip) => !chip.startsWith("外部文章") && !chip.startsWith("外部资产"))
               .map((chip) => (
                 <span
                   key={chip}
@@ -822,6 +862,36 @@ function ContextSummaryDisclosure({
                         </span>
                       ))}
                     </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {externalAssetContexts.length > 0 ? (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">外部资产</p>
+            <div className="mt-2 space-y-2">
+              {externalAssetContexts.map((item) => (
+                <div
+                  key={`${item.record_id}:${item.asset_type}:${item.asset_id}`}
+                  className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold text-ink">
+                        {item.asset_title || item.asset_id}
+                      </p>
+                      <p className="mt-1 text-[11px] text-subtle">
+                        {(item.record_title || item.record_id)} · {item.asset_type === "supplement" ? "AI 补充" : "稳定分析"}
+                      </p>
+                    </div>
+                    <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                      {item.reason === "explicit_attachment" ? "显式加入" : "自动命中"}
+                    </span>
+                  </div>
+                  {item.content_summary ? (
+                    <p className="mt-1 text-[11px] leading-5 text-muted">{item.content_summary}</p>
                   ) : null}
                 </div>
               ))}
@@ -946,6 +1016,61 @@ function DisambiguationCards({
                 density="compact"
                 className="h-7 shrink-0 rounded-full px-2.5 text-[11px]"
                 onClick={() => onSelectCandidate(candidate)}
+              >
+                加入当前讨论
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssetDisambiguationCards({
+  assetDisambiguation,
+  onSelectCandidate,
+}: {
+  assetDisambiguation?: ReaderAskAssetDisambiguationDto | null;
+  onSelectCandidate: (candidate: ReaderAskAssetDisambiguationCandidateDto, assetDisambiguation: ReaderAskAssetDisambiguationDto) => void;
+}) {
+  if (!assetDisambiguation?.required || assetDisambiguation.candidates.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 rounded-note border border-hairline bg-reader-paper/72 px-3 py-3">
+      <div className="mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">候选资产</p>
+        <p className="mt-1 text-[11px] leading-5 text-muted">
+          {assetDisambiguation.reason || "当前外部文章里命中了多个稳定资产，请先指定要并入哪一个。"}
+        </p>
+      </div>
+      <div className="space-y-2">
+        {assetDisambiguation.candidates.map((candidate) => (
+          <div
+            key={`${candidate.asset_type}:${candidate.asset_id}`}
+            className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-ink">
+                  {candidate.title || candidate.asset_id}
+                </p>
+                <p className="mt-1 text-[11px] text-subtle">
+                  {(assetDisambiguation.record_title || "我的文章")} · {candidate.asset_type === "supplement" ? "AI 补充" : "稳定分析"}
+                </p>
+                {candidate.summary ? (
+                  <p className="mt-1 text-[11px] leading-5 text-muted">{candidate.summary}</p>
+                ) : null}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                density="compact"
+                className="h-7 shrink-0 rounded-full px-2.5 text-[11px]"
+                onClick={() => onSelectCandidate(candidate, assetDisambiguation)}
               >
                 加入当前讨论
               </Button>
@@ -1214,6 +1339,7 @@ function MessageBubble({
   pendingActionId,
   onConfirmAction,
   onSelectDisambiguationCandidate,
+  onSelectAssetDisambiguationCandidate,
   onRetry,
   onJumpToAttachment,
   onJumpToCitation,
@@ -1224,6 +1350,11 @@ function MessageBubble({
   pendingActionId: string | null;
   onConfirmAction: (actionId: string, confirmed: boolean) => void;
   onSelectDisambiguationCandidate: (messageId: string, candidate: ReaderAskContextRecordItemDto) => void;
+  onSelectAssetDisambiguationCandidate: (
+    messageId: string,
+    candidate: ReaderAskAssetDisambiguationCandidateDto,
+    assetDisambiguation: ReaderAskAssetDisambiguationDto,
+  ) => void;
   onRetry: (messageId: string) => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
@@ -1272,6 +1403,12 @@ function MessageBubble({
                 <DisambiguationCards
                   disambiguation={message.disambiguation}
                   onSelectCandidate={(candidate) => onSelectDisambiguationCandidate(message.id, candidate)}
+                />
+                <AssetDisambiguationCards
+                  assetDisambiguation={message.asset_disambiguation}
+                  onSelectCandidate={(candidate, assetDisambiguation) =>
+                    onSelectAssetDisambiguationCandidate(message.id, candidate, assetDisambiguation)
+                  }
                 />
               </div>
               <div className="mt-3 space-y-3">
@@ -1741,6 +1878,41 @@ export function AiWorkspacePanel({
     });
   }
 
+  async function handleSelectAssetDisambiguationCandidate(
+    messageId: string,
+    candidate: ReaderAskAssetDisambiguationCandidateDto,
+    assetDisambiguation: ReaderAskAssetDisambiguationDto,
+  ) {
+    if (sending || !assetDisambiguation.record_id) {
+      return;
+    }
+    const candidateAttachment = buildExternalAssetAttachment(
+      pageIdentity,
+      assetDisambiguation.record_id,
+      assetDisambiguation.record_title,
+      candidate,
+    );
+    const nextAttachments = mergeAttachments(attachments, [candidateAttachment]);
+    const assistantIndex = messages.findIndex((message) => message.id === messageId);
+    const priorUserMessage =
+      assistantIndex > 0
+        ? [...messages.slice(0, assistantIndex)].reverse().find((message) => message.role === "user")
+        : null;
+    if (!priorUserMessage?.content_md.trim()) {
+      setErrorMessage("没有找到这轮资产澄清对应的原始问题，暂时无法继续当前讨论。");
+      return;
+    }
+    if (!attachments.some((item) => askAttachmentKey(item) === askAttachmentKey(candidateAttachment))) {
+      onAppendAttachments?.([candidateAttachment]);
+    }
+    await sendMessage({
+      content: priorUserMessage.content_md,
+      attachments: nextAttachments,
+      entryAction: defaultEntryAction(nextAttachments),
+      clearComposer: false,
+    });
+  }
+
   async function sendMessage(options?: {
     content?: string;
     attachments?: ReaderAskAttachment[];
@@ -1778,6 +1950,7 @@ export function AiWorkspacePanel({
       evidence: [],
       trace_summary: null,
       disambiguation: null,
+      asset_disambiguation: null,
       response_cards: [],
       resolved_context: null,
       resolved_intent: null,
@@ -1803,6 +1976,7 @@ export function AiWorkspacePanel({
       evidence: [],
       trace_summary: null,
       disambiguation: null,
+      asset_disambiguation: null,
       response_cards: [],
       resolved_context: null,
       resolved_intent: null,
@@ -1894,6 +2068,7 @@ export function AiWorkspacePanel({
                     evidence: payload.evidence ?? [],
                     trace_summary: payload.trace_summary ?? null,
                     disambiguation: payload.disambiguation ?? null,
+                    asset_disambiguation: payload.asset_disambiguation ?? null,
                     response_cards: payload.response_cards,
                     resolved_context: payload.resolved_context,
                     context_plan: payload.context_plan ?? null,
@@ -1953,6 +2128,7 @@ export function AiWorkspacePanel({
               evidence: [],
               trace_summary: null,
               disambiguation: null,
+              asset_disambiguation: null,
               response_cards: [],
               resolved_context: null,
               context_plan: null,
@@ -2012,6 +2188,7 @@ export function AiWorkspacePanel({
                     evidence: payload.evidence ?? [],
                     trace_summary: payload.trace_summary ?? null,
                     disambiguation: payload.disambiguation ?? null,
+                    asset_disambiguation: payload.asset_disambiguation ?? null,
                     response_cards: payload.response_cards,
                     resolved_context: payload.resolved_context,
                     context_plan: payload.context_plan ?? null,
@@ -2131,6 +2308,7 @@ export function AiWorkspacePanel({
                   pendingActionId={pendingActionId}
                   onConfirmAction={handleConfirmAction}
                   onSelectDisambiguationCandidate={handleSelectDisambiguationCandidate}
+                  onSelectAssetDisambiguationCandidate={handleSelectAssetDisambiguationCandidate}
                   onRetry={handleRetry}
                   onJumpToAttachment={onJumpToAttachment}
                   onJumpToCitation={onJumpToCitation}

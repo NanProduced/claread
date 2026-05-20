@@ -41,6 +41,8 @@ export interface ReaderAskAttachmentMetadata {
   pageIdentity: ReaderAskPageIdentity;
   sourceSurface: string;
   entryAction?: ReaderAskEntryAction;
+  recordId?: string | null;
+  recordTitle?: string | null;
   markId?: string | null;
   sentenceId?: string | null;
   paragraphId?: string | null;

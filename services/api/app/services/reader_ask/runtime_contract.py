@@ -46,6 +46,9 @@ def _compact_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     history_assets = compact.get("history_assets")
     if isinstance(history_assets, list) and len(history_assets) > 2:
         compact["history_assets"] = history_assets[:2]
+    external_asset_contexts = compact.get("external_asset_contexts")
+    if isinstance(external_asset_contexts, list) and len(external_asset_contexts) > 3:
+        compact["external_asset_contexts"] = external_asset_contexts[:3]
 
     vocabulary_items = compact.get("vocabulary_items")
     if isinstance(vocabulary_items, list) and len(vocabulary_items) > 3:
@@ -195,6 +198,12 @@ def build_prompt_payload(
                 "external_record_refs": planning_snapshot.working_set.external_record_refs
                 if planning_snapshot
                 else [],
+                "external_asset_refs": planning_snapshot.working_set.external_asset_refs
+                if planning_snapshot
+                else [],
+                "external_asset_lookup_needed": planning_snapshot.working_set.external_asset_lookup_needed
+                if planning_snapshot
+                else False,
             },
             "context_plan": planning_snapshot.context_plan.model_dump(mode="json") if planning_snapshot else None,
             "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json") if planning_snapshot else None,

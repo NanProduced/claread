@@ -55,6 +55,7 @@ class ReaderAskRuntimeState:
     latest_record_excerpt_assets: list[dict[str, Any]] = field(default_factory=list)
     latest_article_overview: str | None = None
     latest_external_record_contexts: list[dict[str, Any]] = field(default_factory=list)
+    latest_external_asset_contexts: list[dict[str, Any]] = field(default_factory=list)
     latest_user_excerpt_assets: list[dict[str, Any]] = field(default_factory=list)
     latest_user_vocabulary: list[dict[str, Any]] = field(default_factory=list)
     latest_dictionary_entry: dict[str, Any] | None = None

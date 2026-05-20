@@ -121,6 +121,8 @@ export interface ReaderAskAttachmentPayloadDto {
 export interface ReaderAskAttachmentMetadataDto {
   source_surface: string;
   entry_action?: ReaderAskEntryActionDto | null;
+  record_id?: string | null;
+  record_title?: string | null;
   sentence_id?: string | null;
   paragraph_id?: string | null;
   entry_id?: string | null;
@@ -227,6 +229,7 @@ export interface ReaderAskContextPlanDto {
   dictionary_reason?: string | null;
   external_record_context_reason?: string | null;
   structured_asset_lookup_reason?: string | null;
+  external_asset_selection_reason?: string | null;
   clarification_reason?: string | null;
   source_labels: string[];
 }
@@ -249,6 +252,17 @@ export interface ReaderAskExternalRecordContextDto {
   reason?: string | null;
 }
 
+export interface ReaderAskExternalAssetContextDto {
+  record_id: string;
+  record_title?: string | null;
+  asset_type: "analysis" | "supplement";
+  asset_id: string;
+  entry_type?: string | null;
+  asset_title?: string | null;
+  content_summary?: string | null;
+  reason?: string | null;
+}
+
 export interface ReaderAskResolvedContextInputDto {
   page_identity: ReaderAskPageIdentityDto;
   entry_action: ReaderAskEntryActionDto;
@@ -256,6 +270,7 @@ export interface ReaderAskResolvedContextInputDto {
   normalized_anchors: ReaderAskAnchorRefDto[];
   current_record_context?: ReaderAskCurrentRecordContextDto | null;
   external_record_contexts: ReaderAskExternalRecordContextDto[];
+  external_asset_contexts: ReaderAskExternalAssetContextDto[];
 }
 
 export interface ReaderAskRunInfoDto {
@@ -279,6 +294,22 @@ export interface ReaderAskDisambiguationDto {
   candidates: ReaderAskDisambiguationCandidateDto[];
 }
 
+export interface ReaderAskAssetDisambiguationCandidateDto {
+  asset_type: "analysis" | "supplement";
+  asset_id: string;
+  entry_type?: string | null;
+  title?: string | null;
+  summary?: string | null;
+}
+
+export interface ReaderAskAssetDisambiguationDto {
+  required: boolean;
+  reason?: string | null;
+  record_id?: string | null;
+  record_title?: string | null;
+  candidates: ReaderAskAssetDisambiguationCandidateDto[];
+}
+
 export interface ReaderAskTraceSummaryDto {
   planner_mode:
     | "direct_answer"
@@ -292,6 +323,8 @@ export interface ReaderAskTraceSummaryDto {
   used_external_record_context: boolean;
   used_structured_asset_lookup: boolean;
   used_hitp_disambiguation: boolean;
+  used_external_asset_context: boolean;
+  used_hitp_asset_disambiguation: boolean;
   supplement_generation_used: boolean;
   supplement_persisted_count: number;
   supplement_deleted_count: number;
@@ -399,6 +432,7 @@ export interface ReaderAskMessageDto {
   evidence: ReaderAskEvidenceItemDto[];
   trace_summary?: ReaderAskTraceSummaryDto | null;
   disambiguation?: ReaderAskDisambiguationDto | null;
+  asset_disambiguation?: ReaderAskAssetDisambiguationDto | null;
   response_cards: ReaderAskResponseCardDto[];
   resolved_context?: ReaderAskResolvedContextSummaryDto | null;
   context_plan?: ReaderAskContextPlanDto | null;
@@ -465,6 +499,7 @@ export interface ReaderAskCompletedPayloadDto {
   evidence: ReaderAskEvidenceItemDto[];
   trace_summary?: ReaderAskTraceSummaryDto | null;
   disambiguation?: ReaderAskDisambiguationDto | null;
+  asset_disambiguation?: ReaderAskAssetDisambiguationDto | null;
   response_cards: ReaderAskResponseCardDto[];
   usage_summary?: Record<string, unknown> | null;
   billed_points: number;

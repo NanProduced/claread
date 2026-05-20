@@ -38,9 +38,11 @@ from app.schemas.reader_ask import (
     ReaderAskContextPlan,
     ReaderAskCurrentRecordContext,
     ReaderAskDeleteSupplementResponse,
+    ReaderAskAssetDisambiguation,
     ReaderAskDisambiguation,
     ReaderAskEvidenceItem,
     ReaderAskEntryAction,
+    ReaderAskExternalAssetContext,
     ReaderAskExternalRecordContext,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
@@ -500,6 +502,10 @@ def _external_context_has_structured_assets(items: list[dict[str, Any]] | None) 
     )
 
 
+def _external_asset_context_has_items(items: list[dict[str, Any]] | None) -> bool:
+    return bool(items and any(item.get("asset_id") for item in items))
+
+
 async def _load_external_record_contexts(
     user_id: UUID,
     *,
@@ -532,6 +538,40 @@ async def _load_external_record_contexts(
                 record_insights=list(structured_assets.get("record_insights") or []),
                 source_labels=list(structured_assets.get("source_labels") or []),
                 reason=str(structured_assets.get("reason") or "explicit_attachment"),
+            )
+        )
+    return contexts
+
+
+def _load_external_asset_contexts(
+    *,
+    current_record_id: UUID,
+    planned_external_assets: list[dict[str, str]],
+) -> list[ReaderAskExternalAssetContext]:
+    contexts: list[ReaderAskExternalAssetContext] = []
+    seen: set[tuple[str, str]] = set()
+    for item in planned_external_assets:
+        record_id = str(item.get("record_id") or "").strip()
+        asset_id = str(item.get("asset_id") or "").strip()
+        if not record_id or not asset_id:
+            continue
+        key = (record_id, asset_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        record_uuid = _parse_uuid(record_id, "external asset record id is invalid")
+        if record_uuid == current_record_id:
+            continue
+        contexts.append(
+            ReaderAskExternalAssetContext(
+                record_id=record_id,
+                record_title=str(item.get("record_title") or "") or None,
+                asset_type=str(item.get("asset_type") or "analysis"),  # type: ignore[arg-type]
+                asset_id=asset_id,
+                entry_type=str(item.get("entry_type") or "") or None,
+                asset_title=str(item.get("asset_title") or "") or None,
+                content_summary=str(item.get("content_summary") or "") or None,
+                reason=str(item.get("reason") or "structured_asset_resolved"),
             )
         )
     return contexts
@@ -578,6 +618,16 @@ async def _materialize_planned_context(
         runtime_state.source_labels.add("history_assets")
         for item in external_record_contexts:
             runtime_state.source_labels.update(item.source_labels)
+    external_asset_contexts = _load_external_asset_contexts(
+        current_record_id=record.record_id,
+        planned_external_assets=working_set.external_asset_refs,
+    )
+    if external_asset_contexts:
+        runtime_state.latest_external_asset_contexts = [
+            item.model_dump(mode="json") for item in external_asset_contexts
+        ]
+        runtime_state.used_history_lookup = True
+        runtime_state.source_labels.update({"history_assets", "external_assets"})
 
     current_record_context = ReaderAskCurrentRecordContext(
         record_id=str(record.record_id),
@@ -594,6 +644,7 @@ async def _materialize_planned_context(
         anchors=anchors,
         current_record_context=current_record_context,
         external_record_contexts=external_record_contexts,
+        external_asset_contexts=external_asset_contexts,
     )
 
 
@@ -1218,6 +1269,7 @@ def _message_metadata(
     evidence: list[ReaderAskEvidenceItem] | None = None,
     trace_summary: ReaderAskTraceSummary | None = None,
     disambiguation: ReaderAskDisambiguation | None = None,
+    asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
     response_cards: list[ReaderAskResponseCard] | None = None,
     run_info: dict[str, Any] | None = None,
     supplement_candidates: list[dict[str, Any]] | None = None,
@@ -1239,6 +1291,8 @@ def _message_metadata(
         metadata["trace_summary"] = trace_summary.model_dump(mode="json")
     if disambiguation is not None:
         metadata["disambiguation"] = disambiguation.model_dump(mode="json")
+    if asset_disambiguation is not None:
+        metadata["asset_disambiguation"] = asset_disambiguation.model_dump(mode="json")
     if response_cards:
         metadata["response_cards"] = [card.model_dump(mode="json") for card in response_cards]
     if run_info is not None:
@@ -1298,6 +1352,9 @@ def _visible_output_from_message(message: ReaderAskMessage, message_dict: dict[s
         "evidence": [item.model_dump(mode="json") for item in message.evidence],
         "trace_summary": message.trace_summary.model_dump(mode="json") if message.trace_summary else None,
         "disambiguation": message.disambiguation.model_dump(mode="json") if message.disambiguation else None,
+        "asset_disambiguation": message.asset_disambiguation.model_dump(mode="json")
+        if message.asset_disambiguation
+        else None,
         "response_cards": [item.model_dump(mode="json") for item in message.response_cards],
         "usage_summary": None,
         "billed_points": 0,
@@ -1331,6 +1388,21 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
             "resolved_records": planning_snapshot.resolved_references.resolved_records,
             "ambiguous_records": planning_snapshot.resolved_references.ambiguous_records,
         },
+        "structured_asset_needs": {
+            "requested": planning_snapshot.structured_asset_needs.requested,
+            "requested_asset_type": planning_snapshot.structured_asset_needs.requested_asset_type,
+            "reason": planning_snapshot.structured_asset_needs.reason,
+        },
+        "structured_asset_resolution": {
+            "attempted": planning_snapshot.structured_asset_resolution.attempted,
+            "status": planning_snapshot.structured_asset_resolution.status,
+            "requested_asset_type": planning_snapshot.structured_asset_resolution.requested_asset_type,
+            "reason": planning_snapshot.structured_asset_resolution.reason,
+            "record_id": planning_snapshot.structured_asset_resolution.record_id,
+            "record_title": planning_snapshot.structured_asset_resolution.record_title,
+            "resolved_assets": planning_snapshot.structured_asset_resolution.resolved_assets,
+            "ambiguous_assets": planning_snapshot.structured_asset_resolution.ambiguous_assets,
+        },
         "working_set": {
             "primary_anchor": planning_snapshot.working_set.primary_anchor.model_dump(mode="json")
             if planning_snapshot.working_set.primary_anchor
@@ -1341,11 +1413,16 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
             "dictionary_needed": planning_snapshot.working_set.dictionary_needed,
             "history_assets_allowed": planning_snapshot.working_set.history_assets_allowed,
             "external_record_refs": planning_snapshot.working_set.external_record_refs,
+            "external_asset_refs": planning_snapshot.working_set.external_asset_refs,
+            "external_asset_lookup_needed": planning_snapshot.working_set.external_asset_lookup_needed,
         },
         "context_plan": planning_snapshot.context_plan.model_dump(mode="json"),
         "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json"),
         "disambiguation_state": planning_snapshot.disambiguation_state.model_dump(mode="json")
         if planning_snapshot.disambiguation_state
+        else None,
+        "asset_disambiguation_state": planning_snapshot.asset_disambiguation_state.model_dump(mode="json")
+        if planning_snapshot.asset_disambiguation_state
         else None,
     }
 
@@ -1392,6 +1469,11 @@ def _capability_trace_json(
             if _external_context_has_structured_assets(runtime_state.latest_external_record_contexts)
             else [],
         },
+        "external_asset_context": {
+            "used": bool(runtime_state.latest_external_asset_contexts),
+            "reason": context_plan.external_asset_selection_reason if context_plan else None,
+            "source_labels": ["external_assets"] if runtime_state.latest_external_asset_contexts else [],
+        },
     }
 
 
@@ -1410,6 +1492,8 @@ def _metrics_json(
         "used_external_record_context": trace_summary.used_external_record_context if trace_summary else False,
         "used_structured_asset_lookup": trace_summary.used_structured_asset_lookup if trace_summary else False,
         "used_hitp_disambiguation": trace_summary.used_hitp_disambiguation if trace_summary else False,
+        "used_external_asset_context": trace_summary.used_external_asset_context if trace_summary else False,
+        "used_hitp_asset_disambiguation": trace_summary.used_hitp_asset_disambiguation if trace_summary else False,
         "billed_points": billed_points,
         "usage_event_id": str(usage_event_id) if usage_event_id else None,
         "prompt_version": get_prompt_version(),
@@ -1948,6 +2032,7 @@ def _build_resolved_context_input(
     anchors: list[ReaderAskAnchorRef],
     current_record_context: ReaderAskCurrentRecordContext | None = None,
     external_record_contexts: list[ReaderAskExternalRecordContext] | None = None,
+    external_asset_contexts: list[ReaderAskExternalAssetContext] | None = None,
 ) -> ReaderAskResolvedContextInput:
     return planner.build_resolved_context_input(
         page_identity=page_identity,
@@ -1956,6 +2041,7 @@ def _build_resolved_context_input(
         anchors=anchors,
         current_record_context=current_record_context,
         external_record_contexts=external_record_contexts,
+        external_asset_contexts=external_asset_contexts,
     )
 
 
@@ -2001,9 +2087,11 @@ def _build_evidence_items(
     current_record_id: str | None = None,
     current_record_title: str | None = None,
     external_record_contexts: list[dict[str, Any]] | None = None,
+    external_asset_contexts: list[dict[str, Any]] | None = None,
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
     disambiguation: ReaderAskDisambiguation | None = None,
+    asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
     include_clarification: bool = False,
 ) -> list[ReaderAskEvidenceItem]:
     return post_process_svc.build_evidence_items(
@@ -2012,9 +2100,11 @@ def _build_evidence_items(
         current_record_id=current_record_id,
         current_record_title=current_record_title,
         external_record_contexts=external_record_contexts,
+        external_asset_contexts=external_asset_contexts,
         reference_resolution=reference_resolution,
         supplement_candidates=supplement_candidates,
         disambiguation=disambiguation,
+        asset_disambiguation=asset_disambiguation,
         include_clarification=include_clarification,
     )
 
@@ -2162,6 +2252,7 @@ async def stream_thread_message(
     active_turn_run_id: UUID | None = None
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
     disambiguation: ReaderAskDisambiguation | None = None
+    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
     persisted_supplements_json: list[dict[str, Any]] = []
 
@@ -2196,7 +2287,7 @@ async def stream_thread_message(
             current_record_id=record.record_id,
             reference_needs=draft_plan.reference_needs,
         )
-        planning_snapshot = planner.plan_request(
+        pre_planning_snapshot = planner.plan_request(
             content=body.content,
             page_identity=body.page_identity,
             entry_action=body.entry_action,
@@ -2204,9 +2295,35 @@ async def stream_thread_message(
             anchors=resolved_anchors,
             reference_resolution=reference_resolution,
         )
+        async def _bundle_loader(lookup_user_id: UUID, lookup_record_id: UUID) -> dict[str, Any]:
+            bundle = await _load_record_bundle(lookup_user_id, lookup_record_id)
+            return {
+                "title": bundle.title,
+                "render_scene": bundle.render_scene,
+            }
+
+        structured_asset_resolution = await resolver_svc.resolve_structured_asset_references(
+            user_id=user_id,
+            current_record_id=record.record_id,
+            external_record_refs=pre_planning_snapshot.working_set.external_record_refs,
+            structured_asset_needs=pre_planning_snapshot.structured_asset_needs,
+            explicit_asset_refs=pre_planning_snapshot.working_set.external_asset_refs,
+            bundle_loader=_bundle_loader,
+            supplement_loader=supplements_svc.list_supplements_for_record,
+        )
+        planning_snapshot = planner.plan_request(
+            content=body.content,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            reference_resolution=reference_resolution,
+            structured_asset_resolution=structured_asset_resolution,
+        )
         resolved_intent = planning_snapshot.resolved_intent
         resolved_context_input = planning_snapshot.resolved_context_input
         disambiguation = planning_snapshot.disambiguation_state
+        asset_disambiguation = planning_snapshot.asset_disambiguation_state
         clarification_only = planning_snapshot.clarification_only
         if clarification_only:
             user_message = await repo.create_message(
@@ -2225,6 +2342,7 @@ async def stream_thread_message(
             assistant_md = post_process_svc.build_clarification_message(
                 local_anchor_required=_needs_clarification(body.content, resolved_anchors),
                 reference_resolution=reference_resolution,
+                structured_asset_resolution=planning_snapshot.structured_asset_resolution,
             )
             assistant_message = await repo.create_message(
                 thread_id=thread_id,
@@ -2273,6 +2391,7 @@ async def stream_thread_message(
                 current_record_title=record.title,
                 reference_resolution=reference_resolution,
                 disambiguation=disambiguation,
+                asset_disambiguation=asset_disambiguation,
                 include_clarification=True,
             )
             trace_summary = _build_trace_summary(
@@ -2292,6 +2411,7 @@ async def stream_thread_message(
                 evidence=evidence,
                 trace_summary=trace_summary,
                 disambiguation=disambiguation,
+                asset_disambiguation=asset_disambiguation,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -2316,6 +2436,7 @@ async def stream_thread_message(
                 evidence=evidence,
                 trace_summary=trace_summary,
                 disambiguation=disambiguation,
+                asset_disambiguation=asset_disambiguation,
                 response_cards=[],
                 run_info=run_info,
                 persisted_supplements=[],
@@ -2743,8 +2864,11 @@ async def stream_thread_message(
             current_record_id=str(record.record_id),
             current_record_title=record.title,
             external_record_contexts=runtime_state.latest_external_record_contexts,
+            external_asset_contexts=runtime_state.latest_external_asset_contexts,
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
+            disambiguation=disambiguation,
+            asset_disambiguation=asset_disambiguation,
         )
         trace_summary = trace_summary.model_copy(
             update={
@@ -2824,6 +2948,7 @@ async def stream_thread_message(
                 response_cards=response_cards,
                 run_info=run_info,
                 disambiguation=disambiguation,
+                asset_disambiguation=asset_disambiguation,
                 supplement_candidates=supplement_candidates,
                 persisted_supplements=[],
             ),
@@ -2841,6 +2966,7 @@ async def stream_thread_message(
             evidence=evidence,
             trace_summary=trace_summary,
             disambiguation=disambiguation,
+            asset_disambiguation=asset_disambiguation,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
@@ -2906,6 +3032,8 @@ async def stream_thread_message(
                     evidence=evidence,
                     trace_summary=trace_summary,
                     run_info=run_info,
+                    disambiguation=disambiguation,
+                    asset_disambiguation=asset_disambiguation,
                 ),
                 usage_event_id=None,
                 current_turn_run_id=active_turn_run_id,
@@ -2977,6 +3105,7 @@ async def retry_thread_message(
     original_user_message = ""
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
     disambiguation: ReaderAskDisambiguation | None = None
+    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
 
     try:
@@ -3047,7 +3176,7 @@ async def retry_thread_message(
             current_record_id=record.record_id,
             reference_needs=draft_plan.reference_needs,
         )
-        planning_snapshot = planner.plan_request(
+        pre_planning_snapshot = planner.plan_request(
             content=body.content,
             page_identity=body.page_identity,
             entry_action=body.entry_action,
@@ -3055,9 +3184,35 @@ async def retry_thread_message(
             anchors=resolved_anchors,
             reference_resolution=reference_resolution,
         )
+        async def _bundle_loader(lookup_user_id: UUID, lookup_record_id: UUID) -> dict[str, Any]:
+            bundle = await _load_record_bundle(lookup_user_id, lookup_record_id)
+            return {
+                "title": bundle.title,
+                "render_scene": bundle.render_scene,
+            }
+
+        structured_asset_resolution = await resolver_svc.resolve_structured_asset_references(
+            user_id=user_id,
+            current_record_id=record.record_id,
+            external_record_refs=pre_planning_snapshot.working_set.external_record_refs,
+            structured_asset_needs=pre_planning_snapshot.structured_asset_needs,
+            explicit_asset_refs=pre_planning_snapshot.working_set.external_asset_refs,
+            bundle_loader=_bundle_loader,
+            supplement_loader=supplements_svc.list_supplements_for_record,
+        )
+        planning_snapshot = planner.plan_request(
+            content=body.content,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            reference_resolution=reference_resolution,
+            structured_asset_resolution=structured_asset_resolution,
+        )
         resolved_intent = planning_snapshot.resolved_intent
         resolved_context_input = planning_snapshot.resolved_context_input
         disambiguation = planning_snapshot.disambiguation_state
+        asset_disambiguation = planning_snapshot.asset_disambiguation_state
         run_info, run_history = _next_run_info(assistant_message)
         turn_run = await repo.create_turn_run(
             message_id=message_id,
@@ -3084,6 +3239,7 @@ async def retry_thread_message(
             assistant_md = post_process_svc.build_clarification_message(
                 local_anchor_required=_needs_clarification(body.content, resolved_anchors),
                 reference_resolution=reference_resolution,
+                structured_asset_resolution=planning_snapshot.structured_asset_resolution,
             )
             citations = [
                 _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
@@ -3117,6 +3273,7 @@ async def retry_thread_message(
                 current_record_title=record.title,
                 reference_resolution=reference_resolution,
                 disambiguation=disambiguation,
+                asset_disambiguation=asset_disambiguation,
                 include_clarification=True,
             )
             trace_summary = _build_trace_summary(
@@ -3144,6 +3301,7 @@ async def retry_thread_message(
                     evidence=evidence,
                     trace_summary=trace_summary,
                     disambiguation=disambiguation,
+                    asset_disambiguation=asset_disambiguation,
                     response_cards=[],
                     run_info=run_info,
                     run_history=run_history,
@@ -3163,6 +3321,7 @@ async def retry_thread_message(
                 evidence=evidence,
                 trace_summary=trace_summary,
                 disambiguation=disambiguation,
+                asset_disambiguation=asset_disambiguation,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -3549,8 +3708,11 @@ async def retry_thread_message(
             current_record_id=str(record.record_id),
             current_record_title=record.title,
             external_record_contexts=runtime_state.latest_external_record_contexts,
+            external_asset_contexts=runtime_state.latest_external_asset_contexts,
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
+            disambiguation=disambiguation,
+            asset_disambiguation=asset_disambiguation,
         )
         trace_summary = trace_summary.model_copy(
             update={
@@ -3631,6 +3793,7 @@ async def retry_thread_message(
                 response_cards=response_cards,
                 run_info=run_info,
                 disambiguation=disambiguation,
+                asset_disambiguation=asset_disambiguation,
                 supplement_candidates=supplement_candidates,
                 persisted_supplements=persisted_supplements_json,
                 run_history=run_history,
@@ -3649,6 +3812,7 @@ async def retry_thread_message(
             evidence=evidence,
             trace_summary=trace_summary,
             disambiguation=disambiguation,
+            asset_disambiguation=asset_disambiguation,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
@@ -3715,6 +3879,8 @@ async def retry_thread_message(
                     evidence=evidence,
                     trace_summary=trace_summary,
                     run_info=run_info,
+                    disambiguation=disambiguation,
+                    asset_disambiguation=asset_disambiguation,
                     run_history=run_history,
                     persisted_supplements=persisted_supplements_json,
                 ),
@@ -3894,6 +4060,8 @@ async def confirm_action(
                 resolved_context_input=message.resolved_context_input,
                 evidence=message.evidence,
                 trace_summary=message.trace_summary,
+                disambiguation=message.disambiguation,
+                asset_disambiguation=message.asset_disambiguation,
                 response_cards=message.response_cards,
                 run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
                 supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],
@@ -4054,6 +4222,8 @@ async def confirm_action(
             resolved_context_input=message.resolved_context_input,
             evidence=updated_evidence,
             trace_summary=updated_trace_summary,
+            disambiguation=message.disambiguation,
+            asset_disambiguation=message.asset_disambiguation,
             response_cards=message.response_cards,
             run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
             supplement_candidates=[item.model_dump(mode="json") for item in message.supplement_candidates],

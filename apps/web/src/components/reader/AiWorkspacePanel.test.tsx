@@ -34,6 +34,8 @@ const completedPayload = {
     used_external_record_context: true,
     used_structured_asset_lookup: true,
     used_hitp_disambiguation: false,
+    used_external_asset_context: false,
+    used_hitp_asset_disambiguation: false,
     supplement_generation_used: false,
     supplement_persisted_count: 0,
     supplement_deleted_count: 0,
@@ -113,11 +115,13 @@ const completedPayload = {
         reason: "known_reference_resolved",
       },
     ],
+    external_asset_contexts: [],
   },
   run_info: null,
   supplement_candidates: [],
   persisted_supplements: [],
   disambiguation: null,
+  asset_disambiguation: null,
 };
 
 vi.mock("@/components/ui/message", () => ({
@@ -560,6 +564,7 @@ describe("AiWorkspacePanel", () => {
               evidence: [],
               trace_summary: null,
               disambiguation: null,
+              asset_disambiguation: null,
               response_cards: [],
               resolved_context: null,
               context_plan: null,
@@ -604,6 +609,8 @@ describe("AiWorkspacePanel", () => {
                 used_external_record_context: false,
                 used_structured_asset_lookup: false,
                 used_hitp_disambiguation: true,
+                used_external_asset_context: false,
+                used_hitp_asset_disambiguation: false,
                 supplement_generation_used: false,
                 supplement_persisted_count: 0,
                 supplement_deleted_count: 0,
@@ -625,6 +632,7 @@ describe("AiWorkspacePanel", () => {
                   },
                 ],
               },
+              asset_disambiguation: null,
               response_cards: [],
               resolved_context: null,
               context_plan: null,
@@ -764,6 +772,8 @@ describe("AiWorkspacePanel", () => {
                 used_external_record_context: false,
                 used_structured_asset_lookup: false,
                 used_hitp_disambiguation: false,
+                used_external_asset_context: false,
+                used_hitp_asset_disambiguation: false,
                 supplement_generation_used: true,
                 supplement_persisted_count: 0,
                 supplement_deleted_count: 0,
@@ -773,6 +783,7 @@ describe("AiWorkspacePanel", () => {
                 notes: [],
               },
               disambiguation: null,
+              asset_disambiguation: null,
               response_cards: [],
               resolved_context: null,
               context_plan: null,
@@ -849,5 +860,184 @@ describe("AiWorkspacePanel", () => {
     });
     expect(onSupplementDeleted).toHaveBeenCalledWith("supp-1");
     expect(screen.queryByText("已写入当前页")).toBeNull();
+  });
+
+  it("renders asset disambiguation cards and re-sends the current question after selection", async () => {
+    const onAppendAttachments = vi.fn();
+
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            {
+              id: "msg-user-1",
+              thread_id: "thread-1",
+              role: "user",
+              status: "completed",
+              content_md: "我之前那篇 policy 文章的分析里怎么解释这个概念？",
+              resolved_intent: null,
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: null,
+              disambiguation: null,
+              asset_disambiguation: null,
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+            {
+              id: "msg-assistant-1",
+              thread_id: "thread-1",
+              role: "assistant",
+              status: "completed",
+              content_md: "我已经定位到那篇文章，但其中有多个稳定资产可能相关，请先选一个并入当前讨论。",
+              resolved_intent: "explain",
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [
+                {
+                  kind: "clarification",
+                  label: "外部稳定资产需要补充",
+                  detail: "我已经定位到那篇文章，但其中有多个稳定资产可能相关，请先选一个并入当前讨论。",
+                  scope: "external_record",
+                  record_id: "record-2",
+                  record_title: "Climate Policy",
+                  source_article_title: "Climate Policy",
+                  reason: "clarification",
+                  target_key: null,
+                  metadata_json: {},
+                },
+              ],
+              trace_summary: {
+                planner_mode: "needs_local_clarification",
+                reference_resolution_status: "resolved",
+                working_set_mode: "clarification",
+                used_known_reference_resolution: true,
+                used_external_record_context: true,
+                used_structured_asset_lookup: true,
+                used_hitp_disambiguation: false,
+                used_external_asset_context: false,
+                used_hitp_asset_disambiguation: true,
+                supplement_generation_used: false,
+                supplement_persisted_count: 0,
+                supplement_deleted_count: 0,
+                history_lookup_allowed: true,
+                history_lookup_used: false,
+                tool_steps: [],
+                notes: [],
+              },
+              disambiguation: null,
+              asset_disambiguation: {
+                required: true,
+                reason: "我已经定位到那篇文章，但其中有多个稳定资产可能相关，请先选一个并入当前讨论。",
+                record_id: "record-2",
+                record_title: "Climate Policy",
+                candidates: [
+                  {
+                    asset_type: "analysis",
+                    asset_id: "analysis-1",
+                    entry_type: "sentence_analysis",
+                    title: "Concept analysis",
+                    summary: "这张分析卡解释了这个概念如何承接制度背景。",
+                  },
+                ],
+              },
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+          ],
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[]}
+        onAppendAttachments={onAppendAttachments}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("候选资产")).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "加入当前讨论" }));
+
+    await waitFor(() => {
+      expect(onAppendAttachments).toHaveBeenCalledTimes(1);
+    });
+    expect(onAppendAttachments.mock.calls[0]?.[0]).toMatchObject([
+      {
+        kind: "analysis_ref",
+        subtype: "sentence_analysis",
+        label: "Concept analysis",
+        targetKey: "record:record-2:analysis:sentence_analysis:analysis-1",
+        metadata: {
+          sourceSurface: "ask_hitp_asset_picker",
+          recordId: "record-2",
+          recordTitle: "Climate Policy",
+          assetId: "analysis-1",
+        },
+      },
+    ]);
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+      const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+      expect(body.content).toBe("我之前那篇 policy 文章的分析里怎么解释这个概念？");
+      expect(body.attachments).toMatchObject([
+        {
+          kind: "analysis_ref",
+          subtype: "sentence_analysis",
+          label: "Concept analysis",
+          target_key: "record:record-2:analysis:sentence_analysis:analysis-1",
+          metadata: {
+            record_id: "record-2",
+            record_title: "Climate Policy",
+          },
+        },
+      ]);
+    });
   });
 });

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from app.services.reader_ask import planner
@@ -112,6 +112,198 @@ def lookup_structured_record_assets(
         "reason": reason or "explicit_attachment",
         "source_labels": source_labels,
     }
+
+
+def _analysis_asset_candidates(
+    *,
+    record_id: str,
+    record_title: str | None,
+    render_scene: dict[str, Any],
+) -> list[dict[str, str]]:
+    entries_raw = render_scene.get("sentence_entries") or render_scene.get("sentenceEntries")
+    if not isinstance(entries_raw, list):
+        return []
+
+    candidates: list[dict[str, str]] = []
+    for entry in entries_raw:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("source_kind") or "").strip() == "ask_supplement":
+            continue
+        entry_type = str(entry.get("entry_type") or entry.get("entryType") or "").strip()
+        if not entry_type or entry_type == "content_summary":
+            continue
+        asset_id = str(entry.get("id") or "").strip()
+        if not asset_id:
+            continue
+        title = _truncate_text(entry.get("title") or entry.get("label") or entry_type, 60)
+        summary = _truncate_text(entry.get("content"), 180)
+        candidates.append(
+            {
+                "record_id": record_id,
+                "record_title": record_title or "",
+                "asset_type": "analysis",
+                "asset_id": asset_id,
+                "entry_type": entry_type,
+                "title": title or entry_type,
+                "summary": summary or "稳定分析对象",
+            }
+        )
+    return candidates
+
+
+def _supplement_asset_candidates(
+    *,
+    record_id: str,
+    record_title: str | None,
+    supplements: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    candidates: list[dict[str, str]] = []
+    for row in supplements:
+        asset_id = str(row.get("id") or "").strip()
+        if not asset_id:
+            continue
+        title = _truncate_text(row.get("title"), 60)
+        summary = _truncate_text(row.get("content"), 180)
+        entry_type = str(row.get("supplement_type") or row.get("entry_type") or "grammar_note")
+        candidates.append(
+            {
+                "record_id": record_id,
+                "record_title": record_title or "",
+                "asset_type": "supplement",
+                "asset_id": asset_id,
+                "entry_type": entry_type,
+                "title": title or "AI 补充",
+                "summary": summary or "AI 补充",
+            }
+        )
+    return candidates
+
+
+def _filter_asset_candidates(
+    candidates: list[dict[str, str]],
+    *,
+    requested_asset_type: Literal["analysis", "supplement"] | None,
+    explicit_asset_id: str | None = None,
+    explicit_entry_type: str | None = None,
+) -> list[dict[str, str]]:
+    filtered = list(candidates)
+    if requested_asset_type is not None:
+        filtered = [item for item in filtered if item.get("asset_type") == requested_asset_type]
+    if explicit_asset_id:
+        filtered = [item for item in filtered if item.get("asset_id") == explicit_asset_id]
+    if explicit_entry_type:
+        filtered = [item for item in filtered if item.get("entry_type") == explicit_entry_type]
+    return filtered
+
+
+async def resolve_structured_asset_references(
+    *,
+    user_id: UUID,
+    current_record_id: UUID,
+    external_record_refs: list[dict[str, str]],
+    structured_asset_needs: planner.ReaderAskStructuredAssetNeeds,
+    bundle_loader: Callable[[UUID, UUID], Awaitable[dict[str, Any]]] | None = None,
+    supplement_loader: Callable[[UUID, UUID], Awaitable[list[dict[str, Any]]]] | None = None,
+    explicit_asset_refs: list[dict[str, str]] | None = None,
+) -> planner.ReaderAskStructuredAssetResolution:
+    if not external_record_refs and not explicit_asset_refs:
+        return planner.ReaderAskStructuredAssetResolution()
+    if not structured_asset_needs.requested and not explicit_asset_refs:
+        return planner.ReaderAskStructuredAssetResolution()
+
+    if bundle_loader is None:
+        raise RuntimeError("bundle_loader is required for structured asset resolution")
+    if supplement_loader is None:
+        raise RuntimeError("supplement_loader is required for structured asset resolution")
+
+    explicit_refs = explicit_asset_refs or []
+    if explicit_refs:
+        resolved_assets: list[dict[str, str]] = []
+        for asset_ref in explicit_refs:
+            record_id = str(asset_ref.get("record_id") or "").strip()
+            if not record_id:
+                continue
+            record_uuid = UUID(record_id)
+            if record_uuid == current_record_id:
+                continue
+            bundle = await bundle_loader(user_id, record_uuid)
+            supplement_rows = await supplement_loader(user_id, record_uuid)
+            candidates = [
+                *_analysis_asset_candidates(record_id=record_id, record_title=bundle.get("title"), render_scene=bundle.get("render_scene") or {}),
+                *_supplement_asset_candidates(record_id=record_id, record_title=bundle.get("title"), supplements=supplement_rows),
+            ]
+            matches = _filter_asset_candidates(
+                candidates,
+                requested_asset_type=asset_ref.get("asset_type"),  # type: ignore[arg-type]
+                explicit_asset_id=str(asset_ref.get("asset_id") or "").strip() or None,
+                explicit_entry_type=str(asset_ref.get("entry_type") or "").strip() or None,
+            )
+            resolved_assets.extend(matches[:1])
+        return planner.ReaderAskStructuredAssetResolution(
+            attempted=bool(resolved_assets),
+            status="resolved" if resolved_assets else "not_found",
+            requested_asset_type=structured_asset_needs.requested_asset_type,
+            reason="已并入显式指定的外部稳定资产。" if resolved_assets else "没有找到显式指定的外部稳定资产。",
+            record_id=resolved_assets[0]["record_id"] if resolved_assets else None,
+            record_title=resolved_assets[0].get("record_title") if resolved_assets else None,
+            resolved_assets=resolved_assets,
+        )
+
+    if len(external_record_refs) != 1:
+        return planner.ReaderAskStructuredAssetResolution(
+            attempted=False,
+            status="not_needed",
+            requested_asset_type=structured_asset_needs.requested_asset_type,
+            reason="需要先确定唯一外部文章，再继续定位其中的稳定资产。",
+        )
+
+    target = external_record_refs[0]
+    record_id = str(target.get("record_id") or "").strip()
+    if not record_id:
+        return planner.ReaderAskStructuredAssetResolution()
+    record_uuid = UUID(record_id)
+    if record_uuid == current_record_id:
+        return planner.ReaderAskStructuredAssetResolution()
+
+    bundle = await bundle_loader(user_id, record_uuid)
+    supplement_rows = await supplement_loader(user_id, record_uuid)
+    candidates = [
+        *_analysis_asset_candidates(record_id=record_id, record_title=bundle.get("title"), render_scene=bundle.get("render_scene") or {}),
+        *_supplement_asset_candidates(record_id=record_id, record_title=bundle.get("title"), supplements=supplement_rows),
+    ]
+    matches = _filter_asset_candidates(
+        candidates,
+        requested_asset_type=structured_asset_needs.requested_asset_type,
+    )
+    if not matches:
+        return planner.ReaderAskStructuredAssetResolution(
+            attempted=True,
+            status="not_found",
+            requested_asset_type=structured_asset_needs.requested_asset_type,
+            reason="已定位到外部文章，但当前没有命中可并入的稳定资产。",
+            record_id=record_id,
+            record_title=bundle.get("title"),
+        )
+    if len(matches) > 1:
+        return planner.ReaderAskStructuredAssetResolution(
+            attempted=True,
+            status="ambiguous",
+            requested_asset_type=structured_asset_needs.requested_asset_type,
+            reason="已定位到外部文章，但命中了多个稳定资产，请先指定要并入哪一个。",
+            record_id=record_id,
+            record_title=bundle.get("title"),
+            ambiguous_assets=matches[:4],
+        )
+    return planner.ReaderAskStructuredAssetResolution(
+        attempted=True,
+        status="resolved",
+        requested_asset_type=structured_asset_needs.requested_asset_type,
+        reason="已命中外部文章里的稳定资产。",
+        record_id=record_id,
+        record_title=bundle.get("title"),
+        resolved_assets=matches,
+    )
 
 
 async def resolve_known_references(
