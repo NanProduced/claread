@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.reader_ask import router as reader_ask_router
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
+    ReaderAskContextRecordSearchResponse,
     ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
@@ -100,6 +101,22 @@ class TestReaderAskRoute:
         assert data["items"][0]["record_id"] == RECORD_ID
 
     @_mock_auth()
+    @patch("app.api.routes.reader_ask.ask_svc.list_context_records", new_callable=AsyncMock)
+    def test_list_context_records(self, mock_list_context_records, mock_auth) -> None:
+        client = create_client()
+        mock_list_context_records.return_value = ReaderAskContextRecordSearchResponse(
+            items=[{"record_id": "record-2", "title": "Climate Policy", "updated_at": "2026-05-20T00:00:00Z"}]
+        )
+
+        response = client.get(
+            f"/reader-ask/context-records?query=climate&exclude_record_id={RECORD_ID}",
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["record_id"] == "record-2"
+
+    @_mock_auth()
     @patch("app.api.routes.reader_ask.ask_svc.create_thread", new_callable=AsyncMock)
     def test_create_default_thread(self, mock_create_thread, mock_auth) -> None:
         client = create_client()
@@ -139,7 +156,7 @@ class TestReaderAskRoute:
                 "{\"content_md\": \"hello\", \"context_plan\": {}, \"resolved_context_input\": {}, "
                 "\"run_info\": {\"turn_id\": \"turn-1\", \"run_id\": \"run-1\", \"run_attempt\": 1}, "
                 "\"evidence\": [], \"trace_summary\": {\"planner_mode\": \"direct_answer\", "
-                "\"reference_resolution_status\": \"not_needed\", \"history_lookup_allowed\": false, "
+                "\"reference_resolution_status\": \"not_needed\", \"working_set_mode\": \"anchor_local\", \"history_lookup_allowed\": false, "
                 "\"history_lookup_used\": false, \"tool_steps\": [], \"notes\": []}}\n\n"
             )
 
@@ -253,7 +270,7 @@ class TestReaderAskRoute:
                 "{\"content_md\": \"retry\", \"context_plan\": {}, \"resolved_context_input\": {}, "
                 "\"run_info\": {\"turn_id\": \"turn-1\", \"run_id\": \"run-2\", \"run_attempt\": 2}, "
                 "\"evidence\": [], \"trace_summary\": {\"planner_mode\": \"direct_answer\", "
-                "\"reference_resolution_status\": \"not_needed\", \"history_lookup_allowed\": false, "
+                "\"reference_resolution_status\": \"not_needed\", \"working_set_mode\": \"anchor_local\", \"history_lookup_allowed\": false, "
                 "\"history_lookup_used\": false, \"tool_steps\": [], \"notes\": []}}\n\n"
             )
 

@@ -54,6 +54,12 @@ export type ReaderAskEvidenceKindDto =
   | "resolved_reference"
   | "supplement_candidate"
   | "clarification";
+export type ReaderAskWorkingSetModeDto =
+  | "anchor_local"
+  | "article_overview"
+  | "explicit_external_record"
+  | "known_reference"
+  | "clarification";
 
 export interface ReaderAskAnchorSegmentDto {
   paragraph_id?: string | null;
@@ -209,6 +215,8 @@ export interface ReaderAskContextPlanDto {
   record_context_reason?: string | null;
   used_record_insights: boolean;
   record_insights_reason?: string | null;
+  used_article_overview: boolean;
+  article_overview_reason?: string | null;
   used_dictionary: boolean;
   dictionary_reason?: string | null;
   source_labels: string[];
@@ -236,10 +244,21 @@ export interface ReaderAskTraceSummaryDto {
     | "known_reference_ambiguous"
     | "known_reference_not_found";
   reference_resolution_status: ReaderAskReferenceResolutionStatusDto;
+  working_set_mode: ReaderAskWorkingSetModeDto;
   history_lookup_allowed: boolean;
   history_lookup_used: boolean;
   tool_steps: string[];
   notes: string[];
+}
+
+export interface ReaderAskContextRecordItemDto {
+  record_id: string;
+  title?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ReaderAskContextRecordSearchResponseDto {
+  items: ReaderAskContextRecordItemDto[];
 }
 
 export interface ReaderAskSupplementCandidateDto {

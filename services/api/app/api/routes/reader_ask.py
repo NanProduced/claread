@@ -10,6 +10,7 @@ from app.config.settings import get_settings
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmRequest,
     ReaderAskActionConfirmResponse,
+    ReaderAskContextRecordSearchResponse,
     ReaderAskMessageStreamRequest,
     ReaderAskThreadCreateRequest,
     ReaderAskThreadDetail,
@@ -32,6 +33,23 @@ async def list_reader_ask_threads(
     record_id: str = Query(..., min_length=1),
 ) -> ReaderAskThreadListResponse:
     return await ask_svc.list_threads(UUID(current_user.user_id), record_id)
+
+
+@router.get(
+    "/context-records",
+    response_model=ReaderAskContextRecordSearchResponse,
+    summary="Ask 面板上下文文章搜索",
+)
+async def list_reader_ask_context_records(
+    current_user: AuthUserDep,
+    query: str = Query(..., min_length=1),
+    exclude_record_id: str | None = Query(default=None),
+) -> ReaderAskContextRecordSearchResponse:
+    return await ask_svc.list_context_records(
+        UUID(current_user.user_id),
+        query=query,
+        exclude_record_id=exclude_record_id,
+    )
 
 
 @router.post("/threads", response_model=ReaderAskThreadSummary, summary="创建或获取 Ask 线程")

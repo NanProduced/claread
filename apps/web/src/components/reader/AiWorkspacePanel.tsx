@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  BookPlus,
   Bot,
   ChevronDown,
   LoaderCircle,
   MessageSquare,
   RotateCcw,
+  Search,
   Send,
   Sparkles,
   X,
@@ -48,6 +50,8 @@ import type {
   ReaderAskAttachmentDto,
   ReaderAskCitationDto,
   ReaderAskCompletedPayloadDto,
+  ReaderAskContextRecordItemDto,
+  ReaderAskContextRecordSearchResponseDto,
   ReaderAskEntryActionDto,
   ReaderAskEvidenceItemDto,
   ReaderAskMessageDto,
@@ -81,6 +85,12 @@ const STARTER_PROMPTS = [
   "这段和前面的内容是什么关系？",
   "围绕这一句出一道小练习。",
 ];
+
+type ContextRecordSearchState = {
+  items: ReaderAskContextRecordItemDto[];
+  loading: boolean;
+  query: string;
+};
 
 function serializePageIdentity(pageIdentity: ReaderAskPageIdentity): ReaderAskPageIdentityDto {
   return {
@@ -155,6 +165,25 @@ function serializeAttachment(attachment: ReaderAskAttachment): ReaderAskAttachme
 function defaultEntryAction(attachments: ReaderAskAttachment[]): ReaderAskEntryActionDto {
   const fromAttachment = attachments.at(-1)?.metadata.entryAction;
   return fromAttachment ?? "ask_about_this";
+}
+
+function buildRelatedRecordAttachment(
+  pageIdentity: ReaderAskPageIdentity,
+  item: ReaderAskContextRecordItemDto,
+): ReaderAskAttachment {
+  return {
+    kind: "record_ref",
+    subtype: "related_record",
+    label: item.title?.trim() || "关联文章",
+    targetKey: `record:${item.record_id}:record`,
+    metadata: {
+      pageIdentity,
+      sourceSurface: "ask_context_picker",
+      entryAction: "ask_about_this",
+      assetId: item.record_id,
+      title: item.title?.trim() || null,
+    },
+  };
 }
 
 function toThreadSummary(detail: ReaderAskThreadDetailDto): ReaderAskThreadSummaryDto {
@@ -391,6 +420,95 @@ function AttachmentChips({
   );
 }
 
+function ContextPicker({
+  open,
+  disabled,
+  recordTitle,
+  search,
+  onToggle,
+  onSearchChange,
+  onAttachCurrentRecord,
+  onAttachRelatedRecord,
+}: {
+  open: boolean;
+  disabled?: boolean;
+  recordTitle?: string | null;
+  search: ContextRecordSearchState;
+  onToggle: () => void;
+  onSearchChange: (value: string) => void;
+  onAttachCurrentRecord?: () => void;
+  onAttachRelatedRecord: (item: ReaderAskContextRecordItemDto) => void;
+}) {
+  return (
+    <div className="mb-3 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper/72 px-3 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold text-muted">上下文选择器</p>
+          <p className="mt-1 text-[11px] leading-5 text-subtle">显式并入当前文章或你自己的另一篇文章。</p>
+        </div>
+        <button
+          type="button"
+          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-[var(--cl-radius-control-md)] border border-hairline bg-surface px-2.5 text-xs font-semibold text-ink-soft transition-colors hover:text-ink disabled:opacity-50"
+          onClick={onToggle}
+          disabled={disabled}
+        >
+          <BookPlus className="h-3.5 w-3.5" />
+          <span>{open ? "收起" : "上下文"}</span>
+        </button>
+      </div>
+      {open ? (
+        <div className="mt-3 space-y-3">
+          {onAttachCurrentRecord ? (
+            <button
+              type="button"
+              className="focus-ring flex w-full items-center justify-between rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-2.5 text-left text-xs transition-colors hover:border-muted hover:bg-reader-paper"
+              onClick={onAttachCurrentRecord}
+              disabled={disabled}
+            >
+              <span className="font-semibold text-ink-soft">引用当前文章</span>
+              <span className="max-w-[12rem] truncate text-subtle">{recordTitle || "当前文章"}</span>
+            </button>
+          ) : null}
+          <div className="rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-surface px-3 py-3">
+            <label className="mb-2 block text-[11px] font-semibold text-muted">按标题搜索并加入我的其他文章</label>
+            <div className="flex items-center gap-2 rounded-[var(--cl-radius-control-md)] border border-hairline bg-reader-paper px-3 py-2">
+              <Search className="h-3.5 w-3.5 text-muted" />
+              <input
+                value={search.query}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="输入文章标题，例如 climate policy"
+                className="min-w-0 flex-1 bg-transparent text-xs text-ink outline-none placeholder:text-subtle"
+                disabled={disabled}
+              />
+              {search.loading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted" /> : null}
+            </div>
+            {search.query.trim().length === 0 ? (
+              <p className="mt-2 text-[11px] text-subtle">只搜索你自己的文章标题，最多返回 8 条。</p>
+            ) : search.items.length === 0 ? (
+              <p className="mt-2 text-[11px] text-subtle">没有找到可加入的文章。</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {search.items.map((item) => (
+                  <button
+                    key={item.record_id}
+                    type="button"
+                    className="focus-ring flex w-full items-center justify-between rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-reader-paper px-3 py-2 text-left text-xs transition-colors hover:border-muted hover:bg-white"
+                    onClick={() => onAttachRelatedRecord(item)}
+                    disabled={disabled}
+                  >
+                    <span className="min-w-0 truncate font-medium text-ink-soft">{item.title || "Untitled"}</span>
+                    <span className="shrink-0 text-subtle">加入上下文</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function contextSummaryChips(summary?: ReaderAskResolvedContextSummaryDto | null) {
   if (!summary) {
     return [];
@@ -561,6 +679,7 @@ function TraceSummaryDisclosure({
 
   const summary = [
     traceSummary.planner_mode,
+    `working-set:${traceSummary.working_set_mode}`,
     traceSummary.reference_resolution_status !== "not_needed"
       ? `reference:${traceSummary.reference_resolution_status}`
       : null,
@@ -968,6 +1087,7 @@ export interface AiWorkspacePanelProps {
   hideLauncherInCompactLayout?: boolean;
   onRemoveAttachment: (attachmentKey: string) => void;
   onClearAttachments: () => void;
+  onAppendAttachments?: (attachments: ReaderAskAttachment[]) => void;
   onAttachCurrentRecord?: () => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
@@ -984,6 +1104,7 @@ export function AiWorkspacePanel({
   activeSentence,
   hideLauncherOnMobile = false,
   hideLauncherInCompactLayout = false,
+  onAppendAttachments,
   onAttachCurrentRecord,
   onClearAttachments,
   onJumpToAttachment,
@@ -1006,6 +1127,12 @@ export function AiWorkspacePanel({
   const [sending, setSending] = useState(false);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [contextPickerOpen, setContextPickerOpen] = useState(false);
+  const [contextSearch, setContextSearch] = useState<ContextRecordSearchState>({
+    items: [],
+    loading: false,
+    query: "",
+  });
   const hydrationRef = useRef(0);
   const latestSupplementCandidates = [...messages]
     .reverse()
@@ -1029,6 +1156,14 @@ export function AiWorkspacePanel({
     );
   }
 
+  async function fetchContextRecords(query: string) {
+    return fetchJson<ReaderAskContextRecordSearchResponseDto>(
+      `/api/web/reader-ask/context-records?query=${encodeURIComponent(query)}&excludeRecordId=${encodeURIComponent(recordId)}`,
+      undefined,
+      "上下文文章搜索失败。",
+    );
+  }
+
   async function createThread(mode: "default" | "new_chat", title: string) {
     return fetchJson<ReaderAskThreadSummaryDto>(
       "/api/web/reader-ask/threads",
@@ -1049,6 +1184,44 @@ export function AiWorkspacePanel({
       setThreads(nextThreads);
     }
   }
+
+  useEffect(() => {
+    if (!contextPickerOpen) {
+      return;
+    }
+    const normalizedQuery = contextSearch.query.trim();
+    if (!normalizedQuery) {
+      setContextSearch((current) => ({ ...current, items: [], loading: false }));
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setContextSearch((current) => ({ ...current, loading: true }));
+      void fetchContextRecords(normalizedQuery)
+        .then((payload) => {
+          if (cancelled) {
+            return;
+          }
+          setContextSearch((current) => ({
+            ...current,
+            items: payload.items ?? [],
+            loading: false,
+          }));
+        })
+        .catch(() => {
+          if (cancelled) {
+            return;
+          }
+          setContextSearch((current) => ({ ...current, items: [], loading: false }));
+        });
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [contextPickerOpen, contextSearch.query, recordId]);
 
   async function ensureThreadReady(): Promise<string | null> {
     setLoading(true);
@@ -1153,6 +1326,17 @@ export function AiWorkspacePanel({
     } finally {
       setPendingActionId(null);
     }
+  }
+
+  function handleAttachRelatedRecord(item: ReaderAskContextRecordItemDto) {
+    onAppendAttachments?.([buildRelatedRecordAttachment(pageIdentity, item)]);
+    setContextSearch((current) => ({
+      ...current,
+      query: "",
+      items: [],
+      loading: false,
+    }));
+    setContextPickerOpen(false);
   }
 
   async function sendMessage(options?: {
@@ -1573,6 +1757,20 @@ export function AiWorkspacePanel({
               <AttachmentChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
             </div>
           ) : null}
+          <ContextPicker
+            open={contextPickerOpen}
+            disabled={sending}
+            recordTitle={recordTitle}
+            search={contextSearch}
+            onToggle={() => {
+              setContextPickerOpen((current) => !current);
+            }}
+            onSearchChange={(value) => {
+              setContextSearch((current) => ({ ...current, query: value }));
+            }}
+            onAttachCurrentRecord={onAttachCurrentRecord}
+            onAttachRelatedRecord={handleAttachRelatedRecord}
+          />
           <SupplementCandidateTray candidates={latestSupplementCandidates} />
 
           <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />

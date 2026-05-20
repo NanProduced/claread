@@ -34,6 +34,7 @@ export type ReaderAskAttachmentSubtype =
   | "user_annotation"
   | "favorite"
   | "current_record"
+  | "related_record"
   | "supplement_ref";
 
 export interface ReaderAskAttachmentMetadata {

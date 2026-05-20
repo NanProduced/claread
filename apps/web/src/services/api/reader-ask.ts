@@ -4,6 +4,7 @@ import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
 import type {
   ReaderAskActionConfirmRequestDto,
   ReaderAskActionConfirmResponseDto,
+  ReaderAskContextRecordSearchResponseDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
@@ -30,6 +31,23 @@ export function listUpstreamReaderAskThreads(
   return fastApiFetch<ReaderAskThreadListResponseDto>(`/reader-ask/threads?${searchParams.toString()}`, {
     sessionToken,
   });
+}
+
+export function listUpstreamReaderAskContextRecords(
+  query: string,
+  excludeRecordId: string | null,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderAskContextRecordSearchResponseDto>> {
+  const searchParams = new URLSearchParams({ query });
+  if (excludeRecordId) {
+    searchParams.set("exclude_record_id", excludeRecordId);
+  }
+  return fastApiFetch<ReaderAskContextRecordSearchResponseDto>(
+    `/reader-ask/context-records?${searchParams.toString()}`,
+    {
+      sessionToken,
+    },
+  );
 }
 
 export function createUpstreamReaderAskThread(

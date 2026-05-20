@@ -1,6 +1,4 @@
 /** @vitest-environment jsdom */
-
-import type React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
@@ -28,6 +26,7 @@ const completedPayload = {
   trace_summary: {
     planner_mode: "known_reference_resolved",
     reference_resolution_status: "resolved",
+    working_set_mode: "known_reference",
     history_lookup_allowed: true,
     history_lookup_used: false,
     tool_steps: [],
@@ -132,6 +131,17 @@ function mockFetch() {
         updated_at: "2026-05-20T00:00:00Z",
         last_message_at: null,
         messages: [],
+      });
+    }
+    if (url.includes("/api/web/reader-ask/context-records?")) {
+      return jsonResponse({
+        items: [
+          {
+            record_id: "record-2",
+            title: "Climate Policy",
+            updated_at: "2026-05-20T00:00:00Z",
+          },
+        ],
       });
     }
     if (url.endsWith("/api/web/reader-ask/threads/thread-1/messages/stream")) {
@@ -323,5 +333,56 @@ describe("AiWorkspacePanel", () => {
     expect(screen.getAllByText("Climate Policy").length).toBeGreaterThan(0);
     expect(screen.getByText("规划摘要")).not.toBeNull();
     expect(screen.getByText("已命中历史文章。")).not.toBeNull();
+  });
+
+  it("searches and appends a related record attachment from the context picker", async () => {
+    const onAppendAttachments = vi.fn();
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        activeSentence={null}
+        attachments={[]}
+        onAppendAttachments={onAppendAttachments}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "上下文" }));
+    fireEvent.change(screen.getByPlaceholderText("输入文章标题，例如 climate policy"), {
+      target: { value: "climate policy" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Climate Policy").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /加入上下文/i }));
+
+    await waitFor(() => {
+      expect(onAppendAttachments).toHaveBeenCalledTimes(1);
+    });
+    expect(onAppendAttachments.mock.calls[0]?.[0]).toMatchObject([
+      {
+        kind: "record_ref",
+        subtype: "related_record",
+        label: "Climate Policy",
+        targetKey: "record:record-2:record",
+        metadata: {
+          sourceSurface: "ask_context_picker",
+          assetId: "record-2",
+          title: "Climate Policy",
+        },
+      },
+    ]);
   });
 });

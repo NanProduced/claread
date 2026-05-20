@@ -6,6 +6,7 @@ import {
   createUpstreamReaderAskThread,
   deleteUpstreamReaderAskSupplement,
   getUpstreamReaderAskThread,
+  listUpstreamReaderAskContextRecords,
   listUpstreamReaderAskThreads,
   resetUpstreamReaderAskThread,
   retryUpstreamReaderAskMessage,
@@ -14,6 +15,7 @@ import { getWebSession } from "@/services/bff/session";
 import type {
   ReaderAskActionConfirmRequestDto,
   ReaderAskActionConfirmResponseDto,
+  ReaderAskContextRecordSearchResponseDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
@@ -102,6 +104,24 @@ export async function listReaderAskThreadsForWeb(recordId: string): Promise<Read
     return authError("请先登录后再使用 Ask Claread。");
   }
   const upstream = await listUpstreamReaderAskThreads(recordId, session.sessionToken);
+  if (!upstream.ok) {
+    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+      status: upstream.status || 503,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  return upstream.data;
+}
+
+export async function listReaderAskContextRecordsForWeb(
+  query: string,
+  excludeRecordId: string | null,
+): Promise<ReaderAskContextRecordSearchResponseDto | Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return authError("请先登录后再使用 Ask Claread。");
+  }
+  const upstream = await listUpstreamReaderAskContextRecords(query, excludeRecordId, session.sessionToken);
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
       status: upstream.status || 503,

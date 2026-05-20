@@ -64,6 +64,13 @@ ReaderAskEvidenceKind = Literal[
     "supplement_candidate",
     "clarification",
 ]
+ReaderAskWorkingSetMode = Literal[
+    "anchor_local",
+    "article_overview",
+    "explicit_external_record",
+    "known_reference",
+    "clarification",
+]
 
 
 class ReaderAskAnchorSegment(BaseModel):
@@ -258,6 +265,8 @@ class ReaderAskContextPlan(BaseModel):
     record_context_reason: str | None = None
     used_record_insights: bool = False
     record_insights_reason: str | None = None
+    used_article_overview: bool = False
+    article_overview_reason: str | None = None
     used_dictionary: bool = False
     dictionary_reason: str | None = None
     source_labels: list[str] = Field(default_factory=list)
@@ -286,10 +295,21 @@ class ReaderAskTraceSummary(BaseModel):
         "known_reference_not_found",
     ] = "direct_answer"
     reference_resolution_status: ReaderAskReferenceResolutionStatus = "not_needed"
+    working_set_mode: ReaderAskWorkingSetMode = "anchor_local"
     history_lookup_allowed: bool = False
     history_lookup_used: bool = False
     tool_steps: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class ReaderAskContextRecordItem(BaseModel):
+    record_id: str
+    title: str | None = None
+    updated_at: str | None = None
+
+
+class ReaderAskContextRecordSearchResponse(BaseModel):
+    items: list[ReaderAskContextRecordItem] = Field(default_factory=list)
 
 
 class ReaderAskSupplementCandidate(BaseModel):

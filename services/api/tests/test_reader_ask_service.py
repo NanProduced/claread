@@ -285,6 +285,7 @@ def test_build_context_plan_records_history_and_dictionary_usage() -> None:
     assert context_plan.used_record_context is True
     assert context_plan.used_record_insights is True
     assert context_plan.used_dictionary is True
+    assert context_plan.used_article_overview is False
 
 
 def test_build_grammar_note_candidate_requires_sentence_target() -> None:
@@ -383,6 +384,109 @@ def test_build_context_plan_records_reference_resolution_reason() -> None:
     assert context_plan.reference_resolution_attempted is True
     assert context_plan.reference_resolution_status == "resolved"
     assert context_plan.expanded_record_ids == ["r-2"]
+
+
+def test_plan_request_prefers_anchor_local_working_set_for_grammar() -> None:
+    anchor = ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Even if he knew the risk")
+    plan = planner_svc.plan_request(
+        content="解释这句的语法作用",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context", "record_insights", "dictionary"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="why_here",
+        attachments=[],
+        anchors=[anchor],
+    )
+
+    assert plan.resolved_intent == "grammar"
+    assert plan.working_set.local_context_window_needed is True
+    assert plan.working_set.record_insights_needed is True
+    assert plan.working_set.article_overview_needed is False
+    assert plan.trace_summary.working_set_mode == "anchor_local"
+
+
+def test_plan_request_prefers_article_overview_for_article_level_question() -> None:
+    plan = planner_svc.plan_request(
+        content="解释本文的主线和核心论点",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context", "record_insights", "dictionary"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+    )
+
+    assert plan.working_set.article_overview_needed is True
+    assert plan.working_set.local_context_window_needed is False
+    assert plan.trace_summary.working_set_mode == "article_overview"
+
+
+def test_plan_request_uses_explicit_related_record_context() -> None:
+    plan = planner_svc.plan_request(
+        content="我之前那篇 climate policy 也提过这个吗？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context", "record_insights", "dictionary"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[
+            ReaderAskAttachment(
+                kind="record_ref",
+                subtype="related_record",
+                label="Climate Policy",
+                target_key="record:record-2:record",
+                metadata=ReaderAskAttachmentMetadata(
+                    source_surface="ask_context_picker",
+                    entry_action="ask_about_this",
+                    asset_id="record-2",
+                    title="Climate Policy",
+                ),
+            )
+        ],
+        anchors=[],
+    )
+
+    assert plan.working_set.external_record_refs == [{"record_id": "record-2", "title": "Climate Policy"}]
+    assert plan.retrieval_needs == "known_reference_only"
+    assert plan.trace_summary.working_set_mode == "explicit_external_record"
+
+
+def test_plan_request_without_anchor_returns_clarification_working_set() -> None:
+    plan = planner_svc.plan_request(
+        content="这里为什么这样写？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context", "record_insights", "dictionary"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+    )
+
+    assert plan.clarification_only is True
+    assert plan.trace_summary.working_set_mode == "clarification"
 
 
 def test_typed_supplement_capability_builds_grammar_note_candidates() -> None:

@@ -2396,6 +2396,7 @@ export function ReaderWorkbench({
           hideLauncherInCompactLayout={Boolean(dictionaryPanelVisible)}
           onRemoveAttachment={removeAskAttachment}
           onClearAttachments={clearAskAttachments}
+          onAppendAttachments={appendAskAttachments}
           onAttachCurrentRecord={attachCurrentRecordToAsk}
           onJumpToAttachment={jumpToAskAttachment}
           onJumpToCitation={jumpToAskCitation}
