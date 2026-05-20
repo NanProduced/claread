@@ -4,6 +4,7 @@ import {
   BookPlus,
   Bot,
   ChevronDown,
+  FileText,
   LoaderCircle,
   MessageSquare,
   RotateCcw,
@@ -505,6 +506,19 @@ function AttachmentChips({
         </span>
       )})}
     </div>
+  );
+}
+
+function CurrentArticleChip({ recordTitle }: { recordTitle?: string | null }) {
+  if (!recordTitle) {
+    return null;
+  }
+
+  return (
+    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-reader-paper/84 px-3 py-1.5 text-xs font-medium text-ink-soft">
+      <FileText className="h-3.5 w-3.5 text-subtle" />
+      <span className="truncate">{recordTitle}</span>
+    </span>
   );
 }
 
@@ -1602,9 +1616,6 @@ function StarterState({
             ? "当前句焦点已就绪。你可以直接追问，也可以从下面的起手问题开始。"
             : "Ask Claread 会先解释当前文章，再按需展开到上下文、历史文章和稳定资产。"}
         </p>
-        {recordTitle ? (
-          <p className="mt-3 truncate text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">{recordTitle}</p>
-        ) : null}
         <div className="mt-6 flex flex-wrap gap-2">
           {STARTER_PROMPTS.map((prompt) => (
             <button
@@ -1701,8 +1712,11 @@ export function AiWorkspacePanel({
     message,
     blocks: message.role === "assistant" ? buildAssistantBlocks(message) : [],
   }));
+  const visibleContextAttachments = attachments.filter(
+    (attachment) => !(attachment.kind === "record_ref" && attachment.metadata.recordId === recordId),
+  );
   const composerDockState: AskComposerDockState = {
-    attachmentCount: attachments.length,
+    attachmentCount: visibleContextAttachments.length,
     canSend: composer.trim().length > 0 && !sending,
     sending,
   };
@@ -2382,12 +2396,7 @@ export function AiWorkspacePanel({
       <div className="border-b border-hairline/70 px-5 py-4">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-[15px] font-semibold text-ink">Ask Claread</h2>
-              <span className="max-w-48 truncate rounded-full border border-hairline/80 bg-reader-paper px-2.5 py-1 text-[11px] font-medium text-subtle">
-                {recordTitle || "当前文章"}
-              </span>
-            </div>
+            <h2 className="text-[15px] font-semibold text-ink">Ask Claread</h2>
           </div>
           <div className="flex items-center gap-1.5">
             <Button
@@ -2473,7 +2482,7 @@ export function AiWorkspacePanel({
           className="bg-surface px-4 py-3"
         >
           <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               <button
                 type="button"
                 className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline/80 bg-reader-paper px-3 text-xs font-semibold text-ink-soft transition-colors hover:text-ink"
@@ -2486,13 +2495,17 @@ export function AiWorkspacePanel({
                 <BookPlus className="h-3.5 w-3.5" />
                 <span>上下文</span>
               </button>
-              {composerDockState.attachmentCount > 0 ? (
-                <span className="text-[11px] text-subtle">
-                  已附加 {composerDockState.attachmentCount} 项
-                </span>
-              ) : (
-                <span className="text-[11px] text-subtle">默认围绕当前文章继续问</span>
-              )}
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <CurrentArticleChip recordTitle={recordTitle} />
+                {visibleContextAttachments.length > 0 ? (
+                  <AttachmentChips
+                    attachments={visibleContextAttachments}
+                    removable
+                    onRemove={onRemoveAttachment}
+                    onJump={onJumpToAttachment}
+                  />
+                ) : null}
+              </div>
             </div>
             <PromptInputActions className="shrink-0">
               <button
@@ -2506,21 +2519,6 @@ export function AiWorkspacePanel({
               </button>
             </PromptInputActions>
           </div>
-          {attachments.length > 0 ? (
-            <div className="mb-3 flex items-start justify-between gap-3 rounded-[18px] border border-hairline/80 bg-reader-paper/68 px-3 py-3">
-              <div className="min-w-0 flex-1">
-                <p className="mb-2 text-[11px] font-semibold text-muted">附加上下文</p>
-                <AttachmentChips attachments={attachments} removable onRemove={onRemoveAttachment} onJump={onJumpToAttachment} />
-              </div>
-              <button
-                type="button"
-                className="focus-ring shrink-0 text-[11px] font-semibold text-muted transition-colors hover:text-ink"
-                onClick={onClearAttachments}
-              >
-                清空
-              </button>
-            </div>
-          ) : null}
           {contextPickerOpen ? (
             <div className="mb-3">
               <ContextPicker
@@ -2540,10 +2538,19 @@ export function AiWorkspacePanel({
             </div>
           ) : null}
           <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />
-          <div className="mt-3 border-t border-hairline/70 pt-3">
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/70 pt-3">
             <p className="max-w-[22rem] text-[11px] leading-5 text-muted">
               默认只围绕当前文章；只有问到“以前 / 之前 / 见过”时才会扩展历史资产。
             </p>
+            {composerDockState.attachmentCount > 0 ? (
+              <button
+                type="button"
+                className="focus-ring shrink-0 text-[11px] font-semibold text-muted transition-colors hover:text-ink"
+                onClick={onClearAttachments}
+              >
+                清空附加上下文
+              </button>
+            ) : null}
           </div>
         </PromptInput>
       </div>
