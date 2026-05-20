@@ -531,3 +531,46 @@ class ReaderAskCompletedPayload(BaseModel):
 class ReaderAskStreamEnvelope(BaseModel):
     event: str
     data: dict[str, Any]
+
+
+class ReaderAskPlanningSnapshotRecord(BaseModel):
+    resolved_intent: ReaderAskResolvedIntent
+    reference_needs: dict[str, Any] = Field(default_factory=dict)
+    retrieval_needs: str
+    resolved_references: dict[str, Any] = Field(default_factory=dict)
+    working_set: dict[str, Any] = Field(default_factory=dict)
+    context_plan: dict[str, Any] = Field(default_factory=dict)
+    trace_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReaderAskTurnRunRecord(BaseModel):
+    id: str
+    message_id: str
+    thread_id: str
+    user_id: str
+    record_id: str
+    turn_id: str
+    run_attempt: int
+    supersedes_run_id: str | None = None
+    status: Literal["streaming", "completed", "failed"]
+    resolved_intent: ReaderAskResolvedIntent | None = None
+    user_visible_output_json: dict[str, Any] | None = None
+    usage_summary_json: dict[str, Any] | None = None
+    usage_event_id: str | None = None
+    started_at: str
+    completed_at: str | None = None
+    failed_at: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ReaderAskEvalTraceRecord(BaseModel):
+    turn_run_id: str
+    trace_schema_version: str
+    planning_snapshot_json: dict[str, Any] = Field(default_factory=dict)
+    capability_trace_json: dict[str, Any] = Field(default_factory=dict)
+    action_audit_json: list[dict[str, Any]] = Field(default_factory=list)
+    supplement_audit_json: list[dict[str, Any]] = Field(default_factory=list)
+    metrics_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str

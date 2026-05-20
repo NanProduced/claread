@@ -6,6 +6,7 @@ from app.schemas.reader_ask import (
     ReaderAskAttachment,
     ReaderAskAttachmentMetadata,
     ReaderAskAttachmentPayload,
+    ReaderAskContextPlan,
     ReaderAskCurrentRecordContext,
     ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
@@ -20,8 +21,11 @@ from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask.service import (
     _attachment_to_anchor,
     _attachments_to_anchor_refs,
+    _build_run_info,
+    _capability_trace_json,
     _build_action_proposals,
     _build_context_plan,
+    _planning_snapshot_json,
     _build_resolved_context_input,
     _build_response_cards,
     _build_unused_reservation,
@@ -29,6 +33,7 @@ from app.services.reader_ask.service import (
     _merge_usage_summaries,
     _matches_history_intent,
     _needs_clarification,
+    _next_run_info,
     _resolve_intent,
     _resolved_context_summary,
 )
@@ -351,6 +356,88 @@ def test_build_grammar_note_candidate_requires_sentence_target() -> None:
     assert candidate.supplement_type == "grammar_note"
     assert candidate.created_from_turn_run_id == "run-1"
     assert candidate.lifecycle_status == "candidate"
+
+
+def test_next_run_info_prefers_current_turn_run_pointer() -> None:
+    next_run_info, run_history = _next_run_info(
+        {
+            "run_info": _build_run_info(turn_id="turn-1", run_id="run-1", attempt=1),
+            "current_turn_run": {
+                "id": "run-1",
+                "turn_id": "turn-1",
+                "run_attempt": 1,
+            },
+            "run_history": [],
+        }
+    )
+
+    assert next_run_info["turn_id"] == "turn-1"
+    assert next_run_info["run_attempt"] == 2
+    assert next_run_info["supersedes_run_id"] == "run-1"
+    assert run_history == [{"turn_id": "turn-1", "run_id": "run-1", "run_attempt": 1, "supersedes_run_id": None}]
+
+
+def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
+    snapshot = planner_svc.plan_request(
+        content="我之前那篇 climate policy 也提过这个吗？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_user_assets=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(
+            attempted=True,
+            status="resolved",
+            query="Climate Policy",
+            reason="已命中历史文章“Climate Policy”。",
+            resolved_records=[{"record_id": "r-2", "title": "Climate Policy"}],
+        ),
+    )
+
+    data = _planning_snapshot_json(snapshot)
+
+    assert data["resolved_intent"] == snapshot.resolved_intent
+    assert data["retrieval_needs"] == "known_reference_only"
+    assert data["resolved_references"]["status"] == "resolved"
+    assert data["working_set"]["external_record_refs"][0]["record_id"] == "r-2"
+
+
+def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
+    runtime_state = ReaderAskRuntimeState(
+        source_labels={"current_record", "record_assets", "article_overview", "history_assets", "dictionary"},
+        latest_record_context={"sentence_windows": []},
+        latest_record_insights=[{"entry_type": "sentence_analysis"}],
+        latest_article_overview="overview",
+        latest_external_record_contexts=[{"record_id": "r-2"}],
+        latest_dictionary_entry={"id": 1, "query": "policy"},
+    )
+    context_plan = ReaderAskContextPlan(
+        entry_action="ask_about_this",
+        record_context_reason="sentence_anchor",
+        used_record_context=True,
+        record_insights_reason="grammar_intent",
+        used_record_insights=True,
+        article_overview_reason="article_level_question",
+        used_article_overview=True,
+        dictionary_reason="lookup_in_context",
+        used_dictionary=True,
+        reference_resolution_reason="已命中历史文章“Climate Policy”。",
+    )
+
+    trace = _capability_trace_json(runtime_state=runtime_state, context_plan=context_plan)
+
+    assert trace["local_context_window"]["used"] is True
+    assert trace["record_insights"]["reason"] == "grammar_intent"
+    assert trace["article_overview"]["used"] is True
+    assert trace["dictionary"]["used"] is True
+    assert trace["external_record_context"]["source_labels"] == ["history_assets"]
 
 
 def test_candidate_to_persisted_supplement_separates_lifecycle_contract() -> None:

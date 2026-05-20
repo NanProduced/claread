@@ -51,6 +51,7 @@ from app.schemas.reader_ask import (
     ReaderAskResolvedIntent,
     ReaderAskResolvedContextSummary,
     ReaderAskResponseCard,
+    ReaderAskRunInfo,
     ReaderAskSentenceBreakdownCard,
     ReaderAskSentenceBreakdownPart,
     ReaderAskSupplementCandidate,
@@ -99,6 +100,7 @@ from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import prompting as prompt_layers_svc
 from app.services.reader_ask import repository as repo
 from app.services.reader_ask import resolver as resolver_svc
+from app.services.reader_ask import runtime_contract as runtime_contract_svc
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.text_anchors import ensure_json_dict, sentence_map
 from app.services.user_assets import favorites as favorites_svc
@@ -120,6 +122,7 @@ _PROMPT_BUDGET_BUFFER_TOKENS = 800
 _WORKFLOW_NAME = "reader_ask"
 _WORKFLOW_VERSION = "1.0.0"
 _SCHEMA_VERSION = "reader-ask-v2"
+_EVAL_TRACE_SCHEMA_VERSION = "reader-ask-eval-trace-v1"
 _TASK_MODE_LABELS: dict[ReaderAskTaskMode, str] = {
     "explain": "讲解",
     "breakdown": "拆句",
@@ -1229,6 +1232,191 @@ def _message_metadata(
     return metadata
 
 
+def _current_turn_run_id(message_dict: dict[str, Any], run_info: ReaderAskRunInfo | None = None) -> UUID | None:
+    current_turn_run_id = message_dict.get("current_turn_run_id")
+    if isinstance(current_turn_run_id, str) and current_turn_run_id.strip():
+        try:
+            return UUID(current_turn_run_id)
+        except ValueError:
+            return None
+    run_id = run_info.run_id if run_info is not None else None
+    if isinstance(run_id, str) and run_id.strip():
+        try:
+            return UUID(run_id)
+        except ValueError:
+            return None
+    return None
+
+
+def _build_run_info(
+    *,
+    turn_id: str,
+    run_id: str,
+    attempt: int = 1,
+    supersedes_run_id: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "turn_id": turn_id,
+        "run_id": run_id,
+        "run_attempt": max(attempt, 1),
+        "supersedes_run_id": supersedes_run_id,
+    }
+
+
+def _visible_output_from_message(message: ReaderAskMessage, message_dict: dict[str, Any]) -> dict[str, Any]:
+    current = message_dict.get("current_user_visible_output")
+    if isinstance(current, dict):
+        return dict(current)
+    return {
+        "id": message.id,
+        "thread_id": message.thread_id,
+        "content_md": message.content_md,
+        "resolved_intent": message.resolved_intent,
+        "citations": [item.model_dump(mode="json") for item in message.citations],
+        "action_proposals": [item.model_dump(mode="json") for item in message.action_proposals],
+        "tool_trace": [item.model_dump(mode="json") for item in message.tool_trace],
+        "evidence": [item.model_dump(mode="json") for item in message.evidence],
+        "trace_summary": message.trace_summary.model_dump(mode="json") if message.trace_summary else None,
+        "response_cards": [item.model_dump(mode="json") for item in message.response_cards],
+        "usage_summary": None,
+        "billed_points": 0,
+        "resolved_context": message.resolved_context.model_dump(mode="json") if message.resolved_context else None,
+        "context_plan": message.context_plan.model_dump(mode="json") if message.context_plan else None,
+        "resolved_context_input": message.resolved_context_input.model_dump(mode="json")
+        if message.resolved_context_input
+        else None,
+        "run_info": message.run_info.model_dump(mode="json") if message.run_info else None,
+        "supplement_candidates": [item.model_dump(mode="json") for item in message.supplement_candidates],
+        "persisted_supplements": [item.model_dump(mode="json") for item in message.persisted_supplements],
+    }
+
+
+def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot | None) -> dict[str, Any]:
+    if planning_snapshot is None:
+        return {}
+    return {
+        "resolved_intent": planning_snapshot.resolved_intent,
+        "reference_needs": {
+            "requested": planning_snapshot.reference_needs.requested,
+            "query": planning_snapshot.reference_needs.query,
+            "reason": planning_snapshot.reference_needs.reason,
+        },
+        "retrieval_needs": planning_snapshot.retrieval_needs,
+        "resolved_references": {
+            "attempted": planning_snapshot.resolved_references.attempted,
+            "status": planning_snapshot.resolved_references.status,
+            "query": planning_snapshot.resolved_references.query,
+            "reason": planning_snapshot.resolved_references.reason,
+            "resolved_records": planning_snapshot.resolved_references.resolved_records,
+            "ambiguous_records": planning_snapshot.resolved_references.ambiguous_records,
+        },
+        "working_set": {
+            "primary_anchor": planning_snapshot.working_set.primary_anchor.model_dump(mode="json")
+            if planning_snapshot.working_set.primary_anchor
+            else None,
+            "local_context_window_needed": planning_snapshot.working_set.local_context_window_needed,
+            "record_insights_needed": planning_snapshot.working_set.record_insights_needed,
+            "article_overview_needed": planning_snapshot.working_set.article_overview_needed,
+            "dictionary_needed": planning_snapshot.working_set.dictionary_needed,
+            "history_assets_allowed": planning_snapshot.working_set.history_assets_allowed,
+            "external_record_refs": planning_snapshot.working_set.external_record_refs,
+        },
+        "context_plan": planning_snapshot.context_plan.model_dump(mode="json"),
+        "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json"),
+    }
+
+
+def _capability_trace_json(
+    *,
+    runtime_state: ReaderAskRuntimeState,
+    context_plan: ReaderAskContextPlan | None,
+) -> dict[str, Any]:
+    return {
+        "local_context_window": {
+            "used": runtime_state.latest_record_context is not None,
+            "reason": context_plan.record_context_reason if context_plan else None,
+            "source_labels": ["current_record", "current_anchor", "current_paragraph"]
+            if runtime_state.latest_record_context is not None
+            else [],
+        },
+        "record_insights": {
+            "used": bool(runtime_state.latest_record_insights),
+            "reason": context_plan.record_insights_reason if context_plan else None,
+            "source_labels": ["record_assets"] if runtime_state.latest_record_insights else [],
+        },
+        "article_overview": {
+            "used": bool(runtime_state.latest_article_overview),
+            "reason": context_plan.article_overview_reason if context_plan else None,
+            "source_labels": ["article_overview"] if runtime_state.latest_article_overview else [],
+        },
+        "dictionary": {
+            "used": bool(runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai),
+            "reason": context_plan.dictionary_reason if context_plan else None,
+            "source_labels": ["dictionary"]
+            if runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai
+            else [],
+        },
+        "external_record_context": {
+            "used": bool(runtime_state.latest_external_record_contexts),
+            "reason": context_plan.reference_resolution_reason if context_plan else None,
+            "source_labels": ["history_assets"] if runtime_state.latest_external_record_contexts else [],
+        },
+    }
+
+
+def _metrics_json(
+    *,
+    trace_summary: ReaderAskTraceSummary | None,
+    billed_points: int,
+    usage_event_id: UUID | None,
+) -> dict[str, Any]:
+    return {
+        "planner_mode": trace_summary.planner_mode if trace_summary else None,
+        "working_set_mode": trace_summary.working_set_mode if trace_summary else None,
+        "history_lookup_allowed": trace_summary.history_lookup_allowed if trace_summary else False,
+        "history_lookup_used": trace_summary.history_lookup_used if trace_summary else False,
+        "used_known_reference_resolution": trace_summary.used_known_reference_resolution if trace_summary else False,
+        "used_external_record_context": trace_summary.used_external_record_context if trace_summary else False,
+        "billed_points": billed_points,
+        "usage_event_id": str(usage_event_id) if usage_event_id else None,
+        "prompt_version": get_prompt_version(),
+    }
+
+
+async def _upsert_eval_trace_record(
+    *,
+    turn_run_id: UUID,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
+    runtime_state: ReaderAskRuntimeState,
+    context_plan: ReaderAskContextPlan | None,
+    action_audit_json: list[dict[str, Any]] | None = None,
+    supplement_audit_json: list[dict[str, Any]] | None = None,
+    trace_summary: ReaderAskTraceSummary | None = None,
+    billed_points: int = 0,
+    usage_event_id: UUID | None = None,
+) -> dict[str, Any]:
+    existing = await repo.get_eval_trace(turn_run_id)
+    return await repo.upsert_eval_trace(
+        turn_run_id=turn_run_id,
+        trace_schema_version=_EVAL_TRACE_SCHEMA_VERSION,
+        planning_snapshot_json=_planning_snapshot_json(planning_snapshot) or (existing or {}).get("planning_snapshot_json") or {},
+        capability_trace_json=_capability_trace_json(runtime_state=runtime_state, context_plan=context_plan)
+        if context_plan is not None or runtime_state.source_labels
+        else (existing or {}).get("capability_trace_json") or {},
+        action_audit_json=action_audit_json if action_audit_json is not None else (existing or {}).get("action_audit_json") or [],
+        supplement_audit_json=supplement_audit_json
+        if supplement_audit_json is not None
+        else (existing or {}).get("supplement_audit_json") or [],
+        metrics_json=_metrics_json(
+            trace_summary=trace_summary,
+            billed_points=billed_points,
+            usage_event_id=usage_event_id,
+        )
+        if trace_summary is not None or usage_event_id is not None or billed_points
+        else (existing or {}).get("metrics_json") or {},
+    )
+
+
 def _normalize_persisted_supplements(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1272,12 +1460,13 @@ def _mark_deleted_persisted_supplement(
 def _new_run_info(
     *,
     turn_id: str | None = None,
+    run_id: str | None = None,
     attempt: int = 1,
     supersedes_run_id: str | None = None,
 ) -> dict[str, Any]:
     return {
         "turn_id": turn_id or str(uuid4()),
-        "run_id": str(uuid4()),
+        "run_id": run_id or str(uuid4()),
         "run_attempt": max(attempt, 1),
         "supersedes_run_id": supersedes_run_id,
     }
@@ -1286,6 +1475,18 @@ def _new_run_info(
 def _next_run_info(message_dict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     current = message_dict.get("run_info")
     history = list(message_dict.get("run_history") or [])
+    current_turn_run = message_dict.get("current_turn_run")
+    if isinstance(current_turn_run, dict) and current_turn_run.get("id"):
+        if current is not None:
+            history.append(current)
+        return (
+            _new_run_info(
+                turn_id=str(current_turn_run.get("turn_id") or (current or {}).get("turn_id") or str(uuid4())),
+                attempt=int(current_turn_run.get("run_attempt") or 1) + 1,
+                supersedes_run_id=str(current_turn_run.get("id")),
+            ),
+            history,
+        )
     if current is not None:
         history.append(current)
     if current is None:
@@ -1923,6 +2124,7 @@ async def stream_thread_message(
     evidence: list[ReaderAskEvidenceItem] = []
     trace_summary: ReaderAskTraceSummary | None = None
     run_info: dict[str, Any] | None = None
+    active_turn_run_id: UUID | None = None
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
     persisted_supplements_json: list[dict[str, Any]] = []
@@ -1987,7 +2189,6 @@ async def stream_thread_message(
                 local_anchor_required=_needs_clarification(body.content, resolved_anchors),
                 reference_resolution=reference_resolution,
             )
-            run_info = _new_run_info()
             assistant_message = await repo.create_message(
                 thread_id=thread_id,
                 role="assistant",
@@ -1997,9 +2198,20 @@ async def stream_thread_message(
                 metadata=_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
-                    run_info=run_info,
                 ),
             )
+            turn_run = await repo.create_turn_run(
+                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+                thread_id=thread_id,
+                user_id=user_id,
+                record_id=record.record_id,
+                turn_id=_parse_uuid(user_message["id"], "user message id is invalid"),
+                run_attempt=1,
+                supersedes_run_id=None,
+                status="completed",
+                resolved_intent=resolved_intent,
+            )
+            run_info = _build_run_info(turn_id=user_message["id"], run_id=turn_run["id"], attempt=1)
             citations = [
                 _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
                 for anchor in resolved_anchors
@@ -2080,6 +2292,21 @@ async def stream_thread_message(
                 tool_trace=[],
                 metadata=assistant_metadata,
                 usage_event_id=None,
+                current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            )
+            await repo.update_turn_run(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                status="completed",
+                resolved_intent=resolved_intent,
+                user_visible_output_json=payload.model_dump(mode="json"),
+                completed_at=datetime.now(UTC),
+            )
+            await _upsert_eval_trace_record(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                planning_snapshot=planning_snapshot,
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                trace_summary=trace_summary,
             )
             yield _sse("message.completed", payload.model_dump(mode="json"))
             return
@@ -2150,7 +2377,19 @@ async def stream_thread_message(
                 resolved_context_input=resolved_context_input,
             ),
         )
-        run_info = _new_run_info(turn_id=user_message["id"])
+        turn_run = await repo.create_turn_run(
+            message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+            thread_id=thread_id,
+            user_id=user_id,
+            record_id=record.record_id,
+            turn_id=_parse_uuid(user_message["id"], "user message id is invalid"),
+            run_attempt=1,
+            supersedes_run_id=None,
+            status="streaming",
+            resolved_intent=resolved_intent,
+        )
+        active_turn_run_id = _parse_uuid(turn_run["id"], "turn run id is invalid")
+        run_info = _build_run_info(turn_id=user_message["id"], run_id=turn_run["id"], attempt=1)
         assistant_message = await repo.update_message(
             message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
             status="streaming",
@@ -2165,6 +2404,7 @@ async def stream_thread_message(
                 run_info=run_info,
             ),
             usage_event_id=None,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
         yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
 
@@ -2268,7 +2508,28 @@ async def stream_thread_message(
             get_record_context_cb=get_record_context_cb,
             get_record_insights_cb=get_record_insights_cb,
         )
-        prompt_payload = _build_prompt_payload(
+        context_plan = _build_context_plan(
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+            citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
+            planning_snapshot=planning_snapshot,
+        )
+        trace_summary = _build_trace_summary(
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            planning_snapshot=planning_snapshot,
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+        )
+        prompt_payload = runtime_contract_svc.build_prompt_payload(
             thread=thread,
             record=record,
             user_message=body.content,
@@ -2282,8 +2543,19 @@ async def stream_thread_message(
             resolved_context_input=resolved_context_input,
             reference_resolution=reference_resolution,
             planning_snapshot=planning_snapshot,
+            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+            max_history_messages=_MAX_HISTORY_MESSAGES,
+            max_message_text=_MAX_MESSAGE_TEXT,
         )
-        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
+        prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
+            prompt_payload,
+            reserved_points=READER_ASK_RESERVED_POINTS,
+            tokens_per_point=TOKENS_PER_POINT,
+            multiplier_output=MULTIPLIER_OUTPUT,
+            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+            default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+        )
         route_settings = RunModelSettings(
             max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
@@ -2414,15 +2686,6 @@ async def stream_thread_message(
             used_history_lookup=runtime_state.used_history_lookup,
             citations=runtime_state.citations,
         )
-        context_plan = _build_context_plan(
-            entry_action=body.entry_action,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            runtime_state=runtime_state,
-            citations=runtime_state.citations,
-            reference_resolution=reference_resolution,
-            planning_snapshot=planning_snapshot,
-        )
         typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
             resolved_intent=resolved_intent,
             anchors=resolved_anchors,
@@ -2442,11 +2705,6 @@ async def stream_thread_message(
             external_record_contexts=runtime_state.latest_external_record_contexts,
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
-        )
-        trace_summary = _build_trace_summary(
-            runtime_state=runtime_state,
-            context_plan=context_plan,
-            planning_snapshot=planning_snapshot,
         )
         trace_summary = trace_summary.model_copy(
             update={
@@ -2529,6 +2787,7 @@ async def stream_thread_message(
                 persisted_supplements=[],
             ),
             usage_event_id=usage_event_id,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
         payload = ReaderAskCompletedPayload(
             id=updated["id"],
@@ -2549,6 +2808,34 @@ async def stream_thread_message(
             run_info=run_info,
             supplement_candidates=supplement_candidates,
             persisted_supplements=[],
+        )
+        await repo.update_turn_run(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            status="completed",
+            resolved_intent=resolved_intent,
+            user_visible_output_json=payload.model_dump(mode="json"),
+            usage_summary_json=usage_summary,
+            usage_event_id=usage_event_id,
+            completed_at=datetime.now(UTC),
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+            supplement_audit_json=[
+                {
+                    "event": "candidate_generated",
+                    "supplement_type": item.supplement_type,
+                    "candidate_id": item.candidate_id,
+                    "created_from_turn_run_id": item.created_from_turn_run_id,
+                    "timestamp": _iso_now(),
+                }
+                for item in typed_supplement_candidates
+            ],
+            billed_points=billed_points,
+            usage_event_id=usage_event_id,
         )
         yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
@@ -2579,7 +2866,22 @@ async def stream_thread_message(
                     run_info=run_info,
                 ),
                 usage_event_id=None,
+                current_turn_run_id=active_turn_run_id,
             )
+            if active_turn_run_id is not None:
+                await repo.update_turn_run(
+                    turn_run_id=active_turn_run_id,
+                    status="failed",
+                    resolved_intent=resolved_intent,
+                    failed_at=datetime.now(UTC),
+                )
+                await _upsert_eval_trace_record(
+                    turn_run_id=active_turn_run_id,
+                    planning_snapshot=planning_snapshot,
+                    runtime_state=runtime_state,
+                    context_plan=context_plan,
+                    trace_summary=trace_summary,
+                )
         if record is not None and thread is not None:
             await _record_failure_event(
                 user_id=user_id,
@@ -2627,6 +2929,7 @@ async def retry_thread_message(
     evidence: list[ReaderAskEvidenceItem] = []
     trace_summary: ReaderAskTraceSummary | None = None
     run_info: dict[str, Any] | None = None
+    active_turn_run_id: UUID | None = None
     run_history: list[dict[str, Any]] = []
     body: ReaderAskMessageStreamRequest | None = None
     original_user_message = ""
@@ -2712,6 +3015,26 @@ async def retry_thread_message(
         resolved_intent = planning_snapshot.resolved_intent
         resolved_context_input = planning_snapshot.resolved_context_input
         run_info, run_history = _next_run_info(assistant_message)
+        turn_run = await repo.create_turn_run(
+            message_id=message_id,
+            thread_id=thread_id,
+            user_id=user_id,
+            record_id=record.record_id,
+            turn_id=_parse_uuid(user_message["id"], "user message id is invalid"),
+            run_attempt=int(run_info.get("run_attempt") or 1),
+            supersedes_run_id=_parse_uuid(str(run_info["supersedes_run_id"]), "supersedes run id is invalid")
+            if run_info.get("supersedes_run_id")
+            else None,
+            status="streaming",
+            resolved_intent=resolved_intent,
+        )
+        active_turn_run_id = _parse_uuid(turn_run["id"], "turn run id is invalid")
+        run_info = _build_run_info(
+            turn_id=user_message["id"],
+            run_id=turn_run["id"],
+            attempt=int(run_info.get("run_attempt") or 1),
+            supersedes_run_id=str(run_info.get("supersedes_run_id")) if run_info.get("supersedes_run_id") else None,
+        )
         clarification_only = planning_snapshot.clarification_only
         if clarification_only:
             assistant_md = post_process_svc.build_clarification_message(
@@ -2781,6 +3104,7 @@ async def retry_thread_message(
                     persisted_supplements=persisted_supplements_json,
                 ),
                 usage_event_id=None,
+                current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             )
             payload = ReaderAskCompletedPayload(
                 id=str(message_id),
@@ -2801,6 +3125,20 @@ async def retry_thread_message(
                 run_info=run_info,
                 supplement_candidates=[],
                 persisted_supplements=persisted_supplements_json,
+            )
+            await repo.update_turn_run(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                status="completed",
+                resolved_intent=resolved_intent,
+                user_visible_output_json=payload.model_dump(mode="json"),
+                completed_at=datetime.now(UTC),
+            )
+            await _upsert_eval_trace_record(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                planning_snapshot=planning_snapshot,
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                trace_summary=trace_summary,
             )
             yield _sse("message.completed", payload.model_dump(mode="json"))
             return
@@ -2864,6 +3202,7 @@ async def retry_thread_message(
                 persisted_supplements=persisted_supplements_json,
             ),
             usage_event_id=None,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
         yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
         yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
@@ -2968,7 +3307,28 @@ async def retry_thread_message(
             get_record_context_cb=get_record_context_cb,
             get_record_insights_cb=get_record_insights_cb,
         )
-        prompt_payload = _build_prompt_payload(
+        context_plan = _build_context_plan(
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+            citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
+            planning_snapshot=planning_snapshot,
+        )
+        trace_summary = _build_trace_summary(
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            planning_snapshot=planning_snapshot,
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+        )
+        prompt_payload = runtime_contract_svc.build_prompt_payload(
             thread=thread,
             record=record,
             user_message=body.content,
@@ -2982,8 +3342,19 @@ async def retry_thread_message(
             resolved_context_input=resolved_context_input,
             reference_resolution=reference_resolution,
             planning_snapshot=planning_snapshot,
+            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+            max_history_messages=_MAX_HISTORY_MESSAGES,
+            max_message_text=_MAX_MESSAGE_TEXT,
         )
-        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
+        prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
+            prompt_payload,
+            reserved_points=READER_ASK_RESERVED_POINTS,
+            tokens_per_point=TOKENS_PER_POINT,
+            multiplier_output=MULTIPLIER_OUTPUT,
+            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+            default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+        )
         route_settings = RunModelSettings(
             max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
@@ -3114,15 +3485,6 @@ async def retry_thread_message(
             used_history_lookup=runtime_state.used_history_lookup,
             citations=runtime_state.citations,
         )
-        context_plan = _build_context_plan(
-            entry_action=body.entry_action,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            runtime_state=runtime_state,
-            citations=runtime_state.citations,
-            reference_resolution=reference_resolution,
-            planning_snapshot=planning_snapshot,
-        )
         typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
             resolved_intent=resolved_intent,
             anchors=resolved_anchors,
@@ -3142,11 +3504,6 @@ async def retry_thread_message(
             external_record_contexts=runtime_state.latest_external_record_contexts,
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
-        )
-        trace_summary = _build_trace_summary(
-            runtime_state=runtime_state,
-            context_plan=context_plan,
-            planning_snapshot=planning_snapshot,
         )
         trace_summary = trace_summary.model_copy(
             update={
@@ -3231,6 +3588,7 @@ async def retry_thread_message(
                 run_history=run_history,
             ),
             usage_event_id=usage_event_id,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
         payload = ReaderAskCompletedPayload(
             id=str(message_id),
@@ -3251,6 +3609,34 @@ async def retry_thread_message(
             run_info=run_info,
             supplement_candidates=supplement_candidates,
             persisted_supplements=persisted_supplements_json,
+        )
+        await repo.update_turn_run(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            status="completed",
+            resolved_intent=resolved_intent,
+            user_visible_output_json=payload.model_dump(mode="json"),
+            usage_summary_json=usage_summary,
+            usage_event_id=usage_event_id,
+            completed_at=datetime.now(UTC),
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+            supplement_audit_json=[
+                {
+                    "event": "candidate_generated",
+                    "supplement_type": item.supplement_type,
+                    "candidate_id": item.candidate_id,
+                    "created_from_turn_run_id": item.created_from_turn_run_id,
+                    "timestamp": _iso_now(),
+                }
+                for item in typed_supplement_candidates
+            ],
+            billed_points=billed_points,
+            usage_event_id=usage_event_id,
         )
         yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
@@ -3284,7 +3670,22 @@ async def retry_thread_message(
                     persisted_supplements=persisted_supplements_json,
                 ),
                 usage_event_id=None,
+                current_turn_run_id=active_turn_run_id,
             )
+            if active_turn_run_id is not None:
+                await repo.update_turn_run(
+                    turn_run_id=active_turn_run_id,
+                    status="failed",
+                    resolved_intent=resolved_intent,
+                    failed_at=datetime.now(UTC),
+                )
+                await _upsert_eval_trace_record(
+                    turn_run_id=active_turn_run_id,
+                    planning_snapshot=planning_snapshot,
+                    runtime_state=runtime_state,
+                    context_plan=context_plan,
+                    trace_summary=trace_summary,
+                )
         if record is not None and thread is not None:
             await _record_failure_event(
                 user_id=user_id,
@@ -3422,6 +3823,8 @@ async def confirm_action(
     persisted_supplements = [
         item.model_dump(mode="json") for item in message.persisted_supplements
     ]
+    turn_run_id = _current_turn_run_id(message_dict, message.run_info)
+    visible_output = _visible_output_from_message(message, message_dict)
     if not body.confirmed:
         updated_proposals = [
             proposal_item.model_copy(update={"status": "rejected"}) if proposal_item.id == action_id else proposal_item
@@ -3449,7 +3852,33 @@ async def confirm_action(
                 run_history=run_history,
             ),
             usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+            current_turn_run_id=turn_run_id,
         )
+        if turn_run_id is not None:
+            visible_output["action_proposals"] = [item.model_dump(mode="json") for item in updated_proposals]
+            await repo.update_turn_run(
+                turn_run_id=turn_run_id,
+                status=message.status,
+                user_visible_output_json=visible_output,
+            )
+            existing_trace = await repo.get_eval_trace(turn_run_id)
+            action_audit = list((existing_trace or {}).get("action_audit_json") or [])
+            action_audit.append(
+                {
+                    "action_id": action_id,
+                    "action_type": proposal.action_type,
+                    "decision": "rejected",
+                    "timestamp": _iso_now(),
+                    "status_after_decision": "rejected",
+                }
+            )
+            await _upsert_eval_trace_record(
+                turn_run_id=turn_run_id,
+                planning_snapshot=None,
+                runtime_state=ReaderAskRuntimeState(),
+                context_plan=None,
+                action_audit_json=action_audit,
+            )
         return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="rejected")
 
     thread = await repo.get_thread(user_id, thread_id)
@@ -3583,7 +4012,50 @@ async def confirm_action(
             run_history=run_history,
         ),
         usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+        current_turn_run_id=turn_run_id,
     )
+    if turn_run_id is not None:
+        visible_output["action_proposals"] = [item.model_dump(mode="json") for item in updated_proposals]
+        visible_output["evidence"] = [item.model_dump(mode="json") for item in updated_evidence]
+        visible_output["trace_summary"] = (
+            updated_trace_summary.model_dump(mode="json") if updated_trace_summary is not None else None
+        )
+        visible_output["persisted_supplements"] = persisted_supplements
+        await repo.update_turn_run(
+            turn_run_id=turn_run_id,
+            status=message.status,
+            user_visible_output_json=visible_output,
+        )
+        existing_trace = await repo.get_eval_trace(turn_run_id)
+        action_audit = list((existing_trace or {}).get("action_audit_json") or [])
+        action_audit.append(
+            {
+                "action_id": action_id,
+                "action_type": proposal.action_type,
+                "decision": "confirmed",
+                "timestamp": _iso_now(),
+                "status_after_decision": "executed",
+            }
+        )
+        supplement_audit = list((existing_trace or {}).get("supplement_audit_json") or [])
+        if result.persisted_supplement is not None:
+            supplement_audit.append(
+                {
+                    "event": "persisted",
+                    "supplement_id": result.persisted_supplement.supplement_id,
+                    "supplement_type": result.persisted_supplement.supplement_type,
+                    "created_from_turn_run_id": result.persisted_supplement.created_from_turn_run_id,
+                    "timestamp": _iso_now(),
+                }
+            )
+        await _upsert_eval_trace_record(
+            turn_run_id=turn_run_id,
+            planning_snapshot=None,
+            runtime_state=ReaderAskRuntimeState(),
+            context_plan=None,
+            action_audit_json=action_audit,
+            supplement_audit_json=supplement_audit,
+        )
     return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)
 
 
@@ -3598,6 +4070,48 @@ async def delete_supplement(user_id: UUID, supplement_id: UUID) -> ReaderAskDele
         record_title=record_summary.get("title"),
         lifecycle_status="deleted",
     )
+    source_turn_run_id = _parse_uuid(
+        persisted_supplement.created_from_turn_run_id,
+        "supplement created_from_turn_run_id is invalid",
+    )
+    source_turn_run = await repo.get_turn_run(source_turn_run_id)
+    if source_turn_run is not None:
+        output = dict(source_turn_run.get("user_visible_output_json") or {})
+        persisted_items = list(output.get("persisted_supplements") or [])
+        next_items: list[dict[str, Any]] = []
+        replaced = False
+        for item in persisted_items:
+            if item.get("supplement_id") == persisted_supplement.supplement_id:
+                next_items.append(persisted_supplement.model_dump(mode="json"))
+                replaced = True
+            else:
+                next_items.append(item)
+        if not replaced:
+            next_items.append(persisted_supplement.model_dump(mode="json"))
+        output["persisted_supplements"] = next_items
+        await repo.update_turn_run(
+            turn_run_id=source_turn_run_id,
+            status=source_turn_run["status"],
+            user_visible_output_json=output,
+        )
+        existing_trace = await repo.get_eval_trace(source_turn_run_id)
+        supplement_audit = list((existing_trace or {}).get("supplement_audit_json") or [])
+        supplement_audit.append(
+            {
+                "event": "deleted",
+                "supplement_id": persisted_supplement.supplement_id,
+                "supplement_type": persisted_supplement.supplement_type,
+                "created_from_turn_run_id": persisted_supplement.created_from_turn_run_id,
+                "timestamp": _iso_now(),
+            }
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=source_turn_run_id,
+            planning_snapshot=None,
+            runtime_state=ReaderAskRuntimeState(),
+            context_plan=None,
+            supplement_audit_json=supplement_audit,
+        )
     return ReaderAskDeleteSupplementResponse(
         deleted=True,
         supplement_id=str(supplement_id),
