@@ -91,7 +91,7 @@ function EnhancedText({ text }: { text: string }) {
                 return (
                   <span
                     key={pIdx}
-                    className="font-serif font-semibold text-ink antialiased tracking-normal mx-0.5"
+                    className="font-sans font-medium text-ink/90 antialiased tracking-normal mx-0.5"
                   >
                     {part}
                   </span>
@@ -219,21 +219,21 @@ export function ReaderAnalysisElement({
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span
-                className={`reader-entry-note-icon flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
+                className={`reader-entry-note-icon flex h-[1.15rem] w-[1.15rem] shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
               >
                 {element.entryType === "sentence_analysis" ? (
-                  <BookOpen aria-hidden="true" className="h-2.5 w-2.5" />
+                  <BookOpen aria-hidden="true" className="h-[0.6rem] w-[0.6rem]" />
                 ) : (
-                  <Sparkles aria-hidden="true" className="h-2.5 w-2.5" />
+                  <Sparkles aria-hidden="true" className="h-[0.6rem] w-[0.6rem]" />
                 )}
               </span>
               <span className={`text-[0.7rem] font-semibold uppercase tracking-widest ${labelToneClass}`}>
                 {category}
               </span>
-              <span className="text-hairline-strong/40 font-serif">·</span>
-              <span className="truncate text-[0.85rem] font-medium text-ink-soft">
+              <span className="text-hairline-strong/30 font-sans mx-0.5 font-medium">/</span>
+              <span className="truncate text-[0.85rem] font-medium text-ink-soft max-w-[12rem] sm:max-w-[16rem]">
                 {label}
               </span>
             </div>

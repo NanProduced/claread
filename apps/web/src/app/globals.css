@@ -882,23 +882,6 @@ select {
     var(--surface);
 }
 
-.reader-sentence--analysis-expanded .reader-analysis-atom {
-  margin-inline: -0.03em;
-  padding: 0.01em 0.12em 0.1em;
-  border-radius: 0.22em;
-  background-position: 0 100%, 0 86%;
-  background-size: 100% 0.18em, 100% 0.86em;
-  box-shadow: 0 0.12em 0.42em rgba(28, 24, 18, 0.04);
-}
-
-.reader-sentence--analysis-expanded .reader-analysis-atom::before {
-  width: 1.38em;
-  height: 1.38em;
-  margin-right: 0.2em;
-  transform: translateY(-0.14em);
-  box-shadow: 0 0.14em 0.36em rgba(28, 24, 18, 0.05);
-}
-
 .reader-sentence--user-highlight {
   /* Box visual shadows stripped to maintain pure text flow */
 }
@@ -908,16 +891,13 @@ select {
   --analysis-fill: transparent;
 
   position: relative;
-  margin-inline: -0.02em;
-  padding: 0 0.08em 0.08em;
-  border-radius: 0.16em;
   color: var(--ink); /* Keep text color as ink, use accent for underline */
   background:
-    linear-gradient(to top, var(--analysis-accent) 0 1px, transparent 1px),
+    linear-gradient(to top, var(--analysis-accent) 0 2px, transparent 2px),
     linear-gradient(to top, var(--analysis-fill) 0 100%, transparent 100%);
   background-position: 0 100%, 0 0;
   background-repeat: no-repeat;
-  background-size: 100% 1px, 100% 100%;
+  background-size: 100% 2px, 100% 100%;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
   transition:
@@ -929,26 +909,6 @@ select {
 .reader-analysis-atom--active {
   --analysis-fill: color-mix(in srgb, var(--analysis-accent) 15%, transparent);
   color: var(--analysis-accent);
-}
-
-.reader-analysis-atom::before {
-  content: attr(data-analysis-index);
-  display: inline-flex;
-  width: 1.28em;
-  height: 1.28em;
-  align-items: center;
-  justify-content: center;
-  margin-right: 0.16em;
-  transform: translateY(-0.16em);
-  border: 1px solid color-mix(in srgb, var(--analysis-accent) 58%, white);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--analysis-accent);
-  font-family: var(--font-sans);
-  font-size: 0.62em;
-  font-weight: 700;
-  line-height: 1;
-  vertical-align: middle;
 }
 
 .reader-analysis-atom--1,
@@ -988,11 +948,11 @@ select {
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--analysis-accent) 16%, white);
+  border: none;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--analysis-accent) 10%, white);
+  background: color-mix(in srgb, var(--analysis-accent) 12%, white);
   color: var(--analysis-accent);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 0.18rem 0.45rem rgba(28, 24, 18, 0.04);
@@ -1049,6 +1009,7 @@ select {
   height: 1px;
   background: var(--reader-entry-connector);
   opacity: 0;
+  pointer-events: none;
   transition: opacity 250ms ease;
 }
 
@@ -1062,6 +1023,7 @@ select {
   border-radius: 999px;
   background: linear-gradient(180deg, var(--reader-entry-accent), color-mix(in srgb, var(--reader-entry-accent) 14%, white));
   opacity: 0;
+  pointer-events: none;
   transition: opacity 250ms ease;
 }
 
@@ -1092,14 +1054,18 @@ select {
 
 .reader-entry-note--collapsed {
   border-radius: 999px;
-  padding: 0.25rem 0.5rem;
-  background: var(--reader-entry-surface);
-  border: 1px solid transparent;
+  padding: 0.15rem 0.6rem 0.15rem 0.2rem;
+  background: color-mix(in srgb, var(--reader-entry-surface) 70%, transparent);
+  border: 1px solid var(--hairline);
+  backdrop-filter: blur(4px);
   max-width: max-content;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
 }
 
 .reader-entry-note--collapsed:hover {
-  background: color-mix(in srgb, var(--reader-entry-surface) 90%, var(--reader-entry-accent));
+  background: var(--reader-entry-surface);
+  border-color: rgba(0,0,0,0.06);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.04);
 }
 
 .reader-entry-note--expanded {
@@ -1223,13 +1189,13 @@ select {
 
 .reader-entry-analysis-list {
   display: grid;
-  gap: 0.66rem;
+  gap: 1rem;
 }
 
 .reader-entry-analysis-item {
   display: grid;
   grid-template-columns: 1.75rem minmax(0, 1fr);
-  gap: 0.75rem;
+  gap: 1rem;
   align-items: start;
   padding: 0.12rem 0 0.12rem 0.02rem;
 }
