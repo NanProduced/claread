@@ -2,7 +2,14 @@
 
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TEXT_RANGE_HASH_ALGORITHM, TEXT_RANGE_OFFSET_UNIT, USER_ANNOTATION_COLORS } from "@claread/contracts";
+import {
+  buildMultiTextTargetKey,
+  buildSentenceTargetKey,
+  buildTextRangeTargetKey,
+  TEXT_RANGE_HASH_ALGORITHM,
+  TEXT_RANGE_OFFSET_UNIT,
+  USER_ANNOTATION_COLORS,
+} from "@claread/contracts";
 import {
   BookOpen,
   Type,
@@ -33,7 +40,7 @@ import {
   askAttachmentFromAnnotation,
   askAttachmentFromAnalysisBlock,
   askAttachmentFromContentSummary,
-  askAttachmentFromFavorite,
+  askAttachmentFromReaderNote,
   askAttachmentFromRecord,
   askAttachmentFromSelection,
   askAttachmentFromSentence,
@@ -46,10 +53,8 @@ import {
   anchorPayloadFromSelection,
   anchorPayloadFromSentence,
   copyDomRect,
-  favoriteMutationFromAnchorPayload,
-  favoriteTargetVmFromAnchorPayload,
-  favoriteToTargetRef,
   hashAnchorText,
+  jumpToAnchorPayload,
   jumpTargetFromAskAttachment,
   jumpTargetFromAskCitation,
   jumpToTargetKey,
@@ -77,12 +82,11 @@ import {
 } from "@/lib/reader-plate";
 import type {
   UserAnnotationColorDto,
-  WebAnchorSegmentVm,
   WebAnnotationCreateRequest,
   WebAnnotationVm,
 } from "@/types/api/annotations";
 import type { ReaderAskCitationDto } from "@/types/api/reader-ask";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
+import type { WebReaderNoteCreateRequest, WebReaderNoteVm } from "@/types/api/reader-notes";
 import type { WebDictResult } from "@/types/api/dict";
 import type {
   DictionaryAIViewState,
@@ -96,6 +100,7 @@ import type { SentenceEntryModel, SentenceModel } from "@/types/view/ReaderMockV
 import {
   ANNOTATION_CREATED_EVENT,
 } from "./ReaderAnnotations";
+import { ReaderNoteRail, type ReaderNoteRailDraft, type ReaderNoteRailGroup } from "./ReaderNoteRail";
 import {
   exchangeForms,
   firstMeaning,
@@ -113,7 +118,7 @@ interface ReaderWorkbenchProps {
   dataSource: ReaderDataSource;
   message?: string;
   initialAnnotations: WebAnnotationVm[];
-  initialFavoriteTargets?: WebFavoriteTargetVm[];
+  initialReaderNotes?: WebReaderNoteVm[];
 }
 
 type AnnotationSaveState =
@@ -143,6 +148,164 @@ function belongsToCurrentRecord(candidateRecordId: string | null | undefined, ta
   }
 
   return targetKey.startsWith(`record:${recordId}:`);
+}
+
+function noteRequestFromSentence(recordId: string, sentence: SentenceModel): WebReaderNoteCreateRequest {
+  return {
+    recordId,
+    quoteMode: "sentence",
+    anchorSentenceId: sentence.sentenceId,
+    paragraphId: sentence.paragraphId,
+    sentenceId: sentence.sentenceId,
+    selectedText: sentence.text,
+    noteText: "",
+  };
+}
+
+function noteRequestFromSelection(recordId: string, selection: ReaderTextSelection): WebReaderNoteCreateRequest {
+  if (selection.anchorType === "sentence") {
+    return noteRequestFromSentence(recordId, selection.sentence);
+  }
+
+  if (selection.anchorType === "multi_text") {
+    const firstSegment = selection.segments[0];
+    return {
+      recordId,
+      quoteMode: "multi_text",
+      anchorSentenceId: firstSegment?.sentenceId ?? selection.sentence.sentenceId,
+      paragraphId: firstSegment?.paragraphId ?? selection.sentence.paragraphId,
+      sentenceId: firstSegment?.sentenceId ?? selection.sentence.sentenceId,
+      selectedText: selection.selectedText,
+      segments: selection.segments.map((segment) => ({
+        paragraphId: segment.paragraphId ?? null,
+        sentenceId: segment.sentenceId,
+        selectedText: segment.selectedText,
+        startOffset: segment.startOffset,
+        endOffset: segment.endOffset,
+        textHash: segment.textHash,
+      })),
+      noteText: "",
+    };
+  }
+
+  return {
+    recordId,
+    quoteMode: "text_range",
+    anchorSentenceId: selection.sentence.sentenceId,
+    paragraphId: selection.sentence.paragraphId,
+    sentenceId: selection.sentence.sentenceId,
+    selectedText: selection.selectedText,
+    startOffset: selection.startOffset,
+    endOffset: selection.endOffset,
+    textHash: selection.textHash,
+    noteText: "",
+  };
+}
+
+function noteTargetKeyFromRequest(request: WebReaderNoteCreateRequest) {
+  if (request.quoteMode === "sentence") {
+    return request.sentenceId ? buildSentenceTargetKey(request.recordId, request.sentenceId) : "";
+  }
+
+  if (request.quoteMode === "text_range") {
+    if (
+      !request.sentenceId ||
+      typeof request.startOffset !== "number" ||
+      typeof request.endOffset !== "number" ||
+      !request.textHash
+    ) {
+      return "";
+    }
+    return buildTextRangeTargetKey(
+      request.recordId,
+      request.sentenceId,
+      request.startOffset,
+      request.endOffset,
+      request.textHash,
+    );
+  }
+
+  const segments = request.segments ?? [];
+  if (segments.length < 2) {
+    return "";
+  }
+  return buildMultiTextTargetKey(
+    request.recordId,
+    segments.map((segment) => ({
+      sentenceId: segment.sentenceId,
+      selectedText: segment.selectedText,
+      startOffset: segment.startOffset,
+      endOffset: segment.endOffset,
+      textHash: segment.textHash,
+      paragraphId: segment.paragraphId ?? null,
+    })),
+  );
+}
+
+function readerNoteJumpTarget(note: WebReaderNoteVm): ReaderJumpTarget | null {
+  return jumpToAnchorPayload({
+    anchorType: note.quoteMode,
+    targetKey: note.targetKey,
+    recordId: note.recordId,
+    paragraphId: note.paragraphId,
+    sentenceId: note.sentenceId ?? note.anchorSentenceId,
+    selectedText: note.selectedText,
+    startOffset: note.startOffset,
+    endOffset: note.endOffset,
+    textHash: note.textHash,
+    segments:
+      note.quoteMode === "multi_text"
+        ? note.segments.map((segment) => ({
+            paragraphId: segment.paragraphId ?? null,
+            sentenceId: segment.sentenceId,
+            selectedText: segment.selectedText,
+            startOffset: segment.startOffset,
+            endOffset: segment.endOffset,
+            textHash: segment.textHash,
+          }))
+        : undefined,
+    metadata: {
+      source: "reader_note",
+      originType: note.quoteMode,
+      offsetUnit: TEXT_RANGE_OFFSET_UNIT,
+      textHashAlgorithm: TEXT_RANGE_HASH_ALGORITHM,
+    },
+  });
+}
+
+function readerNoteJumpTargetFromRequest(request: WebReaderNoteCreateRequest): ReaderJumpTarget | null {
+  const targetKey = noteTargetKeyFromRequest(request);
+  if (!targetKey) {
+    return null;
+  }
+  return jumpToAnchorPayload({
+    anchorType: request.quoteMode,
+    targetKey,
+    recordId: request.recordId,
+    paragraphId: request.paragraphId ?? null,
+    sentenceId: request.sentenceId ?? request.anchorSentenceId,
+    selectedText: request.selectedText,
+    startOffset: request.startOffset ?? null,
+    endOffset: request.endOffset ?? null,
+    textHash: request.textHash ?? null,
+    segments:
+      request.quoteMode === "multi_text"
+        ? (request.segments ?? []).map((segment) => ({
+            paragraphId: segment.paragraphId ?? null,
+            sentenceId: segment.sentenceId,
+            selectedText: segment.selectedText,
+            startOffset: segment.startOffset,
+            endOffset: segment.endOffset,
+            textHash: segment.textHash,
+          }))
+        : undefined,
+    metadata: {
+      source: "reader_note_request",
+      originType: request.quoteMode,
+      offsetUnit: TEXT_RANGE_OFFSET_UNIT,
+      textHashAlgorithm: TEXT_RANGE_HASH_ALGORITHM,
+    },
+  });
 }
 
 function entryLabel(entry: SentenceEntryModel) {
@@ -342,7 +505,7 @@ export function ReaderWorkbench({
   dataSource,
   message,
   initialAnnotations,
-  initialFavoriteTargets = [],
+  initialReaderNotes = [],
 }: ReaderWorkbenchProps) {
   const [readerScene, setReaderScene] = useState(record.reader);
   const reader = readerScene;
@@ -355,8 +518,9 @@ export function ReaderWorkbench({
   const [lookupHistory, setLookupHistory] = useState<DictionaryLookupSnapshot[]>([]);
   const [dictionarySaveState, setDictionarySaveState] = useState<SaveState>({ kind: "idle" });
   const [annotations, setAnnotations] = useState(initialAnnotations);
-  const [favoriteTargets, setFavoriteTargets] = useState(initialFavoriteTargets);
+  const [readerNotes, setReaderNotes] = useState(initialReaderNotes);
   const [jumpTarget, setJumpTarget] = useState<ReaderJumpTarget | null>(null);
+  const [focusedReaderNoteTarget, setFocusedReaderNoteTarget] = useState<ReaderJumpTarget | null>(null);
   const [activeSentence, setActiveSentence] = useState<SentenceModel | null>(null);
   const [textSelection, setTextSelection] = useState<ReaderTextSelection | null>(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
@@ -368,13 +532,13 @@ export function ReaderWorkbench({
   const lastSentencePopoverTriggerRef = useRef<HTMLElement | null>(null);
   const lastLookupTriggerRef = useRef<HTMLElement | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
-  const [note, setNote] = useState("");
-  const [selectionNoteOpen, setSelectionNoteOpen] = useState(false);
-  const [selectionNoteDraft, setSelectionNoteDraft] = useState("");
-  const [selectionFavorited, setSelectionFavorited] = useState(false);
-  const [selectionFavoriteLoading, setSelectionFavoriteLoading] = useState(false);
   const [annotationColor, setAnnotationColor] = useState<UserAnnotationColorDto>("warm_yellow");
   const [annotationSaveState, setAnnotationSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
+  const [readerNoteRailOpen, setReaderNoteRailOpen] = useState(false);
+  const [activeReaderNoteId, setActiveReaderNoteId] = useState<string | null>(null);
+  const [pendingReaderNote, setPendingReaderNote] = useState<WebReaderNoteCreateRequest | null>(null);
+  const [readerNoteDraft, setReaderNoteDraft] = useState("");
+  const [readerNoteSaveState, setReaderNoteSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
@@ -556,28 +720,73 @@ export function ReaderWorkbench({
     return reader.sentenceEntries.find((entry) => entry.id === activeEntryId) ?? null;
   }, [activeEntryId, reader.sentenceEntries]);
 
+  const sentenceIndexById = useMemo(
+    () => new Map(reader.article.sentences.map((sentence, index) => [sentence.sentenceId, index + 1])),
+    [reader.article.sentences],
+  );
+
   const assetProjection: ReaderAssetProjection = useMemo(
     () =>
       projectReaderAssets({
         annotations,
-        favoriteTargets,
         recordId: record.id,
       }),
-    [annotations, favoriteTargets, record.id],
+    [annotations, record.id],
   );
 
   const annotationsBySentence = assetProjection.sentenceAssetSummaryBySentence;
-  const favoriteTargetsBySentence = useMemo(() => {
-    const map = new Map<string, WebFavoriteTargetVm[]>();
-    assetProjection.sentenceAssetSummaryBySentence.forEach((summary, sentenceId) => {
-      map.set(sentenceId, summary.favoriteTargets);
-    });
-    return map;
-  }, [assetProjection]);
-
   const activeSentenceAnnotations = activeSentence
     ? annotationsBySentence.get(activeSentence.sentenceId)?.annotations ?? []
     : [];
+  const readerNotesByTargetKey = useMemo(
+    () => new Map(readerNotes.map((note) => [note.targetKey, note])),
+    [readerNotes],
+  );
+  const activeReaderNote = useMemo(
+    () => readerNotes.find((note) => note.id === activeReaderNoteId) ?? null,
+    [activeReaderNoteId, readerNotes],
+  );
+  const readerNoteGroups = useMemo<ReaderNoteRailGroup[]>(() => {
+    const notesBySentence = new Map<string, WebReaderNoteVm[]>();
+    readerNotes.forEach((note) => {
+      const current = notesBySentence.get(note.anchorSentenceId) ?? [];
+      notesBySentence.set(note.anchorSentenceId, [...current, note]);
+    });
+
+    return Array.from(notesBySentence.entries())
+      .map(([sentenceId, notes]) => {
+        const sentence = sentenceById.get(sentenceId);
+        if (!sentence) {
+          return null;
+        }
+        const sortedNotes = [...notes].sort((left, right) => {
+          const leftStart = left.quoteMode === "sentence" ? 0 : (left.startOffset ?? left.segments[0]?.startOffset ?? 0);
+          const rightStart = right.quoteMode === "sentence" ? 0 : (right.startOffset ?? right.segments[0]?.startOffset ?? 0);
+          if (leftStart !== rightStart) {
+            return leftStart - rightStart;
+          }
+          const leftLength =
+            left.quoteMode === "sentence"
+              ? sentence.text.length
+              : (left.endOffset ?? left.segments.at(-1)?.endOffset ?? 0) - leftStart;
+          const rightLength =
+            right.quoteMode === "sentence"
+              ? sentence.text.length
+              : (right.endOffset ?? right.segments.at(-1)?.endOffset ?? 0) - rightStart;
+          if (leftLength !== rightLength) {
+            return leftLength - rightLength;
+          }
+          return left.createdAt.localeCompare(right.createdAt);
+        });
+        return {
+          sentence,
+          sentenceIndex: sentenceIndexById.get(sentenceId) ?? 0,
+          notes: sortedNotes,
+        };
+      })
+      .filter((group): group is ReaderNoteRailGroup => Boolean(group))
+      .sort((left, right) => left.sentenceIndex - right.sentenceIndex);
+  }, [readerNotes, sentenceById, sentenceIndexById]);
   const plateDocument = useMemo(() => renderSceneToPlateDocument(reader), [reader]);
   const pageIdentity: ReaderAskPageIdentity = useMemo(
     () => ({
@@ -602,6 +811,29 @@ export function ReaderWorkbench({
       ) ?? null
     );
   }, [annotations, record.id, textSelection]);
+  const selectedReaderNote = useMemo(() => {
+    if (!textSelection) {
+      return null;
+    }
+    return readerNotesByTargetKey.get(targetKeyForSelection(record.id, textSelection)) ?? null;
+  }, [readerNotesByTargetKey, record.id, textSelection]);
+  const activeReaderNoteDraft = useMemo<ReaderNoteRailDraft | null>(() => {
+    if (activeReaderNote) {
+      return {
+        targetKey: activeReaderNote.targetKey,
+        quoteMode: activeReaderNote.quoteMode,
+        selectedText: activeReaderNote.selectedText,
+      };
+    }
+    if (!pendingReaderNote) {
+      return null;
+    }
+    return {
+      targetKey: noteTargetKeyFromRequest(pendingReaderNote),
+      quoteMode: pendingReaderNote.quoteMode,
+      selectedText: pendingReaderNote.selectedText,
+    };
+  }, [activeReaderNote, pendingReaderNote]);
 
   useEffect(() => {
     const targetKey = searchParams.get("targetKey");
@@ -611,7 +843,6 @@ export function ReaderWorkbench({
 
     const nextJumpTarget = jumpToTargetKey(targetKey, {
       annotations,
-      favoriteTargets,
     });
     if (!nextJumpTarget) {
       return;
@@ -619,7 +850,7 @@ export function ReaderWorkbench({
 
     setJumpTarget(nextJumpTarget);
     focusedRouteTargetKeyRef.current = targetKey;
-  }, [annotations, favoriteTargets, searchParams]);
+  }, [annotations, searchParams]);
 
   useEffect(() => {
     if (!jumpTarget) {
@@ -1235,56 +1466,12 @@ export function ReaderWorkbench({
       setSentencePopoverAnchorEl(null);
       setLookupPreviewOpen(false);
       setLookupPreviewAnchor(null);
-      setSelectionNoteOpen(false);
-      setSelectionNoteDraft("");
-      setSelectionFavorited(false);
-      setSelectionFavoriteLoading(false);
       setAnnotationSaveState({ kind: "idle" });
+      setReaderNoteSaveState({ kind: "idle" });
     } else {
-      setSelectionNoteOpen(false);
-      setSelectionNoteDraft("");
-      setSelectionFavorited(false);
-      setSelectionFavoriteLoading(false);
+      setReaderNoteSaveState({ kind: "idle" });
     }
   }, [sentenceById]);
-
-  useEffect(() => {
-    if (!textSelection) {
-      return;
-    }
-
-    const controller = new AbortController();
-    const favoriteMutation = favoriteMutationFromAnchorPayload(
-      anchorPayloadFromSelection(record.id, textSelection),
-    );
-
-    const params = new URLSearchParams({
-      targetType: favoriteMutation.targetType,
-      targetKey: favoriteMutation.targetKey,
-    });
-
-    void fetch(`/api/web/favorites/target?${params.toString()}`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const payload = (await response.json()) as { ok: boolean; favorited?: boolean };
-        if (response.ok && payload.ok) {
-          setSelectionFavorited(Boolean(payload.favorited));
-        }
-      })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          setSelectionFavorited(false);
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setSelectionFavoriteLoading(false);
-        }
-      });
-
-    return () => controller.abort();
-  }, [record.id, textSelection]);
 
   function mergeAnnotation(item: WebAnnotationVm) {
     setAnnotations((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
@@ -1294,9 +1481,17 @@ export function ReaderWorkbench({
     setAnnotations((current) => current.filter((existing) => existing.id !== annotationId));
   }
 
+  function mergeReaderNote(item: WebReaderNoteVm) {
+    setReaderNotes((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
+  }
+
+  function removeReaderNote(noteId: string) {
+    setReaderNotes((current) => current.filter((existing) => existing.id !== noteId));
+  }
+
   async function patchAnnotation(
     annotationId: string,
-    body: { color?: UserAnnotationColorDto | null; note?: string | null },
+    body: { color: UserAnnotationColorDto },
     errorMessage: string,
   ) {
     const response = await fetch(`/api/web/annotations/${encodeURIComponent(annotationId)}`, {
@@ -1389,22 +1584,18 @@ export function ReaderWorkbench({
     }
   }
 
-  async function saveSentenceAnnotation(
-    useNote: boolean,
-    options?: { color?: UserAnnotationColorDto; selection?: ReaderTextSelection | null; noteText?: string },
-  ) {
+  async function saveHighlight(options?: { color?: UserAnnotationColorDto; selection?: ReaderTextSelection | null }) {
     const targetSelection = options?.selection ?? textSelection;
     const targetSentence = targetSelection?.sentence ?? activeSentence;
 
     if (!targetSentence) {
-      setAnnotationSaveState({ kind: "error", message: "请先选择一个句子。" });
+      setAnnotationSaveState({ kind: "error", message: "请先选中一句或一个片段。" });
       return;
     }
 
     setAnnotationSaveState({ kind: "saving" });
 
     const color = options?.color ?? annotationColor;
-    const noteText = options?.noteText ?? note;
     const sentenceAnnotations = annotationsBySentence.get(targetSentence.sentenceId)?.annotations ?? [];
     const existingTargetAnnotation = targetSelection
       ? annotations.find(
@@ -1414,24 +1605,14 @@ export function ReaderWorkbench({
         ) ?? null
       : sentenceAnnotations.find((item) => item.anchorType === "sentence") ?? null;
 
-    if (useNote && existingTargetAnnotation) {
+    if (existingTargetAnnotation) {
       try {
-        const item = await patchAnnotation(
-          existingTargetAnnotation.id,
-          {
-            note: noteText.trim(),
-            color: existingTargetAnnotation.color ?? color,
-          },
-          "笔记保存失败。",
-        );
-        setNote(item.note ?? "");
-        setSelectionNoteDraft(item.note ?? "");
-        setSelectionNoteOpen(Boolean(item.note));
-        setAnnotationSaveState({ kind: "saved", message: "笔记已保存。" });
+        await patchAnnotation(existingTargetAnnotation.id, { color }, "高亮更新失败。");
+        setAnnotationSaveState({ kind: "saved", message: "高亮已更新。" });
       } catch (error) {
         setAnnotationSaveState({
           kind: "error",
-          message: error instanceof Error ? error.message : "笔记保存失败。",
+          message: error instanceof Error ? error.message : "高亮更新失败。",
         });
       }
       return;
@@ -1442,7 +1623,6 @@ export function ReaderWorkbench({
       : anchorPayloadFromSentence(record.id, targetSentence);
     const body: WebAnnotationCreateRequest = annotationRequestFromAnchorPayload(anchorPayload, {
       color,
-      note: useNote ? noteText.trim() : undefined,
       sentenceTextById,
       translationBySentence: translationModelBySentence,
     });
@@ -1460,7 +1640,7 @@ export function ReaderWorkbench({
       if (!response.ok || !payload.ok) {
         setAnnotationSaveState({
           kind: "error",
-          message: payload.ok === false && payload.message ? payload.message : "批注保存失败。",
+          message: payload.ok === false && payload.message ? payload.message : "高亮保存失败。",
         });
         return;
       }
@@ -1469,16 +1649,48 @@ export function ReaderWorkbench({
       window.dispatchEvent(
         new CustomEvent<WebAnnotationVm>(ANNOTATION_CREATED_EVENT, { detail: payload.item }),
       );
-      setNote(payload.item.note ?? "");
-      setSelectionNoteDraft(payload.item.note ?? "");
-      setSelectionNoteOpen(Boolean(payload.item.note));
-      setAnnotationSaveState({ kind: "saved", message: useNote ? "笔记已保存。" : "高亮已保存。" });
+      setAnnotationSaveState({ kind: "saved", message: "高亮已保存。" });
     } catch (error) {
       setAnnotationSaveState({
         kind: "error",
-        message: error instanceof Error ? error.message : "批注保存失败。",
+        message: error instanceof Error ? error.message : "高亮保存失败。",
       });
     }
+  }
+
+  function focusReaderNote(note: WebReaderNoteVm) {
+    setActiveReaderNoteId(note.id);
+    setPendingReaderNote(null);
+    setReaderNoteDraft(note.noteText);
+    setReaderNoteRailOpen(true);
+    const nextJumpTarget = readerNoteJumpTarget(note);
+    setFocusedReaderNoteTarget(nextJumpTarget);
+    if (nextJumpTarget) {
+      setJumpTarget(nextJumpTarget);
+    }
+    setReaderNoteSaveState({ kind: "idle" });
+  }
+
+  function openReaderNoteComposer(request: WebReaderNoteCreateRequest, existing?: WebReaderNoteVm | null) {
+    setReaderNoteRailOpen(true);
+    setSettingsPanelOpen(false);
+    setContextPanelOpen(false);
+    setAiOpen(false);
+
+    if (existing) {
+      focusReaderNote(existing);
+      return;
+    }
+
+    setActiveReaderNoteId(null);
+    setPendingReaderNote(request);
+    setReaderNoteDraft("");
+    const nextJumpTarget = readerNoteJumpTargetFromRequest(request);
+    setFocusedReaderNoteTarget(nextJumpTarget);
+    if (nextJumpTarget) {
+      setJumpTarget(nextJumpTarget);
+    }
+    setReaderNoteSaveState({ kind: "idle" });
   }
 
   function highlightTextSelection(colorValue: string) {
@@ -1487,7 +1699,7 @@ export function ReaderWorkbench({
     }
     const color = isUserAnnotationColor(colorValue) ? colorValue : annotationColor;
     setAnnotationColor(color);
-    void saveSentenceAnnotation(false, { color, selection: textSelection });
+    void saveHighlight({ color, selection: textSelection });
   }
 
   function openTextSelectionNote() {
@@ -1495,88 +1707,122 @@ export function ReaderWorkbench({
       return;
     }
     setActiveSentence(textSelection.sentence);
-    setSettingsPanelOpen(false);
-    setContextPanelOpen(false);
-    setAiOpen(false);
-    setSelectionNoteDraft(selectedAnnotation?.note ?? "");
-    setSelectionNoteOpen((value) => !value);
-    setAnnotationSaveState({ kind: "idle" });
+    openReaderNoteComposer(
+      noteRequestFromSelection(record.id, textSelection),
+      selectedReaderNote,
+    );
   }
 
-  async function saveTextSelectionNote() {
-    if (!textSelection) {
-      return;
-    }
+  function openSentenceNote(sentence: SentenceModel) {
+    const request = noteRequestFromSentence(record.id, sentence);
+    const existing = readerNotesByTargetKey.get(noteTargetKeyFromRequest(request)) ?? null;
+    openReaderNoteComposer(request, existing);
+  }
 
-    const trimmed = selectionNoteDraft.trim();
+  async function saveActiveReaderNote() {
+    const trimmed = readerNoteDraft.trim();
     if (!trimmed) {
-      setAnnotationSaveState({ kind: "error", message: "请先输入笔记内容。" });
+      setReaderNoteSaveState({ kind: "error", message: "请先输入笔记内容。" });
       return;
     }
 
-    if (selectedAnnotation) {
-      setAnnotationSaveState({ kind: "saving" });
+    if (activeReaderNote) {
+      setReaderNoteSaveState({ kind: "saving" });
       try {
-        await patchAnnotation(
-          selectedAnnotation.id,
-          { note: trimmed, color: selectedAnnotation.color ?? annotationColor },
-          "笔记保存失败。",
-        );
-        setAnnotationSaveState({ kind: "saved", message: "笔记已保存。" });
-      } catch (error) {
-        setAnnotationSaveState({
-          kind: "error",
-          message: error instanceof Error ? error.message : "笔记保存失败。",
+        const response = await fetch("/api/web/reader-notes/" + encodeURIComponent(activeReaderNote.id), {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ noteText: trimmed }),
         });
-      }
-      return;
-    }
-
-    await saveSentenceAnnotation(true, {
-      color: annotationColor,
-      selection: textSelection,
-      noteText: trimmed,
-    });
-  }
-
-  async function clearTextSelectionNote() {
-    if (!selectedAnnotation) {
-      setSelectionNoteDraft("");
-      setSelectionNoteOpen(false);
-      return;
-    }
-
-    setAnnotationSaveState({ kind: "saving" });
-    try {
-      if (selectedAnnotation.type === "note") {
-        const response = await fetch(`/api/web/annotations/${encodeURIComponent(selectedAnnotation.id)}`, {
-          method: "DELETE",
-        });
-        const payload = (await response.json()) as { ok: true } | { ok: false; message?: string };
-
+        const payload = (await response.json()) as
+          | { ok: true; item: WebReaderNoteVm }
+          | { ok: false; message?: string };
         if (!response.ok || !payload.ok) {
-          setAnnotationSaveState({
+          setReaderNoteSaveState({
             kind: "error",
-            message: payload.ok === false && payload.message ? payload.message : "删除笔记失败。",
+            message: payload.ok === false && payload.message ? payload.message : "笔记保存失败。",
           });
           return;
         }
-
-        removeAnnotation(selectedAnnotation.id);
-        setSelectionNoteDraft("");
-        setSelectionNoteOpen(false);
-        setAnnotationSaveState({ kind: "saved", message: "笔记已删除。" });
+        mergeReaderNote(payload.item);
+        setReaderNoteDraft(payload.item.noteText);
+        setReaderNoteSaveState({ kind: "saved", message: "笔记已保存。" });
+        return;
+      } catch (error) {
+        setReaderNoteSaveState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "笔记保存失败。",
+        });
         return;
       }
+    }
 
-      await patchAnnotation(selectedAnnotation.id, { note: null }, "删除笔记失败。");
-      setSelectionNoteDraft("");
-      setSelectionNoteOpen(false);
-      setAnnotationSaveState({ kind: "saved", message: "笔记已删除。" });
+    if (!pendingReaderNote) {
+      setReaderNoteSaveState({ kind: "error", message: "当前没有可保存的笔记选区。" });
+      return;
+    }
+
+    setReaderNoteSaveState({ kind: "saving" });
+    try {
+      const response = await fetch("/api/web/reader-notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...pendingReaderNote,
+          noteText: trimmed,
+        }),
+      });
+      const payload = (await response.json()) as
+        | { ok: true; item: WebReaderNoteVm }
+        | { ok: false; message?: string };
+      if (!response.ok || !payload.ok) {
+        setReaderNoteSaveState({
+          kind: "error",
+          message: payload.ok === false && payload.message ? payload.message : "笔记保存失败。",
+        });
+        return;
+      }
+      mergeReaderNote(payload.item);
+      focusReaderNote(payload.item);
+      setReaderNoteSaveState({ kind: "saved", message: "笔记已保存。" });
     } catch (error) {
-      setAnnotationSaveState({
+      setReaderNoteSaveState({
         kind: "error",
-        message: error instanceof Error ? error.message : "删除笔记失败。",
+        message: error instanceof Error ? error.message : "笔记保存失败。",
+      });
+    }
+  }
+
+  async function deleteActiveReaderNote() {
+    if (!activeReaderNote) {
+      setPendingReaderNote(null);
+      setReaderNoteDraft("");
+      setReaderNoteSaveState({ kind: "idle" });
+      return;
+    }
+
+    setReaderNoteSaveState({ kind: "saving" });
+    try {
+      const response = await fetch("/api/web/reader-notes/" + encodeURIComponent(activeReaderNote.id), {
+        method: "DELETE",
+      });
+      const payload = (await response.json()) as { ok: true } | { ok: false; message?: string };
+      if (!response.ok || !payload.ok) {
+        setReaderNoteSaveState({
+          kind: "error",
+          message: payload.ok === false && payload.message ? payload.message : "笔记删除失败。",
+        });
+        return;
+      }
+      removeReaderNote(activeReaderNote.id);
+      setActiveReaderNoteId(null);
+      setFocusedReaderNoteTarget(null);
+      setReaderNoteDraft("");
+      setReaderNoteSaveState({ kind: "saved", message: "笔记已删除。" });
+    } catch (error) {
+      setReaderNoteSaveState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "笔记删除失败。",
       });
     }
   }
@@ -1588,7 +1834,7 @@ export function ReaderWorkbench({
 
     setAnnotationSaveState({ kind: "saving" });
     try {
-      const response = await fetch(`/api/web/annotations/${encodeURIComponent(selectedAnnotation.id)}`, {
+      const response = await fetch("/api/web/annotations/" + encodeURIComponent(selectedAnnotation.id), {
         method: "DELETE",
       });
       const payload = (await response.json()) as { ok: true } | { ok: false; message?: string };
@@ -1596,81 +1842,23 @@ export function ReaderWorkbench({
       if (!response.ok || !payload.ok) {
         setAnnotationSaveState({
           kind: "error",
-          message: payload.ok === false && payload.message ? payload.message : "取消标注失败。",
+          message: payload.ok === false && payload.message ? payload.message : "取消高亮失败。",
         });
         return;
       }
 
       setAnnotations((current) => current.filter((existing) => existing.id !== selectedAnnotation.id));
-      setSelectionNoteDraft("");
-      setSelectionNoteOpen(false);
-      setAnnotationSaveState({ kind: "saved", message: "标注已取消。" });
+      setAnnotationSaveState({ kind: "saved", message: "高亮已删除。" });
     } catch (error) {
       setAnnotationSaveState({
         kind: "error",
-        message: error instanceof Error ? error.message : "取消标注失败。",
+        message: error instanceof Error ? error.message : "取消高亮失败。",
       });
-    }
-  }
-
-  async function toggleTextSelectionFavorite() {
-    if (!textSelection) {
-      return;
-    }
-
-    const anchorPayload = anchorPayloadFromSelection(record.id, textSelection);
-    const favoriteMutation = favoriteMutationFromAnchorPayload(anchorPayload);
-    setSelectionFavoriteLoading(true);
-
-    try {
-      const response = selectionFavorited
-        ? await fetch(
-            `/api/web/favorites/target?${new URLSearchParams({
-              targetType: favoriteMutation.targetType,
-              targetKey: favoriteMutation.targetKey,
-            }).toString()}`,
-            { method: "DELETE" },
-          )
-        : await fetch("/api/web/favorites/target", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(favoriteMutation),
-          });
-      const payload = (await response.json()) as { ok: boolean; favorited?: boolean; message?: string };
-
-      if (!response.ok || !payload.ok) {
-        setAnnotationSaveState({ kind: "error", message: payload.message ?? "收藏操作失败。" });
-        return;
-      }
-
-      setSelectionFavorited(Boolean(payload.favorited));
-      setFavoriteTargets((current) => {
-        const withoutTarget = current.filter(
-          (item) => !(item.targetType === favoriteMutation.targetType && item.targetKey === favoriteMutation.targetKey),
-        );
-        if (!payload.favorited) {
-          return withoutTarget;
-        }
-        return [
-          favoriteTargetVmFromAnchorPayload(anchorPayload, favoriteMutation.targetKey),
-          ...withoutTarget,
-        ];
-      });
-      setAnnotationSaveState({
-        kind: "saved",
-        message: payload.favorited ? "已收藏。" : "已取消收藏。",
-      });
-    } catch (error) {
-      setAnnotationSaveState({
-        kind: "error",
-        message: error instanceof Error ? error.message : "收藏操作失败。",
-      });
-    } finally {
-      setSelectionFavoriteLoading(false);
     }
   }
 
   function selectCurrentSentenceFromToolbar() {
+
     if (!textSelection || textSelection.anchorType !== "text_range") {
       return;
     }
@@ -1703,10 +1891,7 @@ export function ReaderWorkbench({
       textHash: hashAnchorText(sentence.text),
       rect,
     });
-    setSelectionNoteOpen(false);
-    setSelectionNoteDraft("");
-    setSelectionFavorited(false);
-    setSelectionFavoriteLoading(false);
+    setReaderNoteSaveState({ kind: "idle" });
     setAnnotationSaveState({ kind: "idle" });
     window.getSelection()?.removeAllRanges();
   }
@@ -1850,10 +2035,10 @@ export function ReaderWorkbench({
     ]);
   }
 
-  function openAskWithFavorite(favorite: WebFavoriteTargetVm) {
+  function openAskWithReaderNote(note: WebReaderNoteVm) {
     openAskWithAttachments([
-      askAttachmentFromFavorite(pageIdentity, favorite, {
-        sourceSurface: "favorite",
+      askAttachmentFromReaderNote(pageIdentity, note, {
+        sourceSurface: "note_rail",
         entryAction: "ask_about_this",
       }),
     ]);
@@ -1936,17 +2121,6 @@ export function ReaderWorkbench({
   function jumpToAnnotation(annotation: WebAnnotationVm) {
     const nextJumpTarget = jumpToTargetRef(annotationToTargetRef(annotation), {
       annotations,
-      favoriteTargets,
-    });
-    if (nextJumpTarget) {
-      setJumpTarget(nextJumpTarget);
-    }
-  }
-
-  function jumpToFavorite(favorite: WebFavoriteTargetVm) {
-    const nextJumpTarget = jumpToTargetRef(favoriteToTargetRef(favorite), {
-      annotations,
-      favoriteTargets,
     });
     if (nextJumpTarget) {
       setJumpTarget(nextJumpTarget);
@@ -1961,7 +2135,6 @@ export function ReaderWorkbench({
   function jumpToAskAttachment(attachment: ReaderAskAttachment) {
     const nextJumpTarget = jumpTargetFromAskAttachment(attachment, {
       annotations,
-      favoriteTargets,
     });
     if (nextJumpTarget) {
       setJumpTarget(nextJumpTarget);
@@ -1971,7 +2144,6 @@ export function ReaderWorkbench({
   function jumpToAskCitation(citation: ReaderAskCitationDto) {
     const nextJumpTarget = jumpTargetFromAskCitation(citation, record.id, {
       annotations,
-      favoriteTargets,
     });
     if (nextJumpTarget) {
       setJumpTarget(nextJumpTarget);
@@ -2001,7 +2173,6 @@ export function ReaderWorkbench({
     setActiveEntryId(null);
     const sentenceAnnotation =
       (annotationsBySentence.get(sentence.sentenceId)?.annotations ?? []).find((item) => item.anchorType === "sentence") ?? null;
-    setNote(sentenceAnnotation?.note ?? "");
     setAnnotationColor(sentenceAnnotation?.color ?? "warm_yellow");
     setAnnotationSaveState({ kind: "idle" });
   }
@@ -2172,13 +2343,12 @@ export function ReaderWorkbench({
             activeAnalysisEntryId={activeEntryId}
             expandedAnalysisEntryIds={expandedAnalysisEntryIds}
             jumpTarget={jumpTarget}
+            focusTarget={focusedReaderNoteTarget}
             assetProjection={assetProjection}
             annotationVisibilityGroups={readerSettings.annotationVisibilityGroups}
             onAnalysisFocusChange={setAnalysisEntryFocus}
             onAnalysisToggle={toggleAnalysisEntry}
             onAnnotationJump={jumpToAnnotation}
-            onAnnotationAsk={openAskWithAnnotation}
-            onFavoriteJump={jumpToFavorite}
             onDeleteAnalysisSupplement={deleteAnalysisSupplement}
             onAskTranslation={openAskWithTranslation}
             onAskAnalysis={openAskWithAnalysis}
@@ -2217,32 +2387,25 @@ export function ReaderWorkbench({
               activeColor={selectedAnnotation?.color ?? annotationColor}
               hasAnnotation={Boolean(selectedAnnotation)}
               hasHighlight={selectedAnnotation?.type === "highlight"}
-              hasNote={Boolean(selectedAnnotation?.note)}
-              favorited={selectionFavorited}
-              noteOpen={selectionNoteOpen}
-              noteValue={selectionNoteDraft}
-              noteSaving={annotationSaveState.kind === "saving"}
+              hasNote={Boolean(selectedReaderNote)}
               statusMessage={
-                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
-                  ? annotationSaveState.message
+                readerNoteSaveState.kind === "saved" || readerNoteSaveState.kind === "error"
+                  ? readerNoteSaveState.message
+                  : annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
+                    ? annotationSaveState.message
                   : undefined
               }
               statusKind={
-                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
-                  ? annotationSaveState.kind
+                readerNoteSaveState.kind === "saved" || readerNoteSaveState.kind === "error"
+                  ? readerNoteSaveState.kind
+                  : annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
+                    ? annotationSaveState.kind
                   : undefined
               }
-              disabled={{
-                favorite: selectionFavoriteLoading,
-              }}
               onSelectSentence={selectCurrentSentenceFromToolbar}
               onHighlight={(color) => highlightTextSelection(color)}
               onNote={openTextSelectionNote}
-              onNoteChange={setSelectionNoteDraft}
-              onNoteSave={saveTextSelectionNote}
-              onNoteClear={clearTextSelectionNote}
               onClearAnnotation={deleteTextSelectionAnnotation}
-              onFavorite={toggleTextSelectionFavorite}
               onLookup={lookupTextSelection}
               onAsk={openAskWithSelection}
             />
@@ -2354,23 +2517,38 @@ export function ReaderWorkbench({
             sentence={activeSentence}
             selectedText={textSelection?.selectedText ?? null}
             annotationScope={textSelection ? "text_range" : "sentence"}
-            note={note}
             color={annotationColor}
             saveState={annotationSaveState}
-            sentenceAnnotations={activeSentenceAnnotations}
-            sentenceFavorites={activeSentence ? favoriteTargetsBySentence.get(activeSentence.sentenceId) ?? [] : []}
-            onNoteChange={setNote}
             onColorChange={setAnnotationColor}
-            onSaveAnnotation={saveSentenceAnnotation}
+            onHighlight={() => void saveHighlight()}
+            onNote={() => activeSentence && openSentenceNote(activeSentence)}
             onAsk={openAskWithSentenceContext}
-            onAnnotationJump={jumpToAnnotation}
-            onAnnotationAsk={openAskWithAnnotation}
-            onFavoriteJump={jumpToFavorite}
-            onFavoriteAsk={openAskWithFavorite}
             onClose={closeContextPanel}
           />
         </div>
       ) : null}
+
+      <ReaderNoteRail
+        open={readerNoteRailOpen || readerNotes.length > 0}
+        groups={readerNoteGroups}
+        activeNote={activeReaderNote}
+        draft={activeReaderNoteDraft}
+        draftText={readerNoteDraft}
+        saveState={readerNoteSaveState}
+        onClose={() => {
+          setReaderNoteRailOpen(false);
+          setPendingReaderNote(null);
+          setActiveReaderNoteId(null);
+          setFocusedReaderNoteTarget(null);
+          setReaderNoteDraft("");
+          setReaderNoteSaveState({ kind: "idle" });
+        }}
+        onSelectNote={focusReaderNote}
+        onDraftTextChange={setReaderNoteDraft}
+        onSave={saveActiveReaderNote}
+        onDelete={deleteActiveReaderNote}
+        onAsk={openAskWithReaderNote}
+      />
 
         {settingsPanelOpen ? (
           <div

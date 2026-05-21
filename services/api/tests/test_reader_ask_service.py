@@ -38,18 +38,12 @@ from app.services.reader_ask.service import (
     _build_unused_reservation,
     _dictionary_ai_to_citation,
     _merge_usage_summaries,
-    _matches_history_intent,
     _needs_clarification,
     _next_run_info,
     _resolve_intent,
     _resolved_context_summary,
 )
 from app.services.reader_ask.supplements import build_grammar_note_candidate
-
-
-def test_matches_history_intent_for_cross_article_language() -> None:
-    assert _matches_history_intent("我以前在哪见过这个结构？") is True
-    assert _matches_history_intent("Can you explain this sentence?") is False
 
 
 def test_needs_clarification_for_ambiguous_local_reference_without_anchor() -> None:
@@ -142,7 +136,7 @@ def test_build_unused_reservation_refunds_only_the_unused_tail() -> None:
 def test_build_action_proposals_does_not_offer_saving_full_answer_as_note() -> None:
     anchor = ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="That there were some.")
     proposals = _build_action_proposals(
-        user_message="请把这条解释保存成笔记并收藏这句",
+        user_message="请高亮一下这句，并把解释保存成笔记",
         record=type("Record", (), {"record_id": "00000000-0000-0000-0000-000000000001"})(),
         anchors=[anchor],
         assistant_content_md="这句话在这里是存在句。",
@@ -150,8 +144,8 @@ def test_build_action_proposals_does_not_offer_saving_full_answer_as_note() -> N
 
     proposal_types = {proposal.action_type for proposal in proposals}
 
-    assert "favorite_anchor" in proposal_types
-    assert "save_answer_note" not in proposal_types
+    assert "save_excerpt" in proposal_types
+    assert "save_note" not in proposal_types
     assert all(proposal.requires_confirmation for proposal in proposals)
 
 
@@ -231,14 +225,14 @@ def test_resolved_context_summary_marks_article_assets_and_history_usage() -> No
         anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
         explicit_attachment_count=2,
         runtime_state=runtime_state,
-        used_history_lookup=True,
+        used_cross_record_context=True,
         citations=[],
     )
 
     assert summary.current_sentence_used is True
     assert summary.current_paragraph_used is True
     assert summary.used_record_assets is True
-    assert summary.used_history_lookup is True
+    assert summary.used_cross_record_context is True
     assert summary.explicit_attachment_count == 2
 
 
@@ -268,7 +262,7 @@ def test_build_resolved_context_input_preserves_explicit_attachments_only() -> N
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="why_here",
         attachments=[attachment],
@@ -293,7 +287,7 @@ def test_build_resolved_context_input_distinguishes_current_and_external_records
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],
@@ -325,10 +319,10 @@ def test_build_resolved_context_input_distinguishes_current_and_external_records
 
 def test_build_context_plan_records_history_and_dictionary_usage() -> None:
     runtime_state = ReaderAskRuntimeState(
-        used_history_lookup=True,
+        used_cross_record_context=True,
         latest_record_context={"sentence_windows": []},
-        latest_record_excerpt_assets=[{"id": "asset-1"}],
-        source_labels={"current_record", "history_assets", "dictionary"},
+        latest_record_insights=[{"entry_type": "sentence_analysis"}],
+        source_labels={"current_record", "external_record_context", "dictionary"},
     )
 
     context_plan = _build_context_plan(
@@ -339,7 +333,7 @@ def test_build_context_plan_records_history_and_dictionary_usage() -> None:
         citations=[_dictionary_ai_to_citation({"summary": "x"}, "test", 1)],
     )
 
-    assert context_plan.used_history_lookup is True
+    assert context_plan.used_cross_record_context is True
     assert context_plan.used_record_context is True
     assert context_plan.used_record_insights is True
     assert context_plan.used_dictionary is True
@@ -398,7 +392,7 @@ def test_assistant_message_metadata_keeps_only_minimal_turn_run_compat_fields() 
                 has_article_overview=True,
                 has_sentence_entries=True,
                 has_annotations=True,
-                has_user_assets=True,
+                has_reader_notes=True,
             ),
             entry_action="ask_about_this",
             attachments=[],
@@ -434,7 +428,7 @@ def test_user_visible_output_round_trips_to_completed_payload() -> None:
             anchors=[],
             explicit_attachment_count=0,
             runtime_state=ReaderAskRuntimeState(source_labels={"current_record"}),
-            used_history_lookup=False,
+            used_cross_record_context=False,
             citations=[],
         ),
         context_plan=ReaderAskContextPlan(entry_action="ask_about_this"),
@@ -446,7 +440,7 @@ def test_user_visible_output_round_trips_to_completed_payload() -> None:
                 has_article_overview=True,
                 has_sentence_entries=True,
                 has_annotations=True,
-                has_user_assets=True,
+                has_reader_notes=True,
             ),
             entry_action="ask_about_this",
             attachments=[],
@@ -480,7 +474,7 @@ def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],
@@ -504,7 +498,7 @@ def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
 
 def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
     runtime_state = ReaderAskRuntimeState(
-        source_labels={"current_record", "record_assets", "article_overview", "history_assets", "dictionary"},
+        source_labels={"current_record", "record_assets", "article_overview", "external_record_context", "dictionary"},
         latest_record_context={"sentence_windows": []},
         latest_record_insights=[{"entry_type": "sentence_analysis"}],
         latest_article_overview="overview",
@@ -530,7 +524,7 @@ def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
     assert trace["record_insights"]["reason"] == "grammar_intent"
     assert trace["article_overview"]["used"] is True
     assert trace["dictionary"]["used"] is True
-    assert trace["external_record_context"]["source_labels"] == ["history_assets"]
+    assert trace["external_record_context"]["source_labels"] == ["external_record_context"]
 
 
 def test_candidate_to_persisted_supplement_separates_lifecycle_contract() -> None:
@@ -702,7 +696,7 @@ def test_lookup_structured_record_assets_extracts_overview_and_stable_insights()
 
 def test_build_context_plan_records_reference_resolution_reason() -> None:
     runtime_state = ReaderAskRuntimeState(
-        source_labels={"current_record", "history_assets"},
+        source_labels={"current_record", "external_record_context"},
     )
     context_plan = _build_context_plan(
         entry_action="ask_about_this",
@@ -734,7 +728,7 @@ def test_plan_request_builds_disambiguation_state_for_ambiguous_known_reference(
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],
@@ -768,7 +762,7 @@ def test_build_context_plan_carries_clarification_reason_from_planning_snapshot(
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],
@@ -798,7 +792,7 @@ def test_plan_request_prefers_anchor_local_working_set_for_grammar() -> None:
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="why_here",
         attachments=[],
@@ -822,7 +816,7 @@ def test_plan_request_prefers_article_overview_for_article_level_question() -> N
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],
@@ -857,7 +851,7 @@ def test_plan_request_tracks_explicit_related_record_as_external_context() -> No
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[attachment],
@@ -901,7 +895,7 @@ def test_plan_request_tracks_explicit_external_analysis_asset_context() -> None:
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[attachment],
@@ -933,7 +927,7 @@ def test_trace_summary_marks_external_context_limitations() -> None:
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],
@@ -948,8 +942,8 @@ def test_trace_summary_marks_external_context_limitations() -> None:
     )
     trace = planner_svc.build_trace_summary(
         runtime_state=ReaderAskRuntimeState(
-            source_labels={"current_record", "history_assets"},
-            used_history_lookup=True,
+            source_labels={"current_record", "external_record_context"},
+            used_cross_record_context=True,
             latest_external_record_contexts=[
                 {
                     "record_id": "r-2",
@@ -993,7 +987,7 @@ def test_plan_request_builds_asset_disambiguation_state_for_ambiguous_external_a
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[record_attachment],
@@ -1119,7 +1113,7 @@ def test_plan_request_uses_explicit_related_record_context() -> None:
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[
@@ -1160,7 +1154,7 @@ def test_plan_request_without_anchor_returns_clarification_working_set() -> None
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],
@@ -1226,7 +1220,7 @@ def test_build_resolved_context_input_carries_external_asset_contexts() -> None:
             has_article_overview=True,
             has_sentence_entries=True,
             has_annotations=True,
-            has_user_assets=True,
+            has_reader_notes=True,
         ),
         entry_action="ask_about_this",
         attachments=[],

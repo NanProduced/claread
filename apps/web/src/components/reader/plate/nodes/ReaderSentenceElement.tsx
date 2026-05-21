@@ -7,7 +7,6 @@ import type {
   ReaderSentenceNode,
 } from "@/lib/reader-plate";
 import type { WebAnnotationVm } from "@/types/api/annotations";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import { ReaderAnnotationOverlay } from "../../ReaderAnnotationOverlay";
 import type { ReaderAnnotationVisibilityGroups } from "../../settings";
 
@@ -21,8 +20,6 @@ interface ReaderSentenceElementProps {
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
   onActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm) => void;
-  onAnnotationAsk?: (annotation: WebAnnotationVm) => void;
-  onFavoriteJump?: (favorite: WebFavoriteTargetVm) => void;
 }
 
 export function ReaderSentenceElement({
@@ -31,10 +28,8 @@ export function ReaderSentenceElement({
   analysisExpanded = false,
   assetProjection = null,
   annotationVisibilityGroups,
-  onAnnotationAsk,
   onAnnotationJump,
   onActivate,
-  onFavoriteJump,
   props,
   routeFocused = false,
 }: ReaderSentenceElementProps) {
@@ -45,10 +40,6 @@ export function ReaderSentenceElement({
     analysisActive ? "reader-sentence--analysis-active" : "",
     analysisExpanded ? "reader-sentence--analysis-expanded" : "",
     annotationVisibilityGroups.userAssets && assetProjection?.hasHighlight ? "reader-sentence--user-highlight" : "",
-    annotationVisibilityGroups.userAssets && assetProjection?.hasNote ? "reader-sentence--user-note" : "",
-    annotationVisibilityGroups.userAssets && assetProjection && assetProjection.favoriteCount > 0
-      ? "reader-sentence--favorite"
-      : "",
     routeFocused ? "reader-route-focus-frame" : "",
   ]
     .filter(Boolean)
@@ -81,12 +72,8 @@ export function ReaderSentenceElement({
       ) : null}
       <ReaderAnnotationOverlay
         annotations={assetProjection?.annotations ?? []}
-        slipAnnotations={assetProjection?.slipAnnotations ?? []}
-        favoriteTargets={assetProjection?.favoriteTargets ?? []}
         visible={annotationVisibilityGroups.userAssets}
-        onAnnotationAsk={onAnnotationAsk}
         onAnnotationJump={onAnnotationJump}
-        onFavoriteJump={onFavoriteJump}
       >
         {props.children}
       </ReaderAnnotationOverlay>

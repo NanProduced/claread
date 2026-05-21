@@ -2,18 +2,16 @@ import { TEXT_RANGE_HASH_ALGORITHM, TEXT_RANGE_OFFSET_UNIT } from "@claread/cont
 
 import type { ReaderAskAnchorRefDto, ReaderAskCitationDto } from "@/types/api/reader-ask";
 import type { WebAnnotationVm } from "@/types/api/annotations";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
+import type { WebReaderNoteVm } from "@/types/api/reader-notes";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import type { ReaderAnalysisBlockNode, ReaderContentSummaryNode } from "../../model";
 import type { ReaderTextSelection } from "../../primitives";
 import type { ReaderStructuredInspectIntent } from "../dictionary";
 import {
   anchorPayloadFromAnnotation,
-  anchorPayloadFromFavorite,
   anchorPayloadFromSelection,
   anchorPayloadFromSentence,
   annotationToTargetRef,
-  favoriteToTargetRef,
   sentenceToTargetRef,
   selectionToTargetRef,
   type ReaderAnchorPayload,
@@ -103,17 +101,13 @@ function selectedTextForSentence(sentence: SentenceModel): string {
 }
 
 function labelFromAnnotation(annotation: WebAnnotationVm): string {
-  if (annotation.note?.trim()) {
-    return annotation.note.trim();
-  }
   if (annotation.selectedText?.trim()) {
     return annotation.selectedText.trim();
   }
   return annotation.anchorType === "text_range" ? "选区批注" : "句子批注";
 }
-
-function labelFromFavorite(favorite: WebFavoriteTargetVm): string {
-  return favorite.selectedText?.trim() || "收藏锚点";
+function labelFromReaderNote(note: WebReaderNoteVm): string {
+  return note.noteText.trim() || note.selectedText.trim() || "阅读笔记";
 }
 
 function buildAttachment<T extends ReaderAskAttachment>(
@@ -351,33 +345,58 @@ export function askAttachmentFromAnnotation(
       paragraphId: annotation.paragraphId ?? null,
       assetId: annotation.id,
       annotationType: annotation.type,
-      note: annotation.note ?? null,
     },
   });
 }
 
-export function askAttachmentFromFavorite(
+export function askAttachmentFromReaderNote(
   pageIdentity: ReaderAskPageIdentity,
-  favorite: WebFavoriteTargetVm,
+  note: WebReaderNoteVm,
   options: ReaderAskAttachmentFactoryOptions = {},
 ): ReaderAskAttachment {
-  const anchorPayload = anchorPayloadFromFavorite(favorite);
-  const targetRef = favoriteToTargetRef(favorite);
   return buildAttachment({
     kind: "annotation_ref",
-    subtype: "favorite",
-    label: options.label ?? labelFromFavorite(favorite),
-    selectedText: favorite.selectedText ?? undefined,
-    targetKey: favorite.targetKey,
-    targetRef,
-    anchorPayload,
-    jumpTarget: jumpToTargetRef(targetRef),
+    subtype: "reader_note",
+    label: options.label ?? labelFromReaderNote(note),
+    selectedText: note.selectedText,
+    targetKey: note.targetKey,
+    anchorPayload: {
+      anchorType: note.quoteMode,
+      targetKey: note.targetKey,
+      recordId: note.recordId,
+      paragraphId: note.paragraphId ?? null,
+      sentenceId: note.sentenceId ?? note.anchorSentenceId,
+      selectedText: note.selectedText,
+      startOffset: note.startOffset,
+      endOffset: note.endOffset,
+      textHash: note.textHash,
+      segments:
+        note.quoteMode === "multi_text"
+          ? note.segments.map((segment) => ({
+              paragraphId: segment.paragraphId ?? null,
+              sentenceId: segment.sentenceId,
+              selectedText: segment.selectedText,
+              startOffset: segment.startOffset,
+              endOffset: segment.endOffset,
+              textHash: segment.textHash,
+            }))
+          : undefined,
+      metadata: {
+        offsetUnit: TEXT_RANGE_OFFSET_UNIT,
+        textHashAlgorithm: TEXT_RANGE_HASH_ALGORITHM,
+        source: "reader_note",
+        originType: note.quoteMode,
+      },
+    },
+    jumpTarget: jumpToTargetKey(note.targetKey) ?? null,
     metadata: {
       pageIdentity,
-      sourceSurface: options.sourceSurface ?? "favorite",
+      sourceSurface: options.sourceSurface ?? "note_rail",
       entryAction: options.entryAction ?? "ask_about_this",
-      sentenceId: favorite.sentenceId ?? null,
-      assetId: favorite.id,
+      sentenceId: note.sentenceId ?? note.anchorSentenceId,
+      paragraphId: note.paragraphId ?? null,
+      assetId: note.id,
+      note: note.noteText,
     },
   });
 }
@@ -492,7 +511,7 @@ export function askAnchorsFromAttachments(attachments: ReaderAskAttachment[]): R
     if (attachment.kind === "annotation_ref") {
       const payload = attachment.anchorPayload;
       return anchorDtoFromPayload(
-        attachment.subtype === "favorite" ? "favorite" : "user_annotation",
+        attachment.subtype === "reader_note" ? "reader_note" : "user_annotation",
         payload,
         attachment,
         {
@@ -604,15 +623,15 @@ export function askAttachmentFromAnchor(
     pageIdentityFromTargetKey(anchor.target_key);
   const kind =
     (payloadJson.attachment_kind as ReaderAskAttachment["kind"] | undefined) ??
-    (anchor.anchor_type === "user_annotation" || anchor.anchor_type === "favorite"
+    (anchor.anchor_type === "user_annotation" || anchor.anchor_type === "reader_note"
       ? "annotation_ref"
       : anchor.anchor_type === "sentence" || anchor.anchor_type === "text_range" || anchor.anchor_type === "multi_text"
         ? "text_selection"
         : "analysis_ref");
   const subtype =
     (payloadJson.attachment_subtype as ReaderAskAttachment["subtype"] | undefined) ??
-    (anchor.anchor_type === "favorite"
-      ? "favorite"
+    (anchor.anchor_type === "reader_note"
+      ? "reader_note"
       : anchor.anchor_type === "user_annotation"
         ? "user_annotation"
         : anchor.anchor_type === "sentence_entry"

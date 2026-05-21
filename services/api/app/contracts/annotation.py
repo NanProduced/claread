@@ -6,6 +6,20 @@ TEXT_RANGE_OFFSET_UNIT = "utf16"
 TEXT_RANGE_HASH_ALGORITHM = "fnv1a32-utf16"
 
 
+def build_sentence_target_key(record_id: str, sentence_id: str) -> str:
+    return f"record:{record_id}:sentence:{sentence_id}"
+
+
+def build_text_range_target_key(
+    record_id: str,
+    sentence_id: str,
+    start_offset: int,
+    end_offset: int,
+    text_hash: str,
+) -> str:
+    return f"record:{record_id}:range:{sentence_id}:{start_offset}:{end_offset}:{text_hash}"
+
+
 def utf16_code_unit_length(text: str) -> int:
     """Return JavaScript string length for cross-client text_range offsets."""
     return len(text.encode("utf-16-le", "surrogatepass")) // 2

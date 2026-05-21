@@ -1,10 +1,8 @@
 import type { WebAnnotationVm } from "@/types/api/annotations";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import type { ReaderTextSelection } from "../../primitives";
 import {
   anchorPayloadFromAnnotation,
-  anchorPayloadFromFavorite,
   anchorPayloadFromSelection,
   anchorPayloadFromSentence,
   anchorPayloadFromTargetRef,
@@ -13,7 +11,6 @@ import type { ReaderTargetRef } from "../assets";
 
 export {
   anchorPayloadFromAnnotation,
-  anchorPayloadFromFavorite,
   anchorPayloadFromSelection,
   anchorPayloadFromSentence,
   anchorPayloadFromTargetRef,
@@ -58,12 +55,5 @@ export function annotationToTargetRef(annotation: WebAnnotationVm): ReaderTarget
   return {
     kind: "user_annotation",
     annotation,
-  };
-}
-
-export function favoriteToTargetRef(favorite: WebFavoriteTargetVm): ReaderTargetRef {
-  return {
-    kind: "favorite",
-    favorite,
   };
 }

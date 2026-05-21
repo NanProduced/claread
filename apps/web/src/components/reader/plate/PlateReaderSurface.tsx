@@ -23,7 +23,6 @@ import type {
   ReaderSentenceTextNode,
 } from "@/lib/reader-plate";
 import type { WebAnnotationVm } from "@/types/api/annotations";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import { Editor, EditorContainer } from "../../ui/editor";
 import { ReaderMarkLeaf } from "./ReaderMarkLeaf";
 import { ReaderAnalysisElement } from "./nodes/ReaderAnalysisElement";
@@ -53,6 +52,7 @@ export interface PlateReaderSurfaceProps {
   themeClassName?: string;
   activeSentenceId?: string | null;
   jumpTarget?: ReaderJumpTarget | null;
+  focusTarget?: ReaderJumpTarget | null;
   assetProjection?: ReaderAssetProjection | null;
   activeAnalysisEntryId?: string | null;
   expandedAnalysisEntryId?: string | null;
@@ -61,8 +61,6 @@ export interface PlateReaderSurfaceProps {
   onAnalysisFocusChange?: (entryId: string, focused: boolean) => void;
   onAnalysisToggle?: (entryId: string) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm) => void;
-  onAnnotationAsk?: (annotation: WebAnnotationVm) => void;
-  onFavoriteJump?: (favorite: WebFavoriteTargetVm) => void;
   onLookupIntent?: (
     intent: ReaderLookupIntent,
     anchor: ReaderLookupPreviewAnchor | null,
@@ -93,9 +91,9 @@ export function PlateReaderSurface({
   expandedAnalysisEntryId = null,
   expandedAnalysisEntryIds = [],
   jumpTarget = null,
+  focusTarget = null,
   onAnalysisFocusChange,
   onAnalysisToggle,
-  onAnnotationAsk,
   onAnnotationJump,
   onAskAnalysis,
   onAskContentSummary,
@@ -104,7 +102,6 @@ export function PlateReaderSurface({
   onInspectIntent,
   onLookupIntent,
   onSentenceActivate,
-  onFavoriteJump,
   readingClassName,
   showTranslation,
   themeClassName,
@@ -127,18 +124,22 @@ export function PlateReaderSurface({
   }, [expandedAnalysisEntryId, expandedAnalysisEntryIds]);
 
   const routeFocusSentenceIds = useMemo(
-    () => new Set(jumpTarget?.sentenceIds ?? []),
-    [jumpTarget],
+    () => new Set([...(jumpTarget?.sentenceIds ?? []), ...(focusTarget?.sentenceIds ?? [])]),
+    [focusTarget, jumpTarget],
   );
 
   const routeFocusRangesBySentence = useMemo(() => {
     const map = new Map<string, ReaderJumpRangeSegment[]>();
+    focusTarget?.rangeSegments?.forEach((segment) => {
+      const current = map.get(segment.sentenceId) ?? [];
+      map.set(segment.sentenceId, [...current, segment]);
+    });
     jumpTarget?.rangeSegments?.forEach((segment) => {
       const current = map.get(segment.sentenceId) ?? [];
       map.set(segment.sentenceId, [...current, segment]);
     });
     return map;
-  }, [jumpTarget]);
+  }, [focusTarget, jumpTarget]);
 
   const sentenceAssetsBySentence = useMemo(
     () => assetProjection?.sentenceAssetProjectionBySentence ?? new Map<string, ReaderSentenceAssetProjection>(),
@@ -150,12 +151,8 @@ export function PlateReaderSurface({
     assetProjection?.annotationRangesBySentence?.forEach((ranges, sentenceId) => {
       map.set(sentenceId, [...ranges]);
     });
-    assetProjection?.favoriteRangesBySentence?.forEach((ranges, sentenceId) => {
-      const current = map.get(sentenceId) ?? [];
-      map.set(sentenceId, [...current, ...ranges]);
-    });
     return map;
-  }, [assetProjection?.annotationRangesBySentence, assetProjection?.favoriteRangesBySentence]);
+  }, [assetProjection?.annotationRangesBySentence]);
 
   const sentenceTextBySentence = useMemo(() => {
     const map = new Map<string, string>();
@@ -269,11 +266,9 @@ export function PlateReaderSurface({
               )}
               annotationVisibilityGroups={annotationVisibilityGroups}
               assetProjection={sentenceAssetsBySentence.get(element.sentenceId) ?? null}
-              onAnnotationAsk={onAnnotationAsk}
               routeFocused={Boolean(routeFocusSentenceIds?.has(element.sentenceId))}
               onAnnotationJump={onAnnotationJump}
               onActivate={onSentenceActivate}
-              onFavoriteJump={onFavoriteJump}
             />
           );
         case "reader_sentence_text":
@@ -330,7 +325,6 @@ export function PlateReaderSurface({
       activeSentenceId,
       activeSentenceAnalysisSegmentsBySentence,
       annotationVisibilityGroups,
-      onAnnotationAsk,
       onInspectIntent,
       onLookupIntent,
       onSentenceActivate,
@@ -339,7 +333,6 @@ export function PlateReaderSurface({
       onAskContentSummary,
       onAskTranslation,
       onDeleteAnalysisSupplement,
-      onFavoriteJump,
       paragraphIndexById,
       paragraphNodes.length,
       readingClassName,

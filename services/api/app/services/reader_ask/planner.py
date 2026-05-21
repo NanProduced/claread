@@ -106,7 +106,7 @@ class ReaderAskWorkingSet:
     record_insights_needed: bool = False
     article_overview_needed: bool = False
     dictionary_needed: bool = False
-    history_assets_allowed: bool = False
+    cross_record_context_allowed: bool = False
     external_record_refs: list[dict[str, str]] = field(default_factory=list)
     external_asset_refs: list[dict[str, str]] = field(default_factory=list)
     external_asset_lookup_needed: bool = False
@@ -428,8 +428,8 @@ def _planned_context_plan(
         reference_resolution_status=reference_resolution.status,
         reference_resolution_reason=reference_resolution.reason,
         expanded_record_ids=[item["record_id"] for item in reference_resolution.resolved_records],
-        used_history_lookup=working_set.history_assets_allowed,
-        history_lookup_reason=(
+        used_cross_record_context=working_set.cross_record_context_allowed,
+        cross_record_context_reason=(
             "explicit_external_record_context"
             if working_set.external_record_refs
             else "known_reference_resolved"
@@ -511,8 +511,8 @@ def _planned_trace_summary(
         supplement_generation_used=False,
         supplement_persisted_count=0,
         supplement_deleted_count=0,
-        history_lookup_allowed=working_set.history_assets_allowed,
-        history_lookup_used=False,
+        cross_record_context_allowed=working_set.cross_record_context_allowed,
+        cross_record_context_used=False,
         tool_steps=[],
         notes=notes,
     )
@@ -676,8 +676,8 @@ def plan_request(
         and local_anchor
         and not article_overview_needed
     )
-    history_assets_allowed = bool(merged_external_record_refs) or resolved_reference.status == "resolved"
-    retrieval_needs: ReaderAskRetrievalNeeds = "known_reference_only" if history_assets_allowed else "none"
+    cross_record_context_allowed = bool(merged_external_record_refs) or resolved_reference.status == "resolved"
+    retrieval_needs: ReaderAskRetrievalNeeds = "known_reference_only" if cross_record_context_allowed else "none"
     resolved_external_asset_refs = [
         {
             "record_id": item["record_id"],
@@ -708,7 +708,7 @@ def plan_request(
         record_insights_needed=record_insights_needed,
         article_overview_needed=article_overview_needed,
         dictionary_needed=dictionary_needed,
-        history_assets_allowed=history_assets_allowed,
+        cross_record_context_allowed=cross_record_context_allowed,
         external_record_refs=merged_external_record_refs,
         external_asset_refs=merged_external_asset_refs,
         external_asset_lookup_needed=bool(
@@ -772,11 +772,11 @@ def build_context_plan(
     reference_resolution: ReaderAskReferenceResolution | None = None,
     planning_snapshot: ReaderAskPlanningSnapshot | None = None,
 ) -> ReaderAskContextPlan:
-    has_record_insights = bool(runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets)
+    has_record_insights = bool(runtime_state.latest_record_insights)
     used_dictionary = any(citation.kind in {"dictionary_entry", "dictionary_ai"} for citation in citations)
     used_record_context = runtime_state.latest_record_context is not None
     used_article_overview = bool(runtime_state.latest_article_overview)
-    used_history_lookup = runtime_state.used_history_lookup or bool(
+    used_cross_record_context = runtime_state.used_cross_record_context or bool(
         planning_snapshot and planning_snapshot.working_set.external_record_refs
     )
     working_set = planning_snapshot.working_set if planning_snapshot else None
@@ -795,14 +795,14 @@ def build_context_plan(
         reference_resolution_status=reference_resolution.status if reference_resolution else "not_needed",
         reference_resolution_reason=reference_resolution.reason if reference_resolution else None,
         expanded_record_ids=[item["record_id"] for item in (reference_resolution.resolved_records if reference_resolution else [])],
-        used_history_lookup=used_history_lookup,
-        history_lookup_reason=(
+        used_cross_record_context=used_cross_record_context,
+        cross_record_context_reason=(
             "explicit_external_record_context"
             if working_set and working_set.external_record_refs
             else "known_reference_resolved"
             if reference_resolution and reference_resolution.status == "resolved"
             else "explicit_cross_article_request"
-            if runtime_state.used_history_lookup
+            if runtime_state.used_cross_record_context
             else None
         ),
         used_record_context=used_record_context,
@@ -880,7 +880,7 @@ def build_resolved_context_summary(
     anchors: list[ReaderAskAnchorRef],
     explicit_attachment_count: int,
     runtime_state: ReaderAskRuntimeState,
-    used_history_lookup: bool,
+    used_cross_record_context: bool,
     citations: list[ReaderAskCitation],
 ) -> ReaderAskResolvedContextSummary:
     labels = []
@@ -891,10 +891,10 @@ def build_resolved_context_summary(
         labels.append("current_paragraph")
     if runtime_state.latest_article_overview:
         labels.append("article_overview")
-    if runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets:
+    if runtime_state.latest_record_insights:
         labels.append("record_assets")
-    if used_history_lookup:
-        labels.append("history_assets")
+    if used_cross_record_context:
+        labels.append("external_record_context")
     if runtime_state.latest_external_asset_contexts:
         labels.append("external_assets")
     if any(citation.kind == "vocabulary" for citation in citations):
@@ -906,13 +906,12 @@ def build_resolved_context_summary(
         record_title=record_title,
         anchor_count=len(anchors),
         explicit_attachment_count=explicit_attachment_count,
-        used_history_lookup=used_history_lookup,
+        used_cross_record_context=used_cross_record_context,
         current_sentence_used=bool(anchors),
         current_paragraph_used=runtime_state.latest_record_context is not None,
         used_record_assets=bool(
             runtime_state.latest_article_overview
             or runtime_state.latest_record_insights
-            or runtime_state.latest_record_excerpt_assets
         ),
         used_dictionary=any(citation.kind in {"dictionary_entry", "dictionary_ai"} for citation in citations),
         source_labels=labels,
@@ -950,8 +949,8 @@ def build_trace_summary(
         notes.append("已加载当前文章的稳定解析资产。")
     if context_plan.used_dictionary:
         notes.append("已使用词典或词典 AI。")
-    if context_plan.used_history_lookup:
-        notes.append("本轮允许历史资产扩展。")
+    if context_plan.used_cross_record_context:
+        notes.append("本轮并入了跨文章上下文。")
     if runtime_state.latest_external_record_contexts and not any(
         item.get("article_overview") for item in runtime_state.latest_external_record_contexts
     ):
@@ -989,8 +988,8 @@ def build_trace_summary(
         supplement_generation_used=False,
         supplement_persisted_count=0,
         supplement_deleted_count=0,
-        history_lookup_allowed=context_plan.reference_resolution_attempted or context_plan.used_history_lookup,
-        history_lookup_used=runtime_state.used_history_lookup,
+        cross_record_context_allowed=context_plan.reference_resolution_attempted or context_plan.used_cross_record_context,
+        cross_record_context_used=runtime_state.used_cross_record_context,
         tool_steps=[entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
         notes=notes,
     )

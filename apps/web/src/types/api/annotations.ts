@@ -19,7 +19,6 @@ export interface UserAnchorSegmentDto {
 
 export interface UserAnnotationCreateRequestDto {
   analysis_record_id?: string | null;
-  annotation_type?: UserAnnotationTypeDto;
   anchor_type?: UserAnnotationAnchorTypeDto;
   target_key?: string | null;
   paragraph_id?: string | null;
@@ -30,19 +29,16 @@ export interface UserAnnotationCreateRequestDto {
   text_hash?: string | null;
   segments?: UserAnchorSegmentDto[];
   color?: UserAnnotationColorDto;
-  note?: string | null;
   payload_json?: Record<string, unknown>;
 }
 
 export interface UserAnnotationUpdateRequestDto {
-  color?: UserAnnotationColorDto | null;
-  note?: string | null;
+  color: UserAnnotationColorDto;
 }
 
 export interface UserAnnotationResponseDto {
   id: string;
   analysis_record_id: string | null;
-  annotation_type: UserAnnotationTypeDto;
   anchor_type: UserAnnotationAnchorTypeDto;
   target_key: string;
   paragraph_id: string | null;
@@ -53,7 +49,6 @@ export interface UserAnnotationResponseDto {
   text_hash: string | null;
   segments: UserAnchorSegmentDto[];
   color: UserAnnotationColorDto;
-  note: string | null;
   payload_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -74,13 +69,11 @@ export interface WebAnnotationCreateRequest {
   textHash?: string | null;
   segments?: WebAnchorSegmentVm[];
   color?: UserAnnotationColorDto;
-  note?: string;
   payloadJson?: Record<string, unknown>;
 }
 
 export interface WebAnnotationUpdateRequest {
-  color?: UserAnnotationColorDto | null;
-  note?: string | null;
+  color: UserAnnotationColorDto;
 }
 
 export interface WebAnnotationVm {
@@ -97,7 +90,6 @@ export interface WebAnnotationVm {
   textHash: string | null;
   segments: WebAnchorSegmentVm[];
   color: UserAnnotationColorDto;
-  note: string | null;
   createdAt: string;
   updatedAt: string;
 }

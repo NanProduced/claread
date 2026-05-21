@@ -1,0 +1,110 @@
+.reader-note-sheet__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  background: rgba(15, 23, 42, 0.24);
+  display: flex;
+  align-items: flex-end;
+}
+
+.reader-note-sheet {
+  width: 100%;
+  max-height: 72vh;
+  background: #fffdf7;
+  border-radius: 28rpx 28rpx 0 0;
+  box-shadow: 0 -16rpx 48rpx rgba(15, 23, 42, 0.12);
+  padding: 18rpx 24rpx 36rpx;
+}
+
+.reader-note-sheet__handle {
+  width: 84rpx;
+  height: 8rpx;
+  border-radius: 999rpx;
+  background: rgba(148, 163, 184, 0.48);
+  margin: 0 auto 20rpx;
+}
+
+.reader-note-sheet__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20rpx;
+  margin-bottom: 18rpx;
+}
+
+.reader-note-sheet__title {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8rpx;
+}
+
+.reader-note-sheet__subtitle {
+  display: block;
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: var(--reader-muted);
+}
+
+.reader-note-sheet__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 24rpx;
+  color: #7c5c1d;
+  background: rgba(250, 204, 21, 0.14);
+  border-radius: 999rpx;
+  padding: 10rpx 16rpx;
+  flex-shrink: 0;
+}
+
+.reader-note-sheet__list {
+  max-height: calc(72vh - 132rpx);
+}
+
+.reader-note-card {
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 20rpx;
+  padding: 20rpx;
+  margin-bottom: 16rpx;
+}
+
+.reader-note-card.is-active {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(254, 249, 195, 0.52);
+  box-shadow: 0 8rpx 24rpx rgba(245, 158, 11, 0.12);
+}
+
+.reader-note-card__quote {
+  border-left: 6rpx solid rgba(245, 158, 11, 0.72);
+  background: rgba(255, 248, 220, 0.88);
+  border-radius: 12rpx;
+  padding: 12rpx 14rpx;
+  margin-bottom: 14rpx;
+}
+
+.reader-note-card__quote-text {
+  display: block;
+  font-size: 24rpx;
+  line-height: 1.65;
+  color: #6b4d14;
+}
+
+.reader-note-card__body {
+  display: block;
+  font-size: 28rpx;
+  line-height: 1.75;
+  color: var(--text-primary);
+}
+
+.reader-note-sheet__empty {
+  padding: 36rpx 0 18rpx;
+  text-align: center;
+}
+
+.reader-note-sheet__empty-text {
+  font-size: 24rpx;
+  color: var(--reader-muted);
+}

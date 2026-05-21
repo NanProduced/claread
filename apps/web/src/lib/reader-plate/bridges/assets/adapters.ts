@@ -1,13 +1,11 @@
 import { TEXT_RANGE_HASH_ALGORITHM, TEXT_RANGE_OFFSET_UNIT } from "@claread/contracts";
 
 import type { WebAnnotationCreateRequest, WebAnnotationVm } from "@/types/api/annotations";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import type { ReaderTextSelection } from "../../primitives";
 import { hashAnchorText, targetKeyForSelection } from "../../primitives";
 import type {
   AnnotationRequestFromAnchorPayloadOptions,
-  FavoriteMutationPayload,
   ReaderAnchorPayload,
   ReaderAnchorSegment,
   ReaderTargetRef,
@@ -198,42 +196,6 @@ export function anchorPayloadFromAnnotation(annotation: WebAnnotationVm): Reader
   };
 }
 
-export function anchorPayloadFromFavorite(favorite: WebFavoriteTargetVm): ReaderAnchorPayload {
-  return {
-    anchorType: favorite.anchorType,
-    targetKey: favorite.targetKey,
-    recordId: favorite.recordId ?? recordIdFromTargetKey(favorite.targetKey),
-    sentenceId: favorite.sentenceId,
-    selectedText: favorite.selectedText ?? "",
-    startOffset: favorite.anchorType === "text_range" ? favorite.startOffset : null,
-    endOffset: favorite.anchorType === "text_range" ? favorite.endOffset : null,
-    textHash: favorite.anchorType === "text_range" ? favorite.textHash : null,
-    segments:
-      favorite.anchorType === "multi_text"
-        ? normalizeRangeSegments(favorite.segments)
-        : favorite.anchorType === "text_range" &&
-            favorite.sentenceId &&
-            typeof favorite.startOffset === "number" &&
-            typeof favorite.endOffset === "number"
-          ? normalizeRangeSegments([
-              {
-                sentenceId: favorite.sentenceId,
-                selectedText: favorite.selectedText,
-                startOffset: favorite.startOffset,
-                endOffset: favorite.endOffset,
-                textHash: favorite.textHash,
-              },
-            ])
-          : undefined,
-    metadata: {
-      offsetUnit: TEXT_RANGE_OFFSET_UNIT,
-      textHashAlgorithm: TEXT_RANGE_HASH_ALGORITHM,
-      source: "loaded_favorite",
-      originType: "favorite",
-    },
-  };
-}
-
 export function annotationRequestFromAnchorPayload(
   payload: ReaderAnchorPayload,
   options: AnnotationRequestFromAnchorPayloadOptions = {},
@@ -259,74 +221,12 @@ export function annotationRequestFromAnchorPayload(
           }))
         : undefined,
     color: options.color,
-    note: options.note,
     payloadJson:
       payload.anchorType === "text_range"
         ? payloadJsonForTextRange(payload, options.sentenceTextById, options.translationBySentence)
         : payload.anchorType === "multi_text"
           ? payloadJsonForMultiText(payload, options.translationBySentence)
           : undefined,
-  };
-}
-
-function favoriteTargetTypeFromAnchorType(anchorType: ReaderAnchorPayload["anchorType"]): FavoriteMutationPayload["targetType"] {
-  return anchorType === "sentence" ? "sentence" : anchorType === "multi_text" ? "multi_text" : "text_range";
-}
-
-export function favoriteMutationFromAnchorPayload(payload: ReaderAnchorPayload): FavoriteMutationPayload {
-  return {
-    recordId: payload.recordId,
-    targetType: favoriteTargetTypeFromAnchorType(payload.anchorType),
-    targetKey: payload.targetKey,
-    payloadJson: {
-      source: "web_reader_selection_toolbar",
-      anchor_type: payload.anchorType,
-      paragraph_id: payload.paragraphId ?? null,
-      sentence_id: payload.sentenceId ?? null,
-      selected_text: payload.selectedText,
-      start_offset: payload.anchorType === "text_range" ? payload.startOffset ?? null : null,
-      end_offset: payload.anchorType === "text_range" ? payload.endOffset ?? null : null,
-      text_hash: payload.anchorType === "text_range" ? payload.textHash ?? null : null,
-      segments:
-        payload.anchorType === "multi_text"
-          ? (payload.segments ?? []).map((segment) => ({
-              paragraph_id: segment.paragraphId ?? null,
-              sentence_id: segment.sentenceId,
-              selected_text: segment.selectedText ?? "",
-              start_offset: segment.startOffset,
-              end_offset: segment.endOffset,
-              text_hash: segment.textHash ?? null,
-            }))
-          : undefined,
-      offset_unit: TEXT_RANGE_OFFSET_UNIT,
-      text_hash_algorithm: TEXT_RANGE_HASH_ALGORITHM,
-    },
-  };
-}
-
-export function favoriteTargetVmFromAnchorPayload(
-  payload: ReaderAnchorPayload,
-  favoriteId = payload.targetKey,
-): WebFavoriteTargetVm {
-  return {
-    id: favoriteId,
-    targetType: favoriteTargetTypeFromAnchorType(payload.anchorType),
-    targetKey: payload.targetKey,
-    recordId: payload.recordId,
-    anchorType: payload.anchorType,
-    sentenceId: payload.sentenceId ?? null,
-    selectedText: payload.selectedText,
-    startOffset: payload.anchorType === "text_range" ? payload.startOffset ?? null : null,
-    endOffset: payload.anchorType === "text_range" ? payload.endOffset ?? null : null,
-    textHash: payload.anchorType === "text_range" ? payload.textHash ?? null : null,
-    segments: (payload.segments ?? []).map((segment) => ({
-      paragraphId: segment.paragraphId ?? undefined,
-      sentenceId: segment.sentenceId,
-      selectedText: segment.selectedText ?? "",
-      startOffset: segment.startOffset,
-      endOffset: segment.endOffset,
-      textHash: segment.textHash ?? "",
-    })),
   };
 }
 
@@ -343,5 +243,6 @@ export function anchorPayloadFromTargetRef(ref: ReaderTargetRef): ReaderAnchorPa
     return anchorPayloadFromAnnotation(ref.annotation);
   }
 
-  return anchorPayloadFromFavorite(ref.favorite);
+  const exhaustive: never = ref;
+  return exhaustive;
 }

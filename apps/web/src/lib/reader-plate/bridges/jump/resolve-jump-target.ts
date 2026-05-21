@@ -1,8 +1,6 @@
 import type { WebAnnotationVm } from "@/types/api/annotations";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import {
   anchorPayloadFromAnnotation,
-  anchorPayloadFromFavorite,
   anchorPayloadFromTargetRef,
 } from "./adapters";
 import type {
@@ -208,19 +206,10 @@ function matchingAnnotation(targetKey: string, annotations: WebAnnotationVm[] | 
   return annotations?.find((annotation) => annotation.targetKey === targetKey) ?? null;
 }
 
-function matchingFavorite(targetKey: string, favoriteTargets: WebFavoriteTargetVm[] | undefined) {
-  return favoriteTargets?.find((favorite) => favorite.targetKey === targetKey) ?? null;
-}
-
 export function jumpToTargetKey(targetKey: string, context: ReaderJumpContext = {}): ReaderJumpTarget | null {
   const annotation = matchingAnnotation(targetKey, context.annotations);
   if (annotation) {
     return withTargetType(jumpTargetFromPayload(anchorPayloadFromAnnotation(annotation)), "user_annotation");
-  }
-
-  const favorite = matchingFavorite(targetKey, context.favoriteTargets);
-  if (favorite) {
-    return withTargetType(jumpTargetFromPayload(anchorPayloadFromFavorite(favorite)), "favorite");
   }
 
   const parsed = parseTargetKey(targetKey);
@@ -238,10 +227,6 @@ export function jumpToAnchorPayload(payload: ReaderAnchorPayload): ReaderJumpTar
 export function jumpToTargetRef(ref: ReaderTargetRef, context?: ReaderJumpContext): ReaderJumpTarget | null {
   if (ref.kind === "user_annotation") {
     return withTargetType(jumpTargetFromPayload(anchorPayloadFromAnnotation(ref.annotation)), "user_annotation");
-  }
-
-  if (ref.kind === "favorite") {
-    return withTargetType(jumpTargetFromPayload(anchorPayloadFromFavorite(ref.favorite)), "favorite");
   }
 
   const payload = anchorPayloadFromTargetRef(ref);

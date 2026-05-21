@@ -7,7 +7,6 @@ import { getRecordList, type RecordsBffStatus } from "@/services/bff/records";
 import { LibraryClient } from "./LibraryClient";
 
 const readRoute = "/read" as Route;
-const assetsRoute = "/library/assets" as Route;
 
 const statusLabel: Record<RecordsBffStatus, string> = {
   ready: "已同步",
@@ -36,9 +35,6 @@ export default async function HistoryPage() {
                     <Plus aria-hidden="true" className="h-4 w-4" />
                     新解读
                   </Link>
-                </Button>
-                <Button asChild variant="outline">
-                  <Link href={assetsRoute}>学习资产</Link>
                 </Button>
               </TopActionBar>
             }

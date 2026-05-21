@@ -85,7 +85,6 @@ function createAnnotation(): WebAnnotationVm {
     textHash: hashAnchorText("memory"),
     segments: [],
     color: "warm_yellow",
-    note: null,
     createdAt: "2026-05-19T00:00:00Z",
     updatedAt: "2026-05-19T00:00:00Z",
   };
@@ -104,11 +103,36 @@ describe("reader-plate selection primitives", () => {
       annotationMatchesSelection(
         {
           ...createAnnotation(),
-          endOffset: 21,
+          startOffset: 15,
+          endOffset: 19,
         },
         selection,
       ),
     ).toBe(false);
+    expect(
+      annotationMatchesSelection(
+        {
+          ...createAnnotation(),
+          anchorType: "sentence",
+          startOffset: null,
+          endOffset: null,
+          textHash: null,
+          selectedText: sentence.text,
+        },
+        selection,
+      ),
+    ).toBe(true);
+    expect(
+      annotationMatchesSelection(
+        {
+          ...createAnnotation(),
+          startOffset: 10,
+          endOffset: 24,
+          textHash: hashAnchorText("al memory s"),
+        },
+        selection,
+      ),
+    ).toBe(true);
   });
 
   it("builds target keys from selection anchors", () => {

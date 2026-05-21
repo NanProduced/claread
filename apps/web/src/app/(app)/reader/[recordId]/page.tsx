@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { getReaderAnnotations } from "@/services/bff/annotations";
-import { getReaderFavoriteTargets } from "@/services/bff/favorites";
+import { getReaderNotes } from "@/services/bff/reader-notes";
 import { getReaderRecord } from "@/services/bff/reader";
 import { ReaderWorkbench } from "./ReaderWorkbench";
 
@@ -34,9 +34,9 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
   }
 
   const { record, dataSource, message } = result;
-  const [annotationResult, favoriteTargetsResult] = await Promise.all([
+  const [annotationResult, readerNotesResult] = await Promise.all([
     getReaderAnnotations(record.id),
-    getReaderFavoriteTargets(record.id),
+    getReaderNotes(record.id),
   ]);
 
   return (
@@ -45,7 +45,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
       dataSource={dataSource}
       message={message}
       initialAnnotations={annotationResult.items}
-      initialFavoriteTargets={favoriteTargetsResult.items}
+      initialReaderNotes={readerNotesResult.items}
     />
   );
 }

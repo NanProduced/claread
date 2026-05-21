@@ -20,7 +20,6 @@ from app.agents.reader_ask_agent import (
     get_reader_ask_agent,
 )
 from app.config.settings import get_settings
-from app.contracts.annotation import build_multi_text_target_key
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_ASK
 from app.llm.types import RunModelSettings
@@ -68,8 +67,8 @@ from app.schemas.reader_ask import (
     ReaderAskUserVisibleOutput,
     ReaderAskVocabularyInContextCard,
 )
+from app.schemas.reader_notes import ReaderNoteCreateRequest
 from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
-from app.services import excerpt_assets as excerpt_assets_svc
 from app.services.ai_usage import (
     AIUsageEventCreate,
     BILLING_MODE_USER_POINTS,
@@ -107,15 +106,13 @@ from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.text_anchors import ensure_json_dict, sentence_map
-from app.services.user_assets import favorites as favorites_svc
 from app.services.user_assets import vocabulary as vocabulary_svc
+from app.services import reader_notes as reader_notes_svc
 from app.services import user_annotations as user_annotations_svc
 from app.workflow.tracing import build_usage_metadata
 
-_HISTORY_INTENT_RE = re.compile(r"(以前|之前|记过|收藏过|在哪见过|before|previous|earlier|history|seen this)")
 _SAVE_NOTE_RE = re.compile(r"(保存.*笔记|记成笔记|save.*note|save this explanation)", re.IGNORECASE)
 _SAVE_EXCERPT_RE = re.compile(r"(保存.*摘录|高亮一下|save.*excerpt|highlight this)", re.IGNORECASE)
-_FAVORITE_RE = re.compile(r"(收藏|favorite|bookmark)", re.IGNORECASE)
 _MAX_HISTORY_MESSAGES = 8
 _MAX_CONTEXT_TEXT = 1200
 _MAX_MESSAGE_TEXT = 800
@@ -206,10 +203,6 @@ def _first_anchor_text(anchor: ReaderAskAnchorRef) -> str:
     return anchor.label or anchor.entry_type or anchor.anchor_type
 
 
-def _matches_history_intent(content: str) -> bool:
-    return bool(_HISTORY_INTENT_RE.search(content))
-
-
 def _attachment_payload_json(attachment: ReaderAskAttachment) -> dict[str, Any]:
     payload = attachment.anchor_payload.model_dump(mode="json") if attachment.anchor_payload is not None else None
     return {
@@ -256,7 +249,7 @@ def _attachment_to_anchor(attachment: ReaderAskAttachment) -> ReaderAskAnchorRef
         if payload is None:
             raise HTTPException(status_code=400, detail="annotation_ref attachments require anchor_payload")
         anchor = _anchor_ref_from_attachment_payload(payload)
-        anchor.anchor_type = "favorite" if attachment.subtype == "favorite" else "user_annotation"
+        anchor.anchor_type = "reader_note" if attachment.subtype == "reader_note" else "user_annotation"
         anchor.anchor_id = attachment.metadata.asset_id
         anchor.note = attachment.metadata.note
         anchor.label = attachment.label
@@ -430,7 +423,7 @@ def _current_record_source_labels(runtime_state: ReaderAskRuntimeState) -> list[
     labels: list[str] = []
     if runtime_state.latest_record_context is not None:
         labels.append("current_paragraph")
-    if runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets:
+    if runtime_state.latest_record_insights:
         labels.append("record_assets")
     if runtime_state.latest_article_overview:
         labels.append("article_overview")
@@ -558,8 +551,8 @@ async def _materialize_planned_context(
         runtime_state.latest_external_record_contexts = [
             item.model_dump(mode="json") for item in external_record_contexts
         ]
-        runtime_state.used_history_lookup = True
-        runtime_state.source_labels.add("history_assets")
+        runtime_state.used_cross_record_context = True
+        runtime_state.source_labels.add("external_record_context")
         for item in external_record_contexts:
             runtime_state.source_labels.update(item.source_labels)
     external_asset_contexts = _load_external_asset_contexts(
@@ -570,8 +563,8 @@ async def _materialize_planned_context(
         runtime_state.latest_external_asset_contexts = [
             item.model_dump(mode="json") for item in external_asset_contexts
         ]
-        runtime_state.used_history_lookup = True
-        runtime_state.source_labels.update({"history_assets", "external_assets"})
+        runtime_state.used_cross_record_context = True
+        runtime_state.source_labels.update({"external_record_context", "external_assets"})
 
     current_record_context = ReaderAskCurrentRecordContext(
         record_id=str(record.record_id),
@@ -598,8 +591,8 @@ async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAsk
 
     row = await conn.fetchrow(
         """
-        SELECT id, annotation_type, anchor_type, target_key, paragraph_id, sentence_id,
-               selected_text, start_offset, end_offset, text_hash, note, payload_json
+        SELECT id, anchor_type, target_key, paragraph_id, sentence_id,
+               selected_text, start_offset, end_offset, text_hash, color, payload_json
         FROM user_annotations
         WHERE user_id = $1
           AND deleted_at IS NULL
@@ -626,22 +619,22 @@ async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAsk
             "start_offset": row["start_offset"],
             "end_offset": row["end_offset"],
             "text_hash": row["text_hash"],
-            "note": row["note"],
             "payload_json": payload,
             "segments": segments or [],
-            "label": row["annotation_type"],
+            "label": row["color"],
         }
     )
 
 
-async def _resolve_favorite_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
+async def _resolve_reader_note_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
     if not anchor.anchor_id and not anchor.target_key:
         return anchor
 
     row = await conn.fetchrow(
         """
-        SELECT id, target_type, target_key, payload_json, note
-        FROM favorite_records
+        SELECT id, target_key, anchor_sentence_id, quote_mode, paragraph_id, sentence_id,
+               selected_text, start_offset, end_offset, text_hash, note_text, payload_json
+        FROM reader_notes
         WHERE user_id = $1
           AND deleted_at IS NULL
           AND (($2::uuid IS NOT NULL AND id = $2) OR ($3::text IS NOT NULL AND target_key = $3))
@@ -659,18 +652,18 @@ async def _resolve_favorite_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAn
     return anchor.model_copy(
         update={
             "anchor_id": str(row["id"]),
-            "anchor_type": "favorite",
+            "anchor_type": "reader_note",
             "target_key": row["target_key"],
-            "target_type": row["target_type"],
-            "sentence_id": payload.get("sentence_id"),
-            "paragraph_id": payload.get("paragraph_id"),
-            "selected_text": payload.get("selected_text"),
-            "start_offset": payload.get("start_offset"),
-            "end_offset": payload.get("end_offset"),
-            "text_hash": payload.get("text_hash"),
-            "note": row["note"],
+            "sentence_id": row["sentence_id"] or row["anchor_sentence_id"],
+            "paragraph_id": row["paragraph_id"],
+            "selected_text": row["selected_text"],
+            "start_offset": row["start_offset"],
+            "end_offset": row["end_offset"],
+            "text_hash": row["text_hash"],
+            "note": row["note_text"],
             "payload_json": payload,
             "segments": segments or [],
+            "label": row["quote_mode"],
         }
     )
 
@@ -741,8 +734,8 @@ async def _resolve_anchor_refs(
             anchor = raw_anchor
             if anchor.anchor_type == "user_annotation":
                 anchor = await _resolve_annotation_anchor(conn, user_id, anchor)
-            elif anchor.anchor_type == "favorite":
-                anchor = await _resolve_favorite_anchor(conn, user_id, anchor)
+            elif anchor.anchor_type == "reader_note":
+                anchor = await _resolve_reader_note_anchor(conn, user_id, anchor)
             elif anchor.anchor_type == "sentence_entry":
                 anchor = _resolve_sentence_entry_anchor(record, anchor)
             elif anchor.anchor_type in {"sentence", "text_range"}:
@@ -820,78 +813,6 @@ def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnch
             }
         )
     return results[:_MAX_PROMPT_ASSET_ITEMS]
-
-
-def _flatten_excerpt_items(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for group in groups:
-        group_title = group.get("title")
-        group_record_id = group.get("record_id")
-        for item in group.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            enriched = dict(item)
-            enriched["record_id"] = group_record_id
-            enriched["source_article_title"] = group_title
-            items.append(enriched)
-    return items
-
-
-def _score_excerpt_item(item: dict[str, Any], *, sentence_ids: set[str], query: str) -> int:
-    score = 0
-    if sentence_ids and item.get("sentence_id") in sentence_ids:
-        score += 5
-    haystack = " ".join(
-        _normalize_text(part)
-        for part in (
-            item.get("selected_text"),
-            item.get("translation"),
-            item.get("note"),
-            item.get("source_article_title"),
-        )
-    ).lower()
-    for token in _normalize_text(query).lower().split():
-        if token and token in haystack:
-            score += 2
-    return score
-
-
-async def _tool_get_record_excerpt_assets(
-    user_id: UUID,
-    record: _RecordBundle,
-    anchors: list[ReaderAskAnchorRef],
-    query: str,
-) -> list[dict[str, Any]]:
-    response = await excerpt_assets_svc.list_excerpt_assets(
-        user_id=user_id,
-        page=1,
-        limit=20,
-        record_id=str(record.record_id),
-    )
-    items = _flatten_excerpt_items(response.model_dump(mode="python")["groups"])
-    sentence_ids = {sentence_id for anchor in anchors for sentence_id in _sentence_ids_from_anchor(anchor)}
-    items.sort(key=lambda item: _score_excerpt_item(item, sentence_ids=sentence_ids, query=query), reverse=True)
-    selected = [item for item in items if _score_excerpt_item(item, sentence_ids=sentence_ids, query=query) > 0]
-    return selected[:_MAX_PROMPT_ASSET_ITEMS] or items[: min(_MAX_PROMPT_ASSET_ITEMS, len(items))]
-
-
-async def _tool_search_user_excerpt_assets(
-    user_id: UUID,
-    current_record_id: UUID,
-    query: str,
-) -> list[dict[str, Any]]:
-    response = await excerpt_assets_svc.list_excerpt_assets(
-        user_id=user_id,
-        page=1,
-        limit=40,
-        record_id=None,
-    )
-    items = [
-        item for item in _flatten_excerpt_items(response.model_dump(mode="python")["groups"])
-        if item.get("record_id") != str(current_record_id)
-    ]
-    items.sort(key=lambda item: _score_excerpt_item(item, sentence_ids=set(), query=query), reverse=True)
-    return [item for item in items if _score_excerpt_item(item, sentence_ids=set(), query=query) > 0][:_MAX_PROMPT_ASSET_ITEMS]
 
 
 async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[str, Any]]:
@@ -995,26 +916,6 @@ async def _tool_run_dictionary_ai_context_explain(
             "entry_id": entry_id,
         },
         result.usage_data,
-    )
-
-
-def _excerpt_item_to_citation(item: dict[str, Any], *, kind: str) -> ReaderAskCitation:
-    return ReaderAskCitation(
-        citation_id=str(uuid4()),
-        kind=kind,  # type: ignore[arg-type]
-        label=_truncate_text(item.get("selected_text"), 80) or _truncate_text(item.get("source_article_title"), 80) or "摘录资产",
-        anchor_type=item.get("anchor_type"),
-        sentence_id=item.get("sentence_id"),
-        target_key=item.get("target_key"),
-        selected_text=_truncate_text(item.get("selected_text"), 180) or None,
-        record_id=item.get("record_id"),
-        source_article_title=item.get("source_article_title"),
-        metadata_json={
-            "note": _truncate_text(item.get("note"), 120),
-            "is_favorited": item.get("is_favorited"),
-            "is_noted": item.get("is_noted"),
-            "is_highlighted": item.get("is_highlighted"),
-        },
     )
 
 
@@ -1233,7 +1134,7 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
             "record_insights_needed": planning_snapshot.working_set.record_insights_needed,
             "article_overview_needed": planning_snapshot.working_set.article_overview_needed,
             "dictionary_needed": planning_snapshot.working_set.dictionary_needed,
-            "history_assets_allowed": planning_snapshot.working_set.history_assets_allowed,
+            "cross_record_context_allowed": planning_snapshot.working_set.cross_record_context_allowed,
             "external_record_refs": planning_snapshot.working_set.external_record_refs,
             "external_asset_refs": planning_snapshot.working_set.external_asset_refs,
             "external_asset_lookup_needed": planning_snapshot.working_set.external_asset_lookup_needed,
@@ -1282,7 +1183,7 @@ def _capability_trace_json(
         "external_record_context": {
             "used": bool(runtime_state.latest_external_record_contexts),
             "reason": context_plan.external_record_context_reason if context_plan else None,
-            "source_labels": ["history_assets"] if runtime_state.latest_external_record_contexts else [],
+            "source_labels": ["external_record_context"] if runtime_state.latest_external_record_contexts else [],
         },
         "structured_asset_lookup": {
             "used": _external_context_has_structured_assets(runtime_state.latest_external_record_contexts),
@@ -1308,8 +1209,8 @@ def _metrics_json(
     return {
         "planner_mode": trace_summary.planner_mode if trace_summary else None,
         "working_set_mode": trace_summary.working_set_mode if trace_summary else None,
-        "history_lookup_allowed": trace_summary.history_lookup_allowed if trace_summary else False,
-        "history_lookup_used": trace_summary.history_lookup_used if trace_summary else False,
+        "cross_record_context_allowed": trace_summary.cross_record_context_allowed if trace_summary else False,
+        "cross_record_context_used": trace_summary.cross_record_context_used if trace_summary else False,
         "used_known_reference_resolution": trace_summary.used_known_reference_resolution if trace_summary else False,
         "used_external_record_context": trace_summary.used_external_record_context if trace_summary else False,
         "used_structured_asset_lookup": trace_summary.used_structured_asset_lookup if trace_summary else False,
@@ -1695,19 +1596,6 @@ def _build_action_proposals(
                 },
             )
         )
-    if _FAVORITE_RE.search(user_message):
-        proposals.append(
-            ReaderAskActionProposal(
-                id=str(uuid4()),
-                action_type="favorite_anchor",
-                label="加入收藏",
-                description="收藏当前锚点",
-                payload_json={
-                    "record_id": str(record.record_id),
-                    "anchor": primary_anchor.model_dump(mode="json"),
-                },
-            )
-        )
     return proposals
 
 
@@ -1720,8 +1608,6 @@ def _build_action_proposals_from_runtime(
     proposals: list[ReaderAskActionProposal] = []
     for request in action_requests:
         payload_json = dict(request.payload_json)
-        if request.action_type == "save_answer_note" and not str(payload_json.get("note_text") or "").strip():
-            payload_json["note_text"] = assistant_content_md
         proposals.append(
             ReaderAskActionProposal(
                 id=str(uuid4()),
@@ -1859,7 +1745,7 @@ def _resolved_context_summary(
     anchors: list[ReaderAskAnchorRef],
     explicit_attachment_count: int,
     runtime_state: ReaderAskRuntimeState,
-    used_history_lookup: bool,
+    used_cross_record_context: bool,
     citations: list[ReaderAskCitation],
 ) -> ReaderAskResolvedContextSummary:
     return planner.build_resolved_context_summary(
@@ -1868,7 +1754,7 @@ def _resolved_context_summary(
         anchors=anchors,
         explicit_attachment_count=explicit_attachment_count,
         runtime_state=runtime_state,
-        used_history_lookup=used_history_lookup,
+        used_cross_record_context=used_cross_record_context,
         citations=citations,
     )
 
@@ -2226,7 +2112,7 @@ async def stream_thread_message(
                     anchors=resolved_anchors,
                     explicit_attachment_count=len(attachments),
                     runtime_state=runtime_state,
-                    used_history_lookup=False,
+                    used_cross_record_context=False,
                     citations=citations,
                 ),
                 context_plan=context_plan,
@@ -2384,7 +2270,7 @@ async def stream_thread_message(
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
             raise RuntimeError("planning snapshot is required")
-        history_lookup_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+        cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
         agent = get_reader_ask_agent()
         model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
@@ -2413,12 +2299,6 @@ async def stream_thread_message(
 
         async def get_record_insights_cb() -> list[dict[str, Any]]:
             return _collect_sentence_entries(record, resolved_anchors)
-
-        async def get_record_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_get_record_excerpt_assets(user_id, record, resolved_anchors, query)
-
-        async def search_user_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_search_user_excerpt_assets(user_id, record.record_id, query)
 
         async def search_user_vocabulary_cb(query: str) -> list[dict[str, Any]]:
             return await _tool_search_user_vocabulary(user_id, query)
@@ -2506,7 +2386,7 @@ async def stream_thread_message(
                 resolved_intent=resolved_intent,
                 resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
                 entry_action=body.entry_action,
-                history_lookup_allowed=history_lookup_allowed,
+                cross_record_context_allowed=cross_record_context_allowed,
                 resolved_context_input=resolved_context_input,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
@@ -2538,15 +2418,11 @@ async def stream_thread_message(
             record_id=str(record.record_id),
             record_title=record.title,
             primary_anchor=primary_anchor,
-            history_lookup_allowed=history_lookup_allowed,
             get_record_context_fn=get_record_context_cb,
             get_record_insights_fn=get_record_insights_cb,
-            get_record_excerpt_assets_fn=get_record_excerpt_assets_cb,
-            search_user_excerpt_assets_fn=search_user_excerpt_assets_cb,
             search_user_vocabulary_fn=search_user_vocabulary_cb,
             lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
             run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
-            excerpt_item_to_citation_fn=lambda item, kind: _excerpt_item_to_citation(item, kind=kind),
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
@@ -2650,7 +2526,7 @@ async def stream_thread_message(
             anchors=resolved_anchors,
             explicit_attachment_count=len(attachments),
             runtime_state=runtime_state,
-            used_history_lookup=runtime_state.used_history_lookup,
+            used_cross_record_context=runtime_state.used_cross_record_context,
             citations=runtime_state.citations,
         )
         typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
@@ -2725,7 +2601,7 @@ async def stream_thread_message(
                     "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
                     "thread_id": str(thread_id),
                     "message_id": assistant_message["id"],
-                    "history_lookup_used": runtime_state.used_history_lookup,
+                    "cross_record_context_used": runtime_state.used_cross_record_context,
                     "anchor_count": len(resolved_anchors),
                     "tool_names": [entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
                     "reservation_points": READER_ASK_RESERVED_POINTS,
@@ -3050,7 +2926,7 @@ async def retry_thread_message(
                 anchors=resolved_anchors,
                 explicit_attachment_count=len(attachments),
                 runtime_state=runtime_state,
-                used_history_lookup=False,
+                used_cross_record_context=False,
                 citations=citations,
             )
             context_plan = _build_context_plan(
@@ -3214,7 +3090,7 @@ async def retry_thread_message(
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
             raise RuntimeError("planning snapshot is required")
-        history_lookup_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+        cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
         agent = get_reader_ask_agent()
         model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
@@ -3243,12 +3119,6 @@ async def retry_thread_message(
 
         async def get_record_insights_cb() -> list[dict[str, Any]]:
             return _collect_sentence_entries(record, resolved_anchors)
-
-        async def get_record_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_get_record_excerpt_assets(user_id, record, resolved_anchors, query)
-
-        async def search_user_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_search_user_excerpt_assets(user_id, record.record_id, query)
 
         async def search_user_vocabulary_cb(query: str) -> list[dict[str, Any]]:
             return await _tool_search_user_vocabulary(user_id, query)
@@ -3336,7 +3206,7 @@ async def retry_thread_message(
                 resolved_intent=resolved_intent,
                 resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
                 entry_action=body.entry_action,
-                history_lookup_allowed=history_lookup_allowed,
+                cross_record_context_allowed=cross_record_context_allowed,
                 resolved_context_input=resolved_context_input,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
@@ -3368,15 +3238,11 @@ async def retry_thread_message(
             record_id=str(record.record_id),
             record_title=record.title,
             primary_anchor=primary_anchor,
-            history_lookup_allowed=history_lookup_allowed,
             get_record_context_fn=get_record_context_cb,
             get_record_insights_fn=get_record_insights_cb,
-            get_record_excerpt_assets_fn=get_record_excerpt_assets_cb,
-            search_user_excerpt_assets_fn=search_user_excerpt_assets_cb,
             search_user_vocabulary_fn=search_user_vocabulary_cb,
             lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
             run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
-            excerpt_item_to_citation_fn=lambda item, kind: _excerpt_item_to_citation(item, kind=kind),
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
@@ -3480,7 +3346,7 @@ async def retry_thread_message(
             anchors=resolved_anchors,
             explicit_attachment_count=len(attachments),
             runtime_state=runtime_state,
-            used_history_lookup=runtime_state.used_history_lookup,
+            used_cross_record_context=runtime_state.used_cross_record_context,
             citations=runtime_state.citations,
         )
         typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
@@ -3556,7 +3422,7 @@ async def retry_thread_message(
                     "entrypoint": "/reader-ask/threads/{thread_id}/messages/{message_id}/retry/stream",
                     "thread_id": str(thread_id),
                     "message_id": str(message_id),
-                    "history_lookup_used": runtime_state.used_history_lookup,
+                    "cross_record_context_used": runtime_state.used_cross_record_context,
                     "anchor_count": len(resolved_anchors),
                     "tool_names": [entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
                     "reservation_points": READER_ASK_RESERVED_POINTS,
@@ -3707,58 +3573,20 @@ async def retry_thread_message(
         yield _sse("error", {"code": "READER_ASK_FAILED", "detail": detail})
 
 
-def _favorite_payload_from_anchor(record_id: UUID, anchor: ReaderAskAnchorRef) -> tuple[str, str, dict[str, Any]]:
-    if anchor.anchor_type == "sentence":
-        sentence_id = anchor.sentence_id
-        if not sentence_id:
-            raise HTTPException(status_code=400, detail="sentence anchor is missing sentence_id")
-        target_key = anchor.target_key or f"record:{record_id}:sentence:{sentence_id}"
-        payload = {
-            "sentence_id": sentence_id,
-            "paragraph_id": anchor.paragraph_id,
-            "selected_text": anchor.selected_text,
-        }
-        return "sentence", target_key, payload
-    if anchor.anchor_type == "text_range":
-        if not anchor.sentence_id or anchor.start_offset is None or anchor.end_offset is None or not anchor.text_hash:
-            raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
-        target_key = anchor.target_key or (
-            f"record:{record_id}:range:{anchor.sentence_id}:{anchor.start_offset}:{anchor.end_offset}:{anchor.text_hash}"
-        )
-        payload = {
-            "sentence_id": anchor.sentence_id,
-            "paragraph_id": anchor.paragraph_id,
-            "selected_text": anchor.selected_text,
-            "start_offset": anchor.start_offset,
-            "end_offset": anchor.end_offset,
-            "text_hash": anchor.text_hash,
-        }
-        return "text_range", target_key, payload
-    if anchor.anchor_type == "multi_text":
-        segments = [segment.model_dump(mode="json") for segment in anchor.segments]
-        target_key = anchor.target_key or build_multi_text_target_key(str(record_id), segments)
-        return "multi_text", target_key, {"segments": segments, "selected_text": anchor.selected_text}
-    raise HTTPException(status_code=400, detail="favorite action only supports sentence/text anchors")
-
-
 def _annotation_request_from_anchor(
     *,
     record_id: UUID,
     anchor: ReaderAskAnchorRef,
-    annotation_type: str,
-    note: str | None,
 ) -> UserAnnotationCreateRequest:
     if anchor.anchor_type == "sentence":
         if not anchor.sentence_id or not anchor.selected_text:
             raise HTTPException(status_code=400, detail="sentence anchor is incomplete")
         return UserAnnotationCreateRequest(
             analysis_record_id=str(record_id),
-            annotation_type=annotation_type,
             anchor_type="sentence",
             sentence_id=anchor.sentence_id,
             paragraph_id=anchor.paragraph_id,
             selected_text=anchor.selected_text,
-            note=note,
             payload_json=anchor.payload_json,
         )
     if anchor.anchor_type == "text_range":
@@ -3772,7 +3600,6 @@ def _annotation_request_from_anchor(
             raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
         return UserAnnotationCreateRequest(
             analysis_record_id=str(record_id),
-            annotation_type=annotation_type,
             anchor_type="text_range",
             sentence_id=anchor.sentence_id,
             paragraph_id=anchor.paragraph_id,
@@ -3780,7 +3607,6 @@ def _annotation_request_from_anchor(
             start_offset=anchor.start_offset,
             end_offset=anchor.end_offset,
             text_hash=anchor.text_hash,
-            note=note,
             payload_json=anchor.payload_json,
         )
     if anchor.anchor_type == "multi_text":
@@ -3788,15 +3614,71 @@ def _annotation_request_from_anchor(
             raise HTTPException(status_code=400, detail="multi_text anchor is incomplete")
         return UserAnnotationCreateRequest(
             analysis_record_id=str(record_id),
-            annotation_type=annotation_type,
             anchor_type="multi_text",
             sentence_id=anchor.segments[0].sentence_id,
             selected_text=anchor.selected_text or " ... ".join(segment.selected_text for segment in anchor.segments),
             segments=[UserAnnotationSegment.model_validate(segment.model_dump(mode="json")) for segment in anchor.segments],
-            note=note,
             payload_json=anchor.payload_json,
         )
     raise HTTPException(status_code=400, detail="annotation action only supports sentence/text anchors")
+
+
+def _reader_note_request_from_anchor(
+    *,
+    record_id: UUID,
+    anchor: ReaderAskAnchorRef,
+    note_text: str,
+) -> ReaderNoteCreateRequest:
+    if anchor.anchor_type == "sentence":
+        if not anchor.sentence_id or not anchor.selected_text:
+            raise HTTPException(status_code=400, detail="sentence anchor is incomplete")
+        return ReaderNoteCreateRequest(
+            analysis_record_id=str(record_id),
+            quote_mode="sentence",
+            anchor_sentence_id=anchor.sentence_id,
+            sentence_id=anchor.sentence_id,
+            paragraph_id=anchor.paragraph_id,
+            selected_text=anchor.selected_text,
+            note_text=note_text,
+            payload_json=anchor.payload_json,
+        )
+    if anchor.anchor_type == "text_range":
+        if (
+            not anchor.sentence_id
+            or not anchor.selected_text
+            or anchor.start_offset is None
+            or anchor.end_offset is None
+            or not anchor.text_hash
+        ):
+            raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
+        return ReaderNoteCreateRequest(
+            analysis_record_id=str(record_id),
+            quote_mode="text_range",
+            anchor_sentence_id=anchor.sentence_id,
+            sentence_id=anchor.sentence_id,
+            paragraph_id=anchor.paragraph_id,
+            selected_text=anchor.selected_text,
+            start_offset=anchor.start_offset,
+            end_offset=anchor.end_offset,
+            text_hash=anchor.text_hash,
+            note_text=note_text,
+            payload_json=anchor.payload_json,
+        )
+    if anchor.anchor_type == "multi_text":
+        if len(anchor.segments) < 2:
+            raise HTTPException(status_code=400, detail="multi_text anchor is incomplete")
+        return ReaderNoteCreateRequest(
+            analysis_record_id=str(record_id),
+            quote_mode="multi_text",
+            anchor_sentence_id=anchor.segments[0].sentence_id,
+            sentence_id=anchor.segments[0].sentence_id,
+            paragraph_id=anchor.segments[0].paragraph_id,
+            selected_text=anchor.selected_text or " ... ".join(segment.selected_text for segment in anchor.segments),
+            segments=[UserAnnotationSegment.model_validate(segment.model_dump(mode="json")) for segment in anchor.segments],
+            note_text=note_text,
+            payload_json=anchor.payload_json,
+        )
+    raise HTTPException(status_code=400, detail="reader note action only supports sentence/text anchors")
 
 
 async def confirm_action(
@@ -3930,47 +3812,34 @@ async def confirm_action(
             raise HTTPException(status_code=400, detail="Action proposal is missing anchor payload")
         anchor = ReaderAskAnchorRef.model_validate(anchor_payload)
 
-        if proposal.action_type == "favorite_anchor":
-            target_type, target_key, payload_json = _favorite_payload_from_anchor(record_id, anchor)
-            favorite_id = await favorites_svc.add_favorite(
-                user_id=user_id,
-                target_type=target_type,
-                target_key=target_key,
-                analysis_record_id=record_id,
-                payload_json=payload_json,
-                note=None,
-            )
-            result = ReaderAskActionConfirmResult(favorite_id=str(favorite_id), target_key=target_key)
-        elif proposal.action_type == "save_excerpt":
+        if proposal.action_type == "save_excerpt":
             annotation = await user_annotations_svc.create_user_annotation(
                 user_id,
                 _annotation_request_from_anchor(
                     record_id=record_id,
                     anchor=anchor,
-                    annotation_type="highlight",
-                    note=None,
                 ),
             )
             result = ReaderAskActionConfirmResult(
                 annotation_id=str(annotation.id),
-                annotation_type=annotation.annotation_type,
+                annotation_type="highlight",
+                target_key=annotation.target_key,
             )
-        elif proposal.action_type in {"save_note", "save_answer_note"}:
+        elif proposal.action_type == "save_note":
             note_text = proposal.payload_json.get("note_text")
             if not isinstance(note_text, str) or not note_text.strip():
                 raise HTTPException(status_code=400, detail="Action proposal is missing note_text")
-            annotation = await user_annotations_svc.create_user_annotation(
+            note = await reader_notes_svc.create_reader_note(
                 user_id,
-                _annotation_request_from_anchor(
+                _reader_note_request_from_anchor(
                     record_id=record_id,
                     anchor=anchor,
-                    annotation_type="note",
-                    note=note_text,
+                    note_text=note_text,
                 ),
             )
             result = ReaderAskActionConfirmResult(
-                annotation_id=str(annotation.id),
-                annotation_type=annotation.annotation_type,
+                target_key=note.target_key,
+                note_id=str(note.id),
             )
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported action type: {proposal.action_type}")

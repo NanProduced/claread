@@ -594,10 +594,6 @@ class TestTaskExecutorCharging:
                 AsyncMock(),
             ),
             patch(
-                "app.services.analysis.task_executor.records_svc.insert_audit_log",
-                AsyncMock(),
-            ),
-            patch(
                 "app.services.analysis.task_executor.records_svc.increment_user_reading_count",
                 AsyncMock(return_value=True),
             ),
@@ -703,10 +699,6 @@ class TestTaskExecutorCharging:
                 AsyncMock(),
             ) as update_record_mock,
             patch(
-                "app.services.analysis.task_executor.records_svc.insert_audit_log",
-                AsyncMock(),
-            ) as audit_mock,
-            patch(
                 "app.services.analysis.task_executor.deduct_credits",
                 AsyncMock(return_value=4),
             ) as deduct_mock,
@@ -727,7 +719,6 @@ class TestTaskExecutorCharging:
             )
 
         deduct_mock.assert_not_awaited()
-        audit_mock.assert_not_awaited()
         assert status_mock.await_args_list[-1].kwargs["status"] == "failed"
         assert update_record_mock.await_args_list[-1].kwargs["analysis_status"] == "failed"
         assert event_mock.await_args_list[-1].args[1] == "task_failed"

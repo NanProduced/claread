@@ -4,23 +4,19 @@ export type ReaderAskAnchorTypeDto =
   | "multi_text"
   | "sentence_entry"
   | "user_annotation"
-  | "favorite"
+  | "reader_note"
   | "dictionary_entry";
 
 export type ReaderAskMessageRoleDto = "user" | "assistant" | "system";
 export type ReaderAskMessageStatusDto = "pending" | "streaming" | "completed" | "failed";
 export type ReaderAskCitationKindDto =
   | "anchor"
-  | "record_excerpt_asset"
-  | "user_excerpt_asset"
   | "vocabulary"
   | "dictionary_entry"
   | "dictionary_ai";
 export type ReaderAskActionTypeDto =
   | "save_note"
   | "save_excerpt"
-  | "favorite_anchor"
-  | "save_answer_note"
   | "create_supplement_grammar_note";
 export type ReaderAskActionStatusDto = "pending" | "confirmed" | "executed" | "rejected";
 export type ReaderAskToolStatusDto = "started" | "completed" | "failed";
@@ -102,7 +98,7 @@ export interface ReaderAskPageIdentityDto {
   has_article_overview: boolean;
   has_sentence_entries: boolean;
   has_annotations: boolean;
-  has_user_assets: boolean;
+  has_reader_notes: boolean;
 }
 
 export interface ReaderAskAttachmentPayloadDto {
@@ -199,7 +195,7 @@ export interface ReaderAskResolvedContextSummaryDto {
   record_title?: string | null;
   anchor_count: number;
   explicit_attachment_count: number;
-  used_history_lookup: boolean;
+  used_cross_record_context: boolean;
   current_sentence_used: boolean;
   current_paragraph_used: boolean;
   used_record_assets: boolean;
@@ -217,8 +213,8 @@ export interface ReaderAskContextPlanDto {
   reference_resolution_status: ReaderAskReferenceResolutionStatusDto;
   reference_resolution_reason?: string | null;
   expanded_record_ids: string[];
-  used_history_lookup: boolean;
-  history_lookup_reason?: string | null;
+  used_cross_record_context: boolean;
+  cross_record_context_reason?: string | null;
   used_record_context: boolean;
   record_context_reason?: string | null;
   used_record_insights: boolean;
@@ -328,8 +324,8 @@ export interface ReaderAskTraceSummaryDto {
   supplement_generation_used: boolean;
   supplement_persisted_count: number;
   supplement_deleted_count: number;
-  history_lookup_allowed: boolean;
-  history_lookup_used: boolean;
+  cross_record_context_allowed: boolean;
+  cross_record_context_used: boolean;
   tool_steps: string[];
   notes: string[];
 }
@@ -469,7 +465,7 @@ export interface ReaderAskActionConfirmResponseDto {
   action_id: string;
   status: ReaderAskActionStatusDto;
   result: {
-    favorite_id?: string | null;
+    note_id?: string | null;
     annotation_id?: string | null;
     annotation_type?: string | null;
     target_key?: string | null;

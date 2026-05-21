@@ -11,7 +11,6 @@ export default {
         'history/index',
         'vocab/index',
         'vocab-review/index',
-        'excerpts/index',
         'profile/index',
         'credit-detail/index',
       ],

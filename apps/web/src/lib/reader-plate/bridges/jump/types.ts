@@ -1,5 +1,4 @@
 import type { WebAnnotationVm } from "@/types/api/annotations";
-import type { WebFavoriteTargetVm } from "@/types/api/favorites";
 import type { ReaderAnchorPayload, ReaderAnchorSegment, ReaderTargetRef } from "../assets";
 
 export type ReaderJumpTargetType =
@@ -7,7 +6,6 @@ export type ReaderJumpTargetType =
   | "text_range"
   | "multi_text"
   | "user_annotation"
-  | "favorite"
   | "content_summary";
 export type ReaderJumpHighlightMode = "sentence_frame" | "range_segments" | "sentence_group";
 export type ReaderJumpScrollStrategy = "center" | "none";
@@ -27,7 +25,6 @@ export interface ReaderJumpTarget {
 
 export interface ReaderJumpContext {
   annotations?: WebAnnotationVm[];
-  favoriteTargets?: WebFavoriteTargetVm[];
 }
 
 export type { ReaderAnchorPayload, ReaderTargetRef };

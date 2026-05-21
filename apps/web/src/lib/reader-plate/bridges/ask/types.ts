@@ -32,7 +32,7 @@ export type ReaderAskAttachmentSubtype =
   | ReaderAnalysisBlockNode["entryType"]
   | ReaderContentSummaryNode["type"]
   | "user_annotation"
-  | "favorite"
+  | "reader_note"
   | "current_record"
   | "related_record"
   | "supplement_ref";

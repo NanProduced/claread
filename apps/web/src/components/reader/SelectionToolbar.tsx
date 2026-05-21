@@ -1,17 +1,13 @@
 import {
-  Bookmark,
   Eraser,
-  Heart,
   Highlighter,
   MessageSquare,
   MoreHorizontal,
   NotebookPen,
   Quote,
   Search,
-  Send,
-  Trash2,
 } from "lucide-react";
-import { forwardRef, useId, type CSSProperties } from "react";
+import { forwardRef, type CSSProperties } from "react";
 import { cn } from "../../lib/cn";
 import {
   ReaderToolbarActionButton,
@@ -25,7 +21,6 @@ import {
   ReaderToolbarMenuRadioItem,
   ReaderToolbarMenuSeparator,
   ReaderToolbarMenuTrigger,
-  ReaderToolbarPopoverCard,
   ReaderToolbarRoot,
   ReaderToolbarSeparator,
   ReaderToolbarSplitAction,
@@ -36,7 +31,6 @@ export type SelectionToolbarAction =
   | "selectSentence"
   | "highlight"
   | "note"
-  | "favorite"
   | "lookup"
   | "clear";
 
@@ -54,7 +48,6 @@ export interface SelectionToolbarDisabledStates {
   selectSentence?: boolean;
   highlight?: boolean;
   note?: boolean;
-  favorite?: boolean;
   lookup?: boolean;
   clear?: boolean;
 }
@@ -67,12 +60,7 @@ export interface SelectionToolbarProps {
   hasAnnotation?: boolean;
   hasHighlight?: boolean;
   hasNote?: boolean;
-  favorited?: boolean;
   disabled?: SelectionToolbarDisabledStates;
-  noteOpen?: boolean;
-  noteValue?: string;
-  noteMaxLength?: number;
-  noteSaving?: boolean;
   statusMessage?: string;
   statusKind?: "saving" | "saved" | "error";
   className?: string;
@@ -85,11 +73,7 @@ export interface SelectionToolbarProps {
     option: SelectionToolbarColorOption,
   ) => void;
   onNote?: (selectedText: string) => void;
-  onNoteChange?: (value: string) => void;
-  onNoteSave?: () => void;
-  onNoteClear?: () => void;
   onClearAnnotation?: () => void;
-  onFavorite?: (selectedText: string) => void;
   onLookup?: (selectedText: string) => void;
 }
 
@@ -140,12 +124,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     hasAnnotation = false,
     hasHighlight = false,
     hasNote = false,
-    favorited = false,
     disabled,
-    noteOpen = false,
-    noteValue = "",
-    noteMaxLength = 500,
-    noteSaving = false,
     statusMessage,
     statusKind,
     className,
@@ -154,16 +133,11 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     onSelectSentence,
     onHighlight,
     onNote,
-    onNoteChange,
-    onNoteSave,
-    onNoteClear,
     onClearAnnotation,
-    onFavorite,
     onLookup,
   },
   ref,
 ) {
-  const noteId = useId();
   const hasSelection = selectedText.trim().length > 0;
   const selectionLabel = selectedTextSummary(selectedText);
   const askComingSoon = Boolean(disabled?.ask);
@@ -172,11 +146,9 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     selectionMode !== "text_range" || !hasSelection || Boolean(disabled?.selectSentence) || !onSelectSentence;
   const highlightDisabled = !hasSelection || Boolean(disabled?.highlight) || !onHighlight;
   const noteDisabled = !hasSelection || Boolean(disabled?.note) || !onNote;
-  const favoriteDisabled = !hasSelection || Boolean(disabled?.favorite) || !onFavorite;
   const lookupDisabled = !hasSelection || Boolean(disabled?.lookup) || !onLookup;
   const clearDisabled = !hasAnnotation || Boolean(disabled?.clear) || !onClearAnnotation;
   const moreDisabled = !hasSelection;
-  const noteLength = noteValue.length;
 
   return (
     <div
@@ -250,7 +222,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           aria-label={hasNote ? "编辑笔记" : "笔记"}
           title={hasNote ? "编辑笔记" : "笔记"}
           disabled={noteDisabled}
-          active={noteOpen || hasNote}
+          active={hasNote}
           onClick={() => onNote?.(selectedText)}
         >
           <NotebookPen aria-hidden="true" className="h-4 w-4" />
@@ -272,13 +244,6 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               <Quote aria-hidden="true" className="h-4 w-4" />
               选择整句
             </ReaderToolbarMenuItem>
-            <ReaderToolbarMenuItem disabled={favoriteDisabled} onSelect={() => onFavorite?.(selectedText)}>
-              <Heart
-                aria-hidden="true"
-                className={cn("h-4 w-4", favorited && "fill-vocab-amber text-vocab-amber")}
-              />
-              {favorited ? "取消收藏" : "收藏"}
-            </ReaderToolbarMenuItem>
             <ReaderToolbarMenuItem disabled={lookupDisabled} onSelect={() => onLookup?.(selectedText)}>
               <Search aria-hidden="true" className="h-4 w-4" />
               查词
@@ -291,69 +256,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           </ReaderToolbarMenuContent>
         </ReaderToolbarMenu>
       </ReaderToolbarRoot>
-
-      {noteOpen ? (
-        <ReaderToolbarPopoverCard>
-          <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-            <label htmlFor={noteId} className="font-medium text-foreground">笔记</label>
-            <span className={cn("text-muted-foreground", noteLength > noteMaxLength && "text-destructive")}>
-              {noteLength}/{noteMaxLength}
-            </span>
-          </div>
-          <textarea
-            id={noteId}
-            aria-label="选区笔记"
-            data-selection-note-input="true"
-            className="focus-ring min-h-18 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
-            placeholder="写一句和这段文字绑定的笔记。"
-            value={noteValue}
-            maxLength={noteMaxLength}
-            onChange={(event) => onNoteChange?.(event.target.value)}
-          />
-          <div className="mt-3 flex items-center justify-between gap-2">
-            {statusMessage ? (
-              <span
-                className={cn(
-                  "text-xs font-medium",
-                  statusKind === "error" ? "text-destructive" : "text-muted-foreground",
-                )}
-              >
-                {statusMessage}
-              </span>
-            ) : (
-              <span className="text-xs text-muted-foreground">保存后会直接绑定到原文锚点。</span>
-            )}
-            <span className="flex items-center gap-2">
-              {hasNote ? (
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
-                  disabled={noteSaving || !onNoteClear}
-                  onClick={onNoteClear}
-                >
-                  <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-                  删除
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="focus-ring inline-flex min-h-10 items-center gap-1.5 rounded-md border border-transparent bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={noteSaving || noteLength === 0 || noteLength > noteMaxLength || !onNoteSave}
-                onClick={onNoteSave}
-              >
-                {noteSaving ? (
-                  <Bookmark aria-hidden="true" className="h-3.5 w-3.5" />
-                ) : (
-                  <Send aria-hidden="true" className="h-3.5 w-3.5" />
-                )}
-                保存
-              </button>
-            </span>
-          </div>
-        </ReaderToolbarPopoverCard>
-      ) : null}
-
-      {!noteOpen && statusMessage ? (
+      {statusMessage ? (
         <div
           className={cn(
             "mt-2 rounded-md border px-3 py-2 text-xs font-medium shadow-sm",

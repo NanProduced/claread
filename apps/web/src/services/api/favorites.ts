@@ -37,19 +37,3 @@ export function deleteFavoriteByAnalysisRecordId(
     },
   );
 }
-
-export function deleteFavoriteByTarget(
-  sessionToken: string,
-  targetType: string,
-  targetKey: string,
-): Promise<UpstreamResult<FavoriteDeleteResponseDto>> {
-  const searchParams = new URLSearchParams({
-    target_type: targetType,
-    target_key: targetKey,
-  });
-
-  return fastApiFetch<FavoriteDeleteResponseDto>(`/favorites/target?${searchParams.toString()}`, {
-    method: "DELETE",
-    sessionToken,
-  });
-}

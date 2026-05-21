@@ -2,7 +2,7 @@
 Analysis Records Service.
 
 Handles CRUD operations for analysis_records and analysis_results tables.
-Splits heavy content from metadata and manages audit logs.
+Splits heavy content from metadata.
 """
 
 from __future__ import annotations
@@ -297,40 +297,6 @@ async def update_record(
                 )
 
     return await get_record_by_id(user_id, record_id)
-
-
-async def insert_audit_log(
-    record_id: UUID,
-    user_id: UUID,
-    task_id: UUID | None,
-    request_payload_json: dict[str, Any],
-    usage_summary_json: dict[str, Any],
-    cost_points: int,
-    processing_ms: int | None = None,
-) -> None:
-    """Insert an audit log entry for an analysis task."""
-    pool = db_connection.DB_POOL
-    if pool is None:
-        raise RuntimeError("Database pool not initialized")
-
-    async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO analysis_audit_logs (
-                record_id, task_id, user_id, request_payload_json,
-                usage_summary_json, cost_points, processing_ms, created_at
-            )
-            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
-            """,
-            record_id,
-            task_id,
-            user_id,
-            json.dumps(request_payload_json, ensure_ascii=False),
-            json.dumps(usage_summary_json, ensure_ascii=False),
-            cost_points,
-            processing_ms,
-            datetime.now(timezone.utc),
-        )
 
 
 async def increment_user_reading_count(user_id: UUID) -> bool:

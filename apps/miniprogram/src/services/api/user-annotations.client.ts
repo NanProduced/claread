@@ -1,5 +1,5 @@
 import { request } from './client'
-import type { UserAnnotationAnchorType, UserAnnotationColor, UserAnnotationType } from '@claread/contracts'
+import type { UserAnnotationAnchorType, UserAnnotationColor } from '@claread/contracts'
 
 export interface UserAnchorSegmentDto {
   paragraph_id?: string
@@ -12,7 +12,6 @@ export interface UserAnchorSegmentDto {
 
 export interface UserAnnotationCreateDto {
   analysis_record_id?: string
-  annotation_type?: UserAnnotationType
   anchor_type?: UserAnnotationAnchorType
   target_key?: string
   paragraph_id?: string
@@ -23,19 +22,16 @@ export interface UserAnnotationCreateDto {
   text_hash?: string
   segments?: UserAnchorSegmentDto[]
   color?: UserAnnotationColor
-  note?: string
   payload_json?: Record<string, unknown>
 }
 
 export interface UserAnnotationUpdateDto {
   color?: string
-  note?: string
 }
 
 export interface UserAnnotationDto {
   id: string
   analysis_record_id?: string
-  annotation_type: UserAnnotationType
   anchor_type: UserAnnotationAnchorType
   target_key: string
   paragraph_id?: string
@@ -46,7 +42,6 @@ export interface UserAnnotationDto {
   text_hash?: string
   segments?: UserAnchorSegmentDto[]
   color: UserAnnotationColor
-  note?: string
   payload_json: Record<string, unknown>
   created_at: string
   updated_at: string

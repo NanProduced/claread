@@ -28,7 +28,7 @@ class ReaderAskAnswerRuntimeInput:
     resolved_intent: ReaderAskResolvedIntent
     resolved_intent_label: str
     entry_action: ReaderAskEntryAction
-    history_lookup_allowed: bool
+    cross_record_context_allowed: bool
     resolved_context_input: ReaderAskResolvedContextInput | None
     reference_resolution: planner.ReaderAskReferenceResolution | None
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None
@@ -64,9 +64,6 @@ def _compact_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(record_assets, list) and len(record_assets) > 3:
         compact["record_assets"] = record_assets[:3]
 
-    history_assets = compact.get("history_assets")
-    if isinstance(history_assets, list) and len(history_assets) > 2:
-        compact["history_assets"] = history_assets[:2]
     external_asset_contexts = compact.get("external_asset_contexts")
     if isinstance(external_asset_contexts, list) and len(external_asset_contexts) > 3:
         compact["external_asset_contexts"] = external_asset_contexts[:3]
@@ -197,9 +194,9 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
                 "dictionary_needed": contract.planning_snapshot.working_set.dictionary_needed
                 if contract.planning_snapshot
                 else False,
-                "history_assets_allowed": contract.planning_snapshot.working_set.history_assets_allowed
+                "cross_record_context_allowed": contract.planning_snapshot.working_set.cross_record_context_allowed
                 if contract.planning_snapshot
-                else contract.history_lookup_allowed,
+                else contract.cross_record_context_allowed,
                 "external_record_refs": contract.planning_snapshot.working_set.external_record_refs
                 if contract.planning_snapshot
                 else [],
@@ -217,10 +214,10 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             if contract.planning_snapshot
             else None,
         },
-        "history_lookup_allowed": contract.history_lookup_allowed,
+        "cross_record_context_allowed": contract.cross_record_context_allowed,
         "tooling_contract": {
             "call_tools_on_demand": True,
-            "history_lookup_requires_explicit_intent": contract.history_lookup_allowed,
+            "cross_record_context_requires_explicit_intent": contract.cross_record_context_allowed,
             "writes_require_confirmation": True,
             "dictionary_context_explain_available": True,
         },

@@ -33,14 +33,17 @@ export function annotationMatchesSelection(annotation: WebAnnotationVm, selectio
     return selectionSegmentsEqual(annotation, selection);
   }
 
+  if (annotation.anchorType === "sentence") {
+    return annotation.sentenceId === selection.sentence.sentenceId;
+  }
+
   return (
     annotation.anchorType === "text_range" &&
     annotation.sentenceId === selection.sentence.sentenceId &&
     typeof annotation.startOffset === "number" &&
     typeof annotation.endOffset === "number" &&
-    annotation.startOffset === selection.startOffset &&
-    annotation.endOffset === selection.endOffset &&
-    annotation.textHash === selection.textHash
+    annotation.startOffset <= selection.startOffset &&
+    annotation.endOffset >= selection.endOffset
   );
 }
 
@@ -60,32 +63,4 @@ export function targetKeyForSelection(recordId: string, selection: ReaderTextSel
     selection.endOffset,
     selection.textHash,
   );
-}
-
-export function favoriteTargetForSelection(
-  recordId: string,
-  selection: ReaderTextSelection,
-  annotation?: WebAnnotationVm | null,
-) {
-  if (annotation && annotationMatchesSelection(annotation, selection)) {
-    return {
-      targetType:
-        annotation.anchorType === "sentence"
-          ? "sentence"
-          : annotation.anchorType === "multi_text"
-            ? "multi_text"
-            : "text_range",
-      targetKey: annotation.targetKey,
-    } as const;
-  }
-
-  return {
-    targetType:
-      selection.anchorType === "sentence"
-        ? "sentence"
-        : selection.anchorType === "multi_text"
-          ? "multi_text"
-          : "text_range",
-    targetKey: targetKeyForSelection(recordId, selection),
-  } as const;
 }

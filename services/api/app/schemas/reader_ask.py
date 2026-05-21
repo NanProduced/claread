@@ -12,15 +12,13 @@ ReaderAskAnchorType = Literal[
     "multi_text",
     "sentence_entry",
     "user_annotation",
-    "favorite",
+    "reader_note",
     "dictionary_entry",
 ]
 ReaderAskMessageRole = Literal["user", "assistant", "system"]
 ReaderAskMessageStatus = Literal["pending", "streaming", "completed", "failed"]
 ReaderAskCitationKind = Literal[
     "anchor",
-    "record_excerpt_asset",
-    "user_excerpt_asset",
     "vocabulary",
     "dictionary_entry",
     "dictionary_ai",
@@ -28,8 +26,6 @@ ReaderAskCitationKind = Literal[
 ReaderAskActionType = Literal[
     "save_note",
     "save_excerpt",
-    "favorite_anchor",
-    "save_answer_note",
     "create_supplement_grammar_note",
 ]
 ReaderAskActionStatus = Literal["pending", "confirmed", "executed", "rejected"]
@@ -136,7 +132,7 @@ class ReaderAskPageIdentity(BaseModel):
     has_article_overview: bool = False
     has_sentence_entries: bool = False
     has_annotations: bool = False
-    has_user_assets: bool = False
+    has_reader_notes: bool = False
 
 
 class ReaderAskAttachmentPayload(BaseModel):
@@ -249,7 +245,7 @@ class ReaderAskResolvedContextSummary(BaseModel):
     record_title: str | None = None
     anchor_count: int = 0
     explicit_attachment_count: int = 0
-    used_history_lookup: bool = False
+    used_cross_record_context: bool = False
     current_sentence_used: bool = False
     current_paragraph_used: bool = False
     used_record_assets: bool = False
@@ -267,8 +263,8 @@ class ReaderAskContextPlan(BaseModel):
     reference_resolution_status: ReaderAskReferenceResolutionStatus = "not_needed"
     reference_resolution_reason: str | None = None
     expanded_record_ids: list[str] = Field(default_factory=list)
-    used_history_lookup: bool = False
-    history_lookup_reason: str | None = None
+    used_cross_record_context: bool = False
+    cross_record_context_reason: str | None = None
     used_record_context: bool = False
     record_context_reason: str | None = None
     used_record_insights: bool = False
@@ -379,8 +375,8 @@ class ReaderAskTraceSummary(BaseModel):
     supplement_generation_used: bool = False
     supplement_persisted_count: int = 0
     supplement_deleted_count: int = 0
-    history_lookup_allowed: bool = False
-    history_lookup_used: bool = False
+    cross_record_context_allowed: bool = False
+    cross_record_context_used: bool = False
     tool_steps: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
@@ -523,9 +519,9 @@ class ReaderAskThreadCreateRequest(BaseModel):
 
 
 class ReaderAskActionConfirmResult(BaseModel):
-    favorite_id: str | None = None
     annotation_id: str | None = None
     annotation_type: str | None = None
+    note_id: str | None = None
     target_key: str | None = None
     record_id: str | None = None
     supplement_projection: dict[str, Any] | None = None

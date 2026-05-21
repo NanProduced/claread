@@ -273,19 +273,7 @@ async def execute_task(
             schema_version=render_scene_dict.get("schema_version", ANALYZE_SCHEMA_VERSION),
         )
 
-        # 2. Insert Audit Log
-        processing_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
-        await records_svc.insert_audit_log(
-            record_id=record_id,
-            user_id=user_id,
-            task_id=task_id,
-            request_payload_json=payload.model_dump(mode="json"),
-            usage_summary_json=usage_summary or {},
-            cost_points=cost_points,
-            processing_ms=processing_ms,
-        )
-
-        # 3. Deduct Credits
+        # 2. Deduct Credits
         actual_deducted = 0
         if cost_points > 0:
             actual_deducted = await deduct_credits(
@@ -328,7 +316,7 @@ async def execute_task(
             )
         )
 
-        # 4. Increment Achievement Stats
+        # 3. Increment Achievement Stats
         await records_svc.increment_user_reading_count(user_id)
 
         finished_at = datetime.now(timezone.utc)
@@ -378,18 +366,6 @@ async def execute_task(
             )
 
             cost_points = compute_cost_points(usage_summary) if usage_summary else 0
-
-            if not isinstance(exc, UnrenderableAnalysisError):
-                processing_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
-                await records_svc.insert_audit_log(
-                    record_id=record_id,
-                    user_id=user_id,
-                    task_id=task_id,
-                    request_payload_json=payload.model_dump(mode="json") if payload else {},
-                    usage_summary_json=usage_summary or {},
-                    cost_points=cost_points,
-                    processing_ms=processing_ms,
-                )
 
             await record_ai_usage_event(
                 AIUsageEventCreate(

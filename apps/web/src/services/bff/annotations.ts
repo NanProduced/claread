@@ -27,6 +27,8 @@ import type {
 export type AnnotationsBffStatus =
   | "ready"
   | "created"
+  | "updated"
+  | "deleted"
   | "invalid_request"
   | "unauthenticated"
   | "mock_session"
@@ -56,7 +58,7 @@ export type CreateAnnotationBffResult =
     }
   | {
       ok: false;
-      status: Exclude<AnnotationsBffStatus, "ready" | "created">;
+      status: Exclude<AnnotationsBffStatus, "ready" | "created" | "updated" | "deleted">;
       message: string;
       session: ReturnType<typeof projectSession>;
       httpStatus: number;
@@ -71,7 +73,7 @@ export type UpdateAnnotationBffResult =
     }
   | {
       ok: false;
-      status: Exclude<AnnotationsBffStatus, "ready" | "created">;
+      status: Exclude<AnnotationsBffStatus, "ready" | "created" | "updated" | "deleted">;
       message: string;
       session: ReturnType<typeof projectSession>;
       httpStatus: number;
@@ -85,7 +87,7 @@ export type DeleteAnnotationBffResult =
     }
   | {
       ok: false;
-      status: Exclude<AnnotationsBffStatus, "ready" | "created">;
+      status: Exclude<AnnotationsBffStatus, "ready" | "created" | "updated" | "deleted">;
       message: string;
       session: ReturnType<typeof projectSession>;
       httpStatus: number;
@@ -108,8 +110,8 @@ function authError(session: WebSession): {
     status: session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
     message:
       session.kind === "mock_phone"
-        ? "当前登录态不能写入真实批注，请使用真实登录会话后再试。"
-        : "请先登录后使用批注。",
+        ? "当前登录态不能写入真实高亮，请使用真实登录会话后再试。"
+        : "请先登录后使用高亮。",
     httpStatus: 401,
   };
 }
@@ -129,7 +131,7 @@ function projectAnnotation(item: UserAnnotationResponseDto): WebAnnotationVm {
   return {
     id: item.id,
     recordId: item.analysis_record_id,
-    type: item.annotation_type,
+    type: "highlight",
     anchorType: item.anchor_type,
     targetKey: item.target_key,
     paragraphId: item.paragraph_id,
@@ -140,7 +142,6 @@ function projectAnnotation(item: UserAnnotationResponseDto): WebAnnotationVm {
     textHash: item.text_hash,
     segments: Array.isArray(item.segments) ? item.segments.map(projectSegment) : [],
     color: item.color,
-    note: item.note,
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };
@@ -224,7 +225,6 @@ export async function createReaderSentenceAnnotation(
   const sentenceId = readString(request.sentenceId);
   const paragraphId = readString(request.paragraphId);
   const selectedText = readString(request.selectedText);
-  const note = readString(request.note);
   const anchorType = request.anchorType ?? "sentence";
   const startOffset = readNumber(request.startOffset);
   const endOffset = readNumber(request.endOffset);
@@ -281,15 +281,6 @@ export async function createReaderSentenceAnnotation(
         httpStatus: 400,
       };
     }
-    if (selectedText.length !== endOffset - startOffset) {
-      return {
-        ok: false,
-        status: "invalid_request",
-        message: "text_range 的 selectedText 长度必须匹配 startOffset/endOffset。",
-        session: projectSession(session),
-        httpStatus: 400,
-      };
-    }
   }
 
   if (anchorType === "multi_text") {
@@ -316,7 +307,6 @@ export async function createReaderSentenceAnnotation(
 
   const upstreamBody: UserAnnotationCreateRequestDto = {
     analysis_record_id: recordId,
-    annotation_type: note ? "note" : "highlight",
     anchor_type: anchorType,
     paragraph_id: paragraphId,
     sentence_id: sentenceId,
@@ -326,7 +316,6 @@ export async function createReaderSentenceAnnotation(
     text_hash: anchorType === "text_range" ? textHash : null,
     segments: anchorType === "multi_text" ? segments : [],
     color: request.color ?? "soft_green",
-    note: note || null,
     payload_json: {
       ...(isRecord(request.payloadJson) ? request.payloadJson : {}),
       source: anchorType === "sentence" ? "web_reader_sentence_action" : "web_reader_text_action",
@@ -389,34 +378,19 @@ export async function updateReaderAnnotation(
   }
 
   const request = body as Partial<WebAnnotationUpdateRequest>;
-  const upstreamBody: UserAnnotationUpdateRequestDto = {};
-
-  if ("color" in request) {
-    if (request.color !== null && request.color !== undefined && !isUserAnnotationColor(request.color)) {
-      return {
-        ok: false,
-        status: "invalid_request",
-        message: "color 不正确。",
-        session: projectSession(session),
-        httpStatus: 400,
-      };
-    }
-    upstreamBody.color = request.color ?? null;
-  }
-
-  if ("note" in request) {
-    upstreamBody.note = typeof request.note === "string" ? request.note.trim() || null : null;
-  }
-
-  if (!("color" in upstreamBody) && !("note" in upstreamBody)) {
+  if (!isUserAnnotationColor(request.color)) {
     return {
       ok: false,
       status: "invalid_request",
-      message: "至少需要提供 color 或 note。",
+      message: "color 不正确。",
       session: projectSession(session),
       httpStatus: 400,
     };
   }
+
+  const upstreamBody: UserAnnotationUpdateRequestDto = {
+    color: request.color,
+  };
 
   const upstreamResult = await updateUserAnnotation(session.sessionToken, annotationId, upstreamBody);
 

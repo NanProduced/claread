@@ -1,12 +1,12 @@
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 
 export interface ListRowProps {
-  title: ReactNode;
-  description?: ReactNode;
-  meta?: ReactNode;
-  trailing?: ReactNode;
+  title: any;
+  description?: any;
+  meta?: any;
+  trailing?: any;
   href?: ComponentProps<typeof Link>["href"];
   className?: string;
   contentClassName?: string;

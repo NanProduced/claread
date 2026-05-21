@@ -15,10 +15,15 @@
 BEGIN;
 
 DROP TABLE IF EXISTS
+  reader_ask_eval_traces,
+  reader_ask_turn_runs,
+  reader_ask_supplements,
+  reader_ask_messages,
+  reader_ask_threads,
+  reader_notes,
   user_annotations,
   dict_ai_candidate_entries,
   ai_usage_events,
-  analysis_audit_logs,
   analysis_task_events,
   analysis_tasks,
   analysis_results,

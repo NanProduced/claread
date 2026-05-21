@@ -904,14 +904,6 @@ select {
   /* Box visual shadows stripped to maintain pure text flow */
 }
 
-.reader-sentence--user-note {
-  background-image: linear-gradient(180deg, rgba(255, 249, 238, 0.5), rgba(255, 255, 255, 0));
-}
-
-.reader-sentence--favorite {
-  /* Box visual shadows stripped to maintain pure text flow */
-}
-
 .reader-analysis-atom {
   --analysis-accent: rgb(39, 108, 77);
   --analysis-fill: rgba(60, 140, 104, 0.12);
@@ -1402,18 +1394,6 @@ select {
     radial-gradient(circle at 82% 60%, rgba(47, 116, 123, 0.16) 0 0.18em, transparent 0.2em);
 }
 
-.reader-user-range--favorite {
-  --reader-user-range-fill: rgba(224, 195, 126, 0.18);
-  --reader-user-range-line: rgba(156, 122, 28, 0.54);
-  --reader-user-range-edge: rgba(156, 122, 28, 0.12);
-}
-
-.reader-user-range--with-note {
-  box-shadow:
-    inset 0 -0.04em 0 var(--reader-user-range-edge),
-    inset 0 0 0 1px rgba(157, 95, 74, 0.08);
-}
-
 .reader-user-range:hover,
 .reader-user-range:focus-visible {
   box-shadow: inset 0 -0.04em 0 var(--reader-user-range-edge);
@@ -1443,11 +1423,6 @@ select {
 .reader-user-range--stacked:hover {
   --reader-user-range-fill: rgba(177, 135, 77, 0.32);
   --reader-user-range-line: rgba(145, 106, 55, 0.76);
-}
-
-.reader-user-range--favorite:hover {
-  --reader-user-range-fill: rgba(224, 195, 126, 0.3);
-  --reader-user-range-line: rgba(156, 122, 28, 0.76);
 }
 
 .reader-route-focus-frame {
@@ -1530,14 +1505,6 @@ select {
 .reader-annotation-gutter-marker--note {
   background: rgba(228, 176, 0, 0.13);
   color: #A77700;
-  box-shadow:
-    inset 0 0 0 1px rgba(228, 176, 0, 0.2),
-    0 0.35rem 0.85rem rgba(91, 68, 9, 0.06);
-}
-
-.reader-annotation-gutter-marker--favorite {
-  background: rgba(255, 249, 238, 0.9);
-  color: #9C7A1C;
   box-shadow:
     inset 0 0 0 1px rgba(228, 176, 0, 0.2),
     0 0.35rem 0.85rem rgba(91, 68, 9, 0.06);

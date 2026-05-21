@@ -1,5 +1,6 @@
 from typing import Optional
 from uuid import UUID
+
 from pydantic import BaseModel, Field, model_validator
 
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
@@ -37,8 +38,7 @@ class UserAnnotationSegment(BaseModel):
 
 class UserAnnotationCreateRequest(BaseModel):
     analysis_record_id: Optional[str] = None
-    annotation_type: str = Field(default="highlight", pattern="^(highlight|note)$")
-    anchor_type: str = Field(default="sentence", pattern="^(sentence|paragraph|text_range|multi_text)$")
+    anchor_type: str = Field(default="sentence", pattern="^(sentence|text_range|multi_text)$")
     target_key: Optional[str] = None
     paragraph_id: Optional[str] = None
     sentence_id: Optional[str] = None
@@ -48,7 +48,6 @@ class UserAnnotationCreateRequest(BaseModel):
     text_hash: Optional[str] = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
     color: str = Field(default="soft_green", pattern=USER_ANNOTATION_COLOR_PATTERN)
-    note: Optional[str] = None
     payload_json: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -59,11 +58,6 @@ class UserAnnotationCreateRequest(BaseModel):
         if self.anchor_type == "sentence":
             if not self.sentence_id:
                 raise ValueError("sentence_id is required for sentence anchors")
-            return self
-
-        if self.anchor_type == "paragraph":
-            if not self.paragraph_id:
-                raise ValueError("paragraph_id is required for paragraph anchors")
             return self
 
         if self.anchor_type == "multi_text":
@@ -93,14 +87,12 @@ class UserAnnotationCreateRequest(BaseModel):
 
 
 class UserAnnotationUpdateRequest(BaseModel):
-    color: Optional[str] = Field(default=None, pattern=USER_ANNOTATION_COLOR_PATTERN)
-    note: Optional[str] = None
+    color: str = Field(pattern=USER_ANNOTATION_COLOR_PATTERN)
 
 
 class UserAnnotationResponse(BaseModel):
     id: UUID
     analysis_record_id: Optional[UUID] = None
-    annotation_type: str
     anchor_type: str
     target_key: str
     paragraph_id: Optional[str] = None
@@ -111,7 +103,6 @@ class UserAnnotationResponse(BaseModel):
     text_hash: Optional[str] = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
     color: str
-    note: Optional[str] = None
     payload_json: dict
     created_at: str
     updated_at: str

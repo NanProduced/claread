@@ -62,6 +62,8 @@ apps/web/docs/design/**/*.png
 _migration_prep/
 .agents/
 
+.impeccable/**
+
 RTK.md
 skills-lock.json
 

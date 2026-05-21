@@ -139,14 +139,14 @@ function serializePageIdentity(pageIdentity: ReaderAskPageIdentity): ReaderAskPa
     available_context_capabilities: [
       "record_context",
       "record_insights",
-      "record_excerpt_assets",
-      "history_lookup",
+      "reader_annotations",
+      "reader_notes",
       "dictionary",
     ],
     has_article_overview: true,
     has_sentence_entries: true,
     has_annotations: true,
-    has_user_assets: true,
+    has_reader_notes: true,
   };
 }
 
@@ -412,10 +412,6 @@ function toolLabel(toolName: string) {
       return "当前文章上下文";
     case "get_record_insights":
       return "解析卡片";
-    case "get_record_excerpt_assets":
-      return "本文摘录资产";
-    case "search_user_excerpt_assets":
-      return "历史摘录资产";
     case "search_user_vocabulary":
       return "生词资产";
     case "lookup_dictionary_entry":
@@ -426,8 +422,6 @@ function toolLabel(toolName: string) {
       return "保存笔记确认";
     case "propose_save_excerpt":
       return "保存高亮确认";
-    case "propose_favorite_anchor":
-      return "收藏确认";
     default:
       return toolName;
   }
@@ -626,10 +620,10 @@ function contextSummaryChips(
     chips.push("当前段");
   }
   if (summary.used_record_assets) {
-    chips.push("本文资产");
+    chips.push("本文解析");
   }
-  if (summary.used_history_lookup) {
-    chips.push("历史资产");
+  if (summary.used_cross_record_context) {
+    chips.push("跨文章上下文");
   }
   if (summary.used_dictionary) {
     chips.push("词典");
@@ -1154,7 +1148,7 @@ function TraceSummaryDisclosure({
     traceSummary.reference_resolution_status !== "not_needed"
       ? `reference:${traceSummary.reference_resolution_status}`
       : null,
-    traceSummary.history_lookup_used ? "history:on" : null,
+    traceSummary.cross_record_context_used ? "cross-record:on" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1294,7 +1288,7 @@ function CitationList({
           const canJump = citationCanJump(citation, currentRecordId);
           const sourceLabel =
             citation.source_article_title ||
-            (citation.record_id === currentRecordId ? "当前文章" : "历史资产");
+            (citation.record_id === currentRecordId ? "当前文章" : "外部引用");
 
           return (
             <button
@@ -2540,7 +2534,7 @@ export function AiWorkspacePanel({
           <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/70 pt-3">
             <p className="max-w-[22rem] text-[11px] leading-5 text-muted">
-              默认只围绕当前文章；只有问到“以前 / 之前 / 见过”时才会扩展历史资产。
+              默认只围绕当前文章；只有明确提到以前读过的其他文章时才会扩展外部引用。
             </p>
             {composerDockState.attachmentCount > 0 ? (
               <button

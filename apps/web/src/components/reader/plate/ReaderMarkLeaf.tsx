@@ -204,14 +204,9 @@ function classNameForRanges(ranges: ReaderAssetRange[]) {
   }
 
   if (uniqueRanges.length === 1) {
-    if (primary.assetKind === "favorite") {
-      return "reader-user-range reader-user-range--favorite";
-    }
-
     return [
       "reader-user-range",
       annotationToneClass(primary.color ?? null),
-      primary.hasNote ? "reader-user-range--with-note" : "",
     ]
       .filter(Boolean)
       .join(" ");
