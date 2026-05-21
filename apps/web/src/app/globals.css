@@ -906,25 +906,30 @@ select {
 
 .reader-analysis-atom {
   --analysis-accent: rgb(39, 108, 77);
-  --analysis-fill: rgba(60, 140, 104, 0.12);
+  --analysis-fill: transparent;
 
   position: relative;
   margin-inline: -0.02em;
   padding: 0 0.08em 0.08em;
   border-radius: 0.16em;
-  color: var(--analysis-accent);
+  color: var(--ink); /* Keep text color as ink, use accent for underline */
   background:
-    linear-gradient(to top, var(--analysis-accent) 0 0.08em, transparent 0.08em),
-    linear-gradient(to top, var(--analysis-fill) 0 34%, transparent 34%);
-  background-position: 0 100%, 0 90%;
+    linear-gradient(to top, var(--analysis-accent) 0 1px, transparent 1px),
+    linear-gradient(to top, var(--analysis-fill) 0 100%, transparent 100%);
+  background-position: 0 100%, 0 0;
   background-repeat: no-repeat;
-  background-size: 100% 0.16em, 100% 0.62em;
+  background-size: 100% 1px, 100% 100%;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
   transition:
-    background-size 160ms ease,
-    box-shadow 160ms ease,
-    color 160ms ease;
+    background-color 200ms ease,
+    color 200ms ease;
+}
+
+.reader-analysis-atom:hover,
+.reader-analysis-atom--active {
+  --analysis-fill: color-mix(in srgb, var(--analysis-accent) 15%, transparent);
+  color: var(--analysis-accent);
 }
 
 .reader-analysis-atom::before {
@@ -950,37 +955,31 @@ select {
 .reader-analysis-atom--1,
 .reader-analysis-row-index--1 {
   --analysis-accent: rgb(39, 108, 77);
-  --analysis-fill: rgba(60, 140, 104, 0.13);
 }
 
 .reader-analysis-atom--2,
 .reader-analysis-row-index--2 {
   --analysis-accent: rgb(166, 104, 14);
-  --analysis-fill: rgba(228, 176, 0, 0.13);
 }
 
 .reader-analysis-atom--3,
 .reader-analysis-row-index--3 {
   --analysis-accent: rgb(126, 91, 198);
-  --analysis-fill: rgba(185, 168, 230, 0.18);
 }
 
 .reader-analysis-atom--4,
 .reader-analysis-row-index--4 {
   --analysis-accent: rgb(38, 105, 153);
-  --analysis-fill: rgba(76, 145, 194, 0.14);
 }
 
 .reader-analysis-atom--5,
 .reader-analysis-row-index--5 {
   --analysis-accent: rgb(86, 72, 121);
-  --analysis-fill: rgba(116, 102, 148, 0.14);
 }
 
 .reader-analysis-atom--6,
 .reader-analysis-row-index--6 {
   --analysis-accent: rgb(82, 115, 96);
-  --analysis-fill: rgba(130, 168, 151, 0.14);
 }
 
 .reader-analysis-row-index {
@@ -1021,17 +1020,89 @@ select {
 
 .reader-entry-note {
   --reader-entry-accent: rgba(116, 102, 148, 0.42);
-  --reader-entry-accent-soft: rgba(116, 102, 148, 0.1);
+  --reader-entry-accent-soft: rgba(116, 102, 148, 0.08);
   --reader-entry-connector: rgba(232, 228, 218, 0.92);
 
   position: relative;
   margin-top: 0.75rem;
-  margin-right: auto;
-  margin-left: 1rem;
-  max-width: 43rem;
-  border-width: 1px;
-  border-style: solid;
+  margin-right: 2rem;
+  margin-left: 2rem;
+  max-width: 42rem;
   border-radius: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  outline: none;
+  overflow: visible;
+  transition:
+    background-color 250ms ease,
+    box-shadow 250ms ease,
+    transform 250ms ease;
+  cursor: pointer;
+}
+
+.reader-entry-note::before {
+  content: "";
+  position: absolute;
+  left: -1rem;
+  top: 1.25rem;
+  width: 0.8rem;
+  height: 1px;
+  background: var(--reader-entry-connector);
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.reader-entry-note::after {
+  content: "";
+  position: absolute;
+  left: -0.2rem;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--reader-entry-accent), color-mix(in srgb, var(--reader-entry-accent) 14%, white));
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.reader-entry-note--sentence-analysis {
+  --reader-entry-accent: rgba(60, 140, 104, 0.5);
+  --reader-entry-accent-soft: rgba(60, 140, 104, 0.05);
+}
+
+.reader-entry-note--grammar-note {
+  --reader-entry-accent: rgba(116, 102, 148, 0.48);
+  --reader-entry-accent-soft: rgba(116, 102, 148, 0.05);
+}
+
+.reader-entry-note--term-note {
+  --reader-entry-accent: rgba(166, 119, 0, 0.5);
+  --reader-entry-accent-soft: rgba(228, 176, 0, 0.05);
+}
+
+.reader-entry-note--logic-note {
+  --reader-entry-accent: rgba(37, 99, 235, 0.48);
+  --reader-entry-accent-soft: rgba(37, 99, 235, 0.05);
+}
+
+.reader-entry-note--interpretation-note {
+  --reader-entry-accent: rgba(49, 110, 151, 0.48);
+  --reader-entry-accent-soft: rgba(137, 183, 217, 0.05);
+}
+
+.reader-entry-note--collapsed {
+  border-radius: 999px;
+  padding: 0.25rem 0.5rem;
+  background: var(--reader-entry-surface);
+  border: 1px solid transparent;
+  max-width: max-content;
+}
+
+.reader-entry-note--collapsed:hover {
+  background: color-mix(in srgb, var(--reader-entry-surface) 90%, var(--reader-entry-accent));
+}
+
+.reader-entry-note--expanded {
   padding: 0.82rem 0.95rem 0.84rem 1rem;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(251, 250, 246, 0.92)),
@@ -1039,81 +1110,23 @@ select {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.78),
     var(--reader-entry-shadow);
-  outline: none;
-  overflow: visible;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms ease;
-  cursor: pointer;
-}
-
-.reader-entry-note::before {
-  content: "";
-  position: absolute;
-  left: -0.82rem;
-  top: 1.15rem;
-  width: 0.62rem;
-  height: 1px;
-  background: var(--reader-entry-connector);
-}
-
-.reader-entry-note::after {
-  content: "";
-  position: absolute;
-  left: 0.52rem;
-  top: 0.88rem;
-  bottom: 0.88rem;
-  width: 2px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--reader-entry-accent), color-mix(in srgb, var(--reader-entry-accent) 14%, white));
-  opacity: 0.8;
-}
-
-.reader-entry-note--sentence-analysis {
-  --reader-entry-accent: rgba(60, 140, 104, 0.5);
-  --reader-entry-accent-soft: rgba(60, 140, 104, 0.08);
-}
-
-.reader-entry-note--grammar-note {
-  --reader-entry-accent: rgba(116, 102, 148, 0.48);
-  --reader-entry-accent-soft: rgba(116, 102, 148, 0.09);
-}
-
-.reader-entry-note--term-note {
-  --reader-entry-accent: rgba(166, 119, 0, 0.5);
-  --reader-entry-accent-soft: rgba(228, 176, 0, 0.08);
-}
-
-.reader-entry-note--logic-note {
-  --reader-entry-accent: rgba(37, 99, 235, 0.48);
-  --reader-entry-accent-soft: rgba(37, 99, 235, 0.08);
-}
-
-.reader-entry-note--interpretation-note {
-  --reader-entry-accent: rgba(49, 110, 151, 0.48);
-  --reader-entry-accent-soft: rgba(137, 183, 217, 0.1);
-}
-
-.reader-entry-note--collapsed {
-  padding-top: 0.58rem;
-  padding-bottom: 0.6rem;
-}
-
-.reader-entry-note--expanded {
-  background:
-    linear-gradient(180deg, var(--reader-entry-surface-strong), var(--reader-entry-expanded-surface)),
-    linear-gradient(90deg, var(--reader-entry-accent-soft), transparent 16rem),
-    var(--surface-warm);
+  border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
 .reader-entry-note--active {
   transform: translateY(-1px);
+}
+
+.reader-entry-note--active.reader-entry-note--expanded {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.84),
     0 14px 32px var(--reader-entry-active-shadow),
     0 0 0 1px color-mix(in srgb, var(--reader-entry-accent) 18%, white);
+}
+
+.reader-entry-note--active::before,
+.reader-entry-note--active::after {
+  opacity: 0.8;
 }
 
 .reader-entry-note--active-grammar,
@@ -1329,9 +1342,9 @@ select {
 }
 
 .reader-user-range {
-  --reader-user-range-fill: rgba(229, 132, 103, 0.24);
-  --reader-user-range-line: rgba(157, 95, 74, 0.62);
-  --reader-user-range-edge: rgba(157, 95, 74, 0.1);
+  --reader-user-range-fill: transparent;
+  --reader-user-range-line: rgba(157, 95, 74, 0.4);
+  --reader-user-range-edge: transparent;
 
   margin-inline: -0.035em;
   padding: 0.01em 0.055em 0.05em;
@@ -1340,96 +1353,102 @@ select {
     linear-gradient(
       to top,
       var(--reader-user-range-line) 0 0.08em,
-      var(--reader-user-range-fill) 0.08em 0.7em,
-      transparent 0.7em
+      var(--reader-user-range-fill) 0.08em 0.8em,
+      transparent 0.8em
     );
-  background-position: 0 78%;
+  background-position: 0 85%;
   background-repeat: no-repeat;
   background-size: 100% 0.95em;
-  box-shadow: inset 0 -0.04em 0 var(--reader-user-range-edge);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
   transition:
-    box-shadow 160ms ease,
-    background-size 160ms ease;
+    background-image 200ms ease,
+    background-color 200ms ease;
 }
 
 .reader-user-range--warm-yellow {
-  --reader-user-range-fill: rgba(229, 132, 103, 0.25);
-  --reader-user-range-line: rgba(157, 95, 74, 0.64);
-  --reader-user-range-edge: rgba(157, 95, 74, 0.1);
+  --reader-user-range-fill: transparent;
+  --reader-user-range-line: rgba(157, 95, 74, 0.4);
+  --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--soft-green,
 .reader-user-range--sage-green {
-  --reader-user-range-fill: rgba(126, 139, 88, 0.22);
-  --reader-user-range-line: rgba(106, 112, 79, 0.56);
-  --reader-user-range-edge: rgba(106, 112, 79, 0.1);
+  --reader-user-range-fill: transparent;
+  --reader-user-range-line: rgba(106, 112, 79, 0.4);
+  --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--soft-blue {
-  --reader-user-range-fill: rgba(80, 169, 178, 0.2);
-  --reader-user-range-line: rgba(47, 116, 123, 0.56);
-  --reader-user-range-edge: rgba(47, 116, 123, 0.1);
+  --reader-user-range-fill: transparent;
+  --reader-user-range-line: rgba(47, 116, 123, 0.4);
+  --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--soft-purple {
-  --reader-user-range-fill: rgba(190, 133, 164, 0.22);
-  --reader-user-range-line: rgba(139, 78, 112, 0.5);
-  --reader-user-range-edge: rgba(139, 78, 112, 0.1);
+  --reader-user-range-fill: transparent;
+  --reader-user-range-line: rgba(139, 78, 112, 0.4);
+  --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--stacked {
-  --reader-user-range-fill: rgba(177, 135, 77, 0.2);
-  --reader-user-range-line: rgba(145, 106, 55, 0.54);
-  --reader-user-range-edge: rgba(145, 106, 55, 0.12);
+  --reader-user-range-fill: transparent;
+  --reader-user-range-line: rgba(145, 106, 55, 0.4);
+  --reader-user-range-edge: transparent;
   background-image:
     linear-gradient(
       to top,
       var(--reader-user-range-line) 0 0.08em,
-      var(--reader-user-range-fill) 0.08em 0.7em,
-      transparent 0.7em
+      var(--reader-user-range-fill) 0.08em 0.8em,
+      transparent 0.8em
     ),
-    radial-gradient(circle at 18% 40%, rgba(228, 176, 0, 0.18) 0 0.18em, transparent 0.2em),
-    radial-gradient(circle at 82% 60%, rgba(47, 116, 123, 0.16) 0 0.18em, transparent 0.2em);
+    radial-gradient(circle at 18% 40%, rgba(228, 176, 0, 0.1) 0 0.18em, transparent 0.2em),
+    radial-gradient(circle at 82% 60%, rgba(47, 116, 123, 0.1) 0 0.18em, transparent 0.2em);
 }
 
 .reader-user-range:hover,
 .reader-user-range:focus-visible,
-.reader-user-range--hovered-group {
+.reader-user-range--hovered-group,
+.reader-mark--entry-active {
   box-shadow: inset 0 -0.04em 0 var(--reader-user-range-edge);
 }
 
 .reader-user-range--warm-yellow:hover,
-.reader-user-range--warm-yellow.reader-user-range--hovered-group {
-  --reader-user-range-fill: rgba(229, 132, 103, 0.38);
-  --reader-user-range-line: rgba(157, 95, 74, 0.85);
+.reader-user-range--warm-yellow.reader-user-range--hovered-group,
+.reader-user-range--warm-yellow.reader-mark--entry-active {
+  --reader-user-range-fill: rgba(229, 132, 103, 0.15);
+  --reader-user-range-line: rgba(157, 95, 74, 0.7);
 }
 
 .reader-user-range--soft-green:hover,
 .reader-user-range--soft-green.reader-user-range--hovered-group,
+.reader-user-range--soft-green.reader-mark--entry-active,
 .reader-user-range--sage-green:hover,
-.reader-user-range--sage-green.reader-user-range--hovered-group {
-  --reader-user-range-fill: rgba(126, 139, 88, 0.34);
-  --reader-user-range-line: rgba(106, 112, 79, 0.78);
+.reader-user-range--sage-green.reader-user-range--hovered-group,
+.reader-user-range--sage-green.reader-mark--entry-active {
+  --reader-user-range-fill: rgba(126, 139, 88, 0.15);
+  --reader-user-range-line: rgba(106, 112, 79, 0.7);
 }
 
 .reader-user-range--soft-blue:hover,
-.reader-user-range--soft-blue.reader-user-range--hovered-group {
-  --reader-user-range-fill: rgba(80, 169, 178, 0.32);
-  --reader-user-range-line: rgba(47, 116, 123, 0.78);
+.reader-user-range--soft-blue.reader-user-range--hovered-group,
+.reader-user-range--soft-blue.reader-mark--entry-active {
+  --reader-user-range-fill: rgba(80, 169, 178, 0.15);
+  --reader-user-range-line: rgba(47, 116, 123, 0.7);
 }
 
 .reader-user-range--soft-purple:hover,
-.reader-user-range--soft-purple.reader-user-range--hovered-group {
-  --reader-user-range-fill: rgba(190, 133, 164, 0.34);
-  --reader-user-range-line: rgba(139, 78, 112, 0.72);
+.reader-user-range--soft-purple.reader-user-range--hovered-group,
+.reader-user-range--soft-purple.reader-mark--entry-active {
+  --reader-user-range-fill: rgba(190, 133, 164, 0.15);
+  --reader-user-range-line: rgba(139, 78, 112, 0.7);
 }
 
 .reader-user-range--stacked:hover,
-.reader-user-range--stacked.reader-user-range--hovered-group {
-  --reader-user-range-fill: rgba(177, 135, 77, 0.32);
-  --reader-user-range-line: rgba(145, 106, 55, 0.76);
+.reader-user-range--stacked.reader-user-range--hovered-group,
+.reader-user-range--stacked.reader-mark--entry-active {
+  --reader-user-range-fill: rgba(177, 135, 77, 0.15);
+  --reader-user-range-line: rgba(145, 106, 55, 0.7);
 }
 
 .reader-route-focus-frame {

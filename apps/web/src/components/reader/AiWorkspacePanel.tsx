@@ -406,6 +406,90 @@ function syncToolTrace(
   ];
 }
 
+type MessageUpdater = ( updater: (messages: ReaderAskMessageDto[]) => ReaderAskMessageDto[] ) => void;
+
+function createSseMessageHandler(
+  targetMessageId: string,
+  updateMessage: MessageUpdater,
+  onMessageIdAssigned: ((assignedId: string) => void) | undefined,
+  onError: (message: string) => void,
+) {
+  return function handleSseEvent(event: ReaderAskStreamEnvelopeDto) {
+    if (event.event === "message.started" && onMessageIdAssigned) {
+      const messageId = String((event.data as { message_id?: unknown }).message_id ?? targetMessageId);
+      onMessageIdAssigned(messageId);
+      return;
+    }
+
+    if (event.event === "message.delta") {
+      const delta = String((event.data as { delta?: unknown }).delta ?? "");
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? { ...message, content_md: `${message.content_md}${delta}` }
+            : message,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? { ...message, tool_trace: syncToolTrace(message.tool_trace, event) }
+            : message,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "message.completed") {
+      const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? {
+                ...message,
+                id: payload.id,
+                thread_id: payload.thread_id,
+                status: "completed",
+                content_md: payload.content_md,
+                resolved_intent: payload.resolved_intent ?? null,
+                citations: payload.citations,
+                action_proposals: payload.action_proposals,
+                tool_trace: payload.tool_trace,
+                evidence: payload.evidence ?? [],
+                trace_summary: payload.trace_summary ?? null,
+                disambiguation: payload.disambiguation ?? null,
+                asset_disambiguation: payload.asset_disambiguation ?? null,
+                response_cards: payload.response_cards,
+                resolved_context: payload.resolved_context,
+                context_plan: payload.context_plan ?? null,
+                resolved_context_input: payload.resolved_context_input ?? null,
+                run_info: payload.run_info ?? null,
+                supplement_candidates: payload.supplement_candidates ?? [],
+                persisted_supplements: payload.persisted_supplements ?? [],
+              }
+            : message,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "error") {
+      onError(formatStreamError(event));
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? { ...message, status: "failed" }
+            : message,
+        ),
+      );
+    }
+  };
+}
+
 function toolLabel(toolName: string) {
   switch (toolName) {
     case "get_record_context":
@@ -2160,82 +2244,23 @@ export function AiWorkspacePanel({
         body: JSON.stringify(requestBody),
       });
 
-      await consumeReaderAskSse(response, (event) => {
-        if (event.event === "message.started") {
-          const messageId = String((event.data as { message_id?: unknown }).message_id ?? tempAssistantId);
-          setMessages((current) =>
-            current.map((message) => (message.id === tempAssistantId ? { ...message, id: messageId } : message)),
-          );
-          return;
-        }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "发送失败");
+        throw new Error(errorText || "发送消息失败。");
+      }
 
-        if (event.event === "message.delta") {
-          const delta = String((event.data as { delta?: unknown }).delta ?? "");
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === tempAssistantId || (message.role === "assistant" && message.status === "streaming")
-                ? { ...message, content_md: `${message.content_md}${delta}` }
-                : message,
+      await consumeReaderAskSse(
+        response,
+        createSseMessageHandler(
+          tempAssistantId,
+          (updater) => setMessages(updater),
+          (assignedId) =>
+            setMessages((current) =>
+              current.map((message) => (message.id === tempAssistantId ? { ...message, id: assignedId } : message)),
             ),
-          );
-          return;
-        }
-
-        if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === tempAssistantId || (message.role === "assistant" && message.status === "streaming")
-                ? { ...message, tool_trace: syncToolTrace(message.tool_trace, event) }
-                : message,
-            ),
-          );
-          return;
-        }
-
-        if (event.event === "message.completed") {
-          const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === tempAssistantId || (message.role === "assistant" && message.status === "streaming")
-                ? {
-                    ...message,
-                    id: payload.id,
-                    thread_id: payload.thread_id,
-                    status: "completed",
-                    content_md: payload.content_md,
-                    resolved_intent: payload.resolved_intent ?? null,
-                    citations: payload.citations,
-                    action_proposals: payload.action_proposals,
-                    tool_trace: payload.tool_trace,
-                    evidence: payload.evidence ?? [],
-                    trace_summary: payload.trace_summary ?? null,
-                    disambiguation: payload.disambiguation ?? null,
-                    asset_disambiguation: payload.asset_disambiguation ?? null,
-                    response_cards: payload.response_cards,
-                    resolved_context: payload.resolved_context,
-                    context_plan: payload.context_plan ?? null,
-                    resolved_context_input: payload.resolved_context_input ?? null,
-                    run_info: payload.run_info ?? null,
-                    supplement_candidates: payload.supplement_candidates ?? [],
-                    persisted_supplements: payload.persisted_supplements ?? [],
-                  }
-                : message,
-            ),
-          );
-          return;
-        }
-
-        if (event.event === "error") {
-          setErrorMessage(formatStreamError(event));
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === tempAssistantId || (message.role === "assistant" && message.status === "streaming")
-                ? { ...message, status: "failed" }
-                : message,
-            ),
-          );
-        }
-      });
+          (errorMsg) => setErrorMessage(errorMsg),
+        ),
+      );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Ask Claread 暂时不可用。");
       setMessages((current) =>
@@ -2291,72 +2316,20 @@ export function AiWorkspacePanel({
         },
       );
 
-      await consumeReaderAskSse(response, (event) => {
-        if (event.event === "message.delta") {
-          const delta = String((event.data as { delta?: unknown }).delta ?? "");
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === messageId
-                ? { ...message, content_md: `${message.content_md}${delta}` }
-                : message,
-            ),
-          );
-          return;
-        }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "重试失败");
+        throw new Error(errorText || "重试失败。");
+      }
 
-        if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === messageId
-                ? { ...message, tool_trace: syncToolTrace(message.tool_trace, event) }
-                : message,
-            ),
-          );
-          return;
-        }
-
-        if (event.event === "message.completed") {
-          const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === messageId
-                ? {
-                    ...message,
-                    status: "completed",
-                    content_md: payload.content_md,
-                    resolved_intent: payload.resolved_intent ?? null,
-                    citations: payload.citations,
-                    action_proposals: payload.action_proposals,
-                    tool_trace: payload.tool_trace,
-                    evidence: payload.evidence ?? [],
-                    trace_summary: payload.trace_summary ?? null,
-                    disambiguation: payload.disambiguation ?? null,
-                    asset_disambiguation: payload.asset_disambiguation ?? null,
-                    response_cards: payload.response_cards,
-                    resolved_context: payload.resolved_context,
-                    context_plan: payload.context_plan ?? null,
-                    resolved_context_input: payload.resolved_context_input ?? null,
-                    run_info: payload.run_info ?? null,
-                    supplement_candidates: payload.supplement_candidates ?? [],
-                    persisted_supplements: payload.persisted_supplements ?? [],
-                  }
-                : message,
-            ),
-          );
-          return;
-        }
-
-        if (event.event === "error") {
-          setErrorMessage(formatStreamError(event));
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === messageId
-                ? { ...message, status: "failed" }
-                : message,
-            ),
-          );
-        }
-      });
+      await consumeReaderAskSse(
+        response,
+        createSseMessageHandler(
+          messageId,
+          (updater) => setMessages(updater),
+          undefined,
+          (errorMsg) => setErrorMessage(errorMsg),
+        ),
+      );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Ask Claread 暂时不可用。");
       setMessages((current) =>

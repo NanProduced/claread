@@ -106,7 +106,8 @@ export async function listReaderAskThreadsForWeb(recordId: string): Promise<Read
   }
   const upstream = await listUpstreamReaderAskThreads(recordId, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    const message = upstream.message || "请求失败";
+    return new Response(JSON.stringify({ message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -124,7 +125,7 @@ export async function listReaderAskContextRecordsForWeb(
   }
   const upstream = await listUpstreamReaderAskContextRecords(query, excludeRecordId, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -141,7 +142,7 @@ export async function createReaderAskThreadForWeb(
   }
   const upstream = await createUpstreamReaderAskThread(body, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -156,7 +157,7 @@ export async function getReaderAskThreadForWeb(threadId: string): Promise<Reader
   }
   const upstream = await getUpstreamReaderAskThread(threadId, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -171,7 +172,7 @@ export async function resetReaderAskThreadForWeb(threadId: string): Promise<Read
   }
   const upstream = await resetUpstreamReaderAskThread(threadId, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -190,7 +191,7 @@ export async function confirmReaderAskActionForWeb(
   }
   const upstream = await confirmUpstreamReaderAskAction(threadId, actionId, body, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -207,7 +208,7 @@ export async function deleteReaderAskSupplementForWeb(
   }
   const upstream = await deleteUpstreamReaderAskSupplement(supplementId, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });

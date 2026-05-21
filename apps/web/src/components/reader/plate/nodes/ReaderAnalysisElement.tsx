@@ -152,7 +152,6 @@ export function ReaderAnalysisElement({
   const parsed = element.entryType === "sentence_analysis"
     ? parseSentenceAnalysisContent(element.content)
     : null;
-  const preview = collapsedPreview(element, parsed);
 
   return (
     <section
@@ -170,10 +169,10 @@ export function ReaderAnalysisElement({
       data-entry-id={element.entryId}
       data-entry-type={element.entryType}
       data-entry-expanded={expanded ? "true" : "false"}
-      onMouseEnter={() => expanded && onFocusChange?.(true)}
-      onMouseLeave={() => expanded && onFocusChange?.(false)}
-      onFocus={() => expanded && onFocusChange?.(true)}
-      onBlur={() => expanded && onFocusChange?.(false)}
+      onMouseEnter={() => onFocusChange?.(true)}
+      onMouseLeave={() => onFocusChange?.(false)}
+      onFocus={() => onFocusChange?.(true)}
+      onBlur={() => onFocusChange?.(false)}
     >
       <div className="reader-entry-note-head flex items-start gap-3">
         <button
@@ -186,43 +185,59 @@ export function ReaderAnalysisElement({
           aria-expanded={expanded}
           aria-label={`${expanded ? "收起" : "展开"}${label}`}
         >
-          <div className="reader-entry-note-trigger flex items-start gap-2.5">
-            <span
-              className={`reader-entry-note-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
-            >
-              {element.entryType === "sentence_analysis" ? (
-                <BookOpen aria-hidden="true" className="h-3.5 w-3.5" />
-              ) : (
-                <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
-              )}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="reader-entry-note-meta flex items-center gap-2">
-                <p
-                  className={`reader-entry-note-label text-[0.72rem] font-semibold uppercase tracking-[0.08em] ${labelToneClass}`}
-                >
-                  {category}
-                </p>
-                {element.sourceKind === "ask_supplement" ? (
-                  <span className="rounded-full border border-lens-blue/15 bg-lens-blue/10 px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.08em] text-lens-blue">
-                    AI 补充
+          {expanded ? (
+            <div className="reader-entry-note-trigger flex items-start gap-2.5">
+              <span
+                className={`reader-entry-note-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
+              >
+                {element.entryType === "sentence_analysis" ? (
+                  <BookOpen aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : (
+                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="reader-entry-note-meta flex items-center gap-2">
+                  <p
+                    className={`reader-entry-note-label text-[0.72rem] font-semibold uppercase tracking-[0.08em] ${labelToneClass}`}
+                  >
+                    {category}
+                  </p>
+                  {element.sourceKind === "ask_supplement" ? (
+                    <span className="rounded-full border border-lens-blue/15 bg-lens-blue/10 px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.08em] text-lens-blue">
+                      AI 补充
+                    </span>
+                  ) : null}
+                  <span className="reader-entry-note-toggle inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted">
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+                    />
                   </span>
-                ) : null}
-                <span className="reader-entry-note-toggle inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-white/92 text-muted">
-                  <ChevronDown
-                    aria-hidden="true"
-                    className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
-                  />
-                </span>
+                </div>
+                <h3 className="reader-entry-note-title mt-1 text-[0.95rem] font-semibold leading-6 text-ink">{label}</h3>
               </div>
-              <h3 className="reader-entry-note-title mt-1 text-[0.95rem] font-semibold leading-6 text-ink">{label}</h3>
-              {!expanded && preview ? (
-                <p className="reader-entry-note-preview mt-1 text-[0.78rem] leading-5 text-muted-foreground">
-                  {preview}
-                </p>
-              ) : null}
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span
+                className={`reader-entry-note-icon flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
+              >
+                {element.entryType === "sentence_analysis" ? (
+                  <BookOpen aria-hidden="true" className="h-2.5 w-2.5" />
+                ) : (
+                  <Sparkles aria-hidden="true" className="h-2.5 w-2.5" />
+                )}
+              </span>
+              <span className={`text-[0.7rem] font-semibold uppercase tracking-widest ${labelToneClass}`}>
+                {category}
+              </span>
+              <span className="text-hairline-strong/40 font-serif">·</span>
+              <span className="truncate text-[0.85rem] font-medium text-ink-soft">
+                {label}
+              </span>
+            </div>
+          )}
         </button>
 
         {onAsk ? (
@@ -255,49 +270,64 @@ export function ReaderAnalysisElement({
         ) : null}
       </div>
 
-      {expanded ? (
-        <div className="reader-entry-note-body mt-3 border-t border-hairline/80 pt-3">
-          {parsed ? (
-            <>
-              {parsed.summary ? (
-                <p className="reader-entry-note-summary mb-4 whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
-                  <EnhancedText text={parsed.summary} />
-                </p>
-              ) : null}
-              {parsed.chunks.length > 0 ? (
-                <div className="reader-entry-analysis-list">
-                  {parsed.chunks.map((chunk, index) => (
-                    <div
-                      key={`${element.entryId}-chunk-${index}`}
-                      className="reader-entry-analysis-item"
-                    >
-                      <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1} reader-entry-analysis-index`}>
-                        {index + 1}
-                      </div>
-                      <div className="reader-entry-analysis-copy">
-                        <div className="reader-entry-analysis-label">
-                          {chunk.label}
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          expanded ? "grid-rows-[1fr] opacity-100 mt-3" : "grid-rows-[0fr] opacity-0 mt-0 pointer-events-none"
+        }`}
+        aria-hidden={!expanded}
+      >
+        <div className="overflow-hidden">
+          <div className="reader-entry-note-body border-t border-hairline/80 pt-3">
+            {parsed ? (
+              <>
+                {parsed.summary ? (
+                  <p className="reader-entry-note-summary mb-4 whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+                    <EnhancedText text={parsed.summary} />
+                  </p>
+                ) : null}
+                {parsed.chunks.length > 0 ? (
+                  <div className="reader-entry-analysis-list">
+                    {parsed.chunks.map((chunk, index) => (
+                      <div
+                        key={`${element.entryId}-chunk-${index}`}
+                        className="reader-entry-analysis-item group/chunk"
+                        onMouseEnter={() => {
+                          const atoms = document.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
+                          atoms.forEach(atom => atom.classList.add('reader-analysis-atom--active'));
+                        }}
+                        onMouseLeave={() => {
+                          const atoms = document.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
+                          atoms.forEach(atom => atom.classList.remove('reader-analysis-atom--active'));
+                        }}
+                      >
+                        <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1} reader-entry-analysis-index`}>
+                          {index + 1}
                         </div>
-                        <div className="reader-entry-analysis-text">
-                          <EnhancedText text={chunk.text} />
+                        <div className="reader-entry-analysis-copy">
+                          <div className="reader-entry-analysis-label">
+                            {chunk.label}
+                          </div>
+                          <div className="reader-entry-analysis-text">
+                            <EnhancedText text={chunk.text} />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
-                  <EnhancedText text={element.content} />
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
-              <EnhancedText text={element.content} />
-            </p>
-          )}
+                    ))}
+                  </div>
+                ) : (
+                  <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+                    <EnhancedText text={element.content} />
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+                <EnhancedText text={element.content} />
+              </p>
+            )}
+          </div>
         </div>
-      ) : null}
+      </div>
 
       <span className="hidden">{props.children}</span>
     </section>

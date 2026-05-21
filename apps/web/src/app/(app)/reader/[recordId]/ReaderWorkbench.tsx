@@ -1247,7 +1247,10 @@ export function ReaderWorkbench({
           params.set("occurrence", String(intent.occurrence));
         }
         const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
-        const payload = (await response.json()) as WebDictResult;
+        const payload = (await response.json().catch(() => null)) as WebDictResult | null;
+        if (!payload) {
+          return;
+        }
         handleLookupSnapshot(readerLookupSnapshotFromIntent(record.id, intent, { kind: "ready", result: payload }));
 
         if (!response.ok && payload.kind !== "error") {
@@ -1326,7 +1329,10 @@ export function ReaderWorkbench({
     try {
       const params = new URLSearchParams({ id: String(entryId) });
       const response = await fetch(`/api/web/dict/entry?${params.toString()}`);
-      const payload = (await response.json()) as WebDictResult;
+      const payload = (await response.json().catch(() => null)) as WebDictResult | null;
+      if (!payload) {
+        return;
+      }
       handleLookupSnapshot({ ...base, state: { kind: "ready", result: payload } });
 
       if (!response.ok && payload.kind !== "error") {
@@ -1590,7 +1596,7 @@ export function ReaderWorkbench({
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const payload = (await response.json()) as
+    const payload = (await response.json().catch(() => ({ ok: false, message: "请求失败" }))) as
       | { ok: true; item: WebAnnotationVm }
       | { ok: false; message?: string };
 
@@ -1724,7 +1730,7 @@ export function ReaderWorkbench({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      const payload = (await response.json()) as
+      const payload = (await response.json().catch(() => ({ ok: false, message: "请求失败" }))) as
         | { ok: true; item: WebAnnotationVm }
         | { ok: false; message?: string };
 
@@ -1872,7 +1878,7 @@ export function ReaderWorkbench({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ noteText: trimmed }),
         });
-        const payload = (await response.json()) as
+        const payload = (await response.json().catch(() => ({ ok: false, message: "请求失败" }))) as
           | { ok: true; item: WebReaderNoteVm }
           | { ok: false; message?: string };
         if (!response.ok || !payload.ok) {
@@ -1910,7 +1916,7 @@ export function ReaderWorkbench({
           noteText: trimmed,
         }),
       });
-      const payload = (await response.json()) as
+      const payload = (await response.json().catch(() => ({ ok: false, message: "请求失败" }))) as
         | { ok: true; item: WebReaderNoteVm }
         | { ok: false; message?: string };
       if (!response.ok || !payload.ok) {
@@ -1946,7 +1952,7 @@ export function ReaderWorkbench({
       const response = await fetch("/api/web/reader-notes/" + encodeURIComponent(activeReaderNote.id), {
         method: "DELETE",
       });
-      const payload = (await response.json()) as { ok: true } | { ok: false; message?: string };
+      const payload = (await response.json().catch(() => response.status === 204 ? { ok: true } : { ok: false, message: "删除失败" })) as { ok: true } | { ok: false; message?: string };
       if (!response.ok || !payload.ok) {
         setReaderNoteSaveState({
           kind: "error",
@@ -1978,7 +1984,7 @@ export function ReaderWorkbench({
       const response = await fetch("/api/web/annotations/" + encodeURIComponent(selectedAnnotation.id), {
         method: "DELETE",
       });
-      const payload = (await response.json()) as { ok: true } | { ok: false; message?: string };
+      const payload = (await response.json().catch(() => response.status === 204 ? { ok: true } : { ok: false, message: "删除失败" })) as { ok: true } | { ok: false; message?: string };
 
       if (!response.ok || !payload.ok) {
         setAnnotationSaveState({
@@ -2362,7 +2368,7 @@ export function ReaderWorkbench({
       if (focused) {
         return entryId;
       }
-      if (current === entryId && !expandedAnalysisEntryIds.includes(entryId)) {
+      if (current === entryId) {
         return null;
       }
       return current;
