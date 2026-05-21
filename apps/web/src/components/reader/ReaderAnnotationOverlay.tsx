@@ -6,6 +6,7 @@ import type { WebAnnotationVm } from "@/types/api/annotations";
 import { AnnotationGutter } from "./AnnotationGutter";
 
 interface ReaderAnnotationOverlayProps {
+  sentenceId?: string;
   annotations: WebAnnotationVm[];
   visible?: boolean;
   activeIndex?: number | null;
@@ -16,6 +17,7 @@ interface ReaderAnnotationOverlayProps {
 }
 
 export function ReaderAnnotationOverlay({
+  sentenceId,
   annotations,
   visible = true,
   activeIndex,
@@ -27,6 +29,7 @@ export function ReaderAnnotationOverlay({
   return (
     <>
       <AnnotationGutter
+        sentenceId={sentenceId}
         annotations={annotations}
         visible={visible}
         hoveredTargetKey={hoveredTargetKey}

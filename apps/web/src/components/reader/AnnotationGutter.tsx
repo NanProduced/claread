@@ -3,6 +3,7 @@ import { Highlighter } from "lucide-react";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 
 export interface AnnotationGutterProps {
+  sentenceId?: string;
   annotations: WebAnnotationVm[];
   visible?: boolean;
   hoveredTargetKey?: string | null;
@@ -11,6 +12,7 @@ export interface AnnotationGutterProps {
 }
 
 export function AnnotationGutter({
+  sentenceId,
   annotations,
   visible = true,
   hoveredTargetKey = null,
@@ -23,6 +25,16 @@ export function AnnotationGutter({
 
   const highlightAnnotation = annotations.find((item) => item.type === "highlight") ?? null;
   if (!highlightAnnotation) {
+    return null;
+  }
+
+  const isFirstSentence =
+    !sentenceId ||
+    (highlightAnnotation.anchorType === "multi_text"
+      ? highlightAnnotation.segments?.[0]?.sentenceId === sentenceId
+      : true);
+
+  if (!isFirstSentence) {
     return null;
   }
 

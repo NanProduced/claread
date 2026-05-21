@@ -6,6 +6,13 @@ import { MoreHorizontal, Pencil, Sparkles, Trash2, X } from "lucide-react";
 
 import type { WebReaderNoteCreateRequest, WebReaderNoteVm } from "@/types/api/reader-notes";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/primitives/dropdown-menu";
 import { ReaderFloatingSurface } from "./ReaderFloatingLayer";
 
 type ReaderNoteSaveState =
@@ -53,83 +60,35 @@ function shouldHideQuote(
 function NoteMenu({
   onEdit,
   onDelete,
-  onAsk,
 }: {
   onEdit: () => void;
   onDelete: () => void;
-  onAsk?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClick(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    if (open) {
-      document.addEventListener("mousedown", handleClick);
-      return () => document.removeEventListener("mousedown", handleClick);
-    }
-  }, [open]);
-
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-muted/40 hover:text-foreground group-hover:opacity-100"
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen(!open);
-        }}
-        aria-label="更多操作"
-      >
-        <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
-      </button>
-      {open ? (
-        <div className="absolute right-0 top-9 z-20 w-28 rounded-xl border border-hairline bg-surface py-1 shadow-[0_8px_20px_rgba(17,17,17,0.08)]">
+    <div className="relative">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/30"
-            onClick={(event) => {
-              event.stopPropagation();
-              onEdit();
-              setOpen(false);
-            }}
+            className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-colors hover:bg-muted/40 hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100 data-[state=open]:bg-muted/40 data-[state=open]:text-foreground"
+            onClick={(event) => event.stopPropagation()}
+            aria-label="更多操作"
           >
-            <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
+            <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenuItem onClick={onEdit}>
+            <Pencil aria-hidden="true" className="mr-2 h-3.5 w-3.5" />
             编辑
-          </button>
-          {onAsk ? (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/30"
-              onClick={(event) => {
-                event.stopPropagation();
-                onAsk();
-                setOpen(false);
-              }}
-            >
-              <Sparkles aria-hidden="true" className="h-3.5 w-3.5 text-phrase-lavender" />
-              Ask
-            </button>
-          ) : null}
-          <div className="my-1 h-px bg-hairline" />
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/5"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete();
-              setOpen(false);
-            }}
-          >
-            <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onDelete} className="text-destructive focus:bg-destructive/10 focus:text-destructive">
+            <Trash2 aria-hidden="true" className="mr-2 h-3.5 w-3.5" />
             删除
-          </button>
-        </div>
-      ) : null}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -169,7 +128,7 @@ function NoteItem({
     return (
       <article className="rounded-xl border border-amber-200/60 bg-white px-4 py-3 shadow-sm">
         {!hideQuote ? (
-          <div className="reader-serif rounded-lg bg-reader-paper px-3 py-2 text-sm leading-6 text-muted-foreground">
+          <div className="mb-2 border-l-2 border-lens-blue/30 pl-3 reader-serif text-[0.85rem] leading-6 text-muted-foreground">
             {trimQuote(note.selectedText, 120)}
           </div>
         ) : null}
@@ -224,20 +183,34 @@ function NoteItem({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {!hideQuote ? (
-            <div className="reader-serif rounded-lg bg-reader-paper px-3 py-2 text-sm leading-6 text-muted-foreground">
+            <div className="mb-2 border-l-2 border-lens-blue/30 pl-3 reader-serif text-[0.85rem] leading-6 text-muted-foreground">
               {trimQuote(note.selectedText, 120)}
             </div>
           ) : null}
           <p
-            className={`mt-2 text-[0.92rem] leading-7 ${
-              isActive ? "text-foreground" : "text-ink-soft"
+            className={`mt-2 text-[0.95rem] leading-relaxed ${
+              isActive ? "text-ink font-medium" : "text-ink"
             }`}
           >
             {note.noteText}
           </p>
         </div>
-        <div className="shrink-0 pt-0.5" data-note-menu>
-          <NoteMenu onEdit={onEdit} onDelete={onDelete} onAsk={onAsk} />
+        <div className="shrink-0 pt-0.5 flex items-center gap-1" data-note-menu>
+          {onAsk ? (
+            <button
+              type="button"
+              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground opacity-0 group-hover:opacity-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAsk();
+              }}
+              title="带入 Ask"
+              aria-label="带入 Ask"
+            >
+              <Sparkles aria-hidden="true" className="h-4 w-4" />
+            </button>
+          ) : null}
+          <NoteMenu onEdit={onEdit} onDelete={onDelete} />
         </div>
       </div>
     </article>
@@ -264,7 +237,7 @@ function DraftCard({
   return (
     <article className="rounded-xl border border-amber-200/50 bg-white px-4 py-3 shadow-sm">
       {!hideQuote ? (
-        <div className="reader-serif rounded-lg bg-reader-paper px-3 py-2 text-sm leading-6 text-muted-foreground">
+        <div className="mb-2 border-l-2 border-lens-blue/30 pl-3 reader-serif text-[0.85rem] leading-6 text-muted-foreground">
           {trimQuote(draft.selectedText, 120)}
         </div>
       ) : null}

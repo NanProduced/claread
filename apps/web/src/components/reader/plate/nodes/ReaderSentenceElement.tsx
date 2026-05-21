@@ -104,6 +104,7 @@ export function ReaderSentenceElement({
         </button>
       ) : null}
       <ReaderAnnotationOverlay
+        sentenceId={element.sentenceId}
         annotations={assetProjection?.annotations ?? []}
         visible={annotationVisibilityGroups.userAssets}
         hoveredTargetKey={hoveredAnnotationTargetKey}
