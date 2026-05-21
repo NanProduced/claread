@@ -703,24 +703,25 @@ select {
 }
 
 .reader-mark--grammar {
-  border-radius: 0.24em 0.18em 0.22em 0.15em;
-  background:
-    linear-gradient(to right, var(--reader-mark-grammar-line-strong), var(--reader-mark-grammar-line-soft)) 0 100% / 100% 0.08em no-repeat,
-    linear-gradient(to top, var(--reader-mark-grammar-fill) 0 100%);
-  background-position: 0 92%, 0 86%;
+  background-image: repeating-linear-gradient(to right, rgba(116, 102, 148, 0.8) 0, rgba(116, 102, 148, 0.8) 3px, transparent 3px, transparent 5px);
+  background-position: 0 100%;
   background-repeat: no-repeat;
-  background-size: 100% 0.08em, 100% 0.88em;
-  box-shadow: none;
-  transition: background 160ms ease, box-shadow 160ms ease;
+  background-size: 100% 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  padding-bottom: 0.1em;
+  color: var(--ink);
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
 }
 
-.reader-mark--grammar.reader-mark--interactive:hover {
-  background:
-    linear-gradient(to right, var(--reader-mark-entry-grammar-line-strong), var(--reader-mark-entry-grammar-line-soft)) 0 100% / 100% 0.12em no-repeat,
-    linear-gradient(to top, rgba(116, 102, 148, 0.18) 0 100%);
-  background-position: 0 92%, 0 86%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.12em, 100% 0.88em;
+.reader-mark--grammar:hover,
+.reader-mark--grammar.reader-mark--entry-active {
+  background-image: linear-gradient(to right, rgb(116, 102, 148), rgb(116, 102, 148));
+  background-color: rgba(116, 102, 148, 0.15);
+  border-radius: 0.2em;
+  color: rgb(116, 102, 148) !important;
   box-shadow: none;
 }
 
@@ -782,7 +783,6 @@ select {
   box-shadow: none;
 }
 
-.reader-mark--quiet.reader-mark--grammar,
 .reader-mark--quiet.reader-mark--term,
 .reader-mark--quiet.reader-mark--logic {
   background-size: 100% 0.07em, 100% 0.34em;
@@ -801,17 +801,6 @@ select {
     inset 0 -0.2em 0 var(--reader-mark-entry-underline),
     0 0 0 1px var(--reader-mark-entry-outline),
     0 0.28em 0.92em var(--reader-mark-entry-shadow);
-}
-
-.reader-mark--grammar.reader-mark--entry-active {
-  border-radius: 0.24em 0.18em 0.22em 0.15em;
-  background:
-    linear-gradient(to right, var(--reader-mark-entry-grammar-line-strong), var(--reader-mark-entry-grammar-line-soft)) 0 100% / 100% 0.16em no-repeat,
-    linear-gradient(to top, var(--reader-mark-entry-grammar-fill) 0 100%);
-  background-position: 0 92%, 0 86%;
-  background-repeat: no-repeat;
-  background-size: 100% 0.16em, 100% 0.88em;
-  box-shadow: none;
 }
 
 .reader-mark--term.reader-mark--entry-active {
@@ -860,21 +849,31 @@ select {
   /* Class name kept for test compatibility, outline visual styles stripped */
 }
 
-/* When sentence analysis is expanded, hide other lexical highlights and user ranges inside it to prevent overlap clash */
-.reader-sentence--analysis-expanded .reader-mark {
-  background: none !important;
+/* When an analysis entry is active (hovered or clicked), dim other lexical highlights and user ranges to focus on the structure */
+.reader-sentence--has-active-analysis .reader-mark {
+  background-color: transparent !important;
   box-shadow: none !important;
-  border-bottom: none !important;
+  border-bottom-color: transparent !important;
   text-decoration: none !important;
-  color: inherit !important;
+  color: rgba(17, 17, 17, 0.25) !important; /* Soft dimming using color instead of opacity */
 }
 
-.reader-sentence--analysis-expanded .reader-user-range {
-  background: none !important;
+.reader-sentence--has-active-analysis .reader-user-range {
+  background-image: none !important;
+  background-color: transparent !important;
   box-shadow: none !important;
-  border-bottom: none !important;
+  border-bottom-color: transparent !important;
   text-decoration: none !important;
-  color: inherit !important;
+  color: rgba(17, 17, 17, 0.25) !important;
+}
+
+/* Exception: Analysis atoms (chunk numbers/highlights) should NEVER be dimmed when focus mode is on for analysis */
+.reader-sentence--has-active-analysis .reader-analysis-atom {
+  color: var(--ink) !important; /* Force keep base color overriding parent dimming */
+}
+
+.reader-sentence--has-active-analysis .reader-analysis-atom--active {
+  color: var(--analysis-accent) !important;
 }
 
 .reader-sentence--analysis-expanded {
@@ -1024,9 +1023,10 @@ select {
   --reader-entry-connector: rgba(232, 228, 218, 0.92);
 
   position: relative;
-  margin-top: 0.75rem;
-  margin-right: 2rem;
-  margin-left: 2rem;
+  display: inline-flex;
+  flex-direction: column;
+  margin-bottom: 0.5rem;
+  margin-right: 0.5rem;
   max-width: 42rem;
   border-radius: 1rem;
   padding: 0.5rem 0.75rem;
@@ -1114,7 +1114,7 @@ select {
 }
 
 .reader-entry-note--active {
-  transform: translateY(-1px);
+  /* removed transform: translateY(-1px) to prevent hover jitter loop */
 }
 
 .reader-entry-note--active.reader-entry-note--expanded {

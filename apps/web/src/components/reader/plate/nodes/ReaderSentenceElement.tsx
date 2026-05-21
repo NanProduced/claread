@@ -47,7 +47,7 @@ export function ReaderSentenceElement({
   const frameClassName = [
     "group/sentence relative scroll-mt-8 pl-2 pr-12 py-2 transition-colors rounded-[8px]",
     active ? "bg-surface/42" : "hover:bg-surface/28",
-    analysisActive ? "reader-sentence--analysis-active" : "",
+    analysisActive ? "reader-sentence--analysis-active reader-sentence--has-active-analysis" : "",
     analysisExpanded ? "reader-sentence--analysis-expanded" : "",
     annotationVisibilityGroups.userAssets && assetProjection?.hasHighlight ? "reader-sentence--user-highlight" : "",
     routeFocused ? "reader-route-focus-frame" : "",

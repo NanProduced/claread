@@ -1938,8 +1938,8 @@ export function ReaderWorkbench({
     }
   }
 
-  async function deleteActiveReaderNote() {
-    if (!activeReaderNote) {
+  async function deleteReaderNote(note: WebReaderNoteVm) {
+    if (!note) {
       setPendingReaderNote(null);
       setPendingReaderNoteSource(null);
       setReaderNoteDraft("");
@@ -1949,7 +1949,7 @@ export function ReaderWorkbench({
 
     setReaderNoteSaveState({ kind: "saving" });
     try {
-      const response = await fetch("/api/web/reader-notes/" + encodeURIComponent(activeReaderNote.id), {
+      const response = await fetch("/api/web/reader-notes/" + encodeURIComponent(note.id), {
         method: "DELETE",
       });
       const payload = (await response.json().catch(() => response.status === 204 ? { ok: true } : { ok: false, message: "删除失败" })) as { ok: true } | { ok: false; message?: string };
@@ -1960,12 +1960,14 @@ export function ReaderWorkbench({
         });
         return;
       }
-      removeReaderNote(activeReaderNote.id);
-      setActiveReaderNoteId(null);
-      setFocusedReaderNoteTarget(null);
-      setReaderNoteDraft("");
+      removeReaderNote(note.id);
+      if (activeReaderNoteId === note.id) {
+        setActiveReaderNoteId(null);
+        setFocusedReaderNoteTarget(null);
+        setReaderNoteDraft("");
+        setNotePanelOpen(false);
+      }
       setReaderNoteSaveState({ kind: "saved", message: "笔记已删除。" });
-      setNotePanelOpen(false);
     } catch (error) {
       setReaderNoteSaveState({
         kind: "error",
@@ -2355,10 +2357,17 @@ export function ReaderWorkbench({
   }
 
   function toggleAnalysisEntry(entryId: string) {
-    setExpandedAnalysisEntryIds((current) =>
-      current.includes(entryId) ? current.filter((id) => id !== entryId) : [...current, entryId]
-    );
-    setActiveEntryId(entryId);
+    setExpandedAnalysisEntryIds((current) => {
+      const isExpanding = !current.includes(entryId);
+      if (isExpanding) {
+        setActiveEntryId(entryId);
+        return [...current, entryId];
+      } else {
+        // If we are collapsing, we should clear the active state if it was this entry
+        setActiveEntryId((currActive) => currActive === entryId ? null : currActive);
+        return current.filter((id) => id !== entryId);
+      }
+    });
     setContextPanelOpen(false);
     setSentencePopoverAnchorEl(null);
   }
@@ -2368,7 +2377,17 @@ export function ReaderWorkbench({
       if (focused) {
         return entryId;
       }
+      // If we just left the currently active entry
       if (current === entryId) {
+        // If the entry we just left is expanded, KEEP it active (persistent study mode)
+        if (expandedAnalysisEntryIds.includes(entryId)) {
+          return entryId;
+        }
+        // If the entry we left is NOT expanded, but there are OTHER expanded entries,
+        // fall back to the last expanded one instead of clearing focus mode.
+        if (expandedAnalysisEntryIds.length > 0) {
+          return expandedAnalysisEntryIds[expandedAnalysisEntryIds.length - 1];
+        }
         return null;
       }
       return current;
@@ -2536,7 +2555,7 @@ export function ReaderWorkbench({
             onSelectNote={focusReaderNote}
             onDraftTextChange={setReaderNoteDraft}
             onSave={saveActiveReaderNote}
-            onDelete={deleteActiveReaderNote}
+            onDeleteNote={deleteReaderNote}
             onAsk={openAskWithReaderNote}
           />
         ) : null}
@@ -2603,7 +2622,7 @@ export function ReaderWorkbench({
             }}
             style={lookupPreviewStyles}
             onDismiss={dismissLookupPreview}
-            onOpenDetail={openDictionaryRail}
+            onOpenDetail={dictionaryPanelVisible ? undefined : openDictionaryRail}
             onLookupPhrase={activeInspect ? () => lookupPhraseFromInspect(activeInspect) : undefined}
             onAttachToAsk={activeInspect ? () => openAskWithStructuredInspect(activeInspect) : undefined}
           />

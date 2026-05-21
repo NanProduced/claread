@@ -411,8 +411,14 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   }
 
   const className = readerMarkClassName(visualTone, annotationVisibilityGroups);
-  const entryActiveClass =
-    activeAnalysisEntryId && leaf.readerMarkParentId === activeAnalysisEntryId ? "reader-mark--entry-active" : "";
+  const isLinkedToActiveEntry =
+    activeAnalysisEntryId &&
+    (leaf.readerMarkParentId === activeAnalysisEntryId ||
+      leaf.readerMarkId === activeAnalysisEntryId ||
+      (leaf.readerMarkId?.startsWith("im_") &&
+        activeAnalysisEntryId.startsWith("se_") &&
+        leaf.readerMarkId.slice(3) === activeAnalysisEntryId.slice(3)));
+  const entryActiveClass = isLinkedToActiveEntry ? "reader-mark--entry-active" : "";
   const isClickable = Boolean(className && leaf.readerMarkClickable && leaf.readerSentenceId);
 
   return (

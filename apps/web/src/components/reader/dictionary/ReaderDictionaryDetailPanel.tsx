@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   Check,
@@ -18,6 +18,8 @@ import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import type { WebDictAIRequest, DictionaryAIViewState } from "@/types/api/dict-ai";
 import type { SaveState, DictionaryLookupSnapshot } from "./contracts";
 import { firstMeaning } from "./contracts";
+
+const dictionaryAICache = new Map<string, DictionaryAIViewState>();
 import {
   type DictionaryContentTab,
   type DictionaryExampleGroup,
@@ -68,7 +70,7 @@ interface ReaderDictionaryDetailPanelProps {
 
 export function ReaderDictionaryDetailPanel({
   canSaveVocabulary = true,
-  dictionaryAI,
+  dictionaryAI: propDictionaryAI,
   dictionaryAIPanelOpen,
   inspect = null,
   lookup,
@@ -97,6 +99,26 @@ export function ReaderDictionaryDetailPanel({
   const notFoundResult = lookupResult?.kind === "not_found" ? lookupResult : null;
   const errorResult = lookupResult?.kind === "error" ? lookupResult : null;
   const isCard = variant === "card";
+
+  useEffect(() => {
+    if (lookup && propDictionaryAI.kind === "ready") {
+      const key = `${lookup.query}:${lookup.sentenceId}:${propDictionaryAI.mode}`;
+      dictionaryAICache.set(key, propDictionaryAI);
+    }
+  }, [lookup, propDictionaryAI]);
+
+  const dictionaryAI = useMemo(() => {
+    if (propDictionaryAI.kind !== "idle") {
+      return propDictionaryAI;
+    }
+    if (lookup) {
+      const explainKey = `${lookup.query}:${lookup.sentenceId}:context_explain`;
+      const fallbackKey = `${lookup.query}:${lookup.sentenceId}:missing_fallback`;
+      return dictionaryAICache.get(explainKey) || dictionaryAICache.get(fallbackKey) || propDictionaryAI;
+    }
+    return propDictionaryAI;
+  }, [lookup, propDictionaryAI]);
+
   const [meaningsExpanded, setMeaningsExpanded] = useState(false);
   const [expandedMeaningKeys, setExpandedMeaningKeys] = useState<string[]>([]);
   const [phrasesExpanded, setPhrasesExpanded] = useState(false);
@@ -131,7 +153,7 @@ export function ReaderDictionaryDetailPanel({
     : onDismiss
       ? "h-full min-h-0"
       : lookup
-        ? "min-h-[18rem] xl:max-h-[calc(100vh-1.5rem)]"
+        ? "min-h-[14rem] md:min-h-[18rem] xl:max-h-[calc(100vh-1.5rem)]"
         : "min-h-[14rem]";
   const contentClass = entryResult
     ? "min-h-0 flex-1 overflow-hidden px-4 py-3.5 md:px-5 md:py-4"
@@ -253,20 +275,14 @@ export function ReaderDictionaryDetailPanel({
       { label: "易混", value: contextExplainResult.contrast },
       { label: "记忆点", value: contextExplainResult.learningTip },
     ].filter((item) => item.value);
-    const confidenceLabel = dictionaryAIConfidenceLabel(contextExplainResult.confidence);
 
     return (
-      <div className="overflow-hidden rounded-[16px] border border-lens-blue/16 bg-lens-blue-soft/70 px-4 py-3">
+      <div className="overflow-hidden rounded-[16px] border border-hairline/85 bg-surface/60 px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold tracking-[0.04em] text-lens-blue">
               <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
               <span>语境解读</span>
-              {confidenceLabel ? (
-                <span className="rounded-pill border border-lens-blue/14 bg-surface/70 px-2 py-0.5 text-[0.68rem] text-lens-blue">
-                  {confidenceLabel}
-                </span>
-              ) : null}
             </div>
           </div>
           <button
@@ -278,10 +294,10 @@ export function ReaderDictionaryDetailPanel({
             <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="mt-3 max-h-[min(18rem,42vh)] overflow-y-auto overscroll-contain pr-1">
+        <div className="mt-3">
           <p className="text-sm leading-6 text-ink-soft">{contextExplainResult.summary}</p>
           {details.length > 0 ? (
-            <div className="mt-3 border-t border-lens-blue/12 pt-3">
+            <div className="mt-3 border-t border-hairline/60 pt-3">
               <dl className="space-y-2.5">
                 {details.map((item) => (
                   <div key={item.label}>
@@ -305,7 +321,6 @@ export function ReaderDictionaryDetailPanel({
       return renderAIStatusCard("missing_fallback");
     }
 
-    const confidenceLabel = dictionaryAIConfidenceLabel(missingFallbackResult.confidence);
     const classificationLabel = dictionaryAIClassificationBadgeLabel(missingFallbackResult.classification);
 
     if (missingFallbackResult.kind === "ai_unresolved") {
@@ -322,11 +337,6 @@ export function ReaderDictionaryDetailPanel({
                 {classificationLabel ? (
                   <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
                     {classificationLabel}
-                  </span>
-                ) : null}
-                {confidenceLabel ? (
-                  <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
-                    {confidenceLabel}
                   </span>
                 ) : null}
               </div>
@@ -378,11 +388,6 @@ export function ReaderDictionaryDetailPanel({
               {classificationLabel ? (
                 <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
                   {classificationLabel}
-                </span>
-              ) : null}
-              {confidenceLabel ? (
-                <span className="rounded-pill border border-hairline/80 bg-reader-paper/74 px-2 py-0.5 text-[0.68rem] text-muted">
-                  {confidenceLabel}
                 </span>
               ) : null}
             </div>

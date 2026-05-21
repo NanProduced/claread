@@ -1,5 +1,6 @@
 "use client";
 
+import { Sparkles } from "lucide-react";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import { contextualGlossaryText, structuredInspectLabel } from "./shared";
 
@@ -33,50 +34,42 @@ export function ReaderStructuredInspectCard({
           : "rounded-[16px] border border-hairline/85 bg-surface/80 px-4 py-4 shadow-[0_1px_2px_rgba(17,17,17,0.04)]"
       }
     >
-      <div>
-        <p className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">{title}</p>
-        <h3 className="mt-2 reader-serif text-[1.25rem] leading-tight text-ink">{intent.anchorText}</h3>
-      </div>
+      {!compact ? (
+        <div>
+          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">{title}</p>
+          <h3 className="mt-2 reader-serif text-[1.25rem] leading-tight text-ink">{intent.anchorText}</h3>
+        </div>
+      ) : null}
       <div className="space-y-2">
         <p className="text-sm leading-6 text-ink-soft">{summary}</p>
         {intent.glossary?.reason ? (
           <p className="text-xs leading-5 text-muted">{intent.glossary.reason}</p>
         ) : null}
-        {intent.contextSentence ? (
-          <p className="rounded-[12px] bg-reader-paper/74 px-3 py-2 text-xs leading-5 text-muted">
-            {intent.contextSentence}
-          </p>
-        ) : null}
       </div>
-      <div className="flex flex-wrap gap-2">
-        {onLookupPhrase ? (
-          <button
-            type="button"
-            className="focus-ring reader-dictionary-secondary-button rounded-[10px] border px-3 py-1.5 text-[0.72rem] font-semibold"
-            onClick={onLookupPhrase}
-          >
-            查短语
-          </button>
-        ) : null}
-        {onAttachToAsk ? (
-          <button
-            type="button"
-            className="focus-ring reader-dictionary-secondary-button rounded-[10px] border px-3 py-1.5 text-[0.72rem] font-semibold"
-            onClick={onAttachToAsk}
-          >
-            带入 Ask
-          </button>
-        ) : null}
-        {compact && onOpenDetail ? (
-          <button
-            type="button"
-            className="focus-ring reader-dictionary-primary-button rounded-pill px-3.5 py-1.5 text-[0.72rem] font-semibold text-surface"
-            onClick={onOpenDetail}
-          >
-            打开详情
-          </button>
-        ) : null}
-      </div>
+      {variant === "rail" && (onLookupPhrase || onAttachToAsk) ? (
+        <div className="mt-3 flex items-center gap-2 border-t border-hairline/60 pt-3">
+          {onLookupPhrase ? (
+            <button
+              type="button"
+              className="focus-ring inline-flex h-8 items-center justify-center rounded-md px-2.5 text-[0.72rem] font-semibold text-muted transition-colors hover:bg-surface hover:text-ink"
+              onClick={onLookupPhrase}
+            >
+              查短语
+            </button>
+          ) : null}
+          {onAttachToAsk ? (
+            <button
+              type="button"
+              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface hover:text-ink"
+              onClick={onAttachToAsk}
+              title="带入 Ask"
+              aria-label="带入 Ask"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -2,13 +2,23 @@
 
 import { useId } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight, X, Sparkles } from "lucide-react";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import { ReaderFloatingSurface } from "../ReaderFloatingLayer";
 import type { DictionaryLookupSnapshot } from "./contracts";
 import { firstMeaning } from "./contracts";
-import { contextualGlossaryText, contextualGlossaryTitle } from "./shared";
+import { contextualGlossaryText, contextualGlossaryTitle, structuredInspectLabel } from "./shared";
 import { ReaderStructuredInspectCard } from "./ReaderStructuredInspectCard";
+
+function getInspectColorClass(annotationType: string) {
+  if (annotationType === "phrase_gloss") {
+    return "text-phrase-lavender";
+  }
+  if (annotationType === "context_gloss") {
+    return "text-context-blue";
+  }
+  return "text-muted";
+}
 
 interface ReaderQuickPeekProps {
   lookup?: DictionaryLookupSnapshot | null;
@@ -25,9 +35,11 @@ interface ReaderQuickPeekShellProps {
   titleId: string;
   title: ReactNode;
   eyebrow?: ReactNode;
+  eyebrowClassName?: string;
   aside?: ReactNode;
   bodyId?: string;
   body?: ReactNode;
+  footer?: ReactNode;
   floatingRef?: (node: HTMLDivElement | null) => void;
   style?: CSSProperties;
   onDismiss: () => void;
@@ -37,7 +49,9 @@ function ReaderQuickPeekShell({
   aside,
   body,
   bodyId,
+  footer,
   eyebrow,
+  eyebrowClassName = "text-muted",
   floatingRef,
   onDismiss,
   style,
@@ -65,7 +79,7 @@ function ReaderQuickPeekShell({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {eyebrow ? (
-            <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
+            <div className={`text-[0.7rem] font-semibold uppercase tracking-[0.12em] ${eyebrowClassName}`}>
               {eyebrow}
             </div>
           ) : null}
@@ -77,17 +91,22 @@ function ReaderQuickPeekShell({
           {aside}
           <button
             type="button"
-            className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
+            className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
             onClick={onDismiss}
             aria-label="关闭预览卡片"
           >
-            <X aria-hidden="true" className="h-4 w-4" />
+            <X aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
       {body ? (
         <div id={bodyId} className="mt-3">
           {body}
+        </div>
+      ) : null}
+      {footer ? (
+        <div className="mt-3 flex items-center justify-between border-t border-hairline/60 pt-2.5">
+          {footer}
         </div>
       ) : null}
     </ReaderFloatingSurface>
@@ -113,16 +132,50 @@ export function ReaderQuickPeek({
       <ReaderQuickPeekShell
         floatingRef={floatingRef}
         titleId={inspectTitleId}
-        eyebrow="结构化解释"
+        eyebrow={structuredInspectLabel(inspect.annotationType, inspect.glossary?.phraseType)}
+        eyebrowClassName={getInspectColorClass(inspect.annotationType)}
         title={inspect.anchorText}
         body={
           <ReaderStructuredInspectCard
             intent={inspect}
-            onAttachToAsk={onAttachToAsk}
-            onLookupPhrase={onLookupPhrase}
-            onOpenDetail={onOpenDetail}
             variant="peek"
           />
+        }
+        footer={
+          <>
+            <div className="flex items-center gap-1">
+              {onLookupPhrase ? (
+                <button
+                  type="button"
+                  className="focus-ring inline-flex h-8 items-center justify-center rounded-md px-2.5 text-[0.72rem] font-semibold text-muted transition-colors hover:bg-surface hover:text-ink"
+                  onClick={onLookupPhrase}
+                >
+                  查短语
+                </button>
+              ) : null}
+              {onAttachToAsk ? (
+                <button
+                  type="button"
+                  className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface hover:text-ink"
+                  onClick={onAttachToAsk}
+                  title="带入 Ask"
+                  aria-label="带入 Ask"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+            {onOpenDetail ? (
+              <button
+                type="button"
+                className="focus-ring inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.72rem] font-semibold text-lens-blue transition-opacity hover:opacity-80"
+                onClick={onOpenDetail}
+              >
+                打开详情
+                <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </>
         }
         style={style}
         onDismiss={onDismiss}
@@ -153,14 +206,14 @@ export function ReaderQuickPeek({
       titleId={lookupTitleId}
       eyebrow={lookup.label ?? (lookup.lookupType === "phrase" ? "短语" : "词典")}
       title={
-        <span className="block truncate reader-serif text-[1.35rem] leading-tight text-ink">
-          {entryResult?.entry.word ?? lookup.query}
-        </span>
-      }
-      aside={
-        entryResult?.entry.phonetic ? (
-          <span className="mt-1 text-xs text-muted">{entryResult.entry.phonetic}</span>
-        ) : undefined
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="block truncate reader-serif text-[1.35rem] leading-tight text-ink">
+            {entryResult?.entry.word ?? lookup.query}
+          </span>
+          {entryResult?.entry.phonetic ? (
+            <span className="text-xs text-muted font-sans font-normal tracking-normal">{entryResult.entry.phonetic}</span>
+          ) : null}
+        </div>
       }
       bodyId={lookupBodyId}
       body={
@@ -193,18 +246,22 @@ export function ReaderQuickPeek({
           {errorMessage ? (
             <span className="mt-3 block text-sm leading-6 text-error-red">{errorMessage}</span>
           ) : null}
-
-          {onOpenDetail ? (
+        </>
+      }
+      footer={
+        onOpenDetail ? (
+          <>
+            <div />
             <button
               type="button"
-              className="focus-ring mt-3 inline-flex min-h-10 items-center gap-2 rounded-md px-1 text-xs font-semibold text-lens-blue"
+              className="focus-ring inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.72rem] font-semibold text-lens-blue transition-opacity hover:opacity-80"
               onClick={onOpenDetail}
             >
               打开详情
               <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
             </button>
-          ) : null}
-        </>
+          </>
+        ) : undefined
       }
       style={style}
       onDismiss={onDismiss}

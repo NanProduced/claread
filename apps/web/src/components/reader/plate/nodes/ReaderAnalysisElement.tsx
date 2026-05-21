@@ -159,7 +159,7 @@ export function ReaderAnalysisElement({
       className={[
         "reader-entry-note group/analysis",
         `reader-entry-note--${element.entryType.replace("_", "-")}`,
-        expanded ? "reader-entry-note--expanded" : "reader-entry-note--collapsed",
+        expanded ? "reader-entry-note--expanded block w-full" : "reader-entry-note--collapsed",
         cardToneClass,
         activeClass,
       ]
@@ -291,13 +291,15 @@ export function ReaderAnalysisElement({
                       <div
                         key={`${element.entryId}-chunk-${index}`}
                         className="reader-entry-analysis-item group/chunk"
-                        onMouseEnter={() => {
-                          const atoms = document.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
-                          atoms.forEach(atom => atom.classList.add('reader-analysis-atom--active'));
+                        onMouseEnter={(event) => {
+                          const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
+                          const atoms = sentence?.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
+                          atoms?.forEach((atom) => atom.classList.add("reader-analysis-atom--active"));
                         }}
-                        onMouseLeave={() => {
-                          const atoms = document.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
-                          atoms.forEach(atom => atom.classList.remove('reader-analysis-atom--active'));
+                        onMouseLeave={(event) => {
+                          const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
+                          const atoms = sentence?.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
+                          atoms?.forEach((atom) => atom.classList.remove("reader-analysis-atom--active"));
                         }}
                       >
                         <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1} reader-entry-analysis-index`}>

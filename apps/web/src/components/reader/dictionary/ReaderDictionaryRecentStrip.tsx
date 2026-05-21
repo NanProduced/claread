@@ -55,8 +55,8 @@ export function ReaderDictionaryRecentStrip({
                 <button
                   key={dictionaryLookupHistoryKey(item)}
                   type="button"
-                  className={`focus-ring reader-dictionary-history-row block w-full rounded-[14px] border px-3 py-2.5 text-left ${
-                    active ? "reader-dictionary-history-row--active border-lens-blue/16" : "border-hairline/75"
+                  className={`focus-ring reader-dictionary-history-row block w-full rounded-[10px] px-3 py-2 text-left transition-colors ${
+                    active ? "reader-dictionary-history-row--active bg-lens-blue/5" : "hover:bg-muted/10"
                   }`}
                   onClick={() => onSelectHistory(item)}
                   title={`${item.query}: ${summary}`}

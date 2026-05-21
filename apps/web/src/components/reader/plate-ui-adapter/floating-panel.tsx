@@ -26,7 +26,7 @@ export function ReaderFloatingPanel({
     <div
       ref={floatingRef}
       className={cn(
-        "reader-lookup-preview rounded-xl border border-border/75 bg-popover/98 text-popover-foreground shadow-lg shadow-black/5 backdrop-blur-md supports-[backdrop-filter]:bg-popover/95",
+        "reader-lookup-preview rounded-xl border border-border/75 bg-popover/98 text-popover-foreground shadow-lg shadow-black/5 backdrop-blur-md supports-[backdrop-filter]:bg-popover/95 animate-in fade-in zoom-in-95 duration-200 ease-out",
         className,
       )}
       role={role}

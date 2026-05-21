@@ -1,6 +1,7 @@
 "use client";
 
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { autoUpdate } from "@floating-ui/react";
 import {
   flip,
   offset,
@@ -32,6 +33,7 @@ export function useReaderFloatingLayer({
     open,
     placement,
     strategy,
+    whileElementsMounted: autoUpdate,
     middleware: [
       offset({
         mainAxis: offsetPx,

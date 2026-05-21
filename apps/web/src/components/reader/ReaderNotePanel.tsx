@@ -1,7 +1,8 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { MessageSquare, Quote, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { MoreHorizontal, Pencil, Sparkles, Trash2, X } from "lucide-react";
 
 import type { WebReaderNoteCreateRequest, WebReaderNoteVm } from "@/types/api/reader-notes";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
@@ -28,11 +29,12 @@ interface ReaderNotePanelProps {
   onSelectNote: (note: WebReaderNoteVm) => void;
   onDraftTextChange: (value: string) => void;
   onSave: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
+  onDeleteNote?: (note: WebReaderNoteVm) => void;
   onAsk?: (note: WebReaderNoteVm) => void;
 }
 
-function trimQuote(value: string, limit = 90) {
+function trimQuote(value: string, limit = 120) {
   const normalized = value.trim().replace(/\s+/g, " ");
   if (!normalized) return "";
   return normalized.length <= limit ? normalized : `${normalized.slice(0, limit)}...`;
@@ -48,114 +50,196 @@ function shouldHideQuote(
   return sentenceText.trim() === selectedText.trim();
 }
 
-function quoteBadgeLabel(
-  quoteMode: WebReaderNoteVm["quoteMode"] | WebReaderNoteCreateRequest["quoteMode"],
-) {
-  if (quoteMode === "sentence") return "整句";
-  if (quoteMode === "multi_text") return "跨句";
-  return "片段";
-}
-
-function CommentCard({
-  note,
-  sentenceText,
-  active,
-  draftText,
-  saveState,
-  onSelect,
-  onDraftTextChange,
-  onSave,
+function NoteMenu({
+  onEdit,
   onDelete,
   onAsk,
 }: {
-  note: WebReaderNoteVm;
-  sentenceText: string;
-  active: boolean;
-  draftText: string;
-  saveState: ReaderNoteSaveState;
-  onSelect: () => void;
-  onDraftTextChange: (value: string) => void;
-  onSave: () => void;
+  onEdit: () => void;
   onDelete: () => void;
   onAsk?: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClick);
+      return () => document.removeEventListener("mousedown", handleClick);
+    }
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-muted/40 hover:text-foreground group-hover:opacity-100"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(!open);
+        }}
+        aria-label="更多操作"
+      >
+        <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-9 z-20 w-28 rounded-xl border border-hairline bg-surface py-1 shadow-[0_8px_20px_rgba(17,17,17,0.08)]">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/30"
+            onClick={(event) => {
+              event.stopPropagation();
+              onEdit();
+              setOpen(false);
+            }}
+          >
+            <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
+            编辑
+          </button>
+          {onAsk ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/30"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAsk();
+                setOpen(false);
+              }}
+            >
+              <Sparkles aria-hidden="true" className="h-3.5 w-3.5 text-phrase-lavender" />
+              Ask
+            </button>
+          ) : null}
+          <div className="my-1 h-px bg-hairline" />
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/5"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
+              setOpen(false);
+            }}
+          >
+            <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+            删除
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function NoteItem({
+  note,
+  sentenceText,
+  isActive,
+  isEditing,
+  draftText,
+  saveState,
+  onSelect,
+  onEdit,
+  onDelete,
+  onAsk,
+  onDraftTextChange,
+  onSave,
+  onCancelEdit,
+}: {
+  note: WebReaderNoteVm;
+  sentenceText: string;
+  isActive: boolean;
+  isEditing: boolean;
+  draftText: string;
+  saveState: ReaderNoteSaveState;
+  onSelect: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onAsk?: () => void;
+  onDraftTextChange: (value: string) => void;
+  onSave: () => void;
+  onCancelEdit: () => void;
+}) {
   const hideQuote = shouldHideQuote(note.quoteMode, note.selectedText, sentenceText);
+
+  if (isEditing) {
+    return (
+      <article className="rounded-xl border border-amber-200/60 bg-white px-4 py-3 shadow-sm">
+        {!hideQuote ? (
+          <div className="reader-serif rounded-lg bg-reader-paper px-3 py-2 text-sm leading-6 text-muted-foreground">
+            {trimQuote(note.selectedText, 120)}
+          </div>
+        ) : null}
+        <textarea
+          value={draftText}
+          onChange={(event) => onDraftTextChange(event.target.value)}
+          placeholder="写下你的笔记"
+          maxLength={500}
+          className="focus-ring mt-3 min-h-24 w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-[0.92rem] leading-7 text-foreground outline-none transition-colors focus:border-ring"
+        />
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            {saveState.kind === "saved" || saveState.kind === "error"
+              ? saveState.message
+              : `${draftText.length}/500`}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="focus-ring inline-flex min-h-9 items-center rounded-full px-3 text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+              onClick={onCancelEdit}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="focus-ring inline-flex min-h-9 items-center rounded-full bg-ink px-4 text-sm font-semibold text-white transition-colors hover:bg-ink/92 disabled:opacity-60"
+              onClick={onSave}
+              disabled={saveState.kind === "saving" || draftText.trim().length === 0}
+            >
+              保存
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article
-      className={`rounded-[1rem] border bg-white/96 px-4 py-3 transition-[border-color,box-shadow,background-color] ${
-        active
-          ? "border-[rgba(232,196,79,0.66)] shadow-[0_14px_28px_rgba(17,17,17,0.06)]"
-          : "border-border/65 hover:border-border"
+      className={`group relative rounded-xl px-4 py-3 transition-colors ${
+        isActive ? "bg-surface-warm" : "hover:bg-surface-warm/60"
       }`}
+      onClick={(event) => {
+        // 避免点击菜单区域时触发 select
+        if ((event.target as HTMLElement).closest("[data-note-menu]")) {
+          return;
+        }
+        onSelect();
+      }}
     >
-      <button type="button" className="w-full text-left" onClick={onSelect}>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[rgba(138,119,255,0.65)]" />
-          <span className="text-xs font-medium text-muted-foreground">comment</span>
-          <span className="text-xs text-muted-foreground">{quoteBadgeLabel(note.quoteMode)}</span>
-        </div>
-      </button>
-
-      {!hideQuote ? (
-        <div className="mt-2 rounded-md border-l-2 border-[rgba(240,196,59,0.95)] pl-3 text-[0.92rem] leading-7 text-foreground">
-          {trimQuote(note.selectedText, 120)}
-        </div>
-      ) : null}
-
-      {active ? (
-        <>
-          <textarea
-            value={draftText}
-            onChange={(event) => onDraftTextChange(event.target.value)}
-            placeholder="写下你的笔记"
-            maxLength={500}
-            className="focus-ring mt-3 min-h-24 w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-[0.92rem] leading-7 text-foreground outline-none transition-colors focus:border-ring"
-          />
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <span className="text-xs text-muted-foreground">
-              {saveState.kind === "saved" || saveState.kind === "error"
-                ? saveState.message
-                : `${draftText.length}/500`}
-            </span>
-            <div className="flex items-center gap-2">
-              {onAsk ? (
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium text-lens-blue transition-colors hover:text-foreground"
-                  onClick={onAsk}
-                >
-                  Ask
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="focus-ring inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:border-border/80 hover:text-foreground"
-                onClick={onDelete}
-                aria-label="删除当前笔记"
-              >
-                <Trash2 aria-hidden="true" className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                className="focus-ring inline-flex min-h-11 items-center rounded-full bg-ink px-4 text-sm font-semibold text-white transition-colors hover:bg-ink/92 disabled:opacity-60"
-                onClick={onSave}
-                disabled={saveState.kind === "saving" || draftText.trim().length === 0}
-              >
-                保存修改
-              </button>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {!hideQuote ? (
+            <div className="reader-serif rounded-lg bg-reader-paper px-3 py-2 text-sm leading-6 text-muted-foreground">
+              {trimQuote(note.selectedText, 120)}
             </div>
-          </div>
-        </>
-      ) : (
-        <button
-          type="button"
-          className="mt-3 w-full text-left text-[0.92rem] leading-7 text-ink-soft"
-          onClick={onSelect}
-        >
-          {note.noteText}
-        </button>
-      )}
+          ) : null}
+          <p
+            className={`mt-2 text-[0.92rem] leading-7 ${
+              isActive ? "text-foreground" : "text-ink-soft"
+            }`}
+          >
+            {note.noteText}
+          </p>
+        </div>
+        <div className="shrink-0 pt-0.5" data-note-menu>
+          <NoteMenu onEdit={onEdit} onDelete={onDelete} onAsk={onAsk} />
+        </div>
+      </div>
     </article>
   );
 }
@@ -178,21 +262,16 @@ function DraftCard({
   const hideQuote = shouldHideQuote(draft.quoteMode, draft.selectedText, sentenceText);
 
   return (
-    <article className="rounded-[1rem] border border-[rgba(232,196,79,0.5)] bg-white/98 px-4 py-3 shadow-[0_14px_28px_rgba(17,17,17,0.05)]">
-      <div className="flex items-center gap-2">
-        <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[rgba(138,119,255,0.65)]" />
-        <span className="text-xs font-medium text-muted-foreground">draft</span>
-        <span className="text-xs text-muted-foreground">{quoteBadgeLabel(draft.quoteMode)}</span>
-      </div>
+    <article className="rounded-xl border border-amber-200/50 bg-white px-4 py-3 shadow-sm">
       {!hideQuote ? (
-        <div className="mt-2 rounded-md border-l-2 border-[rgba(240,196,59,0.95)] pl-3 text-[0.92rem] leading-7 text-foreground">
+        <div className="reader-serif rounded-lg bg-reader-paper px-3 py-2 text-sm leading-6 text-muted-foreground">
           {trimQuote(draft.selectedText, 120)}
         </div>
       ) : null}
       <textarea
         value={draftText}
         onChange={(event) => onDraftTextChange(event.target.value)}
-        placeholder="写下你的笔记"
+        placeholder="写下你对这段内容的理解、疑问或提醒。"
         maxLength={500}
         className="focus-ring mt-3 min-h-24 w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-[0.92rem] leading-7 text-foreground outline-none transition-colors focus:border-ring"
       />
@@ -204,7 +283,7 @@ function DraftCard({
         </span>
         <button
           type="button"
-          className="focus-ring inline-flex min-h-11 items-center rounded-full bg-ink px-4 text-sm font-semibold text-white transition-colors hover:bg-ink/92 disabled:opacity-60"
+          className="focus-ring inline-flex min-h-9 items-center rounded-full bg-ink px-4 text-sm font-semibold text-white transition-colors hover:bg-ink/92 disabled:opacity-60"
           onClick={onSave}
           disabled={saveState.kind === "saving" || draftText.trim().length === 0}
         >
@@ -217,7 +296,6 @@ function DraftCard({
 
 function PanelBody({
   sentence,
-  sentenceIndex,
   notes,
   activeNote,
   draft,
@@ -228,21 +306,17 @@ function PanelBody({
   onDraftTextChange,
   onSave,
   onDelete,
+  onDeleteNote,
   onAsk,
-}: Omit<ReaderNotePanelProps, "open" | "style" | "floatingRef">) {
+}: Omit<ReaderNotePanelProps, "open" | "style" | "floatingRef" | "sentenceIndex">) {
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+
   return (
     <div className="flex max-h-[min(38rem,calc(100vh-2rem))] w-[22rem] flex-col overflow-hidden rounded-[1.1rem] border border-border/75 bg-popover/98 text-popover-foreground shadow-[0_18px_44px_rgba(17,17,17,0.08)]">
-      <div className="flex items-start justify-between gap-3 border-b border-border/70 px-4 py-3">
-        <div className="min-w-0">
-          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Comments
-          </p>
-          <h3 className="mt-1 text-lg font-semibold text-foreground">句子 {sentenceIndex}</h3>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">{trimQuote(sentence.text, 96)}</p>
-        </div>
+      <div className="flex items-center justify-end border-b border-hairline/70 px-3 py-2">
         <button
           type="button"
-          className="focus-ring inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:border-border/80 hover:text-foreground"
+          className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
           aria-label="关闭笔记面板"
           onClick={onClose}
         >
@@ -250,21 +324,40 @@ function PanelBody({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        <div className="space-y-3">
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        <div className="space-y-1">
           {notes.map((note) => (
-            <CommentCard
+            <NoteItem
               key={note.id}
               note={note}
               sentenceText={sentence.text}
-              active={note.id === activeNote?.id}
+              isActive={note.id === activeNote?.id}
+              isEditing={note.id === editingNoteId}
               draftText={draftText}
               saveState={saveState}
-              onSelect={() => onSelectNote(note)}
-              onDraftTextChange={onDraftTextChange}
-              onSave={onSave}
-              onDelete={onDelete}
+              onSelect={() => {
+                setEditingNoteId(null);
+                onSelectNote(note);
+              }}
+              onEdit={() => {
+                onSelectNote(note);
+                setEditingNoteId(note.id);
+              }}
+              onDelete={() => {
+                if (onDeleteNote) {
+                  onDeleteNote(note);
+                } else {
+                  onSelectNote(note);
+                  onDelete?.();
+                }
+              }}
               onAsk={onAsk ? () => onAsk(note) : undefined}
+              onDraftTextChange={onDraftTextChange}
+              onSave={() => {
+                onSave();
+                setEditingNoteId(null);
+              }}
+              onCancelEdit={() => setEditingNoteId(null)}
             />
           ))}
           {draft ? (
