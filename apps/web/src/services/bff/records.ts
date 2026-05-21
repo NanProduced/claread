@@ -139,6 +139,15 @@ export async function getRecordList(options: GetRecordsOptions = {}): Promise<Re
   const upstreamResult = await listRecords(session.sessionToken, normalizedOptions);
 
   if (!upstreamResult.ok) {
+    if (upstreamResult.status === 401) {
+      return emptyResult(
+        session,
+        normalizedOptions,
+        "unauthenticated",
+        "当前会话已过期，请重新登录。",
+      );
+    }
+
     return emptyResult(
       session,
       normalizedOptions,
