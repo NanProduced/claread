@@ -22,6 +22,8 @@ import {
   AiWorkspacePanel,
   ReaderContextPanel,
   ReaderDictionaryRail,
+  ReaderNotePanel,
+  ReaderSelectionNoteDraftPopover,
   ReaderQuickPeek,
   ReaderSettingsPanel,
   PlateReaderSurface,
@@ -100,7 +102,6 @@ import type { SentenceEntryModel, SentenceModel } from "@/types/view/ReaderMockV
 import {
   ANNOTATION_CREATED_EVENT,
 } from "./ReaderAnnotations";
-import { ReaderNoteRail, type ReaderNoteRailDraft, type ReaderNoteRailGroup } from "./ReaderNoteRail";
 import {
   exchangeForms,
   firstMeaning,
@@ -109,6 +110,7 @@ import {
   type DictionaryLookupSnapshot,
   type SaveState,
 } from "@/components/reader/dictionary/contracts";
+import { readerCommentDraftId } from "@/components/reader/plate-comment-adapter";
 import { FavoriteButton } from "./FavoriteButton";
 
 type ReaderDataSource = "upstream-render-scene" | "upstream-source-text";
@@ -126,6 +128,8 @@ type AnnotationSaveState =
   | { kind: "saving" }
   | { kind: "saved"; message: string }
   | { kind: "error"; message: string };
+
+type PendingReaderNoteSource = "selection" | "sentence";
 
 const dataSourceLabel: Record<ReaderDataSource, string> = {
   "upstream-render-scene": "解析结果",
@@ -534,11 +538,13 @@ export function ReaderWorkbench({
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [annotationColor, setAnnotationColor] = useState<UserAnnotationColorDto>("warm_yellow");
   const [annotationSaveState, setAnnotationSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
-  const [readerNoteRailOpen, setReaderNoteRailOpen] = useState(false);
   const [activeReaderNoteId, setActiveReaderNoteId] = useState<string | null>(null);
   const [pendingReaderNote, setPendingReaderNote] = useState<WebReaderNoteCreateRequest | null>(null);
+  const [pendingReaderNoteSource, setPendingReaderNoteSource] = useState<PendingReaderNoteSource | null>(null);
   const [readerNoteDraft, setReaderNoteDraft] = useState("");
   const [readerNoteSaveState, setReaderNoteSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
+  const [notePanelOpen, setNotePanelOpen] = useState(false);
+  const [hoveredAnnotationTargetKey, setHoveredAnnotationTargetKey] = useState<string | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
@@ -570,6 +576,19 @@ export function ReaderWorkbench({
     placement: "top-start",
     offsetPx: 14,
     crossAxisOffsetPx: 28,
+    strategy: "fixed",
+  });
+  const {
+    refs: {
+      setFloating: setSelectionNoteDraftFloating,
+      setPositionReference: setSelectionNoteDraftReference,
+    },
+    floatingStyles: selectionNoteDraftStyles,
+  } = useReaderFloatingLayer({
+    open: Boolean(pendingReaderNote && pendingReaderNoteSource === "selection"),
+    placement: "bottom-start",
+    offsetPx: 12,
+    crossAxisOffsetPx: 8,
     strategy: "fixed",
   });
   const {
@@ -720,11 +739,6 @@ export function ReaderWorkbench({
     return reader.sentenceEntries.find((entry) => entry.id === activeEntryId) ?? null;
   }, [activeEntryId, reader.sentenceEntries]);
 
-  const sentenceIndexById = useMemo(
-    () => new Map(reader.article.sentences.map((sentence, index) => [sentence.sentenceId, index + 1])),
-    [reader.article.sentences],
-  );
-
   const assetProjection: ReaderAssetProjection = useMemo(
     () =>
       projectReaderAssets({
@@ -746,47 +760,70 @@ export function ReaderWorkbench({
     () => readerNotes.find((note) => note.id === activeReaderNoteId) ?? null,
     [activeReaderNoteId, readerNotes],
   );
-  const readerNoteGroups = useMemo<ReaderNoteRailGroup[]>(() => {
+  const readerNotesBySentence = useMemo(() => {
     const notesBySentence = new Map<string, WebReaderNoteVm[]>();
     readerNotes.forEach((note) => {
       const current = notesBySentence.get(note.anchorSentenceId) ?? [];
       notesBySentence.set(note.anchorSentenceId, [...current, note]);
     });
 
-    return Array.from(notesBySentence.entries())
-      .map(([sentenceId, notes]) => {
-        const sentence = sentenceById.get(sentenceId);
-        if (!sentence) {
-          return null;
+    notesBySentence.forEach((notes, sentenceId) => {
+      const sentence = sentenceById.get(sentenceId);
+      if (!sentence) {
+        return;
+      }
+      const sortedNotes = [...notes].sort((left, right) => {
+        const leftStart = left.quoteMode === "sentence" ? 0 : (left.startOffset ?? left.segments[0]?.startOffset ?? 0);
+        const rightStart = right.quoteMode === "sentence" ? 0 : (right.startOffset ?? right.segments[0]?.startOffset ?? 0);
+        if (leftStart !== rightStart) {
+          return leftStart - rightStart;
         }
-        const sortedNotes = [...notes].sort((left, right) => {
-          const leftStart = left.quoteMode === "sentence" ? 0 : (left.startOffset ?? left.segments[0]?.startOffset ?? 0);
-          const rightStart = right.quoteMode === "sentence" ? 0 : (right.startOffset ?? right.segments[0]?.startOffset ?? 0);
-          if (leftStart !== rightStart) {
-            return leftStart - rightStart;
-          }
-          const leftLength =
-            left.quoteMode === "sentence"
-              ? sentence.text.length
-              : (left.endOffset ?? left.segments.at(-1)?.endOffset ?? 0) - leftStart;
-          const rightLength =
-            right.quoteMode === "sentence"
-              ? sentence.text.length
-              : (right.endOffset ?? right.segments.at(-1)?.endOffset ?? 0) - rightStart;
-          if (leftLength !== rightLength) {
-            return leftLength - rightLength;
-          }
-          return left.createdAt.localeCompare(right.createdAt);
-        });
-        return {
-          sentence,
-          sentenceIndex: sentenceIndexById.get(sentenceId) ?? 0,
-          notes: sortedNotes,
-        };
-      })
-      .filter((group): group is ReaderNoteRailGroup => Boolean(group))
-      .sort((left, right) => left.sentenceIndex - right.sentenceIndex);
-  }, [readerNotes, sentenceById, sentenceIndexById]);
+        const leftLength =
+          left.quoteMode === "sentence"
+            ? sentence.text.length
+            : (left.endOffset ?? left.segments.at(-1)?.endOffset ?? 0) - leftStart;
+        const rightLength =
+          right.quoteMode === "sentence"
+            ? sentence.text.length
+            : (right.endOffset ?? right.segments.at(-1)?.endOffset ?? 0) - rightStart;
+        if (leftLength !== rightLength) {
+          return leftLength - rightLength;
+        }
+        return left.createdAt.localeCompare(right.createdAt);
+      });
+      notesBySentence.set(sentenceId, sortedNotes);
+    });
+
+    return notesBySentence;
+  }, [readerNotes, sentenceById]);
+  const selectionDraftReaderNote = useMemo(
+    () => (pendingReaderNote && pendingReaderNoteSource === "selection" ? pendingReaderNote : null),
+    [pendingReaderNote, pendingReaderNoteSource],
+  );
+  const sentenceDraftReaderNote = useMemo(
+    () => (pendingReaderNote && pendingReaderNoteSource === "sentence" ? pendingReaderNote : null),
+    [pendingReaderNote, pendingReaderNoteSource],
+  );
+  const notePanelSentenceId = activeReaderNote?.anchorSentenceId ?? sentenceDraftReaderNote?.anchorSentenceId ?? null;
+  const notePanelSentence = notePanelSentenceId ? sentenceById.get(notePanelSentenceId) ?? null : null;
+  const notePanelSentenceIndex = notePanelSentenceId
+    ? reader.article.sentences.findIndex((item) => item.sentenceId === notePanelSentenceId) + 1
+    : 0;
+  const notePanelNotes = notePanelSentenceId ? readerNotesBySentence.get(notePanelSentenceId) ?? [] : [];
+  const {
+    refs: {
+      setFloating: setNotePanelFloating,
+      setPositionReference: setNotePanelReference,
+    },
+    floatingStyles: notePanelStyles,
+  } = useReaderFloatingLayer({
+    open: Boolean(notePanelOpen && (activeReaderNote || sentenceDraftReaderNote)),
+    placement: "right-start",
+    offsetPx: 12,
+    crossAxisOffsetPx: 8,
+    collisionPadding: 18,
+    strategy: "fixed",
+  });
   const plateDocument = useMemo(() => renderSceneToPlateDocument(reader), [reader]);
   const pageIdentity: ReaderAskPageIdentity = useMemo(
     () => ({
@@ -817,23 +854,7 @@ export function ReaderWorkbench({
     }
     return readerNotesByTargetKey.get(targetKeyForSelection(record.id, textSelection)) ?? null;
   }, [readerNotesByTargetKey, record.id, textSelection]);
-  const activeReaderNoteDraft = useMemo<ReaderNoteRailDraft | null>(() => {
-    if (activeReaderNote) {
-      return {
-        targetKey: activeReaderNote.targetKey,
-        quoteMode: activeReaderNote.quoteMode,
-        selectedText: activeReaderNote.selectedText,
-      };
-    }
-    if (!pendingReaderNote) {
-      return null;
-    }
-    return {
-      targetKey: noteTargetKeyFromRequest(pendingReaderNote),
-      quoteMode: pendingReaderNote.quoteMode,
-      selectedText: pendingReaderNote.selectedText,
-    };
-  }, [activeReaderNote, pendingReaderNote]);
+  const pendingReaderCommentId = pendingReaderNote ? readerCommentDraftId() : null;
 
   useEffect(() => {
     const targetKey = searchParams.get("targetKey");
@@ -894,6 +915,32 @@ export function ReaderWorkbench({
     }, 4200);
     return () => window.clearTimeout(timer);
   }, [jumpTarget, sentenceById]);
+
+  useEffect(() => {
+    if (!focusedReaderNoteTarget) {
+      return;
+    }
+
+    const targetSentenceId =
+      focusedReaderNoteTarget.primarySentenceId ?? focusedReaderNoteTarget.sentenceIds[0];
+    if (!targetSentenceId) {
+      return;
+    }
+
+    const targetSentence = sentenceById.get(targetSentenceId);
+    if (!targetSentence) {
+      return;
+    }
+
+    setActiveSentence(targetSentence);
+    if (focusedReaderNoteTarget.scrollStrategy === "center") {
+      window.requestAnimationFrame(() => {
+        articleRef.current
+          ?.querySelector<HTMLElement>(`#reader-sentence-${CSS.escape(targetSentenceId)}`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    }
+  }, [focusedReaderNoteTarget, sentenceById]);
 
   const dismissLookupPreview = useCallback(() => {
     setLookupPreviewOpen(false);
@@ -1088,6 +1135,50 @@ export function ReaderWorkbench({
       contextElement: articleRef.current ?? undefined,
     });
   }, [setSelectionToolbarReference, textSelection]);
+
+  useEffect(() => {
+    if (!textSelection || !pendingReaderNote || pendingReaderNoteSource !== "selection") {
+      setSelectionNoteDraftReference(null);
+      return;
+    }
+
+    setSelectionNoteDraftReference({
+      getBoundingClientRect: () => selectionToolbarRectForReaderSelection(articleRef.current, textSelection),
+      contextElement: articleRef.current ?? undefined,
+    });
+  }, [pendingReaderNote, pendingReaderNoteSource, setSelectionNoteDraftReference, textSelection]);
+
+  useEffect(() => {
+    if (!notePanelOpen || !notePanelSentenceId) {
+      setNotePanelReference(null);
+      return;
+    }
+
+    const sentenceSelector = `[data-reader-anchor="sentence"][data-sentence-id="${CSS.escape(notePanelSentenceId)}"]`;
+    const updateReference = () => {
+      const noteHandle =
+        articleRef.current?.querySelector<HTMLElement>(`${sentenceSelector} [data-reader-sentence-note-handle="true"]`) ??
+        null;
+      const sentenceSection = articleRef.current?.querySelector<HTMLElement>(sentenceSelector) ?? null;
+      const anchor = noteHandle ?? sentenceSection;
+      if (!anchor) {
+        setNotePanelReference(null);
+        return;
+      }
+      setNotePanelReference({
+        getBoundingClientRect: () => copyDomRect(anchor.getBoundingClientRect()),
+        contextElement: articleRef.current ?? undefined,
+      });
+    };
+
+    updateReference();
+    window.addEventListener("resize", updateReference);
+    window.addEventListener("scroll", updateReference, true);
+    return () => {
+      window.removeEventListener("resize", updateReference);
+      window.removeEventListener("scroll", updateReference, true);
+    };
+  }, [notePanelOpen, notePanelSentenceId, setNotePanelReference]);
 
   useEffect(() => {
     if (!textSelection) {
@@ -1658,21 +1749,33 @@ export function ReaderWorkbench({
     }
   }
 
-  function focusReaderNote(note: WebReaderNoteVm) {
-    setActiveReaderNoteId(note.id);
+  function closeReaderNoteUi() {
     setPendingReaderNote(null);
-    setReaderNoteDraft(note.noteText);
-    setReaderNoteRailOpen(true);
-    const nextJumpTarget = readerNoteJumpTarget(note);
-    setFocusedReaderNoteTarget(nextJumpTarget);
-    if (nextJumpTarget) {
-      setJumpTarget(nextJumpTarget);
-    }
+    setPendingReaderNoteSource(null);
+    setActiveReaderNoteId(null);
+    setFocusedReaderNoteTarget(null);
+    setReaderNoteDraft("");
     setReaderNoteSaveState({ kind: "idle" });
+    setNotePanelOpen(false);
   }
 
-  function openReaderNoteComposer(request: WebReaderNoteCreateRequest, existing?: WebReaderNoteVm | null) {
-    setReaderNoteRailOpen(true);
+  function focusReaderNote(note: WebReaderNoteVm) {
+    setAiOpen(false);
+    setActiveReaderNoteId(note.id);
+    setPendingReaderNote(null);
+    setPendingReaderNoteSource(null);
+    setReaderNoteDraft(note.noteText);
+    const nextJumpTarget = readerNoteJumpTarget(note);
+    setFocusedReaderNoteTarget(nextJumpTarget);
+    setReaderNoteSaveState({ kind: "idle" });
+    setNotePanelOpen(true);
+  }
+
+  function openReaderNoteComposer(
+    request: WebReaderNoteCreateRequest,
+    existing?: WebReaderNoteVm | null,
+    source: PendingReaderNoteSource = "selection",
+  ) {
     setSettingsPanelOpen(false);
     setContextPanelOpen(false);
     setAiOpen(false);
@@ -1684,13 +1787,12 @@ export function ReaderWorkbench({
 
     setActiveReaderNoteId(null);
     setPendingReaderNote(request);
+    setPendingReaderNoteSource(source);
     setReaderNoteDraft("");
     const nextJumpTarget = readerNoteJumpTargetFromRequest(request);
     setFocusedReaderNoteTarget(nextJumpTarget);
-    if (nextJumpTarget) {
-      setJumpTarget(nextJumpTarget);
-    }
     setReaderNoteSaveState({ kind: "idle" });
+    setNotePanelOpen(source === "sentence");
   }
 
   function highlightTextSelection(colorValue: string) {
@@ -1710,13 +1812,49 @@ export function ReaderWorkbench({
     openReaderNoteComposer(
       noteRequestFromSelection(record.id, textSelection),
       selectedReaderNote,
+      "selection",
     );
   }
 
   function openSentenceNote(sentence: SentenceModel) {
     const request = noteRequestFromSentence(record.id, sentence);
     const existing = readerNotesByTargetKey.get(noteTargetKeyFromRequest(request)) ?? null;
-    openReaderNoteComposer(request, existing);
+    openReaderNoteComposer(request, existing, "sentence");
+  }
+
+  function openSentenceNotes(sentenceId: string, _anchorEl?: HTMLElement) {
+    const sentenceNotes = readerNotesBySentence.get(sentenceId) ?? [];
+    if (sentenceNotes.length === 0) {
+      return;
+    }
+    setAiOpen(false);
+    setNotePanelOpen(true);
+
+    const activeInSentence = sentenceNotes.find((note) => note.id === activeReaderNoteId) ?? null;
+    if (activeInSentence) {
+      return;
+    }
+
+    const firstNote = sentenceNotes[0];
+    if (firstNote) {
+      focusReaderNote(firstNote);
+    }
+  }
+
+  function closeSentenceNotes() {
+    closeReaderNoteUi();
+  }
+
+  function closeSelectionDraftNote() {
+    if (!selectionDraftReaderNote) {
+      return;
+    }
+    setPendingReaderNote(null);
+    setPendingReaderNoteSource(null);
+    setFocusedReaderNoteTarget(null);
+    setReaderNoteDraft("");
+    setReaderNoteSaveState({ kind: "idle" });
+    setNotePanelOpen(false);
   }
 
   async function saveActiveReaderNote() {
@@ -1785,6 +1923,7 @@ export function ReaderWorkbench({
       mergeReaderNote(payload.item);
       focusReaderNote(payload.item);
       setReaderNoteSaveState({ kind: "saved", message: "笔记已保存。" });
+      setNotePanelOpen(true);
     } catch (error) {
       setReaderNoteSaveState({
         kind: "error",
@@ -1796,6 +1935,7 @@ export function ReaderWorkbench({
   async function deleteActiveReaderNote() {
     if (!activeReaderNote) {
       setPendingReaderNote(null);
+      setPendingReaderNoteSource(null);
       setReaderNoteDraft("");
       setReaderNoteSaveState({ kind: "idle" });
       return;
@@ -1819,6 +1959,7 @@ export function ReaderWorkbench({
       setFocusedReaderNoteTarget(null);
       setReaderNoteDraft("");
       setReaderNoteSaveState({ kind: "saved", message: "笔记已删除。" });
+      setNotePanelOpen(false);
     } catch (error) {
       setReaderNoteSaveState({
         kind: "error",
@@ -2038,7 +2179,7 @@ export function ReaderWorkbench({
   function openAskWithReaderNote(note: WebReaderNoteVm) {
     openAskWithAttachments([
       askAttachmentFromReaderNote(pageIdentity, note, {
-        sourceSurface: "note_rail",
+        sourceSurface: "note_card",
         entryAction: "ask_about_this",
       }),
     ]);
@@ -2344,11 +2485,16 @@ export function ReaderWorkbench({
             expandedAnalysisEntryIds={expandedAnalysisEntryIds}
             jumpTarget={jumpTarget}
             focusTarget={focusedReaderNoteTarget}
+            hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
             assetProjection={assetProjection}
+            readerNotesBySentence={readerNotesBySentence}
+            activeReaderNoteId={activeReaderNoteId}
             annotationVisibilityGroups={readerSettings.annotationVisibilityGroups}
             onAnalysisFocusChange={setAnalysisEntryFocus}
             onAnalysisToggle={toggleAnalysisEntry}
             onAnnotationJump={jumpToAnnotation}
+            onHoverAnnotationTargetKeyChange={setHoveredAnnotationTargetKey}
+            onOpenSentenceNotes={openSentenceNotes}
             onDeleteAnalysisSupplement={deleteAnalysisSupplement}
             onAskTranslation={openAskWithTranslation}
             onAskAnalysis={openAskWithAnalysis}
@@ -2367,6 +2513,27 @@ export function ReaderWorkbench({
             }}
           />
         </article>
+
+        {notePanelSentence ? (
+          <ReaderNotePanel
+            open={Boolean(notePanelOpen && (activeReaderNote || sentenceDraftReaderNote))}
+            sentence={notePanelSentence}
+            sentenceIndex={notePanelSentenceIndex}
+            notes={notePanelNotes}
+            activeNote={activeReaderNote && activeReaderNote.anchorSentenceId === notePanelSentence.sentenceId ? activeReaderNote : null}
+            draft={sentenceDraftReaderNote && sentenceDraftReaderNote.anchorSentenceId === notePanelSentence.sentenceId ? sentenceDraftReaderNote : null}
+            draftText={readerNoteDraft}
+            saveState={readerNoteSaveState}
+            floatingRef={setNotePanelFloating}
+            style={notePanelStyles}
+            onClose={closeSentenceNotes}
+            onSelectNote={focusReaderNote}
+            onDraftTextChange={setReaderNoteDraft}
+            onSave={saveActiveReaderNote}
+            onDelete={deleteActiveReaderNote}
+            onAsk={openAskWithReaderNote}
+          />
+        ) : null}
 
         {textSelection && !contextPanelVisible ? (
           <div
@@ -2389,17 +2556,13 @@ export function ReaderWorkbench({
               hasHighlight={selectedAnnotation?.type === "highlight"}
               hasNote={Boolean(selectedReaderNote)}
               statusMessage={
-                readerNoteSaveState.kind === "saved" || readerNoteSaveState.kind === "error"
-                  ? readerNoteSaveState.message
-                  : annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
-                    ? annotationSaveState.message
+                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
+                  ? annotationSaveState.message
                   : undefined
               }
               statusKind={
-                readerNoteSaveState.kind === "saved" || readerNoteSaveState.kind === "error"
-                  ? readerNoteSaveState.kind
-                  : annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
-                    ? annotationSaveState.kind
+                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
+                  ? annotationSaveState.kind
                   : undefined
               }
               onSelectSentence={selectCurrentSentenceFromToolbar}
@@ -2410,6 +2573,19 @@ export function ReaderWorkbench({
               onAsk={openAskWithSelection}
             />
           </div>
+        ) : null}
+        {selectionDraftReaderNote ? (
+          <ReaderSelectionNoteDraftPopover
+            key={pendingReaderCommentId ?? undefined}
+            draft={selectionDraftReaderNote}
+            draftText={readerNoteDraft}
+            saveState={readerNoteSaveState}
+            floatingRef={setSelectionNoteDraftFloating}
+            style={selectionNoteDraftStyles}
+            onDraftTextChange={setReaderNoteDraft}
+            onSave={saveActiveReaderNote}
+            onClose={closeSelectionDraftNote}
+          />
         ) : null}
         {floatingLookupPreviewVisible ? (
           <ReaderQuickPeek
@@ -2527,28 +2703,6 @@ export function ReaderWorkbench({
           />
         </div>
       ) : null}
-
-      <ReaderNoteRail
-        open={readerNoteRailOpen || readerNotes.length > 0}
-        groups={readerNoteGroups}
-        activeNote={activeReaderNote}
-        draft={activeReaderNoteDraft}
-        draftText={readerNoteDraft}
-        saveState={readerNoteSaveState}
-        onClose={() => {
-          setReaderNoteRailOpen(false);
-          setPendingReaderNote(null);
-          setActiveReaderNoteId(null);
-          setFocusedReaderNoteTarget(null);
-          setReaderNoteDraft("");
-          setReaderNoteSaveState({ kind: "idle" });
-        }}
-        onSelectNote={focusReaderNote}
-        onDraftTextChange={setReaderNoteDraft}
-        onSave={saveActiveReaderNote}
-        onDelete={deleteActiveReaderNote}
-        onAsk={openAskWithReaderNote}
-      />
 
         {settingsPanelOpen ? (
           <div

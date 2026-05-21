@@ -10,7 +10,7 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 
 - 微信小程序仍是稳定客户端，继续作为回归约束。
 - Web baseline 已接入真实 FastAPI BFF/API 链路，不再依赖产品路径 mock/demo fixture。
-- Web 已开始 Web 端能力增强：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 批注/收藏，以及按文章聚合的“摘录与批注”页已落地；Reader 自动化回归仍待补齐。
+- Web 已进入 Reader 标注体系收口阶段：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 高亮/笔记和 Ask Claread 显式引用已接入；文本收藏与按文章聚合的“摘录与批注”页已删除，Reader 自动化回归仍待补齐。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
@@ -38,14 +38,14 @@ Web Reader 2.0（Plate 底座接入）这一前置任务已经完成。当前工
 1. 修正 Ask Claread 冻结前的 correctness 问题，确保 regenerate、supplement lifecycle、known reference resolution 和写动作边界符合当前规范。
 2. 统一 Ask Claread 正式文档口径，以 `docs/product/ask-claread.md` 和 `docs/architecture/ask-claread.md` 作为当前真相源。
 3. 保持 Reader 2.0 底座稳定，继续补真实数据自动化和小程序 DevTools 人工回归，避免 Ask 收尾影响阅读主链路。
-4. 在冻结完成后，评估后续产品调整，尤其是“用户学习资产”相关范围是否保留、缩减或移除。
+4. 在冻结完成后，继续稳定新的 Reader 标注模型，重点验证高亮、笔记和 Ask Claread 的单一新逻辑闭环。
 5. Directus 当前只进入边界设计和 schema 准备；等 Ask Claread 冻结评估完成后，再决定是否启动正式内部工具开发。
 
 ## 暂不拍板
 
 以下事项仍需产品、业务和技术评估，不在本文做决定性描述：
 
-- Ask Claread 冻结后是否继续保留“用户学习资产”相关范围，以及缩减后 planner / resolver / product contract 应如何收口。
+- Ask Claread 在显式引用模型上是否还需要更强的跨文章扩展，以及 planner / resolver / product contract 应如何继续演进。
 - 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG。
 - Grammar X-Ray、分享页、导出和其他 AI 能力的优先级，但它们都不应抢在 Ask Claread 主线前面。
 - 是否在 Ask Claread 之外单独产品化“AI 整合总结用户历史数据”能力，以及是否做跨文章/跨资产的长期学习画像。

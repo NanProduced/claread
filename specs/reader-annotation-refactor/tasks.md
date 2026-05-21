@@ -1,6 +1,15 @@
 # Implementation Plan
 
-- [ ] 1. 重建后端 Reader 标注模型并删除旧聚合链路
+> 状态更新：2026-05-21
+>
+> - 已完成：1, 2
+> - 进行中：3, 4, 5
+> - 当前剩余重点：
+>   - Web Reader 笔记 UI/UX 仍在收口到最终的 Plate-style comment 交互
+>   - 小程序结果页仍残留旧选区写路径与旧组件壳，尚未完全收口到只读查看态
+>   - 正式文档与 Web 专项文档仍需继续清理过时表述
+
+- [x] 1. 重建后端 Reader 标注模型并删除旧聚合链路
   - 新增 `reader_notes` schema、service、route、tests，并实现 exact-hit note reopen 与 note text-only edit 规则
   - 将 `user_annotations` 收口为纯高亮模型，删除 note 语义、相关校验与测试
   - 将 `favorite_records` 收口为纯文章收藏，删除文本收藏 target、接口与测试
@@ -8,7 +17,7 @@
   - 补齐 schema reset / migration / cascade delete / baseline 校验
   - _Requirement: 1, 2, 3, 4, 5, 6, 12, 13_
 
-- [ ] 2. 重构 Ask Claread 到新双模型
+- [x] 2. 重构 Ask Claread 到新双模型
   - 重写 attachment / citation / trace 语义，移除 `history_lookup`、`record_excerpt_assets`、`user_excerpt_asset` 等旧能力
   - 保留 external stable analysis / supplement asset disambiguation
   - 将 AI 写高亮动作改为写入纯高亮模型
@@ -19,7 +28,7 @@
 - [ ] 3. 重构 Web Reader 标注 UI 与交互
   - 重构 `ReaderWorkbench` 状态组织，拆分 highlight state、note state、ask attachment state
   - 更新 `SelectionToolbar`，删除文本收藏和内嵌旧 note 编辑心智，保留新动作模型
-  - 实现句侧 note rail、note card、单 note focus、focused quote projection
+  - 实现句侧 note marker、anchored note card、单 note focus、focused quote projection
   - 更新 gutter / marker / route focus / bridge 语义，删除 asset-center 相关 UI 与状态
   - 删除 `/library/assets` 页面、BFF、types、tests，并改造 Ask 前端面板到新 contract
   - _Requirement: 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 14_
@@ -34,6 +43,6 @@
 - [ ] 5. 清理文档、测试与残留语义
   - 删除或重写旧“用户学习资产 / 摘录资产 / 文本收藏 / 混合 annotation note”文档事实
   - 删除旧 asset-center、excerpt-assets、text favorite、mixed note/highlight 自动化测试
-  - 增补新高亮、reader note、Ask write action、Web note rail 的验证覆盖
+  - 增补新高亮、reader note、Ask write action、Web anchored note card 的验证覆盖
   - 做一轮仓库级搜索，确认不再残留面向产品语义的旧入口、旧命名、旧 contract
   - _Requirement: 1, 2, 3, 10, 11, 12, 14_

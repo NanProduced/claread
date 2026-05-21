@@ -18,6 +18,7 @@
     "@claread/contracts": "workspace:*",
     "@claread/design-tokens": "workspace:*",
     "@floating-ui/react": "^0.27.0",
+    "@platejs/comment": "^53.0.0",
     "@platejs/floating": "^53.0.0",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.16",

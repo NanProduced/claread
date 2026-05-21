@@ -80,7 +80,7 @@ Ask Claread 改为围绕上述三个系统读取或写入，但不再通过“�
 - `apps/web/src/components/reader/AnnotationGutter.tsx`
   - 从“句侧资产 marker”改为“句侧 note/highlight marker”
 - `apps/web/src/components/reader/AnnotationSlip.tsx`
-  - 删除或替换为新的 note rail/card 体系
+  - 删除或替换为新的句侧 marker / anchored note card 体系
 - `apps/web/src/components/reader/AiWorkspacePanel.tsx`
   - Ask attachment、trace、action confirm 改为新模型
 - `apps/web/src/app/(app)/library/assets/page.tsx`
@@ -297,7 +297,7 @@ Ask Claread 改为围绕上述三个系统读取或写入，但不再通过“�
 
 ### GET `/reader-notes?record_id=...`
 
-返回当前文章全部 notes，供 Web note rail 与小程序查看态消费。
+返回当前文章全部 notes，供 Web 句侧 note card 与小程序查看态消费。
 
 ### PATCH `/reader-notes/{id}`
 
@@ -388,7 +388,8 @@ note 不做 overlap merge，只做 exact-hit reopen。
 - notes grouped by sentence
 - active focused note id
 - active editing note id
-- note rail expanded/collapsed state
+- current draft popover state
+- current anchored note card state
 
 ### Ask State
 
@@ -418,19 +419,19 @@ note 不做 overlap merge，只做 exact-hit reopen。
 - 选中后点高亮：走高亮 resolver
 - 选中后点笔记：
   - exact-hit note -> 打开现有 note 进入编辑
-  - no hit -> 在句侧 rail 打开新 note composer
+  - no hit -> 选区旁打开 draft popover；整句入口则在句侧 anchored card 打开新 note composer
 - toolbar 自身只负责触发，不负责承载 note 内容编辑
 
-## 3. Note Rail
+## 3. Sentence-Side Note Card
 
-Web 使用 Plate comment 风格句侧 rail，但不采用 Plate 默认 comment data model。
+Web 使用 Plate comment 风格句侧 marker + anchored note card，但不采用 Plate 默认 comment data model。
 
 ### Rendering Model
 
-- 每句一个 rail anchor slot
-- rail 中显示该句 `note list`
-- 支持折叠、展开、滚动
-- 跨句 note 挂第一句 slot
+- 每句一个 comment marker
+- 点击 marker 后显示 anchored note card
+- 同一句多条 note 在同一张 card 内切换/滚动
+- 跨句 note 挂第一句 marker
 
 ### Card Variants
 
@@ -476,7 +477,7 @@ Reader surface 需要同时叠加三类 mark：
 
 marker 点击行为：
 
-- 若句子有 note，则展开该句 rail
+- 若句子有 note，则打开该句 anchored note card
 - 不再跳到独立资产页
 
 ## Ask Claread Design
@@ -563,7 +564,7 @@ Ask Claread 从“资产中心上下文”改为“当前文章上下文 + 显�
 
 ## 3. Notes UI
 
-不实现 Web rail。
+不实现 Web 桌面端 anchored card 交互。
 
 改为：
 
@@ -604,7 +605,6 @@ Ask Claread 从“资产中心上下文”改为“当前文章上下文 + 显�
 - `docs/product/current-state.md`
 - `docs/product/ask-claread.md`
 - `docs/architecture/ask-claread.md`
-- `apps/web/docs/annotation-toolbar-text-range-plan.md`
 - `apps/web/docs/reader-ia.md`
 
 ## Database / Migration Strategy
@@ -650,7 +650,7 @@ Ask Claread 从“资产中心上下文”改为“当前文章上下文 + 显�
 ## Web
 
 - toolbar action state
-- note rail grouping / sorting / collapse
+- note marker grouping / anchored card paging
 - single focused note projection
 - current selection exact-hit note editing
 - Ask attachment / action confirm under new model

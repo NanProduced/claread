@@ -23,6 +23,7 @@ import type {
   ReaderSentenceTextNode,
 } from "@/lib/reader-plate";
 import type { WebAnnotationVm } from "@/types/api/annotations";
+import type { WebReaderNoteVm } from "@/types/api/reader-notes";
 import { Editor, EditorContainer } from "../../ui/editor";
 import { ReaderMarkLeaf } from "./ReaderMarkLeaf";
 import { ReaderAnalysisElement } from "./nodes/ReaderAnalysisElement";
@@ -53,11 +54,16 @@ export interface PlateReaderSurfaceProps {
   activeSentenceId?: string | null;
   jumpTarget?: ReaderJumpTarget | null;
   focusTarget?: ReaderJumpTarget | null;
+  hoveredAnnotationTargetKey?: string | null;
   assetProjection?: ReaderAssetProjection | null;
+  readerNotesBySentence?: Map<string, WebReaderNoteVm[]>;
+  activeReaderNoteId?: string | null;
   activeAnalysisEntryId?: string | null;
   expandedAnalysisEntryId?: string | null;
   expandedAnalysisEntryIds?: string[];
   onSentenceActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
+  onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
+  onOpenSentenceNotes?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onAnalysisFocusChange?: (entryId: string, focused: boolean) => void;
   onAnalysisToggle?: (entryId: string) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm) => void;
@@ -77,6 +83,43 @@ export interface PlateReaderSurfaceProps {
   onDeleteAnalysisSupplement?: (supplementId: string) => void;
 }
 
+function focusRangesBySentence(
+  target: ReaderJumpTarget | null,
+  sentenceTextBySentence: Map<string, string>,
+): Map<string, ReaderJumpRangeSegment[]> {
+  const map = new Map<string, ReaderJumpRangeSegment[]>();
+  if (!target) {
+    return map;
+  }
+
+  if (target.rangeSegments && target.rangeSegments.length > 0) {
+    target.rangeSegments.forEach((segment) => {
+      const current = map.get(segment.sentenceId) ?? [];
+      map.set(segment.sentenceId, [...current, segment]);
+    });
+    return map;
+  }
+
+  target.sentenceIds.forEach((sentenceId) => {
+    const sentenceText = sentenceTextBySentence.get(sentenceId);
+    if (!sentenceText) {
+      return;
+    }
+    map.set(sentenceId, [
+      {
+        sentenceId,
+        paragraphId: target.paragraphIds?.[0] ?? null,
+        selectedText: sentenceText,
+        startOffset: 0,
+        endOffset: sentenceText.length,
+        textHash: null,
+      },
+    ]);
+  });
+
+  return map;
+}
+
 export function PlateReaderSurface({
   activeSentenceId = null,
   activeAnalysisEntryId = null,
@@ -92,9 +135,13 @@ export function PlateReaderSurface({
   expandedAnalysisEntryIds = [],
   jumpTarget = null,
   focusTarget = null,
+  hoveredAnnotationTargetKey = null,
+  readerNotesBySentence = new Map<string, WebReaderNoteVm[]>(),
+  activeReaderNoteId = null,
   onAnalysisFocusChange,
   onAnalysisToggle,
   onAnnotationJump,
+  onOpenSentenceNotes,
   onAskAnalysis,
   onAskContentSummary,
   onAskTranslation,
@@ -102,6 +149,7 @@ export function PlateReaderSurface({
   onInspectIntent,
   onLookupIntent,
   onSentenceActivate,
+  onHoverAnnotationTargetKeyChange,
   readingClassName,
   showTranslation,
   themeClassName,
@@ -122,24 +170,6 @@ export function PlateReaderSurface({
     if (expandedAnalysisEntryIds) expandedAnalysisEntryIds.forEach(id => ids.add(id));
     return ids;
   }, [expandedAnalysisEntryId, expandedAnalysisEntryIds]);
-
-  const routeFocusSentenceIds = useMemo(
-    () => new Set([...(jumpTarget?.sentenceIds ?? []), ...(focusTarget?.sentenceIds ?? [])]),
-    [focusTarget, jumpTarget],
-  );
-
-  const routeFocusRangesBySentence = useMemo(() => {
-    const map = new Map<string, ReaderJumpRangeSegment[]>();
-    focusTarget?.rangeSegments?.forEach((segment) => {
-      const current = map.get(segment.sentenceId) ?? [];
-      map.set(segment.sentenceId, [...current, segment]);
-    });
-    jumpTarget?.rangeSegments?.forEach((segment) => {
-      const current = map.get(segment.sentenceId) ?? [];
-      map.set(segment.sentenceId, [...current, segment]);
-    });
-    return map;
-  }, [focusTarget, jumpTarget]);
 
   const sentenceAssetsBySentence = useMemo(
     () => assetProjection?.sentenceAssetProjectionBySentence ?? new Map<string, ReaderSentenceAssetProjection>(),
@@ -185,6 +215,21 @@ export function PlateReaderSurface({
     });
     return map;
   }, [paragraphNodes]);
+
+  const routeFocusSentenceIds = useMemo(
+    () => new Set(jumpTarget?.sentenceIds ?? []),
+    [jumpTarget],
+  );
+
+  const jumpFocusRangesBySentence = useMemo(
+    () => focusRangesBySentence(jumpTarget, sentenceTextBySentence),
+    [jumpTarget, sentenceTextBySentence],
+  );
+
+  const noteFocusRangesBySentence = useMemo(
+    () => focusRangesBySentence(focusTarget, sentenceTextBySentence),
+    [focusTarget, sentenceTextBySentence],
+  );
 
   const activeSentenceAnalysisSegmentsBySentence = useMemo(() => {
     const map = new Map<string, SentenceAnalysisSegment[]>();
@@ -254,6 +299,9 @@ export function PlateReaderSurface({
             />
           );
         case "reader_sentence":
+          const sentenceNotes = readerNotesBySentence.get(element.sentenceId) ?? [];
+          const activeSentenceNote =
+            sentenceNotes.find((note) => note.id === activeReaderNoteId) ?? null;
           return (
             <ReaderSentenceElement
               props={props}
@@ -266,9 +314,14 @@ export function PlateReaderSurface({
               )}
               annotationVisibilityGroups={annotationVisibilityGroups}
               assetProjection={sentenceAssetsBySentence.get(element.sentenceId) ?? null}
+              hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+              noteCount={sentenceNotes.length}
+              noteActive={Boolean(activeSentenceNote)}
               routeFocused={Boolean(routeFocusSentenceIds?.has(element.sentenceId))}
               onAnnotationJump={onAnnotationJump}
               onActivate={onSentenceActivate}
+              onOpenNotes={onOpenSentenceNotes}
+              onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
             />
           );
         case "reader_sentence_text":
@@ -336,10 +389,13 @@ export function PlateReaderSurface({
       paragraphIndexById,
       paragraphNodes.length,
       readingClassName,
+      readerNotesBySentence,
       routeFocusSentenceIds,
       sourceContextBySentence,
       sentenceAssetsBySentence,
       showTranslation,
+      activeReaderNoteId,
+      onOpenSentenceNotes,
     ],
   );
 
@@ -354,7 +410,10 @@ export function PlateReaderSurface({
         onLookupIntent={onLookupIntent}
         props={props}
         analysisSegmentsBySentence={activeSentenceAnalysisSegmentsBySentence}
-        routeFocusRangesBySentence={routeFocusRangesBySentence}
+        jumpFocusRangesBySentence={jumpFocusRangesBySentence}
+        noteFocusRangesBySentence={noteFocusRangesBySentence}
+        hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+        onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
         activeAnalysisEntryId={activeAnalysisEntryId}
         sentenceTextBySentence={sentenceTextBySentence}
         sourceContextBySentence={sourceContextBySentence}
@@ -367,7 +426,10 @@ export function PlateReaderSurface({
       annotationVisibilityGroups,
       onInspectIntent,
       onLookupIntent,
-      routeFocusRangesBySentence,
+      jumpFocusRangesBySentence,
+      hoveredAnnotationTargetKey,
+      noteFocusRangesBySentence,
+      onHoverAnnotationTargetKeyChange,
       sentenceTextBySentence,
       sourceContextBySentence,
     ],

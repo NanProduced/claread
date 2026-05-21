@@ -5,12 +5,16 @@ import type { WebAnnotationVm } from "@/types/api/annotations";
 export interface AnnotationGutterProps {
   annotations: WebAnnotationVm[];
   visible?: boolean;
+  hoveredTargetKey?: string | null;
+  onHoverTargetKeyChange?: (targetKey: string | null) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm) => void;
 }
 
 export function AnnotationGutter({
   annotations,
   visible = true,
+  hoveredTargetKey = null,
+  onHoverTargetKeyChange,
   onAnnotationJump,
 }: AnnotationGutterProps) {
   if (!visible) {
@@ -29,7 +33,13 @@ export function AnnotationGutter({
     >
       <button
         type="button"
-        className="reader-annotation-gutter-marker reader-annotation-gutter-marker--highlight relative text-structure-green drop-shadow-sm opacity-80"
+        className={`reader-annotation-gutter-marker reader-annotation-gutter-marker--highlight relative text-structure-green drop-shadow-sm opacity-80 ${
+          hoveredTargetKey === highlightAnnotation.targetKey ? "reader-annotation-gutter-marker--active" : ""
+        }`}
+        onMouseEnter={() => onHoverTargetKeyChange?.(highlightAnnotation.targetKey)}
+        onMouseLeave={() => onHoverTargetKeyChange?.(null)}
+        onFocus={() => onHoverTargetKeyChange?.(highlightAnnotation.targetKey)}
+        onBlur={() => onHoverTargetKeyChange?.(null)}
         onClick={(event) => {
           event.stopPropagation();
           onAnnotationJump?.(highlightAnnotation);

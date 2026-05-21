@@ -38,11 +38,11 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 - Reader inline mark 已有基础词典浮层，调用同源 `/api/web/dict/lookup`，不让页面直连 FastAPI。
 - `/vocabulary` 已通过 Web BFF 接入 FastAPI `GET /vocabulary`，匿名、不可用登录态和上游不可用时显示明确空态，不再展示 mock 生词。
 - `/review` 已通过 Web BFF 接入 FastAPI `GET /vocabulary/review/due` 和 `POST /vocabulary/{id}/review`，支持真实待复习队列和复习结果提交。
-- Reader 已接入文章收藏、生词写入、句子级高亮/笔记，以及单句内 `text_range`、跨句/跨段 `multi_text` 的高亮/笔记/收藏创建链路；`/library/assets` 也已作为“摘录与批注”页实现按文章聚合的索引面。**但这条“用户学习资产”产品线现已进入重审**：文本收藏、`multi_text` 用户资产和 `/library/assets` 的长期定位都不再视为已拍板方向，后续在产品结论明确前不继续扩展。
+- Reader 已接入文章收藏、生词写入、句子级高亮（`user_annotations`，`anchor_type` 支持 `sentence / text_range / multi_text`），以及笔记（`reader_notes`，`quote_mode` 支持 `sentence / text_range / multi_text`）；Library 是阅读记录页面，不是”学习资产中心”。
 - Reader UI/UX 第一轮已废弃右侧轻旁注方向；当前在此基础上进一步从固定三栏改为 Canvas Workspace：中心原文画布是核心，外层内容容器在宽屏放宽到约 96ch，正文文本列继续保持 65-75ch；词典详情进入画布左侧工具层，句子操作和阅读设置使用短时浮层，AI chatbox 进入画布右侧工具层。
 - Reader 词典交互当前采用三层模型：正文附近可关闭的轻释义小卡、画布左侧完整词典详情卡片、独立的本次查词轨迹 chips。左侧词典支持手动输入查词；无正文上下文的手动查词只展示词条，不直接加入生词本。
 - Reader 词典 AI 交互当前遵循“词典为主、AI 为辅”：正文点词后的 canonical entry 可按需展开 `AI 语境解读`；canonical `not_found` 可按需触发 AI 未验证词条或未识别结果；manual search 和 disambiguation 不直接显示 AI 入口。
-- SelectionToolbar 已落地第一版：`Ask Claread` 入口、3 色用户高亮、轻量笔记、收藏、查词、反馈占位、更多占位；普通正文不再逐词拆分为可点击节点，避免破坏浏览器原生选区。当前下一条 Reader AI 主线是把 `Ask Claread` 做成解析页内 grounded chatbox，而不是先单独产品化“用户资产上下文层”或 AI 总结用户历史数据。
+- SelectionToolbar 已落地第一版：`Ask Claread` 入口、3 色用户高亮、笔记、查词、扩展到整句、取消标注；普通正文不再逐词拆分为可点击节点，避免破坏浏览器原生选区。收藏是文章级按钮（Reader 顶部 FavoriteButton），不在 SelectionToolbar 内。
 - `Ask Claread` 的当前产品与交互边界见 `docs/product/ask-claread.md`。Web UI 对接将采用“Prompt Kit 基础 primitives + Claread 自研 Reader-specific 组件”的方式推进：先初始化 `components.json`，再接 `ChatContainer` / `Message` / `PromptInput` / `Markdown` / `Tool`，自研 context chips、article citation、confirm card 和 thread header。
 - 文本选区数据契约已进入稳定 v1：Web 和小程序通过 `@claread/contracts` 共享 anchor/target/color/offset/hash 常量；后端按 UTF-16 offset、`fnv1a32-utf16` hash、multi_text segments 和 render scene sentence 切片校验局部/多段选区。
 - Plate readOnly runtime 已经接入并成为 Reader 主运行时：当前主链路是 `renderSceneToPlateDocument -> PlateReaderSurface`，配套 `reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已落地。ReaderWorkbench 当前仍是 orchestration hub，但旧的 `ReaderCanvas`、`ReaderSentenceRow`、`reader-selection` 路径已经退役；后续 Reader 改动优先围绕 `PlateReaderSurface`、bridges、`ReaderContextPanel`、`SelectionToolbar`、`AnnotationGutter` / `AnnotationSlip` 收口。
@@ -83,10 +83,10 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 | 历史记录 | `/library` | `GET /records` | 列表、进入详情 |
 | 词典查词 | Reader popover | `GET /dict` / `GET /dict/entry` | 点击词或标注查词 |
 | 登录 / 配额 | `/login`, `/settings` | Next.js BFF + session / quota APIs | 手机号短信登录为目标；开发期可用受控调试态 |
-| 收藏 | Reader / history | favorites APIs | 文章收藏稳定；句子/局部 `text_range` / 跨句 `multi_text` 收藏是现有实现，但已进入产品重审，不再继续扩展 |
+| 收藏 | Reader / history | favorites APIs | 文章级收藏（`target_type='analysis_record'`）；句子级和局部 text_range 收藏已删除 |
 | 生词本 | `/vocabulary` | vocabulary APIs | 已接真实列表；Reader 可写入 |
 | 生词复习 | `/review` | review APIs | 已接真实 due queue 和提交；不放一级导航，从 `/vocabulary` 进入 |
-| 批注 | Reader | user-annotations APIs | 已接句子级、单句内 `text_range` 和跨句/跨段 `multi_text` 高亮/笔记；其中用户资产冲突模型与 `/library/assets` 定位待重审 |
+| 批注 | Reader | user-annotations / reader-notes APIs | 高亮已接（`anchor_type` sentence/text_range/multi_text）；笔记已移至独立 `reader_notes` API（`quote_mode` sentence/text_range/multi_text） |
 | 反馈 | Settings / Reader feedback | feedback APIs | Settings 应用反馈已接入；Reader 反馈待 UI/UX 评审 |
 
 验收标准：
@@ -107,12 +107,12 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 - 原文附近显示可关闭的轻释义预览；词汇详细释义进入画布左侧词典详情卡片；句子操作和阅读设置进入短时浮层；语法说明、句子拆解和用户笔记回到中心原文画布。
 - 翻译显示、注释密度、字体大小、阅读模式可切换。
 - Reader 偏好持久化。
-- SelectionToolbar 稳定化：当前已通过本地浏览器回归验证出现位置、无横向溢出和滚动跟随；提交到仓库的浏览器自动化仍待补齐创建/取消高亮、笔记和局部收藏。文本收藏是否继续保留仍待产品重审。
+- SelectionToolbar 稳定化：当前已通过本地浏览器回归验证出现位置、无横向溢出和滚动跟随；提交到仓库的浏览器自动化仍待补齐创建/取消高亮和笔记。
 
 暂不做：
 
 - 完整多窗口资料工作台。
-- 脱离 Reader 上下文的独立 AI 工作台；`Ask Claread` 应作为解析页右侧默认收起的 AI 工作区推进，围绕当前句子、选区、全文与按需获取的摘录资产对话，不承载批注列表。
+- 脱离 Reader 上下文的独立 AI 工作台；`Ask Claread` 应作为解析页右侧默认收起的 AI 工作区推进，围绕当前句子、选区、全文与按需获取的上下文资产对话，不承载批注列表。
 - 复杂协作文档。
 - 过重的 dashboard shell。
 
@@ -129,12 +129,12 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 
 优先级：
 
-1. **Reader 内 Ask Claread**：解析页右侧 grounded AI chatbox，围绕当前句子、选区、全文和按需获取的上下文进行多轮对话；不再预设“摘录资产中心”是它的长期前置条件。
+1. **Reader 内 Ask Claread**：解析页右侧 grounded AI chatbox，围绕当前句子、选区、全文和按需获取的上下文进行多轮对话；不以”学习资产中心”作为长期前置条件。
 2. **Grammar X-Ray**：后续 Web 高保真语法透视能力，需要结构化 xray payload 和专门渲染组件；当前 workflow schema 不支持，不能用 `grammar_note` 或 `sentence_analysis` 冒充。
 3. **Share page**：公开分享页，SSR metadata 和 OG image。
 4. **Artifact Studio**：长图、PDF、Markdown 导出预览。
-5. **高级批注**：复杂重叠规则、跨文章批注索引、筛选、批量导出；在“用户学习资产”产品重定义完成前暂停推进。
-6. **更丰富历史/资产管理**：暂停。`/library/assets` 与“用户学习资产”定位待重新定义，不作为当前阶段主线。
+5. **高级批注**：复杂重叠规则、跨文章批注索引、筛选、批量导出；在当前 Reader 标注 UI/UX 收口完成前暂停推进。
+6. **更丰富历史/资产管理**：暂停。Library 定位待重新定义，不作为当前阶段主线。
 
 这些能力可以逐步加入，不阻塞首期 Web 功能页。
 

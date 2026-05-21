@@ -80,7 +80,7 @@ Reader 当前稳定基线已经进入：
 - Web Reader 主画布当前已运行在 `platejs/react` readOnly runtime 上，而不是 `PlateStatic`。
 - `apps/web/src/lib/reader-plate/` 已形成 projection + bridges 结构，当前至少包含 `selection / assets / dictionary / jump / ask` 五组 bridge。
 - 浏览器侧的 selection、Ask attachment、词典 hit-test 和用户资产回源，仍需尊重现有 `target_key / UTF-16 offset / text_hash / segments` 合同。
-- `text_range`、`sentence_id`、`paragraph_id` 和 selected text 继续作为用户批注与收藏的共享锚点基础；但文本收藏和 `multi_text` 用户资产的长期产品方向当前已进入重审。
+- `text_range`、`sentence_id`、`paragraph_id` 和 selected text 继续作为用户高亮与用户笔记的共享锚点基础；文本收藏已删除，`multi_text` 继续作为高亮/笔记共享锚点能力存在。
 - Reader Floating Layer 继续封装 Floating UI，定位选区工具栏、词典浮层、hover card。
 - Radix Dialog/Popover/Tooltip 继续处理可访问交互。
 

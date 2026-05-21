@@ -36,14 +36,14 @@ Editorial / annotation-workbench
 ### Typography
 
 - English reading body: existing Reader serif baseline
-- Chinese UI / note rail body: existing product Chinese text stack
+- Chinese UI / sentence-side note card body: existing product Chinese text stack
 - No new decorative font family introduced in this phase
 
 ### Layout Strategy
 
 - Reader 正文继续作为主画布
-- Web 笔记使用句侧可折叠 comment rail
-- 小程序不复制 Web rail，而使用句子展开层 / bottom sheet 查看笔记
+- Web 笔记使用句侧 comment marker + anchored note card
+- 小程序不复制 Web anchored card，而使用句子展开层 / bottom sheet 查看笔记
 - 不再使用独立“学习资产页”承接正文痕迹
 
 ## Requirements
@@ -116,12 +116,12 @@ Editorial / annotation-workbench
 
 #### Acceptance Criteria
 
-1. While the Web Reader displays notes, when a sentence has notes, the Claread system shall organize them as a note list anchored to that sentence’s side rail.
-2. While a note references a whole sentence, when the note is shown in the note rail, the Claread system shall display the note without a visible quote preview by default.
-3. While a note references a single-sentence partial quote, when the note is shown in the note rail, the Claread system shall display the quoted text and the note content together.
-4. While a note references a multi-sentence quote, when the note is shown in the note rail, the Claread system shall display a compressed quote preview and the note content together.
+1. While the Web Reader displays notes, when a sentence has notes, the Claread system shall expose a sentence-side comment marker that opens an anchored note card for that sentence.
+2. While a note references a whole sentence, when the note is shown in the anchored note card, the Claread system shall display the note without a visible quote preview by default.
+3. While a note references a single-sentence partial quote, when the note is shown in the anchored note card, the Claread system shall display the quoted text and the note content together.
+4. While a note references a multi-sentence quote, when the note is shown in the anchored note card, the Claread system shall display a compressed quote preview and the note content together.
 5. While a multi-sentence note is organized structurally, when the note is persisted, the Claread system shall anchor the note list position to the first quoted sentence without changing the full quote semantics.
-6. While a sentence contains multiple notes, when the note rail is shown, the Claread system shall support folding, expansion, and scrolling so that note density does not block the reading surface.
+6. While a sentence contains multiple notes, when the anchored note card is shown, the Claread system shall support switching or scrolling within that card so that note density does not block the reading surface.
 7. While notes are ordered in a sentence note list, when the list is rendered, the Claread system shall sort by quote position in the text before using creation time as a fallback.
 8. While a whole-sentence note identity exists for a sentence, when the user targets that same whole sentence again, the Claread system shall treat it as the same note identity rather than creating a second whole-sentence note for that sentence.
 9. While a text-range or multi-range note identity exists, when the user targets the exact same quote again, the Claread system shall treat it as the same note identity rather than creating a duplicate note.
@@ -212,10 +212,10 @@ Editorial / annotation-workbench
 
 #### Acceptance Criteria
 
-1. While the Web Reader renders note-related UI, when note cards are shown, the Claread system shall present them in a sentence-side comment-style note rail adapted from the Plate-style comment pattern.
+1. While the Web Reader renders note-related UI, when note cards are shown, the Claread system shall present them as sentence-side comment markers with anchored note cards adapted from the Plate-style comment pattern.
 2. While the Web Reader renders selection actions, when the toolbar is shown, the Claread system shall update toolbar labels, button states, and note/highlight affordances to match the new split model.
 3. While the Web Reader renders sentence action panels, note cards, or marker UI, when the refactor is complete, the Claread system shall remove UI semantics that imply text favorite or “user asset center” behavior.
-4. While a note is focused or edited in Web Reader, when the UI updates, the Claread system shall synchronize note rail state, quote focus projection, and Ask entry affordances with the new note identity rules.
+4. While a note is focused or edited in Web Reader, when the UI updates, the Claread system shall synchronize sentence-side note card state, quote focus projection, and Ask entry affordances with the new note identity rules.
 
 ## Confirmed Scope Decisions
 

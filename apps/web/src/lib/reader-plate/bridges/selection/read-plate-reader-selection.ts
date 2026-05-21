@@ -44,6 +44,14 @@ function buildSelectionSegment(
   };
 }
 
+function selectedTextFromSegments(segments: ReaderSelectionSegment[]) {
+  return segments
+    .map((segment) => segment.selectedText.trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
 export function readPlateReaderSelection(
   articleElement: HTMLElement | null,
   sentenceById: Map<string, SentenceModel>,
@@ -177,7 +185,7 @@ export function readPlateReaderSelection(
     return null;
   }
 
-  const selectedText = selection.toString().trim();
+  const selectedText = selectedTextFromSegments(segments);
   if (!selectedText) {
     return null;
   }

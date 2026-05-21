@@ -11,7 +11,7 @@
 
 - 原文画布、句子、段落、译文。
 - 机器标注：`vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`term_note`、`logic_note`。
-- 用户批注：句子级 highlight / note、单句内 `text_range`，以及当前代码仍支持的跨句/跨段 `multi_text` highlight / note / favorite；但后两者的长期产品方向已进入重审。
+- 用户批注：高亮（`user_annotations`，`anchor_type` 支持 `sentence / text_range / multi_text`）；笔记已移至独立 `reader_notes` API（`quote_mode` 支持 `sentence / text_range / multi_text`）；收藏只有文章级（`target_type='analysis_record'`），句子级和局部 text_range/multi_text 收藏已删除。
 - 画布左侧词典详情层、浮动上下文/阅读设置面板、右侧 AI 工作区 shell。
 - `grammar_note` / `sentence_analysis` 句后卡。
 
@@ -189,7 +189,7 @@
 | sentence highlight | soft sentence frame / wash behind the sentence text | stronger edge marker + subtle sentence background |
 | text range highlight | inline paper marker on selected text | toolbar反显颜色，可取消或更新 |
 | note | gutter marker + sentence-side paper slip with scope label (`整句` / `局部选区` / `跨句选区`) | slip lift + current sentence dot |
-| favorite | small bookmark marker near sentence or header | warm amber icon fill; text-selection favorite 的长期去留待重审 |
+| favorite | small bookmark marker near sentence or header | warm amber icon fill |
 
 Rules:
 
@@ -199,7 +199,7 @@ Rules:
 - The lightweight follow-card near the original text should contain only fast context: surface form, type label, one short Chinese meaning, and optional reason. Full meanings, examples, phrases, disambiguation, and vocabulary-save controls belong in `DictionaryPanel`.
 - When a sentence has both machine marks and user highlight, machine highlights remain distinguishable above the softer sentence-level user highlighter.
 - 当前 personal family 的对象语法和冲突规则尚未收口；`reader-user-range--stacked` 仍是实现兜底，而不是稳定设计语言。
-- `/library/assets` 与“用户学习资产”模块的产品定位已进入重审，不应再被当成 Reader 组件规范的默认延伸面。
+- Library 阅读记录页的定位已进入重审，不应再作为 Reader 组件规范的默认延伸面。
 - Do not use color alone: include marker shape, icon, label, or placement.
 
 ## 7. Interaction Rules
@@ -218,7 +218,7 @@ Rules:
 1. Click or keyboard-focus sentence.
 2. Sentence gets subtle active background and side marker.
 3. `ReaderContextPanel` switches to sentence action.
-4. Saving highlight/note writes sentence-level `user_annotations`.
+4. Saving highlight writes sentence-level `user_annotations`.
 5. Saved note appears back in `AnnotationSlip`.
 
 ### Reading Settings
@@ -240,7 +240,7 @@ Rules:
 It must not force ordinary words into separate interactive DOM nodes. Plain text should remain selectable as continuous text; click-to-lookup can be implemented from sentence-level hit testing.
 If a manual DOM selection exactly covers the full sentence text, the client should normalize it to a sentence anchor instead of persisting a fake full-length `text_range`.
 If a manual DOM selection crosses sentence or paragraph boundaries, the client should preserve it as `multi_text` and expose the mode explicitly in the toolbar instead of silently collapsing it into a sentence or partial `text_range`.
-When `/library/assets` or miniprogram excerpts jump into a saved asset, Reader should use a short-lived route focus layer for favorites, annotations, and mixed assets across sentence / `text_range` / `multi_text` anchors instead of reusing the live selection state.
+When Library or miniprogram excerpts jump into a saved asset, Reader should use a short-lived route focus layer for favorites and annotations across sentence / `text_range` / `multi_text` anchors instead of reusing the live selection state.
 
 ## 8. File Ownership
 
@@ -287,7 +287,7 @@ Move later:
 - Zustand store for Reader UI state
 - persisted Reader preferences
 - `DictionaryPanel`, `ReaderLookupPreview`, entry card rendering, and toolbar mutation wiring once behavior stabilizes
-- Reader 2.0 的 user asset 冲突模型与文本收藏去留；当前代码实现不等同于最终产品规则
+- Reader 2.0 的 Web 笔记交互与 Plate-style comment UI 仍在收口；当前代码实现仍不等同于最终产品规则
 
 ## 9. Component Preview Policy
 

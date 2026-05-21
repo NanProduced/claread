@@ -77,7 +77,7 @@ Ask Claread 是 Reader 内、围绕当前文章工作的阅读助手。它的当
 - `has_article_overview`
 - `has_sentence_entries`
 - `has_annotations`
-- `has_user_assets`
+- `has_reader_notes`
 
 ## 当前交互模型
 
@@ -134,7 +134,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - hybrid retrieval
 - 外部 sentence window
 - 外部 dictionary path
-- excerpt / favorite / annotation 的自由跨文章检索
+- 跨文章用户资产检索（高亮/笔记/收藏）
 
 ## 当前回答输出
 
@@ -163,9 +163,8 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 
 当前支持的写动作：
 
-- 保存为笔记
-- 保存为高亮/摘录
-- 收藏当前锚点
+- 保存为笔记（写入 `reader_notes`）
+- 保存为高亮（写入 `user_annotations`，类型为 `highlight`）
 - 生成 AI supplement `grammar_note`
 
 明确约束：
@@ -207,17 +206,17 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - 多会话列表
 - 独立 AI 工作台
 - 对话级长期人格记忆
-- 自由的“用户学习资产”历史查询能力
+- 跨文章用户资产聚合查询
+- “用户学习资产”作为独立产品面
 
-## 关于“用户学习资产”的当前事实
+## 当前跨文章能力边界
 
-当前 Ask 的跨文章能力以：
+Ask 的跨文章能力限于受控扩展，不是自由历史检索。当前支持：
 
-- 显式 `record_ref`
-- 已知标题引用
-- external `analysis_ref`
-- external `supplement_ref`
+- 显式 `record_ref`（用户主动带入其他文章）
+- 已知标题引用解析（record-level HITP）
+- external `analysis_ref`（用户主动带入分析结果）
+- external `supplement_ref`（用户主动带入 AI 补充内容）
 
-为主。
-
-虽然系统内部仍保留部分用户资产相关能力接口，但它们当前不是稳定主路径，也不应被视为当前产品承诺。后续若产品调整决定缩减或移除“用户学习资产”范围，应以本文和当前架构文档为基线评估影响。
+不承诺：
+- 跨文章的用户高亮/笔记/收藏检索

@@ -22,8 +22,8 @@
 - 原文与译文已经收口为稳定双层阅读面：英文正文是主层，译文是第二阅读层，不再只是普通 muted 段落。
 - `vocab / phrase / context` 三类 lexical marks 已改成完整覆盖的色块高亮家族；`grammar_note / sentence_analysis` 则回到句下解释层，不再沿用旧的右侧集中说明心智。
 - `sentence_analysis` 已支持 chunk 映射回原文，Reader 主画布已经具备“原文内结构锚点 + 句下说明卡”的组合，而不只是展开一张 analysis card。
-- 用户高亮、笔记、收藏的技术链路都已存在，但产品冲突模型尚未闭环；当前重叠资产仍依赖 `stacked` 渲染兜底，不应被当成成熟能力继续扩展。
-- `/library/assets` 当前只是按文章聚合的“摘录与批注”实验面，不足以支撑“学习资产中心”的长期定位；在产品重审完成前，它不再作为 Reader IA 的稳定延伸方向。
+- 用户高亮与用户笔记已经拆到 `user_annotations` 和 `reader_notes` 两套链路；文本收藏已删除。当前未闭环的重点不再是数据模型，而是 Web 端笔记 UI/UX 仍在向 Plate-style comment 交互继续收口。
+- Library 页面已重新定位为”阅读记录”，承载阅读历史、收藏和批注的入口，不再是”学习资产中心”；`/library/assets` 路由不存在。
 
 ## 页面结构
 
@@ -79,7 +79,7 @@ Reader 桌面端采用“原文画布 + 边缘工具层”的 Canvas Workspace�
 | 点击 inline_mark | 点击高亮词/短语 | 原文附近出现轻释义浮层，画布左侧词典层实时显示详细释义 |
 | 点击任意词 | 点击非标注英文词 | 原文附近出现轻释义浮层，画布左侧词典层同步显示完整词条 |
 | 关闭轻释义 | 再次点击同词、关闭按钮、点击正文或 `Esc` | 只收起原文附近小卡片；画布左侧词典层保留当前词条 |
-| 选区操作 | 选中单句内文本 | SelectionToolbar 当前实现仍显示高亮 / 笔记 / 收藏 / 查词 / 选择当前句 / Ask Claread 占位；其中“文本收藏”和多句用户资产已进入产品重审 |
+| 选区操作 | 选中单句内文本 | SelectionToolbar 当前主动作是高亮 / 笔记 / 查词 / 选择当前句 / Ask Claread；“文本收藏”已删除，用户态文案不再暴露内部锚点模式 |
 | 选句操作 | toolbar 中选择当前句，或明确点击句子解析入口 | 进入句子级操作和解析上下文；不再点击空白处隐式弹笔记面板 |
 | 语法说明 | 点击 grammar_note 锚点 | 在当前句子下方展开 label + note_zh 卡 |
 | 句子拆解 | 点击 sentence_analysis 入口 | 在当前句子下方展开 analysis_zh 和 chunks 列表 |
@@ -92,7 +92,7 @@ Reader 桌面端采用“原文画布 + 边缘工具层”的 Canvas Workspace�
 | 翻译切换 | 快捷键 `T` 或阅读设置 | 逐句翻译显示/隐藏，正文版心不跳动 |
 | 句子聚焦 | 点击主区句子 | 句子轻高亮，浮动上下文面板显示句子操作 |
 | 查词历史 | 当前会话内多次查词 | 画布左侧词典层下方显示本次查词 chips，不进入长期资产 |
-| 写笔记 | SelectionToolbar 内轻量输入保存 | 正文选区或句子处显示 anchored note 痕迹；是否继续做跨页摘录汇总已进入产品重审 |
+| 写笔记 | SelectionToolbar 或句侧 note marker | 新建时走选区 draft popover；已有笔记通过句侧常显 marker 打开浮出式 note panel |
 | Ask Claread | 句子操作或右侧入口 | 右侧 AI 展开，并带入当前句子/选区上下文 |
 
 Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseline。当前 `grammar_note` 和 `sentence_analysis` 不应在 UI 中命名为 X-Ray，也不应被渲染成完整句法图。
@@ -228,7 +228,7 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 - `multi_text` 结构线索不要伪装成连续高亮，应按 parts 分段标记并用编号、颜色或 hover 联动表达同一条解释。
 - PDF / 外部网页批注如果后续进入 Web，需要单独设计 anchor resolver；不要直接复用文本 Reader 的 DOM offset 实现。
 
-当前代码层已落地句子、句内 `text_range` 和跨句/跨段 `multi_text` 的 DOM 锚点属性。`SelectionToolbar` 已开放 `anchor_type="text_range"` / `anchor_type="multi_text"` 的创建、反显和取消；局部选区通过 `start_offset`、`end_offset` 和 `text_hash` 锚定，多段选区通过 `segments[]` 锚定。**但这只是现有实现事实，不代表 `multi_text` 已被确认成长期用户学习资产模型。**
+当前代码层已落地句子、句内 `text_range` 和跨句/跨段 `multi_text` 的 DOM 锚点属性。`SelectionToolbar` 已开放 `anchor_type="text_range"` / `anchor_type="multi_text"` 的创建、反显和取消；局部选区通过 `start_offset`、`end_offset` 和 `text_hash` 锚定，多段选区通过 `segments[]` 锚定。`multi_text` 当前保留为高亮和笔记的共享锚点能力，但产品层仍以“正文主场、轻量 comment 交互”为先，不再围绕独立资产页组织。
 
 ### 数据模型
 
@@ -236,12 +236,12 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 
 | 字段 | 说明 | Web 增强 |
 |------|------|---------|
-| `annotation_type` | `highlight / note` | Web 完整支持 |
-| `anchor_type` | `sentence / paragraph / text_range / multi_text` | 当前实现支持句子级、单句内 `text_range` 和跨句/跨段 `multi_text`；长期产品方向以句子级与单句内 `text_range` 为主，`multi_text` 待重审 |
+| `annotation_type` | `highlight` | Web 完整支持；笔记功能已移至独立 `reader_notes` API |
+| `anchor_type` | `sentence / text_range / multi_text` | 当前实现支持句子级、单句内 `text_range` 和跨句/跨段 `multi_text`；长期产品方向以句子级与单句内 `text_range` 为主，`multi_text` 待重审 |
 | `selected_text` | 选中文本 | Web 用浏览器 Selection API 获取 |
 | `start_offset / end_offset` | 字符偏移 | Web v1 使用句子内 JavaScript UTF-16 offset |
 | `color` | 5 色高亮 | Web 完整支持 |
-| `note` | 笔记文本 | Web 支持富文本（后续） |
+| `note_text` | 笔记文本 | 由独立 `reader_notes` API 提供；当前是纯文本编辑，不支持原地修改 quote identity |
 
 ### 选区操作工具栏
 
@@ -256,9 +256,9 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 
 v1 操作流程：
 1. 用户选中单句内文本。
-2. SelectionToolbar 当前实现显示 `Ask Claread` 占位、3 色用户高亮、笔记、收藏、查词、反馈和更多；其中“文本收藏”和 `multi_text` 用户资产仍属待重审范围。
-3. 用户可保存局部高亮/笔记/收藏，也可以选择“当前句子”切换为句子级操作。
-4. 正文画布中的对应选区或句子显示高亮、书签或笔记痕迹，toolbar 负责短时编辑和状态反馈。
+2. SelectionToolbar 当前实现显示 `Ask Claread`、3 色用户高亮、笔记、查词、扩展到整句和更多；“文本收藏”已删除。
+3. 用户可保存局部高亮/笔记，也可以选择“当前句子”切换为句子级操作。
+4. 正文画布中的对应选区或句子显示高亮与笔记痕迹；新建笔记通过 draft popover，已有笔记通过句侧 marker 打开浮出式 note panel。
 5. 跨句选区、富文本笔记和跨文章批注索引后置。
 
 ### 批注展示
@@ -267,9 +267,7 @@ v1 操作流程：
 
 1. 局部 text range 高亮：直接覆盖在原文选区上，使用用户 marker 视觉。
 2. 句子高亮：直接覆盖在原文句子上。
-3. 用户笔记：以句后 note slip 或句子边缘标记呈现。
-4. 收藏：句子角标或边缘书签。
-5. Library / Excerpts 后续可提供跨文章批注索引，但不进入 Reader 默认右栏。
+3. 用户笔记：以句子边缘常显 marker + 浮出式 note panel 呈现。
 
 筛选维度：
 - 按颜色
@@ -281,16 +279,16 @@ v1 操作流程：
 ### 与 render_scene inline_marks 的关系
 
 - `inline_marks` 是后端分析产出的标注（vocab_highlight / phrase_gloss / context_gloss / grammar_note）
-- `user_annotations` 是用户手动创建的批注（highlight / note）
+- `user_annotations` 是用户手动创建的高亮批注（highlight）；笔记功能已移至独立 `reader_notes` API
 - 两者独立存在，UI 上可叠加显示
 - inline_marks 不可编辑，user_annotations 可编辑/删除
-- 从 `/library/assets` 或小程序摘录页带 `targetKey` 回到 Reader 时，favorites、annotations 和 mixed asset 共用同一套 route focus 语义：先滚到对应句子，再根据 sentence / `text_range` / `multi_text` 对目标资产做短时强调。该回跳链路作为实现事实继续保留，但不再等同于“学习资产中心”已经成立。
+- 从 Library 阅读记录页带 `targetKey` 回到 Reader 时，favorites 和 annotations 共用同一套 route focus 语义：先滚到对应句子，再根据 sentence / `text_range` / `multi_text` 对目标资产做短时强调。
 
 ## 历史回看设计
 
 ### 列表页
 
-Library 第一版保持安静的摘录资产索引，不做卡片墙或后台 dashboard。`/library/assets` 当前虽然实现为“摘录与批注”页：左侧是文章索引，右侧是当前文章下的摘录列表；但它的产品定位已进入重审，不应再默认承载“学习资产中心”的语义，`/vocabulary` 继续是独立词汇资产入口。
+Library 承载阅读历史列表，提供文章索引和阅读记录管理（继续阅读、删除）；`/vocabulary` 继续是独立词汇资产入口。
 
 ### 筛选维度
 

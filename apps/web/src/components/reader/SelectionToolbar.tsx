@@ -110,9 +110,9 @@ function selectionModeLabel(selectionMode: NonNullable<SelectionToolbarProps["se
     return "整句";
   }
   if (selectionMode === "multi_text") {
-    return "多句";
+    return "跨句";
   }
-  return "已选片段";
+  return "已选文本";
 }
 
 export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps>(function SelectionToolbar(
@@ -163,24 +163,6 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           {selectionModeLabel(selectionMode)}
         </span>
 
-        <ReaderToolbarActionButton
-          className="gap-2 px-3 font-medium text-foreground/78"
-          disabled={askDisabled}
-          aria-label={askComingSoon ? "Ask Claread，稍后开放" : "Ask Claread"}
-          title={askComingSoon ? "Ask Claread coming soon" : "Ask Claread"}
-          onClick={() => onAsk?.(selectedText)}
-        >
-          <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue/75" />
-          <span>Ask</span>
-          {askComingSoon ? (
-            <span className="rounded-full border border-border bg-background px-1.5 py-0.5 text-[0.625rem] font-semibold leading-none text-muted-foreground">
-              soon
-            </span>
-          ) : null}
-        </ReaderToolbarActionButton>
-
-        <ReaderToolbarSeparator aria-hidden="true" />
-
         <ReaderToolbarSplitAction
           active={hasHighlight}
           disabled={highlightDisabled}
@@ -228,6 +210,24 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           <NotebookPen aria-hidden="true" className="h-4 w-4" />
         </ReaderToolbarIconButton>
 
+        <ReaderToolbarSeparator aria-hidden="true" />
+
+        <ReaderToolbarActionButton
+          className="gap-2 px-3 font-medium text-foreground/78"
+          disabled={askDisabled}
+          aria-label={askComingSoon ? "Ask Claread，稍后开放" : "Ask Claread"}
+          title={askComingSoon ? "Ask Claread coming soon" : "Ask Claread"}
+          onClick={() => onAsk?.(selectedText)}
+        >
+          <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue/75" />
+          <span>Ask</span>
+          {askComingSoon ? (
+            <span className="rounded-full border border-border bg-background px-1.5 py-0.5 text-[0.625rem] font-semibold leading-none text-muted-foreground">
+              soon
+            </span>
+          ) : null}
+        </ReaderToolbarActionButton>
+
         <ReaderToolbarMenu>
           <ReaderToolbarMenuTrigger asChild disabled={moreDisabled}>
             <ReaderToolbarIconButton
@@ -242,7 +242,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
             <ReaderToolbarMenuSeparator />
             <ReaderToolbarMenuItem disabled={selectSentenceDisabled} onSelect={() => onSelectSentence?.(selectedText)}>
               <Quote aria-hidden="true" className="h-4 w-4" />
-              选择整句
+              扩展到整句
             </ReaderToolbarMenuItem>
             <ReaderToolbarMenuItem disabled={lookupDisabled} onSelect={() => onLookup?.(selectedText)}>
               <Search aria-hidden="true" className="h-4 w-4" />

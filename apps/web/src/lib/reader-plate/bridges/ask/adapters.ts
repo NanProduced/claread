@@ -391,7 +391,7 @@ export function askAttachmentFromReaderNote(
     jumpTarget: jumpToTargetKey(note.targetKey) ?? null,
     metadata: {
       pageIdentity,
-      sourceSurface: options.sourceSurface ?? "note_rail",
+      sourceSurface: options.sourceSurface ?? "note_card",
       entryAction: options.entryAction ?? "ask_about_this",
       sentenceId: note.sentenceId ?? note.anchorSentenceId,
       paragraphId: note.paragraphId ?? null,

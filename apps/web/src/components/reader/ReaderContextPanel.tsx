@@ -85,7 +85,7 @@ export function ReaderContextPanel({
             {scopeLabel(annotationScope, Boolean(activeSelectedText))}
           </h2>
           <p id={descriptionId} className="mt-1 text-xs leading-5 text-muted-foreground">
-            高亮与笔记分离。高亮直接作用于正文，笔记会进入右侧 note rail。
+            高亮直接作用于正文；笔记会挂在句侧，以 comment 卡片的方式查看和编辑。
           </p>
         </div>
         {onClose ? (

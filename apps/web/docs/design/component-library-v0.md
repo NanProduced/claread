@@ -10,7 +10,6 @@ Claread Web 组件库服务于登录后功能页和 Reader 工具层：
 - `/read`
 - `/reader/[recordId]`
 - `/library`
-- `/library/assets`
 - `/vocabulary`
 - `/review`
 - `/settings`

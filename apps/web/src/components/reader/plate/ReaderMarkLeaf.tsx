@@ -23,10 +23,13 @@ interface ReaderMarkLeafProps {
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
   analysisSegmentsBySentence?: Map<string, SentenceAnalysisSegment[]>;
   annotationRangesBySentence?: Map<string, ReaderAssetRange[]>;
-  routeFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
+  jumpFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
+  noteFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
+  hoveredAnnotationTargetKey?: string | null;
   activeAnalysisEntryId?: string | null;
   sentenceTextBySentence?: Map<string, string>;
   sourceContextBySentence?: Map<string, string | undefined>;
+  onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
   onLookupIntent?: (
     intent: ReaderLookupIntent,
     anchor: ReaderLookupPreviewAnchor | null,
@@ -43,13 +46,13 @@ function routeFocusSegmentsForLeaf(
   sentenceId: string | undefined,
   leafStartOffset: number | undefined,
   leafEndOffset: number | undefined,
-  routeFocusRangesBySentence: Map<string, ReaderJumpRangeSegment[]> | undefined,
+  focusRangesBySentence: Map<string, ReaderJumpRangeSegment[]> | undefined,
 ) {
-  if (!sentenceId || leafStartOffset === undefined || leafEndOffset === undefined || !routeFocusRangesBySentence) {
+  if (!sentenceId || leafStartOffset === undefined || leafEndOffset === undefined || !focusRangesBySentence) {
     return [];
   }
 
-  return (routeFocusRangesBySentence.get(sentenceId) ?? [])
+  return (focusRangesBySentence.get(sentenceId) ?? [])
     .map((segment) => ({
       startOffset: Math.max(leafStartOffset, segment.startOffset),
       endOffset: Math.min(leafEndOffset, segment.endOffset),
@@ -61,7 +64,8 @@ function routeFocusSegmentsForLeaf(
 function renderLeafContent(
   text: string,
   leafStartOffset: number | undefined,
-  focusedSegments: Array<{ startOffset: number; endOffset: number }>,
+  jumpFocusedSegments: Array<{ startOffset: number; endOffset: number }>,
+  noteFocusedSegments: Array<{ startOffset: number; endOffset: number }>,
   analysisSegments: Array<{
     startOffset: number;
     endOffset: number;
@@ -73,23 +77,26 @@ function renderLeafContent(
     endOffset: number;
     annotations: ReaderAssetRange[];
   }>,
+  hoveredAnnotationTargetKey: string | null,
+  onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void,
 ): ReactNode {
-  if (leafStartOffset === undefined || (focusedSegments.length === 0 && annotationSegments.length === 0)) {
-    if (analysisSegments.length === 0) {
-      return text;
-    }
-  }
-
   if (
     leafStartOffset === undefined ||
-    (focusedSegments.length === 0 && annotationSegments.length === 0 && analysisSegments.length === 0)
+    (jumpFocusedSegments.length === 0 &&
+      noteFocusedSegments.length === 0 &&
+      annotationSegments.length === 0 &&
+      analysisSegments.length === 0)
   ) {
     return text;
   }
 
   const leafEndOffset = leafStartOffset + text.length;
   const boundaries = new Set<number>([leafStartOffset, leafEndOffset]);
-  focusedSegments.forEach((segment) => {
+  jumpFocusedSegments.forEach((segment) => {
+    boundaries.add(segment.startOffset);
+    boundaries.add(segment.endOffset);
+  });
+  noteFocusedSegments.forEach((segment) => {
     boundaries.add(segment.startOffset);
     boundaries.add(segment.endOffset);
   });
@@ -112,7 +119,10 @@ function renderLeafContent(
     }
 
     const segmentText = text.slice(segmentStart - leafStartOffset, segmentEnd - leafStartOffset);
-    const overlappingFocus = focusedSegments.some(
+    const overlappingJumpFocus = jumpFocusedSegments.some(
+      (segment) => segment.startOffset < segmentEnd && segment.endOffset > segmentStart,
+    );
+    const overlappingNoteFocus = noteFocusedSegments.some(
       (segment) => segment.startOffset < segmentEnd && segment.endOffset > segmentStart,
     );
     const overlappingAnalysis = analysisSegments.find(
@@ -122,13 +132,23 @@ function renderLeafContent(
       segment.startOffset < segmentEnd && segment.endOffset > segmentStart ? segment.annotations : [],
     );
 
-    if (!overlappingFocus && overlappingAnnotations.length === 0 && !overlappingAnalysis) {
+    if (!overlappingJumpFocus && !overlappingNoteFocus && overlappingAnnotations.length === 0 && !overlappingAnalysis) {
       children.push(segmentText);
       continue;
     }
 
     const annotationClassName = classNameForRanges(overlappingAnnotations);
-    const className = [annotationClassName, overlappingFocus ? "reader-route-focus-range" : ""]
+    const annotationTargetKeys = Array.from(
+      new Set(overlappingAnnotations.map((annotation) => annotation.targetKey).filter(Boolean)),
+    );
+    const className = [
+      annotationClassName,
+      overlappingJumpFocus ? "reader-route-focus-range" : "",
+      overlappingNoteFocus ? "reader-note-focus-range" : "",
+      hoveredAnnotationTargetKey && annotationTargetKeys.includes(hoveredAnnotationTargetKey)
+        ? "reader-user-range--hovered-group"
+        : "",
+    ]
       .filter(Boolean)
       .join(" ");
 
@@ -168,6 +188,18 @@ function renderLeafContent(
             ? String(new Set(overlappingAnnotations.map((annotation) => `${annotation.assetKind}:${annotation.assetId}`)).size)
             : undefined
         }
+        data-reader-annotation-target-keys={annotationTargetKeys.length > 0 ? annotationTargetKeys.join(",") : undefined}
+        onMouseEnter={() => {
+          const targetKey = annotationTargetKeys[0] ?? null;
+          if (targetKey) {
+            onHoverAnnotationTargetKeyChange?.(targetKey);
+          }
+        }}
+        onMouseLeave={() => {
+          if (annotationTargetKeys.length > 0) {
+            onHoverAnnotationTargetKeyChange?.(null);
+          }
+        }}
       >
         {content}
       </span>,
@@ -261,10 +293,13 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   analysisSegmentsBySentence,
   annotationRangesBySentence,
   annotationVisibilityGroups,
+  hoveredAnnotationTargetKey = null,
+  jumpFocusRangesBySentence,
+  noteFocusRangesBySentence,
+  onHoverAnnotationTargetKeyChange,
   onInspectIntent,
   onLookupIntent,
   props,
-  routeFocusRangesBySentence,
   sentenceTextBySentence,
   sourceContextBySentence,
 }: ReaderMarkLeafProps) {
@@ -282,19 +317,34 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     readerTextEndOffset?: number;
     readerMarkVisualTone?: Parameters<typeof readerMarkClassName>[0];
   };
-  const focusedSegments = useMemo(
+  const jumpFocusedSegments = useMemo(
     () =>
       routeFocusSegmentsForLeaf(
         leaf.readerSentenceId,
         leaf.readerTextStartOffset,
         leaf.readerTextEndOffset,
-        routeFocusRangesBySentence,
+        jumpFocusRangesBySentence,
       ),
     [
+      jumpFocusRangesBySentence,
+      leaf.readerSentenceId,
+      leaf.readerTextEndOffset,
+      leaf.readerTextStartOffset,
+    ],
+  );
+  const noteFocusedSegments = useMemo(
+    () =>
+      routeFocusSegmentsForLeaf(
+        leaf.readerSentenceId,
+        leaf.readerTextStartOffset,
+        leaf.readerTextEndOffset,
+        noteFocusRangesBySentence,
+      ),
+    [
+      noteFocusRangesBySentence,
       leaf.readerSentenceId,
       leaf.readerTextStartOffset,
       leaf.readerTextEndOffset,
-      routeFocusRangesBySentence,
     ],
   );
   const annotationSegments = useMemo(
@@ -332,13 +382,29 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
       renderLeafContent(
         leaf.text,
         leaf.readerTextStartOffset,
-        focusedSegments,
+        jumpFocusedSegments,
+        noteFocusedSegments,
         analysisSegments,
         annotationSegments,
+        hoveredAnnotationTargetKey,
+        onHoverAnnotationTargetKeyChange,
       ),
-    [analysisSegments, annotationSegments, focusedSegments, leaf.text, leaf.readerTextStartOffset],
+    [
+      analysisSegments,
+      annotationSegments,
+      hoveredAnnotationTargetKey,
+      jumpFocusedSegments,
+      leaf.text,
+      leaf.readerTextStartOffset,
+      noteFocusedSegments,
+      onHoverAnnotationTargetKeyChange,
+    ],
   );
-  const hasDecoratedContent = focusedSegments.length > 0 || analysisSegments.length > 0 || annotationSegments.length > 0;
+  const hasDecoratedContent =
+    jumpFocusedSegments.length > 0 ||
+    noteFocusedSegments.length > 0 ||
+    analysisSegments.length > 0 ||
+    annotationSegments.length > 0;
   const visualTone = leaf.readerMarkVisualTone;
   if (!visualTone) {
     return <span {...props.attributes}>{hasDecoratedContent ? content : props.children}</span>;

@@ -33,6 +33,28 @@ function addToMapArray<T>(map: Map<string, T[]>, key: string | null | undefined,
 }
 
 function rangeFromAnnotation(annotation: WebAnnotationVm): ReaderAssetRange[] {
+  if (annotation.anchorType === "sentence") {
+    if (!annotation.sentenceId || !annotation.selectedText.trim()) {
+      return [];
+    }
+
+    return [
+      {
+        assetKind: "annotation",
+        assetId: annotation.id,
+        targetKey: annotation.targetKey,
+        paragraphId: annotation.paragraphId,
+        sentenceId: annotation.sentenceId,
+        selectedText: annotation.selectedText,
+        startOffset: 0,
+        endOffset: annotation.selectedText.length,
+        textHash: annotation.textHash,
+        color: annotation.color,
+        annotationType: annotation.type,
+      },
+    ];
+  }
+
   if (annotation.anchorType === "text_range") {
     if (
       !annotation.sentenceId ||

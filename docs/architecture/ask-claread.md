@@ -247,18 +247,41 @@ assistant message 当前只保留：
 - 多线程列表与复杂 source management
 - 独立 AI 工作台
 - 直接保存整条 assistant 回答为笔记
-- 把“用户学习资产自由检索”视为当前稳定主路径
+- 把用户高亮 / 用户笔记当作独立可检索资产中心
 
-## 后续评估点
+## 当前边界说明
 
-当前最需要为后续产品调整保留弹性的部分是“用户学习资产”。当前架构对它仍有耦合，但稳定主路径已经收窄为：
+Reader 标注体系完成重构后，Ask Claread 已不再依赖“用户学习资产”聚合层。当前稳定主路径收口为：
 
 - explicit record reference
 - known title reference
+- explicit annotation reference（通过 `annotation_ref.anchor_payload.anchor_type` 区分高亮 `user_annotation` 或笔记 `reader_note`）
 - external stable analysis / supplement assets
 
-如果后续决定缩减或移除“用户学习资产”范围，应优先评估：
+后续若继续扩展跨文章能力，应优先评估：
 
 - planner 的 history expansion 条件
 - resolver 的 future structured lookup 扩展点
-- agent tools 中仍保留的 user asset 查询接口
+- agent tools 中是否需要新增受控的跨文章引用入口
+
+### 当前 Attachment 类型与 Anchor 类型
+
+`ReaderAskAttachmentKind` 枚举当前值：
+
+- `text_selection` — 用户选区
+- `annotation_ref` — 引用用户批注（高亮）
+- `analysis_ref` — 引用分析结果
+- `supplement_ref` — 引用 AI 补充
+- `record_ref` — 引用文章
+
+`ReaderAskAnchorType` 枚举当前值：
+
+- `sentence`
+- `text_range`
+- `multi_text`
+- `sentence_entry`
+- `user_annotation` — 锚点类型：用户高亮
+- `reader_note` — 锚点类型：用户笔记
+- `dictionary_entry`
+
+`annotation_ref` 通过其 `anchor_payload.anchor_type` 区分高亮（`user_annotation`）和笔记（`reader_note`）。
