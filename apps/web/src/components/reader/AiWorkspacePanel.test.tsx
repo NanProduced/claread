@@ -152,6 +152,17 @@ const pageIdentity: ReaderAskPageIdentity = {
   recordTitle: "Test Reader",
   surface: "reader",
   source: "reader_2_0",
+  availableContextCapabilities: [
+    "record_context",
+    "record_insights",
+    "reader_annotations",
+    "reader_notes",
+    "dictionary",
+  ],
+  hasArticleOverview: true,
+  hasSentenceEntries: true,
+  hasAnnotations: true,
+  hasReaderNotes: true,
 };
 
 const attachment: ReaderAskAttachment = {
@@ -165,6 +176,20 @@ const attachment: ReaderAskAttachment = {
   },
 };
 
+const sentenceAttachment: ReaderAskAttachment = {
+  kind: "text_selection",
+  subtype: "sentence",
+  label: "整句",
+  selectedText: "Climate change presents an existential challenge.",
+  metadata: {
+    pageIdentity,
+    sourceSurface: "reader_live_selection",
+    entryAction: "explain_this",
+    sentenceId: "s1",
+    paragraphId: "p1",
+  },
+};
+
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -175,7 +200,7 @@ function jsonResponse(payload: unknown, status = 200) {
 function mockFetch() {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("/api/web/reader-ask/threads?recordId=")) {
+    if (url.includes("/api/web/reader-ask/threads?record_id=")) {
       return jsonResponse({
         items: [
           {
@@ -326,7 +351,6 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[]}
         onRemoveAttachment={vi.fn()}
         onClearAttachments={vi.fn()}
@@ -343,6 +367,51 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("当前讲解方式")).toBeNull();
   });
 
+  it("uses article-level starter copy when there is no actual ask attachment", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText("从这篇文章开始问")).not.toBeNull();
+    expect(screen.getByText("概括这篇文章的核心观点。")).not.toBeNull();
+    expect(screen.queryByText("继续追问这句内容")).toBeNull();
+  });
+
+  it("switches starter copy to sentence mode only when a sentence attachment is actually present", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[sentenceAttachment]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText("继续追问这句内容")).not.toBeNull();
+    expect(screen.getByText("解释这句在这里的意思。")).not.toBeNull();
+  });
+
   it("sends only the current reader ask request shape", async () => {
     render(
       <AiWorkspacePanel
@@ -350,7 +419,6 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[attachment]}
         onRemoveAttachment={vi.fn()}
         onClearAttachments={vi.fn()}
@@ -362,7 +430,7 @@ describe("AiWorkspacePanel", () => {
       expect(global.fetch).toHaveBeenCalled();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("继续围绕当前文章、句子、译文或解析对象提问。"), {
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
       target: { value: "解释这篇文章的核心论点" },
     });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -415,6 +483,58 @@ describe("AiWorkspacePanel", () => {
     expect(body).not.toHaveProperty("reader_focus");
   });
 
+  it("serializes page identity from current reader facts instead of hardcoded capability flags", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={{
+          recordId: "record-1",
+          recordTitle: "Test Reader",
+          surface: "reader",
+          source: "reader_2_0",
+          availableContextCapabilities: ["record_context", "dictionary"],
+          hasArticleOverview: false,
+          hasSentenceEntries: false,
+          hasAnnotations: false,
+          hasReaderNotes: false,
+        }}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[attachment]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "概括一下这篇文章" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const calls = vi.mocked(global.fetch).mock.calls;
+      expect(calls.some(([url]) => String(url).includes("/messages/stream"))).toBe(true);
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+
+    expect(body.page_identity).toMatchObject({
+      available_context_capabilities: ["record_context", "dictionary"],
+      has_article_overview: false,
+      has_sentence_entries: false,
+      has_annotations: false,
+      has_reader_notes: false,
+    });
+  });
+
   it("resets the active conversation and clears attachments", async () => {
     const onClearAttachments = vi.fn();
 
@@ -424,7 +544,6 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[attachment]}
         onRemoveAttachment={vi.fn()}
         onClearAttachments={onClearAttachments}
@@ -448,14 +567,13 @@ describe("AiWorkspacePanel", () => {
     ).toBe(true);
   });
 
-  it("renders evidence and planner summary from the completed payload", async () => {
+  it("keeps evidence and planner diagnostics out of the default assistant surface", async () => {
     render(
       <AiWorkspacePanel
         open
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[attachment]}
         onRemoveAttachment={vi.fn()}
         onClearAttachments={vi.fn()}
@@ -467,34 +585,28 @@ describe("AiWorkspacePanel", () => {
       expect(global.fetch).toHaveBeenCalled();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("继续围绕当前文章、句子、译文或解析对象提问。"), {
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
       target: { value: "我之前那篇 climate policy 的解析里也提过这个吗？" },
     });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
-      expect(screen.getByText("证据")).not.toBeNull();
+      expect(screen.getByText("解释完成。")).not.toBeNull();
     });
 
-    expect(screen.getAllByText("Climate Policy").length).toBeGreaterThan(0);
-    expect(screen.getByText("外部文章")).not.toBeNull();
-    expect(screen.getByText("自动命中")).not.toBeNull();
-    expect(screen.getByText("规划摘要")).not.toBeNull();
-    expect(screen.getByText("已命中历史文章。")).not.toBeNull();
+    expect(screen.queryByText("证据")).toBeNull();
+    expect(screen.queryByText("规划摘要")).toBeNull();
+    expect(screen.queryByText("自动命中")).toBeNull();
   });
 
-  it("searches and appends a related record attachment from the context picker", async () => {
-    const onAppendAttachments = vi.fn();
-
+  it("shows the current page chip and recent related-article search from the add menu", async () => {
     render(
       <AiWorkspacePanel
         open
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[]}
-        onAppendAttachments={onAppendAttachments}
         onRemoveAttachment={vi.fn()}
         onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
@@ -505,33 +617,14 @@ describe("AiWorkspacePanel", () => {
       expect(global.fetch).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "上下文" }));
-    fireEvent.change(screen.getByPlaceholderText("输入文章标题，例如 climate policy"), {
-      target: { value: "climate policy" },
-    });
+    expect(screen.getByText("Test Reader")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "添加其他文章" }));
 
+    expect(screen.getByPlaceholderText("搜索其他文章")).not.toBeNull();
+    expect(screen.getByText("最近文章")).not.toBeNull();
     await waitFor(() => {
-      expect(screen.getAllByText("Climate Policy").length).toBeGreaterThan(0);
+      expect(screen.getByText("Climate Policy")).not.toBeNull();
     });
-
-    fireEvent.click(screen.getByRole("button", { name: /加入上下文/i }));
-
-    await waitFor(() => {
-      expect(onAppendAttachments).toHaveBeenCalledTimes(1);
-    });
-    expect(onAppendAttachments.mock.calls[0]?.[0]).toMatchObject([
-      {
-        kind: "record_ref",
-        subtype: "related_record",
-        label: "Climate Policy",
-        targetKey: "record:record-2:record",
-        metadata: {
-          sourceSurface: "ask_context_picker",
-          assetId: "record-2",
-          title: "Climate Policy",
-        },
-      },
-    ]);
   });
 
   it("renders disambiguation candidate cards and re-sends the current question after selection", async () => {
@@ -656,7 +749,6 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[]}
         onAppendAttachments={onAppendAttachments}
         onRemoveAttachment={vi.fn()}
@@ -831,7 +923,6 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[]}
         onActionExecuted={onActionExecuted}
         onSupplementDeleted={onSupplementDeleted}
@@ -986,7 +1077,6 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        activeSentence={null}
         attachments={[]}
         onAppendAttachments={onAppendAttachments}
         onRemoveAttachment={vi.fn()}

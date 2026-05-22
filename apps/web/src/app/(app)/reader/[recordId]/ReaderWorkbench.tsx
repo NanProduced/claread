@@ -31,10 +31,10 @@ import {
   defaultReaderSettings,
   persistReaderSettings,
   readerColumnWidthClassName,
+  readerPaperThemeClassName,
+  readerPaperThemeDataValue,
   readStoredReaderSettings,
   readerTextClassName,
-  readerThemeDataValue,
-  readerThemeClassName,
   translationVisible,
   type ReaderSettingsState,
   textRangeAnchorAttributes,
@@ -45,7 +45,6 @@ import {
   askAttachmentFromAnalysisBlock,
   askAttachmentFromContentSummary,
   askAttachmentFromReaderNote,
-  askAttachmentFromRecord,
   askAttachmentFromSelection,
   askAttachmentFromSentence,
   askAttachmentFromStructuredInspect,
@@ -619,6 +618,7 @@ export function ReaderWorkbench({
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
+  const [dismissedLiveAskAttachmentKey, setDismissedLiveAskAttachmentKey] = useState<string | null>(null);
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
   const [dictionaryRailOpen, setDictionaryRailOpen] = useState(false);
   const [dictionaryQuery, setDictionaryQuery] = useState("");
@@ -627,6 +627,8 @@ export function ReaderWorkbench({
   const [dictionaryAIPanelOpen, setDictionaryAIPanelOpen] = useState(false);
   const [dictionaryAINoteState, setDictionaryAINoteState] = useState<SaveState>({ kind: "idle" });
   const activeAnnotationTargetKeyRef = useRef<string | null>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [settingsFloatingStyle, setSettingsFloatingStyle] = useState<CSSProperties | null>(null);
 
   useEffect(() => {
     setReaderScene(record.reader);
@@ -642,6 +644,7 @@ export function ReaderWorkbench({
   const focusedRouteTargetKeyRef = useRef<string | null>(null);
   const dictionaryAIRequestKeyRef = useRef<string | null>(null);
   const textSelectionSourceRef = useRef<ReaderSelectionSource>("none");
+  const previousLiveAskAttachmentKeyRef = useRef<string | null>(null);
   const [dictionaryDockLayout, setDictionaryDockLayout] = useState<DictionaryDockLayout | null>(null);
   const dictionaryPanelVisible = Boolean(dictionaryRailOpen || dictionaryPinned);
 
@@ -704,6 +707,45 @@ export function ReaderWorkbench({
   useEffect(() => {
     persistReaderSettings(readerSettings);
   }, [readerSettings]);
+
+  useEffect(() => {
+    if (!settingsPanelOpen) {
+      setSettingsFloatingStyle(null);
+      return;
+    }
+
+    const updateSettingsPanelPosition = () => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      if (window.innerWidth < 768 || !settingsButtonRef.current) {
+        setSettingsFloatingStyle(null);
+        return;
+      }
+
+      const rect = settingsButtonRef.current.getBoundingClientRect();
+      const panelWidth = Math.min(464, Math.max(window.innerWidth - 40, 320));
+      const maxLeft = Math.max(24, window.innerWidth - panelWidth - 24);
+      const left = Math.min(maxLeft, Math.max(24, rect.right - panelWidth));
+
+      setSettingsFloatingStyle({
+        left,
+        top: rect.bottom + 12,
+        bottom: "auto",
+        width: panelWidth,
+      });
+    };
+
+    updateSettingsPanelPosition();
+    window.addEventListener("resize", updateSettingsPanelPosition);
+    window.addEventListener("scroll", updateSettingsPanelPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updateSettingsPanelPosition);
+      window.removeEventListener("scroll", updateSettingsPanelPosition, true);
+    };
+  }, [settingsPanelOpen]);
 
   useEffect(() => {
     if (!contextPanelOpen || !sentencePopoverAnchorEl) {
@@ -915,8 +957,19 @@ export function ReaderWorkbench({
       recordTitle: record.title,
       surface: "reader",
       source: "reader_2_0",
+      availableContextCapabilities: [
+        "record_context",
+        "dictionary",
+        ...(reader.contentSummary?.overview?.trim() || reader.sentenceEntries.length > 0 ? ["record_insights"] : []),
+        ...(annotations.length > 0 ? ["reader_annotations"] : []),
+        ...(readerNotes.length > 0 ? ["reader_notes"] : []),
+      ],
+      hasArticleOverview: Boolean(reader.contentSummary?.overview?.trim()),
+      hasSentenceEntries: reader.sentenceEntries.length > 0,
+      hasAnnotations: annotations.length > 0,
+      hasReaderNotes: readerNotes.length > 0,
     }),
-    [record.id, record.title],
+    [annotations.length, reader.contentSummary?.overview, reader.sentenceEntries.length, readerNotes.length, record.id, record.title],
   );
   const activeLookupAIContextKey = useMemo(() => dictionaryAIContextKey(activeLookup), [activeLookup]);
   const activeLookupAICacheEntry = useMemo(() => {
@@ -955,6 +1008,40 @@ export function ReaderWorkbench({
     }
     return readerNotesByTargetKey.get(targetKeyForSelection(record.id, textSelection)) ?? null;
   }, [readerNotesByTargetKey, record.id, textSelection]);
+  const liveAskAttachment = useMemo(() => {
+    if (!textSelection) {
+      return null;
+    }
+    return askAttachmentFromSelection(pageIdentity, textSelection, {
+      sourceSurface: "reader_live_selection",
+      entryAction: textSelection.anchorType === "sentence" ? "explain_this" : "ask_about_this",
+    });
+  }, [pageIdentity, textSelection]);
+  const liveAskAttachmentKey = liveAskAttachment ? askAttachmentKey(liveAskAttachment) : null;
+  useEffect(() => {
+    if (previousLiveAskAttachmentKeyRef.current !== liveAskAttachmentKey) {
+      previousLiveAskAttachmentKeyRef.current = liveAskAttachmentKey;
+      setDismissedLiveAskAttachmentKey(null);
+    }
+  }, [liveAskAttachmentKey]);
+  const askPanelAttachments = useMemo(() => {
+    const merged: ReaderAskAttachment[] = [];
+    const seen = new Set<string>();
+    if (liveAskAttachment && liveAskAttachmentKey !== dismissedLiveAskAttachmentKey) {
+      merged.push(liveAskAttachment);
+      if (liveAskAttachmentKey) {
+        seen.add(liveAskAttachmentKey);
+      }
+    }
+    askAttachments.forEach((attachment) => {
+      const key = askAttachmentKey(attachment);
+      if (!seen.has(key)) {
+        merged.push(attachment);
+        seen.add(key);
+      }
+    });
+    return merged;
+  }, [askAttachments, dismissedLiveAskAttachmentKey, liveAskAttachment, liveAskAttachmentKey]);
   const pendingReaderCommentId = pendingReaderNote ? readerCommentDraftId() : null;
   const selectionTargetKey = useMemo(
     () => (textSelection ? targetKeyForSelection(record.id, textSelection) : null),
@@ -1687,7 +1774,6 @@ export function ReaderWorkbench({
       setActiveSentence(sentenceById.get(intent.sentenceId) ?? null);
       setContextPanelOpen(false);
       setSentencePopoverAnchorEl(null);
-      setAiOpen(false);
       void lookupPlainText(intent, {
         showPreview: options?.showPreview,
         anchor,
@@ -1725,7 +1811,6 @@ export function ReaderWorkbench({
       setActiveSentence(sentenceById.get(intent.sentenceId) ?? null);
       setContextPanelOpen(false);
       setSentencePopoverAnchorEl(null);
-      setAiOpen(false);
     },
     [sentenceById],
   );
@@ -2623,11 +2708,16 @@ export function ReaderWorkbench({
   }
 
   function removeAskAttachment(attachmentKey: string) {
+    if (liveAskAttachmentKey && attachmentKey === liveAskAttachmentKey) {
+      setDismissedLiveAskAttachmentKey(attachmentKey);
+      return;
+    }
     setAskAttachments((current) => current.filter((attachment) => askAttachmentKey(attachment) !== attachmentKey));
   }
 
   function clearAskAttachments() {
     setAskAttachments([]);
+    setDismissedLiveAskAttachmentKey(null);
   }
 
   function openAskWithAttachments(nextAttachments: ReaderAskAttachment[]) {
@@ -2645,12 +2735,10 @@ export function ReaderWorkbench({
       return;
     }
     setActiveSentence(textSelection.sentence);
-    openAskWithAttachments([
-      askAttachmentFromSelection(pageIdentity, textSelection, {
-        sourceSurface: "selection_toolbar",
-        entryAction: "ask_about_this",
-      }),
-    ]);
+    setDismissedLiveAskAttachmentKey(null);
+    setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
+    setAiOpen(true);
   }
 
   function openAskWithSentenceContext() {
@@ -2753,15 +2841,6 @@ export function ReaderWorkbench({
       askAttachmentFromStructuredInspect(pageIdentity, intent, sentence, {
         sourceSurface: "dictionary_inspect",
         entryAction: "lookup_in_context",
-      }),
-    ]);
-  }
-
-  function attachCurrentRecordToAsk() {
-    openAskWithAttachments([
-      askAttachmentFromRecord(pageIdentity, {
-        sourceSurface: "ask_panel",
-        entryAction: "ask_about_this",
       }),
     ]);
   }
@@ -2959,20 +3038,20 @@ export function ReaderWorkbench({
     });
   }
 
-  const canvasThemeClass = readerThemeClassName(readerSettings.theme);
-  const canvasThemeData = readerThemeDataValue(readerSettings.theme);
+  const canvasThemeClass = readerPaperThemeClassName(readerSettings.readerPaperTheme);
+  const canvasThemeData = readerPaperThemeDataValue(readerSettings.readerPaperTheme);
   const readingClass = readerTextClassName(readerSettings);
   const readingColumnClass = readerColumnWidthClassName(readerSettings.columnWidth);
   const showTranslation = translationVisible(readerSettings.translationDisplay);
   const contextPanelVisible = Boolean(contextPanelOpen && activeSentence);
   const compactDictionaryPanelVisible = Boolean(
-    dictionaryPanelVisible && !dictionaryDockLayout && !aiOpen && !contextPanelVisible && !settingsPanelOpen,
+    dictionaryPanelVisible && !dictionaryDockLayout && !contextPanelVisible && !settingsPanelOpen,
   );
   const floatingLookupPreviewVisible = Boolean(
     lookupPreviewOpen && lookupPreviewAnchor && (activeLookup || activeInspect) && !settingsPanelOpen && !contextPanelVisible,
   );
   const compactSurfaceBottom = "max(5.25rem, calc(env(safe-area-inset-bottom) + 4.25rem))";
-  const settingsPanelStyle = compactDictionaryPanelVisible
+  const mobileSettingsPanelStyle = compactDictionaryPanelVisible
     ? ({ bottom: "min(calc(72vh + 6.5rem), calc(100vh - 18rem))" } satisfies CSSProperties)
     : undefined;
 
@@ -3052,6 +3131,7 @@ export function ReaderWorkbench({
                         : "hidden";
                       setReaderSettings((current) => ({
                         ...current,
+                        readingMode: "custom",
                         translationDisplay: nextDisplay,
                       }));
                     }}
@@ -3069,6 +3149,7 @@ export function ReaderWorkbench({
                       </span>
                     </button>
                   <button
+                    ref={settingsButtonRef}
                     type="button"
                     className={`focus-ring inline-flex min-h-[2.55rem] min-w-[5.2rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
                       settingsPanelOpen
@@ -3261,7 +3342,7 @@ export function ReaderWorkbench({
         </div>
       ) : null}
 
-      {dictionaryPanelVisible && !dictionaryDockLayout && !aiOpen && !contextPanelVisible ? (
+      {dictionaryPanelVisible && !dictionaryDockLayout && !contextPanelVisible ? (
         <div className="fixed inset-x-3 z-50 flex max-h-[72vh] flex-col md:bottom-6" style={{ bottom: compactSurfaceBottom }}>
           <ReaderDictionaryRail
             lookup={activeLookup}
@@ -3329,16 +3410,22 @@ export function ReaderWorkbench({
 
         {settingsPanelOpen ? (
           <div
-            className="fixed inset-x-3 z-50 md:bottom-6 md:left-1/2 md:right-auto md:w-[min(640px,calc(100vw-6rem))] md:-translate-x-1/2"
-            style={{ bottom: compactSurfaceBottom, ...settingsPanelStyle }}
-        >
-          <ReaderSettingsPanel
-            value={readerSettings}
-            onChange={setReaderSettings}
-            onClose={() => setSettingsPanelOpen(false)}
-          />
-        </div>
-      ) : null}
+            className="fixed inset-x-0 top-3 bottom-3 z-50 overflow-y-auto px-3 md:inset-x-auto md:top-auto md:bottom-auto md:overflow-visible md:px-0"
+            style={{
+              bottom: compactSurfaceBottom,
+              ...(mobileSettingsPanelStyle ?? {}),
+              ...(settingsFloatingStyle ?? {}),
+            }}
+          >
+            <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[0_-20px_40px_rgba(17,17,17,0.12)] backdrop-blur md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-0">
+              <ReaderSettingsPanel
+                value={readerSettings}
+                onChange={setReaderSettings}
+                onClose={() => setSettingsPanelOpen(false)}
+              />
+            </div>
+          </div>
+        ) : null}
 
       {!contextPanelVisible || aiOpen ? (
         <AiWorkspacePanel
@@ -3346,15 +3433,13 @@ export function ReaderWorkbench({
           open={aiOpen}
           recordId={record.id}
           recordTitle={record.title}
-          activeSentence={activeSentence}
           pageIdentity={pageIdentity}
-          attachments={askAttachments}
+          attachments={askPanelAttachments}
           hideLauncherOnMobile={Boolean(dictionaryPanelVisible)}
           hideLauncherInCompactLayout={Boolean(dictionaryPanelVisible)}
           onRemoveAttachment={removeAskAttachment}
           onClearAttachments={clearAskAttachments}
           onAppendAttachments={appendAskAttachments}
-          onAttachCurrentRecord={attachCurrentRecordToAsk}
           onJumpToAttachment={jumpToAskAttachment}
           onJumpToCitation={jumpToAskCitation}
           onActionExecuted={handleAskActionExecuted}

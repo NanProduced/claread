@@ -1,15 +1,18 @@
 "use client";
 
 import {
+  ArrowUp,
   BookPlus,
   Bot,
   ChevronDown,
   FileText,
+  GitBranch,
   LoaderCircle,
   MessageSquare,
+  PencilLine,
+  Plus,
   RotateCcw,
   Search,
-  Send,
   Sparkles,
   X,
 } from "lucide-react";
@@ -35,6 +38,7 @@ import {
 } from "@/components/ui/prompt-input";
 import { Tool, type ToolPart } from "@/components/ui/tool";
 import { IconButton } from "@/components/primitives/icon-button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { cn } from "@/lib/cn";
 import {
   askAttachmentFromAnchor,
@@ -73,7 +77,6 @@ import type {
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
 } from "@/types/api/reader-ask";
-import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import { consumeReaderAskSse } from "./ask/sse";
 
 type ErrorEnvelope = {
@@ -84,13 +87,48 @@ type ErrorEnvelope = {
 };
 
 const IS_DEV = process.env.NODE_ENV !== "production";
-const COMPOSER_PLACEHOLDER = "继续围绕当前文章、句子、译文或解析对象提问。";
-const STARTER_PROMPTS = [
-  "解释这句在这里的意思。",
-  "为什么作者这里这样写？",
-  "这段和前面的内容是什么关系？",
-  "围绕这一句出一道小练习。",
-];
+const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
+type StarterMode = "record" | "sentence" | "selection";
+
+const STARTER_CONTENT: Record<
+  StarterMode,
+  {
+    title: string;
+    description: string;
+    prompts: [string, string, string, string];
+  }
+> = {
+  record: {
+    title: "从这篇文章开始问",
+    description: "当前文章默认在场，可以直接问核心观点、结构关系或作者意图。",
+    prompts: [
+      "概括这篇文章的核心观点。",
+      "作者最想说明什么？",
+      "这篇文章是怎么展开论证的？",
+      "基于这篇文章出一道小练习。",
+    ],
+  },
+  sentence: {
+    title: "继续追问这句内容",
+    description: "当前句会直接带入这轮提问。",
+    prompts: [
+      "解释这句在这里的意思。",
+      "为什么作者这里这样写？",
+      "这句和前面的内容是什么关系？",
+      "围绕这一句出一道小练习。",
+    ],
+  },
+  selection: {
+    title: "继续围绕这段内容问",
+    description: "当前选区会直接带入这轮提问。",
+    prompts: [
+      "解释这段内容在这里的意思。",
+      "作者为什么在这里这样写？",
+      "这段和前面的内容是什么关系？",
+      "围绕这段内容出一道小练习。",
+    ],
+  },
+};
 
 type ContextRecordSearchState = {
   items: ReaderAskContextRecordItemDto[];
@@ -125,10 +163,27 @@ type AskPanelConversationItem = {
 };
 
 type AskComposerDockState = {
-  attachmentCount: number;
   canSend: boolean;
   sending: boolean;
 };
+
+function deriveAvailableContextCapabilities(pageIdentity: ReaderAskPageIdentity): string[] {
+  if (Array.isArray(pageIdentity.availableContextCapabilities)) {
+    return [...new Set(pageIdentity.availableContextCapabilities.filter((item) => item.trim().length > 0))];
+  }
+
+  const capabilities = ["record_context", "dictionary"];
+  if (pageIdentity.hasArticleOverview || pageIdentity.hasSentenceEntries) {
+    capabilities.push("record_insights");
+  }
+  if (pageIdentity.hasAnnotations) {
+    capabilities.push("reader_annotations");
+  }
+  if (pageIdentity.hasReaderNotes) {
+    capabilities.push("reader_notes");
+  }
+  return capabilities;
+}
 
 function serializePageIdentity(pageIdentity: ReaderAskPageIdentity): ReaderAskPageIdentityDto {
   return {
@@ -136,17 +191,11 @@ function serializePageIdentity(pageIdentity: ReaderAskPageIdentity): ReaderAskPa
     title: pageIdentity.recordTitle ?? null,
     surface: pageIdentity.surface,
     source: pageIdentity.source,
-    available_context_capabilities: [
-      "record_context",
-      "record_insights",
-      "reader_annotations",
-      "reader_notes",
-      "dictionary",
-    ],
-    has_article_overview: true,
-    has_sentence_entries: true,
-    has_annotations: true,
-    has_reader_notes: true,
+    available_context_capabilities: deriveAvailableContextCapabilities(pageIdentity),
+    has_article_overview: pageIdentity.hasArticleOverview ?? false,
+    has_sentence_entries: pageIdentity.hasSentenceEntries ?? false,
+    has_annotations: pageIdentity.hasAnnotations ?? false,
+    has_reader_notes: pageIdentity.hasReaderNotes ?? false,
   };
 }
 
@@ -556,135 +605,116 @@ function AttachmentChips({
         const attachmentKey = askAttachmentKey(attachment);
         const clickable = Boolean(onJump && attachment.kind !== "record_ref");
         return (
-        <span
-          key={attachmentKey}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-hairline/80 bg-reader-paper/84 px-3 py-1.5 text-xs font-medium text-ink-soft"
-        >
-          {clickable ? (
-            <button
-              type="button"
-              className="truncate text-left transition-colors hover:text-ink"
-              onClick={() => onJump?.(attachment)}
-            >
-              {askAttachmentLabel(attachment)}
-            </button>
-          ) : (
-            <span className="truncate">{askAttachmentLabel(attachment)}</span>
-          )}
-          {removable ? (
-            <button
-              type="button"
-              className="inline-flex size-4 items-center justify-center rounded-full text-muted transition-colors hover:bg-reader-paper hover:text-ink"
-              onClick={() => onRemove?.(attachmentKey)}
-              aria-label="移除上下文"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          ) : null}
-        </span>
-      )})}
+          <span
+            key={attachmentKey}
+            className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-[rgba(250,249,246,0.92)] px-2.5 py-1.5 text-xs font-medium text-ink-soft"
+          >
+            <span className="shrink-0 rounded-full bg-reader-paper px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.02em] text-muted">
+              {attachment.kind === "record_ref" ? "页" : "AI"}
+            </span>
+            {clickable ? (
+              <button
+                type="button"
+                className="truncate text-left transition-colors hover:text-ink"
+                onClick={() => onJump?.(attachment)}
+                title={askAttachmentLabel(attachment)}
+              >
+                {askAttachmentLabel(attachment)}
+              </button>
+            ) : (
+              <span className="truncate" title={askAttachmentLabel(attachment)}>
+                {askAttachmentLabel(attachment)}
+              </span>
+            )}
+            {removable ? (
+              <button
+                type="button"
+                className="inline-flex size-5 items-center justify-center rounded-full text-muted transition-colors hover:bg-reader-paper hover:text-ink"
+                onClick={() => onRemove?.(attachmentKey)}
+                aria-label={`移除引用：${askAttachmentLabel(attachment)}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            ) : null}
+          </span>
+        );
+      })}
     </div>
   );
 }
 
-function CurrentArticleChip({ recordTitle }: { recordTitle?: string | null }) {
-  if (!recordTitle) {
+function CurrentRecordChip({ recordTitle }: { recordTitle?: string | null }) {
+  if (!recordTitle?.trim()) {
     return null;
   }
 
   return (
-    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-reader-paper/84 px-3 py-1.5 text-xs font-medium text-ink-soft">
-      <FileText className="h-3.5 w-3.5 text-subtle" />
-      <span className="truncate">{recordTitle}</span>
+    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-[rgba(250,249,246,0.9)] px-2.5 py-1.5 text-xs font-medium text-ink-soft">
+      <FileText className="h-3.5 w-3.5 shrink-0 text-subtle" />
+      <span className="truncate" title={recordTitle}>
+        {recordTitle}
+      </span>
     </span>
   );
 }
 
-function ContextPicker({
-  open,
+function RelatedRecordPicker({
   disabled,
-  recordTitle,
   search,
-  onToggle,
   onSearchChange,
-  onAttachCurrentRecord,
   onAttachRelatedRecord,
 }: {
-  open: boolean;
   disabled?: boolean;
-  recordTitle?: string | null;
   search: ContextRecordSearchState;
-  onToggle: () => void;
   onSearchChange: (value: string) => void;
-  onAttachCurrentRecord?: () => void;
   onAttachRelatedRecord: (item: ReaderAskContextRecordItemDto) => void;
 }) {
+  const showingRecent = search.query.trim().length === 0;
+
   return (
-    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold text-muted">上下文</p>
-          <p className="mt-1 text-[11px] leading-5 text-subtle">显式并入当前文章或你的另一篇文章。</p>
-        </div>
-        <button
-          type="button"
-          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline bg-surface px-3 text-xs font-semibold text-ink-soft transition-colors hover:text-ink disabled:opacity-50"
-          onClick={onToggle}
+    <div className="w-[17rem] rounded-[16px] border border-hairline/65 bg-[rgba(255,255,255,0.98)] p-2 shadow-[0_12px_24px_rgba(17,17,17,0.07)]">
+      <div className="flex items-center gap-2 rounded-[12px] border border-hairline/75 bg-[rgba(250,249,246,0.84)] px-2.5 py-1.5">
+        <Search className="h-3.5 w-3.5 text-muted" />
+        <input
+          autoFocus
+          value={search.query}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="搜索其他文章"
+          className="min-w-0 flex-1 bg-transparent text-[13px] leading-5 text-ink outline-none placeholder:text-subtle"
           disabled={disabled}
-        >
-          <BookPlus className="h-3.5 w-3.5" />
-          <span>{open ? "收起" : "上下文"}</span>
-        </button>
+        />
+        {search.loading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted" /> : null}
       </div>
-      {open ? (
-        <div className="mt-3 space-y-3">
-          {onAttachCurrentRecord ? (
-            <button
-              type="button"
-              className="focus-ring flex w-full items-center justify-between rounded-[18px] border border-hairline/80 bg-surface px-3 py-3 text-left text-xs transition-colors hover:border-muted hover:bg-reader-paper"
-              onClick={onAttachCurrentRecord}
-              disabled={disabled}
-            >
-              <span className="font-semibold text-ink-soft">引用当前文章</span>
-              <span className="max-w-[12rem] truncate text-subtle">{recordTitle || "当前文章"}</span>
-            </button>
-          ) : null}
-          <div className="rounded-[18px] border border-hairline/80 bg-surface px-3 py-3">
-            <label className="mb-2 block text-[11px] font-semibold text-muted">按标题搜索并加入我的其他文章</label>
-            <div className="flex items-center gap-2 rounded-[16px] border border-hairline bg-reader-paper px-3 py-2">
-              <Search className="h-3.5 w-3.5 text-muted" />
-              <input
-                value={search.query}
-                onChange={(event) => onSearchChange(event.target.value)}
-                placeholder="输入文章标题，例如 climate policy"
-                className="min-w-0 flex-1 bg-transparent text-xs text-ink outline-none placeholder:text-subtle"
+      <div className="mt-2">
+        <p className="px-1 text-[11px] font-medium tracking-[0.01em] text-subtle">
+          {showingRecent ? "最近文章" : "搜索结果"}
+        </p>
+        {search.items.length === 0 ? (
+          <p className="px-1 pb-0.5 pt-2 text-xs leading-5 text-muted">
+            {showingRecent ? "最近没有可加入的文章。" : "没有找到匹配的文章。"}
+          </p>
+        ) : (
+          <div className="mt-1.5 space-y-1">
+            {search.items.map((item) => (
+              <button
+                key={item.record_id}
+                type="button"
+                className="focus-ring flex w-full items-center justify-between rounded-[12px] px-2.5 py-2 text-left transition-colors hover:bg-reader-paper/90"
+                onClick={() => onAttachRelatedRecord(item)}
                 disabled={disabled}
-              />
-              {search.loading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted" /> : null}
-            </div>
-            {search.query.trim().length === 0 ? (
-              <p className="mt-2 text-[11px] text-subtle">只搜索你自己的文章标题，最多返回 8 条。</p>
-            ) : search.items.length === 0 ? (
-              <p className="mt-2 text-[11px] text-subtle">没有找到可加入的文章。</p>
-            ) : (
-              <div className="mt-2 space-y-2">
-                {search.items.map((item) => (
-                  <button
-                    key={item.record_id}
-                    type="button"
-                    className="focus-ring flex w-full items-center justify-between rounded-[16px] border border-hairline bg-reader-paper px-3 py-2.5 text-left text-xs transition-colors hover:border-muted hover:bg-white"
-                    onClick={() => onAttachRelatedRecord(item)}
-                    disabled={disabled}
-                  >
-                    <span className="min-w-0 truncate font-medium text-ink-soft">{item.title || "Untitled"}</span>
-                    <span className="shrink-0 text-subtle">加入上下文</span>
-                  </button>
-                ))}
-              </div>
-            )}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium text-ink">{item.title || "Untitled"}</p>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted">
+                    {item.updated_at ? "最近查看的文章" : "加入当前讨论"}
+                  </p>
+                </div>
+                <BookPlus className="h-3.5 w-3.5 shrink-0 text-subtle" />
+              </button>
+            ))}
           </div>
-        </div>
-      ) : null}
+        )}
+      </div>
     </div>
   );
 }
@@ -748,6 +778,10 @@ function pendingSupplementCandidates(message: ReaderAskMessageDto | null): Reade
 function buildAssistantBlocks(message: ReaderAskMessageDto): AskPanelBlock[] {
   const blocks: AskPanelBlock[] = [{ kind: "answer" }];
 
+  if (message.citations.length > 0) {
+    blocks.push({ kind: "citations" });
+  }
+
   if (message.response_cards.length > 0) {
     blocks.push({ kind: "response_cards" });
   }
@@ -765,21 +799,6 @@ function buildAssistantBlocks(message: ReaderAskMessageDto): AskPanelBlock[] {
     message.persisted_supplements.some((item) => item.lifecycle_status === "persisted")
   ) {
     blocks.push({ kind: "supplement_candidates" });
-  }
-  if (message.resolved_context) {
-    blocks.push({ kind: "context_summary" });
-  }
-  if (message.evidence.length > 0) {
-    blocks.push({ kind: "evidence" });
-  }
-  if (message.trace_summary) {
-    blocks.push({ kind: "trace_summary" });
-  }
-  if (message.citations.length > 0) {
-    blocks.push({ kind: "citations" });
-  }
-  if (message.tool_trace.length > 0) {
-    blocks.push({ kind: "tool_trace" });
   }
 
   return blocks;
@@ -1365,7 +1384,8 @@ function CitationList({
   }
 
   return (
-    <DisclosureSection label="来源" summary={`${citations.length} 条引用`}>
+    <div className="space-y-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">引用</p>
       <div className="flex flex-col gap-2">
         {citations.map((citation) => {
           const citationView = askCitationViewFromDto(citation);
@@ -1385,24 +1405,27 @@ function CitationList({
                 }
               }}
               className={cn(
-                "w-full rounded-2xl border border-hairline bg-surface px-3 py-2.5 text-left text-xs transition-colors",
+                "w-full rounded-[18px] border border-hairline/80 bg-[rgba(255,255,255,0.72)] px-3 py-2.5 text-left transition-colors",
                 canJump ? "hover:border-muted hover:bg-reader-paper" : "cursor-default",
               )}
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="truncate font-semibold text-ink">{citation.label}</span>
-                <span className="shrink-0 rounded-full border border-hairline bg-reader-paper px-2 py-0.5 text-[11px] text-muted">
+                <span className="truncate text-xs font-semibold text-ink">{citation.label}</span>
+                <span className="shrink-0 rounded-full bg-reader-paper px-2 py-0.5 text-[11px] text-muted">
                   {sourceLabel}
                 </span>
               </div>
+              {citationView.label && citationView.label !== citation.label ? (
+                <p className="mt-1 text-[11px] text-muted">{citationView.label}</p>
+              ) : null}
               {citation.selected_text ? (
-                <p className="mt-1.5 line-clamp-2 text-muted">{citation.selected_text}</p>
+                <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted">{citation.selected_text}</p>
               ) : null}
             </button>
           );
         })}
       </div>
-    </DisclosureSection>
+    </div>
   );
 }
 
@@ -1441,20 +1464,19 @@ function ConfirmActionCard({
   onReject: (confirmed: boolean) => void;
 }) {
   return (
-    <div className="rounded-[18px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-ink">{proposal.label}</p>
-          {proposal.description ? (
-            <p className="mt-1 text-xs leading-5 text-muted">{proposal.description}</p>
-          ) : null}
+    <div className="rounded-[18px] border border-hairline/80 bg-[rgba(250,249,246,0.82)] px-3.5 py-3">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 rounded-full bg-lens-blue-soft p-1.5 text-lens-blue">
+          <Sparkles className="h-3.5 w-3.5" />
         </div>
-        <span className="rounded-pill border border-hairline bg-surface px-2 py-0.5 text-[11px] font-semibold text-muted">
-          {proposal.status}
-        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">建议动作</p>
+          <p className="mt-1 text-sm font-semibold text-ink">{proposal.label}</p>
+          {proposal.description ? <p className="mt-1 text-xs leading-5 text-muted">{proposal.description}</p> : null}
+        </div>
       </div>
       {proposal.status === "pending" ? (
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex gap-2 pl-9">
           <Button type="button" variant="secondary" size="sm" density="compact" disabled={busy} onClick={() => onConfirm(true)}>
             确认
           </Button>
@@ -1531,22 +1553,20 @@ function MessageBubble({
                     正在生成
                   </span>
                 ) : null}
-              </div>
-              {message.status === "completed" ? (
-                <div className="mb-2 flex items-center gap-2">
+                {message.status === "completed" || message.status === "failed" ? (
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="quiet"
                     size="sm"
                     density="compact"
-                    className="h-7 rounded-full px-2.5 text-[11px] text-muted"
+                    className="ml-auto h-7 rounded-full px-2.5 text-[11px] text-muted"
                     onClick={() => onRetry(message.id)}
                   >
                     <RotateCcw className="h-3 w-3" />
                     <span>重新生成</span>
                   </Button>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
               <div className="space-y-3">
                 {blocks.map((block, index) => {
                   switch (block.kind) {
@@ -1554,16 +1574,16 @@ function MessageBubble({
                       return (
                         <div
                           key={`${message.id}-${block.kind}-${index}`}
-                          className="rounded-[24px] border border-hairline/75 bg-[rgba(255,255,255,0.94)] px-4 py-3.5 shadow-[0_18px_40px_rgba(17,17,17,0.05)]"
+                          className="rounded-[22px] border border-hairline/75 bg-[rgba(255,255,255,0.9)] px-4 py-3.5 shadow-[0_10px_26px_rgba(17,17,17,0.04)]"
                         >
                           {clarificationText ? (
-                            <div className="mb-3 rounded-[16px] border border-amber-200/70 bg-amber-50/80 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
+                            <div className="mb-3 rounded-[14px] bg-reader-paper px-3 py-2 text-[11px] leading-5 text-muted">
                               {clarificationText}
                             </div>
                           ) : null}
                           <MessageContent
                             markdown
-                            className="border-0 bg-transparent p-0 shadow-none text-[15px] leading-7 text-ink-soft prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
+                            className="border-0 bg-transparent p-0 text-[15px] leading-7 text-ink-soft shadow-none prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
                           >
                             {message.content_md || "…"}
                           </MessageContent>
@@ -1615,23 +1635,6 @@ function MessageBubble({
                           onDeletePersistedSupplement={onDeletePersistedSupplement}
                         />
                       );
-                    case "context_summary":
-                      return (
-                        <ContextSummaryDisclosure
-                          key={`${message.id}-${block.kind}-${index}`}
-                          summary={message.resolved_context}
-                          contextInput={message.resolved_context_input}
-                        />
-                      );
-                    case "evidence":
-                      return <EvidenceDisclosure key={`${message.id}-${block.kind}-${index}`} evidence={message.evidence} />;
-                    case "trace_summary":
-                      return (
-                        <TraceSummaryDisclosure
-                          key={`${message.id}-${block.kind}-${index}`}
-                          traceSummary={message.trace_summary}
-                        />
-                      );
                     case "citations":
                       return (
                         <CitationList
@@ -1641,8 +1644,10 @@ function MessageBubble({
                           onJumpToCitation={onJumpToCitation}
                         />
                       );
+                    case "context_summary":
+                    case "evidence":
+                    case "trace_summary":
                     case "tool_trace":
-                      return <ToolTraceBlock key={`${message.id}-${block.kind}-${index}`} entries={message.tool_trace} />;
                     default:
                       return null;
                   }
@@ -1661,7 +1666,7 @@ function MessageBubble({
           </>
         ) : (
           <div className="max-w-[85%]">
-            <MessageContent className="rounded-[20px] border-[rgba(30,31,37,0.82)] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(21,22,28,0.98))] px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_12px_28px_rgba(17,17,17,0.12)]">
+            <MessageContent className="rounded-[20px] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(23,24,29,0.98))] px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_12px_28px_rgba(17,17,17,0.12)]">
               {message.content_md}
             </MessageContent>
           </div>
@@ -1672,48 +1677,94 @@ function MessageBubble({
 }
 
 function StarterState({
-  onAttachRecord,
-  recordTitle,
-  activeSentence,
+  attachments,
   onPickPrompt,
 }: {
-  onAttachRecord?: () => void;
-  recordTitle?: string | null;
-  activeSentence: SentenceModel | null;
+  attachments: ReaderAskAttachment[];
   onPickPrompt: (prompt: string) => void;
 }) {
+  const starterMode: StarterMode = (() => {
+    const selectionAttachment = attachments.find((attachment) => attachment.kind === "text_selection");
+    if (selectionAttachment) {
+      return selectionAttachment.subtype === "sentence" ? "sentence" : "selection";
+    }
+    const sentenceAttachment = attachments.find(
+      (attachment) => attachment.kind === "analysis_ref" && attachment.subtype === "sentence",
+    );
+    if (sentenceAttachment) {
+      return "sentence";
+    }
+    return "record";
+  })();
+  const starterContent = STARTER_CONTENT[starterMode];
+  const suggestions = [
+    {
+      prompt: starterContent.prompts[0],
+      icon: MessageSquare,
+      iconClassName: "text-grammar-violet",
+      badgeClassName: "bg-[rgba(116,102,148,0.12)]",
+    },
+    {
+      prompt: starterContent.prompts[1],
+      icon: Search,
+      iconClassName: "text-context-blue",
+      badgeClassName: "bg-[rgba(76,145,194,0.12)]",
+    },
+    {
+      prompt: starterContent.prompts[2],
+      icon: GitBranch,
+      iconClassName: "text-structure-green",
+      badgeClassName: "bg-[rgba(60,140,104,0.12)]",
+    },
+    {
+      prompt: starterContent.prompts[3],
+      icon: PencilLine,
+      iconClassName: "text-vocab-amber",
+      badgeClassName: "bg-[rgba(228,176,0,0.14)]",
+    },
+  ];
+
   return (
-    <div className="flex min-h-[42vh] flex-col justify-end pb-6 pt-10">
-      <div className="max-w-[28rem]">
-        <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-full border border-hairline/80 bg-surface shadow-[0_16px_34px_rgba(17,17,17,0.06)]">
-          <Sparkles className="h-4.5 w-4.5 text-lens-blue" />
+    <div className="flex min-h-full flex-col pb-2 pt-3">
+      <div className="flex min-h-full flex-col">
+        <div className="max-w-[24.5rem] space-y-4">
+          <div className="relative w-fit">
+            <div className="absolute inset-x-5 bottom-2 h-6 rounded-full bg-lens-blue/8 blur-2xl" />
+            <div className="relative h-[124px] w-[172px] overflow-hidden rounded-[28px] border border-hairline/70 bg-[radial-gradient(circle_at_30%_18%,rgba(255,255,255,0.98),rgba(248,246,240,0.9))] shadow-[0_18px_40px_rgba(17,17,17,0.06)]">
+              <img
+                src="/brand/ask-claread/empty-state-illustration.png"
+                alt=""
+                aria-hidden="true"
+                className="h-full w-full scale-[1.08] object-cover object-center"
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-[26px] font-semibold tracking-[-0.04em] text-ink">{starterContent.title}</p>
+            <p className="max-w-[23rem] text-[15px] leading-7 text-muted">{starterContent.description}</p>
+          </div>
         </div>
-        <p className="text-[28px] font-semibold tracking-[-0.03em] text-ink">围绕当前文章继续问</p>
-        <p className="mt-3 text-sm leading-6 text-muted">
-          {activeSentence?.text
-            ? "当前句焦点已就绪。你可以直接追问，也可以从下面的起手问题开始。"
-            : "Ask Claread 会先解释当前文章，再按需展开到上下文、历史文章和稳定资产。"}
-        </p>
-        <div className="mt-6 flex flex-wrap gap-2">
-          {STARTER_PROMPTS.map((prompt) => (
+        <div className="mt-auto max-w-[25rem] space-y-2.5 pt-12">
+          {suggestions.map((suggestion) => (
             <button
-              key={prompt}
+              key={suggestion.prompt}
               type="button"
-              className="focus-ring rounded-full border border-hairline/80 bg-surface px-3.5 py-2 text-left text-xs font-medium text-ink-soft transition-colors hover:border-muted hover:bg-reader-paper hover:text-ink"
-              onClick={() => onPickPrompt(prompt)}
+              className="focus-ring group flex w-full items-center gap-3 rounded-[18px] px-2.5 py-2.5 text-left transition-[background-color,transform] duration-200 hover:bg-reader-paper/75 hover:translate-x-0.5"
+              onClick={() => onPickPrompt(suggestion.prompt)}
             >
-              {prompt}
+              <span
+                className={cn(
+                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-transform duration-200 group-hover:scale-105",
+                  suggestion.badgeClassName,
+                )}
+              >
+                <suggestion.icon className={cn("h-4 w-4", suggestion.iconClassName)} />
+              </span>
+              <span className="text-[15px] font-medium leading-6 tracking-[-0.01em] text-ink-soft">
+                {suggestion.prompt}
+              </span>
             </button>
           ))}
-          {onAttachRecord ? (
-            <button
-              type="button"
-              className="focus-ring rounded-full border border-hairline/80 bg-surface px-3.5 py-2 text-left text-xs font-medium text-lens-blue transition-colors hover:border-muted hover:text-ink"
-              onClick={onAttachRecord}
-            >
-              引用整篇文章
-            </button>
-          ) : null}
         </div>
       </div>
     </div>
@@ -1725,14 +1776,12 @@ export interface AiWorkspacePanelProps {
   pageIdentity: ReaderAskPageIdentity;
   recordId: string;
   recordTitle?: string | null;
-  activeSentence: SentenceModel | null;
   attachments: ReaderAskAttachment[];
   hideLauncherOnMobile?: boolean;
   hideLauncherInCompactLayout?: boolean;
   onRemoveAttachment: (attachmentKey: string) => void;
   onClearAttachments: () => void;
   onAppendAttachments?: (attachments: ReaderAskAttachment[]) => void;
-  onAttachCurrentRecord?: () => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
   onActionExecuted?: (result: ReaderAskActionConfirmResponseDto["result"]) => void;
@@ -1746,11 +1795,9 @@ export function AiWorkspacePanel({
   open,
   recordId,
   recordTitle,
-  activeSentence,
   hideLauncherOnMobile = false,
   hideLauncherInCompactLayout = false,
   onAppendAttachments,
-  onAttachCurrentRecord,
   onClearAttachments,
   onJumpToAttachment,
   onJumpToCitation,
@@ -1794,14 +1841,13 @@ export function AiWorkspacePanel({
     (attachment) => !(attachment.kind === "record_ref" && attachment.metadata.recordId === recordId),
   );
   const composerDockState: AskComposerDockState = {
-    attachmentCount: visibleContextAttachments.length,
     canSend: composer.trim().length > 0 && !sending,
     sending,
   };
 
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
-      `/api/web/reader-ask/threads?recordId=${encodeURIComponent(recordId)}`,
+      `/api/web/reader-ask/threads?record_id=${encodeURIComponent(recordId)}`,
       undefined,
       "Ask Claread 线程列表加载失败。",
     );
@@ -1818,21 +1864,21 @@ export function AiWorkspacePanel({
 
   async function fetchContextRecords(query: string) {
     return fetchJson<ReaderAskContextRecordSearchResponseDto>(
-      `/api/web/reader-ask/context-records?query=${encodeURIComponent(query)}&excludeRecordId=${encodeURIComponent(recordId)}`,
+      `/api/web/reader-ask/context-records?query=${encodeURIComponent(query)}&exclude_record_id=${encodeURIComponent(recordId)}`,
       undefined,
       "上下文文章搜索失败。",
     );
   }
 
-  async function createThread(mode: "default" | "new_chat", title: string) {
+  async function createThread(title: string) {
     return fetchJson<ReaderAskThreadSummaryDto>(
       "/api/web/reader-ask/threads",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ record_id: recordId, mode, title }),
+        body: JSON.stringify({ record_id: recordId, title }),
       },
-      mode === "default" ? "Ask Claread 初始化失败。" : "新对话创建失败。",
+      "Ask Claread 初始化失败。",
     );
   }
 
@@ -1851,12 +1897,9 @@ export function AiWorkspacePanel({
       return;
     }
     const normalizedQuery = contextSearch.query.trim();
-    if (!normalizedQuery) {
-      setContextSearch((current) => ({ ...current, items: [], loading: false }));
-      return;
-    }
 
     let cancelled = false;
+    const delay = normalizedQuery ? 180 : 0;
     const timer = window.setTimeout(() => {
       setContextSearch((current) => ({ ...current, loading: true }));
       void fetchContextRecords(normalizedQuery)
@@ -1876,7 +1919,7 @@ export function AiWorkspacePanel({
           }
           setContextSearch((current) => ({ ...current, items: [], loading: false }));
         });
-    }, 180);
+    }, delay);
 
     return () => {
       cancelled = true;
@@ -1890,7 +1933,7 @@ export function AiWorkspacePanel({
     try {
       let nextThreads = await fetchThreadList();
       if (nextThreads.length === 0) {
-        const createdThread = await createThread("default", recordTitle || "Ask Claread");
+        const createdThread = await createThread(recordTitle || "Ask Claread");
         nextThreads = [createdThread];
       }
       const preferredThreadId =
@@ -2071,10 +2114,8 @@ export function AiWorkspacePanel({
     setContextSearch((current) => ({
       ...current,
       query: "",
-      items: [],
       loading: false,
     }));
-    setContextPickerOpen(false);
   }
 
   async function handleSelectDisambiguationCandidate(messageId: string, candidate: ReaderAskContextRecordItemDto) {
@@ -2348,12 +2389,20 @@ export function AiWorkspacePanel({
     return (
       <button
         type="button"
-        className={`focus-ring fixed bottom-[5.25rem] right-4 z-40 min-h-11 items-center gap-2 rounded-pill border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(249,247,241,0.98))] px-4 text-sm font-semibold text-ink shadow-[0_12px_28px_rgba(17,17,17,0.06)] transition-colors hover:border-muted hover:bg-reader-paper md:bottom-6 md:right-6 ${launcherVisibilityClass}`}
+        className={`focus-ring group fixed bottom-[5.25rem] right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-full border border-hairline/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] shadow-[0_14px_34px_rgba(17,17,17,0.08)] transition-[transform,border-color,box-shadow,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:translate-y-0 active:scale-[0.98] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)] md:bottom-6 md:right-6 ${launcherVisibilityClass}`}
         onClick={onToggle}
         aria-label="打开 AI 工作区"
+        title="打开 Ask Claread"
       >
-        <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-        <span>Ask Claread</span>
+        <span className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_32%_28%,rgba(255,255,255,0.98),rgba(242,239,231,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.65),0_8px_18px_rgba(17,17,17,0.08)]">
+          <span className="absolute inset-[3px] rounded-full border border-hairline/65" />
+          <img
+            src="/brand/claread-icon-fullcolor.png"
+            alt=""
+            aria-hidden="true"
+            className="h-[22px] w-[22px] object-contain transition-transform duration-200 ease-out group-hover:scale-105"
+          />
+        </span>
       </button>
     );
   }
@@ -2362,24 +2411,26 @@ export function AiWorkspacePanel({
     <aside className="fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[28px] border border-hairline/85 bg-[linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] shadow-[0_26px_76px_rgba(17,17,17,0.12)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none">
       <div className="border-b border-hairline/70 px-5 py-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-[15px] font-semibold text-ink">Ask Claread</h2>
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-surface shadow-[0_10px_22px_rgba(17,17,17,0.04)]">
+              <Sparkles className="h-4 w-4 text-lens-blue" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-[17px] font-semibold tracking-[-0.03em] text-ink">Ask Claread</h2>
+            </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
+            <IconButton
               variant="quiet"
               size="sm"
-              density="compact"
-              className="h-8 rounded-full px-3 text-xs text-ink-soft"
               onClick={() => {
                 void handleResetConversation();
               }}
               disabled={loading || sending || !activeThreadId}
+              aria-label="重新开始"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>重新开始</span>
-            </Button>
+              <RotateCcw aria-hidden="true" className="h-4 w-4" />
+            </IconButton>
             <IconButton variant="quiet" size="sm" onClick={onToggle} aria-label="收起 AI 工作区">
               <X aria-hidden="true" className="h-4 w-4" />
             </IconButton>
@@ -2387,19 +2438,17 @@ export function AiWorkspacePanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 px-5 py-5">
+      <div className="min-h-0 flex-1 px-5 pb-3 pt-4">
         {loading ? (
           <div className="flex h-full items-center justify-center">
             <LoaderCircle className="h-5 w-5 animate-spin text-lens-blue" />
           </div>
         ) : (
           <ChatContainerRoot className="min-h-0 h-full w-full">
-            <ChatContainerContent className="gap-6 pr-1">
+            <ChatContainerContent className={cn("pr-1", messages.length === 0 ? "gap-0" : "gap-5")}>
               {messages.length === 0 ? (
                 <StarterState
-                  onAttachRecord={onAttachCurrentRecord}
-                  recordTitle={recordTitle}
-                  activeSentence={activeSentence}
+                  attachments={attachments}
                   onPickPrompt={(prompt) => {
                     void sendMessage({
                       content: prompt,
@@ -2433,9 +2482,9 @@ export function AiWorkspacePanel({
         )}
       </div>
 
-      <div className="border-t border-hairline/70 bg-[rgba(247,246,242,0.84)] px-4 py-4">
+      <div className="bg-[rgba(250,249,245,0.98)] px-4 pb-4 pt-1">
         {errorMessage ? (
-          <div className="mb-3 rounded-[18px] border border-destructive/20 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
+          <div className="mb-3 rounded-[12px] border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {errorMessage}
           </div>
         ) : null}
@@ -2446,78 +2495,86 @@ export function AiWorkspacePanel({
           onSubmit={handleSend}
           isLoading={sending}
           maxHeight={220}
-          className="bg-surface px-4 py-3"
+          className="flex flex-col gap-0 rounded-[24px] border border-hairline/80 bg-surface !px-0 !py-0 shadow-[0_12px_30px_rgba(17,17,17,0.04)] transition-all focus-within:border-muted focus-within:shadow-[0_16px_34px_rgba(17,17,17,0.06)]"
         >
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full border border-hairline/80 bg-reader-paper px-3 text-xs font-semibold text-ink-soft transition-colors hover:text-ink"
-                onClick={() => {
-                  setContextPickerOpen((current) => !current);
-                }}
-                disabled={sending}
-                aria-label="上下文"
-              >
-                <BookPlus className="h-3.5 w-3.5" />
-                <span>上下文</span>
-              </button>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <CurrentArticleChip recordTitle={recordTitle} />
-                {visibleContextAttachments.length > 0 ? (
-                  <AttachmentChips
-                    attachments={visibleContextAttachments}
-                    removable
-                    onRemove={onRemoveAttachment}
-                    onJump={onJumpToAttachment}
-                  />
-                ) : null}
-              </div>
-            </div>
-            <PromptInputActions className="shrink-0">
-              <button
-                type="button"
-                className="focus-ring inline-flex h-10 min-w-10 items-center justify-center rounded-full border border-[rgba(46,89,219,0.72)] bg-[linear-gradient(180deg,rgba(72,117,255,0.98),rgba(47,92,232,0.98))] px-3 text-surface shadow-[0_10px_24px_rgba(47,92,232,0.2)] disabled:opacity-40"
-                disabled={!composerDockState.canSend}
-                onClick={handleSend}
-                aria-label="发送"
-              >
-                {composerDockState.sending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </button>
-            </PromptInputActions>
-          </div>
-          {contextPickerOpen ? (
-            <div className="mb-3">
-              <ContextPicker
-                open={contextPickerOpen}
-                disabled={sending}
-                recordTitle={recordTitle}
-                search={contextSearch}
-                onToggle={() => {
-                  setContextPickerOpen((current) => !current);
-                }}
-                onSearchChange={(value) => {
-                  setContextSearch((current) => ({ ...current, query: value }));
-                }}
-                onAttachCurrentRecord={onAttachCurrentRecord}
-                onAttachRelatedRecord={handleAttachRelatedRecord}
+          {(recordTitle || visibleContextAttachments.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline/40 px-3.5 pb-2.5 pt-3">
+              <CurrentRecordChip recordTitle={recordTitle} />
+              <AttachmentChips
+                attachments={visibleContextAttachments}
+                removable
+                onRemove={onRemoveAttachment}
+                onJump={onJumpToAttachment}
               />
             </div>
-          ) : null}
-          <PromptInputTextarea placeholder={COMPOSER_PLACEHOLDER} />
-          <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/70 pt-3">
-            <p className="max-w-[22rem] text-[11px] leading-5 text-muted">
-              默认只围绕当前文章；只有明确提到以前读过的其他文章时才会扩展外部引用。
-            </p>
-            {composerDockState.attachmentCount > 0 ? (
+          )}
+
+          <div className="px-3.5 py-3">
+            <PromptInputTextarea
+              placeholder={COMPOSER_PLACEHOLDER}
+              className="min-h-[44px] text-[14px] leading-relaxed"
+            />
+          </div>
+
+          <div className="flex items-center justify-between px-3.5 pb-2.5 pt-1">
+            <div className="flex items-center gap-2">
+              <Popover open={contextPickerOpen} onOpenChange={setContextPickerOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      "focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border text-xs font-medium transition-colors",
+                      contextPickerOpen
+                        ? "border-muted bg-reader-paper text-ink"
+                        : "border-transparent text-muted hover:border-hairline hover:bg-reader-paper hover:text-ink",
+                    )}
+                    disabled={sending}
+                    onMouseDown={(event) => {
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                    }}
+                    title="添加其他文章"
+                    aria-label="添加其他文章"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent side="top" align="start" className="mb-3 border-none bg-transparent p-0 shadow-none">
+                  <RelatedRecordPicker
+                    disabled={sending}
+                    search={contextSearch}
+                    onSearchChange={(value) => {
+                      setContextSearch((current) => ({ ...current, query: value }));
+                    }}
+                    onAttachRelatedRecord={(item) => {
+                      void handleAttachRelatedRecord(item);
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <PromptInputActions>
               <button
                 type="button"
-                className="focus-ring shrink-0 text-[11px] font-semibold text-muted transition-colors hover:text-ink"
-                onClick={onClearAttachments}
+                className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full bg-ink text-surface transition-transform hover:scale-105 active:scale-95 disabled:scale-100 disabled:opacity-30 disabled:hover:scale-100"
+                disabled={!composerDockState.canSend}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleSend();
+                }}
+                title="发送"
+                aria-label="发送"
               >
-                清空附加上下文
+                {composerDockState.sending ? (
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ArrowUp className="h-3.5 w-3.5" />
+                )}
               </button>
-            ) : null}
+            </PromptInputActions>
           </div>
         </PromptInput>
       </div>
