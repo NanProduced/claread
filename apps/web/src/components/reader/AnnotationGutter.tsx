@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Highlighter } from "lucide-react";
+import { Highlighter, MessageSquare } from "lucide-react";
 
 import type { WebAnnotationVm } from "@/types/api/annotations";
 
@@ -8,8 +8,11 @@ export interface AnnotationGutterProps {
   annotations: WebAnnotationVm[];
   visible?: boolean;
   hoveredTargetKey?: string | null;
+  noteCount?: number;
+  noteActive?: boolean;
   onHoverTargetKeyChange?: (targetKey: string | null) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm, triggerEl?: HTMLElement, sentenceId?: string) => void;
+  onOpenNotes?: (sentenceId: string, triggerEl?: HTMLElement) => void;
 }
 
 function sentenceHighlightRange(annotation: WebAnnotationVm, sentenceId?: string) {
@@ -66,8 +69,11 @@ export function AnnotationGutter({
   annotations,
   visible = true,
   hoveredTargetKey = null,
+  noteCount = 0,
+  noteActive = false,
   onHoverTargetKeyChange,
   onAnnotationJump,
+  onOpenNotes,
 }: AnnotationGutterProps) {
   const [stripOpen, setStripOpen] = useState(false);
   const highlightAnnotations = useMemo(
@@ -84,7 +90,7 @@ export function AnnotationGutter({
     [annotations, sentenceId],
   );
 
-  if (!visible || highlightAnnotations.length === 0) {
+  if (!visible || (highlightAnnotations.length === 0 && noteCount === 0)) {
     return null;
   }
 
@@ -95,40 +101,65 @@ export function AnnotationGutter({
   return (
     <div
       className="reader-annotation-gutter absolute -left-5 top-2.5 flex flex-col gap-1"
-      aria-label="句子高亮锚点"
+      aria-label="句子高亮与笔记锚点"
     >
-      <button
-        type="button"
-        className={`reader-annotation-gutter-marker reader-annotation-gutter-marker--highlight relative text-structure-green drop-shadow-sm opacity-80 ${
-          active ? "reader-annotation-gutter-marker--active" : ""
-        }`}
-        onMouseEnter={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
-        onMouseLeave={() => onHoverTargetKeyChange?.(null)}
-        onFocus={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
-        onBlur={() => onHoverTargetKeyChange?.(null)}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (!primaryAnnotation) {
-            return;
-          }
+      {noteCount > 0 ? (
+        <button
+          type="button"
+          className={`reader-annotation-gutter-marker reader-annotation-gutter-marker--note relative ${
+            noteActive ? "reader-annotation-gutter-marker--active" : ""
+          }`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!sentenceId) {
+              return;
+            }
+            onOpenNotes?.(sentenceId, event.currentTarget);
+          }}
+          aria-label={noteCount > 1 ? `打开当前句的 ${noteCount} 条笔记` : "打开当前句笔记"}
+        >
+          <MessageSquare className="h-4 w-4" />
+          {noteCount > 1 ? (
+            <span className="reader-annotation-gutter-count" aria-hidden="true">
+              {noteCount}
+            </span>
+          ) : null}
+        </button>
+      ) : null}
+      {highlightAnnotations.length > 0 ? (
+        <button
+          type="button"
+          className={`reader-annotation-gutter-marker reader-annotation-gutter-marker--highlight relative text-structure-green drop-shadow-sm opacity-80 ${
+            active ? "reader-annotation-gutter-marker--active" : ""
+          }`}
+          onMouseEnter={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
+          onMouseLeave={() => onHoverTargetKeyChange?.(null)}
+          onFocus={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
+          onBlur={() => onHoverTargetKeyChange?.(null)}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!primaryAnnotation) {
+              return;
+            }
 
-          if (!hasMultipleHighlights) {
-            onAnnotationJump?.(primaryAnnotation, event.currentTarget, sentenceId);
-            return;
-          }
+            if (!hasMultipleHighlights) {
+              onAnnotationJump?.(primaryAnnotation, event.currentTarget, sentenceId);
+              return;
+            }
 
-          setStripOpen((current) => !current);
-        }}
-        aria-label={hasMultipleHighlights ? `查看本句 ${highlightAnnotations.length} 处高亮` : "打开本句高亮"}
-        aria-expanded={hasMultipleHighlights ? stripOpen : undefined}
-      >
-        <Highlighter className="h-4 w-4" />
-        {hasMultipleHighlights ? (
-          <span className="reader-annotation-gutter-count" aria-hidden="true">
-            {highlightAnnotations.length}
-          </span>
-        ) : null}
-      </button>
+            setStripOpen((current) => !current);
+          }}
+          aria-label={hasMultipleHighlights ? `查看本句 ${highlightAnnotations.length} 处高亮` : "打开本句高亮"}
+          aria-expanded={hasMultipleHighlights ? stripOpen : undefined}
+        >
+          <Highlighter className="h-4 w-4" />
+          {hasMultipleHighlights ? (
+            <span className="reader-annotation-gutter-count" aria-hidden="true">
+              {highlightAnnotations.length}
+            </span>
+          ) : null}
+        </button>
+      ) : null}
       {hasMultipleHighlights && stripOpen ? (
         <div
           className="reader-annotation-gutter-strip"

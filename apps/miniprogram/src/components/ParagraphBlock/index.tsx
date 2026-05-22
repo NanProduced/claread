@@ -994,7 +994,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
                     }}
                   >
                     <LucideIcon name='sticky-note' size={14} color='currentColor' />
-                    <Text>查看笔记{noteCount > 1 ? ` ${noteCount}` : ''}</Text>
+                    <Text>笔记{noteCount > 1 ? ` ${noteCount}` : ''}</Text>
                   </View>
                 )}
               </View>
@@ -1107,7 +1107,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
                           }}
                         >
                           <LucideIcon name='sticky-note' size={14} color='currentColor' />
-                          <Text>查看笔记{noteCount > 1 ? ` ${noteCount}` : ''}</Text>
+                          <Text>笔记{noteCount > 1 ? ` ${noteCount}` : ''}</Text>
                         </View>
                       )}
                     </View>

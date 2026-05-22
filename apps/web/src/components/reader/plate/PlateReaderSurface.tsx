@@ -65,7 +65,7 @@ export interface PlateReaderSurfaceProps {
   expandedAnalysisEntryIds?: string[];
   onSentenceActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
-  onOpenSentenceNotes?: (sentenceId: string, anchorEl: HTMLElement) => void;
+  onOpenSentenceNotes?: (sentenceId: string, anchorEl?: HTMLElement) => void;
   onAnalysisFocusChange?: (entryId: string, focused: boolean) => void;
   onAnalysisToggle?: (entryId: string) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm, triggerEl?: HTMLElement, sentenceId?: string) => void;

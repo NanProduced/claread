@@ -12,7 +12,7 @@ from app.contracts.annotation import compute_text_range_hash
 from app.main import app
 from app.schemas.reader_notes import ReaderNoteCreateRequest, ReaderNoteUpdateRequest
 from app.schemas.user_annotations import UserAnnotationSegment
-from app.services.reader_notes import _build_target_key, _row_to_response
+from app.services.reader_notes import _build_target_key, _row_to_response, create_reader_note, list_reader_notes
 
 client = TestClient(app)
 
@@ -174,6 +174,80 @@ class TestHelpers:
             end_offset=4,
             text_hash=compute_text_range_hash("beta"),
         )
+
+
+@pytest.mark.asyncio
+class TestServiceBehavior:
+    @patch("app.services.reader_notes._validate_quote_against_record", new_callable=AsyncMock)
+    @patch("app.services.reader_notes.db_connect.DB_POOL")
+    async def test_create_reader_note_reopens_exact_target_key(self, mock_pool, _mock_validate):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        reopened_row = _make_row(note_text="Updated existing note")
+        conn.fetchrow.return_value = reopened_row
+        req = ReaderNoteCreateRequest(
+            analysis_record_id=RECORD_ID,
+            quote_mode="sentence",
+            anchor_sentence_id="s1",
+            sentence_id="s1",
+            selected_text="Full sentence.",
+            note_text="Updated existing note",
+        )
+
+        response = await create_reader_note(UUID(USER_ID), req)
+
+        assert response.target_key == f"record:{RECORD_ID}:sentence:s1"
+        query = conn.fetchrow.await_args.args[0]
+        assert "ON CONFLICT (user_id, analysis_record_id, target_key) DO UPDATE" in query
+        assert "deleted_at = NULL" in query
+        assert "note_text = EXCLUDED.note_text" in query
+
+    @patch("app.services.reader_notes._validate_quote_against_record", new_callable=AsyncMock)
+    @patch("app.services.reader_notes.db_connect.DB_POOL")
+    async def test_create_reader_note_keeps_overlap_but_not_exact_as_new_target(self, mock_pool, _mock_validate):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        new_row = _make_row(
+            quote_mode="text_range",
+            target_key=f"record:{RECORD_ID}:range:s1:2:8:{compute_text_range_hash('ll sen')}",
+            selected_text="ll sen",
+            start_offset=2,
+            end_offset=8,
+            text_hash=compute_text_range_hash("ll sen"),
+        )
+        conn.fetchrow.return_value = new_row
+        req = ReaderNoteCreateRequest(
+            analysis_record_id=RECORD_ID,
+            quote_mode="text_range",
+            anchor_sentence_id="s1",
+            sentence_id="s1",
+            selected_text="ll sen",
+            start_offset=2,
+            end_offset=8,
+            text_hash=compute_text_range_hash("ll sen"),
+            note_text="New overlapping note",
+        )
+
+        response = await create_reader_note(UUID(USER_ID), req)
+
+        assert response.target_key == f"record:{RECORD_ID}:range:s1:2:8:{compute_text_range_hash('ll sen')}"
+        insert_args = conn.fetchrow.await_args.args
+        assert insert_args[5] == f"record:{RECORD_ID}:range:s1:2:8:{compute_text_range_hash('ll sen')}"
+
+    @patch("app.services.reader_notes.db_connect.DB_POOL")
+    async def test_list_reader_notes_orders_by_quote_position_then_created_at(self, mock_pool):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        conn.fetch.return_value = [
+            _make_row(note_text="Sentence note", start_offset=None, end_offset=None),
+            _make_row(note_text="Range note", quote_mode="text_range", start_offset=4, end_offset=10),
+        ]
+
+        response = await list_reader_notes(UUID(USER_ID), RECORD_ID)
+
+        assert [item.note_text for item in response] == ["Sentence note", "Range note"]
+        query = conn.fetch.await_args.args[0]
+        assert "ORDER BY anchor_sentence_id ASC, start_offset ASC NULLS FIRST, end_offset ASC NULLS FIRST, created_at ASC" in query
 
 
 class TestRoutes:

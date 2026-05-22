@@ -102,7 +102,7 @@ type AskPanelBlockKind =
   | "answer"
   | "response_cards"
   | "disambiguation"
-  | "asset_disambiguation"
+  | "external_asset_disambiguation"
   | "action_proposals"
   | "supplement_candidates"
   | "persisted_supplements"
@@ -462,7 +462,7 @@ function createSseMessageHandler(
                 evidence: payload.evidence ?? [],
                 trace_summary: payload.trace_summary ?? null,
                 disambiguation: payload.disambiguation ?? null,
-                asset_disambiguation: payload.asset_disambiguation ?? null,
+                external_asset_disambiguation: payload.external_asset_disambiguation ?? null,
                 response_cards: payload.response_cards,
                 resolved_context: payload.resolved_context,
                 context_plan: payload.context_plan ?? null,
@@ -504,7 +504,7 @@ function toolLabel(toolName: string) {
       return "词典 AI";
     case "propose_save_note":
       return "保存笔记确认";
-    case "propose_save_excerpt":
+    case "propose_save_highlight":
       return "保存高亮确认";
     default:
       return toolName;
@@ -703,7 +703,7 @@ function contextSummaryChips(
   if (summary.current_paragraph_used) {
     chips.push("当前段");
   }
-  if (summary.used_record_assets) {
+  if (summary.used_record_insights) {
     chips.push("本文解析");
   }
   if (summary.used_cross_record_context) {
@@ -754,8 +754,8 @@ function buildAssistantBlocks(message: ReaderAskMessageDto): AskPanelBlock[] {
   if (message.disambiguation?.required) {
     blocks.push({ kind: "disambiguation" });
   }
-  if (message.asset_disambiguation?.required) {
-    blocks.push({ kind: "asset_disambiguation" });
+  if (message.external_asset_disambiguation?.required) {
+    blocks.push({ kind: "external_asset_disambiguation" });
   }
   if (message.action_proposals.length > 0) {
     blocks.push({ kind: "action_proposals" });
@@ -1579,11 +1579,11 @@ function MessageBubble({
                           onSelectCandidate={(candidate) => onSelectDisambiguationCandidate(message.id, candidate)}
                         />
                       );
-                    case "asset_disambiguation":
+                    case "external_asset_disambiguation":
                       return (
                         <AssetDisambiguationCards
                           key={`${message.id}-${block.kind}-${index}`}
-                          assetDisambiguation={message.asset_disambiguation}
+                          assetDisambiguation={message.external_asset_disambiguation}
                           onSelectCandidate={(candidate, assetDisambiguation) =>
                             onSelectAssetDisambiguationCandidate(message.id, candidate, assetDisambiguation)
                           }
@@ -2175,7 +2175,7 @@ export function AiWorkspacePanel({
       evidence: [],
       trace_summary: null,
       disambiguation: null,
-      asset_disambiguation: null,
+      external_asset_disambiguation: null,
       response_cards: [],
       resolved_context: null,
       resolved_intent: null,
@@ -2201,7 +2201,7 @@ export function AiWorkspacePanel({
       evidence: [],
       trace_summary: null,
       disambiguation: null,
-      asset_disambiguation: null,
+      external_asset_disambiguation: null,
       response_cards: [],
       resolved_context: null,
       resolved_intent: null,
@@ -2296,7 +2296,7 @@ export function AiWorkspacePanel({
               evidence: [],
               trace_summary: null,
               disambiguation: null,
-              asset_disambiguation: null,
+              external_asset_disambiguation: null,
               response_cards: [],
               resolved_context: null,
               context_plan: null,

@@ -148,7 +148,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - `resolved_context_input`
 - `trace_summary`
 - `disambiguation`
-- `asset_disambiguation`
+- `external_asset_disambiguation`
 - `response_cards`
 - `action_proposals`
 - `supplement_candidates`

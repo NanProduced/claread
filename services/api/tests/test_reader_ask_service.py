@@ -144,7 +144,7 @@ def test_build_action_proposals_does_not_offer_saving_full_answer_as_note() -> N
 
     proposal_types = {proposal.action_type for proposal in proposals}
 
-    assert "save_excerpt" in proposal_types
+    assert "save_highlight" in proposal_types
     assert "save_note" not in proposal_types
     assert all(proposal.requires_confirmation for proposal in proposals)
 
@@ -231,7 +231,7 @@ def test_resolved_context_summary_marks_article_assets_and_history_usage() -> No
 
     assert summary.current_sentence_used is True
     assert summary.current_paragraph_used is True
-    assert summary.used_record_assets is True
+    assert summary.used_record_insights is True
     assert summary.used_cross_record_context is True
     assert summary.explicit_attachment_count == 2
 
@@ -418,7 +418,7 @@ def test_user_visible_output_round_trips_to_completed_payload() -> None:
         evidence=[],
         trace_summary=None,
         disambiguation=None,
-        asset_disambiguation=None,
+        external_asset_disambiguation=None,
         response_cards=[],
         usage_summary={"input_tokens": 10, "output_tokens": 20},
         billed_points=3,
@@ -964,7 +964,7 @@ def test_trace_summary_marks_external_context_limitations() -> None:
     assert trace.used_structured_asset_lookup is True
 
 
-def test_plan_request_builds_asset_disambiguation_state_for_ambiguous_external_assets() -> None:
+def test_plan_request_builds_external_asset_disambiguation_state_for_ambiguous_external_assets() -> None:
     record_attachment = ReaderAskAttachment(
         kind="record_ref",
         subtype="related_record",
@@ -1019,10 +1019,10 @@ def test_plan_request_builds_asset_disambiguation_state_for_ambiguous_external_a
     )
 
     assert snapshot.clarification_only is True
-    assert snapshot.asset_disambiguation_state is not None
-    assert snapshot.asset_disambiguation_state.required is True
-    assert len(snapshot.asset_disambiguation_state.candidates) == 2
-    assert snapshot.trace_summary.used_hitp_asset_disambiguation is True
+    assert snapshot.external_asset_disambiguation_state is not None
+    assert snapshot.external_asset_disambiguation_state.required is True
+    assert len(snapshot.external_asset_disambiguation_state.candidates) == 2
+    assert snapshot.trace_summary.used_external_asset_disambiguation is True
 
 
 def test_build_evidence_items_marks_external_record_scope() -> None:
@@ -1081,7 +1081,7 @@ def test_build_evidence_items_marks_external_asset_scope_and_asset_candidates() 
                 reason="structured_asset_resolved",
             ).model_dump(mode="json")
         ],
-        asset_disambiguation=ReaderAskAssetDisambiguation(
+        external_asset_disambiguation=ReaderAskAssetDisambiguation(
             required=True,
             reason="外部文章里有多个稳定资产可能相关。",
             record_id="record-2",
@@ -1100,7 +1100,7 @@ def test_build_evidence_items_marks_external_asset_scope_and_asset_candidates() 
 
     assert evidence[0].reason == "external_supplement_asset"
     assert any(item.reason == "external_supplement_asset" and item.kind == "citation" for item in evidence)
-    assert any(item.reason == "asset_disambiguation_candidate" for item in evidence)
+    assert any(item.reason == "external_asset_disambiguation_candidate" for item in evidence)
 
 
 def test_plan_request_uses_explicit_related_record_context() -> None:

@@ -34,7 +34,7 @@ def _tool_trace(tool_name: str, status: Literal["started", "completed", "failed"
 
 @dataclass(slots=True)
 class ReaderAskRuntimeActionRequest:
-    action_type: Literal["save_note", "save_excerpt"]
+    action_type: Literal["save_note", "save_highlight"]
     label: str
     description: str
     payload_json: dict[str, Any] = field(default_factory=dict)
@@ -246,7 +246,6 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     async def propose_save_note(
         ctx: RunContext[ReaderAskAgentDeps],
         note_text: str | None = None,
-        use_assistant_answer: bool = False,
     ) -> dict[str, Any]:
         async def runner() -> dict[str, Any]:
             if ctx.deps.primary_anchor is None:
@@ -267,14 +266,14 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
 
         return await _run_tool(ctx, "propose_save_note", runner)
 
-    @agent.tool(name="propose_save_excerpt")
-    async def propose_save_excerpt(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
+    @agent.tool(name="propose_save_highlight")
+    async def propose_save_highlight(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
         async def runner() -> dict[str, Any]:
             if ctx.deps.primary_anchor is None:
                 return {"ok": False, "reason": "No anchor available"}
             ctx.deps.state.action_requests.append(
                 ReaderAskRuntimeActionRequest(
-                    action_type="save_excerpt",
+                    action_type="save_highlight",
                     label="保存为高亮",
                     description="把当前锚点保存成高亮/摘录",
                     payload_json={
@@ -283,8 +282,8 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                     },
                 )
             )
-            return {"ok": True, "action_type": "save_excerpt"}
+            return {"ok": True, "action_type": "save_highlight"}
 
-        return await _run_tool(ctx, "propose_save_excerpt", runner)
+        return await _run_tool(ctx, "propose_save_highlight", runner)
 
     return agent

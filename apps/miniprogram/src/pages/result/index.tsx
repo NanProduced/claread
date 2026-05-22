@@ -27,6 +27,7 @@ import { useResultEffects } from './hooks/useResultEffects'
 import { useResultActions } from './hooks/useResultActions'
 import { PAGE_MODE_OPTIONS, hasRenderableScene } from './utils'
 import { getVocabEntryByLookupForm } from '../../services/storage'
+import { getLocalReaderNotes } from '../../services/storage'
 import DegradedBanner from './components/DegradedBanner'
 import SourceFallback from './components/SourceFallback'
 import StateViews from './components/StateViews'
@@ -174,7 +175,10 @@ export default function Result() {
   const [userAnnotations, setUserAnnotations] = useState<UserAnnotationDto[]>([])
   const [readerNotes, setReaderNotes] = useState<ReaderNoteDto[]>([])
   const [noteSheetSentenceId, setNoteSheetSentenceId] = useState<string | null>(null)
+  const [noteSheetMode, setNoteSheetMode] = useState<'preview' | 'compose'>('preview')
   const [activeReaderNoteId, setActiveReaderNoteId] = useState<string | null>(null)
+  const [editingReaderNoteId, setEditingReaderNoteId] = useState<string | null>(null)
+  const [noteDraftText, setNoteDraftText] = useState('')
   const [showFeedbackSheet, setShowFeedbackSheet] = useState(false)
   const [scrollIntoViewId, setScrollIntoViewId] = useState('')
   const [articleScrollTop, setArticleScrollTop] = useState(0)
@@ -233,6 +237,13 @@ export default function Result() {
       setReaderNotes([])
       return
     }
+
+    const localReaderNotes = getLocalReaderNotes()
+      .filter(note => note.analysis_record_id === cloudId)
+    if (localReaderNotes.length > 0) {
+      setReaderNotes(localReaderNotes)
+    }
+
     listUserAnnotations(cloudId).then(setUserAnnotations).catch(err => {
       console.warn('Failed to load user annotations', err)
     })
@@ -273,7 +284,10 @@ export default function Result() {
     )
     if (matchedReaderNote) {
       setNoteSheetSentenceId(matchedReaderNote.anchor_sentence_id)
+      setNoteSheetMode('preview')
       setActiveReaderNoteId(matchedReaderNote.id)
+      setEditingReaderNoteId(null)
+      setNoteDraftText('')
     }
   }, [readerNotes, userAnnotations])
 
@@ -354,6 +368,10 @@ export default function Result() {
   }, [selectionContext, cloudId, recordId])
   const routeFocusSentenceIds = useMemo(() => new Set(routeFocus?.sentenceIds || []), [routeFocus])
   const routeFocusRangesBySentence = useMemo(() => routeFocus?.rangesBySentence || {}, [routeFocus])
+  const sentenceById = useMemo(
+    () => new Map((sceneData?.article?.sentences || []).map(sentence => [sentence.sentenceId, sentence])),
+    [sceneData],
+  )
 
   const noteSheetNotes = useMemo(() => {
     if (!noteSheetSentenceId) return []
@@ -375,24 +393,96 @@ export default function Result() {
     return sceneData.article.sentences.find(sentence => sentence.sentenceId === noteSheetSentenceId)?.text || ''
   }, [noteSheetSentenceId, sceneData])
 
-  const handleOpenSentenceNotes = useCallback((sentenceId: string) => {
+  const editingReaderNote = useMemo(() => {
+    if (!editingReaderNoteId) return null
+    return readerNotes.find(note => note.id === editingReaderNoteId) || null
+  }, [editingReaderNoteId, readerNotes])
+
+  const activeReaderNote = useMemo(() => {
+    if (!activeReaderNoteId) return null
+    return readerNotes.find(note => note.id === activeReaderNoteId) || null
+  }, [activeReaderNoteId, readerNotes])
+
+  const openNoteSheetForSentence = useCallback((sentenceId: string, preferSentenceComposer = false) => {
+    const sentenceTargetKey = cloudId ? buildSentenceTargetKey(cloudId, sentenceId) : null
+    const sentenceNote = sentenceTargetKey
+      ? readerNotes.find(note => note.target_key === sentenceTargetKey) || null
+      : null
+    const fallbackNote = readerNotes.find(note => note.anchor_sentence_id === sentenceId) || null
+    const nextActiveNote = sentenceNote || fallbackNote
+    const nextEditingNote = preferSentenceComposer ? sentenceNote : null
+
     setNoteSheetSentenceId(sentenceId)
-    setActiveReaderNoteId(prev => {
-      const next = readerNotes.find(note => note.anchor_sentence_id === sentenceId)
-      return next?.id || prev
-    })
+    setNoteSheetMode(preferSentenceComposer || !nextActiveNote ? 'compose' : 'preview')
+    setActiveReaderNoteId(nextActiveNote?.id || null)
+    setEditingReaderNoteId(nextEditingNote?.id || null)
+    setNoteDraftText(nextEditingNote?.note_text || '')
     clearSelection()
-  }, [clearSelection, readerNotes])
+  }, [clearSelection, cloudId, readerNotes])
+
+  const closeNoteSheet = useCallback(() => {
+    setNoteSheetSentenceId(null)
+    setNoteSheetMode('preview')
+    setActiveReaderNoteId(null)
+    setEditingReaderNoteId(null)
+    setNoteDraftText('')
+  }, [])
+
+  const handleOpenSentenceNotes = useCallback((sentenceId: string) => {
+    openNoteSheetForSentence(sentenceId)
+  }, [openNoteSheetForSentence])
 
   const focusReaderNote = useCallback((note: ReaderNoteDto) => {
     const focus = buildRouteFocusFromReaderNote(note)
     routeSentenceIdRef.current = note.anchor_sentence_id
     scrolledSentenceIdRef.current = null
+    setNoteSheetSentenceId(note.anchor_sentence_id)
+    setNoteSheetMode('preview')
     setActiveReaderNoteId(note.id)
+    setEditingReaderNoteId(null)
+    setNoteDraftText('')
     setActiveSentenceId(note.anchor_sentence_id)
     setScrollIntoViewId(getSentenceAnchorId(note.anchor_sentence_id))
     setRouteFocus(focus)
   }, [setActiveSentenceId])
+
+  const handleOpenActiveNoteActions = useCallback(() => {
+    if (!activeReaderNote) return
+
+    Taro.showActionSheet({
+      itemList: ['编辑笔记', '删除笔记'],
+      success: (result) => {
+        if (result.tapIndex === 0) {
+          setNoteSheetMode('compose')
+          setEditingReaderNoteId(activeReaderNote.id)
+          setNoteDraftText(activeReaderNote.note_text)
+          return
+        }
+
+        if (result.tapIndex === 1) {
+          Taro.showModal({
+            title: '删除笔记',
+            content: '删除后将无法恢复，是否继续？',
+            confirmColor: '#C2410C',
+            success: (modal) => {
+              if (!modal.confirm) return
+
+              const nextNotes = readerNotes.filter(note => note.id !== activeReaderNote.id)
+              const nextActive = nextNotes.find(note => note.anchor_sentence_id === activeReaderNote.anchor_sentence_id) || null
+
+              setReaderNotes(nextNotes)
+              setActiveReaderNoteId(nextActive?.id || null)
+              setEditingReaderNoteId(null)
+              setNoteDraftText('')
+              setNoteSheetMode(nextActive ? 'preview' : 'compose')
+              CloudSyncService.syncDeleteNote(activeReaderNote.id)
+              Taro.showToast({ title: '已删除笔记', icon: 'success' })
+            },
+          })
+        }
+      },
+    })
+  }, [activeReaderNote, readerNotes])
 
   const handleCopy = (mode: 'original' | 'translation' | 'bilingual') => {
     if (!selectionContext) return
@@ -481,6 +571,126 @@ export default function Result() {
       Taro.showToast({ title: '添加笔记失败', icon: 'none' })
     }
   }
+
+  const handleSentenceHighlight = useCallback(async (
+    color: 'soft_green' | 'soft_blue' | 'soft_purple' | 'warm_yellow' | 'sage_green',
+    selectedText: string,
+  ) => {
+    if (!selectionContext || !cloudId) return
+    try {
+      const now = new Date().toISOString()
+      const targetKey = buildSentenceTargetKey(cloudId, selectionContext.sentenceId)
+      const existingAnnotation = userAnnotations.find(item => item.target_key === targetKey) || null
+
+      if (existingAnnotation) {
+        const updatedAnnotation: UserAnnotationDto = {
+          ...existingAnnotation,
+          sentence_id: selectionContext.sentenceId,
+          selected_text: selectedText,
+          text_hash: selectionContext.textHash,
+          color,
+          updated_at: now,
+        }
+        setUserAnnotations(prev => prev.map(item => item.id === updatedAnnotation.id ? updatedAnnotation : item))
+        CloudSyncService.syncAnnotation(updatedAnnotation, false)
+        Taro.showToast({ title: '已更新高亮', icon: 'success' })
+        clearSelection()
+        return
+      }
+
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const newAnnotation: UserAnnotationDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_type: 'sentence',
+        target_key: targetKey,
+        sentence_id: selectionContext.sentenceId,
+        selected_text: selectedText,
+        text_hash: selectionContext.textHash,
+        color,
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setUserAnnotations(prev => [...prev, newAnnotation])
+      CloudSyncService.syncAnnotation(newAnnotation, true)
+      Taro.showToast({ title: '已添加高亮', icon: 'success' })
+      clearSelection()
+    } catch (err) {
+      console.warn('Failed to create highlight', err)
+      Taro.showToast({ title: '添加高亮失败', icon: 'none' })
+    }
+  }, [clearSelection, cloudId, selectionContext, userAnnotations])
+
+  const handleSentenceNoteAction = useCallback(() => {
+    if (!selectionContext) return
+    openNoteSheetForSentence(selectionContext.sentenceId, true)
+  }, [openNoteSheetForSentence, selectionContext])
+
+  const handleSubmitNoteDraft = useCallback(async () => {
+    if (!noteSheetSentenceId || !cloudId) return
+    const nextText = noteDraftText.trim()
+    if (!nextText) {
+      Taro.showToast({ title: '笔记内容不能为空', icon: 'none' })
+      return
+    }
+
+    try {
+      const now = new Date().toISOString()
+
+      if (editingReaderNote) {
+        const updatedNote: ReaderNoteDto = {
+          ...editingReaderNote,
+          note_text: nextText,
+          updated_at: now,
+        }
+        setReaderNotes(prev => prev.map(note => note.id === updatedNote.id ? updatedNote : note))
+        setActiveReaderNoteId(updatedNote.id)
+        setEditingReaderNoteId(updatedNote.id)
+        setNoteDraftText(updatedNote.note_text)
+        setNoteSheetMode('preview')
+        CloudSyncService.syncNote(updatedNote, false)
+        Taro.showToast({ title: '已保存笔记', icon: 'success' })
+        return
+      }
+
+      const sentence = sentenceById.get(noteSheetSentenceId)
+      const selectedText = sentence?.text || noteSheetSentenceText
+      if (!selectedText) {
+        Taro.showToast({ title: '未找到句子内容', icon: 'none' })
+        return
+      }
+
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const newNote: ReaderNoteDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_sentence_id: noteSheetSentenceId,
+        quote_mode: 'sentence',
+        target_key: buildSentenceTargetKey(cloudId, noteSheetSentenceId),
+        paragraph_id: sentence?.paragraphId,
+        sentence_id: noteSheetSentenceId,
+        selected_text: selectedText,
+        start_offset: 0,
+        end_offset: selectedText.length,
+        segments: [],
+        note_text: nextText,
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setReaderNotes(prev => [...prev, newNote])
+      setActiveReaderNoteId(newNote.id)
+      setEditingReaderNoteId(newNote.id)
+      setNoteDraftText(newNote.note_text)
+      setNoteSheetMode('preview')
+      CloudSyncService.syncNote(newNote, true)
+      Taro.showToast({ title: '已创建笔记', icon: 'success' })
+    } catch (err) {
+      console.warn('Failed to save note', err)
+      Taro.showToast({ title: '保存笔记失败', icon: 'none' })
+    }
+  }, [cloudId, editingReaderNote, noteDraftText, noteSheetSentenceId, noteSheetSentenceText, sentenceById])
 
   useResultEffects({
     recordId, cloudId, sceneData, pageState,
@@ -729,17 +939,23 @@ export default function Result() {
         onClose={clearSelection}
         onCopy={handleCopy}
         onFeedback={() => { setShowFeedbackSheet(true) }}
-        onHighlight={handleHighlight}
-        onNote={handleNote}
+        onHighlight={handleSentenceHighlight}
+        onNote={handleSentenceNoteAction}
       />
 
       <ReaderNoteSheet
         visible={!!noteSheetSentenceId}
-        sentenceText={noteSheetSentenceText}
         notes={noteSheetNotes}
+        mode={noteSheetMode}
+        activeNote={activeReaderNote}
         activeNoteId={activeReaderNoteId}
-        onClose={() => setNoteSheetSentenceId(null)}
+        draftText={noteDraftText}
+        submitLabel={editingReaderNote ? '保存笔记' : '创建笔记'}
+        onClose={closeNoteSheet}
         onSelectNote={focusReaderNote}
+        onDraftChange={setNoteDraftText}
+        onSubmitDraft={handleSubmitNoteDraft}
+        onOpenActions={handleOpenActiveNoteActions}
       />
 
       {showFeedbackSheet && selectionContext && (

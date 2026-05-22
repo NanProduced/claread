@@ -64,7 +64,7 @@ Ask Claread 当前采用四层真相源：
 - `context_plan`
 - `trace_summary`
 - `disambiguation_state`
-- `asset_disambiguation_state`
+- `external_asset_disambiguation_state`
 
 Planner 负责决定“用什么上下文”，不负责直接生成最终回答。
 
@@ -171,7 +171,7 @@ Planner 负责决定“用什么上下文”，不负责直接生成最终回答
 
 当 external record 已确定，但 asset 命中多个候选时：
 
-- planner 进入 `asset_disambiguation_state`
+- planner 进入 `external_asset_disambiguation_state`
 - 当前 run 不走主回答生成
 - Ask 面板展示 asset-level candidate cards
 

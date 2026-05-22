@@ -984,7 +984,7 @@ export function ReaderWorkbench({
   }, [selectedAnnotation]);
 
   useEffect(() => {
-    const targetKey = searchParams.get("targetKey");
+    const targetKey = searchParams.get("focusTargetKey") ?? searchParams.get("targetKey");
     if (!targetKey || focusedRouteTargetKeyRef.current === targetKey) {
       return;
     }

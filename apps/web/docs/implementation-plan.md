@@ -48,7 +48,7 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 - SelectionToolbar 当前已收口为单层 Reader 工具条：高亮是一级按钮，首次点击直接用默认色创建且不关闭 toolbar，随后立即展开 inline 颜色条；已有高亮时再次点击高亮按钮只切换颜色条展开/收起。工具条不再显示 range type 文案，不再弹 dropdown 选色，不再显示“高亮已保存”提示；AI 入口改为火花 icon，句子扩展、笔记、查词、取消标注都尽量保持一级动作。
 - `Ask Claread` 的当前产品与交互边界见 `docs/product/ask-claread.md`。Web UI 对接将采用“Prompt Kit 基础 primitives + Claread 自研 Reader-specific 组件”的方式推进：先初始化 `components.json`，再接 `ChatContainer` / `Message` / `PromptInput` / `Markdown` / `Tool`，自研 context chips、article citation、confirm card 和 thread header。
 - 文本选区数据契约已进入稳定 v1：Web 和小程序通过 `@claread/contracts` 共享 anchor/target/color/offset/hash 常量；后端按 UTF-16 offset、`fnv1a32-utf16` hash、multi_text segments 和 render scene sentence 切片校验局部/多段选区。
-- Plate readOnly runtime 已经接入并成为 Reader 主运行时：当前主链路是 `renderSceneToPlateDocument -> PlateReaderSurface`，配套 `reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已落地。ReaderWorkbench 当前仍是 orchestration hub，但旧的 `ReaderCanvas`、`ReaderSentenceRow`、`reader-selection` 路径已经退役；后续 Reader 改动优先围绕 `PlateReaderSurface`、bridges、`SelectionToolbar`、`AnnotationGutter` / `AnnotationSlip` 收口，句尾句柄不再作为独立句子卡片入口。
+- Plate readOnly runtime 已经接入并成为 Reader 主运行时：当前主链路是 `renderSceneToPlateDocument -> PlateReaderSurface`，配套 `reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已落地。ReaderWorkbench 当前仍是 orchestration hub，但旧的 `ReaderCanvas`、`ReaderSentenceRow`、`reader-selection` 路径已经退役；后续 Reader 改动优先围绕 `PlateReaderSurface`、bridges、`SelectionToolbar`、`AnnotationGutter` 和 `ReaderNotePanel` 收口，句尾句柄不再作为独立句子卡片入口。
 - Reader 文字底板与机器批注已经完成第一轮 UI 收口：译文已成为稳定第二阅读层；`vocab / phrase / context` 已改为完整覆盖的 lexical family；`sentence_analysis` 已有原文 chunk 回写。结构类批注与用户资产冲突模型仍未最终定稿，这部分不应再被写成“已稳定产品能力”。
 
 ## UI/UX 第一版定稿约束

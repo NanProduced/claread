@@ -29,7 +29,10 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
     evidence = visible.get("evidence", metadata.get("evidence") or [])
     trace_summary = visible.get("trace_summary", metadata.get("trace_summary"))
     disambiguation = visible.get("disambiguation", metadata.get("disambiguation"))
-    asset_disambiguation = visible.get("asset_disambiguation", metadata.get("asset_disambiguation"))
+    external_asset_disambiguation = visible.get(
+        "external_asset_disambiguation",
+        metadata.get("external_asset_disambiguation"),
+    )
     response_cards = visible.get("response_cards", metadata.get("response_cards") or [])
     resolved_context = visible.get("resolved_context", metadata.get("resolved_context"))
     context_plan = visible.get("context_plan", metadata.get("context_plan"))
@@ -58,7 +61,7 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "evidence": evidence,
         "trace_summary": trace_summary,
         "disambiguation": disambiguation,
-        "asset_disambiguation": asset_disambiguation,
+        "external_asset_disambiguation": external_asset_disambiguation,
         "response_cards": response_cards,
         "resolved_context": resolved_context,
         "context_plan": context_plan,

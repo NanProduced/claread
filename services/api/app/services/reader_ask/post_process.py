@@ -44,7 +44,7 @@ def build_evidence_items(
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
     disambiguation: ReaderAskDisambiguation | None = None,
-    asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
     include_clarification: bool = False,
 ) -> list[ReaderAskEvidenceItem]:
     evidence: list[ReaderAskEvidenceItem] = []
@@ -204,18 +204,18 @@ def build_evidence_items(
                     metadata_json={"updated_at": candidate.updated_at, "query": disambiguation.query},
                 )
             )
-    if asset_disambiguation and asset_disambiguation.required:
-        for candidate in asset_disambiguation.candidates:
+    if external_asset_disambiguation and external_asset_disambiguation.required:
+        for candidate in external_asset_disambiguation.candidates:
             evidence.append(
                 ReaderAskEvidenceItem(
                     kind="disambiguation_candidate",
                     label=candidate.title or candidate.asset_id,
                     detail=candidate.summary or "候选外部稳定资产，可加入当前讨论。",
                     scope="external_record",
-                    record_id=asset_disambiguation.record_id,
-                    record_title=asset_disambiguation.record_title,
-                    source_article_title=asset_disambiguation.record_title,
-                    reason="asset_disambiguation_candidate",
+                    record_id=external_asset_disambiguation.record_id,
+                    record_title=external_asset_disambiguation.record_title,
+                    source_article_title=external_asset_disambiguation.record_title,
+                    reason="external_asset_disambiguation_candidate",
                     metadata_json={
                         "asset_id": candidate.asset_id,
                         "asset_type": candidate.asset_type,

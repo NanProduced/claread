@@ -125,7 +125,7 @@ class ReaderAskPlanningSnapshot:
     context_plan: ReaderAskContextPlan
     trace_summary: ReaderAskTraceSummary
     disambiguation_state: ReaderAskDisambiguation | None = None
-    asset_disambiguation_state: ReaderAskAssetDisambiguation | None = None
+    external_asset_disambiguation_state: ReaderAskAssetDisambiguation | None = None
     clarification_only: bool = False
 
 
@@ -467,7 +467,7 @@ def _planned_trace_summary(
     working_set: ReaderAskWorkingSet,
     clarification_only: bool,
     disambiguation_state: ReaderAskDisambiguation | None = None,
-    asset_disambiguation_state: ReaderAskAssetDisambiguation | None = None,
+    external_asset_disambiguation_state: ReaderAskAssetDisambiguation | None = None,
 ) -> ReaderAskTraceSummary:
     if clarification_only:
         planner_mode = "needs_local_clarification"
@@ -491,7 +491,7 @@ def _planned_trace_summary(
         notes.append("本轮显式并入了其他文章记录。")
     if working_set.external_asset_refs:
         notes.append("本轮并入了外部文章里的稳定解析资产。")
-    if asset_disambiguation_state and asset_disambiguation_state.required:
+    if external_asset_disambiguation_state and external_asset_disambiguation_state.required:
         notes.append("外部文章里的候选资产不唯一，需要先指定要并入哪一个。")
 
     return ReaderAskTraceSummary(
@@ -507,7 +507,9 @@ def _planned_trace_summary(
         used_structured_asset_lookup=bool(working_set.external_record_refs),
         used_hitp_disambiguation=bool(disambiguation_state and disambiguation_state.required),
         used_external_asset_context=bool(working_set.external_asset_refs),
-        used_hitp_asset_disambiguation=bool(asset_disambiguation_state and asset_disambiguation_state.required),
+        used_external_asset_disambiguation=bool(
+            external_asset_disambiguation_state and external_asset_disambiguation_state.required
+        ),
         supplement_generation_used=False,
         supplement_persisted_count=0,
         supplement_deleted_count=0,
@@ -545,7 +547,7 @@ def _planned_disambiguation_state(
     )
 
 
-def _planned_asset_disambiguation_state(
+def _planned_external_asset_disambiguation_state(
     *,
     structured_asset_resolution: ReaderAskStructuredAssetResolution,
     clarification_only: bool,
@@ -734,7 +736,7 @@ def plan_request(
         reference_resolution=resolved_reference,
         clarification_only=clarification_only,
     )
-    asset_disambiguation_state = _planned_asset_disambiguation_state(
+    external_asset_disambiguation_state = _planned_external_asset_disambiguation_state(
         structured_asset_resolution=resolved_asset_resolution,
         clarification_only=clarification_only,
     )
@@ -743,7 +745,7 @@ def plan_request(
         working_set=working_set,
         clarification_only=clarification_only,
         disambiguation_state=disambiguation_state,
-        asset_disambiguation_state=asset_disambiguation_state,
+        external_asset_disambiguation_state=external_asset_disambiguation_state,
     )
     return ReaderAskPlanningSnapshot(
         resolved_intent=resolved_intent,
@@ -757,7 +759,7 @@ def plan_request(
         context_plan=context_plan,
         trace_summary=trace_summary,
         disambiguation_state=disambiguation_state,
-        asset_disambiguation_state=asset_disambiguation_state,
+        external_asset_disambiguation_state=external_asset_disambiguation_state,
         clarification_only=clarification_only,
     )
 
@@ -865,7 +867,9 @@ def build_context_plan(
             else "structured_asset_resolved"
             if working_set and working_set.external_asset_refs
             else "structured_asset_ambiguous"
-            if planning_snapshot and planning_snapshot.asset_disambiguation_state and planning_snapshot.asset_disambiguation_state.required
+            if planning_snapshot
+            and planning_snapshot.external_asset_disambiguation_state
+            and planning_snapshot.external_asset_disambiguation_state.required
             else None
         ),
         clarification_reason=clarification_reason,
@@ -909,7 +913,7 @@ def build_resolved_context_summary(
         used_cross_record_context=used_cross_record_context,
         current_sentence_used=bool(anchors),
         current_paragraph_used=runtime_state.latest_record_context is not None,
-        used_record_assets=bool(
+        used_record_insights=bool(
             runtime_state.latest_article_overview
             or runtime_state.latest_record_insights
         ),
@@ -982,8 +986,10 @@ def build_trace_summary(
         ),
         used_hitp_disambiguation=context_plan.reference_resolution_status == "ambiguous",
         used_external_asset_context=bool(runtime_state.latest_external_asset_contexts),
-        used_hitp_asset_disambiguation=bool(
-            planning_snapshot and planning_snapshot.asset_disambiguation_state and planning_snapshot.asset_disambiguation_state.required
+        used_external_asset_disambiguation=bool(
+            planning_snapshot
+            and planning_snapshot.external_asset_disambiguation_state
+            and planning_snapshot.external_asset_disambiguation_state.required
         ),
         supplement_generation_used=False,
         supplement_persisted_count=0,

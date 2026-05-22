@@ -55,9 +55,10 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 1. 当前产品主线是稳定 `analysis record Reader` 的新标注模型：文章收藏、用户高亮、用户笔记和 Ask Claread 显式引用。
 2. Web Reader 仍在进行最后一轮 UI/UX 收口：当前主路径已经是句侧 note marker、selection draft popover 和浮出式 note panel，但评论交互与视觉层级仍在继续打磨。
-3. 小程序尚未完全收口到目标中的“只读查看态”：结果页已经读取新 `reader_notes` / `user_annotations`，但旧 `ReadingSelectionToolbar`、`ReaderNoteSheet` 等写路径壳仍待删除；`/vocabulary` 继续保持独立词汇资产入口。
-4. 收紧数据层长期约束：`text_range` / `multi_text` 校验、局部索引、annotations/notes 分页和完整 OpenAPI contracts 生成。
-5. Directus 当前只适合进入边界设计和 schema 准备；等首个 AI 能力纵切跑通并出现真实运营需求后，再进入正式开发。
+3. 小程序已切到“句子级可写、局部/跨句只读回显”的收口目标：结果页读取 `reader_notes` / `user_annotations`，句子级高亮可直接创建或更新；句子级笔记默认先展示预览，再通过二级菜单进入编辑或删除；Web 创建的 `text_range` / `multi_text` 资产只负责回显与 focus，不在小程序端改写锚点；`/vocabulary` 继续保持独立词汇资产入口。
+4. 小程序 Reader 结果页对 `reader_notes` 已补齐本地优先回读：页面进入时先读取本地 `reader_notes` cache，再用云端 `GET /reader-notes?analysis_record_id=...` 结果覆盖，避免 sync queue flush 稍慢时表现成“刚写完就丢失”。
+5. 收紧数据层长期约束：`text_range` / `multi_text` 校验、局部索引、annotations/notes 分页和完整 OpenAPI contracts 生成。
+6. Directus 当前只适合进入边界设计和 schema 准备；等首个 AI 能力纵切跑通并出现真实运营需求后，再进入正式开发。
 
 ## 已知边界
 

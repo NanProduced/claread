@@ -48,10 +48,10 @@
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
 | 收藏整篇文章 | 已接入 | 已接入 | `favorite_records.target_type=analysis_record` | 双端共享记录收藏 |
-| 整句选择后高亮/笔记 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、反显和取消 | 部分接入：仍保留旧句子级写路径壳，目标是收口到只读查看态 | `anchor_type=sentence`、`reader_notes` | 双端共享句子级锚点，但小程序仍在收尾阶段 |
+| 整句选择后高亮/笔记 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、反显和取消 | 部分接入：小程序保留句子级高亮/笔记写入，并继续收口到句子级专用交互；笔记默认先进入预览态，再通过二级菜单编辑/删除 | `anchor_type=sentence`、`reader_notes` | 双端共享句子级锚点；小程序只在句子级提供写入口 |
 | 句内局部文本高亮/笔记 | 已接入：Web 支持单句内精确选区创建、渲染、反显和取消 | 部分接入：结果页已能读取和回显局部资产，但旧选区工具条/笔记 sheet 仍在 | `anchor_type=text_range`、`reader_notes`、`start_offset`、`end_offset`、`text_hash` | 坐标系为 UTF-16 code unit；后端校验 render scene sentence 切片和 `fnv1a32-utf16` hash |
 | 选中文本查词/查短语 | 已接入：selection toolbar 触发 | 未接入选区操作；保留点词查词路径 | `/dict` | Web 选区能力增强，不要求小程序复刻交互 |
-| 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 部分接入：按已有句子级操作为主；局部资产先只展示 | `/user-annotations/{id}` | 小程序可先展示局部资产，不必提供同等编辑入口 |
+| 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 部分接入：按已有句子级操作为主；句子级笔记可在预览态通过二级菜单删除，局部资产先只展示 | `/user-annotations/{id}`、`/reader-notes/{id}` | 小程序可先展示局部资产，不必提供同等编辑入口 |
 | 跨句/跨段选择后批注 | 已接入：Web 可创建、渲染、回跳 `multi_text` 选区 | 仅展示：结果页可兼容显示并回显 Web 创建的跨句资产 | `anchor_type=multi_text`、`payload_json.segments[]` | 每段使用 UTF-16 offset + hash；后端按 render scene 顺序和切片校验 |
 | 段落级选择后批注 | 未接入 UI | 未接入 | `anchor_type=paragraph` 字段预留 | 当前没有产品化操作入口，不能视作已完成能力 |
 
@@ -72,10 +72,10 @@
 |----------|-----|--------|-------------|------|
 | 查看文章收藏 | 已接入 | 已接入 | `favorite_records`（文章级） | 文本收藏已移除 |
 | 展示句子级高亮/笔记 | 已接入 | 已接入 | `sentence` anchor + `reader_notes` | 句子级是双端 baseline |
-| 展示句内局部文本高亮/笔记 | 已接入：Reader 内直接展示 | 已接入 | `text_range` anchor + `reader_notes` | 小程序已可回显 quote，但交互仍未完全收口到只读 |
+| 展示句内局部文本高亮/笔记 | 已接入：Reader 内直接展示 | 已接入 | `text_range` anchor + `reader_notes` | 小程序可回显并 focus Web 创建的 quote，但不创建新的局部锚点 |
 | 展示跨句/跨段高亮/笔记 | 已接入：Reader 内可识别 `multi_text` | 已接入 | `multi_text` anchor + segment payload | 小程序当前不创建 `multi_text`，但可读取 Web 资产 |
 | 查看解析 sidecar / insight | 已接入 | 已接入 | render scene / sentence entries | 不再通过摘录资产页聚合展示 |
-| 跨端编辑同一笔记 | 已接入：Web 可编辑 note 文本 | 未接入：当前目标仍是小程序只读查看，但代码收口未完成 | 共享 id、target_key、anchor metadata | 改 quote 需删除后重建 |
+| 跨端编辑同一笔记 | 已接入：Web 可编辑 note 文本 | 部分接入：小程序可编辑句子级笔记，且可修改其他 quote 的 note 文本但不改锚点；结果页先用本地 cache 预填，再以云端 `analysis_record_id` 查询结果覆盖 | 共享 id、target_key、anchor metadata | 改 quote 需删除后重建 |
 
 ## 历史、资料库与记录管理
 

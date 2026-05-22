@@ -1042,7 +1042,7 @@ def _build_user_visible_output(
     evidence: list[ReaderAskEvidenceItem],
     trace_summary: ReaderAskTraceSummary | None,
     disambiguation: ReaderAskDisambiguation | None,
-    asset_disambiguation: ReaderAskAssetDisambiguation | None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None,
     response_cards: list[ReaderAskResponseCard],
     usage_summary: dict[str, Any] | None,
     billed_points: int,
@@ -1062,7 +1062,7 @@ def _build_user_visible_output(
         evidence=evidence,
         trace_summary=trace_summary,
         disambiguation=disambiguation,
-        asset_disambiguation=asset_disambiguation,
+        external_asset_disambiguation=external_asset_disambiguation,
         response_cards=response_cards,
         usage_summary=usage_summary,
         billed_points=billed_points,
@@ -1144,8 +1144,8 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
         "disambiguation_state": planning_snapshot.disambiguation_state.model_dump(mode="json")
         if planning_snapshot.disambiguation_state
         else None,
-        "asset_disambiguation_state": planning_snapshot.asset_disambiguation_state.model_dump(mode="json")
-        if planning_snapshot.asset_disambiguation_state
+        "external_asset_disambiguation_state": planning_snapshot.external_asset_disambiguation_state.model_dump(mode="json")
+        if planning_snapshot.external_asset_disambiguation_state
         else None,
     }
 
@@ -1216,7 +1216,7 @@ def _metrics_json(
         "used_structured_asset_lookup": trace_summary.used_structured_asset_lookup if trace_summary else False,
         "used_hitp_disambiguation": trace_summary.used_hitp_disambiguation if trace_summary else False,
         "used_external_asset_context": trace_summary.used_external_asset_context if trace_summary else False,
-        "used_hitp_asset_disambiguation": trace_summary.used_hitp_asset_disambiguation if trace_summary else False,
+        "used_external_asset_disambiguation": trace_summary.used_external_asset_disambiguation if trace_summary else False,
         "billed_points": billed_points,
         "usage_event_id": str(usage_event_id) if usage_event_id else None,
         "prompt_version": get_prompt_version(),
@@ -1587,7 +1587,7 @@ def _build_action_proposals(
         proposals.append(
             ReaderAskActionProposal(
                 id=str(uuid4()),
-                action_type="save_excerpt",
+                action_type="save_highlight",
                 label="保存为高亮",
                 description="把当前锚点保存成高亮/摘录",
                 payload_json={
@@ -1785,7 +1785,7 @@ def _build_evidence_items(
     reference_resolution: planner.ReaderAskReferenceResolution | None = None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
     disambiguation: ReaderAskDisambiguation | None = None,
-    asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
     include_clarification: bool = False,
 ) -> list[ReaderAskEvidenceItem]:
     return post_process_svc.build_evidence_items(
@@ -1798,7 +1798,7 @@ def _build_evidence_items(
         reference_resolution=reference_resolution,
         supplement_candidates=supplement_candidates,
         disambiguation=disambiguation,
-        asset_disambiguation=asset_disambiguation,
+        external_asset_disambiguation=external_asset_disambiguation,
         include_clarification=include_clarification,
     )
 
@@ -1946,7 +1946,7 @@ async def stream_thread_message(
     active_turn_run_id: UUID | None = None
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
     disambiguation: ReaderAskDisambiguation | None = None
-    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
     persisted_supplements_json: list[dict[str, Any]] = []
 
@@ -2017,7 +2017,7 @@ async def stream_thread_message(
         resolved_intent = planning_snapshot.resolved_intent
         resolved_context_input = planning_snapshot.resolved_context_input
         disambiguation = planning_snapshot.disambiguation_state
-        asset_disambiguation = planning_snapshot.asset_disambiguation_state
+        external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
         clarification_only = planning_snapshot.clarification_only
         if clarification_only:
             user_message = await repo.create_message(
@@ -2085,7 +2085,7 @@ async def stream_thread_message(
                 current_record_title=record.title,
                 reference_resolution=reference_resolution,
                 disambiguation=disambiguation,
-                asset_disambiguation=asset_disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
                 include_clarification=True,
             )
             trace_summary = _build_trace_summary(
@@ -2103,7 +2103,7 @@ async def stream_thread_message(
                 evidence=evidence,
                 trace_summary=trace_summary,
                 disambiguation=disambiguation,
-                asset_disambiguation=asset_disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -2550,7 +2550,7 @@ async def stream_thread_message(
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
             disambiguation=disambiguation,
-            asset_disambiguation=asset_disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
         )
         trace_summary = trace_summary.model_copy(
             update={
@@ -2621,7 +2621,7 @@ async def stream_thread_message(
             evidence=evidence,
             trace_summary=trace_summary,
             disambiguation=disambiguation,
-            asset_disambiguation=asset_disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
@@ -2777,7 +2777,7 @@ async def retry_thread_message(
     original_user_message = ""
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
     disambiguation: ReaderAskDisambiguation | None = None
-    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
 
     try:
@@ -2884,7 +2884,7 @@ async def retry_thread_message(
         resolved_intent = planning_snapshot.resolved_intent
         resolved_context_input = planning_snapshot.resolved_context_input
         disambiguation = planning_snapshot.disambiguation_state
-        asset_disambiguation = planning_snapshot.asset_disambiguation_state
+        external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
         run_info, run_history = _next_run_info(assistant_message)
         turn_run = await repo.create_turn_run(
             message_id=message_id,
@@ -2945,7 +2945,7 @@ async def retry_thread_message(
                 current_record_title=record.title,
                 reference_resolution=reference_resolution,
                 disambiguation=disambiguation,
-                asset_disambiguation=asset_disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
                 include_clarification=True,
             )
             trace_summary = _build_trace_summary(
@@ -2983,7 +2983,7 @@ async def retry_thread_message(
                 evidence=evidence,
                 trace_summary=trace_summary,
                 disambiguation=disambiguation,
-                asset_disambiguation=asset_disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
                 response_cards=[],
                 usage_summary=None,
                 billed_points=0,
@@ -3370,7 +3370,7 @@ async def retry_thread_message(
             reference_resolution=reference_resolution,
             supplement_candidates=typed_supplement_candidates,
             disambiguation=disambiguation,
-            asset_disambiguation=asset_disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
         )
         trace_summary = trace_summary.model_copy(
             update={
@@ -3442,7 +3442,7 @@ async def retry_thread_message(
             evidence=evidence,
             trace_summary=trace_summary,
             disambiguation=disambiguation,
-            asset_disambiguation=asset_disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
             response_cards=response_cards,
             usage_summary=usage_summary,
             billed_points=billed_points,
@@ -3812,7 +3812,7 @@ async def confirm_action(
             raise HTTPException(status_code=400, detail="Action proposal is missing anchor payload")
         anchor = ReaderAskAnchorRef.model_validate(anchor_payload)
 
-        if proposal.action_type == "save_excerpt":
+        if proposal.action_type == "save_highlight":
             annotation = await user_annotations_svc.create_user_annotation(
                 user_id,
                 _annotation_request_from_anchor(

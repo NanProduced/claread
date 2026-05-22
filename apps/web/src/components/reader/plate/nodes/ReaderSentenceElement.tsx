@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquare, Quote } from "lucide-react";
+import { Quote } from "lucide-react";
 import type { RenderElement } from "platejs/react";
 import type {
   ReaderSentenceAssetProjection,
@@ -22,7 +22,7 @@ interface ReaderSentenceElementProps {
   noteActive?: boolean;
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
   onActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
-  onOpenNotes?: (sentenceId: string, anchorEl: HTMLElement) => void;
+  onOpenNotes?: (sentenceId: string, anchorEl?: HTMLElement) => void;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm, triggerEl?: HTMLElement, sentenceId?: string) => void;
 }
@@ -79,36 +79,16 @@ export function ReaderSentenceElement({
           <Quote aria-hidden="true" className="h-4 w-4" />
         </button>
       ) : null}
-      {noteCount > 0 ? (
-        <button
-          type="button"
-          className={`focus-ring absolute top-[3.25rem] right-2 z-10 inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-full border bg-white/95 px-2 text-muted shadow-[0_8px_20px_rgba(17,17,17,0.05)] transition-[border-color,color,background-color,box-shadow,transform] hover:-translate-y-[1px] hover:border-muted hover:text-ink ${
-            noteActive
-              ? "border-amber-300 text-amber-800 shadow-[0_10px_24px_rgba(177,135,77,0.12)]"
-              : "border-hairline/70"
-          }`}
-          aria-label={noteCount > 1 ? `打开当前句的 ${noteCount} 条笔记` : "打开当前句笔记"}
-          data-reader-sentence-note-handle="true"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenNotes?.(element.sentenceId, event.currentTarget);
-          }}
-        >
-          <MessageSquare aria-hidden="true" className="h-4 w-4" />
-          {noteCount > 1 ? (
-            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[0.68rem] font-semibold leading-none text-amber-900">
-              {noteCount}
-            </span>
-          ) : null}
-        </button>
-      ) : null}
       <ReaderAnnotationOverlay
         sentenceId={element.sentenceId}
         annotations={assetProjection?.annotations ?? []}
         visible={annotationVisibilityGroups.userAssets}
         hoveredTargetKey={hoveredAnnotationTargetKey}
+        noteCount={noteCount}
+        noteActive={noteActive}
         onHoverTargetKeyChange={onHoverAnnotationTargetKeyChange}
         onAnnotationJump={onAnnotationJump}
+        onOpenNotes={onOpenNotes}
       >
         {props.children}
       </ReaderAnnotationOverlay>

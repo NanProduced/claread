@@ -111,14 +111,30 @@ describe("AnnotationGutter", () => {
       selectedText: "no sign could I find Then I stopped",
     });
 
-    const view = render(
-      <AnnotationGutter sentenceId="s1" annotations={[multiText]} />,
-    );
+    const view = render(<AnnotationGutter sentenceId="s1" annotations={[multiText]} />);
 
     expect(view.container.querySelector('[aria-label="打开本句高亮"]')).toBeTruthy();
 
     view.rerender(<AnnotationGutter sentenceId="s2" annotations={[multiText]} />);
 
     expect(view.container.querySelector('[aria-label="打开本句高亮"]')).toBeNull();
+  });
+
+  it("opens sentence notes from the gutter marker", () => {
+    const onOpenNotes = vi.fn();
+
+    render(
+      <AnnotationGutter
+        sentenceId="s1"
+        annotations={[]}
+        noteCount={2}
+        noteActive
+        onOpenNotes={onOpenNotes}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("打开当前句的 2 条笔记"));
+
+    expect(onOpenNotes).toHaveBeenCalledWith("s1", expect.any(HTMLButtonElement));
   });
 });

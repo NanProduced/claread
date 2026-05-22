@@ -16,7 +16,7 @@ export type ReaderAskCitationKindDto =
   | "dictionary_ai";
 export type ReaderAskActionTypeDto =
   | "save_note"
-  | "save_excerpt"
+  | "save_highlight"
   | "create_supplement_grammar_note";
 export type ReaderAskActionStatusDto = "pending" | "confirmed" | "executed" | "rejected";
 export type ReaderAskToolStatusDto = "started" | "completed" | "failed";
@@ -198,7 +198,7 @@ export interface ReaderAskResolvedContextSummaryDto {
   used_cross_record_context: boolean;
   current_sentence_used: boolean;
   current_paragraph_used: boolean;
-  used_record_assets: boolean;
+  used_record_insights: boolean;
   used_dictionary: boolean;
   source_labels: string[];
 }
@@ -320,7 +320,7 @@ export interface ReaderAskTraceSummaryDto {
   used_structured_asset_lookup: boolean;
   used_hitp_disambiguation: boolean;
   used_external_asset_context: boolean;
-  used_hitp_asset_disambiguation: boolean;
+  used_external_asset_disambiguation: boolean;
   supplement_generation_used: boolean;
   supplement_persisted_count: number;
   supplement_deleted_count: number;
@@ -428,7 +428,7 @@ export interface ReaderAskMessageDto {
   evidence: ReaderAskEvidenceItemDto[];
   trace_summary?: ReaderAskTraceSummaryDto | null;
   disambiguation?: ReaderAskDisambiguationDto | null;
-  asset_disambiguation?: ReaderAskAssetDisambiguationDto | null;
+  external_asset_disambiguation?: ReaderAskAssetDisambiguationDto | null;
   response_cards: ReaderAskResponseCardDto[];
   resolved_context?: ReaderAskResolvedContextSummaryDto | null;
   context_plan?: ReaderAskContextPlanDto | null;
@@ -495,7 +495,7 @@ export interface ReaderAskCompletedPayloadDto {
   evidence: ReaderAskEvidenceItemDto[];
   trace_summary?: ReaderAskTraceSummaryDto | null;
   disambiguation?: ReaderAskDisambiguationDto | null;
-  asset_disambiguation?: ReaderAskAssetDisambiguationDto | null;
+  external_asset_disambiguation?: ReaderAskAssetDisambiguationDto | null;
   response_cards: ReaderAskResponseCardDto[];
   usage_summary?: Record<string, unknown> | null;
   billed_points: number;

@@ -178,7 +178,7 @@ async def list_reader_notes(user_id: UUID, record_id: str) -> list[ReaderNoteRes
             SELECT {_NOTE_FIELDS}
             FROM reader_notes
             WHERE user_id = $1 AND analysis_record_id = $2 AND deleted_at IS NULL
-            ORDER BY anchor_sentence_id ASC, start_offset ASC NULLS FIRST, char_length(selected_text) ASC, created_at ASC
+            ORDER BY anchor_sentence_id ASC, start_offset ASC NULLS FIRST, end_offset ASC NULLS FIRST, created_at ASC
             """,
             user_id,
             parsed_record_id,

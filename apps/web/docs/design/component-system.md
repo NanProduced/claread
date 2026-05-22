@@ -146,7 +146,7 @@
 | Component | Role |
 | --- | --- |
 | `AnnotationGutter` | 句子边缘 marker，显示本句有高亮/笔记 |
-| `AnnotationSlip` | 句后用户笔记纸条 |
+| `ReaderNotePanel` | 用户笔记面板与 quote 编辑区 |
 | `AnnotationColorSwatch` | 高亮颜色选择 |
 | `SelectionToolbar` | sentence / `text_range` / `multi_text` 选区工具栏，使用 Floating UI virtual element 和 live DOM Range |
 | `reader-anchors` | Reader DOM 锚点属性生成器；先输出句子和句内 text range 属性 |
@@ -193,7 +193,7 @@
 
 Rules:
 
-- User note text appears as `AnnotationSlip`, not as a right-side list by default.
+- User note editing and recall live in `ReaderNotePanel`; sentence-level presence is surfaced by gutter note markers.
 - Gutter markers should sit outside the reading text flow and must not shrink the 65-75ch line length.
 - Vocabulary marks are rendered only on the original English text. The current backend does not provide original-to-translation word alignment, so translated Chinese text must not mirror the same per-word colors.
 - The lightweight follow-card near the original text should contain only fast context: surface form, type label, one short Chinese meaning, and optional reason. Full meanings, examples, phrases, disambiguation, and vocabulary-save controls belong in `DictionaryPanel`.
@@ -219,7 +219,7 @@ Rules:
 2. Sentence gets subtle active background and side marker.
 3. `ReaderContextPanel` switches to sentence action.
 4. Saving highlight writes sentence-level `user_annotations`.
-5. Saved note appears back in `AnnotationSlip`.
+5. Saved note appears back in `ReaderNotePanel`, and the sentence gutter keeps the note marker active.
 
 ### Reading Settings
 
@@ -249,7 +249,7 @@ Current extraction:
 ```text
 apps/web/src/components/reader/
   AnnotationGutter.tsx
-  AnnotationSlip.tsx
+  ReaderNotePanel.tsx
   ReaderFloatingLayer.tsx
   ReaderContextPanel.tsx
   ReaderAnnotationOverlay.tsx

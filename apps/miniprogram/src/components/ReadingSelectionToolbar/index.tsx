@@ -20,7 +20,7 @@ export interface SelectionContext {
   endOffset: number
   textHash?: string
   translation?: string
-  anchorType: 'sentence' | 'paragraph' | 'text_range'
+  anchorType: 'sentence'
 }
 
 type CopyMode = 'original' | 'translation' | 'bilingual'
@@ -36,9 +36,9 @@ interface Props {
 }
 
 export const selectionToolbarColorOptions: SelectionToolbarColorOption[] = [
-  { value: 'warm_yellow', label: '暖黄', swatchClassName: 'bg-amber-400/75' },
-  { value: 'soft_blue', label: '雾青', swatchClassName: 'bg-blue-400/65' },
-  { value: 'sage_green', label: '灰绿', swatchClassName: 'bg-green-400/45' },
+  { value: 'warm_yellow', label: '暖黄', swatchClassName: 'sel-swatch--warm-yellow' },
+  { value: 'soft_blue', label: '雾青', swatchClassName: 'sel-swatch--soft-blue' },
+  { value: 'sage_green', label: '灰绿', swatchClassName: 'sel-swatch--sage-green' },
 ]
 
 const ReadingSelectionToolbar = memo(function ReadingSelectionToolbar({
@@ -88,6 +88,7 @@ const ReadingSelectionToolbar = memo(function ReadingSelectionToolbar({
 
   const handleColorSelect = useCallback((color: SelectionToolbarColorValue) => (e: any) => {
     e.stopPropagation()
+    setActiveColor(color)
     setShowColorPicker(false)
     onHighlight(color, context?.selectedText || '')
   }, [onHighlight, context])
@@ -137,8 +138,9 @@ const ReadingSelectionToolbar = memo(function ReadingSelectionToolbar({
         </View>
       )}
       <View className='sel-floating-toolbar' onClick={e => e.stopPropagation()}>
-        <View className='sel-tool-btn' onClick={handleHighlightClick}>
+        <View className={`sel-tool-btn ${showColorPicker ? 'sel-tool-btn--active' : ''}`} onClick={handleHighlightClick}>
           <LucideIcon name='highlighter' size={20} color='currentColor' />
+          <View className={`sel-tool-indicator ${selectionToolbarColorOptions.find(option => option.value === activeColor)?.swatchClassName || ''}`} />
           <Text className='sel-tool-label'>高亮</Text>
         </View>
 

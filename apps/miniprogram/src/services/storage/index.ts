@@ -663,7 +663,16 @@ export function saveLocalReaderNotes(notes: ReaderNoteDto[]): void {
 
 export function addLocalReaderNote(note: ReaderNoteDto): void {
   const existing = getLocalReaderNotes()
-  const updated = [note, ...existing.filter(n => n.id !== note.id)]
+  const updated = [
+    note,
+    ...existing.filter(n => !(
+      n.id === note.id
+      || (
+        n.analysis_record_id === note.analysis_record_id
+        && n.target_key === note.target_key
+      )
+    )),
+  ]
   saveLocalReaderNotes(updated)
 }
 

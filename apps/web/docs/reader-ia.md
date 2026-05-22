@@ -282,7 +282,7 @@ v1 操作流程：
 - `user_annotations` 是用户手动创建的高亮批注（highlight）；笔记功能已移至独立 `reader_notes` API
 - 两者独立存在，UI 上可叠加显示
 - inline_marks 不可编辑，user_annotations 可编辑/删除
-- 从 Library 阅读记录页带 `targetKey` 回到 Reader 时，favorites 和 annotations 共用同一套 route focus 语义：先滚到对应句子，再根据 sentence / `text_range` / `multi_text` 对目标资产做短时强调。
+- Reader 支持通过 `focusTargetKey` 做正文内 deep-link / focus：先滚到对应句子，再根据 sentence / `text_range` / `multi_text` 对目标高亮或笔记做短时强调。
 
 ## 历史回看设计
 

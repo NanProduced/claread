@@ -25,7 +25,7 @@ ReaderAskCitationKind = Literal[
 ]
 ReaderAskActionType = Literal[
     "save_note",
-    "save_excerpt",
+    "save_highlight",
     "create_supplement_grammar_note",
 ]
 ReaderAskActionStatus = Literal["pending", "confirmed", "executed", "rejected"]
@@ -248,7 +248,7 @@ class ReaderAskResolvedContextSummary(BaseModel):
     used_cross_record_context: bool = False
     current_sentence_used: bool = False
     current_paragraph_used: bool = False
-    used_record_assets: bool = False
+    used_record_insights: bool = False
     used_dictionary: bool = False
     source_labels: list[str] = Field(default_factory=list)
 
@@ -371,7 +371,7 @@ class ReaderAskTraceSummary(BaseModel):
     used_structured_asset_lookup: bool = False
     used_hitp_disambiguation: bool = False
     used_external_asset_context: bool = False
-    used_hitp_asset_disambiguation: bool = False
+    used_external_asset_disambiguation: bool = False
     supplement_generation_used: bool = False
     supplement_persisted_count: int = 0
     supplement_deleted_count: int = 0
@@ -480,7 +480,7 @@ class ReaderAskMessage(BaseModel):
     evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
     trace_summary: ReaderAskTraceSummary | None = None
     disambiguation: ReaderAskDisambiguation | None = None
-    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     resolved_context: ReaderAskResolvedContextSummary | None = None
     context_plan: ReaderAskContextPlan | None = None
@@ -567,7 +567,7 @@ class ReaderAskUserVisibleOutput(BaseModel):
     evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
     trace_summary: ReaderAskTraceSummary | None = None
     disambiguation: ReaderAskDisambiguation | None = None
-    asset_disambiguation: ReaderAskAssetDisambiguation | None = None
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
     usage_summary: dict[str, Any] | None = None
     billed_points: int = 0

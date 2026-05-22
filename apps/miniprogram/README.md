@@ -115,10 +115,19 @@ Web 端可以共享业务契约，但应使用 Web 原生实现。
 - `analysis_record_{id}`
 - `record_identity_map`
 - `sync_queue`
+- `reader_notes`
+- `user_annotations`
 - `vocab_ids`
 - `vocab_entry_{id}`
 - `vocab_lemma_index`
 - `favorite_records`
 - `reading_preferences_local`
+
+Reader 标注当前遵循以下小程序端边界：
+
+- 句子级高亮可以直接创建或更新。
+- 句子级笔记默认先进入预览态，再通过二级菜单编辑或删除。
+- Web 创建的 `text_range` / `multi_text` 高亮与笔记在小程序端只负责回显和 focus，不在结果页改写锚点。
+- 结果页进入时会先读取本地 `reader_notes` cache，再用云端 `GET /reader-notes?analysis_record_id=...` 结果覆盖。
 
 稳定基线范围见 `apps/miniprogram/docs/freeze-baseline.md`。小程序会继续推进功能和体验增强，但新增能力应服从多端 API 契约。

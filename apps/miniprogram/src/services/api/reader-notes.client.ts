@@ -34,7 +34,7 @@ interface ReaderNoteListDto {
 
 export async function listReaderNotes(recordId: string): Promise<ReaderNoteDto[]> {
   const params = new URLSearchParams()
-  params.set('record_id', recordId)
+  params.set('analysis_record_id', recordId)
   const res = await request<ReaderNoteListDto>({
     url: `/reader-notes?${params.toString()}`,
     method: 'GET',

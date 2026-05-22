@@ -161,7 +161,7 @@ class TestReaderAskRoute:
                 "\"cross_record_context_used\": false, \"used_known_reference_resolution\": false, "
                 "\"used_external_record_context\": false, \"used_structured_asset_lookup\": false, "
                 "\"used_hitp_disambiguation\": false, \"used_external_asset_context\": false, "
-                "\"used_hitp_asset_disambiguation\": false, \"supplement_generation_used\": false, "
+                "\"used_external_asset_disambiguation\": false, \"supplement_generation_used\": false, "
                 "\"supplement_persisted_count\": 0, \"supplement_deleted_count\": 0, "
                 "\"tool_steps\": [], \"notes\": []}}\n\n"
             )
@@ -341,7 +341,7 @@ class TestReaderAskRoute:
                 "\"cross_record_context_used\": false, \"used_known_reference_resolution\": false, "
                 "\"used_external_record_context\": false, \"used_structured_asset_lookup\": false, "
                 "\"used_hitp_disambiguation\": false, \"used_external_asset_context\": false, "
-                "\"used_hitp_asset_disambiguation\": false, \"supplement_generation_used\": false, "
+                "\"used_external_asset_disambiguation\": false, \"supplement_generation_used\": false, "
                 "\"supplement_persisted_count\": 0, \"supplement_deleted_count\": 0, "
                 "\"tool_steps\": [], \"notes\": []}}\n\n"
             )
