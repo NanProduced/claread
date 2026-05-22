@@ -1,13 +1,11 @@
 import Taro from '@tarojs/taro'
 import { useArticleStore } from '../../../stores/article'
-import { isFavorited, saveFavorite, removeFavorite, updateRecord, saveVocabEntry, getVocabulary } from '../../../services/storage'
+import { updateRecord } from '../../../services/storage'
 import { CloudSyncService } from '../../../services/cloudSync.service'
 import { track } from '../../../services/analytics'
 import { getApiParams, SERVER_GOAL_TO_UI_GOAL, ReadingGoal } from '../../../config/purpose'
 import type { AnalyzeRequest } from '../../../services/api/client'
 import { ROUTES } from '../../../config/routes'
-import type { FavoriteRecord } from '../../../types/view/favorites.vm'
-import type { VocabEntry, SaveVocabResult } from '../../../types/view/vocabulary.vm'
 import type { DictionaryResult } from '../../../types/view/render-scene.vm'
 import type { WordClickPayload } from '../../../components/ParagraphBlock'
 import type { WordPopupState } from './useResultState'
@@ -94,22 +92,10 @@ export function useResultActions(deps: ActionDeps) {
     if (!recordId) return
     const isAdding = !favorited
     setAnimTrigger(prev => prev + 1)
-
-    if (isAdding) {
-      saveFavorite({ recordId, cloudId: cloudId || undefined, createdAt: Date.now() } as FavoriteRecord)
-      updateRecord(recordId, { isFavorited: true })
-      setFavorited(true)
-      track('favorite', { isFavorited: true })
-      Taro.showToast({ title: '已收藏', icon: 'success', duration: 1500 })
-      CloudSyncService.syncFavorite(cloudId || undefined, recordId, 'add')
-    } else {
-      removeFavorite(recordId)
-      updateRecord(recordId, { isFavorited: false })
-      setFavorited(false)
-      track('favorite', { isFavorited: false })
-      Taro.showToast({ title: '已取消收藏', icon: 'none', duration: 1500 })
-      CloudSyncService.syncFavorite(cloudId || undefined, recordId, 'remove')
-    }
+    updateRecord(recordId, { isFavorited: isAdding })
+    setFavorited(isAdding)
+    track('favorite', { isFavorited: isAdding })
+    Taro.showToast({ title: isAdding ? '已收藏' : '已取消收藏', icon: 'none' })
   }
 
   const handleModeSelect = (goal: ReadingGoal, level: string | null) => {
@@ -153,69 +139,7 @@ export function useResultActions(deps: ActionDeps) {
 
   const handleAddVocab = async (w: string, dictResult: DictionaryResult | null) => {
     if (!recordId || !dictResult || dictResult.resultType !== 'entry') return
-    const detailEntry = dictResult.entry
-    const detailMeanings = detailEntry.meanings
-    const derivedMeaning = detailMeanings[0]?.definitions
-      ?.map((d: { meaning: string }) => d.meaning)
-      .filter(Boolean)
-      .join('；') || ''
-    const lemma = detailEntry.baseWord ?? detailEntry.word
-    const sentenceId = wordPopup.mark?.anchor?.sentenceId || activeSentenceId || undefined
-    const vocabEntry: VocabEntry = {
-      id: `${recordId}_${lemma.toLowerCase()}_${Date.now()}`,
-      lemma,
-      word: w,
-      partOfSpeech: detailMeanings[0]?.partOfSpeech || '',
-      meaning: derivedMeaning.slice(0, 200),
-      addedAt: Date.now(),
-      mastered: false,
-      dictEntryId: detailEntry.id,
-      phonetic: detailEntry.phonetic,
-      provider: dictResult.provider || 'tecd3',
-      sentence: wordPopup.contextSentence,
-      detailMeanings: detailMeanings.map((m: { partOfSpeech?: string; definitions: Array<{ meaning: string; example?: string; exampleTranslation?: string }> }) => ({
-        partOfSpeech: m.partOfSpeech || '',
-        definitions: m.definitions.map((d: { meaning: string; example?: string; exampleTranslation?: string }) => {
-          const def: { meaning: string; example?: string; exampleTranslation?: string } = { meaning: d.meaning }
-          if (d.example) def.example = d.example
-          if (d.exampleTranslation) def.exampleTranslation = d.exampleTranslation
-          return def
-        }).filter((d: { meaning: string }) => d.meaning),
-      })).filter((m: { definitions: Array<{ meaning: string }> }) => m.definitions.length > 0),
-      detailPhrases: detailEntry.phrases?.length > 0 ? detailEntry.phrases : undefined,
-      detailExamples: detailEntry.examples?.length > 0 ? detailEntry.examples : undefined,
-      exchange: detailEntry.exchange || [],
-      tags: detailEntry.tags || [],
-      sourceRefs: [{
-        clientRecordId: recordId,
-        cloudRecordId: cloudId || undefined,
-        sourceSentence: wordPopup.contextSentence || undefined,
-        sourceSentenceId: sentenceId,
-        sourceAnchorText: w,
-        sourceOccurrence: wordPopup.occurrence,
-        collectedAt: new Date().toISOString(),
-      }],
-    }
-    const result: SaveVocabResult = saveVocabEntry(vocabEntry)
-    if (result.merged) {
-      Taro.showToast({
-        title: `${w} 已添加到 ${lemma}（第 ${result.totalSourceCount} 个语境）`,
-        icon: 'none',
-        duration: 2000,
-      })
-    } else {
-      Taro.showToast({ title: `${w} 已记入生词本`, icon: 'success' })
-    }
-    const allVocabAfter = getVocabulary()
-    const wordsAfter = allVocabAfter.flatMap((v) => {
-      const forms = [v.word.toLowerCase()]
-      if (v.lemma) forms.push(v.lemma.toLowerCase())
-      if (v.collectedForms) forms.push(...v.collectedForms.map(f => f.toLowerCase()))
-      return forms
-    })
-    setVocabList([...new Set(wordsAfter)])
-    track('add_vocab', { word: w, merged: result.merged })
-    CloudSyncService.syncVocab(result.entry)
+    Taro.showToast({ title: '生词本功能暂停使用', icon: 'none' })
   }
 
   return {

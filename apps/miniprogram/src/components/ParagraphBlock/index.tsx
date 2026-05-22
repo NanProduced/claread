@@ -327,7 +327,9 @@ interface UserHighlightRange {
 function normalizeUserHighlightColor(color?: string): string {
   if (color === 'soft_blue') return 'soft_blue'
   if (color === 'soft_purple') return 'soft_purple'
-  if (color === 'sage_green' || color === 'soft_green' || color === 'warm_yellow') return 'soft_green'
+  if (color === 'sage_green') return 'sage_green'
+  if (color === 'warm_yellow') return 'warm_yellow'
+  if (color === 'soft_green') return 'soft_green'
   return 'soft_green'
 }
 

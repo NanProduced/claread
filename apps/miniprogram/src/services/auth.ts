@@ -7,7 +7,7 @@
 import Taro from '@tarojs/taro'
 import { useAuthStore } from '../stores/auth'
 import { fetchWeChatLogin } from './api/client'
-import { getAllRecords, getFavorites, getVocabulary } from './storage'
+import { getAllRecords } from './storage'
 
 export interface LoginResult {
   success: boolean
@@ -82,10 +82,9 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
 }
 
 /**
- * 登录后同步本地记录、收藏和生词本到云端。
+ * 登录后同步本地记录到云端。
  *
- * 顺序：records → favorites + vocab
- * 原因：后端 favorites 表的 analysis_record_id 依赖 cloud records 已存在。
+ * 顺序：records
  * 策略：fire-and-forget，失败静默忽略，不阻塞用户体验。
  */
 async function syncLocalAssetsToCloud(): Promise<void> {
@@ -93,24 +92,11 @@ async function syncLocalAssetsToCloud(): Promise<void> {
     const { CloudSyncService } = await import('./cloudSync.service')
 
     const records = getAllRecords()
-    const favorites = getFavorites()
-    const vocab = getVocabulary()
 
-    // Step 1: 先同步 records（需要时间，且 favorites/vocab 依赖它）
-    const recordPromises = records.map((r) =>
+    // 同步 records
+    records.forEach((r) =>
       CloudSyncService.syncRecord(r).catch(() => {})
     )
-
-    // Step 2: records 同步完成后，sync favorites 和 vocab（并行）
-    Promise.all(recordPromises).then(() => {
-      const favPromise = favorites.length > 0
-        ? CloudSyncService.syncAllFavorites(favorites)
-        : Promise.resolve()
-      const vocabPromise = vocab.length > 0
-        ? CloudSyncService.syncAllVocab(vocab)
-        : Promise.resolve()
-      Promise.all([favPromise, vocabPromise]).catch(() => {})
-    })
   } catch (err) {
     // 静默失败，不影响登录流程
     console.warn('[auth] syncLocalAssetsToCloud failed', err)

@@ -9,16 +9,11 @@
 
 import { useAuthStore } from '../stores/auth'
 import type { AnalysisRecord } from '../types/view/analysis-record.vm'
-import type { FavoriteRecord } from '../types/view/favorites.vm'
-import type { VocabEntry } from '../types/view/vocabulary.vm'
+import type { UserAnnotationDto } from './api/user-annotations.client'
+import type { ReaderNoteDto } from './api/reader-notes.client'
 import {
   getRecord,
   updateRecord,
-  getVocabulary,
-  getVocabEntryByLemma,
-  removeVocabEntry,
-  saveVocabEntry,
-  updateVocabEntry,
   saveRecordIdentity,
   resolveCloudIdFromMap,
   getSyncQueue,
@@ -27,6 +22,12 @@ import {
   updateSyncQueueItem,
   removeSyncQueueItem,
   getPendingSyncItems,
+  addLocalUserAnnotation,
+  removeLocalUserAnnotation,
+  updateLocalUserAnnotation,
+  addLocalReaderNote,
+  removeLocalReaderNote,
+  updateLocalReaderNote,
   type SyncQueueItem,
 } from './storage'
 import {
@@ -35,14 +36,15 @@ import {
   deleteCloudRecord,
 } from './api/records.client'
 import {
-  addFavoriteToCloud,
-  removeFavoriteFromCloud,
-} from './api/favorites.client'
+  createUserAnnotation,
+  deleteUserAnnotation,
+  updateUserAnnotation,
+} from './api/user-annotations.client'
 import {
-  addVocabToCloud,
-  updateCloudVocabulary,
-  deleteCloudVocabulary,
-} from './api/vocabulary.client'
+  createReaderNote,
+  deleteReaderNote,
+  updateReaderNote,
+} from './api/reader-notes.client'
 
 function hashString(str: string): string {
   let hash = 0
@@ -196,23 +198,20 @@ async function executeQueueItem(item: SyncQueueItem): Promise<void> {
     case 'SYNC_RECORD':
       await executeSyncRecord(item)
       break
-    case 'ADD_FAVORITE':
-      await executeAddFavorite(item)
-      break
-    case 'REMOVE_FAVORITE':
-      await executeRemoveFavorite(item)
-      break
-    case 'UPSERT_VOCAB':
-      await executeUpsertVocab(item)
-      break
-    case 'UPDATE_VOCAB_MASTERY':
-      await executeUpdateVocabMastery(item)
-      break
-    case 'DELETE_VOCAB':
-      await executeDeleteVocab(item)
-      break
     case 'DELETE_RECORD':
       await executeDeleteRecord(item)
+      break
+    case 'UPSERT_ANNOTATION':
+      await executeUpsertAnnotation(item)
+      break
+    case 'DELETE_ANNOTATION':
+      await executeDeleteAnnotation(item)
+      break
+    case 'UPSERT_NOTE':
+      await executeUpsertNote(item)
+      break
+    case 'DELETE_NOTE':
+      await executeDeleteNote(item)
       break
     default:
       console.warn('[cloudSync] unknown action:', item.action)
@@ -250,115 +249,119 @@ async function executeSyncRecord(item: SyncQueueItem): Promise<void> {
   })
 }
 
-async function executeAddFavorite(item: SyncQueueItem): Promise<void> {
-  const { clientRecordId, targetType } = item.payload as { clientRecordId: string; targetType?: string }
-  const isDailyReader = targetType === 'daily_reader_article'
-  let cloudId = resolveCloudIdFromMap(clientRecordId)
-  if (!cloudId) {
-    const record = getRecord(clientRecordId)
-    cloudId = record?.cloudId ?? null
-  }
-  if (!cloudId && !isDailyReader) {
-    cloudId = (await resolveCloudId(clientRecordId)) ?? null
-  }
-  if (!cloudId && !isDailyReader) {
-    throw new Error(`Cannot resolve cloudId for favorite add: ${clientRecordId}`)
-  }
-  await addFavoriteToCloud(cloudId, clientRecordId, isDailyReader ? 'daily_reader_article' : 'analysis_record')
-}
-
-async function executeRemoveFavorite(item: SyncQueueItem): Promise<void> {
-  const { clientRecordId, targetType } = item.payload as { clientRecordId: string; targetType?: string }
-  const isDailyReader = targetType === 'daily_reader_article'
-  let cloudId = resolveCloudIdFromMap(clientRecordId)
-  if (!cloudId) {
-    const record = getRecord(clientRecordId)
-    cloudId = record?.cloudId ?? null
-  }
-  if (!cloudId && !isDailyReader) {
-    cloudId = (await resolveCloudId(clientRecordId)) ?? null
-  }
-  if (!cloudId && !isDailyReader) {
-    throw new Error(`Cannot resolve cloudId for favorite remove: ${clientRecordId}`)
-  }
-  if (isDailyReader) {
-    await removeFavoriteFromCloud(clientRecordId, 'daily_reader_article')
-  } else {
-    await removeFavoriteFromCloud(cloudId!)
-  }
-}
-
-async function executeUpsertVocab(item: SyncQueueItem): Promise<void> {
-  const { vocabEntry, sourceType } = item.payload as { vocabEntry: VocabEntry; sourceType?: string }
-  const entry = vocabEntry
-  const isDailyReader = sourceType === 'daily_reader_article'
-
-  const primaryRef = entry.sourceRefs?.[0]
-  let resolvedRecordId = primaryRef?.cloudRecordId
-  if (!resolvedRecordId && primaryRef?.clientRecordId && !isDailyReader) {
-    resolvedRecordId = (await resolveCloudId(primaryRef.clientRecordId)) || undefined
-  }
-  if (!resolvedRecordId && primaryRef?.clientRecordId && !isDailyReader) {
-    throw new Error(`Cannot resolve cloudRecordId for vocab upsert: ${entry.word}`)
-  }
-
-  const syncedRefs = (entry.sourceRefs || []).map(ref => ({
-    ...ref,
-    cloudRecordId: ref.cloudRecordId || resolvedRecordId,
-  }))
-
-  const res = await addVocabToCloud({ ...entry, sourceRefs: syncedRefs })
-
-  if (res.id && res.id !== entry.id) {
-    const currentVocab = getVocabulary()
-    const target = currentVocab.find(v => v.id === entry.id)
-    if (target) {
-      removeVocabEntry(entry.id)
-      const newEntry: VocabEntry = { ...target, id: res.id, sourceRefs: syncedRefs, syncState: 'synced' }
-      saveVocabEntry(newEntry)
-    }
-  } else {
-    updateVocabEntry(entry.id, { syncState: 'synced' })
-  }
-}
-
-function _isCloudUuid(id: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-}
-
-async function executeUpdateVocabMastery(item: SyncQueueItem): Promise<void> {
-  const { lemma, masteryStatus } = item.payload as { lemma: string; masteryStatus: string; cloudId?: string }
-  const targetId = resolveCurrentVocabId(lemma, item.entityId)
-  if (!targetId) return
-  if (!_isCloudUuid(targetId)) throw new Error(`vocab mastery sync: local ID not yet replaced by cloud UUID (${lemma})`)
-  await updateCloudVocabulary(targetId, { mastery_status: masteryStatus as 'new' | 'learning' | 'review' | 'mastered' | 'archived' })
-}
-
-async function executeDeleteVocab(item: SyncQueueItem): Promise<void> {
-  const { lemma } = item.payload as { lemma: string; cloudId?: string }
-  const targetId = resolveCurrentVocabId(lemma, item.entityId)
-  if (!targetId) return
-  if (!_isCloudUuid(targetId)) throw new Error(`vocab delete sync: local ID not yet replaced by cloud UUID (${lemma})`)
-  await deleteCloudVocabulary(targetId)
-}
-
-function resolveCurrentVocabId(lemma: string, fallbackId: string): string | null {
-  const match = getVocabEntryByLemma(lemma)
-  if (match) return match.id
-  const fallback = getVocabEntryByLemma(fallbackId) || _getVocabEntryById(fallbackId)
-  if (fallback && !fallback.tombstone) return fallback.id
-  return null
-}
-
-function _getVocabEntryById(id: string): VocabEntry | null {
-  const all = getVocabulary()
-  return all.find(v => v.id === id && !v.tombstone) || null
-}
-
 async function executeDeleteRecord(item: SyncQueueItem): Promise<void> {
   const { cloudRecordId } = item.payload as { cloudRecordId: string }
   if (!cloudRecordId) return
   await deleteCloudRecord(cloudRecordId)
+}
+
+// ---------------------------------------------------------------------------
+// Annotation Sync
+// ---------------------------------------------------------------------------
+
+interface AnnotationPayload {
+  annotation: UserAnnotationDto
+  isNew?: boolean
+}
+
+async function executeUpsertAnnotation(item: SyncQueueItem): Promise<void> {
+  const payload = item.payload as Record<string, unknown>
+  const annotation = payload.annotation as UserAnnotationDto | undefined
+  const isNew = payload.isNew as boolean | undefined
+  if (!annotation) return
+
+  try {
+    if (isNew) {
+      const created = await createUserAnnotation({
+        analysis_record_id: annotation.analysis_record_id,
+        anchor_type: annotation.anchor_type,
+        target_key: annotation.target_key,
+        paragraph_id: annotation.paragraph_id ?? undefined,
+        sentence_id: annotation.sentence_id,
+        selected_text: annotation.selected_text,
+        start_offset: annotation.start_offset ?? undefined,
+        end_offset: annotation.end_offset ?? undefined,
+        text_hash: annotation.text_hash ?? undefined,
+        segments: annotation.segments,
+        color: annotation.color,
+        payload_json: annotation.payload_json,
+      })
+      addLocalUserAnnotation(created)
+    } else {
+      await updateUserAnnotation(annotation.id, { color: annotation.color })
+      updateLocalUserAnnotation(annotation.id, annotation)
+    }
+  } catch (err) {
+    console.warn('[cloudSync] executeUpsertAnnotation failed:', err)
+    throw err
+  }
+}
+
+async function executeDeleteAnnotation(item: SyncQueueItem): Promise<void> {
+  const { annotationId } = item.payload as { annotationId: string }
+  if (!annotationId) return
+
+  try {
+    await deleteUserAnnotation(annotationId)
+    removeLocalUserAnnotation(annotationId)
+  } catch (err) {
+    console.warn('[cloudSync] executeDeleteAnnotation failed:', err)
+    throw err
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Note Sync
+// ---------------------------------------------------------------------------
+
+interface NotePayload {
+  note: ReaderNoteDto
+  isNew?: boolean
+}
+
+async function executeUpsertNote(item: SyncQueueItem): Promise<void> {
+  const payload = item.payload as Record<string, unknown>
+  const note = payload.note as ReaderNoteDto | undefined
+  const isNew = payload.isNew as boolean | undefined
+  if (!note) return
+
+  try {
+    if (isNew) {
+      const created = await createReaderNote({
+        analysis_record_id: note.analysis_record_id,
+        anchor_sentence_id: note.anchor_sentence_id,
+        quote_mode: note.quote_mode,
+        target_key: note.target_key,
+        sentence_id: note.sentence_id ?? undefined,
+        selected_text: note.selected_text,
+        start_offset: note.start_offset ?? undefined,
+        end_offset: note.end_offset ?? undefined,
+        text_hash: note.text_hash ?? undefined,
+        segments: note.segments,
+        note_text: note.note_text,
+      })
+      addLocalReaderNote(created)
+    } else {
+      await updateReaderNote(note.id, { note_text: note.note_text })
+      updateLocalReaderNote(note.id, note)
+    }
+  } catch (err) {
+    console.warn('[cloudSync] executeUpsertNote failed:', err)
+    throw err
+  }
+}
+
+async function executeDeleteNote(item: SyncQueueItem): Promise<void> {
+  const { noteId } = item.payload as { noteId: string }
+  if (!noteId) return
+
+  try {
+    await deleteReaderNote(noteId)
+    removeLocalReaderNote(noteId)
+  } catch (err) {
+    console.warn('[cloudSync] executeDeleteNote failed:', err)
+    throw err
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -392,90 +395,6 @@ export const CloudSyncService = {
   },
 
   /**
-   * 同步收藏状态到云端
-   */
-  async syncFavorite(cloudId: string | undefined, clientRecordId: string, action: 'add' | 'remove', targetType?: string): Promise<void> {
-    if (!useAuthStore.getState().isLoggedIn) return
-
-    enqueueSyncItem({
-      opId: generateOpId(),
-      entityType: 'favorite',
-      entityId: clientRecordId,
-      action: action === 'add' ? 'ADD_FAVORITE' : 'REMOVE_FAVORITE',
-      payload: { clientRecordId, cloudId: cloudId || null, targetType },
-      status: 'pending',
-      retryCount: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })
-
-    flushQueue()
-  },
-
-  /**
-   * 同步生词本条目到云端
-   */
-  async syncVocab(entry: VocabEntry, sourceType?: string): Promise<void> {
-    if (!useAuthStore.getState().isLoggedIn) return
-
-    enqueueSyncItem({
-      opId: generateOpId(),
-      entityType: 'vocab',
-      entityId: entry.id,
-      action: 'UPSERT_VOCAB',
-      payload: { vocabEntry: { ...entry }, sourceType },
-      status: 'pending',
-      retryCount: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })
-
-    flushQueue()
-  },
-
-  /**
-   * 同步生词掌握状态到云端
-   */
-  async syncVocabMastery(vocabId: string, masteryStatus: string, lemma: string): Promise<void> {
-    if (!useAuthStore.getState().isLoggedIn) return
-
-    enqueueSyncItem({
-      opId: generateOpId(),
-      entityType: 'vocab',
-      entityId: vocabId,
-      action: 'UPDATE_VOCAB_MASTERY',
-      payload: { lemma, masteryStatus, cloudId: vocabId },
-      status: 'pending',
-      retryCount: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })
-
-    flushQueue()
-  },
-
-  /**
-   * 同步删除生词到云端
-   */
-  async syncDeleteVocab(vocabId: string, lemma: string): Promise<void> {
-    if (!useAuthStore.getState().isLoggedIn) return
-
-    enqueueSyncItem({
-      opId: generateOpId(),
-      entityType: 'vocab',
-      entityId: vocabId,
-      action: 'DELETE_VOCAB',
-      payload: { lemma, cloudId: vocabId },
-      status: 'pending',
-      retryCount: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })
-
-    flushQueue()
-  },
-
-  /**
    * 同步删除记录到云端
    */
   async syncDeleteRecord(cloudRecordId: string, clientRecordId: string): Promise<void> {
@@ -497,53 +416,93 @@ export const CloudSyncService = {
   },
 
   /**
-   * 同步所有本地收藏到云端（登录后全量同步）
+   * 同步新建高亮到云端
    */
-  async syncAllFavorites(localFavorites: FavoriteRecord[]): Promise<void> {
+  async syncAnnotation(annotation: UserAnnotationDto, isNew = true): Promise<void> {
     if (!useAuthStore.getState().isLoggedIn) return
 
-    for (const fav of localFavorites) {
-      if (fav.tombstone) continue
-      const record = getRecord(fav.recordId)
-      if (!record?.isFavorited) continue
+    addLocalUserAnnotation(annotation)
 
-      enqueueSyncItem({
-        opId: generateOpId(),
-        entityType: 'favorite',
-        entityId: fav.recordId,
-        action: 'ADD_FAVORITE',
-        payload: { clientRecordId: fav.recordId, cloudId: record.cloudId || null },
-        status: 'pending',
-        retryCount: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      })
-    }
+    enqueueSyncItem({
+      opId: generateOpId(),
+      entityType: 'annotation',
+      entityId: annotation.id,
+      action: 'UPSERT_ANNOTATION',
+      payload: { annotation, isNew },
+      status: 'pending',
+      retryCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
 
     flushQueue()
   },
 
   /**
-   * 同步所有本地生词本到云端（登录后全量同步）
+   * 同步删除高亮到云端
    */
-  async syncAllVocab(localVocab: VocabEntry[]): Promise<void> {
+  async syncDeleteAnnotation(annotationId: string): Promise<void> {
     if (!useAuthStore.getState().isLoggedIn) return
 
-    for (const entry of localVocab) {
-      if (entry.tombstone) continue
+    removeLocalUserAnnotation(annotationId)
 
-      enqueueSyncItem({
-        opId: generateOpId(),
-        entityType: 'vocab',
-        entityId: entry.id,
-        action: 'UPSERT_VOCAB',
-        payload: { vocabEntry: { ...entry } },
-        status: 'pending',
-        retryCount: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      })
-    }
+    enqueueSyncItem({
+      opId: generateOpId(),
+      entityType: 'annotation',
+      entityId: annotationId,
+      action: 'DELETE_ANNOTATION',
+      payload: { annotationId },
+      status: 'pending',
+      retryCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    flushQueue()
+  },
+
+  /**
+   * 同步新建笔记到云端
+   */
+  async syncNote(note: ReaderNoteDto, isNew = true): Promise<void> {
+    if (!useAuthStore.getState().isLoggedIn) return
+
+    addLocalReaderNote(note)
+
+    enqueueSyncItem({
+      opId: generateOpId(),
+      entityType: 'note',
+      entityId: note.id,
+      action: 'UPSERT_NOTE',
+      payload: { note, isNew },
+      status: 'pending',
+      retryCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    flushQueue()
+  },
+
+  /**
+   * 同步删除笔记到云端
+   */
+  async syncDeleteNote(noteId: string): Promise<void> {
+    if (!useAuthStore.getState().isLoggedIn) return
+
+    removeLocalReaderNote(noteId)
+
+    enqueueSyncItem({
+      opId: generateOpId(),
+      entityType: 'note',
+      entityId: noteId,
+      action: 'DELETE_NOTE',
+      payload: { noteId },
+      status: 'pending',
+      retryCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
 
     flushQueue()
   },

@@ -171,3 +171,78 @@
     background: rgba(44, 40, 32, 0.05);
   }
 }
+
+.sel-color-picker {
+  position: fixed;
+  left: 88rpx;
+  right: 88rpx;
+  bottom: calc(118rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+  background: rgba(255, 253, 248, 0.98);
+  border: 1rpx solid rgba(43, 38, 31, 0.07);
+  border-radius: 20rpx;
+  padding: 12rpx 16rpx;
+  box-shadow:
+    0 14rpx 36rpx rgba(39, 34, 27, 0.11),
+    0 4rpx 10rpx rgba(39, 34, 27, 0.05);
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: auto;
+  animation: sel-copy-pop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+
+  &__label {
+    font-size: 22rpx;
+    color: rgba(94, 94, 88, 0.78);
+    padding: 0 4rpx 4rpx;
+  }
+
+  &__options {
+    display: flex;
+    gap: 12rpx;
+    justify-content: space-around;
+  }
+}
+
+.sel-color-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6rpx;
+  padding: 10rpx 8rpx;
+  border-radius: 12rpx;
+  transition: all 0.15s ease;
+
+  &:active {
+    background: rgba(44, 40, 32, 0.05);
+    transform: scale(0.96);
+  }
+
+  &.is-active {
+    background: rgba(119, 154, 133, 0.14);
+
+    .sel-color-btn__label {
+      color: #416F59;
+      font-weight: 650;
+    }
+  }
+
+  &__swatch {
+    width: 40rpx;
+    height: 40rpx;
+    border-radius: 8rpx;
+    border: 1rpx solid rgba(0, 0, 0, 0.06);
+  }
+
+  &__label {
+    font-size: 20rpx;
+    color: rgba(94, 94, 88, 0.78);
+  }
+}
+
+.bg-amber-400\/75 { background-color: rgba(251, 191, 36, 0.75); }
+.bg-blue-400\/65 { background-color: rgba(96, 165, 250, 0.65); }
+.bg-green-400\/45 { background-color: rgba(74, 222, 128, 0.45); }

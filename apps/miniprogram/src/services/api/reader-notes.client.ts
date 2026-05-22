@@ -41,3 +41,44 @@ export async function listReaderNotes(recordId: string): Promise<ReaderNoteDto[]
   })
   return res.items
 }
+
+export interface CreateReaderNoteDto {
+  analysis_record_id: string
+  anchor_sentence_id: string
+  quote_mode: 'sentence' | 'text_range' | 'multi_text'
+  target_key: string
+  sentence_id?: string
+  selected_text: string
+  start_offset?: number
+  end_offset?: number
+  text_hash?: string
+  segments?: ReaderNoteSegmentDto[]
+  note_text: string
+}
+
+export async function createReaderNote(data: CreateReaderNoteDto): Promise<ReaderNoteDto> {
+  return request<ReaderNoteDto>({
+    url: '/reader-notes',
+    method: 'POST',
+    data,
+  })
+}
+
+export interface UpdateReaderNoteDto {
+  note_text?: string
+}
+
+export async function updateReaderNote(id: string, data: UpdateReaderNoteDto): Promise<ReaderNoteDto> {
+  return request<ReaderNoteDto>({
+    url: `/reader-notes/${id}`,
+    method: 'PATCH',
+    data,
+  })
+}
+
+export async function deleteReaderNote(id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>({
+    url: `/reader-notes/${id}`,
+    method: 'DELETE',
+  })
+}

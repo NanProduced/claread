@@ -20,6 +20,7 @@ import ReadingSelectionToolbar, { SelectionContext } from '../../components/Read
 import { useReadingPreferencesStore } from '../../stores/reading-preferences'
 import { UserAnnotationDto, listUserAnnotations } from '../../services/api/user-annotations.client'
 import { ReaderNoteDto, listReaderNotes } from '../../services/api/reader-notes.client'
+import { CloudSyncService } from '../../services/cloudSync.service'
 import FeedbackSheet from '../../components/FeedbackSystem/FeedbackSheet'
 import { useResultState } from './hooks/useResultState'
 import { useResultEffects } from './hooks/useResultEffects'
@@ -414,6 +415,73 @@ export default function Result() {
     })
   }
 
+  const handleHighlight = async (color: 'soft_green' | 'soft_blue' | 'soft_purple' | 'warm_yellow' | 'sage_green', selectedText: string) => {
+    if (!selectionContext || !cloudId) return
+    try {
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const now = new Date().toISOString()
+      const newAnnotation: UserAnnotationDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_type: 'sentence',
+        target_key: buildSentenceTargetKey(cloudId, selectionContext.sentenceId),
+        sentence_id: selectionContext.sentenceId,
+        selected_text: selectedText,
+        text_hash: selectionContext.textHash,
+        color: color,
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setUserAnnotations(prev => [...prev, newAnnotation])
+      CloudSyncService.syncAnnotation(newAnnotation, true)
+      Taro.showToast({ title: '已添加高亮', icon: 'success' })
+      clearSelection()
+    } catch (err) {
+      console.warn('Failed to create highlight', err)
+      Taro.showToast({ title: '添加高亮失败', icon: 'none' })
+    }
+  }
+
+  const handleNote = async (selectedText: string) => {
+    if (!selectionContext || !cloudId) return
+    try {
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const now = new Date().toISOString()
+      const newNote: ReaderNoteDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_sentence_id: selectionContext.sentenceId,
+        quote_mode: 'sentence',
+        target_key: buildSentenceTargetKey(cloudId, selectionContext.sentenceId),
+        sentence_id: selectionContext.sentenceId,
+        selected_text: selectedText,
+        start_offset: selectionContext.startOffset,
+        end_offset: selectionContext.endOffset,
+        text_hash: selectionContext.textHash,
+        segments: [{
+          sentence_id: selectionContext.sentenceId,
+          selected_text: selectedText,
+          start_offset: selectionContext.startOffset,
+          end_offset: selectionContext.endOffset,
+          text_hash: selectionContext.textHash || '',
+        }],
+        note_text: '',
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setReaderNotes(prev => [...prev, newNote])
+      setNoteSheetSentenceId(selectionContext.sentenceId)
+      setActiveReaderNoteId(newNote.id)
+      CloudSyncService.syncNote(newNote, true)
+      clearSelection()
+    } catch (err) {
+      console.warn('Failed to create note', err)
+      Taro.showToast({ title: '添加笔记失败', icon: 'none' })
+    }
+  }
+
   useResultEffects({
     recordId, cloudId, sceneData, pageState,
     setFavorited: state.setFavorited,
@@ -661,6 +729,8 @@ export default function Result() {
         onClose={clearSelection}
         onCopy={handleCopy}
         onFeedback={() => { setShowFeedbackSheet(true) }}
+        onHighlight={handleHighlight}
+        onNote={handleNote}
       />
 
       <ReaderNoteSheet
