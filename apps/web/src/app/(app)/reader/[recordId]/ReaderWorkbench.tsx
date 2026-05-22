@@ -33,7 +33,9 @@ import {
   readerColumnWidthClassName,
   readStoredReaderSettings,
   readerTextClassName,
+  readerThemeDataValue,
   readerThemeClassName,
+  translationVisible,
   type ReaderSettingsState,
   textRangeAnchorAttributes,
   useReaderFloatingLayer,
@@ -2958,8 +2960,10 @@ export function ReaderWorkbench({
   }
 
   const canvasThemeClass = readerThemeClassName(readerSettings.theme);
+  const canvasThemeData = readerThemeDataValue(readerSettings.theme);
   const readingClass = readerTextClassName(readerSettings);
   const readingColumnClass = readerColumnWidthClassName(readerSettings.columnWidth);
+  const showTranslation = translationVisible(readerSettings.translationDisplay);
   const contextPanelVisible = Boolean(contextPanelOpen && activeSentence);
   const compactDictionaryPanelVisible = Boolean(
     dictionaryPanelVisible && !dictionaryDockLayout && !aiOpen && !contextPanelVisible && !settingsPanelOpen,
@@ -2979,6 +2983,7 @@ export function ReaderWorkbench({
           <article
           ref={articleRef}
           className={`min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${canvasThemeClass}`}
+          data-reader-theme={canvasThemeData}
           onClick={(event) => {
             const target = event.target instanceof HTMLElement ? event.target : null;
             const nativeSelection = window.getSelection();
@@ -3034,27 +3039,32 @@ export function ReaderWorkbench({
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 lg:gap-2.5">
                 <FavoriteButton recordId={record.id} />
                 <div className="flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/72 p-1 shadow-sm">
-                  <button
+                    <button
                     type="button"
                     className={`focus-ring inline-flex min-h-[2.55rem] min-w-[6rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
-                      readerSettings.showTranslation
+                      showTranslation
                         ? "border-lens-blue/15 bg-background text-ink shadow-sm"
                         : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
                     }`}
-                    onClick={() =>
+                    onClick={() => {
+                      const nextDisplay = readerSettings.translationDisplay === "hidden" ? "visible"
+                        : readerSettings.translationDisplay === "visible" ? "muted"
+                        : "hidden";
                       setReaderSettings((current) => ({
                         ...current,
-                        showTranslation: !current.showTranslation,
-                      }))
-                    }
+                        translationDisplay: nextDisplay,
+                      }));
+                    }}
                   >
                     <BookOpen
                       aria-hidden="true"
-                      className={`h-4 w-4 shrink-0 ${readerSettings.showTranslation ? "text-lens-blue" : "text-muted"}`}
+                      className={`h-4 w-4 shrink-0 ${showTranslation ? "text-lens-blue" : "text-muted"}`}
                     />
                       <span className="flex min-w-0 flex-col">
                         <span className="text-[0.84rem] font-semibold leading-none">
-                          {readerSettings.showTranslation ? "原文 + 译文" : "仅看原文"}
+                          {readerSettings.translationDisplay === "visible" ? "原文 + 译文"
+                            : readerSettings.translationDisplay === "muted" ? "译文淡显"
+                            : "仅看原文"}
                         </span>
                       </span>
                     </button>
@@ -3088,7 +3098,7 @@ export function ReaderWorkbench({
 
           <PlateReaderSurface
             document={plateDocument}
-            showTranslation={readerSettings.showTranslation}
+            translationDisplay={readerSettings.translationDisplay}
             readingClassName={readingClass}
             columnWidth={readerSettings.columnWidth}
             themeClassName={canvasThemeClass}

@@ -148,12 +148,14 @@ Editorial / annotation-workbench
 
 #### Acceptance Criteria
 
-1. While a user selects text in Web Reader, when the selection toolbar opens, the Claread system shall expose Ask Claread, highlight color, note, lookup, and select-current-sentence actions.
-2. While the user opens the selection toolbar, when the refactor is complete, the Claread system shall not expose text favorite.
-3. While the current selection already has a highlight, when the toolbar opens, the Claread system shall reflect the current highlight state.
-4. While the current selection already has a note, when the user chooses the note action, the Claread system shall open the existing note instead of creating a duplicate.
-5. While the current selection has a highlight but no note, when the user chooses the note action, the Claread system shall allow note creation from that same selection without conflict.
-6. While the current selection exactly matches an existing note quote, when the user invokes the note action from the toolbar, the Claread system shall route to existing-note editing instead of note creation.
+1. While a user selects text in Web Reader, when the selection toolbar opens, the Claread system shall expose Ask Claread, highlight, note, lookup, and select-current-sentence actions.
+2. While the user clicks the highlight button without an existing highlight, when the action is confirmed, the Claread system shall create a highlight using the default color (warm yellow) without requiring a color choice first.
+3. While the current selection already has a highlight, when the user clicks the highlight button, the Claread system shall present a color switching menu rather than creating a new highlight.
+4. While the user opens the selection toolbar, when the refactor is complete, the Claread system shall not expose text favorite.
+5. While the current selection already has a highlight, when the toolbar opens, the Claread system shall reflect the current highlight state.
+6. While the current selection already has a note, when the user chooses the note action, the Claread system shall open the existing note instead of creating a duplicate.
+7. While the current selection has a highlight but no note, when the user chooses the note action, the Claread system shall allow note creation from that same selection without conflict.
+8. While the current selection exactly matches an existing note quote, when the user invokes the note action from the toolbar, the Claread system shall route to existing-note editing instead of note creation.
 
 ### Requirement 9 - Mini-Program Phase 1 Scope
 

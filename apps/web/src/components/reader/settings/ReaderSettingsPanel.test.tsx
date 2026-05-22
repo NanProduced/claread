@@ -18,11 +18,13 @@ describe("ReaderSettingsPanel", () => {
 
     expect(screen.getByText("阅读显示")).toBeTruthy();
     expect(screen.getByText("标注显示分组")).toBeTruthy();
+    expect(screen.getByText("阅读模式")).toBeTruthy();
+    expect(screen.getByText("阅读主题")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /原文模式/i }));
+    fireEvent.click(screen.getByRole("button", { name: /隐藏/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
-      showTranslation: false,
+      translationDisplay: "hidden",
     });
 
     fireEvent.click(screen.getByRole("button", { name: /^大/i }));
@@ -46,7 +48,7 @@ describe("ReaderSettingsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /护眼/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
-      theme: "green",
+      theme: "sage",
     });
 
     fireEvent.click(screen.getByRole("button", { name: /词汇 \/ 短语/i }));
@@ -57,5 +59,16 @@ describe("ReaderSettingsPanel", () => {
         lexical: false,
       },
     });
+  });
+
+  it("has a renamed annotation group label", () => {
+    render(
+      <ReaderSettingsPanel
+        value={defaultReaderSettings}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryAllByText("我的笔记与高亮").length).toBeGreaterThan(0);
   });
 });

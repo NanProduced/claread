@@ -42,11 +42,12 @@ import {
   readerColumnWidthClassName,
   type ReaderAnnotationVisibilityGroups,
   type ReaderColumnWidth,
+  type TranslationDisplay,
 } from "../settings";
 
 export interface PlateReaderSurfaceProps {
   document: ReaderPlateDocument;
-  showTranslation: boolean;
+  translationDisplay: TranslationDisplay;
   readingClassName: string;
   columnWidth?: ReaderColumnWidth;
   annotationVisibilityGroups?: ReaderAnnotationVisibilityGroups;
@@ -155,7 +156,7 @@ export function PlateReaderSurface({
   onSentenceActivate,
   onHoverAnnotationTargetKeyChange,
   readingClassName,
-  showTranslation,
+  translationDisplay,
   themeClassName,
 }: PlateReaderSurfaceProps) {
   const paragraphNodes = useMemo(
@@ -341,7 +342,7 @@ export function PlateReaderSurface({
           return (
             <ReaderTranslationElement
               props={props}
-              visible={showTranslation}
+              translationDisplay={translationDisplay}
               onAsk={onAskTranslation ? () => onAskTranslation(element.sentenceId, element.translationZh) : undefined}
             />
           );
@@ -398,7 +399,7 @@ export function PlateReaderSurface({
       routeFocusSentenceIds,
       sourceContextBySentence,
       sentenceAssetsBySentence,
-      showTranslation,
+      translationDisplay,
       activeReaderNoteId,
       onOpenSentenceNotes,
     ],

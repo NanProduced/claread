@@ -135,7 +135,7 @@ describe("readPlateReaderSelection", () => {
       <article data-testid="reader-article">
         <PlateReaderSurface
           document={documentValue}
-          showTranslation
+          translationDisplay="visible"
           readingClassName="reader-serif text-ink"
         />
       </article>,
@@ -194,7 +194,7 @@ describe("readPlateReaderSelection", () => {
       <article data-testid="reader-article">
         <PlateReaderSurface
           document={documentValue}
-          showTranslation
+          translationDisplay="visible"
           readingClassName="reader-serif text-ink"
         />
       </article>,

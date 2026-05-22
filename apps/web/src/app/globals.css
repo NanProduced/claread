@@ -166,6 +166,66 @@ body {
   --reader-user-range-focus-shadow: rgba(145, 106, 55, 0.08);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Reader theme overrides                                             */
+/* ------------------------------------------------------------------ */
+
+[data-reader-theme="cool"] {
+  --reader-paper: #F8F8F6;
+  --hairline: #E0E0DE;
+  --reader-floating-surface: rgba(252, 252, 250, 0.985);
+  --reader-floating-surface-strong: rgba(248, 248, 246, 0.965);
+  --reader-entry-surface: rgba(252, 252, 250, 0.8);
+  --reader-entry-surface-strong: rgba(252, 252, 250, 0.92);
+  --reader-entry-expanded-surface: rgba(248, 248, 246, 0.96);
+  --reader-translation-line: rgba(208, 208, 204, 0.92);
+  --reader-translation-line-strong: rgba(186, 186, 180, 0.9);
+  --reader-translation-copy: rgba(68, 70, 74, 0.92);
+  --reader-translation-copy-strong: rgba(46, 48, 52, 0.96);
+  --reader-entry-chip-border: rgba(224, 224, 218, 0.82);
+  --reader-entry-chip-surface: rgba(248, 248, 246, 0.76);
+  --reader-entry-chip-surface-hover: rgba(252, 252, 250, 0.88);
+  --reader-slip-border: rgba(224, 224, 218, 0.66);
+  --reader-slip-surface-top: rgba(252, 252, 250, 0.54);
+  --reader-slip-surface-bottom: rgba(248, 248, 246, 0.72);
+}
+
+[data-reader-theme="sage"] {
+  --reader-paper: #F0F4EE;
+  --hairline: #D0DAD0;
+  --ink: #2A2F2A;
+  --ink-soft: #323832;
+  --muted: #5A645A;
+  --subtle: #7A887A;
+  --reader-floating-surface: rgba(246, 250, 244, 0.985);
+  --reader-floating-surface-strong: rgba(242, 248, 240, 0.965);
+  --reader-entry-surface: rgba(246, 250, 244, 0.8);
+  --reader-entry-surface-strong: rgba(246, 250, 244, 0.92);
+  --reader-entry-expanded-surface: rgba(242, 248, 240, 0.96);
+  --reader-translation-line: rgba(192, 208, 192, 0.92);
+  --reader-translation-line-strong: rgba(168, 188, 168, 0.9);
+  --reader-translation-copy: rgba(56, 66, 56, 0.92);
+  --reader-translation-copy-strong: rgba(38, 48, 38, 0.96);
+  --reader-entry-chip-border: rgba(208, 218, 208, 0.82);
+  --reader-entry-chip-surface: rgba(242, 248, 240, 0.76);
+  --reader-entry-chip-surface-hover: rgba(246, 250, 244, 0.88);
+  --reader-slip-border: rgba(208, 218, 208, 0.66);
+  --reader-slip-surface-top: rgba(246, 250, 244, 0.54);
+  --reader-slip-surface-bottom: rgba(242, 248, 240, 0.72);
+}
+
+[data-reader-theme="cool"] .paper-grain {
+  background-image:
+    linear-gradient(135deg, rgba(17, 17, 17, 0.018) 0 1px, transparent 1px),
+    linear-gradient(45deg, rgba(252, 252, 250, 0.36), rgba(246, 246, 242, 0.42));
+}
+
+[data-reader-theme="sage"] .paper-grain {
+  background-image:
+    linear-gradient(135deg, rgba(42, 47, 42, 0.02) 0 1px, transparent 1px),
+    linear-gradient(45deg, rgba(240, 244, 238, 0.36), rgba(232, 240, 228, 0.42));
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -204,6 +264,20 @@ select {
     var(--reader-paper);
 }
 
+.reading-paper-cool {
+  background:
+    radial-gradient(circle at 88% 12%, rgba(37, 99, 235, 0.02), transparent 14rem),
+    linear-gradient(180deg, rgba(252, 252, 250, 0.76), rgba(248, 248, 246, 0.86)),
+    #F8F8F6;
+}
+
+.reading-paper-sage {
+  background:
+    radial-gradient(circle at 88% 12%, rgba(60, 140, 104, 0.028), transparent 14rem),
+    linear-gradient(180deg, rgba(248, 252, 248, 0.72), rgba(240, 244, 238, 0.84)),
+    #F0F4EE;
+}
+
 .focus-ring {
   outline: none;
 }
@@ -222,6 +296,20 @@ select {
   box-shadow:
     0 1px 2px rgba(17, 17, 17, 0.035),
     0 18px 48px rgba(28, 24, 18, 0.06);
+}
+
+[data-reader-theme="cool"] .reader-tool-panel {
+  border-color: var(--hairline);
+  background:
+    linear-gradient(180deg, rgba(252, 252, 250, 0.9), rgba(248, 248, 246, 0.94)),
+    #F8F8F6;
+}
+
+[data-reader-theme="sage"] .reader-tool-panel {
+  border-color: var(--hairline);
+  background:
+    linear-gradient(180deg, rgba(248, 252, 248, 0.9), rgba(240, 244, 238, 0.94)),
+    #F0F4EE;
 }
 
 .reader-dictionary-panel {
@@ -646,6 +734,20 @@ select {
   position: absolute;
   top: -0.1rem;
   right: -0.2rem;
+}
+
+.reader-translation--muted .reader-translation-copy {
+  color: var(--reader-translation-copy);
+  font-size: 0.88rem;
+  opacity: 0.52;
+  transition: opacity 220ms ease, font-size 220ms ease, color 220ms ease;
+}
+
+.reader-translation--muted:hover .reader-translation-copy,
+.reader-translation--muted:focus-within .reader-translation-copy {
+  opacity: 0.88;
+  font-size: 0.94rem;
+  color: var(--reader-translation-copy-strong);
 }
 
 .reader-translation-copy::selection,
