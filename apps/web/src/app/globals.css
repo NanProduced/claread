@@ -1489,6 +1489,13 @@ select {
   box-decoration-break: clone;
 }
 
+.reader-selection-focus-range {
+  background: var(--reader-selection-highlight);
+  color: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 .reader-annotation-gutter {
   transform: translateX(-0.15rem);
   z-index: 12;
@@ -1554,6 +1561,91 @@ select {
   box-shadow:
     0 0 0 2px rgba(40, 92, 255, 0.12),
     0 0.45rem 0.95rem rgba(28, 24, 18, 0.08);
+}
+
+.reader-annotation-gutter-count {
+  position: absolute;
+  right: -0.18rem;
+  top: -0.24rem;
+  display: inline-flex;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(60, 140, 104, 0.92);
+  padding: 0 0.18rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(252, 249, 242, 0.98);
+  box-shadow: 0 0.25rem 0.6rem rgba(60, 140, 104, 0.24);
+}
+
+.reader-annotation-gutter-strip {
+  margin-top: 0.35rem;
+  display: flex;
+  max-width: 10rem;
+  flex-direction: column;
+  gap: 0.32rem;
+  border-radius: 0.95rem;
+  border: 1px solid rgba(109, 113, 123, 0.16);
+  background: rgba(252, 249, 242, 0.96);
+  padding: 0.38rem;
+  box-shadow: 0 0.8rem 1.5rem rgba(28, 24, 18, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.reader-annotation-gutter-strip-item {
+  display: inline-flex;
+  min-height: 1.9rem;
+  width: 100%;
+  align-items: center;
+  gap: 0.42rem;
+  border: 0;
+  border-radius: 0.7rem;
+  background: transparent;
+  color: rgba(43, 45, 50, 0.86);
+  cursor: pointer;
+  padding: 0.3rem 0.42rem;
+  text-align: left;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.reader-annotation-gutter-strip-item:hover,
+.reader-annotation-gutter-strip-item:focus-visible,
+.reader-annotation-gutter-strip-item--active {
+  background: rgba(60, 140, 104, 0.1);
+  color: rgba(25, 31, 28, 0.96);
+  outline: none;
+}
+
+.reader-annotation-gutter-strip-item:hover,
+.reader-annotation-gutter-strip-item--active {
+  transform: translateX(1px);
+}
+
+.reader-annotation-gutter-strip-index {
+  display: inline-flex;
+  width: 1rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(60, 140, 104, 0.84);
+}
+
+.reader-annotation-gutter-strip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  line-height: 1.15rem;
 }
 
 .reader-annotation-slip-list {

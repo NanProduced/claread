@@ -68,14 +68,14 @@ describe("ReaderQuickPeek", () => {
     const inspectView = within(inspectDialog);
 
     expect(inspectDialog).toBeTruthy();
-    expect(inspectView.getByText("结构化解释")).toBeTruthy();
+    expect(inspectView.getByText("固定搭配")).toBeTruthy();
     expect(inspectView.getAllByText("policy choices").length).toBeGreaterThan(0);
     expect(inspectView.getByText("政策选择")).toBeTruthy();
 
     fireEvent.click(inspectView.getByText("查短语"));
     expect(onLookupPhrase).toHaveBeenCalled();
 
-    fireEvent.click(inspectView.getByText("带入 Ask"));
+    fireEvent.click(inspectView.getByLabelText("带入 Ask"));
     expect(onAttachToAsk).toHaveBeenCalled();
   });
 });

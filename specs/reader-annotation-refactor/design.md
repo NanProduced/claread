@@ -337,19 +337,42 @@ Ask Claread 改为围绕上述三个系统读取或写入，但不再通过“�
 
 ## Highlight Conflict Resolver
 
-高亮保留“合并/扩展”逻辑，但只对高亮生效。
+高亮保留"合并/扩展"逻辑，但只对高亮生效。所有重叠场景均走确定性合并，不再返回 409。
 
 ### Resolution Rules
 
 1. exact match
-   - 命中已有高亮，更新该高亮
-2. subset
-   - 命中已有高亮，不创建第二条
-3. superset
-   - 扩展已有高亮到新范围
-4. overlap with multiple highlights
-   - Phase 1 以 deterministic resolver 处理
-   - 若无法无歧义归并，则返回 409，要求前端刷新后重试
+   - 命中已有高亮，更新该高亮（由 INSERT ON CONFLICT 处理）
+2. subset（请求范围 ⊂ 已有高亮）
+   - 保留已有高亮范围，更新颜色为已有颜色
+3. superset（已有高亮 ⊂ 请求范围）
+   - 扩展已有高亮到新范围，颜色保留已有颜色
+4. partial overlap（与 1 条部分重叠）
+   - 计算并集范围，更新已有高亮到并集
+   - 若并集覆盖整句，自动升级 anchor_type 为 sentence
+   - 颜色保留已有高亮颜色
+5. overlap with multiple highlights（与多条重叠）
+   - 计算所有重叠行与请求的并集范围
+   - 保留 created_at 最早的记录，UPDATE 为并集范围
+   - 其余重叠记录软删除，id 列入响应的 superseded_ids
+   - 若并集覆盖整句，自动升级 anchor_type 为 sentence
+   - 颜色：所有已有高亮颜色一致则保留，否则用请求颜色（默认色）
+
+### Color Resolution Rules
+
+- subset / partial overlap / superset：保留已有高亮颜色
+- multiple overlaps：所有已有颜色一致则保留，否则用请求颜色
+
+### Anchor Type Upgrade
+
+当合并后的范围恰好覆盖整句（start_offset == 0 && end_offset == sentence UTF-16 length）时：
+- anchor_type 自动升级为 sentence
+- target_key 变为 sentence 格式
+- start_offset / end_offset / text_hash 置为 null
+
+### Selected Text 重算
+
+并集合并后 selected_text 无法从两个已有字符串直接拼接（重叠区域会重复），必须从 render scene 按新 offset 重新提取。冲突解决函数按需加载 render scene（优先复用验证阶段已加载的）。
 
 ### Important Boundary
 

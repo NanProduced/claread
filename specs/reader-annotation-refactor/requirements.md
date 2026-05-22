@@ -95,7 +95,11 @@ Editorial / annotation-workbench
 5. While a user creates a highlight that exactly matches an existing highlight, when the action is confirmed, the Claread system shall edit the existing highlight instead of creating a duplicate.
 6. While a user creates a highlight that is a strict subrange of an existing highlight, when the action is confirmed, the Claread system shall treat the action as operating on the existing highlight rather than creating a second overlapping highlight.
 7. While a user creates a highlight that is a strict superrange of an existing highlight, when the action is confirmed, the Claread system shall extend the existing highlight according to the highlight conflict rules.
-8. While highlight conflict rules are evaluated, when note data exists on overlapping text, the Claread system shall not use note objects to decide highlight merge behavior.
+8. While a user creates a highlight that partially overlaps one existing highlight (neither subset nor superset), when the action is confirmed, the Claread system shall merge the two ranges into their union and preserve the existing highlight's color.
+9. While a user creates a highlight that overlaps multiple existing highlights, when the action is confirmed, the Claread system shall merge all overlapping ranges into a single union highlight, keep the earliest-created record, and soft-delete the rest.
+10. While a union merge result covers an entire sentence, when the merge is applied, the Claread system shall automatically upgrade the anchor type to sentence.
+11. While multiple overlapping highlights have inconsistent colors, when the merge is applied, the Claread system shall use the request color; when colors are consistent, the Claread system shall preserve the existing color.
+12. While highlight conflict rules are evaluated, when note data exists on overlapping text, the Claread system shall not use note objects to decide highlight merge behavior.
 
 ### Requirement 5 - Reader Note Identity And Authoring
 

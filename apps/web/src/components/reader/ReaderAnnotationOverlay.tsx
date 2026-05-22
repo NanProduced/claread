@@ -12,7 +12,7 @@ interface ReaderAnnotationOverlayProps {
   activeIndex?: number | null;
   hoveredTargetKey?: string | null;
   onHoverTargetKeyChange?: (targetKey: string | null) => void;
-  onAnnotationJump?: (annotation: WebAnnotationVm) => void;
+  onAnnotationJump?: (annotation: WebAnnotationVm, triggerEl?: HTMLElement, sentenceId?: string) => void;
   children: ReactNode;
 }
 

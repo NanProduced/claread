@@ -15,10 +15,12 @@ interface ReaderDictionaryRailProps {
   saveState: SaveState;
   dictionaryAI: DictionaryAIViewState;
   dictionaryAIPanelOpen: boolean;
+  dictionaryAINoteState: SaveState;
   searchQuery: string;
   searchExpanded: boolean;
   onSave: () => void;
   onRequestAI: (mode: WebDictAIRequest["mode"]) => void;
+  onCreateAINote: () => void;
   onSelectAISuggestedQuery: (query: string) => void;
   onSearchQueryChange: (value: string) => void;
   onSearchSubmit: (query: string) => void;
@@ -35,6 +37,7 @@ interface ReaderDictionaryRailProps {
   onSelectHistory: (lookup: DictionaryLookupSnapshot) => void;
   className?: string;
   style?: CSSProperties;
+  canCreateAINote?: boolean;
 }
 
 export function ReaderDictionaryRail({
@@ -42,10 +45,12 @@ export function ReaderDictionaryRail({
   className,
   dictionaryAI,
   dictionaryAIPanelOpen,
+  dictionaryAINoteState,
   history,
   inspect = null,
   lookup,
   onAttachToAsk,
+  onCreateAINote,
   onDismiss,
   onLookupPhraseFromInspect,
   onRequestAI,
@@ -65,6 +70,7 @@ export function ReaderDictionaryRail({
   searchQuery,
   style,
   variant = "sheet",
+  canCreateAINote = false,
 }: ReaderDictionaryRailProps) {
   return (
     <div className={className} style={style}>
@@ -77,10 +83,12 @@ export function ReaderDictionaryRail({
             saveState={saveState}
             dictionaryAI={dictionaryAI}
             dictionaryAIPanelOpen={dictionaryAIPanelOpen}
+            dictionaryAINoteState={dictionaryAINoteState}
             searchQuery={searchQuery}
             searchExpanded={searchExpanded}
             onSave={onSave}
             onRequestAI={onRequestAI}
+            onCreateAINote={onCreateAINote}
             onSelectAISuggestedQuery={onSelectAISuggestedQuery}
             onSearchQueryChange={onSearchQueryChange}
             onSearchSubmit={onSearchSubmit}
@@ -92,6 +100,7 @@ export function ReaderDictionaryRail({
             onTogglePinned={onTogglePinned}
             variant={variant}
             canSaveVocabulary={canSaveVocabulary}
+            canCreateAINote={canCreateAINote}
             onAttachToAsk={onAttachToAsk}
             onLookupPhraseFromInspect={onLookupPhraseFromInspect}
           />

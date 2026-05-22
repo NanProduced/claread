@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import {
+  buildMultiTextTargetKey,
   buildSentenceTargetKey,
   buildTextRangeTargetKey,
 } from "@claread/contracts";
@@ -9,6 +10,7 @@ import type { WebAnnotationVm } from "@/types/api/annotations";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import {
   annotationMatchesSelection,
+  annotationOverlapsSelection,
   hashAnchorText,
   rectForTextOffsets,
   targetKeyForSelection,
@@ -133,6 +135,152 @@ describe("reader-plate selection primitives", () => {
         selection,
       ),
     ).toBe(true);
+    expect(
+      annotationMatchesSelection(
+        {
+          ...createAnnotation(),
+          anchorType: "multi_text",
+          targetKey: buildMultiTextTargetKey("record-1", [
+            {
+              paragraphId: "p1",
+              sentenceId: "s1",
+              startOffset: 10,
+              endOffset: 21,
+              textHash: hashAnchorText("al memory s"),
+            },
+            {
+              paragraphId: "p2",
+              sentenceId: "s2",
+              startOffset: 0,
+              endOffset: 6,
+              textHash: hashAnchorText("policy"),
+            },
+          ]),
+          sentenceId: "s1",
+          startOffset: null,
+          endOffset: null,
+          textHash: null,
+          segments: [
+            {
+              paragraphId: "p1",
+              sentenceId: "s1",
+              selectedText: "al memory s",
+              startOffset: 10,
+              endOffset: 21,
+              textHash: hashAnchorText("al memory s"),
+            },
+            {
+              paragraphId: "p2",
+              sentenceId: "s2",
+              selectedText: "policy",
+              startOffset: 0,
+              endOffset: 6,
+              textHash: hashAnchorText("policy"),
+            },
+          ],
+        },
+        selection,
+      ),
+    ).toBe(true);
+  });
+
+  it("only treats intersecting annotations as overlapping selections", () => {
+    const selection = createTextRangeSelection();
+    expect(
+      annotationOverlapsSelection(
+        {
+          ...createAnnotation(),
+          anchorType: "multi_text",
+          targetKey: buildMultiTextTargetKey("record-1", [
+            {
+              paragraphId: "p1",
+              sentenceId: "s1",
+              startOffset: 10,
+              endOffset: 21,
+              textHash: hashAnchorText("al memory s"),
+            },
+            {
+              paragraphId: "p2",
+              sentenceId: "s2",
+              startOffset: 0,
+              endOffset: 6,
+              textHash: hashAnchorText("policy"),
+            },
+          ]),
+          sentenceId: "s1",
+          startOffset: null,
+          endOffset: null,
+          textHash: null,
+          segments: [
+            {
+              paragraphId: "p1",
+              sentenceId: "s1",
+              selectedText: "al memory s",
+              startOffset: 10,
+              endOffset: 21,
+              textHash: hashAnchorText("al memory s"),
+            },
+            {
+              paragraphId: "p2",
+              sentenceId: "s2",
+              selectedText: "policy",
+              startOffset: 0,
+              endOffset: 6,
+              textHash: hashAnchorText("policy"),
+            },
+          ],
+        },
+        selection,
+      ),
+    ).toBe(true);
+
+    expect(
+      annotationOverlapsSelection(
+        {
+          ...createAnnotation(),
+          anchorType: "multi_text",
+          targetKey: buildMultiTextTargetKey("record-1", [
+            {
+              paragraphId: "p1",
+              sentenceId: "s1",
+              startOffset: 0,
+              endOffset: 8,
+              textHash: hashAnchorText("Instituti"),
+            },
+            {
+              paragraphId: "p2",
+              sentenceId: "s2",
+              startOffset: 0,
+              endOffset: 6,
+              textHash: hashAnchorText("policy"),
+            },
+          ]),
+          sentenceId: "s1",
+          startOffset: null,
+          endOffset: null,
+          textHash: null,
+          segments: [
+            {
+              paragraphId: "p1",
+              sentenceId: "s1",
+              selectedText: "Instituti",
+              startOffset: 0,
+              endOffset: 8,
+              textHash: hashAnchorText("Instituti"),
+            },
+            {
+              paragraphId: "p2",
+              sentenceId: "s2",
+              selectedText: "policy",
+              startOffset: 0,
+              endOffset: 6,
+              textHash: hashAnchorText("policy"),
+            },
+          ],
+        },
+        selection,
+      ),
+    ).toBe(false);
   });
 
   it("builds target keys from selection anchors", () => {

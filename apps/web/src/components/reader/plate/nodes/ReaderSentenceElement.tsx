@@ -24,7 +24,7 @@ interface ReaderSentenceElementProps {
   onActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onOpenNotes?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
-  onAnnotationJump?: (annotation: WebAnnotationVm) => void;
+  onAnnotationJump?: (annotation: WebAnnotationVm, triggerEl?: HTMLElement, sentenceId?: string) => void;
 }
 
 export function ReaderSentenceElement({
@@ -69,8 +69,7 @@ export function ReaderSentenceElement({
         <button
           type="button"
           className="focus-ring absolute top-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-hairline/70 bg-white/88 text-muted opacity-0 shadow-[0_8px_20px_rgba(17,17,17,0.05)] transition-[opacity,border-color,color,background-color] hover:border-muted hover:text-ink focus-visible:opacity-100 group-hover/sentence:opacity-100 group-focus-within/sentence:opacity-100"
-          aria-label="打开当前句操作"
-          aria-haspopup="dialog"
+          aria-label="选中当前句"
           data-reader-sentence-handle="true"
           onClick={(event) => {
             event.stopPropagation();

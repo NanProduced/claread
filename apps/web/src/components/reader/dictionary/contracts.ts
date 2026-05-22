@@ -24,7 +24,12 @@ export interface DictionaryLookupSnapshot {
   recordId: string;
   sentenceId: string;
   anchorText: string;
+  anchorOffsets?: {
+    startOffset: number;
+    endOffset: number;
+  };
   occurrence?: number;
+  textHash?: string | null;
   title: string;
   label?: string;
   annotationType?: AnnotationType;

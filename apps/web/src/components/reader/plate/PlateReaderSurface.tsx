@@ -52,6 +52,8 @@ export interface PlateReaderSurfaceProps {
   annotationVisibilityGroups?: ReaderAnnotationVisibilityGroups;
   themeClassName?: string;
   activeSentenceId?: string | null;
+  selectedSentenceId?: string | null;
+  selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpTarget?: ReaderJumpTarget | null;
   focusTarget?: ReaderJumpTarget | null;
   hoveredAnnotationTargetKey?: string | null;
@@ -66,7 +68,7 @@ export interface PlateReaderSurfaceProps {
   onOpenSentenceNotes?: (sentenceId: string, anchorEl: HTMLElement) => void;
   onAnalysisFocusChange?: (entryId: string, focused: boolean) => void;
   onAnalysisToggle?: (entryId: string) => void;
-  onAnnotationJump?: (annotation: WebAnnotationVm) => void;
+  onAnnotationJump?: (annotation: WebAnnotationVm, triggerEl?: HTMLElement, sentenceId?: string) => void;
   onLookupIntent?: (
     intent: ReaderLookupIntent,
     anchor: ReaderLookupPreviewAnchor | null,
@@ -122,6 +124,8 @@ function focusRangesBySentence(
 
 export function PlateReaderSurface({
   activeSentenceId = null,
+  selectedSentenceId = null,
+  selectionFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   activeAnalysisEntryId = null,
   annotationVisibilityGroups = {
     lexical: true,
@@ -376,6 +380,7 @@ export function PlateReaderSurface({
       expandedAnalysisEntryIds,
       expandedIds,
       activeSentenceId,
+      selectedSentenceId,
       activeSentenceAnalysisSegmentsBySentence,
       annotationVisibilityGroups,
       onInspectIntent,
@@ -411,6 +416,7 @@ export function PlateReaderSurface({
         props={props}
         analysisSegmentsBySentence={activeSentenceAnalysisSegmentsBySentence}
         jumpFocusRangesBySentence={jumpFocusRangesBySentence}
+        selectionFocusRangesBySentence={selectionFocusRangesBySentence}
         noteFocusRangesBySentence={noteFocusRangesBySentence}
         hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
@@ -427,6 +433,7 @@ export function PlateReaderSurface({
       onInspectIntent,
       onLookupIntent,
       jumpFocusRangesBySentence,
+      selectionFocusRangesBySentence,
       hoveredAnnotationTargetKey,
       noteFocusRangesBySentence,
       onHoverAnnotationTargetKeyChange,

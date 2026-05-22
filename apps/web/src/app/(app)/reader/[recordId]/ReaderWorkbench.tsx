@@ -50,6 +50,7 @@ import {
   askAttachmentFromTranslation,
   askAttachmentKey,
   annotationMatchesSelection,
+  annotationOverlapsSelection,
   annotationRequestFromAnchorPayload,
   annotationToTargetRef,
   anchorPayloadFromSelection,
@@ -79,6 +80,8 @@ import {
   type ReaderAskPageIdentity,
   type ReaderContentSummaryNode,
   type ReaderAssetProjection,
+  type ReaderJumpRangeSegment,
+  type ReaderSelectionSegment,
   type ReaderJumpTarget,
   type ReaderTextSelection,
 } from "@/lib/reader-plate";
@@ -92,10 +95,9 @@ import type { WebReaderNoteCreateRequest, WebReaderNoteVm } from "@/types/api/re
 import type { WebDictResult } from "@/types/api/dict";
 import type {
   DictionaryAIViewState,
-  DictAISourceDto,
   WebDictAIErrorResult,
-  WebDictAIRequest,
   WebDictAIResult,
+  WebDictAIRequest,
 } from "@/types/api/dict-ai";
 import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
 import type { SentenceEntryModel, SentenceModel } from "@/types/view/ReaderMockVm";
@@ -110,6 +112,21 @@ import {
   type DictionaryLookupSnapshot,
   type SaveState,
 } from "@/components/reader/dictionary/contracts";
+import {
+  createDictionaryAICacheEntry,
+  dictionaryAICacheKey,
+  dictionaryAIContextKey,
+  dictionaryAIRequestForLookup,
+  dictionaryAIRequestKey,
+  dictionaryAIViewStateFromCacheEntry,
+  dictionaryLookupBase,
+  dictionaryLookupHistoryKey,
+  dictionaryLookupSupportsExactAINote,
+  dictionaryPreferredAIMode,
+  persistDictionaryAIArticleCache,
+  readStoredDictionaryAIArticleCache,
+  type DictionaryAIArticleCache,
+} from "@/components/reader/dictionary";
 import { readerCommentDraftId } from "@/components/reader/plate-comment-adapter";
 import { FavoriteButton } from "./FavoriteButton";
 
@@ -130,6 +147,8 @@ type AnnotationSaveState =
   | { kind: "error"; message: string };
 
 type PendingReaderNoteSource = "selection" | "sentence";
+type ReaderSelectionSource = "dom" | "programmatic" | "none";
+type ReaderSelectionVisualMode = "selection" | "annotation_hover";
 
 const dataSourceLabel: Record<ReaderDataSource, string> = {
   "upstream-render-scene": "解析结果",
@@ -152,6 +171,75 @@ function belongsToCurrentRecord(candidateRecordId: string | null | undefined, ta
   }
 
   return targetKey.startsWith(`record:${recordId}:`);
+}
+
+function mergedSelectionText(segments: ReaderSelectionSegment[]) {
+  return segments
+    .map((segment) => segment.selectedText.trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+function mergeSelectionSegments(
+  sentenceById: ReadonlyMap<string, SentenceModel>,
+  sentenceOrderById: ReadonlyMap<string, number>,
+  segments: ReaderSelectionSegment[],
+): ReaderSelectionSegment[] {
+  const grouped = new Map<string, Array<{ startOffset: number; endOffset: number }>>();
+
+  segments.forEach((segment) => {
+    const current = grouped.get(segment.sentenceId) ?? [];
+    current.push({ startOffset: segment.startOffset, endOffset: segment.endOffset });
+    grouped.set(segment.sentenceId, current);
+  });
+
+  return Array.from(grouped.entries())
+    .sort(([leftId], [rightId]) => {
+      const leftOrder = sentenceOrderById.get(leftId);
+      const rightOrder = sentenceOrderById.get(rightId);
+      if (typeof leftOrder === "number" && typeof rightOrder === "number") {
+        return leftOrder - rightOrder;
+      }
+      return leftId.localeCompare(rightId);
+    })
+    .flatMap(([sentenceId, ranges]) => {
+      const sentence = sentenceById.get(sentenceId);
+      if (!sentence) {
+        return [];
+      }
+
+      const mergedRanges = ranges
+        .sort((left, right) => left.startOffset - right.startOffset)
+        .reduce<Array<{ startOffset: number; endOffset: number }>>((current, range) => {
+          const previous = current[current.length - 1];
+          if (!previous) {
+            current.push({ ...range });
+            return current;
+          }
+
+          if (range.startOffset <= previous.endOffset) {
+            previous.endOffset = Math.max(previous.endOffset, range.endOffset);
+            return current;
+          }
+
+          current.push({ ...range });
+          return current;
+        }, []);
+
+      return mergedRanges.map((range) => {
+        const selectedText = sentence.text.slice(range.startOffset, range.endOffset);
+        return {
+          paragraphId: sentence.paragraphId,
+          sentenceId,
+          sentence,
+          selectedText,
+          startOffset: range.startOffset,
+          endOffset: range.endOffset,
+          textHash: hashAnchorText(selectedText),
+        } satisfies ReaderSelectionSegment;
+      });
+    });
 }
 
 function noteRequestFromSentence(recordId: string, sentence: SentenceModel): WebReaderNoteCreateRequest {
@@ -337,6 +425,7 @@ function lookupIntentFromSnapshotBase(base: LookupBase): ReaderLookupIntent {
     sentenceId: base.sentenceId,
     contextSentence: base.contextSentence,
     sourceContext: base.sourceContext,
+    anchorOffsets: base.anchorOffsets,
     anchorText: base.anchorText,
     occurrence: base.occurrence,
     title: base.title,
@@ -380,113 +469,86 @@ function caretRangeFromPoint(clientX: number, clientY: number): Range | null {
   return range;
 }
 
-function dictionaryResolvedQuery(lookup: DictionaryLookupSnapshot) {
-  if (lookup.state.kind === "ready") {
-    return lookup.state.result.query.trim() || lookup.query;
+function pushDictionaryAINoteLine(lines: string[], label: string, value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return;
   }
-  return lookup.query;
+
+  lines.push(`${label}：${normalized}`);
 }
 
-function dictionaryContextExplainQuery(result: Extract<WebDictResult, { kind: "entry" }>, fallbackQuery: string) {
-  return result.entry.baseWord?.trim() || result.query.trim() || result.entry.word.trim() || fallbackQuery;
+function dictionaryAINoteText(result: WebDictAIResult) {
+  const lines = [result.mode === "context_explain" ? "AI 语境解读" : "AI 未验证词条", result.summary.trim()];
+
+  if (result.mode === "context_explain") {
+    pushDictionaryAINoteLine(lines, "词义", result.bestFitSense);
+    pushDictionaryAINoteLine(lines, "语境", result.whyHere);
+    pushDictionaryAINoteLine(lines, "线索", result.cue);
+    pushDictionaryAINoteLine(lines, "译法", result.translation);
+    pushDictionaryAINoteLine(lines, "易混", result.contrast);
+    pushDictionaryAINoteLine(lines, "记忆点", result.learningTip);
+    return lines.filter(Boolean).join("\n");
+  }
+
+  pushDictionaryAINoteLine(lines, "分类", result.classification);
+  if (result.kind === "ai_entry") {
+    pushDictionaryAINoteLine(lines, "建议词条", result.entry.word);
+  }
+  if (result.kind === "ai_unresolved") {
+    pushDictionaryAINoteLine(lines, "原因", result.reason);
+  }
+  if (result.suggestedQuery.length > 0) {
+    lines.push(`建议改查：${result.suggestedQuery.join(" / ")}`);
+  }
+
+  return lines.filter(Boolean).join("\n");
 }
 
-function dictionaryIsManualLookup(lookup: DictionaryLookupSnapshot | null) {
-  if (!lookup) {
-    return false;
-  }
-  return lookup.sentenceId === "__manual__" || lookup.label === "手动查词";
-}
-
-function dictionaryAILookupSource(lookup: DictionaryLookupSnapshot): DictAISourceDto {
-  if (dictionaryIsManualLookup(lookup)) {
-    return "manual_search";
-  }
-  if (lookup.label === "选区查词" || lookup.title === "选区查词") {
-    return "selection";
-  }
-  return "reader_click";
-}
-
-function dictionaryAIRequestForLookup(
-  lookup: DictionaryLookupSnapshot | null,
-  mode: WebDictAIRequest["mode"],
-): WebDictAIRequest | null {
-  if (!lookup || !lookup.contextSentence.trim() || dictionaryIsManualLookup(lookup)) {
-    return null;
-  }
-
-  const resolvedQuery = dictionaryResolvedQuery(lookup);
-
-  if (mode === "context_explain") {
-    const result = lookup.state.kind === "ready" ? lookup.state.result : null;
-    if (!result || result.kind !== "entry") {
-      return null;
-    }
-    return {
-      mode,
-      query: dictionaryContextExplainQuery(result, resolvedQuery),
-      queryType: lookup.lookupType,
-      contextSentence: lookup.contextSentence,
-      occurrence: lookup.occurrence,
-      recordId: lookup.recordId,
-      sentenceId: lookup.sentenceId,
-      source: dictionaryAILookupSource(lookup),
-      entryId: result.entry.id,
-    };
-  }
-
+function dictionaryAINotePayload(lookup: DictionaryLookupSnapshot, result: WebDictAIResult) {
   return {
-    mode,
-    query: resolvedQuery,
-    queryType: lookup.lookupType,
-    contextSentence: lookup.contextSentence,
-    occurrence: lookup.occurrence,
-    recordId: lookup.recordId,
+    source: "dictionary_ai",
+    mode: result.mode,
+    query: result.query,
+    anchorText: lookup.anchorText,
     sentenceId: lookup.sentenceId,
-    source: dictionaryAILookupSource(lookup),
+    occurrence: lookup.occurrence ?? null,
+    summary: result.summary,
+    generatedAt: new Date().toISOString(),
+    ...(result.mode === "context_explain"
+      ? {
+          bestFitSense: result.bestFitSense ?? null,
+        }
+      : {
+          classification: result.classification,
+          resultKind: result.kind,
+          suggestedQuery: result.suggestedQuery,
+        }),
   };
 }
 
-function dictionaryAIRequestKey(request: WebDictAIRequest) {
-  const entryIdPart = request.mode === "context_explain" ? String(request.entryId) : "missing";
-  return [
-    request.mode,
-    request.query.toLowerCase(),
-    request.queryType,
-    request.contextSentence.trim().toLowerCase(),
-    entryIdPart,
-  ].join("::");
-}
-
-function dictionaryAIContextKey(lookup: DictionaryLookupSnapshot | null) {
-  if (!lookup) {
+function dictionaryAINoteRequestFromLookup(
+  lookup: DictionaryLookupSnapshot,
+  sentence: SentenceModel,
+  result: WebDictAIResult,
+): WebReaderNoteCreateRequest | null {
+  if (!lookup.anchorOffsets || !lookup.textHash) {
     return null;
   }
 
-  const base = [
-    lookup.query.toLowerCase(),
-    lookup.lookupType,
-    lookup.contextSentence.trim().toLowerCase(),
-    lookup.sentenceId,
-    lookup.anchorText.toLowerCase(),
-    lookup.occurrence ?? "",
-  ].join("::");
-
-  if (lookup.state.kind !== "ready") {
-    return `${base}::${lookup.state.kind}`;
-  }
-
-  if (lookup.state.result.kind === "entry") {
-    return `${base}::entry::${lookup.state.result.entry.id}`;
-  }
-
-  return `${base}::${lookup.state.result.kind}`;
-}
-
-function dictionaryLookupBase(lookup: DictionaryLookupSnapshot): LookupBase {
-  const { state: _state, ...base } = lookup;
-  return base;
+  return {
+    recordId: lookup.recordId,
+    quoteMode: "text_range",
+    anchorSentenceId: lookup.sentenceId,
+    paragraphId: sentence.paragraphId,
+    sentenceId: lookup.sentenceId,
+    selectedText: lookup.anchorText,
+    startOffset: lookup.anchorOffsets.startOffset,
+    endOffset: lookup.anchorOffsets.endOffset,
+    textHash: lookup.textHash,
+    noteText: dictionaryAINoteText(result),
+    payloadJson: dictionaryAINotePayload(lookup, result),
+  };
 }
 
 function isDictionaryAIErrorResult(value: unknown): value is WebDictAIErrorResult {
@@ -520,6 +582,9 @@ export function ReaderWorkbench({
   const [lookupPreviewAnchor, setLookupPreviewAnchor] = useState<ReaderLookupPreviewAnchor | null>(null);
   const [lookupPreviewEpoch, setLookupPreviewEpoch] = useState(0);
   const [lookupHistory, setLookupHistory] = useState<DictionaryLookupSnapshot[]>([]);
+  const [dictionaryAICache, setDictionaryAICache] = useState<DictionaryAIArticleCache>(() =>
+    readStoredDictionaryAIArticleCache(record.id),
+  );
   const [dictionarySaveState, setDictionarySaveState] = useState<SaveState>({ kind: "idle" });
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const [readerNotes, setReaderNotes] = useState(initialReaderNotes);
@@ -538,6 +603,9 @@ export function ReaderWorkbench({
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [annotationColor, setAnnotationColor] = useState<UserAnnotationColorDto>("warm_yellow");
   const [annotationSaveState, setAnnotationSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
+  const [highlightPaletteOpen, setHighlightPaletteOpen] = useState(false);
+  const [textSelectionSource, setTextSelectionSource] = useState<ReaderSelectionSource>("none");
+  const [textSelectionVisualMode, setTextSelectionVisualMode] = useState<ReaderSelectionVisualMode>("selection");
   const [activeReaderNoteId, setActiveReaderNoteId] = useState<string | null>(null);
   const [pendingReaderNote, setPendingReaderNote] = useState<WebReaderNoteCreateRequest | null>(null);
   const [pendingReaderNoteSource, setPendingReaderNoteSource] = useState<PendingReaderNoteSource | null>(null);
@@ -545,6 +613,7 @@ export function ReaderWorkbench({
   const [readerNoteSaveState, setReaderNoteSaveState] = useState<AnnotationSaveState>({ kind: "idle" });
   const [notePanelOpen, setNotePanelOpen] = useState(false);
   const [hoveredAnnotationTargetKey, setHoveredAnnotationTargetKey] = useState<string | null>(null);
+  const [activeAnnotationTargetKey, setActiveAnnotationTargetKey] = useState<string | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
@@ -554,14 +623,23 @@ export function ReaderWorkbench({
   const [dictionarySearchExpanded, setDictionarySearchExpanded] = useState(false);
   const [dictionaryAI, setDictionaryAI] = useState<DictionaryAIViewState>({ kind: "idle" });
   const [dictionaryAIPanelOpen, setDictionaryAIPanelOpen] = useState(false);
+  const [dictionaryAINoteState, setDictionaryAINoteState] = useState<SaveState>({ kind: "idle" });
+  const activeAnnotationTargetKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     setReaderScene(record.reader);
   }, [record.reader]);
+  useEffect(() => {
+    setDictionaryAICache(readStoredDictionaryAIArticleCache(record.id));
+  }, [record.id]);
+  useEffect(() => {
+    persistDictionaryAIArticleCache(record.id, dictionaryAICache);
+  }, [dictionaryAICache, record.id]);
   const articleRef = useRef<HTMLElement | null>(null);
   const readingColumnRef = useRef<HTMLDivElement | null>(null);
   const focusedRouteTargetKeyRef = useRef<string | null>(null);
   const dictionaryAIRequestKeyRef = useRef<string | null>(null);
+  const textSelectionSourceRef = useRef<ReaderSelectionSource>("none");
   const [dictionaryDockLayout, setDictionaryDockLayout] = useState<DictionaryDockLayout | null>(null);
   const dictionaryPanelVisible = Boolean(dictionaryRailOpen || dictionaryPinned);
 
@@ -716,6 +794,10 @@ export function ReaderWorkbench({
     () => new Map(reader.article.sentences.map((sentence) => [sentence.sentenceId, sentence])),
     [reader.article.sentences],
   );
+  const sentenceOrderById = useMemo(
+    () => new Map(reader.article.sentences.map((sentence, index) => [sentence.sentenceId, index])),
+    [reader.article.sentences],
+  );
   const sentenceTextById = useMemo(
     () => new Map(reader.article.sentences.map((sentence) => [sentence.sentenceId, sentence.text])),
     [reader.article.sentences],
@@ -835,6 +917,23 @@ export function ReaderWorkbench({
     [record.id, record.title],
   );
   const activeLookupAIContextKey = useMemo(() => dictionaryAIContextKey(activeLookup), [activeLookup]);
+  const activeLookupAICacheEntry = useMemo(() => {
+    const preferredMode = dictionaryPreferredAIMode(activeLookup);
+    if (!activeLookup || !preferredMode) {
+      return null;
+    }
+
+    const request = dictionaryAIRequestForLookup(activeLookup, preferredMode);
+    if (!request) {
+      return null;
+    }
+
+    return dictionaryAICache[dictionaryAICacheKey(activeLookup, request)] ?? null;
+  }, [activeLookup, dictionaryAICache]);
+  const canCreateDictionaryAINote =
+    activeLookup &&
+    dictionaryAI.kind === "ready" &&
+    dictionaryLookupSupportsExactAINote(activeLookup);
 
   const selectedAnnotation = useMemo(() => {
     if (!textSelection) {
@@ -855,6 +954,34 @@ export function ReaderWorkbench({
     return readerNotesByTargetKey.get(targetKeyForSelection(record.id, textSelection)) ?? null;
   }, [readerNotesByTargetKey, record.id, textSelection]);
   const pendingReaderCommentId = pendingReaderNote ? readerCommentDraftId() : null;
+  const selectionTargetKey = useMemo(
+    () => (textSelection ? targetKeyForSelection(record.id, textSelection) : null),
+    [record.id, textSelection],
+  );
+  const selectedHighlight = selectedAnnotation?.type === "highlight" ? selectedAnnotation : null;
+  const activeAnnotation =
+    activeAnnotationTargetKey
+      ? annotations.find(
+          (item) =>
+            belongsToCurrentRecord(item.recordId, item.targetKey, record.id) &&
+            item.targetKey === activeAnnotationTargetKey,
+        ) ?? null
+      : null;
+  const hasExactSelectedHighlight = Boolean(
+    selectedHighlight && selectionTargetKey && selectedHighlight.targetKey === selectionTargetKey,
+  );
+  const multiTextHighlightExtensionBase =
+    !hasExactSelectedHighlight && selectedHighlight?.anchorType === "multi_text"
+      ? selectedHighlight
+      : activeAnnotation?.type === "highlight" && activeAnnotation.anchorType === "multi_text"
+        ? activeAnnotation
+        : null;
+
+  useEffect(() => {
+    if (selectedAnnotation?.type === "highlight") {
+      setAnnotationColor(selectedAnnotation.color);
+    }
+  }, [selectedAnnotation]);
 
   useEffect(() => {
     const targetKey = searchParams.get("targetKey");
@@ -942,6 +1069,30 @@ export function ReaderWorkbench({
     }
   }, [focusedReaderNoteTarget, sentenceById]);
 
+  const updateDictionaryAICacheEntry = useCallback(
+    (
+      lookup: DictionaryLookupSnapshot | null,
+      state: Extract<DictionaryAIViewState, { kind: "ready" | "error" }>,
+      expanded: boolean,
+    ) => {
+      if (!lookup) {
+        return;
+      }
+
+      const request = dictionaryAIRequestForLookup(lookup, state.mode);
+      if (!request) {
+        return;
+      }
+
+      const cacheKey = dictionaryAICacheKey(lookup, request);
+      setDictionaryAICache((current) => ({
+        ...current,
+        [cacheKey]: createDictionaryAICacheEntry(state, expanded),
+      }));
+    },
+    [],
+  );
+
   const dismissLookupPreview = useCallback(() => {
     setLookupPreviewOpen(false);
     const trigger = lastLookupTriggerRef.current;
@@ -961,6 +1112,7 @@ export function ReaderWorkbench({
     dictionaryAIRequestKeyRef.current = null;
     setDictionaryAI({ kind: "idle" });
     setDictionaryAIPanelOpen(false);
+    setDictionaryAINoteState({ kind: "idle" });
     const trigger = lastLookupTriggerRef.current;
     if (trigger?.isConnected) {
       window.requestAnimationFrame(() => {
@@ -976,9 +1128,15 @@ export function ReaderWorkbench({
 
   useEffect(() => {
     dictionaryAIRequestKeyRef.current = null;
+    setDictionaryAINoteState({ kind: "idle" });
+    if (activeLookupAICacheEntry) {
+      setDictionaryAI(dictionaryAIViewStateFromCacheEntry(activeLookupAICacheEntry));
+      setDictionaryAIPanelOpen(activeLookupAICacheEntry.expanded);
+      return;
+    }
     setDictionaryAI({ kind: "idle" });
     setDictionaryAIPanelOpen(false);
-  }, [activeLookupAIContextKey]);
+  }, [activeLookupAICacheEntry, activeLookupAIContextKey]);
 
   useEffect(() => {
     function handleCreated(event: Event) {
@@ -1188,6 +1346,13 @@ export function ReaderWorkbench({
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setTextSelection(null);
+        setHighlightPaletteOpen(false);
+        textSelectionSourceRef.current = "none";
+        setTextSelectionSource("none");
+        setTextSelectionVisualMode("selection");
+        activeAnnotationTargetKeyRef.current = null;
+        setActiveAnnotationTargetKey(null);
+        setHoveredAnnotationTargetKey(null);
         window.getSelection()?.removeAllRanges();
       }
     }
@@ -1201,15 +1366,13 @@ export function ReaderWorkbench({
     setActiveInspect(null);
     setDictionaryQuery(snapshot.query);
     setDictionarySaveState({ kind: "idle" });
+    setDictionaryAINoteState({ kind: "idle" });
 
     if (snapshot.state.kind === "ready") {
+      const snapshotHistoryKey = dictionaryLookupHistoryKey(snapshot);
       setLookupHistory((current) => [
         snapshot,
-        ...current.filter(
-          (item) =>
-            item.query.toLowerCase() !== snapshot.query.toLowerCase() ||
-            item.sentenceId !== snapshot.sentenceId,
-        ),
+        ...current.filter((item) => dictionaryLookupHistoryKey(item) !== snapshotHistoryKey),
       ].slice(0, 8));
     }
   }, []);
@@ -1299,6 +1462,7 @@ export function ReaderWorkbench({
     setDictionaryRailOpen(true);
     setDictionaryQuery(lookup.query);
     setDictionarySaveState({ kind: "idle" });
+    setDictionaryAINoteState({ kind: "idle" });
     setLookupPreviewAnchor(null);
     setLookupPreviewOpen(false);
   }, []);
@@ -1316,7 +1480,9 @@ export function ReaderWorkbench({
       recordId: activeLookup.recordId,
       sentenceId: activeLookup.sentenceId,
       anchorText: activeLookup.anchorText,
+      anchorOffsets: activeLookup.anchorOffsets,
       occurrence: activeLookup.occurrence,
+      textHash: activeLookup.textHash,
       title: activeLookup.title,
       label: activeLookup.label,
       annotationType: activeLookup.annotationType,
@@ -1353,8 +1519,14 @@ export function ReaderWorkbench({
   }, [activeLookup, handleLookupSnapshot]);
 
   const toggleDictionaryAIPanel = useCallback(() => {
-    setDictionaryAIPanelOpen((value) => !value);
-  }, []);
+    setDictionaryAIPanelOpen((value) => {
+      const nextValue = !value;
+      if (activeLookup && (dictionaryAI.kind === "ready" || dictionaryAI.kind === "error")) {
+        updateDictionaryAICacheEntry(activeLookup, dictionaryAI, nextValue);
+      }
+      return nextValue;
+    });
+  }, [activeLookup, dictionaryAI, updateDictionaryAICacheEntry]);
 
   const requestDictionaryAI = useCallback(
     async (mode: WebDictAIRequest["mode"]) => {
@@ -1389,6 +1561,7 @@ export function ReaderWorkbench({
       dictionaryAIRequestKeyRef.current = requestKey;
       setDictionaryAI({ kind: "loading", mode, requestKey });
       setDictionaryAIPanelOpen(true);
+      setDictionaryAINoteState({ kind: "idle" });
 
       try {
         const response = await fetch("/api/web/dict/ai", {
@@ -1420,8 +1593,10 @@ export function ReaderWorkbench({
           const errorResult =
             payload && isDictionaryAIErrorResult(payload) ? payload : fallbackError;
 
-          setDictionaryAI({ kind: "error", mode, requestKey, error: errorResult });
+          const nextState = { kind: "error", mode, requestKey, error: errorResult } satisfies DictionaryAIViewState;
+          setDictionaryAI(nextState);
           setDictionaryAIPanelOpen(true);
+          updateDictionaryAICacheEntry(lookupAtRequest, nextState, true);
 
           if (errorResult.code === "canonical_dictionary_available") {
             void lookupPlainText(lookupIntentFromSnapshotBase(dictionaryLookupBase(lookupAtRequest)), {
@@ -1433,19 +1608,21 @@ export function ReaderWorkbench({
           return;
         }
 
-        setDictionaryAI({
+        const nextState = {
           kind: "ready",
           mode,
           requestKey,
           result: payload,
-        });
+        } satisfies DictionaryAIViewState;
+        setDictionaryAI(nextState);
         setDictionaryAIPanelOpen(true);
+        updateDictionaryAICacheEntry(lookupAtRequest, nextState, true);
       } catch {
         if (dictionaryAIRequestKeyRef.current !== requestKey) {
           return;
         }
 
-        setDictionaryAI({
+        const nextState = {
           kind: "error",
           mode,
           requestKey,
@@ -1457,11 +1634,13 @@ export function ReaderWorkbench({
             code: "upstream_unavailable",
             message: "AI 查词暂时不可用，请稍后再试。",
           },
-        });
+        } satisfies DictionaryAIViewState;
+        setDictionaryAI(nextState);
         setDictionaryAIPanelOpen(true);
+        updateDictionaryAICacheEntry(lookupAtRequest, nextState, true);
       }
     },
-    [activeLookup, dictionaryAI, lookupPlainText],
+    [activeLookup, dictionaryAI, lookupPlainText, updateDictionaryAICacheEntry],
   );
 
   const selectAISuggestedQuery = useCallback(
@@ -1478,6 +1657,7 @@ export function ReaderWorkbench({
       dictionaryAIRequestKeyRef.current = null;
       setDictionaryAI({ kind: "idle" });
       setDictionaryAIPanelOpen(false);
+      setDictionaryAINoteState({ kind: "idle" });
 
       void lookupPlainText(
         {
@@ -1536,6 +1716,7 @@ export function ReaderWorkbench({
       setActiveInspect(intent);
       setDictionaryQuery(intent.lookupText ?? intent.anchorText);
       setDictionarySaveState({ kind: "idle" });
+      setDictionaryAINoteState({ kind: "idle" });
       dictionaryAIRequestKeyRef.current = null;
       setDictionaryAI({ kind: "idle" });
       setDictionaryAIPanelOpen(false);
@@ -1552,23 +1733,314 @@ export function ReaderWorkbench({
     setLookupPreviewOpen(false);
   }, []);
 
+  const readerSentenceTextElement = useCallback((sentenceId: string) => {
+    if (!articleRef.current) {
+      return null;
+    }
+
+    return articleRef.current.querySelector<HTMLElement>(
+      `[data-reader-anchor="sentence"][data-sentence-id="${CSS.escape(sentenceId)}"] [data-reader-sentence-text="true"]`,
+    );
+  }, []);
+
+  const focusReaderSelection = useCallback(
+    (
+      selection: ReaderTextSelection | null,
+      options?: {
+        openHighlightPalette?: boolean;
+        source?: ReaderSelectionSource;
+        visualMode?: ReaderSelectionVisualMode;
+        activeAnnotationTargetKey?: string | null;
+        hoveredAnnotationTargetKey?: string | null;
+      },
+    ) => {
+      setTextSelection(selection);
+      setHighlightPaletteOpen(Boolean(options?.openHighlightPalette));
+      const nextSource = selection ? (options?.source ?? "programmatic") : "none";
+      textSelectionSourceRef.current = nextSource;
+      setTextSelectionSource(nextSource);
+      setTextSelectionVisualMode(selection ? (options?.visualMode ?? "selection") : "selection");
+      const nextActiveAnnotationTargetKey = selection ? (options?.activeAnnotationTargetKey ?? null) : null;
+      activeAnnotationTargetKeyRef.current = nextActiveAnnotationTargetKey;
+      setActiveAnnotationTargetKey(nextActiveAnnotationTargetKey);
+      setHoveredAnnotationTargetKey(
+        selection
+          ? (options?.hoveredAnnotationTargetKey ?? options?.activeAnnotationTargetKey ?? null)
+          : null,
+      );
+
+      if (selection) {
+        setActiveSentence(selection.sentence);
+        setSettingsPanelOpen(false);
+        setContextPanelOpen(false);
+        setSentencePopoverAnchorEl(null);
+        setLookupPreviewOpen(false);
+        setLookupPreviewAnchor(null);
+        setAnnotationSaveState({ kind: "idle" });
+        setReaderNoteSaveState({ kind: "idle" });
+        return;
+      }
+
+      setReaderNoteSaveState({ kind: "idle" });
+    },
+    [],
+  );
+
+  const clearReaderSelection = useCallback(
+    (options?: { preserveDomSelection?: boolean }) => {
+      setTextSelection(null);
+      setHighlightPaletteOpen(false);
+      textSelectionSourceRef.current = "none";
+      setTextSelectionSource("none");
+      setTextSelectionVisualMode("selection");
+      activeAnnotationTargetKeyRef.current = null;
+      setActiveAnnotationTargetKey(null);
+      setHoveredAnnotationTargetKey(null);
+      if (!options?.preserveDomSelection) {
+        window.getSelection()?.removeAllRanges();
+      }
+    },
+    [],
+  );
+
+  const selectionFromSentence = useCallback(
+    (sentence: SentenceModel, anchorEl?: HTMLElement | null): Extract<ReaderTextSelection, { anchorType: "sentence" }> => {
+      const sentenceText = sentence.text;
+      const sentenceTextHash = hashAnchorText(sentenceText);
+      const sentenceTextElement = readerSentenceTextElement(sentence.sentenceId);
+      const fallbackRect = anchorEl ? copyDomRect(anchorEl.getBoundingClientRect()) : new DOMRect();
+      return {
+        anchorType: "sentence",
+        sentence,
+        selectedText: sentenceText,
+        rect: sentenceTextElement ? copyDomRect(sentenceTextElement.getBoundingClientRect()) : fallbackRect,
+        segments: [
+          {
+            paragraphId: sentence.paragraphId,
+            sentenceId: sentence.sentenceId,
+            sentence,
+            selectedText: sentenceText,
+            startOffset: 0,
+            endOffset: sentenceText.length,
+            textHash: sentenceTextHash,
+          },
+        ],
+        startOffset: 0,
+        endOffset: sentenceText.length,
+        textHash: sentenceTextHash,
+      };
+    },
+    [readerSentenceTextElement],
+  );
+
+  const selectionFromAnnotation = useCallback(
+    (
+      annotation: WebAnnotationVm,
+      options?: { preferredSentenceId?: string; anchorEl?: HTMLElement | null },
+    ): ReaderTextSelection | null => {
+      const fallbackRect = options?.anchorEl ? copyDomRect(options.anchorEl.getBoundingClientRect()) : new DOMRect();
+
+      if (annotation.anchorType === "sentence" && annotation.sentenceId) {
+        const sentence = sentenceById.get(annotation.sentenceId);
+        if (!sentence) {
+          return null;
+        }
+
+        return selectionFromSentence(sentence, options?.anchorEl);
+      }
+
+      if (
+        annotation.anchorType === "text_range" &&
+        annotation.sentenceId &&
+        typeof annotation.startOffset === "number" &&
+        typeof annotation.endOffset === "number"
+      ) {
+        const sentence = sentenceById.get(annotation.sentenceId);
+        if (!sentence) {
+          return null;
+        }
+
+        const sentenceTextElement = readerSentenceTextElement(annotation.sentenceId);
+        return {
+          anchorType: "text_range",
+          sentence,
+          selectedText: annotation.selectedText,
+          rect:
+            (sentenceTextElement
+              ? rectForTextOffsets(sentenceTextElement, annotation.startOffset, annotation.endOffset)
+              : null) ?? fallbackRect,
+          segments: [
+            {
+              paragraphId: sentence.paragraphId,
+              sentenceId: sentence.sentenceId,
+              sentence,
+              selectedText: annotation.selectedText,
+              startOffset: annotation.startOffset,
+              endOffset: annotation.endOffset,
+              textHash: annotation.textHash ?? hashAnchorText(annotation.selectedText),
+            },
+          ],
+          startOffset: annotation.startOffset,
+          endOffset: annotation.endOffset,
+          textHash: annotation.textHash ?? hashAnchorText(annotation.selectedText),
+        };
+      }
+
+      if (annotation.anchorType !== "multi_text") {
+        return null;
+      }
+
+      const segments = annotation.segments
+        .map((segment) => {
+          const sentence = sentenceById.get(segment.sentenceId);
+          if (!sentence) {
+            return null;
+          }
+
+          return {
+            paragraphId: segment.paragraphId ?? sentence.paragraphId,
+            sentenceId: segment.sentenceId,
+            sentence,
+            selectedText: segment.selectedText,
+            startOffset: segment.startOffset,
+            endOffset: segment.endOffset,
+            textHash: segment.textHash,
+          };
+        })
+        .filter((segment): segment is NonNullable<typeof segment> => Boolean(segment));
+
+      if (segments.length === 0) {
+        return null;
+      }
+
+      const preferredSegment =
+        segments.find((segment) => segment.sentenceId === options?.preferredSentenceId) ?? segments[0];
+      if (!preferredSegment) {
+        return null;
+      }
+
+      const sentenceTextElement = readerSentenceTextElement(preferredSegment.sentenceId);
+      return {
+        anchorType: "multi_text",
+        sentence: preferredSegment.sentence,
+        selectedText: annotation.selectedText,
+        rect:
+          (sentenceTextElement
+            ? rectForTextOffsets(sentenceTextElement, preferredSegment.startOffset, preferredSegment.endOffset)
+            : null) ?? fallbackRect,
+        segments,
+        startOffset: segments[0]?.startOffset ?? preferredSegment.startOffset,
+        endOffset: segments[segments.length - 1]?.endOffset ?? preferredSegment.endOffset,
+        textHash: hashAnchorText(annotation.selectedText),
+      };
+    },
+    [readerSentenceTextElement, selectionFromSentence, sentenceById],
+  );
+
+  const combinedMultiTextSelection = useCallback(
+    (selection: ReaderTextSelection, annotation: WebAnnotationVm): ReaderTextSelection | null => {
+      if (annotation.anchorType !== "multi_text") {
+        return null;
+      }
+
+      const annotationSelection = selectionFromAnnotation(annotation);
+      if (!annotationSelection) {
+        return null;
+      }
+
+      const mergedSegments = mergeSelectionSegments(sentenceById, sentenceOrderById, [
+        ...annotationSelection.segments,
+        ...selection.segments,
+      ]);
+      if (mergedSegments.length < 2) {
+        return null;
+      }
+
+      return {
+        anchorType: "multi_text",
+        sentence: selection.sentence,
+        selectedText: mergedSelectionText(mergedSegments),
+        rect: selection.rect,
+        range: selection.range,
+        segments: mergedSegments,
+        startOffset: mergedSegments[0]?.startOffset ?? selection.startOffset,
+        endOffset: mergedSegments[mergedSegments.length - 1]?.endOffset ?? selection.endOffset,
+        textHash: hashAnchorText(mergedSelectionText(mergedSegments)),
+      };
+    },
+    [selectionFromAnnotation, sentenceById, sentenceOrderById],
+  );
+
   const updateTextSelectionFromDom = useCallback(() => {
     const nextSelection = readPlateReaderSelection(articleRef.current, sentenceById);
-    setTextSelection(nextSelection);
-
-    if (nextSelection) {
-      setActiveSentence(nextSelection.sentence);
-      setSettingsPanelOpen(false);
-      setContextPanelOpen(false);
-      setSentencePopoverAnchorEl(null);
-      setLookupPreviewOpen(false);
-      setLookupPreviewAnchor(null);
-      setAnnotationSaveState({ kind: "idle" });
-      setReaderNoteSaveState({ kind: "idle" });
-    } else {
-      setReaderNoteSaveState({ kind: "idle" });
+    if (!nextSelection && textSelectionSourceRef.current === "programmatic") {
+      return;
     }
-  }, [sentenceById]);
+
+    const matchingHighlight =
+      nextSelection
+        ? annotations.find(
+            (item) =>
+              item.type === "highlight" &&
+              belongsToCurrentRecord(item.recordId, item.targetKey, record.id) &&
+              annotationMatchesSelection(item, nextSelection),
+          ) ?? null
+        : null;
+
+    const currentActiveAnnotation =
+      activeAnnotationTargetKeyRef.current
+        ? annotations.find(
+            (item) =>
+              belongsToCurrentRecord(item.recordId, item.targetKey, record.id) &&
+              item.targetKey === activeAnnotationTargetKeyRef.current,
+          ) ?? null
+        : null;
+    const preservedActiveAnnotationTargetKey =
+      currentActiveAnnotation?.type === "highlight" &&
+      currentActiveAnnotation.anchorType === "multi_text" &&
+      nextSelection &&
+      annotationOverlapsSelection(currentActiveAnnotation, nextSelection)
+        ? currentActiveAnnotation.targetKey
+        : matchingHighlight?.anchorType === "multi_text"
+          ? matchingHighlight.targetKey
+          : null;
+
+    focusReaderSelection(nextSelection, {
+      openHighlightPalette: Boolean(matchingHighlight),
+      source: nextSelection ? "dom" : "none",
+      visualMode: "selection",
+      activeAnnotationTargetKey: preservedActiveAnnotationTargetKey,
+      hoveredAnnotationTargetKey: matchingHighlight?.targetKey ?? null,
+    });
+  }, [annotations, focusReaderSelection, record.id, sentenceById]);
+
+  const selectionFocusRangesBySentence = useMemo(() => {
+    const map = new Map<string, ReaderJumpRangeSegment[]>();
+    if (
+      !textSelection ||
+      textSelectionSource !== "programmatic" ||
+      textSelectionVisualMode !== "selection"
+    ) {
+      return map;
+    }
+
+    textSelection.segments.forEach((segment) => {
+      const current = map.get(segment.sentenceId) ?? [];
+      map.set(segment.sentenceId, [
+        ...current,
+        {
+          paragraphId: segment.paragraphId ?? null,
+          sentenceId: segment.sentenceId,
+          selectedText: segment.selectedText,
+          startOffset: segment.startOffset,
+          endOffset: segment.endOffset,
+          textHash: segment.textHash,
+        },
+      ]);
+    });
+
+    return map;
+  }, [textSelection, textSelectionSource, textSelectionVisualMode]);
 
   function mergeAnnotation(item: WebAnnotationVm) {
     setAnnotations((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
@@ -1681,8 +2153,18 @@ export function ReaderWorkbench({
     }
   }
 
-  async function saveHighlight(options?: { color?: UserAnnotationColorDto; selection?: ReaderTextSelection | null }) {
-    const targetSelection = options?.selection ?? textSelection;
+  async function saveHighlight(options?: {
+    color?: UserAnnotationColorDto;
+    selection?: ReaderTextSelection | null;
+    mode?: "create" | "recolor";
+  }) {
+    const requestedSelection = options?.selection ?? textSelection;
+    const targetSelection =
+      options?.mode !== "recolor" &&
+      requestedSelection &&
+      multiTextHighlightExtensionBase
+        ? combinedMultiTextSelection(requestedSelection, multiTextHighlightExtensionBase) ?? requestedSelection
+        : requestedSelection;
     const targetSentence = targetSelection?.sentence ?? activeSentence;
 
     if (!targetSentence) {
@@ -1693,19 +2175,21 @@ export function ReaderWorkbench({
     setAnnotationSaveState({ kind: "saving" });
 
     const color = options?.color ?? annotationColor;
-    const sentenceAnnotations = annotationsBySentence.get(targetSentence.sentenceId)?.annotations ?? [];
     const existingTargetAnnotation = targetSelection
       ? annotations.find(
           (item) =>
             belongsToCurrentRecord(item.recordId, item.targetKey, record.id) &&
             annotationMatchesSelection(item, targetSelection),
         ) ?? null
-      : sentenceAnnotations.find((item) => item.anchorType === "sentence") ?? null;
+      : (annotationsBySentence.get(targetSentence.sentenceId)?.annotations ?? []).find(
+          (item) => item.anchorType === "sentence",
+        ) ?? null;
 
-    if (existingTargetAnnotation) {
+    if (options?.mode === "recolor" && existingTargetAnnotation?.type === "highlight") {
       try {
         await patchAnnotation(existingTargetAnnotation.id, { color }, "高亮更新失败。");
-        setAnnotationSaveState({ kind: "saved", message: "高亮已更新。" });
+        setAnnotationSaveState({ kind: "idle" });
+        setHighlightPaletteOpen(true);
       } catch (error) {
         setAnnotationSaveState({
           kind: "error",
@@ -1743,10 +2227,35 @@ export function ReaderWorkbench({
       }
 
       mergeAnnotation(payload.item);
+      if (payload.item.supersededIds?.length) {
+        for (const supersededId of payload.item.supersededIds) {
+          removeAnnotation(supersededId);
+        }
+      }
+      const nextSelection =
+        payload.item.type === "highlight"
+          ? selectionFromAnnotation(payload.item)
+          : null;
+      const requestedTargetKey = requestedSelection ? targetKeyForSelection(record.id, requestedSelection) : null;
+      const targetSelectionKey = targetSelection ? targetKeyForSelection(record.id, targetSelection) : null;
+      const shouldReplaceSelection =
+        Boolean(nextSelection) &&
+        (targetSelectionKey !== requestedTargetKey || payload.item.targetKey !== requestedTargetKey);
+      if (nextSelection && shouldReplaceSelection) {
+        const exactRecalled = payload.item.targetKey === targetKeyForSelection(record.id, nextSelection);
+        focusReaderSelection(nextSelection, {
+          openHighlightPalette: true,
+          source: "programmatic",
+          visualMode: exactRecalled ? "annotation_hover" : "selection",
+          activeAnnotationTargetKey: payload.item.targetKey,
+          hoveredAnnotationTargetKey: payload.item.targetKey,
+        });
+      }
       window.dispatchEvent(
         new CustomEvent<WebAnnotationVm>(ANNOTATION_CREATED_EVENT, { detail: payload.item }),
       );
-      setAnnotationSaveState({ kind: "saved", message: "高亮已保存。" });
+      setAnnotationSaveState({ kind: "idle" });
+      setHighlightPaletteOpen(true);
     } catch (error) {
       setAnnotationSaveState({
         kind: "error",
@@ -1775,6 +2284,60 @@ export function ReaderWorkbench({
     setFocusedReaderNoteTarget(nextJumpTarget);
     setReaderNoteSaveState({ kind: "idle" });
     setNotePanelOpen(true);
+  }
+
+  async function createDictionaryAINote() {
+    if (!activeLookup || dictionaryAI.kind !== "ready") {
+      setDictionaryAINoteState({ kind: "error", message: "请先生成可用的 AI 结果。" });
+      return;
+    }
+
+    const sentence = sentenceById.get(activeLookup.sentenceId);
+    if (!sentence) {
+      setDictionaryAINoteState({ kind: "error", message: "当前定位不到原文句子，暂时无法生成笔记。" });
+      return;
+    }
+
+    const request = dictionaryAINoteRequestFromLookup(activeLookup, sentence, dictionaryAI.result);
+    if (!request) {
+      setDictionaryAINoteState({ kind: "error", message: "当前结果缺少精确原文锚点，暂时无法生成笔记。" });
+      return;
+    }
+
+    const existing = readerNotesByTargetKey.get(noteTargetKeyFromRequest(request)) ?? null;
+    if (existing) {
+      focusReaderNote(existing);
+      setDictionaryAINoteState({ kind: "saved", message: "该位置已有笔记，已为你打开。" });
+      return;
+    }
+
+    setDictionaryAINoteState({ kind: "saving" });
+    try {
+      const response = await fetch("/api/web/reader-notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const payload = (await response.json().catch(() => ({ ok: false, message: "请求失败" }))) as
+        | { ok: true; item: WebReaderNoteVm }
+        | { ok: false; message?: string };
+      if (!response.ok || !payload.ok) {
+        setDictionaryAINoteState({
+          kind: "error",
+          message: payload.ok === false && payload.message ? payload.message : "AI 笔记生成失败。",
+        });
+        return;
+      }
+
+      mergeReaderNote(payload.item);
+      focusReaderNote(payload.item);
+      setDictionaryAINoteState({ kind: "saved", message: "AI 笔记已生成。" });
+    } catch (error) {
+      setDictionaryAINoteState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "AI 笔记生成失败。",
+      });
+    }
   }
 
   function openReaderNoteComposer(
@@ -1807,7 +2370,11 @@ export function ReaderWorkbench({
     }
     const color = isUserAnnotationColor(colorValue) ? colorValue : annotationColor;
     setAnnotationColor(color);
-    void saveHighlight({ color, selection: textSelection });
+    void saveHighlight({
+      color,
+      selection: textSelection,
+      mode: hasExactSelectedHighlight ? "recolor" : "create",
+    });
   }
 
   function openTextSelectionNote() {
@@ -1997,7 +2564,8 @@ export function ReaderWorkbench({
       }
 
       setAnnotations((current) => current.filter((existing) => existing.id !== selectedAnnotation.id));
-      setAnnotationSaveState({ kind: "saved", message: "高亮已删除。" });
+      setHighlightPaletteOpen(false);
+      setAnnotationSaveState({ kind: "idle" });
     } catch (error) {
       setAnnotationSaveState({
         kind: "error",
@@ -2007,41 +2575,21 @@ export function ReaderWorkbench({
   }
 
   function selectCurrentSentenceFromToolbar() {
-
     if (!textSelection || textSelection.anchorType !== "text_range") {
       return;
     }
 
     const sentence = textSelection.sentence;
-    const sentenceElement = articleRef.current?.querySelector<HTMLElement>(
-      `[data-reader-anchor="sentence"][data-sentence-id="${CSS.escape(sentence.sentenceId)}"] [data-reader-sentence-text="true"]`,
-    );
-    const rect = sentenceElement ? copyDomRect(sentenceElement.getBoundingClientRect()) : textSelection.rect;
-    setActiveSentence(sentence);
-    setSettingsPanelOpen(false);
-    setContextPanelOpen(false);
-    setTextSelection({
-      anchorType: "sentence",
-      sentence,
-      selectedText: sentence.text,
-      segments: [
-        {
-          paragraphId: sentence.paragraphId,
-          sentenceId: sentence.sentenceId,
-          sentence,
-          selectedText: sentence.text,
-          startOffset: 0,
-          endOffset: sentence.text.length,
-          textHash: hashAnchorText(sentence.text),
-        },
-      ],
-      startOffset: 0,
-      endOffset: sentence.text.length,
-      textHash: hashAnchorText(sentence.text),
-      rect,
+    const sentenceHighlight =
+      (annotationsBySentence.get(sentence.sentenceId)?.annotations ?? []).find(
+        (item) => item.type === "highlight" && item.anchorType === "sentence",
+      ) ?? null;
+    focusReaderSelection(selectionFromSentence(sentence), {
+      openHighlightPalette: Boolean(sentenceHighlight),
+      visualMode: "selection",
+      activeAnnotationTargetKey: sentenceHighlight?.targetKey ?? null,
+      hoveredAnnotationTargetKey: null,
     });
-    setReaderNoteSaveState({ kind: "idle" });
-    setAnnotationSaveState({ kind: "idle" });
     window.getSelection()?.removeAllRanges();
   }
 
@@ -2267,12 +2815,23 @@ export function ReaderWorkbench({
     }
   }
 
-  function jumpToAnnotation(annotation: WebAnnotationVm) {
-    const nextJumpTarget = jumpToTargetRef(annotationToTargetRef(annotation), {
-      annotations,
+  function jumpToAnnotation(annotation: WebAnnotationVm, anchorEl?: HTMLElement, sentenceId?: string) {
+    const nextSelection = selectionFromAnnotation(annotation, {
+      preferredSentenceId: sentenceId,
+      anchorEl,
     });
-    if (nextJumpTarget) {
-      setJumpTarget(nextJumpTarget);
+    if (nextSelection) {
+      focusReaderSelection(nextSelection, {
+        openHighlightPalette: annotation.type === "highlight",
+        visualMode: annotation.type === "highlight" ? "annotation_hover" : "selection",
+        activeAnnotationTargetKey: annotation.targetKey,
+        hoveredAnnotationTargetKey: annotation.targetKey,
+      });
+      window.requestAnimationFrame(() => {
+        articleRef.current
+          ?.querySelector<HTMLElement>(`#reader-sentence-${CSS.escape(nextSelection.sentence.sentenceId)}`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
     }
   }
 
@@ -2313,17 +2872,21 @@ export function ReaderWorkbench({
 
   function selectSentence(sentence: SentenceModel, anchorEl?: HTMLElement | null) {
     setActiveSentence(sentence);
-    setTextSelection(null);
-    setContextPanelOpen(true);
-    setSentencePopoverAnchorEl(anchorEl ?? null);
     lastSentencePopoverTriggerRef.current = anchorEl ?? null;
-    setSettingsPanelOpen(false);
     setExpandedAnalysisEntryIds([]);
     setActiveEntryId(null);
     const sentenceAnnotation =
-      (annotationsBySentence.get(sentence.sentenceId)?.annotations ?? []).find((item) => item.anchorType === "sentence") ?? null;
+      (annotationsBySentence.get(sentence.sentenceId)?.annotations ?? []).find(
+        (item) => item.type === "highlight" && item.anchorType === "sentence",
+      ) ?? null;
     setAnnotationColor(sentenceAnnotation?.color ?? "warm_yellow");
-    setAnnotationSaveState({ kind: "idle" });
+    focusReaderSelection(selectionFromSentence(sentence, anchorEl), {
+      openHighlightPalette: Boolean(sentenceAnnotation),
+      visualMode: "selection",
+      activeAnnotationTargetKey: sentenceAnnotation?.targetKey ?? null,
+      hoveredAnnotationTargetKey: null,
+    });
+    window.getSelection()?.removeAllRanges();
   }
 
   function openSettingsPanel() {
@@ -2350,7 +2913,7 @@ export function ReaderWorkbench({
     setActiveSentence(null);
     setExpandedAnalysisEntryIds([]);
     setActiveEntryId(null);
-    setTextSelection(null);
+    clearReaderSelection();
     window.requestAnimationFrame(() => {
       trigger?.focus();
     });
@@ -2416,13 +2979,37 @@ export function ReaderWorkbench({
           <article
           ref={articleRef}
           className={`min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${canvasThemeClass}`}
-          onClick={lookupPreviewOpen ? dismissLookupPreview : undefined}
+          onClick={(event) => {
+            const target = event.target instanceof HTMLElement ? event.target : null;
+            const nativeSelection = window.getSelection();
+            if (nativeSelection && !nativeSelection.isCollapsed && nativeSelection.toString().trim()) {
+              return;
+            }
+            if (
+              target?.closest(
+                "button,a,[role='dialog'],[data-reader-mark-id],[data-selection-note-input='true'],[data-reader-sentence-popover='true'],[data-reader-sentence-handle='true'],[data-reader-sentence-note-handle='true']",
+              )
+            ) {
+              if (lookupPreviewOpen) {
+                dismissLookupPreview();
+              }
+              return;
+            }
+
+            if (lookupPreviewOpen) {
+              dismissLookupPreview();
+            }
+
+            if (textSelection) {
+              clearReaderSelection();
+            }
+          }}
           onMouseUp={() => {
             window.requestAnimationFrame(updateTextSelectionFromDom);
           }}
           onKeyUp={(event) => {
             if (event.key === "Escape") {
-              setTextSelection(null);
+              clearReaderSelection();
               return;
             }
             window.requestAnimationFrame(updateTextSelectionFromDom);
@@ -2506,10 +3093,12 @@ export function ReaderWorkbench({
             columnWidth={readerSettings.columnWidth}
             themeClassName={canvasThemeClass}
             activeSentenceId={activeSentence?.sentenceId ?? null}
+            selectedSentenceId={textSelection?.anchorType === "sentence" ? textSelection.sentence.sentenceId : null}
             activeAnalysisEntryId={activeEntryId}
             expandedAnalysisEntryIds={expandedAnalysisEntryIds}
             jumpTarget={jumpTarget}
             focusTarget={focusedReaderNoteTarget}
+            selectionFocusRangesBySentence={selectionFocusRangesBySentence}
             hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
             assetProjection={assetProjection}
             readerNotesBySentence={readerNotesBySentence}
@@ -2578,20 +3167,13 @@ export function ReaderWorkbench({
               selectionMode={textSelection.anchorType}
               activeColor={selectedAnnotation?.color ?? annotationColor}
               hasAnnotation={Boolean(selectedAnnotation)}
-              hasHighlight={selectedAnnotation?.type === "highlight"}
+              hasHighlight={Boolean(selectedHighlight)}
+              canToggleHighlightPalette={hasExactSelectedHighlight}
               hasNote={Boolean(selectedReaderNote)}
-              statusMessage={
-                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
-                  ? annotationSaveState.message
-                  : undefined
-              }
-              statusKind={
-                annotationSaveState.kind === "saved" || annotationSaveState.kind === "error"
-                  ? annotationSaveState.kind
-                  : undefined
-              }
+              highlightPaletteOpen={highlightPaletteOpen}
               onSelectSentence={selectCurrentSentenceFromToolbar}
               onHighlight={(color) => highlightTextSelection(color)}
+              onToggleHighlightPalette={() => setHighlightPaletteOpen((current) => !current)}
               onNote={openTextSelectionNote}
               onClearAnnotation={deleteTextSelectionAnnotation}
               onLookup={lookupTextSelection}
@@ -2644,10 +3226,12 @@ export function ReaderWorkbench({
             saveState={dictionarySaveState}
             dictionaryAI={dictionaryAI}
             dictionaryAIPanelOpen={dictionaryAIPanelOpen}
+            dictionaryAINoteState={dictionaryAINoteState}
             searchQuery={dictionaryQuery}
             searchExpanded={dictionarySearchExpanded}
             onSave={saveVocabularyFromDictionary}
             onRequestAI={requestDictionaryAI}
+            onCreateAINote={createDictionaryAINote}
             onSelectAISuggestedQuery={selectAISuggestedQuery}
             onSearchQueryChange={setDictionaryQuery}
             onSearchSubmit={lookupDictionaryQuery}
@@ -2659,6 +3243,7 @@ export function ReaderWorkbench({
             onTogglePinned={() => setDictionaryPinned((value) => !value)}
             variant="card"
             canSaveVocabulary={Boolean(activeLookup?.contextSentence.trim())}
+            canCreateAINote={Boolean(canCreateDictionaryAINote)}
             onLookupPhraseFromInspect={lookupPhraseFromInspect}
             onAttachToAsk={openAskWithStructuredInspect}
             onSelectHistory={selectLookupFromTrail}
@@ -2676,10 +3261,12 @@ export function ReaderWorkbench({
             saveState={dictionarySaveState}
             dictionaryAI={dictionaryAI}
             dictionaryAIPanelOpen={dictionaryAIPanelOpen}
+            dictionaryAINoteState={dictionaryAINoteState}
             searchQuery={dictionaryQuery}
             searchExpanded={dictionarySearchExpanded}
             onSave={saveVocabularyFromDictionary}
             onRequestAI={requestDictionaryAI}
+            onCreateAINote={createDictionaryAINote}
             onSelectAISuggestedQuery={selectAISuggestedQuery}
             onSearchQueryChange={setDictionaryQuery}
             onSearchSubmit={lookupDictionaryQuery}
@@ -2688,6 +3275,7 @@ export function ReaderWorkbench({
             onToggleSearchExpanded={() => setDictionarySearchExpanded((value) => !value)}
             onDismiss={clearLookup}
             canSaveVocabulary={Boolean(activeLookup?.contextSentence.trim())}
+            canCreateAINote={Boolean(canCreateDictionaryAINote)}
             onLookupPhraseFromInspect={lookupPhraseFromInspect}
             onAttachToAsk={openAskWithStructuredInspect}
             onSelectHistory={selectLookupFromTrail}

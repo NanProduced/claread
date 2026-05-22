@@ -144,6 +144,7 @@ function projectAnnotation(item: UserAnnotationResponseDto): WebAnnotationVm {
     color: item.color,
     createdAt: item.created_at,
     updatedAt: item.updated_at,
+    supersededIds: item.superseded_ids,
   };
 }
 

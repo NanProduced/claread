@@ -28,7 +28,7 @@ export function ReaderToolbarRoot({
   return (
     <Toolbar
       className={cn(
-        "flex max-w-[min(38rem,calc(100vw-1rem))] flex-wrap items-center gap-1 rounded-xl border border-border/65 bg-background/94 p-1.5 text-foreground shadow-sm backdrop-blur-sm",
+        "flex max-w-[min(38rem,calc(100vw-1rem))] flex-wrap items-center gap-1 rounded-[0.95rem] border border-border/60 bg-background/95 p-1 text-foreground shadow-sm backdrop-blur-sm",
         className,
       )}
       {...props}
@@ -49,14 +49,14 @@ export function ReaderToolbarSeparator({
 }: React.ComponentPropsWithoutRef<typeof ToolbarSeparator>) {
   return (
     <ToolbarSeparator
-      className={cn("mx-0.5 hidden h-6 shrink-0 opacity-70 sm:inline-flex", className)}
+      className={cn("mx-0.5 hidden h-5 shrink-0 opacity-70 sm:inline-flex", className)}
       {...props}
     />
   );
 }
 
 const readerToolbarButtonBaseClassName =
-  "focus-ring shrink-0 rounded-lg border border-transparent text-foreground/72 transition-[background-color,border-color,color,box-shadow] hover:border-border/55 hover:bg-muted/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
+  "focus-ring shrink-0 rounded-[0.8rem] border border-transparent text-foreground/72 transition-[background-color,border-color,color,box-shadow] hover:border-border/55 hover:bg-muted/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
 
 export interface ReaderToolbarButtonProps
   extends React.ComponentPropsWithoutRef<typeof ToolbarButton> {
@@ -72,7 +72,7 @@ export function ReaderToolbarButton({
     <ToolbarButton
       className={cn(
         readerToolbarButtonBaseClassName,
-        "min-h-9 min-w-9 px-2.5",
+        "min-h-8 min-w-8 px-2",
         active && "border-border/65 bg-background text-foreground shadow-sm",
         className,
       )}
@@ -93,7 +93,7 @@ export function ReaderToolbarIconButton({
   className,
   ...props
 }: ReaderToolbarButtonProps) {
-  return <ReaderToolbarButton className={cn("h-10 min-w-10 px-2.5", className)} {...props} />;
+  return <ReaderToolbarButton className={cn("h-8 min-w-8 px-2", className)} {...props} />;
 }
 
 export interface ReaderToolbarSplitActionProps {

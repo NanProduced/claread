@@ -48,8 +48,7 @@ export function ReaderDictionaryRecentStrip({
           <div className="space-y-1.5">
             {recentItems.map((item) => {
               const active =
-                activeLookup?.query.toLowerCase() === item.query.toLowerCase() &&
-                activeLookup?.sentenceId === item.sentenceId;
+                activeLookup ? dictionaryLookupHistoryKey(activeLookup) === dictionaryLookupHistoryKey(item) : false;
               const summary = dictionaryLookupHistorySummary(item);
               return (
                 <button

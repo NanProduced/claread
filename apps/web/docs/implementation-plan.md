@@ -34,18 +34,21 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 - Reader 已能把真实 `render_scene_json` 中的 `multi_text` anchor 作为“结构线索”展示在句子下方，不把非连续片段强行伪装成 inline highlight。旧的右侧集中说明形态已废弃，后续实现应回到原文画布。
 - `/settings` 已通过 Web BFF 读取 FastAPI `/auth/session/me` 和 `/me/quota`；不可用登录态只显示明确不可用提示，不再伪造额度。
 - 词典 BFF 已接入 FastAPI `/dict` 和 `/dict/entry`，返回 Web 专用 `entry` / `disambiguation` / `not_found` / `error` union，不向页面暴露原始 FastAPI DTO。
-- Reader 词典 AI 已通过同源 `/api/web/dict/ai` 接入 FastAPI `POST /dict/ai`：`context_explain` 作为正文点词后的二级语境解读，`missing_fallback` 作为 canonical `not_found` 后的按需增强；AI 结果内嵌在同一张词典卡里，不覆盖正式词典，也不写入查词历史。
+- Reader 词典 AI 已通过同源 `/api/web/dict/ai` 接入 FastAPI `POST /dict/ai`：`context_explain` 作为正文点词后的二级语境解读，`missing_fallback` 作为 canonical `not_found` 后的按需增强；AI 结果内嵌在同一张词典卡里，不覆盖正式词典，不写入后端词典事实层，也不写入查词历史。
 - Reader inline mark 已有基础词典浮层，调用同源 `/api/web/dict/lookup`，不让页面直连 FastAPI。
 - `/vocabulary` 已通过 Web BFF 接入 FastAPI `GET /vocabulary`，匿名、不可用登录态和上游不可用时显示明确空态，不再展示 mock 生词。
 - `/review` 已通过 Web BFF 接入 FastAPI `GET /vocabulary/review/due` 和 `POST /vocabulary/{id}/review`，支持真实待复习队列和复习结果提交。
 - Reader 已接入文章收藏、生词写入、句子级高亮（`user_annotations`，`anchor_type` 支持 `sentence / text_range / multi_text`），以及笔记（`reader_notes`，`quote_mode` 支持 `sentence / text_range / multi_text`）；Library 是阅读记录页面，不是”学习资产中心”。
+- Reader 词典 AI 当前采用 article-scoped 前端缓存：会话内以内存态保留，刷新后通过 `localStorage` 恢复；缓存粒度按文章内锚点和 AI mode 定位，不进入后端持久层。
 - Reader UI/UX 第一轮已废弃右侧轻旁注方向；当前在此基础上进一步从固定三栏改为 Canvas Workspace：中心原文画布是核心，外层内容容器在宽屏放宽到约 96ch，正文文本列继续保持 65-75ch；词典详情进入画布左侧工具层，句子操作和阅读设置使用短时浮层，AI chatbox 进入画布右侧工具层。
 - Reader 词典交互当前采用三层模型：正文附近可关闭的轻释义小卡、画布左侧完整词典详情卡片、独立的本次查词轨迹 chips。左侧词典支持手动输入查词；无正文上下文的手动查词只展示词条，不直接加入生词本。
 - Reader 词典 AI 交互当前遵循“词典为主、AI 为辅”：正文点词后的 canonical entry 可按需展开 `AI 语境解读`；canonical `not_found` 可按需触发 AI 未验证词条或未识别结果；manual search 和 disambiguation 不直接显示 AI 入口。
-- SelectionToolbar 已落地第一版：`Ask Claread` 入口、3 色用户高亮、笔记、查词、扩展到整句、取消标注；普通正文不再逐词拆分为可点击节点，避免破坏浏览器原生选区。收藏是文章级按钮（Reader 顶部 FavoriteButton），不在 SelectionToolbar 内。
+- AI 结果显示状态已拆分为“结果是否存在”和“当前是否展开”：卡片内折叠只收起正文，不删除已生成结果；再次点击 AI 入口时，已有结果只做展开/折叠，不重复请求。
+- 对存在可靠原文 anchor 的正文点词/选区查词，词典 AI 结果卡支持一键生成 `reader_note`，以 `quote_mode='text_range'` 精确挂回原词或短语；手动查词和无可靠 anchor 的结果不显示该入口。
+- SelectionToolbar 当前已收口为单层 Reader 工具条：高亮是一级按钮，首次点击直接用默认色创建且不关闭 toolbar，随后立即展开 inline 颜色条；已有高亮时再次点击高亮按钮只切换颜色条展开/收起。工具条不再显示 range type 文案，不再弹 dropdown 选色，不再显示“高亮已保存”提示；AI 入口改为火花 icon，句子扩展、笔记、查词、取消标注都尽量保持一级动作。
 - `Ask Claread` 的当前产品与交互边界见 `docs/product/ask-claread.md`。Web UI 对接将采用“Prompt Kit 基础 primitives + Claread 自研 Reader-specific 组件”的方式推进：先初始化 `components.json`，再接 `ChatContainer` / `Message` / `PromptInput` / `Markdown` / `Tool`，自研 context chips、article citation、confirm card 和 thread header。
 - 文本选区数据契约已进入稳定 v1：Web 和小程序通过 `@claread/contracts` 共享 anchor/target/color/offset/hash 常量；后端按 UTF-16 offset、`fnv1a32-utf16` hash、multi_text segments 和 render scene sentence 切片校验局部/多段选区。
-- Plate readOnly runtime 已经接入并成为 Reader 主运行时：当前主链路是 `renderSceneToPlateDocument -> PlateReaderSurface`，配套 `reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已落地。ReaderWorkbench 当前仍是 orchestration hub，但旧的 `ReaderCanvas`、`ReaderSentenceRow`、`reader-selection` 路径已经退役；后续 Reader 改动优先围绕 `PlateReaderSurface`、bridges、`ReaderContextPanel`、`SelectionToolbar`、`AnnotationGutter` / `AnnotationSlip` 收口。
+- Plate readOnly runtime 已经接入并成为 Reader 主运行时：当前主链路是 `renderSceneToPlateDocument -> PlateReaderSurface`，配套 `reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已落地。ReaderWorkbench 当前仍是 orchestration hub，但旧的 `ReaderCanvas`、`ReaderSentenceRow`、`reader-selection` 路径已经退役；后续 Reader 改动优先围绕 `PlateReaderSurface`、bridges、`SelectionToolbar`、`AnnotationGutter` / `AnnotationSlip` 收口，句尾句柄不再作为独立句子卡片入口。
 - Reader 文字底板与机器批注已经完成第一轮 UI 收口：译文已成为稳定第二阅读层；`vocab / phrase / context` 已改为完整覆盖的 lexical family；`sentence_analysis` 已有原文 chunk 回写。结构类批注与用户资产冲突模型仍未最终定稿，这部分不应再被写成“已稳定产品能力”。
 
 ## UI/UX 第一版定稿约束
@@ -57,7 +60,7 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 - 未登录不开放模型试用；后续可展示少量精选解析示例，不使用 mock fixture 或真实提交回退。
 - `/read` 展示最近记录，但只作为克制索引，不做 feed。
 - Reader 默认标准模式：译文柔和显示；词汇、短语、语境标注显示；语法下划线显示但不展开；结构链默认隐藏。
-- Reader 桌面端使用画布边缘工具层：画布左侧词典详情卡片实时显示当前点击词/短语详细释义，原文附近只显示可关闭的轻释义预览；文本选区时通过 SelectionToolbar 显示高亮、写笔记、收藏、查词、问 Claread 占位，点击 `Aa` 时显示阅读设置。`grammar_note` 语法说明和 `sentence_analysis` 句子拆解应在相关句子下方展开，不使用 Grammar X-Ray 命名。
+- Reader 桌面端使用画布边缘工具层：画布左侧词典详情卡片实时显示当前点击词/短语详细释义，原文附近只显示可关闭的轻释义预览；文本选区时统一通过 SelectionToolbar 显示高亮、写笔记、查词、整句扩展、AI 与取消标注，句尾句柄点击后直接整句选中并弹出同一工具条；句前高亮 marker 负责回显本句高亮，不再只是弱提示 icon。`grammar_note` 语法说明和 `sentence_analysis` 句子拆解应在相关句子下方展开，不使用 Grammar X-Ray 命名。
 - 用户批注当前实现支持句子级、单句内 `text_range` 和跨句/跨段 `multi_text`；但产品层只把句子级和单句内 `text_range` 视为稳定方向，`multi_text` 作为用户学习资产的长期策略进入重审。PDF/外部网页 anchor 和富文本笔记继续后置。
 - Library 不做归档概念；删除为 7 天软删除，不单独做回收站页面。
 - Library v1 做客户端标题 + 原文片段搜索，后端语义搜索后置。
@@ -107,7 +110,9 @@ Wave 1 的临时任务已完成并整合为 Web 可运行基线，随后进入�
 - 原文附近显示可关闭的轻释义预览；词汇详细释义进入画布左侧词典详情卡片；句子操作和阅读设置进入短时浮层；语法说明、句子拆解和用户笔记回到中心原文画布。
 - 翻译显示、注释密度、字体大小、阅读模式可切换。
 - Reader 偏好持久化。
-- SelectionToolbar 稳定化：当前已通过本地浏览器回归验证出现位置、无横向溢出和滚动跟随；提交到仓库的浏览器自动化仍待补齐创建/取消高亮和笔记。
+- 高亮冲突当前统一走后端 resolver：`sentence`、单句 `text_range` 与跨句/跨段 `multi_text` 只要相交就会按句内 segment 求并集，返回单条保留记录和 `superseded_ids`；前端不再用 subset 命中直接 `PATCH` 改色。
+- SelectionToolbar 稳定化：当前已通过本地构建与组件测试验证出现位置、默认色直写、颜色条展开/收起和滚动跟随；提交到仓库的浏览器自动化仍待补齐真实 Reader 路由下的创建/取消高亮、句柄整句选中和 gutter 回显。
+- Reader 词典 AI 回归重点补充为：切换 lookup、关闭词典面板和刷新后应恢复同一锚点的 AI 结果；折叠不清空结果；精确 anchor 场景可从 AI 卡直接生成笔记。
 
 暂不做：
 

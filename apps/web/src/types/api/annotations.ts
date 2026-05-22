@@ -52,6 +52,7 @@ export interface UserAnnotationResponseDto {
   payload_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  superseded_ids?: string[];
 }
 
 export interface UserAnnotationListResponseDto {
@@ -92,6 +93,7 @@ export interface WebAnnotationVm {
   color: UserAnnotationColorDto;
   createdAt: string;
   updatedAt: string;
+  supersededIds?: string[];
 }
 
 export interface WebAnchorSegmentVm {

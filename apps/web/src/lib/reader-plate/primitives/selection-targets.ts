@@ -7,6 +7,38 @@ import {
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import type { ReaderTextSelection } from "./selection-types";
 
+function rangeContains(
+  outerStart: number | null | undefined,
+  outerEnd: number | null | undefined,
+  innerStart: number,
+  innerEnd: number,
+) {
+  return typeof outerStart === "number" && typeof outerEnd === "number" && outerStart <= innerStart && outerEnd >= innerEnd;
+}
+
+function rangesOverlap(
+  leftStart: number | null | undefined,
+  leftEnd: number | null | undefined,
+  rightStart: number,
+  rightEnd: number,
+) {
+  return typeof leftStart === "number" && typeof leftEnd === "number" && leftStart < rightEnd && leftEnd > rightStart;
+}
+
+function multiTextContainsSelection(annotation: WebAnnotationVm, selection: ReaderTextSelection) {
+  if (annotation.anchorType !== "multi_text") {
+    return false;
+  }
+
+  return selection.segments.every((selectedSegment) =>
+    annotation.segments.some(
+      (segment) =>
+        segment.sentenceId === selectedSegment.sentenceId &&
+        rangeContains(segment.startOffset, segment.endOffset, selectedSegment.startOffset, selectedSegment.endOffset),
+    ),
+  );
+}
+
 function selectionSegmentsEqual(annotation: WebAnnotationVm, selection: ReaderTextSelection) {
   if (annotation.anchorType !== "multi_text" || annotation.segments.length !== selection.segments.length) {
     return false;
@@ -30,7 +62,56 @@ export function annotationMatchesSelection(annotation: WebAnnotationVm, selectio
   }
 
   if (selection.anchorType === "multi_text") {
-    return selectionSegmentsEqual(annotation, selection);
+    return selectionSegmentsEqual(annotation, selection) || multiTextContainsSelection(annotation, selection);
+  }
+
+  if (annotation.anchorType === "sentence") {
+    return annotation.sentenceId === selection.sentence.sentenceId;
+  }
+
+  if (annotation.anchorType === "multi_text") {
+    return multiTextContainsSelection(annotation, selection);
+  }
+
+  return (
+    annotation.anchorType === "text_range" &&
+    annotation.sentenceId === selection.sentence.sentenceId &&
+    rangeContains(annotation.startOffset, annotation.endOffset, selection.startOffset, selection.endOffset)
+  );
+}
+
+export function annotationOverlapsSelection(annotation: WebAnnotationVm, selection: ReaderTextSelection) {
+  if (selection.anchorType === "sentence") {
+    return annotation.sentenceId === selection.sentence.sentenceId;
+  }
+
+  if (selection.anchorType === "multi_text") {
+    return selection.segments.some((selectedSegment) => {
+      if (annotation.anchorType === "multi_text") {
+        return annotation.segments.some(
+          (segment) =>
+            segment.sentenceId === selectedSegment.sentenceId &&
+            rangesOverlap(segment.startOffset, segment.endOffset, selectedSegment.startOffset, selectedSegment.endOffset),
+        );
+      }
+
+      if (annotation.anchorType === "sentence") {
+        return annotation.sentenceId === selectedSegment.sentenceId;
+      }
+
+      return (
+        annotation.sentenceId === selectedSegment.sentenceId &&
+        rangesOverlap(annotation.startOffset, annotation.endOffset, selectedSegment.startOffset, selectedSegment.endOffset)
+      );
+    });
+  }
+
+  if (annotation.anchorType === "multi_text") {
+    return annotation.segments.some(
+      (segment) =>
+        segment.sentenceId === selection.sentence.sentenceId &&
+        rangesOverlap(segment.startOffset, segment.endOffset, selection.startOffset, selection.endOffset),
+    );
   }
 
   if (annotation.anchorType === "sentence") {
@@ -38,12 +119,8 @@ export function annotationMatchesSelection(annotation: WebAnnotationVm, selectio
   }
 
   return (
-    annotation.anchorType === "text_range" &&
     annotation.sentenceId === selection.sentence.sentenceId &&
-    typeof annotation.startOffset === "number" &&
-    typeof annotation.endOffset === "number" &&
-    annotation.startOffset <= selection.startOffset &&
-    annotation.endOffset >= selection.endOffset
+    rangesOverlap(annotation.startOffset, annotation.endOffset, selection.startOffset, selection.endOffset)
   );
 }
 

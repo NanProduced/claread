@@ -10,6 +10,7 @@ import {
   readerLookupSnapshotFromIntent,
 } from "./adapters";
 import type { ReaderTextSelection } from "../../primitives";
+import { hashAnchorText } from "../../primitives";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 
 function createSentence(text = "Institutional memory shapes policy choices."): Pick<SentenceModel, "sentenceId" | "text"> {
@@ -186,6 +187,10 @@ describe("dictionary bridge adapters", () => {
         lookupType: "word",
         sentenceId: "s1",
         contextSentence: "Institutional memory shapes policy choices.",
+        anchorOffsets: {
+          startOffset: 14,
+          endOffset: 20,
+        },
         anchorText: "memory",
         title: "查词",
       },
@@ -197,6 +202,11 @@ describe("dictionary bridge adapters", () => {
       query: "memory",
       lookupType: "word",
       sentenceId: "s1",
+      anchorOffsets: {
+        startOffset: 14,
+        endOffset: 20,
+      },
+      textHash: hashAnchorText("memory"),
       title: "查词",
       state: { kind: "loading" },
     });

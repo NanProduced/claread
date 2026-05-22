@@ -1,6 +1,6 @@
 import type { DictLookupTypeDto } from "@/types/api/dict";
 import type { ReaderTextSelection } from "../../primitives";
-import { rectForTextOffsets, textOffsetWithinElement } from "../../primitives";
+import { hashAnchorText, rectForTextOffsets, textOffsetWithinElement } from "../../primitives";
 import type { ReaderLookupIntent, ReaderLookupPreviewAnchor, ReaderStructuredInspectIntent } from "./types";
 import type { DictionaryLookupSnapshot, LookupState } from "@/components/reader/dictionary/contracts";
 import type { InlineMarkModel, SentenceModel } from "@/types/view/ReaderMockVm";
@@ -299,7 +299,9 @@ export function readerLookupSnapshotFromIntent(
     recordId,
     sentenceId: intent.sentenceId,
     anchorText: intent.anchorText,
+    anchorOffsets: intent.anchorOffsets,
     occurrence: intent.occurrence,
+    textHash: intent.anchorOffsets ? hashAnchorText(intent.anchorText) : null,
     title: intent.title,
     label: intent.label,
     annotationType: intent.annotationType,

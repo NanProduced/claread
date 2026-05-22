@@ -195,9 +195,37 @@ export function dictionaryAIRequestKey(request: WebDictAIRequest) {
   const entryIdPart = request.mode === "context_explain" ? String(request.entryId) : "missing";
   return [
     request.mode,
+    request.recordId ?? "",
+    request.sentenceId ?? "",
     request.query.toLowerCase(),
     request.queryType,
     request.contextSentence.trim().toLowerCase(),
+    request.occurrence ?? "",
+    entryIdPart,
+  ].join("::");
+}
+
+function dictionaryLookupAnchorOffsetsKey(lookup: DictionaryLookupSnapshot) {
+  if (!lookup.anchorOffsets) {
+    return "na";
+  }
+
+  return `${lookup.anchorOffsets.startOffset}:${lookup.anchorOffsets.endOffset}`;
+}
+
+export function dictionaryAICacheKey(lookup: DictionaryLookupSnapshot, request: WebDictAIRequest) {
+  const entryIdPart = request.mode === "context_explain" ? String(request.entryId) : "missing";
+  return [
+    lookup.recordId,
+    lookup.sentenceId,
+    lookup.lookupType,
+    lookup.query.toLowerCase(),
+    request.query.toLowerCase(),
+    lookup.anchorText.toLowerCase(),
+    lookup.occurrence ?? "",
+    dictionaryLookupAnchorOffsetsKey(lookup),
+    lookup.textHash ?? "",
+    request.mode,
     entryIdPart,
   ].join("::");
 }
@@ -214,6 +242,8 @@ export function dictionaryAIContextKey(lookup: DictionaryLookupSnapshot | null) 
     lookup.sentenceId,
     lookup.anchorText.toLowerCase(),
     lookup.occurrence ?? "",
+    dictionaryLookupAnchorOffsetsKey(lookup),
+    lookup.textHash ?? "",
   ].join("::");
 
   if (lookup.state.kind !== "ready") {
@@ -230,6 +260,34 @@ export function dictionaryAIContextKey(lookup: DictionaryLookupSnapshot | null) 
 export function dictionaryLookupBase(lookup: DictionaryLookupSnapshot) {
   const { state: _state, ...base } = lookup;
   return base;
+}
+
+export function dictionaryPreferredAIMode(
+  lookup: DictionaryLookupSnapshot | null,
+): WebDictAIRequest["mode"] | null {
+  if (!lookup || lookup.state.kind !== "ready") {
+    return null;
+  }
+
+  if (lookup.state.result.kind === "entry") {
+    return "context_explain";
+  }
+  if (lookup.state.result.kind === "not_found") {
+    return "missing_fallback";
+  }
+
+  return null;
+}
+
+export function dictionaryLookupSupportsExactAINote(lookup: DictionaryLookupSnapshot | null) {
+  return Boolean(
+    lookup &&
+      !dictionaryIsManualLookup(lookup) &&
+      lookup.sentenceId &&
+      lookup.anchorText.trim() &&
+      lookup.anchorOffsets &&
+      lookup.textHash,
+  );
 }
 
 export function isDictionaryAIErrorResult(value: unknown): value is WebDictAIErrorResult {
@@ -260,9 +318,11 @@ export function dictionaryAIActionLabel(
   if (state.kind === "ready" && state.mode === mode) {
     return panelOpen
       ? mode === "context_explain"
-        ? "收起 AI 语境解读"
-        : "收起 AI 结果"
-      : baseLabel;
+        ? "折叠 AI 语境解读"
+        : "折叠 AI 结果"
+      : mode === "context_explain"
+        ? "展开 AI 语境解读"
+        : "展开 AI 结果";
   }
   if (state.kind === "error" && state.mode === mode) {
     return mode === "context_explain" ? "重试 AI 语境解读" : "重试 AI 补充";
@@ -446,7 +506,15 @@ export function groupDisambiguationCandidates(result: WebDictDisambiguationResul
 }
 
 export function dictionaryLookupHistoryKey(lookup: DictionaryLookupSnapshot) {
-  return `${lookup.query}-${lookup.sentenceId}-${lookup.anchorText}`;
+  return [
+    lookup.recordId,
+    lookup.sentenceId,
+    lookup.query.toLowerCase(),
+    lookup.anchorText.toLowerCase(),
+    lookup.occurrence ?? "",
+    dictionaryLookupAnchorOffsetsKey(lookup),
+    lookup.textHash ?? "",
+  ].join("::");
 }
 
 export function dictionaryEntrySummary(

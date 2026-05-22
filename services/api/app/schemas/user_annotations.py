@@ -106,6 +106,7 @@ class UserAnnotationResponse(BaseModel):
     payload_json: dict
     created_at: str
     updated_at: str
+    superseded_ids: list[UUID] = Field(default_factory=list)
 
 
 class UserAnnotationListResponse(BaseModel):

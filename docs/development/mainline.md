@@ -10,7 +10,8 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 
 - 微信小程序仍是稳定客户端，继续作为回归约束。
 - Web baseline 已接入真实 FastAPI BFF/API 链路，不再依赖产品路径 mock/demo fixture。
-- Web 已进入 Reader 标注体系收口阶段：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 高亮/笔记和 Ask Claread 显式引用已接入；文本收藏与按文章聚合的“摘录与批注”页已删除，Reader 自动化回归仍待补齐。
+- Web 已进入 Reader 标注体系收口阶段：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 高亮/笔记和 Ask Claread 显式引用已接入；高亮冲突现已统一走后端 resolver 合并，SelectionToolbar 已收口为“一级高亮 + inline 颜色条”的单层工具条，句尾句柄改为整句选中，句前 gutter marker 改为高亮回显入口；文本收藏与按文章聚合的“摘录与批注”页已删除，Reader 自动化回归仍待补齐。
+- Reader 词典 AI 已收口为 article-scoped 的前端缓存能力：`AI 语境解读` 与 `未验证词条` 结果保留在当前浏览器会话和 `localStorage`，支持按原锚点回显与折叠保留，并可在存在精确 anchor 时直接生成词级 `reader_note`；这不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
