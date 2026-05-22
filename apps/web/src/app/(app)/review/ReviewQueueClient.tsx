@@ -107,8 +107,8 @@ export function ReviewQueueClient({ initialItems }: ReviewQueueClientProps) {
         <div
           className={`rounded-note border px-4 py-3 text-sm leading-6 shadow-surface-quiet ${
             submitState.kind === "success"
-              ? "border-structure-green/30 bg-[linear-gradient(180deg,rgba(240,253,244,0.92),rgba(255,255,255,0.98))] text-ink-soft"
-              : "border-vocab-amber/40 bg-[linear-gradient(180deg,rgba(255,251,235,0.94),rgba(255,255,255,0.98))] text-ink-soft"
+              ? "border-structure-green/30 bg-structure-green/10 text-ink-soft"
+              : "border-vocab-amber/40 bg-vocab-amber/10 text-ink-soft"
           }`}
         >
           {submitState.message}

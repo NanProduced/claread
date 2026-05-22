@@ -236,6 +236,42 @@ async def search_records_by_title(
     ]
 
 
+async def list_recent_records(
+    user_id: UUID,
+    *,
+    exclude_record_id: UUID | None = None,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, title, updated_at
+            FROM analysis_records
+            WHERE user_id = $1
+              AND deleted_at IS NULL
+              AND ($2::uuid IS NULL OR id <> $2)
+              AND title IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT $3
+            """,
+            user_id,
+            exclude_record_id,
+            limit,
+        )
+    return [
+        {
+            "id": str(row["id"]),
+            "title": row["title"],
+            "updated_at": _iso(row["updated_at"]),
+        }
+        for row in rows
+    ]
+
+
 async def list_threads(user_id: UUID, record_id: UUID) -> list[dict[str, Any]]:
     pool = db_connection.DB_POOL
     if pool is None:
@@ -294,33 +330,6 @@ async def get_or_create_default_thread(
             DO UPDATE SET
                 title = COALESCE(reader_ask_threads.title, EXCLUDED.title),
                 updated_at = EXCLUDED.updated_at
-            RETURNING id, record_id, title, is_default, archived_at, created_at, updated_at, last_message_at
-            """,
-            user_id,
-            record_id,
-            title,
-            now,
-        )
-    assert row is not None
-    return _thread_row_to_dict(row)
-
-
-async def create_new_chat_thread(
-    user_id: UUID,
-    record_id: UUID,
-    *,
-    title: str | None = None,
-) -> dict[str, Any]:
-    pool = db_connection.DB_POOL
-    if pool is None:
-        raise RuntimeError("Database pool not initialized")
-
-    now = datetime.now(UTC)
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO reader_ask_threads (user_id, record_id, title, is_default, created_at, updated_at)
-            VALUES ($1, $2, $3, FALSE, $4, $4)
             RETURNING id, record_id, title, is_default, archived_at, created_at, updated_at, last_message_at
             """,
             user_id,

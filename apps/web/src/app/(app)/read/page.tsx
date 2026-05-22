@@ -1,9 +1,6 @@
-import { ArrowRight, BookOpen } from "lucide-react";
+import { FileText } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
-import { Button } from "@/components/primitives/button";
-import { InfoCard } from "@/components/composed/info-card";
-import { PageHeader } from "@/components/composed/page-header";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
 import type { DailyReaderArticle, DailyReaderListItem } from "@/types/view/DailyReaderVm";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
@@ -50,109 +47,123 @@ export default async function PasteToReadPage() {
   const sideArchiveItems = fallbackLead ? archiveItems.slice(1) : archiveItems.slice(0, 2);
 
   return (
-    <main className="min-h-screen bg-[oklch(96.8%_0.012_84)] px-4 py-6 text-ink sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-[1340px]">
-        <PageHeader
-          eyebrow="透读入口"
-          title="打开一篇文章"
-          description="从一段英文原文开始，进入 Claread 的深度阅读链路。模式和场景在进入时定好，正文仍然是主角。"
-          className="mb-6"
-        />
-
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.78fr)_300px]">
+    <main className="min-h-screen bg-[oklch(96.8%_0.012_84)] px-4 py-12 text-ink sm:px-8 lg:px-12">
+      <div className="mx-auto max-w-[1400px]">
+        <div className="grid gap-16 xl:grid-cols-[minmax(0,1.8fr)_340px]">
           <div className="min-w-0">
+            <div className="mb-14 pl-2">
+              <p className="mb-5 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-lens-blue">Paste to read</p>
+              <h1 className="font-headline text-[3.5rem] font-medium leading-[1.05] tracking-tight text-ink md:text-[4rem]">
+                A Quiet Space <br /> for Deep Reading.
+              </h1>
+              <p className="mt-6 max-w-xl text-[1rem] leading-relaxed text-muted">
+                粘贴你需要精读的英文材料，Claread 将为你生成一份纯粹的、结构化的阅读体验。
+              </p>
+            </div>
             <AnalyzeSubmitForm />
           </div>
 
-          <aside className="min-w-0 xl:pt-1">
-            <InfoCard
-              title="今日精读"
-              className="bg-surface-raised/92 xl:sticky xl:top-6"
-              footer={
-                <Button asChild variant="ghost" size="sm" className="justify-start px-0 text-muted hover:bg-transparent hover:text-ink">
-                  <Link href={dailyRoute}>
-                    <BookOpen aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-                    浏览精读列表
-                  </Link>
-                </Button>
-              }
-            >
-              <div className="flex items-center justify-end">
-                <Button asChild variant="ghost" size="sm" className="h-auto min-h-0 px-0 text-lens-blue hover:bg-transparent">
-                  <Link href={dailyRoute}>
-                    全部
-                    <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                  </Link>
-                </Button>
-              </div>
-
+          <aside className="min-w-0 xl:pt-4 space-y-16">
+            {/* FEATURED */}
+            <div>
+              <h3 className="mb-6 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-ink">Featured</h3>
               {todayArticle ? (
-                <article className="mt-4 border-t border-hairline pt-4">
-                  <p className="text-[0.72rem] font-semibold text-lens-blue">
-                    {featureMeta(todayArticle)}
-                  </p>
-                  <Link
-                    href={dailyArticleRoute(todayArticle.id)}
-                    className="focus-ring mt-2 block font-headline text-[1.22rem] font-semibold leading-snug tracking-normal text-ink transition-colors hover:text-lens-blue"
-                  >
-                    {todayArticle.title}
+                <article>
+                  <Link href={dailyArticleRoute(todayArticle.id)} className="group block focus-ring rounded-2xl outline-offset-8">
+                    {todayArticle.coverImageUrl ? (
+                      <div className="mb-5 aspect-[4/3] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img 
+                          src={todayArticle.coverImageUrl} 
+                          alt="" 
+                          className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105" 
+                        />
+                      </div>
+                    ) : (
+                      <div className="mb-5 aspect-[4/3] w-full rounded-2xl bg-surface-raised ring-1 ring-inset ring-black/5" />
+                    )}
+                    <h4 className="font-headline text-[1.4rem] font-semibold leading-snug tracking-tight text-ink group-hover:text-lens-blue transition-colors">
+                      {todayArticle.title}
+                    </h4>
+                    {todayArticle.subtitle ? (
+                      <p className="mt-2.5 text-[0.95rem] leading-relaxed text-muted line-clamp-2">
+                        {todayArticle.subtitle}
+                      </p>
+                    ) : null}
+                    <div className="mt-4 flex items-center gap-3 text-[0.75rem] font-medium text-muted">
+                      <span className="flex items-center gap-1.5">
+                        <span className="flex h-3 w-3 items-center justify-center rounded-full border border-muted/30">
+                          <span className="h-1 w-1 rounded-full bg-muted/60" />
+                        </span>
+                        {todayArticle.readTimeMinutes} min read
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="flex h-3 items-center gap-0.5">
+                          <span className="h-1.5 w-0.5 bg-muted/30" />
+                          <span className="h-2 w-0.5 bg-muted/50" />
+                          <span className="h-2.5 w-0.5 bg-muted" />
+                        </span>
+                        {todayArticle.difficulty}
+                      </span>
+                    </div>
                   </Link>
-                  {todayArticle.subtitle ? (
-                    <p className="mt-2 text-sm leading-6 text-muted">{todayArticle.subtitle}</p>
-                  ) : null}
-                  <Button asChild variant="ghost" size="sm" className="mt-3 h-auto min-h-0 px-0 text-lens-blue hover:bg-transparent">
-                    <Link href={dailyArticleRoute(todayArticle.id)}>
-                      打开精读
-                      <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                    </Link>
-                  </Button>
                 </article>
               ) : fallbackLead ? (
-                <article className="mt-4 border-t border-hairline pt-4">
-                  <p className="text-[0.72rem] font-semibold text-muted">今日未更新</p>
-                  <Link
-                    href={dailyArticleRoute(fallbackLead.id)}
-                    className="focus-ring mt-2 block font-headline text-[1.22rem] font-semibold leading-snug tracking-normal text-ink transition-colors hover:text-lens-blue"
-                  >
-                    {fallbackLead.title}
+                <article>
+                  <Link href={dailyArticleRoute(fallbackLead.id)} className="group block focus-ring rounded-2xl outline-offset-8">
+                    {fallbackLead.coverImageUrl ? (
+                      <div className="mb-5 aspect-[4/3] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img 
+                          src={fallbackLead.coverImageUrl} 
+                          alt="" 
+                          className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105" 
+                        />
+                      </div>
+                    ) : (
+                      <div className="mb-5 aspect-[4/3] w-full rounded-2xl bg-surface-raised ring-1 ring-inset ring-black/5" />
+                    )}
+                    <h4 className="font-headline text-[1.4rem] font-semibold leading-snug tracking-tight text-ink group-hover:text-lens-blue transition-colors">
+                      {fallbackLead.title}
+                    </h4>
+                    <div className="mt-4 flex items-center gap-3 text-[0.75rem] font-medium text-muted">
+                      <span>{fallbackLead.readTimeMinutes} min read</span>
+                      <span>{fallbackLead.difficulty}</span>
+                    </div>
                   </Link>
-                  <p className="mt-2 text-xs leading-5 text-muted">{featureMeta(fallbackLead)}</p>
-                  <Button asChild variant="ghost" size="sm" className="mt-3 h-auto min-h-0 px-0 text-lens-blue hover:bg-transparent">
-                    <Link href={dailyArticleRoute(fallbackLead.id)}>
-                      从往期开始
-                      <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                    </Link>
-                  </Button>
                 </article>
               ) : (
-                <p className="mt-4 border-t border-hairline pt-4 text-sm leading-6 text-muted">
-                  暂无可读文章。
-                </p>
+                <p className="text-sm text-muted">No featured reading today.</p>
               )}
+            </div>
 
-              {sideArchiveItems.length > 0 ? (
-                <div className="mt-6 border-t border-hairline pt-4">
-                  <h3 className="text-xs font-semibold text-muted">往期精选</h3>
-                  <div className="mt-3 space-y-3">
-                    {sideArchiveItems.map((article) => (
-                      <Link
-                        key={article.id}
-                        href={dailyArticleRoute(article.id)}
-                        className="focus-ring block rounded-[1rem] px-3 py-2.5 transition-colors hover:bg-surface-warm/78"
-                      >
-                        <p className="text-[0.72rem] font-semibold text-lens-blue">
-                          {formatPublishDate(article.publishDate)}
+            {/* ARCHIVE */}
+            {sideArchiveItems.length > 0 ? (
+              <div>
+                <h3 className="mb-6 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-ink">Archive</h3>
+                <div className="space-y-6">
+                  {sideArchiveItems.map((article) => (
+                    <Link
+                      key={article.id}
+                      href={dailyArticleRoute(article.id)}
+                      className="group flex gap-4 focus-ring rounded-xl outline-offset-4"
+                    >
+                      <div className="flex-shrink-0 mt-0.5 flex h-9 w-9 items-center justify-center rounded-[0.4rem] border border-hairline bg-surface/50 text-muted shadow-sm group-hover:border-lens-blue/20 group-hover:bg-lens-blue/5 group-hover:text-lens-blue transition-colors">
+                        <FileText aria-hidden="true" className="h-[18px] w-[18px] stroke-[1.5]" />
+                      </div>
+                      <div>
+                        <p className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-muted group-hover:text-lens-blue transition-colors">
+                          {article.tags?.[0] || article.difficulty}
                         </p>
-                        <h4 className="mt-1 font-headline text-[1rem] font-semibold leading-snug tracking-normal text-ink">
+                        <h4 className="mt-1 font-headline text-[1.05rem] font-semibold leading-[1.4] tracking-tight text-ink group-hover:text-lens-blue transition-colors line-clamp-2">
                           {article.title}
                         </h4>
-                        <p className="mt-1.5 text-xs leading-5 text-muted">{archiveMeta(article)}</p>
-                      </Link>
-                    ))}
-                  </div>
+                      </div>
+                    </Link>
+                  ))}
                 </div>
-              ) : null}
-            </InfoCard>
+              </div>
+            ) : null}
           </aside>
         </div>
       </div>

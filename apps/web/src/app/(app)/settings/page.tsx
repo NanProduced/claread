@@ -1,11 +1,12 @@
-import { MessageSquare, SlidersHorizontal, UserRound } from "lucide-react";
+import { MessageSquare, Palette, UserRound } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { Button } from "@/components/primitives/button";
-import { InfoCard, PageHeader, SectionCard, SelectField } from "@/components/composed";
+import { InfoCard, PageHeader, SectionCard } from "@/components/composed";
 import { getProfileSettings, type ProfileBffStatus } from "@/services/bff/profile";
 import { FeedbackForm } from "./FeedbackForm";
 import { LogoutButton } from "./LogoutButton";
+import { ThemePreferencesSection } from "./ThemePreferencesSection";
 
 const statusLabel: Record<ProfileBffStatus, string> = {
   ready: "已连接账户",
@@ -15,24 +16,6 @@ const statusLabel: Record<ProfileBffStatus, string> = {
   upstream_error: "账户读取失败",
 };
 const loginRoute = "/login" as Route;
-
-const paperToneItems = [
-  { label: "Warm Paper (默认)", value: "warm", description: "暖纸底色，适合长时阅读。" },
-  { label: "Clean White", value: "white", description: "更干净，更接近文档阅读器。" },
-  { label: "Sage Green", value: "sage", description: "轻微冷静感，适合注释密度高的场景。" },
-];
-
-const readingDensityItems = [
-  { label: "标准 (默认)", value: "standard" },
-  { label: "偏大", value: "large" },
-  { label: "紧凑", value: "compact" },
-];
-
-const translationToneItems = [
-  { label: "柔和 (默认)", value: "muted" },
-  { label: "清晰", value: "standard" },
-  { label: "隐藏", value: "hidden" },
-];
 
 export default async function SettingsPage() {
   const settings = await getProfileSettings();
@@ -50,7 +33,7 @@ export default async function SettingsPage() {
           <PageHeader
             eyebrow="账户与偏好"
             title="设置"
-            description="查看账户状态、解析额度和阅读偏好。反馈入口放在这里，不打断阅读链路。"
+            description="查看账户状态、解析额度以及 Claread Web 的界面外观。Reader 的即时阅读显示仍放在正文里调整。"
             message={settings.message}
             className="max-w-3xl"
           />
@@ -94,17 +77,15 @@ export default async function SettingsPage() {
             </SectionCard>
 
             <SectionCard
-              title="阅读偏好"
-              icon={SlidersHorizontal}
+              title="外观与 Reader 默认纸面"
+              icon={Palette}
               footer={
                 <p className="text-xs leading-5 text-muted">
-                  偏好保存能力后续接入。当前控件先确定 Web 端阅读设置的形态。
+                  Appearance 影响全站界面；Reader 默认纸面决定新打开文章时的初始纸面风格。
                 </p>
               }
             >
-              <SelectField label="背景纸色" description="选择 Reader 模式的默认底色。" items={paperToneItems} defaultValue="warm" />
-              <SelectField label="字号与行距" description="影响英文正文显示。" items={readingDensityItems} defaultValue="standard" />
-              <SelectField label="默认翻译显示" description="进入 Reader 时译文的可见性。" items={translationToneItems} defaultValue="muted" />
+              <ThemePreferencesSection />
             </SectionCard>
 
             <SectionCard title="反馈" icon={MessageSquare}>

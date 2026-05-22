@@ -1,15 +1,9 @@
-"use client";
-
 import type { VisualTone } from "@/types/view/ReaderMockVm";
 
-/* ------------------------------------------------------------------ */
-/*  Value types                                                        */
-/* ------------------------------------------------------------------ */
-
-export type ReadingMode = "annotated" | "immersive";
+export type ReadingMode = "annotated" | "immersive" | "custom";
 export type TranslationDisplay = "hidden" | "muted" | "visible";
 export type ReadingDensity = "compact" | "calm" | "roomy";
-export type ReaderTheme = "warm" | "cool" | "sage";
+export type ReaderPaperTheme = "warm" | "cool" | "sage";
 export type ReaderFontSize = "compact" | "normal" | "large" | "xlarge";
 export type ReaderColumnWidth = "narrow" | "standard" | "wide";
 
@@ -24,40 +18,36 @@ export interface ReaderSettingsState {
   translationDisplay: TranslationDisplay;
   fontSize: ReaderFontSize;
   density: ReadingDensity;
-  theme: ReaderTheme;
+  readerPaperTheme: ReaderPaperTheme;
   columnWidth: ReaderColumnWidth;
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
   updatedAt?: string;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Defaults                                                           */
-/* ------------------------------------------------------------------ */
+export const READER_SETTINGS_STORAGE_KEY = "claread.reader.settings.v2";
+export const READER_DEFAULT_PAPER_THEME_STORAGE_KEY = "claread.reader.paper-theme.v1";
 
-export const READER_SETTINGS_STORAGE_KEY = "claread.reader.settings.v1";
+export function createDefaultReaderSettings(
+  readerPaperTheme: ReaderPaperTheme = "warm",
+): ReaderSettingsState {
+  return {
+    readingMode: "annotated",
+    translationDisplay: "visible",
+    fontSize: "normal",
+    density: "calm",
+    readerPaperTheme,
+    columnWidth: "standard",
+    annotationVisibilityGroups: {
+      lexical: true,
+      analysis: true,
+      userAssets: true,
+    },
+  };
+}
 
-export const defaultReaderSettings: ReaderSettingsState = {
-  readingMode: "annotated",
-  translationDisplay: "visible",
-  fontSize: "normal",
-  density: "calm",
-  theme: "warm",
-  columnWidth: "standard",
-  annotationVisibilityGroups: {
-    lexical: true,
-    analysis: true,
-    userAssets: true,
-  },
-};
+export const defaultReaderSettings: ReaderSettingsState = createDefaultReaderSettings();
 
-/* ------------------------------------------------------------------ */
-/*  Mode presets                                                       */
-/* ------------------------------------------------------------------ */
-
-/** Default overrides when the user switches into a reading mode.
- *  These only set the *initial* values for the mode; the user can
- *  subsequently fine-tune any individual setting. */
-export const MODE_PRESETS: Record<ReadingMode, Partial<ReaderSettingsState>> = {
+export const MODE_PRESETS: Record<Exclude<ReadingMode, "custom">, Partial<ReaderSettingsState>> = {
   annotated: {
     translationDisplay: "visible",
     annotationVisibilityGroups: { lexical: true, analysis: true, userAssets: true },
@@ -68,12 +58,8 @@ export const MODE_PRESETS: Record<ReadingMode, Partial<ReaderSettingsState>> = {
   },
 };
 
-/* ------------------------------------------------------------------ */
-/*  Type guards                                                        */
-/* ------------------------------------------------------------------ */
-
 function isReadingMode(value: unknown): value is ReadingMode {
-  return value === "annotated" || value === "immersive";
+  return value === "annotated" || value === "immersive" || value === "custom";
 }
 
 function isTranslationDisplay(value: unknown): value is TranslationDisplay {
@@ -88,7 +74,7 @@ function isDensity(value: unknown): value is ReadingDensity {
   return value === "compact" || value === "calm" || value === "roomy";
 }
 
-function isTheme(value: unknown): value is ReaderTheme {
+function isReaderPaperTheme(value: unknown): value is ReaderPaperTheme {
   return value === "warm" || value === "cool" || value === "sage";
 }
 
@@ -96,33 +82,31 @@ function isColumnWidth(value: unknown): value is ReaderColumnWidth {
   return value === "narrow" || value === "standard" || value === "wide";
 }
 
-/* ------------------------------------------------------------------ */
-/*  Backward-compatible normalization                                  */
-/* ------------------------------------------------------------------ */
-
-/** Migrate legacy v1 formats where `showTranslation` was a boolean
- *  and `theme` used the old value set ("paper" | "white" | "green"). */
 function migrateTranslation(payload: Record<string, unknown>): TranslationDisplay {
-  // New key takes precedence
   if (isTranslationDisplay(payload.translationDisplay)) {
     return payload.translationDisplay;
   }
-  // Migrate old boolean key
   if (typeof payload.showTranslation === "boolean") {
     return payload.showTranslation ? "visible" : "hidden";
   }
   return defaultReaderSettings.translationDisplay;
 }
 
-function migrateTheme(payload: Record<string, unknown>): ReaderTheme {
-  if (isTheme(payload.theme)) {
-    return payload.theme;
+function normalizeReaderPaperTheme(value: unknown): ReaderPaperTheme {
+  if (isReaderPaperTheme(value)) {
+    return value;
   }
-  // Migrate old theme values
-  if (payload.theme === "paper") return "warm";
-  if (payload.theme === "white") return "cool";
-  if (payload.theme === "green") return "sage";
-  return defaultReaderSettings.theme;
+  if (value === "paper") return "warm";
+  if (value === "white") return "cool";
+  if (value === "green") return "sage";
+  return defaultReaderSettings.readerPaperTheme;
+}
+
+function migrateReaderPaperTheme(payload: Record<string, unknown>): ReaderPaperTheme {
+  if (isReaderPaperTheme(payload.readerPaperTheme)) {
+    return payload.readerPaperTheme;
+  }
+  return normalizeReaderPaperTheme(payload.theme);
 }
 
 export function normalizeReaderSettings(value: unknown): ReaderSettingsState {
@@ -134,44 +118,67 @@ export function normalizeReaderSettings(value: unknown): ReaderSettingsState {
   const groups = payload.annotationVisibilityGroups as
     | Partial<ReaderAnnotationVisibilityGroups>
     | undefined;
+  const readerPaperTheme = migrateReaderPaperTheme(payload);
+  const baseDefaults = createDefaultReaderSettings(readerPaperTheme);
 
   return {
     readingMode: isReadingMode(payload.readingMode)
       ? payload.readingMode
-      : defaultReaderSettings.readingMode,
+      : baseDefaults.readingMode,
     translationDisplay: migrateTranslation(payload),
     fontSize: isFontSize(payload.fontSize)
       ? payload.fontSize
-      : defaultReaderSettings.fontSize,
+      : baseDefaults.fontSize,
     density: isDensity(payload.density)
       ? payload.density
-      : defaultReaderSettings.density,
-    theme: migrateTheme(payload),
+      : baseDefaults.density,
+    readerPaperTheme,
     columnWidth: isColumnWidth(payload.columnWidth)
       ? payload.columnWidth
-      : defaultReaderSettings.columnWidth,
+      : baseDefaults.columnWidth,
     annotationVisibilityGroups: {
       lexical:
         typeof groups?.lexical === "boolean"
           ? groups.lexical
-          : defaultReaderSettings.annotationVisibilityGroups.lexical,
+          : baseDefaults.annotationVisibilityGroups.lexical,
       analysis:
         typeof groups?.analysis === "boolean"
           ? groups.analysis
-          : defaultReaderSettings.annotationVisibilityGroups.analysis,
+          : baseDefaults.annotationVisibilityGroups.analysis,
       userAssets:
         typeof groups?.userAssets === "boolean"
           ? groups.userAssets
-          : defaultReaderSettings.annotationVisibilityGroups.userAssets,
+          : baseDefaults.annotationVisibilityGroups.userAssets,
     },
     updatedAt:
       typeof payload.updatedAt === "string" ? payload.updatedAt : undefined,
   };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Persistence                                                        */
-/* ------------------------------------------------------------------ */
+export function readStoredDefaultReaderPaperTheme(): ReaderPaperTheme {
+  if (typeof window === "undefined") {
+    return defaultReaderSettings.readerPaperTheme;
+  }
+
+  try {
+    return normalizeReaderPaperTheme(
+      window.localStorage.getItem(READER_DEFAULT_PAPER_THEME_STORAGE_KEY),
+    );
+  } catch {
+    return defaultReaderSettings.readerPaperTheme;
+  }
+}
+
+export function persistDefaultReaderPaperTheme(value: ReaderPaperTheme) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(READER_DEFAULT_PAPER_THEME_STORAGE_KEY, value);
+  } catch {
+  }
+}
 
 export function readStoredReaderSettings(): ReaderSettingsState {
   if (typeof window === "undefined") {
@@ -181,11 +188,11 @@ export function readStoredReaderSettings(): ReaderSettingsState {
   try {
     const raw = window.localStorage.getItem(READER_SETTINGS_STORAGE_KEY);
     if (!raw) {
-      return defaultReaderSettings;
+      return createDefaultReaderSettings(readStoredDefaultReaderPaperTheme());
     }
     return normalizeReaderSettings(JSON.parse(raw));
   } catch {
-    return defaultReaderSettings;
+    return createDefaultReaderSettings(readStoredDefaultReaderPaperTheme());
   }
 }
 
@@ -200,29 +207,18 @@ export function persistReaderSettings(value: ReaderSettingsState) {
       JSON.stringify({ ...value, updatedAt: new Date().toISOString() }),
     );
   } catch {
-    // Ignore persistence failures. Reader settings should remain best-effort only.
   }
 }
-
-/* ------------------------------------------------------------------ */
-/*  Convenience: is translation visible at all?                        */
-/* ------------------------------------------------------------------ */
 
 export function translationVisible(display: TranslationDisplay): boolean {
   return display !== "hidden";
 }
 
-/* ------------------------------------------------------------------ */
-/*  Theme data-attribute (used on <article data-reader-theme="warm">)  */
-/* ------------------------------------------------------------------ */
-
-export function readerThemeDataValue(theme: ReaderTheme): string {
+export function readerPaperThemeDataValue(theme: ReaderPaperTheme): string {
   return theme;
 }
 
-/** Legacy className helper — still used by daily-reader and examples
- *  pages that have not adopted the data-attribute approach. */
-export function readerThemeClassName(theme: ReaderTheme) {
+export function readerPaperThemeClassName(theme: ReaderPaperTheme) {
   if (theme === "cool") {
     return "reading-paper-cool";
   }
@@ -231,10 +227,6 @@ export function readerThemeClassName(theme: ReaderTheme) {
   }
   return "reading-paper";
 }
-
-/* ------------------------------------------------------------------ */
-/*  Typography helpers                                                 */
-/* ------------------------------------------------------------------ */
 
 export function readerTextClassName({
   density,
@@ -269,19 +261,22 @@ export function readerColumnWidthClassName(columnWidth: ReaderColumnWidth) {
   return "max-w-[96ch]";
 }
 
-/* ------------------------------------------------------------------ */
-/*  Translation display class (for CSS-driven muted/visible styling)   */
-/* ------------------------------------------------------------------ */
-
 export function translationDisplayClassName(display: TranslationDisplay): string {
   if (display === "hidden") return "hidden";
   if (display === "muted") return "reader-translation-layer reader-translation--muted group/translation";
   return "reader-translation-layer group/translation";
 }
 
-/* ------------------------------------------------------------------ */
-/*  Annotation visibility helpers                                      */
-/* ------------------------------------------------------------------ */
+export function withCustomReadingMode(
+  current: ReaderSettingsState,
+  patch: Partial<ReaderSettingsState>,
+): ReaderSettingsState {
+  return {
+    ...current,
+    ...patch,
+    readingMode: "custom",
+  };
+}
 
 export function lexicalMarkVisible(
   visualTone: VisualTone | undefined,

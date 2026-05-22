@@ -1,11 +1,12 @@
 "use client";
 
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Send, X } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/primitives/button";
-import { SectionCard } from "@/components/composed/section-card";
+import { Sparkles, Settings2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { SegmentedControl } from "@/components/composed/segmented-control";
 import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 
@@ -179,70 +180,79 @@ export function AnalyzeSubmitForm() {
   const showVariantOptions = activeVariantOptions.length > 1;
 
   return (
-    <SectionCard
-      className="overflow-hidden border-none bg-reader-paper p-0 shadow-[0_24px_76px_rgba(35,28,18,0.11)]"
-      contentClassName="space-y-0"
-    >
-      <div className="border-b border-hairline bg-surface-warm/60 px-5 py-5 sm:px-7">
-        <SegmentedControl
-          label="透读模式"
-          value={readingGoal}
-          onValueChange={(nextGoal) => {
-            setReadingGoal(nextGoal);
-            setReadingVariant(defaultVariantByGoal[nextGoal]);
-          }}
-          options={readingOptions}
-        />
+    <div className="flex h-full min-h-[600px] flex-col">
+      <div className="flex-1">
+        <div className="sr-only">
+        </div>
 
-        {showVariantOptions ? (
-          <SegmentedControl
-            className="mt-5 border-t border-hairline pt-4"
-            label="细分场景"
-            value={readingVariant}
-            onValueChange={setReadingVariant}
-            options={activeVariantOptions}
-          />
-        ) : null}
+        <div className="relative h-full w-full">
+          <textarea
+            id="analysis-text"
+              className="min-h-[500px] w-full resize-none bg-transparent font-reading text-[1.16rem] leading-[2.1] text-ink outline-none placeholder:text-[#999690] sm:text-[1.28rem]"
+              placeholder={`在此粘贴文章正文...`}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  void handleSubmit();
+                }
+              }}
+            />
+          {text.length > 0 ? (
+            <button
+              type="button"
+              className="absolute right-0 top-0 focus-ring p-2 text-muted hover:text-ink transition-colors"
+              onClick={() => setText("")}
+              title="清空"
+            >
+              <X aria-hidden className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <div className="px-5 py-6 sm:px-8 lg:px-10 lg:py-8">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <label htmlFor="analysis-text" className="text-sm font-semibold text-ink">
-            正文
-          </label>
-          <div className="flex items-center gap-3 text-xs text-muted">
-            <span>{text.trim().length.toLocaleString("zh-CN")} 字符</span>
-            {text.length > 0 ? (
-              <button
-                type="button"
-                className="focus-ring rounded-pill transition-colors hover:text-ink"
-                onClick={() => setText("")}
-              >
-                清空
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-hairline bg-transparent px-0 py-6">
+        <div className="flex flex-col sm:flex-row gap-4 sm:gap-8 text-[0.8rem] text-muted font-medium uppercase tracking-widest">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="focus-ring flex items-center gap-2 hover:text-ink transition-colors">
+                <Settings2 aria-hidden className="h-4 w-4" />
+                设置透读选项
               </button>
-            ) : null}
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[300px] p-4">
+              <SegmentedControl
+                label="透读模式"
+                value={readingGoal}
+                onValueChange={(nextGoal) => {
+                  setReadingGoal(nextGoal);
+                  setReadingVariant(defaultVariantByGoal[nextGoal]);
+                }}
+                options={readingOptions}
+              />
+              {showVariantOptions ? (
+                <SegmentedControl
+                  className="mt-4 border-t border-hairline pt-3"
+                  label="细分场景"
+                  value={readingVariant}
+                  onValueChange={setReadingVariant}
+                  options={activeVariantOptions}
+                />
+              ) : null}
+            </PopoverContent>
+          </Popover>
+          <div className="flex items-center gap-2">
+            <span>字符数:</span>
+            <span className="text-ink font-semibold">{text.trim().length.toLocaleString("zh-CN")}</span>
           </div>
         </div>
 
-        <div className="rounded-[1.35rem] border border-hairline bg-surface px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] sm:px-5 sm:py-5">
-          <textarea
-            id="analysis-text"
-            className="min-h-[480px] w-full resize-none bg-transparent font-reading text-[1.16rem] leading-[1.95] text-ink outline-none placeholder:text-[#736f66] sm:text-[1.28rem]"
-            placeholder={`在这里粘贴英文正文……
-
-Cities are not only built to be crossed, but also to be read through signs, corners, and quiet habits.`}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="flex justify-end border-t border-hairline bg-surface-warm/72 px-5 py-4 sm:px-7">
-        <Button variant="primary" size="lg" disabled={isPending} onClick={handleSubmit}>
+        <Button variant="secondary" size="lg" className="rounded-pill shadow-xl text-[0.95rem] min-w-[120px] bg-ink hover:bg-ink-soft border-transparent" disabled={isPending} onClick={handleSubmit}>
           {isPending ? (
             <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
           ) : (
-            <Send aria-hidden className="h-4 w-4" />
+            <Sparkles aria-hidden className="h-4 w-4" />
           )}
           {isPending ? "透读中" : "开始透读"}
         </Button>
@@ -266,6 +276,6 @@ Cities are not only built to be crossed, but also to be read through signs, corn
           ) : null}
         </div>
       ) : null}
-    </SectionCard>
+    </div>
   );
 }

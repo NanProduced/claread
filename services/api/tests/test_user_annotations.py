@@ -76,17 +76,6 @@ def _make_row(**overrides):
     return defaults
 
 
-def _render_scene(*sentences: tuple[str, str, str]):
-    return {
-        "article": {
-            "sentences": [
-                {"sentence_id": sentence_id, "paragraph_id": paragraph_id, "text": text}
-                for sentence_id, paragraph_id, text in sentences
-            ],
-        },
-    }
-
-
 class TestSchemaValidation:
     def test_create_request_defaults(self):
         req = UserAnnotationCreateRequest(selected_text="Sentence", sentence_id="s1")
@@ -215,9 +204,6 @@ class TestHelpers:
             text_hash=compute_text_range_hash("memory"),
             color="soft_blue",
         )
-        render_scene = _render_scene(
-            ("s1", "p1", "Institutional memory shapes policy choices."),
-        )
 
         response = await _resolve_single_sentence_conflict(
             conn,
@@ -225,7 +211,6 @@ class TestHelpers:
             record_id=UUID(RECORD_ID),
             req=req,
             target_key=f"record:{RECORD_ID}:range:s1:14:20:{compute_text_range_hash('memory')}",
-            render_scene=render_scene,
         )
 
         assert response is not None
@@ -266,9 +251,6 @@ class TestHelpers:
             selected_text="Institutional memory shapes policy choices.",
             color="warm_yellow",
         )
-        render_scene = _render_scene(
-            ("s1", "p1", "Institutional memory shapes policy choices."),
-        )
 
         response = await _resolve_single_sentence_conflict(
             conn,
@@ -276,7 +258,6 @@ class TestHelpers:
             record_id=UUID(RECORD_ID),
             req=req,
             target_key=f"record:{RECORD_ID}:sentence:s1",
-            render_scene=render_scene,
         )
 
         assert response is not None
@@ -626,204 +607,6 @@ class TestHelpers:
         assert response is not None
         # Colors inconsistent → use request color (warm_yellow)
         assert response.color == "warm_yellow"
-
-    @pytest.mark.anyio
-    async def test_resolve_multi_text_overlap_with_text_range_merges_into_single_multi_text(self):
-        sentence_1 = "Institutional memory shapes policy choices."
-        sentence_2 = "The committee adjusted course after the warning."
-        existing_segment_1 = "memory"
-        existing_segment_2 = "adjusted course"
-        existing = _make_row(
-            anchor_type="multi_text",
-            target_key=f"record:{RECORD_ID}:multi_text:existing",
-            sentence_id="s1",
-            selected_text=f"{existing_segment_1} {existing_segment_2}",
-            start_offset=None,
-            end_offset=None,
-            text_hash=None,
-            color="soft_blue",
-            payload_json={
-                "segments": [
-                    {
-                        "paragraph_id": "p1",
-                        "sentence_id": "s1",
-                        "selected_text": existing_segment_1,
-                        "start_offset": 14,
-                        "end_offset": 20,
-                        "text_hash": compute_text_range_hash(existing_segment_1),
-                    },
-                    {
-                        "paragraph_id": "p2",
-                        "sentence_id": "s2",
-                        "selected_text": existing_segment_2,
-                        "start_offset": 14,
-                        "end_offset": 29,
-                        "text_hash": compute_text_range_hash(existing_segment_2),
-                    },
-                ]
-            },
-        )
-        updated = _make_row(
-            id=existing["id"],
-            anchor_type="multi_text",
-            target_key=f"record:{RECORD_ID}:multi_text:merged",
-            sentence_id="s1",
-            selected_text="memory shapes adjusted course",
-            start_offset=None,
-            end_offset=None,
-            text_hash=None,
-            color="soft_blue",
-            payload_json={
-                "segments": [
-                    {
-                        "paragraph_id": "p1",
-                        "sentence_id": "s1",
-                        "selected_text": "memory shapes",
-                        "start_offset": 14,
-                        "end_offset": 27,
-                        "text_hash": compute_text_range_hash("memory shapes"),
-                    },
-                    {
-                        "paragraph_id": "p2",
-                        "sentence_id": "s2",
-                        "selected_text": existing_segment_2,
-                        "start_offset": 14,
-                        "end_offset": 29,
-                        "text_hash": compute_text_range_hash(existing_segment_2),
-                    },
-                ]
-            },
-        )
-        conn = AsyncMock()
-        conn.fetch.return_value = [existing]
-        conn.fetchrow.return_value = updated
-
-        req = UserAnnotationCreateRequest(
-            analysis_record_id=RECORD_ID,
-            anchor_type="text_range",
-            paragraph_id="p1",
-            sentence_id="s1",
-            selected_text="memory shapes",
-            start_offset=14,
-            end_offset=27,
-            text_hash=compute_text_range_hash("memory shapes"),
-            color="warm_yellow",
-        )
-
-        response = await _resolve_single_sentence_conflict(
-            conn,
-            user_id=UUID(USER_ID),
-            record_id=UUID(RECORD_ID),
-            req=req,
-            target_key=f"record:{RECORD_ID}:range:s1:14:27:{compute_text_range_hash('memory shapes')}",
-            render_scene=_render_scene(("s1", "p1", sentence_1), ("s2", "p2", sentence_2)),
-        )
-
-        assert response is not None
-        assert response.anchor_type == "multi_text"
-        assert response.color == "soft_blue"
-        assert len(response.segments) == 2
-        assert response.segments[0].sentence_id == "s1"
-        assert response.segments[0].start_offset == 14
-        assert response.segments[0].end_offset == 27
-        update_args = conn.fetchrow.await_args.args
-        assert isinstance(update_args[10], dict)
-        assert update_args[10]["range_status"] == "multi_text_anchor"
-        assert "selected_text_hash" not in update_args[10]
-        assert "prefix" not in update_args[10]
-
-    @pytest.mark.anyio
-    async def test_resolve_sentence_overlap_with_multi_text_keeps_single_union_annotation(self):
-        sentence_1 = "Institutional memory shapes policy choices."
-        sentence_2 = "The committee adjusted course after the warning."
-        existing = _make_row(
-            anchor_type="multi_text",
-            target_key=f"record:{RECORD_ID}:multi_text:existing",
-            sentence_id="s1",
-            selected_text="memory adjusted course",
-            start_offset=None,
-            end_offset=None,
-            text_hash=None,
-            color="soft_blue",
-            payload_json={
-                "segments": [
-                    {
-                        "paragraph_id": "p1",
-                        "sentence_id": "s1",
-                        "selected_text": "memory",
-                        "start_offset": 14,
-                        "end_offset": 20,
-                        "text_hash": compute_text_range_hash("memory"),
-                    },
-                    {
-                        "paragraph_id": "p2",
-                        "sentence_id": "s2",
-                        "selected_text": "adjusted course",
-                        "start_offset": 14,
-                        "end_offset": 29,
-                        "text_hash": compute_text_range_hash("adjusted course"),
-                    },
-                ]
-            },
-        )
-        updated = _make_row(
-            id=existing["id"],
-            anchor_type="multi_text",
-            target_key=f"record:{RECORD_ID}:multi_text:merged",
-            sentence_id="s1",
-            selected_text="Institutional memory shapes policy choices. adjusted course",
-            start_offset=None,
-            end_offset=None,
-            text_hash=None,
-            color="soft_blue",
-            payload_json={
-                "segments": [
-                    {
-                        "paragraph_id": "p1",
-                        "sentence_id": "s1",
-                        "selected_text": sentence_1,
-                        "start_offset": 0,
-                        "end_offset": utf16_code_unit_length(sentence_1),
-                        "text_hash": compute_text_range_hash(sentence_1),
-                    },
-                    {
-                        "paragraph_id": "p2",
-                        "sentence_id": "s2",
-                        "selected_text": "adjusted course",
-                        "start_offset": 14,
-                        "end_offset": 29,
-                        "text_hash": compute_text_range_hash("adjusted course"),
-                    },
-                ]
-            },
-        )
-        conn = AsyncMock()
-        conn.fetch.return_value = [existing]
-        conn.fetchrow.return_value = updated
-
-        req = UserAnnotationCreateRequest(
-            analysis_record_id=RECORD_ID,
-            anchor_type="sentence",
-            paragraph_id="p1",
-            sentence_id="s1",
-            selected_text=sentence_1,
-            color="warm_yellow",
-        )
-
-        response = await _resolve_single_sentence_conflict(
-            conn,
-            user_id=UUID(USER_ID),
-            record_id=UUID(RECORD_ID),
-            req=req,
-            target_key=f"record:{RECORD_ID}:sentence:s1",
-            render_scene=_render_scene(("s1", "p1", sentence_1), ("s2", "p2", sentence_2)),
-        )
-
-        assert response is not None
-        assert response.anchor_type == "multi_text"
-        assert response.color == "soft_blue"
-        assert len(response.segments) == 2
-        assert response.segments[0].selected_text == sentence_1
 
 
 class TestRoutes:

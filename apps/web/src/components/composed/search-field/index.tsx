@@ -28,7 +28,7 @@ export function SearchField({
 
   return (
     <div className={cn("flex flex-col gap-3 border-b border-hairline/90 pb-4 lg:flex-row lg:items-center lg:justify-between", className)}>
-      <label className="focus-within:border-[rgba(98,101,109,0.35)] flex min-h-12 flex-1 items-center gap-3 rounded-pill border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(251,250,246,0.98))] px-4 shadow-surface-quiet transition-colors lg:max-w-xl">
+      <label className="app-panel-surface focus-within:border-[var(--app-control-border-hover)] flex min-h-12 flex-1 items-center gap-3 rounded-pill border border-hairline px-4 transition-colors lg:max-w-xl">
         <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted" />
         <span className="sr-only">{label}</span>
         <input

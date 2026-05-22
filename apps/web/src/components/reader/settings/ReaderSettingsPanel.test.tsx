@@ -17,43 +17,49 @@ describe("ReaderSettingsPanel", () => {
     );
 
     expect(screen.getByText("阅读显示")).toBeTruthy();
-    expect(screen.getByText("标注显示分组")).toBeTruthy();
-    expect(screen.getByText("阅读模式")).toBeTruthy();
-    expect(screen.getByText("阅读主题")).toBeTruthy();
+    expect(screen.getByText("标注层")).toBeTruthy();
+    expect(screen.getByText("阅读预设")).toBeTruthy();
+    expect(screen.getByText("纸面主题")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /隐藏/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
+      readingMode: "custom",
       translationDisplay: "hidden",
     });
 
     fireEvent.click(screen.getByRole("button", { name: /^大/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
+      readingMode: "custom",
       fontSize: "large",
     });
 
     fireEvent.click(screen.getByRole("button", { name: /舒展/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
+      readingMode: "custom",
       density: "roomy",
     });
 
     fireEvent.click(screen.getByRole("button", { name: /^宽/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
+      readingMode: "custom",
       columnWidth: "wide",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /护眼/i }));
+    fireEvent.click(screen.getByRole("button", { name: /鼠尾草/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
-      theme: "sage",
+      readingMode: "custom",
+      readerPaperTheme: "sage",
     });
 
     fireEvent.click(screen.getByRole("button", { name: /词汇 \/ 短语/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
+      readingMode: "custom",
       annotationVisibilityGroups: {
         ...defaultReaderSettings.annotationVisibilityGroups,
         lexical: false,
@@ -69,6 +75,6 @@ describe("ReaderSettingsPanel", () => {
       />,
     );
 
-    expect(screen.queryAllByText("我的笔记与高亮").length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("我的高亮与笔记").length).toBeGreaterThan(0);
   });
 });

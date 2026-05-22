@@ -25,7 +25,7 @@ export function SectionCard({
   return (
     <section
       className={cn(
-        "rounded-panel border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(251,250,246,0.98))] p-5 shadow-surface-quiet sm:p-6",
+        "app-panel-surface rounded-panel border border-hairline p-5 sm:p-6",
         className,
       )}
       {...props}

@@ -33,6 +33,11 @@ function pageIdentityFromTargetKey(targetKey?: string | null): ReaderAskPageIden
     recordTitle: null,
     surface: "reader",
     source: "reader_2_0",
+    availableContextCapabilities: [],
+    hasArticleOverview: false,
+    hasSentenceEntries: false,
+    hasAnnotations: false,
+    hasReaderNotes: false,
   };
 }
 

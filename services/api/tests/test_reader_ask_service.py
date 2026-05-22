@@ -15,6 +15,10 @@ from app.schemas.reader_ask import (
     ReaderAskExternalAssetContext,
     ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
+    ReaderAskPlannerDecision,
+    ReaderAskPlannerReferenceRequest,
+    ReaderAskPlannerStructuredAssetRequest,
+    ReaderAskPlannerWorkingSetDecision,
 )
 from app.services.analysis.credit_service import CreditReservation
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
@@ -46,6 +50,49 @@ from app.services.reader_ask.service import (
 from app.services.reader_ask.supplements import build_grammar_note_candidate
 
 
+def _planner_decision(
+    *,
+    resolved_intent: str = "explain",
+    clarification_only: bool = False,
+    clarification_reason: str | None = None,
+    reference_requested: bool = False,
+    reference_query: str | None = None,
+    structured_asset_requested: bool = False,
+    structured_asset_type: str | None = None,
+    local_context_window_needed: bool = False,
+    record_insights_needed: bool = False,
+    article_overview_needed: bool = False,
+    dictionary_needed: bool = False,
+    cross_record_context_allowed: bool = False,
+    external_asset_lookup_needed: bool = False,
+    rationale: str = "test planner decision",
+) -> ReaderAskPlannerDecision:
+    return ReaderAskPlannerDecision(
+        resolved_intent=resolved_intent,  # type: ignore[arg-type]
+        clarification_only=clarification_only,
+        clarification_reason=clarification_reason,
+        reference_request=ReaderAskPlannerReferenceRequest(
+            requested=reference_requested,
+            query=reference_query,
+            reason="semantic_reference" if reference_requested else None,
+        ),
+        structured_asset_request=ReaderAskPlannerStructuredAssetRequest(
+            requested=structured_asset_requested,
+            requested_asset_type=structured_asset_type,  # type: ignore[arg-type]
+            reason="semantic_asset_request" if structured_asset_requested else None,
+        ),
+        working_set=ReaderAskPlannerWorkingSetDecision(
+            local_context_window_needed=local_context_window_needed,
+            record_insights_needed=record_insights_needed,
+            article_overview_needed=article_overview_needed,
+            dictionary_needed=dictionary_needed,
+            cross_record_context_allowed=cross_record_context_allowed,
+            external_asset_lookup_needed=external_asset_lookup_needed,
+        ),
+        rationale=rationale,
+    )
+
+
 def test_needs_clarification_for_ambiguous_local_reference_without_anchor() -> None:
     assert _needs_clarification("这里为什么这样写？", []) is True
     assert _needs_clarification(
@@ -56,7 +103,7 @@ def test_needs_clarification_for_ambiguous_local_reference_without_anchor() -> N
 
 def test_resolve_intent_prefers_explicit_entry_action_and_content_signal() -> None:
     assert _resolve_intent("为什么这里是这个意思？", [], "lookup_in_context") == "vocabulary"
-    assert _resolve_intent("帮我拆句", [], "ask_about_this") == "breakdown"
+    assert _resolve_intent("为什么这里这样写", [], "why_here") == "grammar"
     assert (
         _resolve_intent(
             "看看译文和原句差在哪",
@@ -144,9 +191,9 @@ def test_build_action_proposals_does_not_offer_saving_full_answer_as_note() -> N
 
     proposal_types = {proposal.action_type for proposal in proposals}
 
-    assert "save_highlight" in proposal_types
+    assert "save_highlight" not in proposal_types
     assert "save_note" not in proposal_types
-    assert all(proposal.requires_confirmation for proposal in proposals)
+    assert proposal_types == set()
 
 
 def test_merge_usage_summaries_accumulates_nested_tool_usage() -> None:
@@ -212,6 +259,88 @@ def test_build_response_cards_creates_sentence_breakdown_card() -> None:
     assert len(cards) == 1
     assert cards[0].card_type == "sentence_breakdown_card"
     assert cards[0].parts[0].label == "主干"
+
+
+def test_current_record_affordances_use_backend_render_scene_over_frontend_hint() -> None:
+    record = type(
+        "Record",
+        (),
+        {
+            "title": "Backend Truth",
+            "render_scene": {
+                "content_summary": {"overview": "这篇文章讨论制度记忆。"},
+                "sentence_entries": [{"entry_type": "sentence_analysis", "content": "主干先落判断。"}],
+            },
+        },
+    )()
+    page_identity = ReaderAskPageIdentity(
+        record_id="00000000-0000-0000-0000-000000000001",
+        title="Frontend Hint",
+        available_context_capabilities=["record_context"],
+        has_article_overview=False,
+        has_sentence_entries=False,
+        has_annotations=True,
+        has_reader_notes=False,
+    )
+
+    affordances = reader_ask_service._current_record_affordances(record=record, page_identity=page_identity)
+
+    assert affordances.title == "Backend Truth"
+    assert affordances.has_article_overview is True
+    assert affordances.has_sentence_entries is True
+    assert affordances.has_annotations is True
+
+
+def test_planner_decision_normalizes_chinese_labels() -> None:
+    decision = ReaderAskPlannerDecision.model_validate(
+        {
+            "resolved_intent": "拆句",
+            "structured_asset_request": {"requested": True, "requested_asset_type": "解析"},
+            "working_set": {"article_overview_needed": True, "extra_field": "ignored"},
+            "extra_top_level": "ignored",
+        }
+    )
+
+    assert decision.resolved_intent == "breakdown"
+    assert decision.structured_asset_request.requested_asset_type == "analysis"
+    assert decision.working_set.article_overview_needed is True
+
+
+def test_fallback_semantic_planner_decision_handles_article_level_question() -> None:
+    record = type(
+        "Record",
+        (),
+        {
+            "title": "Dracula",
+            "render_scene": {
+                "content_summary": {"overview": "本文讨论叙事推进与恐惧升级。"},
+                "sentence_entries": [],
+            },
+        },
+    )()
+    page_identity = ReaderAskPageIdentity(
+        record_id="00000000-0000-0000-0000-000000000001",
+        title="Dracula",
+        available_context_capabilities=["record_context"],
+        has_article_overview=False,
+        has_sentence_entries=False,
+        has_annotations=False,
+        has_reader_notes=False,
+    )
+
+    decision = reader_ask_service._fallback_semantic_planner_decision(
+        user_message="这篇文章是怎么展开论证的？",
+        entry_action="ask_about_this",
+        page_identity=page_identity,
+        attachments=[],
+        anchors=[],
+        record=record,
+        failure_reason="validation failed",
+    )
+
+    assert decision.clarification_only is False
+    assert decision.working_set.article_overview_needed is True
+    assert decision.working_set.local_context_window_needed is True
 
 
 def test_resolved_context_summary_marks_article_assets_and_history_usage() -> None:
@@ -479,6 +608,12 @@ def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            reference_requested=True,
+            reference_query="Climate Policy",
+            cross_record_context_allowed=True,
+        ),
         reference_resolution=planner_svc.ReaderAskReferenceResolution(
             attempted=True,
             status="resolved",
@@ -491,6 +626,7 @@ def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
     data = _planning_snapshot_json(snapshot)
 
     assert data["resolved_intent"] == snapshot.resolved_intent
+    assert data["planner_decision"]["reference_request"]["query"] == "Climate Policy"
     assert data["retrieval_needs"] == "known_reference_only"
     assert data["resolved_references"]["status"] == "resolved"
     assert data["working_set"]["external_record_refs"][0]["record_id"] == "r-2"
@@ -578,11 +714,31 @@ def test_row_to_persisted_supplement_supports_deleted_lifecycle() -> None:
     assert persisted.record_title == "Test Reader"
 
 
-def test_reference_needs_extracts_known_title_query() -> None:
-    needs = planner_svc.build_reference_needs("我之前那篇 climate policy 的解析里也提过这个吗？")
+def test_planner_reference_request_round_trips_into_snapshot() -> None:
+    snapshot = planner_svc.plan_request(
+        content="我之前那篇 climate policy 的解析里也提过这个吗？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_reader_notes=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            reference_requested=True,
+            reference_query="climate policy",
+            cross_record_context_allowed=True,
+        ),
+    )
 
-    assert needs.requested is True
-    assert needs.query == "climate policy"
+    assert snapshot.reference_needs.requested is True
+    assert snapshot.reference_needs.query == "climate policy"
 
 
 def test_reference_resolution_single_hit_returns_resolved_record() -> None:
@@ -733,6 +889,14 @@ def test_plan_request_builds_disambiguation_state_for_ambiguous_known_reference(
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            clarification_only=True,
+            clarification_reason="ambiguous_known_reference",
+            reference_requested=True,
+            reference_query="climate policy",
+            cross_record_context_allowed=True,
+        ),
         reference_resolution=planner_svc.ReaderAskReferenceResolution(
             attempted=True,
             status="ambiguous",
@@ -767,6 +931,11 @@ def test_build_context_plan_carries_clarification_reason_from_planning_snapshot(
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            clarification_only=True,
+            clarification_reason="missing_required_context",
+        ),
     )
 
     context_plan = _build_context_plan(
@@ -778,7 +947,7 @@ def test_build_context_plan_carries_clarification_reason_from_planning_snapshot(
         planning_snapshot=snapshot,
     )
 
-    assert context_plan.clarification_reason == "missing_local_anchor"
+    assert context_plan.clarification_reason == "missing_required_context"
 
 
 def test_plan_request_prefers_anchor_local_working_set_for_grammar() -> None:
@@ -797,6 +966,11 @@ def test_plan_request_prefers_anchor_local_working_set_for_grammar() -> None:
         entry_action="why_here",
         attachments=[],
         anchors=[anchor],
+        planner_decision=_planner_decision(
+            resolved_intent="grammar",
+            local_context_window_needed=True,
+            record_insights_needed=True,
+        ),
     )
 
     assert plan.resolved_intent == "grammar"
@@ -821,6 +995,10 @@ def test_plan_request_prefers_article_overview_for_article_level_question() -> N
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            article_overview_needed=True,
+        ),
     )
 
     assert plan.working_set.article_overview_needed is True
@@ -856,6 +1034,10 @@ def test_plan_request_tracks_explicit_related_record_as_external_context() -> No
         entry_action="ask_about_this",
         attachments=[attachment],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            cross_record_context_allowed=True,
+        ),
     )
 
     assert plan.working_set.external_record_refs == [
@@ -900,6 +1082,13 @@ def test_plan_request_tracks_explicit_external_analysis_asset_context() -> None:
         entry_action="ask_about_this",
         attachments=[attachment],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            structured_asset_requested=True,
+            structured_asset_type="analysis",
+            cross_record_context_allowed=True,
+            external_asset_lookup_needed=True,
+        ),
     )
 
     assert plan.working_set.external_asset_refs == [
@@ -932,6 +1121,12 @@ def test_trace_summary_marks_external_context_limitations() -> None:
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            reference_requested=True,
+            reference_query="Climate Policy",
+            cross_record_context_allowed=True,
+        ),
         reference_resolution=planner_svc.ReaderAskReferenceResolution(
             attempted=True,
             status="resolved",
@@ -992,6 +1187,15 @@ def test_plan_request_builds_external_asset_disambiguation_state_for_ambiguous_e
         entry_action="ask_about_this",
         attachments=[record_attachment],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            clarification_only=True,
+            clarification_reason="ambiguous_external_asset",
+            structured_asset_requested=True,
+            structured_asset_type="analysis",
+            cross_record_context_allowed=True,
+            external_asset_lookup_needed=True,
+        ),
         structured_asset_resolution=planner_svc.ReaderAskStructuredAssetResolution(
             attempted=True,
             status="ambiguous",
@@ -1131,6 +1335,10 @@ def test_plan_request_uses_explicit_related_record_context() -> None:
             )
         ],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            cross_record_context_allowed=True,
+        ),
     )
 
     assert plan.working_set.external_record_refs == [
@@ -1159,6 +1367,11 @@ def test_plan_request_without_anchor_returns_clarification_working_set() -> None
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            clarification_only=True,
+            clarification_reason="missing_required_context",
+        ),
     )
 
     assert plan.clarification_only is True

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.user_assets.favorites import FavoriteTargetType
 
@@ -70,6 +70,7 @@ ReaderAskWorkingSetMode = Literal[
     "known_reference",
     "clarification",
 ]
+ReaderAskPlannerAssetType = Literal["analysis", "supplement"]
 
 
 class ReaderAskAnchorSegment(BaseModel):
@@ -128,6 +129,17 @@ class ReaderAskPageIdentity(BaseModel):
     title: str | None = None
     surface: Literal["reader"] = "reader"
     source: Literal["reader_2_0"] = "reader_2_0"
+    available_context_capabilities: list[str] = Field(default_factory=list)
+    has_article_overview: bool = False
+    has_sentence_entries: bool = False
+    has_annotations: bool = False
+    has_reader_notes: bool = False
+
+
+class ReaderAskCurrentRecordAffordances(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str | None = None
     available_context_capabilities: list[str] = Field(default_factory=list)
     has_article_overview: bool = False
     has_sentence_entries: bool = False
@@ -317,6 +329,113 @@ class ReaderAskResolvedContextInput(BaseModel):
     current_record_context: ReaderAskCurrentRecordContext | None = None
     external_record_contexts: list[ReaderAskExternalRecordContext] = Field(default_factory=list)
     external_asset_contexts: list[ReaderAskExternalAssetContext] = Field(default_factory=list)
+
+
+class ReaderAskPlannerHistoryMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    role: Literal["user", "assistant"]
+    content_md: str
+    resolved_intent: ReaderAskResolvedIntent | None = None
+
+
+class ReaderAskPlannerReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    requested: bool = False
+    query: str | None = None
+    reason: str | None = None
+
+
+class ReaderAskPlannerStructuredAssetRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    requested: bool = False
+    requested_asset_type: ReaderAskPlannerAssetType | None = None
+    reason: str | None = None
+
+    @field_validator("requested_asset_type", mode="before")
+    @classmethod
+    def normalize_requested_asset_type(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        mapping = {
+            "analysis": "analysis",
+            "解析": "analysis",
+            "分析": "analysis",
+            "sentence_analysis": "analysis",
+            "supplement": "supplement",
+            "补充": "supplement",
+            "旁注": "supplement",
+            "grammar_note": "supplement",
+        }
+        return mapping.get(normalized, value)
+
+
+class ReaderAskPlannerWorkingSetDecision(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    local_context_window_needed: bool = False
+    record_insights_needed: bool = False
+    article_overview_needed: bool = False
+    dictionary_needed: bool = False
+    cross_record_context_allowed: bool = False
+    external_asset_lookup_needed: bool = False
+
+
+class ReaderAskPlannerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    user_message: str
+    entry_action: ReaderAskEntryAction
+    page_identity: ReaderAskPageIdentity
+    current_record_affordances: ReaderAskCurrentRecordAffordances
+    attachments: list[ReaderAskAttachment] = Field(default_factory=list)
+    normalized_anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
+    history: list[ReaderAskPlannerHistoryMessage] = Field(default_factory=list)
+
+
+class ReaderAskPlannerDecision(BaseModel):
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    resolved_intent: ReaderAskResolvedIntent
+    clarification_only: bool = False
+    clarification_reason: str | None = None
+    reference_request: ReaderAskPlannerReferenceRequest = Field(default_factory=ReaderAskPlannerReferenceRequest)
+    structured_asset_request: ReaderAskPlannerStructuredAssetRequest = Field(
+        default_factory=ReaderAskPlannerStructuredAssetRequest
+    )
+    working_set: ReaderAskPlannerWorkingSetDecision = Field(default_factory=ReaderAskPlannerWorkingSetDecision)
+    rationale: str | None = None
+
+    @field_validator("resolved_intent", mode="before")
+    @classmethod
+    def normalize_resolved_intent(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        mapping = {
+            "explain": "explain",
+            "解释": "explain",
+            "讲解": "explain",
+            "explanation": "explain",
+            "breakdown": "breakdown",
+            "拆句": "breakdown",
+            "拆解": "breakdown",
+            "语法拆解": "breakdown",
+            "vocabulary": "vocabulary",
+            "词义": "vocabulary",
+            "词汇": "vocabulary",
+            "单词": "vocabulary",
+            "grammar": "grammar",
+            "语法": "grammar",
+            "syntax": "grammar",
+            "practice": "practice",
+            "练习": "practice",
+            "exercise": "practice",
+        }
+        return mapping.get(normalized, value)
 
 
 class ReaderAskRunInfo(BaseModel):
@@ -513,8 +632,9 @@ class ReaderAskThreadListResponse(BaseModel):
 
 
 class ReaderAskThreadCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     record_id: str
-    mode: Literal["default", "new_chat"] = "default"
     title: str | None = Field(default=None, max_length=120)
 
 
@@ -591,9 +711,13 @@ class ReaderAskStreamEnvelope(BaseModel):
 
 class ReaderAskPlanningSnapshotRecord(BaseModel):
     resolved_intent: ReaderAskResolvedIntent
+    planner_decision: dict[str, Any] = Field(default_factory=dict)
+    planner_validation_status: str = "not_run"
     reference_needs: dict[str, Any] = Field(default_factory=dict)
     retrieval_needs: str
     resolved_references: dict[str, Any] = Field(default_factory=dict)
+    structured_asset_needs: dict[str, Any] = Field(default_factory=dict)
+    structured_asset_resolution: dict[str, Any] = Field(default_factory=dict)
     working_set: dict[str, Any] = Field(default_factory=dict)
     context_plan: dict[str, Any] = Field(default_factory=dict)
     trace_summary: dict[str, Any] = Field(default_factory=dict)

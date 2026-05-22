@@ -4,6 +4,8 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { SidebarRail } from "../sidebar-rail";
 
+import { ScrollArea } from "@/components/ui/scroll-area";
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const standalone = pathname === "/login";
@@ -17,9 +19,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const railWidth = collapsed ? "md:pl-[84px]" : "md:pl-[232px]";
 
   return (
-    <div className="min-h-screen bg-web-canvas text-ink">
+    <div className="h-screen overflow-hidden bg-web-canvas text-ink">
       <SidebarRail pathname={pathname} collapsed={collapsed} onToggle={() => setManualCollapsed((value) => !(value ?? collapsed))} />
-      <div className={`${railWidth} min-h-screen pb-20 md:pb-0`}>{children}</div>
+      <ScrollArea className={`${railWidth} h-full pb-20 md:pb-0`}>
+        {children}
+      </ScrollArea>
     </div>
   );
 }

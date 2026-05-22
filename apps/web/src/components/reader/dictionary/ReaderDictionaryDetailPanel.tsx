@@ -2,6 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   BookOpen,
   Check,
@@ -64,6 +65,17 @@ interface ReaderDictionaryDetailPanelProps {
   canCreateAINote?: boolean;
   onLookupPhraseFromInspect?: (intent: ReaderStructuredInspectIntent) => void;
   onAttachToAsk?: (intent: ReaderStructuredInspectIntent) => void;
+}
+
+function ScrollWrapper({ scrollable, className, children }: { scrollable: boolean, className: string, children: React.ReactNode }) {
+  if (scrollable) {
+    return (
+      <ScrollArea className={className.replace('overflow-y-auto', '').replace('overscroll-contain', '')}>
+        <div className="h-full pb-4">{children}</div>
+      </ScrollArea>
+    );
+  }
+  return <div className={className}>{children}</div>;
 }
 
 export function ReaderDictionaryDetailPanel({
@@ -179,7 +191,12 @@ export function ReaderDictionaryDetailPanel({
   }, [activeTab, entryResult, tabItems]);
 
   useEffect(() => {
-    entryScrollRef.current?.scrollTo({ top: 0 });
+    const viewport = entryScrollRef.current?.querySelector('[data-radix-scroll-area-viewport]');
+    if (viewport) {
+      viewport.scrollTo({ top: 0 });
+    } else {
+      entryScrollRef.current?.scrollTo({ top: 0 });
+    }
   }, [activeTab, dictionaryAI.kind, dictionaryAIMode, dictionaryAIPanelOpen, inspect?.markId, lookup?.query, lookupResult?.kind]);
 
   function toggleMeaningExpanded(key: string) {
@@ -578,7 +595,7 @@ export function ReaderDictionaryDetailPanel({
                               <figure key={example.key} className="space-y-1">
                                 <blockquote className="reader-serif text-[0.9rem] leading-6 text-ink-soft">{example.example}</blockquote>
                                 {example.exampleTranslation ? (
-                                  <figcaption className="text-xs leading-5 text-muted">{example.exampleTranslation}</figcaption>
+                                  <figcaption className="text-[0.82rem] leading-5 text-ink-soft">{example.exampleTranslation}</figcaption>
                                 ) : null}
                               </figure>
                             ))}
@@ -605,7 +622,7 @@ export function ReaderDictionaryDetailPanel({
                 {group.examples.map((example) => (
                   <li key={example.key} className="rounded-[12px] bg-reader-paper/74 px-3 py-2.5">
                     <blockquote className="reader-serif text-[0.92rem] leading-6 text-ink-soft">{example.example}</blockquote>
-                    {example.exampleTranslation ? <p className="mt-1 text-xs leading-5 text-muted">{example.exampleTranslation}</p> : null}
+                    {example.exampleTranslation ? <p className="mt-1 text-[0.82rem] leading-5 text-ink-soft">{example.exampleTranslation}</p> : null}
                   </li>
                 ))}
               </ol>
@@ -636,7 +653,7 @@ export function ReaderDictionaryDetailPanel({
             {visibleItems.map((phrase) => (
               <div key={phrase.phrase} className="flex items-start justify-between gap-3 border-t border-hairline/70 px-3.5 py-3 first:border-t-0">
                 <p className="min-w-0 text-sm font-semibold leading-6 text-ink">{phrase.phrase}</p>
-                {phrase.meaning ? <p className="max-w-[60%] text-right text-xs leading-5 text-muted">{phrase.meaning}</p> : <span className="text-[0.72rem] text-subtle">搭配</span>}
+                {phrase.meaning ? <p className="max-w-[60%] text-right text-[0.82rem] leading-5 text-ink-soft">{phrase.meaning}</p> : <span className="text-[0.72rem] text-muted">搭配</span>}
               </div>
             ))}
           </div>
@@ -759,7 +776,7 @@ export function ReaderDictionaryDetailPanel({
         ) : null}
       </div>
 
-      <div className={contentClass}>
+      <ScrollWrapper scrollable={!entryResult && !isCard} className={contentClass}>
         {!lookup && !inspectVisible ? (
           <div className="flex min-h-40 flex-col justify-center">
             <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">默认状态</p>
@@ -882,13 +899,15 @@ export function ReaderDictionaryDetailPanel({
                 </div>
               ) : null}
             </div>
-            <div ref={entryScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pt-3 pr-1">
+            <ScrollArea ref={entryScrollRef} className="min-h-0 flex-1">
+              <div className="pt-3 pr-4">
               <div className="space-y-3.5 pb-4">
                 {canRequestContextExplain ? renderCollapsedAIStub("context_explain", "AI 语境解读", contextExplainResult?.summary) : null}
                 {canRequestContextExplain && dictionaryAIPanelOpen ? renderContextExplainCard() : null}
                 {renderEntryTabContent()}
               </div>
-            </div>
+              </div>
+            </ScrollArea>
           </div>
         ) : null}
 
@@ -974,7 +993,8 @@ export function ReaderDictionaryDetailPanel({
             </div>
           </div>
         ) : null}
-      </div>
+      </ScrollWrapper>
+
     </section>
   );
 }

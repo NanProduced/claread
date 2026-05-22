@@ -49,7 +49,7 @@
 |----------|-----|--------|-------------|------|
 | 收藏整篇文章 | 已接入 | 已接入 | `favorite_records.target_type=analysis_record` | 双端共享记录收藏 |
 | 整句选择后高亮/笔记 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、反显和取消 | 部分接入：小程序保留句子级高亮/笔记写入，并继续收口到句子级专用交互；笔记默认先进入预览态，再通过二级菜单编辑/删除 | `anchor_type=sentence`、`reader_notes` | 双端共享句子级锚点；小程序只在句子级提供写入口 |
-| 句内局部文本高亮/笔记 | 已接入：Web 支持单句内精确选区创建、渲染、反显和取消 | 部分接入：结果页已能读取和回显局部资产，但旧选区工具条/笔记 sheet 仍在 | `anchor_type=text_range`、`reader_notes`、`start_offset`、`end_offset`、`text_hash` | 坐标系为 UTF-16 code unit；后端校验 render scene sentence 切片和 `fnv1a32-utf16` hash |
+| 句内局部文本高亮/笔记 | 已接入：Web 支持单句内精确选区创建、渲染、反显和取消 | 部分接入：结果页可读取、回显并 focus Web 创建的局部资产，但不在小程序端新建新的局部锚点 | `anchor_type=text_range`、`reader_notes`、`start_offset`、`end_offset`、`text_hash` | 坐标系为 UTF-16 code unit；后端校验 render scene sentence 切片和 `fnv1a32-utf16` hash |
 | 选中文本查词/查短语 | 已接入：selection toolbar 触发 | 未接入选区操作；保留点词查词路径 | `/dict` | Web 选区能力增强，不要求小程序复刻交互 |
 | 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 部分接入：按已有句子级操作为主；句子级笔记可在预览态通过二级菜单删除，局部资产先只展示 | `/user-annotations/{id}`、`/reader-notes/{id}` | 小程序可先展示局部资产，不必提供同等编辑入口 |
 | 跨句/跨段选择后批注 | 已接入：Web 可创建、渲染、回跳 `multi_text` 选区 | 仅展示：结果页可兼容显示并回显 Web 创建的跨句资产 | `anchor_type=multi_text`、`payload_json.segments[]` | 每段使用 UTF-16 offset + hash；后端按 render scene 顺序和切片校验 |
@@ -123,5 +123,4 @@
 - `docs/architecture/multi-client.md`：多端架构原则。
 - `docs/architecture/backend-multiclient-review.md`：后端多端化评审问题域。
 - `apps/web/docs/api-contract-audit.md`：Web 接口审计。
-- `specs/reader-annotation-refactor/requirements.md`：Web Reader 标注交互、toolbar、note card 与高亮/笔记边界。
 - `apps/web/docs/reader-ia.md`：Web Reader 信息架构。

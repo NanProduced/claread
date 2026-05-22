@@ -15,19 +15,19 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          "rounded-[0.82rem] border-[rgba(46,89,219,0.72)] bg-[linear-gradient(180deg,rgba(72,117,255,0.98),rgba(47,92,232,0.98))] text-white shadow-[0_12px_28px_rgba(47,92,232,0.2),inset_0_1px_0_rgba(255,255,255,0.26)] hover:-translate-y-[0.5px] hover:border-[rgba(39,80,207,0.78)] hover:bg-[linear-gradient(180deg,rgba(67,111,244,0.98),rgba(42,84,214,0.98))] hover:shadow-[0_16px_32px_rgba(47,92,232,0.24),inset_0_1px_0_rgba(255,255,255,0.22)]",
+          "rounded-[0.82rem] border-[var(--app-primary-border)] [background-image:var(--app-primary-gradient)] text-primary-foreground shadow-[var(--app-primary-shadow)] hover:-translate-y-[0.5px] hover:border-[var(--app-primary-border-hover)] hover:[background-image:var(--app-primary-gradient-hover)] hover:shadow-[var(--app-primary-shadow-hover)]",
         secondary:
-          "rounded-[0.82rem] border-[rgba(30,31,37,0.82)] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(21,22,28,0.98))] text-white shadow-[0_10px_24px_rgba(17,17,17,0.14),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-[0.5px] hover:bg-[linear-gradient(180deg,rgba(40,42,49,0.98),rgba(24,25,30,0.98))] hover:shadow-[0_14px_28px_rgba(17,17,17,0.18)]",
+          "rounded-[0.82rem] border-[var(--app-secondary-border)] [background-image:var(--app-secondary-gradient)] text-white shadow-[var(--app-secondary-shadow)] hover:-translate-y-[0.5px] hover:[background-image:var(--app-secondary-gradient-hover)] hover:shadow-[var(--app-secondary-shadow-hover)] dark:text-foreground",
         outline:
-          "rounded-[0.82rem] border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink shadow-[0_8px_20px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.72)] hover:border-[rgba(113,116,124,0.34)] hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,244,236,1))] hover:text-ink-soft",
+          "app-control-surface rounded-[0.82rem] border-hairline text-ink hover:border-[var(--app-control-border-hover)] hover:text-ink-soft",
         subtle:
-          "rounded-[0.82rem] border-transparent bg-reader-paper text-ink shadow-none hover:bg-surface-warm",
+          "rounded-[0.82rem] border-transparent bg-secondary text-ink shadow-none hover:bg-surface-warm",
         quiet:
-          "rounded-[0.82rem] border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(248,245,238,0.92))] text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] hover:border-[rgba(113,116,124,0.28)] hover:text-ink hover:shadow-[0_8px_18px_rgba(17,17,17,0.04)]",
+          "rounded-[0.82rem] border-hairline bg-[var(--app-control-quiet)] text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:border-[var(--app-control-border-hover)] hover:text-ink hover:shadow-[var(--app-panel-shadow-quiet)]",
         danger:
-          "rounded-[0.82rem] border-[rgba(190,18,60,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,247,249,0.98))] text-error-red shadow-[0_8px_18px_rgba(190,18,60,0.05)] hover:bg-[linear-gradient(180deg,rgba(255,249,251,1),rgba(255,241,245,1))]",
+          "rounded-[0.82rem] border-[var(--app-danger-border)] [background-image:var(--app-danger-gradient)] text-error-red shadow-[0_8px_18px_rgba(190,18,60,0.08)] hover:[background-image:var(--app-danger-gradient-hover)]",
         ghost:
-          "rounded-[0.82rem] border-transparent bg-transparent text-muted shadow-none hover:bg-reader-paper/92 hover:text-ink",
+          "rounded-[0.82rem] border-transparent bg-transparent text-muted shadow-none hover:bg-[var(--app-control-quiet)] hover:text-ink",
       },
       size: {
         sm: "min-h-9 px-3.5 text-[0.82rem]",

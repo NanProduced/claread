@@ -509,7 +509,6 @@ export interface ReaderAskCompletedPayloadDto {
 
 export interface ReaderAskThreadCreateRequestDto {
   record_id: string;
-  mode?: "default" | "new_chat";
   title?: string | null;
 }
 

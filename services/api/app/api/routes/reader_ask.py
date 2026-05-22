@@ -43,7 +43,7 @@ async def list_reader_ask_threads(
 )
 async def list_reader_ask_context_records(
     current_user: AuthUserDep,
-    query: str = Query(..., min_length=1),
+    query: str = Query(default=""),
     exclude_record_id: str | None = Query(default=None),
 ) -> ReaderAskContextRecordSearchResponse:
     return await ask_svc.list_context_records(

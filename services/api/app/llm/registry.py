@@ -12,6 +12,7 @@ from app.llm.routes import (
     MODEL_ROUTE_DAILY_REVIEW,
     MODEL_ROUTE_DICT_AI,
     MODEL_ROUTE_READER_ASK,
+    MODEL_ROUTE_READER_ASK_PLANNER,
 )
 from app.llm.types import ModelPresetConfig, ModelProfileConfig, ModelRegistry
 
@@ -60,6 +61,7 @@ def _build_model_registry_cached(
     annotation_model_profile: str,
     dict_ai_model_profile: str,
     reader_ask_model_profile: str,
+    reader_ask_planner_model_profile: str,
     daily_annotation_model_profile: str,
     daily_analysis_model_profile: str,
     daily_review_model_profile: str,
@@ -71,6 +73,7 @@ def _build_model_registry_cached(
         annotation_model_profile=annotation_model_profile,
         dict_ai_model_profile=dict_ai_model_profile,
         reader_ask_model_profile=reader_ask_model_profile,
+        reader_ask_planner_model_profile=reader_ask_planner_model_profile,
         daily_annotation_model_profile=daily_annotation_model_profile,
         daily_analysis_model_profile=daily_analysis_model_profile,
         daily_review_model_profile=daily_review_model_profile,
@@ -83,6 +86,11 @@ def _build_model_registry_cached(
             MODEL_ROUTE_ANNOTATION_GENERATION: settings.annotation_model_profile,
             MODEL_ROUTE_DICT_AI: settings.dict_ai_model_profile or settings.annotation_model_profile,
             MODEL_ROUTE_READER_ASK: settings.reader_ask_model_profile or settings.annotation_model_profile,
+            MODEL_ROUTE_READER_ASK_PLANNER: (
+                settings.reader_ask_planner_model_profile
+                or settings.reader_ask_model_profile
+                or settings.annotation_model_profile
+            ),
             MODEL_ROUTE_DAILY_ANNOTATION: settings.daily_annotation_model_profile,
             MODEL_ROUTE_DAILY_ANALYSIS: settings.daily_analysis_model_profile,
             MODEL_ROUTE_DAILY_REVIEW: settings.daily_review_model_profile,
@@ -103,6 +111,7 @@ def build_model_registry(settings: Settings) -> ModelRegistry:
         annotation_model_profile=settings.annotation_model_profile,
         dict_ai_model_profile=settings.dict_ai_model_profile,
         reader_ask_model_profile=settings.reader_ask_model_profile,
+        reader_ask_planner_model_profile=settings.reader_ask_planner_model_profile,
         daily_annotation_model_profile=settings.daily_annotation_model_profile,
         daily_analysis_model_profile=settings.daily_analysis_model_profile,
         daily_review_model_profile=settings.daily_review_model_profile,

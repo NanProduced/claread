@@ -118,6 +118,22 @@ class TestReaderAskRoute:
         assert response.json()["items"][0]["record_id"] == "record-2"
 
     @_mock_auth()
+    @patch("app.api.routes.reader_ask.ask_svc.list_context_records", new_callable=AsyncMock)
+    def test_list_context_records_without_query_returns_recent_items(self, mock_list_context_records, mock_auth) -> None:
+        client = create_client()
+        mock_list_context_records.return_value = ReaderAskContextRecordSearchResponse(
+            items=[{"record_id": "record-3", "title": "Recent Article", "updated_at": "2026-05-21T00:00:00Z"}]
+        )
+
+        response = client.get(
+            f"/reader-ask/context-records?exclude_record_id={RECORD_ID}",
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["record_id"] == "record-3"
+
+    @_mock_auth()
     @patch("app.api.routes.reader_ask.ask_svc.create_thread", new_callable=AsyncMock)
     def test_create_default_thread(self, mock_create_thread, mock_auth) -> None:
         client = create_client()
@@ -126,11 +142,23 @@ class TestReaderAskRoute:
         response = client.post(
             "/reader-ask/threads",
             headers=AUTH_HEADERS,
-            json={"record_id": RECORD_ID, "mode": "default"},
+            json={"record_id": RECORD_ID},
         )
 
         assert response.status_code == 200
         assert response.json()["is_default"] is True
+
+    @_mock_auth()
+    def test_create_thread_rejects_legacy_mode_field(self, mock_auth) -> None:
+        client = create_client()
+
+        response = client.post(
+            "/reader-ask/threads",
+            headers=AUTH_HEADERS,
+            json={"record_id": RECORD_ID, "mode": "new_chat"},
+        )
+
+        assert response.status_code == 422
 
     @_mock_auth()
     @patch("app.api.routes.reader_ask.ask_svc.get_thread_detail", new_callable=AsyncMock)

@@ -29,7 +29,7 @@ const TooltipContent = React.forwardRef<
         ref={ref}
         sideOffset={sideOffset}
         className={cn(
-          "z-50 max-w-60 rounded-[var(--cl-radius-control-sm)] border border-hairline bg-ink px-3 py-1.5 text-xs leading-5 text-[rgba(250,249,246,0.94)] shadow-[var(--cl-shadow-3)]",
+          "app-tooltip-surface z-50 max-w-60 rounded-[var(--cl-radius-control-sm)] border border-hairline px-3 py-1.5 text-xs leading-5 shadow-[var(--cl-shadow-3)]",
           className,
         )}
         {...props}

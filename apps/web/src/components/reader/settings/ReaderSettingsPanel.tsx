@@ -1,16 +1,28 @@
 "use client";
 
-import { BookOpen, Eye, EyeOff, Layers, Type, X } from "lucide-react";
 import {
+  AlignLeft,
+  BookOpen,
+  Eye,
+  EyeOff,
+  Highlighter,
+  Layers3,
+  Palette,
+  ScanText,
+  Type,
+  X,
+} from "lucide-react";
+import {
+  MODE_PRESETS,
   type ReaderAnnotationVisibilityGroups,
   type ReaderColumnWidth,
   type ReaderFontSize,
+  type ReaderPaperTheme,
   type ReaderSettingsState,
-  type ReaderTheme,
   type ReadingDensity,
   type ReadingMode,
   type TranslationDisplay,
-  MODE_PRESETS,
+  withCustomReadingMode,
 } from "./shared";
 
 interface ReaderSettingsPanelProps {
@@ -19,30 +31,72 @@ interface ReaderSettingsPanelProps {
   onClose?: () => void;
 }
 
-function optionClass(active: boolean) {
-  return `focus-ring min-h-11 rounded-[0.9rem] border px-3.5 py-2 text-left transition-[background-color,border-color,color,box-shadow] ${
-    active
-      ? "border-lens-blue/18 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(234,241,255,0.94))] text-ink shadow-[0_8px_18px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.75)]"
-      : "border-transparent bg-transparent text-ink-soft hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
-  }`;
-}
+const modeOptions: Array<{
+  value: ReadingMode;
+  label: string;
+}> = [
+  { value: "annotated", label: "精读" },
+  { value: "immersive", label: "沉浸" },
+  { value: "custom", label: "自定义" },
+];
+
+const paperThemes: Array<{
+  value: ReaderPaperTheme;
+  label: string;
+  dotClassName: string;
+}> = [
+  { value: "warm", label: "暖纸", dotClassName: "bg-[#d6bd8a]" },
+  { value: "cool", label: "冷纸", dotClassName: "bg-[#b8becb]" },
+  { value: "sage", label: "鼠尾草", dotClassName: "bg-[#9bb7a4]" },
+];
 
 function sectionClass() {
-  return "rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.58),rgba(248,245,238,0.8))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]";
+  return "reader-settings-section rounded-[1.05rem] border border-hairline/80 px-3.5 py-3";
 }
 
 function segmentContainerClass() {
-  return "inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]";
+  return "reader-settings-segmented inline-flex w-full flex-wrap gap-1 rounded-[0.95rem] border border-hairline p-1";
+}
+
+function optionClass(active: boolean) {
+  return `reader-settings-option focus-ring min-h-[2.9rem] rounded-[0.82rem] border px-3 py-2 text-left ${
+    active
+      ? "reader-settings-option--active border-hairline/90 text-ink"
+      : "reader-settings-option--inactive border-transparent bg-transparent text-ink-soft hover:text-ink"
+  }`;
+}
+
+function chipClass(active: boolean) {
+  return `reader-settings-chip focus-ring rounded-[0.85rem] border px-3 py-2 text-sm font-semibold ${
+    active
+      ? "reader-settings-chip--active border-hairline text-ink shadow-[var(--app-panel-shadow-quiet)]"
+      : "reader-settings-chip--inactive border-hairline/75 bg-background/38 text-ink-soft hover:text-ink"
+  }`;
+}
+
+function sectionHeaderClass() {
+  return "mb-2.5 flex items-center justify-between gap-2";
+}
+
+function sectionLabelClass() {
+  return "flex items-center gap-2 text-[0.8rem] font-semibold text-subtle";
+}
+
+function activeValueChip(label: string) {
+  return (
+    <span className="rounded-pill border border-hairline bg-background/72 px-2 py-0.5 text-[0.66rem] font-semibold text-muted">
+      {label}
+    </span>
+  );
 }
 
 function updateGroups(
   current: ReaderSettingsState,
   groups: ReaderAnnotationVisibilityGroups,
 ): ReaderSettingsState {
-  return {
-    ...current,
+  return withCustomReadingMode(current, {
     annotationVisibilityGroups: groups,
-  };
+  });
 }
 
 function updateField<K extends keyof ReaderSettingsState>(
@@ -50,35 +104,20 @@ function updateField<K extends keyof ReaderSettingsState>(
   key: K,
   nextValue: ReaderSettingsState[K],
 ): ReaderSettingsState {
-  return {
-    ...current,
+  return withCustomReadingMode(current, {
     [key]: nextValue,
-  };
+  } as Partial<ReaderSettingsState>);
 }
-
-/* ------------------------------------------------------------------ */
-/*  Theme swatch color mapping                                         */
-/* ------------------------------------------------------------------ */
-
-const THEME_SWATCHES: Array<{
-  value: ReaderTheme;
-  label: string;
-  hint: string;
-  fill: string;
-  edge: string;
-}> = [
-  { value: "warm", label: "暖纸", hint: "长时间精读", fill: "#FAF9F6", edge: "#DED3BF" },
-  { value: "cool", label: "冷纸", hint: "干净阅读", fill: "#F8F8F6", edge: "#D8D8D4" },
-  { value: "sage", label: "护眼", hint: "柔和护眼", fill: "#F0F4EE", edge: "#B7C9BE" },
-];
 
 export function ReaderSettingsPanel({
   onChange,
   onClose,
   value,
 }: ReaderSettingsPanelProps) {
-  /** Switch reading mode and apply the mode preset defaults. */
-  function switchMode(nextMode: ReadingMode) {
+  const activeModeLabel = modeOptions.find((option) => option.value === value.readingMode)?.label ?? "自定义";
+  const activePaperLabel = paperThemes.find((theme) => theme.value === value.readerPaperTheme)?.label ?? "暖纸";
+
+  function switchMode(nextMode: Exclude<ReadingMode, "custom">) {
     const preset = MODE_PRESETS[nextMode];
     onChange({
       ...value,
@@ -88,19 +127,23 @@ export function ReaderSettingsPanel({
   }
 
   return (
-    <section className="reader-tool-panel flex max-h-[min(54vh,30rem)] flex-col overflow-hidden">
-      <div className="flex items-start justify-between gap-3 border-b border-hairline px-5 py-3">
+    <section className="reader-tool-panel reader-settings-panel flex w-full flex-col overflow-hidden md:w-[29rem]">
+      <div className="flex items-start justify-between gap-3 border-b border-hairline px-4 py-3.5">
         <div>
           <div className="flex items-center gap-2">
             <Type aria-hidden="true" className="h-4 w-4 text-lens-blue" />
             <h2 className="text-base font-semibold text-ink">阅读显示</h2>
           </div>
-          <p className="mt-1 text-xs leading-5 text-muted">只影响当前浏览器里的 Reader 阅读体验。</p>
+          <div className="mt-1.5">
+            <span className="rounded-pill border border-lens-blue/12 bg-lens-blue-soft/55 px-2 py-0.5 text-[0.66rem] font-semibold text-lens-blue">
+              即时生效
+            </span>
+          </div>
         </div>
         {onClose ? (
           <button
             type="button"
-            className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(249,247,241,0.98))] text-muted shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.76)] transition-colors hover:border-muted hover:text-ink"
+            className="reader-settings-dismiss app-control-surface focus-ring inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-hairline text-muted transition-colors hover:border-[var(--app-control-border-hover)] hover:text-ink"
             onClick={onClose}
             aria-label="关闭阅读设置"
           >
@@ -109,188 +152,198 @@ export function ReaderSettingsPanel({
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
-        {/* ---- Reading mode ---- */}
+      <div className="space-y-3 px-4 py-3.5">
         <fieldset className={sectionClass()}>
-          <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">阅读模式</legend>
-          <p className="mt-1 text-xs leading-5 text-muted">切换精读与沉浸阅读，模式会联动译文和标注的默认显示。</p>
-          <div className={`mt-3 ${segmentContainerClass()}`}>
-            {([
-              { value: "annotated" as const, label: "精读", hint: "译文与标注全开", icon: Layers },
-              { value: "immersive" as const, label: "沉浸", hint: "只留英文原文", icon: BookOpen },
-            ]).map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`${optionClass(value.readingMode === option.value)} flex-1`}
-                onClick={() => switchMode(option.value)}
-              >
-                <span className="flex items-center gap-2">
-                  <option.icon aria-hidden="true" className="h-3.5 w-3.5" />
-                  <span className="text-sm font-semibold">{option.label}</span>
-                </span>
-                <span className="mt-1 block text-[0.68rem] leading-none text-subtle">{option.hint}</span>
-              </button>
-            ))}
+          <div className={sectionHeaderClass()}>
+            <legend className={sectionLabelClass()}>
+              <BookOpen aria-hidden="true" className="h-3.5 w-3.5" />
+              阅读预设
+            </legend>
+            {activeValueChip(activeModeLabel)}
           </div>
-        </fieldset>
-
-        {/* ---- Translation display ---- */}
-        <fieldset className={sectionClass()}>
-          <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">译文</legend>
-          <p className="mt-1 text-xs leading-5 text-muted">控制中文解释的显示方式。</p>
-          <div className={`mt-3 ${segmentContainerClass()}`}>
-            {([
-              { value: "visible" as TranslationDisplay, label: "显示", hint: "句后保留中文解释", icon: Eye },
-              { value: "muted" as TranslationDisplay, label: "淡显", hint: "译文轻隐、悬停显现", icon: EyeOff },
-              { value: "hidden" as TranslationDisplay, label: "隐藏", hint: "只留下英文原文", icon: EyeOff },
-            ]).map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`${optionClass(value.translationDisplay === option.value)} flex-1`}
-                onClick={() => onChange(updateField(value, "translationDisplay", option.value))}
-              >
-                <span className="block text-sm font-semibold">{option.label}</span>
-                <span className="mt-1 block text-[0.68rem] leading-none text-subtle">{option.hint}</span>
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        {/* ---- Font size & density ---- */}
-        <fieldset className={sectionClass()}>
-          <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">字号与行距</legend>
-          <div className="mt-3 grid gap-3">
-            <div>
-              <div className="mb-2 text-[0.68rem] font-semibold tracking-[0.08em] text-subtle">字号</div>
-              <div className={segmentContainerClass()}>
-                {([
-                  { value: "compact", label: "小", hint: "更紧凑" },
-                  { value: "normal", label: "中", hint: "默认阅读" },
-                  { value: "large", label: "大", hint: "更宽松" },
-                  { value: "xlarge", label: "特大", hint: "大字体" },
-                ] satisfies Array<{ value: ReaderFontSize; label: string; hint: string }>).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`${optionClass(value.fontSize === option.value)} flex-1`}
-                    onClick={() => onChange(updateField(value, "fontSize", option.value))}
-                  >
-                    <span className="block text-sm font-semibold">{option.label}</span>
-                    <span className="mt-1 block text-[0.68rem] leading-none text-subtle">{option.hint}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-2 text-[0.68rem] font-semibold tracking-[0.08em] text-subtle">行距</div>
-              <div className={segmentContainerClass()}>
-                {([
-                  { value: "compact", label: "紧凑", hint: "信息密集" },
-                  { value: "calm", label: "标准", hint: "日常阅读" },
-                  { value: "roomy", label: "舒展", hint: "留出更多呼吸" },
-                ] satisfies Array<{ value: ReadingDensity; label: string; hint: string }>).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`${optionClass(value.density === option.value)} flex-1`}
-                    onClick={() => onChange(updateField(value, "density", option.value))}
-                  >
-                    <span className="block text-sm font-semibold">{option.label}</span>
-                    <span className="mt-1 block text-[0.68rem] leading-none text-subtle">{option.hint}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </fieldset>
-
-        {/* ---- Column width ---- */}
-        <fieldset className={sectionClass()}>
-          <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">版心宽度</legend>
-          <p className="mt-1 text-xs leading-5 text-muted">控制正文最大列宽，不影响词典或 Ask 区域布局。</p>
-          <div className={`mt-3 ${segmentContainerClass()}`}>
-            {([
-              { value: "narrow", label: "窄", hint: "更聚焦" },
-              { value: "standard", label: "中", hint: "默认版心" },
-              { value: "wide", label: "宽", hint: "更多横向空间" },
-            ] satisfies Array<{ value: ReaderColumnWidth; label: string; hint: string }>).map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`${optionClass(value.columnWidth === option.value)} flex-1`}
-                onClick={() => onChange(updateField(value, "columnWidth", option.value))}
-              >
-                <span className="block text-sm font-semibold">{option.label}</span>
-                <span className="mt-1 block text-[0.68rem] leading-none text-subtle">{option.hint}</span>
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        {/* ---- Reading theme ---- */}
-        <fieldset className={sectionClass()}>
-          <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">阅读主题</legend>
-          <p className="mt-1 text-xs leading-5 text-muted">切换阅读面纸色，标注、分隔、面板随主题联动。</p>
-          <div className="mt-3 flex gap-3">
-            {THEME_SWATCHES.map((swatch) => {
-              const active = value.theme === swatch.value;
+          <div className={segmentContainerClass()}>
+            {modeOptions.map((option) => {
+              const active = value.readingMode === option.value;
+              const disabled = option.value === "custom";
               return (
                 <button
-                  key={swatch.value}
+                  key={option.value}
                   type="button"
-                  className={`focus-ring flex flex-col items-center gap-2 rounded-[0.9rem] border px-4 py-3 transition-[background-color,border-color,box-shadow] ${
-                    active
-                      ? "border-lens-blue/22 bg-[rgba(234,241,255,0.5)] shadow-[0_6px_16px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.7)]"
-                      : "border-transparent hover:border-hairline hover:bg-[rgba(255,255,255,0.48)]"
-                  }`}
-                  onClick={() => onChange(updateField(value, "theme", swatch.value))}
-                  aria-label={swatch.label}
+                  disabled={disabled}
+                  className={`${optionClass(active)} flex-1 text-center ${disabled ? "cursor-default opacity-100" : ""}`}
+                  onClick={() => {
+                    if (!disabled) {
+                      switchMode(option.value as Exclude<ReadingMode, "custom">);
+                    }
+                  }}
                 >
-                  <span
-                    className={`inline-block h-9 w-9 rounded-full border-2 shadow-sm transition-[border-color,box-shadow] ${
-                      active ? "border-lens-blue shadow-[0_0_0_2px_rgba(37,99,235,0.18)]" : "border-hairline"
-                    }`}
-                    style={{ backgroundColor: swatch.fill, borderColor: active ? undefined : swatch.edge }}
-                  />
-                  <span className="text-[0.72rem] font-semibold text-ink">{swatch.label}</span>
-                  <span className="text-[0.62rem] leading-none text-subtle">{swatch.hint}</span>
+                  <span className="block text-sm font-semibold">{option.label}</span>
                 </button>
               );
             })}
           </div>
         </fieldset>
 
-        {/* ---- Annotation visibility groups ---- */}
         <fieldset className={sectionClass()}>
-          <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">标注显示分组</legend>
-          <p className="mt-1 text-xs leading-5 text-muted">控制不同类型的机器标注和用户资产在正文里的常态可见层。</p>
-          <div className="mt-3 grid gap-2">
+          <div className={sectionHeaderClass()}>
+            <legend className={sectionLabelClass()}>
+              {value.translationDisplay === "visible" ? (
+                <Eye aria-hidden="true" className="h-3.5 w-3.5" />
+              ) : (
+                <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+              译文
+            </legend>
+            {activeValueChip(
+              value.translationDisplay === "visible"
+                ? "显示"
+                : value.translationDisplay === "muted"
+                  ? "淡显"
+                  : "隐藏",
+            )}
+          </div>
+          <div className={segmentContainerClass()}>
             {([
-              {
-                key: "lexical",
-                label: "词汇 / 短语",
-                hint: "词汇、短语、语境义等 inline 标注",
-              },
-              {
-                key: "analysis",
-                label: "语法 / 逻辑",
-                hint: "语法、术语、逻辑和句后分析块",
-              },
-              {
-                key: "userAssets",
-                label: "我的笔记与高亮",
-                hint: "高亮、笔记 slip、收藏 marker",
-              },
-            ] satisfies Array<{ key: keyof ReaderAnnotationVisibilityGroups; label: string; hint: string }>).map((group) => {
+              { value: "visible" as TranslationDisplay, label: "显示" },
+              { value: "muted" as TranslationDisplay, label: "淡显" },
+              { value: "hidden" as TranslationDisplay, label: "隐藏" },
+            ]).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`${optionClass(value.translationDisplay === option.value)} flex-1 text-center`}
+                onClick={() => onChange(updateField(value, "translationDisplay", option.value))}
+              >
+                <span className="block text-sm font-semibold">{option.label}</span>
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <section className={`${sectionClass()} grid gap-3 sm:grid-cols-3`}>
+          <fieldset className="sm:border-r sm:border-hairline/65 sm:pr-3">
+            <div className={sectionHeaderClass()}>
+              <legend className={sectionLabelClass()}>
+                <Type aria-hidden="true" className="h-3.5 w-3.5" />
+                字号
+              </legend>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-1">
+              {([
+                { value: "compact", label: "小" },
+                { value: "normal", label: "中" },
+                { value: "large", label: "大" },
+                { value: "xlarge", label: "特大" },
+              ] satisfies Array<{ value: ReaderFontSize; label: string }>).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={chipClass(value.fontSize === option.value)}
+                  onClick={() => onChange(updateField(value, "fontSize", option.value))}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <fieldset className="sm:border-r sm:border-hairline/65 sm:px-3">
+            <div className={sectionHeaderClass()}>
+              <legend className={sectionLabelClass()}>
+                <Layers3 aria-hidden="true" className="h-3.5 w-3.5" />
+                行距
+              </legend>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-1">
+              {([
+                { value: "compact", label: "紧" },
+                { value: "calm", label: "中" },
+                { value: "roomy", label: "舒" },
+              ] satisfies Array<{ value: ReadingDensity; label: string }>).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={chipClass(value.density === option.value)}
+                  onClick={() => onChange(updateField(value, "density", option.value))}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <fieldset className="sm:pl-3">
+            <div className={sectionHeaderClass()}>
+              <legend className={sectionLabelClass()}>
+                <AlignLeft aria-hidden="true" className="h-3.5 w-3.5" />
+                版心
+              </legend>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-1">
+              {([
+                { value: "narrow", label: "窄" },
+                { value: "standard", label: "中" },
+                { value: "wide", label: "宽" },
+              ] satisfies Array<{ value: ReaderColumnWidth; label: string }>).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={chipClass(value.columnWidth === option.value)}
+                  onClick={() => onChange(updateField(value, "columnWidth", option.value))}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        </section>
+
+        <fieldset className={sectionClass()}>
+          <div className={sectionHeaderClass()}>
+            <legend className={sectionLabelClass()}>
+              <Palette aria-hidden="true" className="h-3.5 w-3.5" />
+              纸面主题
+            </legend>
+            {activeValueChip(activePaperLabel)}
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {paperThemes.map((theme) => {
+              const active = value.readerPaperTheme === theme.value;
+
+              return (
+                <button
+                  key={theme.value}
+                  type="button"
+                  className={`${chipClass(active)} inline-flex items-center justify-center gap-2`}
+                  onClick={() => onChange(updateField(value, "readerPaperTheme", theme.value))}
+                >
+                  <span className={`h-2 w-2 rounded-full ${theme.dotClassName}`} />
+                  <span>{theme.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <fieldset className={sectionClass()}>
+          <div className={sectionHeaderClass()}>
+            <legend className={sectionLabelClass()}>
+              <Highlighter aria-hidden="true" className="h-3.5 w-3.5" />
+              标注层
+            </legend>
+          </div>
+          <div className="grid gap-1.5 sm:grid-cols-3">
+            {([
+              { key: "lexical", label: "词汇 / 短语" },
+              { key: "analysis", label: "语法 / 逻辑" },
+              { key: "userAssets", label: "我的高亮与笔记" },
+            ] satisfies Array<{ key: keyof ReaderAnnotationVisibilityGroups; label: string }>).map((group) => {
               const enabled = value.annotationVisibilityGroups[group.key];
               return (
                 <button
                   key={group.key}
                   type="button"
-                  className={`${optionClass(enabled)} w-full`}
+                  className={`${chipClass(enabled)} inline-flex items-center justify-center gap-2 text-center`}
                   onClick={() =>
                     onChange(
                       updateGroups(value, {
@@ -300,8 +353,10 @@ export function ReaderSettingsPanel({
                     )
                   }
                 >
-                  <span className="block text-sm font-semibold">{group.label}</span>
-                  <span className="mt-1 block text-[0.68rem] leading-none text-subtle">{group.hint}</span>
+                  <span
+                    className={`h-2 w-2 rounded-full transition-colors ${enabled ? "bg-structure-green" : "bg-hairline"}`}
+                  />
+                  {group.label}
                 </button>
               );
             })}

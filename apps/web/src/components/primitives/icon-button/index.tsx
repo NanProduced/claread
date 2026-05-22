@@ -15,11 +15,11 @@ const iconButtonVariants = cva(
     variants: {
       variant: {
         outline:
-          "rounded-[0.82rem] border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.72)] hover:-translate-y-[0.5px] hover:border-[rgba(113,116,124,0.32)] hover:text-ink",
+          "app-control-surface rounded-[0.82rem] border-hairline text-ink-soft hover:-translate-y-[0.5px] hover:border-[var(--app-control-border-hover)] hover:text-ink",
         quiet:
-          "rounded-[0.82rem] border-transparent bg-transparent text-muted hover:bg-reader-paper/92 hover:text-ink",
+          "rounded-[0.82rem] border-transparent bg-transparent text-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
         danger:
-          "rounded-[0.82rem] border-[rgba(190,18,60,0.18)] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,247,249,0.98))] text-error-red hover:bg-[linear-gradient(180deg,rgba(255,249,251,1),rgba(255,241,245,1))]",
+          "rounded-[0.82rem] border-[var(--app-danger-border)] [background-image:var(--app-danger-gradient)] text-error-red hover:[background-image:var(--app-danger-gradient-hover)]",
       },
       size: {
         sm: "h-8 w-8",

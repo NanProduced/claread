@@ -3122,7 +3122,7 @@ export function ReaderWorkbench({
                     type="button"
                     className={`focus-ring inline-flex min-h-[2.55rem] min-w-[6rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
                       showTranslation
-                        ? "border-lens-blue/15 bg-background text-ink shadow-sm"
+                        ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
                         : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
                     }`}
                     onClick={() => {
@@ -3153,7 +3153,7 @@ export function ReaderWorkbench({
                     type="button"
                     className={`focus-ring inline-flex min-h-[2.55rem] min-w-[5.2rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
                       settingsPanelOpen
-                        ? "border-lens-blue/15 bg-background text-ink shadow-sm"
+                        ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
                         : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
                     }`}
                     onClick={openSettingsPanel}

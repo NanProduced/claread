@@ -98,7 +98,7 @@ export function VocabularyClient({
       />
 
       {filteredItems.length > 0 ? (
-        <section className="overflow-hidden rounded-panel border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(251,250,246,0.985))] shadow-surface-quiet">
+        <section className="app-panel-surface overflow-hidden rounded-panel border border-hairline">
           {filteredItems.map((item) => (
             <ListRow
               key={item.id}

@@ -22,7 +22,7 @@ const dialogContentVariants = cva(
     variants: {
       variant: {
         default: "",
-        quiet: "bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(247,246,242,0.96))]",
+        quiet: "app-panel-surface--muted",
         danger: "border-[rgba(190,18,60,0.16)]",
       },
       size: {
@@ -75,7 +75,7 @@ const DialogContent = React.forwardRef<
         {showCloseButton ? (
           <DialogPrimitive.Close
             className={cn(
-              "absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] border border-hairline bg-reader-paper text-muted transition-colors hover:text-ink",
+              "absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] border border-hairline bg-secondary text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink",
               primitiveFocusRing,
             )}
             aria-label="关闭对话框"

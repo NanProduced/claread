@@ -60,7 +60,7 @@ export default async function ReviewPage() {
           title="复习"
           description="复习从真实生词本生成，按熟悉程度推进下一次复习时间。"
           actions={
-            <div className="shrink-0 rounded-pill border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(251,250,246,0.985))] px-3 py-1 text-xs font-semibold text-muted shadow-surface-quiet">
+            <div className="app-panel-surface shrink-0 rounded-pill border border-hairline px-3 py-1 text-xs font-semibold text-muted">
               {queue.total} / {queue.limit}
             </div>
           }

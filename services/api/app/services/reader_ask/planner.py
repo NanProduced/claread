@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -13,12 +12,19 @@ from app.schemas.reader_ask import (
     ReaderAskCitation,
     ReaderAskContextPlan,
     ReaderAskCurrentRecordContext,
+    ReaderAskCurrentRecordAffordances,
     ReaderAskDisambiguationCandidate,
     ReaderAskDisambiguation,
     ReaderAskEntryAction,
     ReaderAskExternalAssetContext,
     ReaderAskExternalRecordContext,
     ReaderAskPageIdentity,
+    ReaderAskPlannerDecision,
+    ReaderAskPlannerHistoryMessage,
+    ReaderAskPlannerInput,
+    ReaderAskPlannerReferenceRequest,
+    ReaderAskPlannerStructuredAssetRequest,
+    ReaderAskPlannerWorkingSetDecision,
     ReaderAskReferenceResolutionStatus,
     ReaderAskResolvedContextInput,
     ReaderAskResolvedContextSummary,
@@ -28,39 +34,6 @@ from app.schemas.reader_ask import (
 )
 
 ReaderAskRetrievalNeeds = Literal["none", "known_reference_only"]
-
-_PRACTICE_INTENT_RE = re.compile(r"(练习|习题|exercise|quiz|practice)", re.IGNORECASE)
-_BREAKDOWN_INTENT_RE = re.compile(r"(拆句|拆解|主干|阅读顺序|break\s*down|breakdown)", re.IGNORECASE)
-_GRAMMAR_INTENT_RE = re.compile(r"(语法|句法|从句|时态|语态|grammar|syntax)", re.IGNORECASE)
-_VOCABULARY_INTENT_RE = re.compile(r"(词义|短语|搭配|表达|词汇|单词|vocabulary|phrase|word)", re.IGNORECASE)
-_AMBIGUOUS_REF_RE = re.compile(r"(这里|这句|这段|刚刚那段|上一段|this|that|here|it)", re.IGNORECASE)
-_REFERENCE_MARKER_RE = re.compile(
-    r"(之前那篇|以前那篇|那篇|上一篇|另一篇|另一条|earlier article|previous article|that article|another article|other article)",
-    re.IGNORECASE,
-)
-_QUOTED_REFERENCE_RE = re.compile(r"[\"“”'']([^\"“”'']{3,80})[\"“”'']")
-_TITLEISH_REFERENCE_RE = re.compile(
-    r"(?:那篇|上一篇|关于|article|analysis|piece|title)\s+([A-Za-z0-9][A-Za-z0-9\-:\s]{2,80}?)(?=\s*(?:的|里|中|文章|解析)|[？?。.!]|\s*$)",
-    re.IGNORECASE,
-)
-_ARTICLE_LEVEL_RE = re.compile(
-    r"(全文|整篇|整篇文章|本文主线|主线|核心论点|整体|通篇|这篇文章|这篇|overall|whole article|main point|main thread|big picture)",
-    re.IGNORECASE,
-)
-_SUPPLEMENT_ASSET_RE = re.compile(r"(补充|旁注|grammar\s*note|语法补充|语法旁注)", re.IGNORECASE)
-_ANALYSIS_ASSET_RE = re.compile(r"(分析里|解析里|analysis|sentence\s*analysis|分析卡|解析卡)", re.IGNORECASE)
-_LOCAL_WINDOW_ATTACHMENT_SUBTYPES = {
-    "sentence",
-    "text_range",
-    "multi_text",
-    "translation",
-    "sentence_analysis",
-    "grammar_note",
-    "supplement_ref",
-}
-_DICTIONARY_ATTACHMENT_SUBTYPES = {
-    "dictionary_entry",
-}
 
 
 @dataclass(slots=True)
@@ -115,6 +88,8 @@ class ReaderAskWorkingSet:
 @dataclass(slots=True)
 class ReaderAskPlanningSnapshot:
     resolved_intent: ReaderAskResolvedIntent
+    planner_decision: ReaderAskPlannerDecision
+    planner_validation_status: str
     resolved_context_input: ReaderAskResolvedContextInput
     reference_needs: ReaderAskReferenceNeeds
     retrieval_needs: ReaderAskRetrievalNeeds
@@ -129,13 +104,14 @@ class ReaderAskPlanningSnapshot:
     clarification_only: bool = False
 
 
-def _clean_reference_query(value: str | None) -> str | None:
+def _normalize_text(value: str | None) -> str:
     if not value:
-        return None
-    cleaned = re.sub(r"\s+", " ", value).strip(" \t\r\n,.;:!?，。；：！？")
-    for suffix in (" 的", " 里", " 中", " 文章", " 解析"):
-        if cleaned.endswith(suffix):
-            cleaned = cleaned[: -len(suffix)].strip()
+        return ""
+    return " ".join(value.split()).strip()
+
+
+def _clean_reference_query(value: str | None) -> str | None:
+    cleaned = _normalize_text(value).strip(" \t\r\n,.;:!?，。；：！？")
     return cleaned or None
 
 
@@ -183,172 +159,60 @@ def _attachment_asset_id(attachment: ReaderAskAttachment) -> str | None:
     return None
 
 
-def _word_or_phrase_selection(attachments: list[ReaderAskAttachment], anchors: list[ReaderAskAnchorRef]) -> bool:
-    candidates = [attachment.selected_text for attachment in attachments]
-    candidates.extend(anchor.selected_text for anchor in anchors)
-    for candidate in candidates:
-        normalized = re.sub(r"\s+", " ", (candidate or "").strip())
-        if not normalized:
+def build_planner_input(
+    *,
+    user_message: str,
+    entry_action: ReaderAskEntryAction,
+    page_identity: ReaderAskPageIdentity,
+    current_record_affordances: ReaderAskCurrentRecordAffordances,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    history_messages: list[dict[str, object]],
+) -> ReaderAskPlannerInput:
+    history: list[ReaderAskPlannerHistoryMessage] = []
+    for item in history_messages:
+        role = item.get("role")
+        if role not in {"user", "assistant"}:
             continue
-        token_count = len(normalized.split(" "))
-        if token_count <= 4 and len(normalized) <= 40:
-            return True
-    return False
-
-
-def _has_local_anchor(
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    *,
-    current_record_id: str,
-) -> bool:
-    if anchors:
-        return True
-    return any(
-        attachment.kind == "text_selection"
-        or (
-            attachment.kind in {"analysis_ref", "supplement_ref"}
-            and _attachment_record_id(attachment) in {None, current_record_id}
+        content_md = _clean_reference_query(str(item.get("content_md") or "")) or ""
+        if not content_md:
+            continue
+        history.append(
+            ReaderAskPlannerHistoryMessage(
+                role=role,
+                content_md=content_md,
+                resolved_intent=item.get("resolved_intent"),
+            )
         )
-        or attachment.subtype in _LOCAL_WINDOW_ATTACHMENT_SUBTYPES
-        for attachment in attachments
+    return ReaderAskPlannerInput(
+        user_message=user_message,
+        entry_action=entry_action,
+        page_identity=page_identity,
+        current_record_affordances=current_record_affordances,
+        attachments=attachments,
+        normalized_anchors=anchors,
+        history=history,
     )
 
 
-def _has_explicit_external_context(attachments: list[ReaderAskAttachment], current_record_id: str) -> bool:
-    return any(
-        (attachment.kind == "record_ref" and attachment.subtype == "related_record")
-        or (
-            attachment.kind in {"analysis_ref", "supplement_ref"}
-            and _attachment_record_id(attachment) not in {None, current_record_id}
-        )
-        for attachment in attachments
+def _reference_needs_from_decision(decision: ReaderAskPlannerDecision) -> ReaderAskReferenceNeeds:
+    request = decision.reference_request
+    return ReaderAskReferenceNeeds(
+        requested=request.requested,
+        query=_clean_reference_query(request.query),
+        reason=request.reason,
     )
 
 
-def _has_dictionary_request(
-    *,
-    content: str,
-    entry_action: ReaderAskEntryAction,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-) -> bool:
-    if entry_action == "lookup_in_context":
-        return True
-    if any(anchor.anchor_type == "dictionary_entry" for anchor in anchors):
-        return True
-    if any(attachment.subtype in _DICTIONARY_ATTACHMENT_SUBTYPES for attachment in attachments):
-        return True
-    return resolve_intent(content, attachments, entry_action) == "vocabulary" and _word_or_phrase_selection(attachments, anchors)
-
-
-def _is_article_level_question(content: str, entry_action: ReaderAskEntryAction) -> bool:
-    if entry_action == "compare_translation":
-        return False
-    return bool(_ARTICLE_LEVEL_RE.search(content))
-
-
-def build_structured_asset_needs(
-    content: str,
-    attachments: list[ReaderAskAttachment],
-    *,
-    current_record_id: str,
+def _structured_asset_needs_from_decision(
+    decision: ReaderAskPlannerDecision,
 ) -> ReaderAskStructuredAssetNeeds:
-    explicit_external_asset = next(
-        (
-            attachment
-            for attachment in attachments
-            if attachment.kind in {"analysis_ref", "supplement_ref"}
-            and _attachment_record_id(attachment) not in {None, current_record_id}
-        ),
-        None,
+    request = decision.structured_asset_request
+    return ReaderAskStructuredAssetNeeds(
+        requested=request.requested,
+        requested_asset_type=request.requested_asset_type,
+        reason=request.reason,
     )
-    if explicit_external_asset is not None:
-        return ReaderAskStructuredAssetNeeds(
-            requested=True,
-            requested_asset_type="supplement" if explicit_external_asset.kind == "supplement_ref" else "analysis",
-            reason="explicit_external_asset_attachment",
-        )
-    if _SUPPLEMENT_ASSET_RE.search(content):
-        return ReaderAskStructuredAssetNeeds(
-            requested=True,
-            requested_asset_type="supplement",
-            reason="supplement_asset_reference",
-        )
-    if _ANALYSIS_ASSET_RE.search(content):
-        return ReaderAskStructuredAssetNeeds(
-            requested=True,
-            requested_asset_type="analysis",
-            reason="analysis_asset_reference",
-        )
-    return ReaderAskStructuredAssetNeeds()
-
-
-def resolve_intent(
-    content: str,
-    attachments: list[ReaderAskAttachment],
-    entry_action: ReaderAskEntryAction,
-) -> ReaderAskResolvedIntent:
-    if _PRACTICE_INTENT_RE.search(content):
-        return "practice"
-    if _BREAKDOWN_INTENT_RE.search(content):
-        return "breakdown"
-    if _GRAMMAR_INTENT_RE.search(content):
-        return "grammar"
-    if _VOCABULARY_INTENT_RE.search(content):
-        return "vocabulary"
-    if entry_action == "lookup_in_context":
-        return "vocabulary"
-    if entry_action == "why_here":
-        return "grammar"
-    if entry_action == "compare_translation":
-        return "explain"
-    if any(attachment.subtype == "translation" for attachment in attachments):
-        return "explain"
-    return "explain"
-
-
-def needs_clarification(
-    content: str,
-    anchors: list[ReaderAskAnchorRef],
-    *,
-    resolved_reference_status: ReaderAskReferenceResolutionStatus = "not_needed",
-    has_explicit_external_context: bool = False,
-) -> bool:
-    if resolved_reference_status in {"ambiguous", "not_found"}:
-        return True
-    if anchors:
-        return False
-    if has_explicit_external_context:
-        return False
-    return bool(_AMBIGUOUS_REF_RE.search(content))
-
-
-def build_reference_needs(content: str) -> ReaderAskReferenceNeeds:
-    quoted = _QUOTED_REFERENCE_RE.search(content)
-    if quoted:
-        return ReaderAskReferenceNeeds(
-            requested=True,
-            query=_clean_reference_query(quoted.group(1)),
-            reason="quoted_reference",
-        )
-
-    titleish = _TITLEISH_REFERENCE_RE.search(content)
-    if titleish:
-        return ReaderAskReferenceNeeds(
-            requested=True,
-            query=_clean_reference_query(titleish.group(1)),
-            reason="title_like_reference",
-        )
-
-    if _REFERENCE_MARKER_RE.search(content):
-        return ReaderAskReferenceNeeds(
-            requested=True,
-            query=None,
-            reason="reference_marker_without_title",
-        )
-
-    return ReaderAskReferenceNeeds()
 
 
 def build_resolved_context_input(
@@ -394,6 +258,7 @@ def _planned_context_plan(
     entry_action: ReaderAskEntryAction,
     attachments: list[ReaderAskAttachment],
     anchors: list[ReaderAskAnchorRef],
+    planner_decision: ReaderAskPlannerDecision,
     working_set: ReaderAskWorkingSet,
     reference_resolution: ReaderAskReferenceResolution,
     structured_asset_resolution: ReaderAskStructuredAssetResolution,
@@ -403,14 +268,16 @@ def _planned_context_plan(
     external_record_context_reason = None
     structured_asset_lookup_reason = None
     if clarification_only:
-        if reference_resolution.status == "ambiguous":
-            clarification_reason = "ambiguous_known_reference"
-        elif reference_resolution.status == "not_found":
-            clarification_reason = "known_reference_not_found"
-        elif structured_asset_resolution.status == "ambiguous":
-            clarification_reason = "ambiguous_external_asset"
-        else:
-            clarification_reason = "missing_local_anchor"
+        clarification_reason = planner_decision.clarification_reason
+        if not clarification_reason:
+            if reference_resolution.status == "ambiguous":
+                clarification_reason = "ambiguous_known_reference"
+            elif reference_resolution.status == "not_found":
+                clarification_reason = "known_reference_not_found"
+            elif structured_asset_resolution.status == "ambiguous":
+                clarification_reason = "ambiguous_external_asset"
+            else:
+                clarification_reason = "missing_required_context"
     if working_set.external_record_refs:
         external_record_context_reason = (
             "known_reference_resolved"
@@ -430,22 +297,44 @@ def _planned_context_plan(
         expanded_record_ids=[item["record_id"] for item in reference_resolution.resolved_records],
         used_cross_record_context=working_set.cross_record_context_allowed,
         cross_record_context_reason=(
-            "explicit_external_record_context"
+            planner_decision.reference_request.reason
+            if planner_decision.reference_request.requested
+            else "explicit_external_record_context"
             if working_set.external_record_refs
             else "known_reference_resolved"
             if reference_resolution.status == "resolved"
             else None
         ),
         used_record_context=working_set.local_context_window_needed,
-        record_context_reason="anchor_window_planned" if working_set.local_context_window_needed else None,
+        record_context_reason=(
+            "semantic_planner_requested_local_context"
+            if working_set.local_context_window_needed
+            else None
+        ),
         used_record_insights=working_set.record_insights_needed,
-        record_insights_reason="grammar_or_breakdown_anchor" if working_set.record_insights_needed else None,
+        record_insights_reason=(
+            "semantic_planner_requested_record_insights"
+            if working_set.record_insights_needed
+            else None
+        ),
         used_article_overview=working_set.article_overview_needed,
-        article_overview_reason="article_level_question" if working_set.article_overview_needed else None,
+        article_overview_reason=(
+            "semantic_planner_requested_article_overview"
+            if working_set.article_overview_needed
+            else None
+        ),
         used_dictionary=working_set.dictionary_needed,
-        dictionary_reason="dictionary_lookup_planned" if working_set.dictionary_needed else None,
+        dictionary_reason=(
+            "semantic_planner_requested_dictionary"
+            if working_set.dictionary_needed
+            else None
+        ),
         external_record_context_reason=external_record_context_reason,
-        structured_asset_lookup_reason=structured_asset_lookup_reason,
+        structured_asset_lookup_reason=(
+            planner_decision.structured_asset_request.reason
+            if structured_asset_lookup_reason
+            else None
+        ),
         external_asset_selection_reason=(
             "explicit_external_asset"
             if working_set.external_asset_refs
@@ -463,6 +352,7 @@ def _planned_context_plan(
 
 def _planned_trace_summary(
     *,
+    planner_decision: ReaderAskPlannerDecision,
     reference_resolution: ReaderAskReferenceResolution,
     working_set: ReaderAskWorkingSet,
     clarification_only: bool,
@@ -481,14 +371,18 @@ def _planned_trace_summary(
         planner_mode = "direct_answer"
 
     notes: list[str] = []
-    if clarification_only:
-        notes.append("当前问题缺少可定位的本文锚点，需要先澄清。")
+    if planner_decision.rationale:
+        notes.append(planner_decision.rationale)
+    if clarification_only and planner_decision.clarification_reason:
+        notes.append(f"需要澄清：{planner_decision.clarification_reason}")
     if working_set.article_overview_needed:
         notes.append("本轮优先使用当前文章概览。")
     if working_set.local_context_window_needed:
-        notes.append("本轮优先使用当前锚点附近的正文窗口。")
+        notes.append("本轮优先使用当前文章正文窗口。")
+    if working_set.record_insights_needed:
+        notes.append("本轮优先使用当前文章稳定解析资产。")
     if working_set.external_record_refs:
-        notes.append("本轮显式并入了其他文章记录。")
+        notes.append("本轮并入了其他文章记录。")
     if working_set.external_asset_refs:
         notes.append("本轮并入了外部文章里的稳定解析资产。")
     if external_asset_disambiguation_state and external_asset_disambiguation_state.required:
@@ -504,7 +398,9 @@ def _planned_trace_summary(
         ),
         used_known_reference_resolution=reference_resolution.status == "resolved",
         used_external_record_context=bool(working_set.external_record_refs),
-        used_structured_asset_lookup=bool(working_set.external_record_refs),
+        used_structured_asset_lookup=bool(
+            working_set.external_record_refs and planner_decision.structured_asset_request.requested
+        ),
         used_hitp_disambiguation=bool(disambiguation_state and disambiguation_state.required),
         used_external_asset_context=bool(working_set.external_asset_refs),
         used_external_asset_disambiguation=bool(
@@ -576,27 +472,10 @@ def _planned_external_asset_disambiguation_state(
     )
 
 
-def plan_request(
-    *,
-    content: str,
-    page_identity: ReaderAskPageIdentity,
-    entry_action: ReaderAskEntryAction,
+def _explicit_external_record_refs(
     attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    reference_resolution: ReaderAskReferenceResolution | None = None,
-    structured_asset_resolution: ReaderAskStructuredAssetResolution | None = None,
-) -> ReaderAskPlanningSnapshot:
-    resolved_reference = reference_resolution or ReaderAskReferenceResolution()
-    resolved_asset_resolution = structured_asset_resolution or ReaderAskStructuredAssetResolution()
-    resolved_intent = resolve_intent(content, attachments, entry_action)
-    reference_needs = build_reference_needs(content)
-    structured_asset_needs = build_structured_asset_needs(
-        content,
-        attachments,
-        current_record_id=page_identity.record_id,
-    )
-
-    explicit_external_record_refs = [
+) -> list[dict[str, str]]:
+    return [
         {
             "record_id": record_id,
             "title": attachment.metadata.title or attachment.label,
@@ -607,7 +486,14 @@ def plan_request(
         for record_id in [(_attachment_target_record(attachment) or "")]
         if record_id
     ]
-    explicit_external_asset_refs = [
+
+
+def _explicit_external_asset_refs(
+    attachments: list[ReaderAskAttachment],
+    *,
+    current_record_id: str,
+) -> list[dict[str, str]]:
+    return [
         {
             "record_id": record_id,
             "record_title": attachment.metadata.record_title or None,
@@ -621,66 +507,38 @@ def plan_request(
         if attachment.kind in {"analysis_ref", "supplement_ref"}
         for record_id in [(_attachment_record_id(attachment) or "")]
         for asset_id in [(_attachment_asset_id(attachment) or "")]
-        if record_id and record_id != page_identity.record_id and asset_id
+        if record_id and record_id != current_record_id and asset_id
     ]
-    resolved_external_record_refs = [
+
+
+def _merge_external_record_refs(
+    explicit_refs: list[dict[str, str]],
+    reference_resolution: ReaderAskReferenceResolution,
+) -> list[dict[str, str]]:
+    resolved_refs = [
         {
             "record_id": item["record_id"],
             "title": item["title"],
             "reason": "known_reference_resolved",
         }
-        for item in resolved_reference.resolved_records
+        for item in reference_resolution.resolved_records
     ]
-    merged_external_record_refs: list[dict[str, str]] = []
-    seen_external_record_ids: set[str] = set()
-    for item in [*explicit_external_record_refs, *resolved_external_record_refs]:
+    merged: list[dict[str, str]] = []
+    seen_record_ids: set[str] = set()
+    for item in [*explicit_refs, *resolved_refs]:
         record_id = item["record_id"]
-        if record_id in seen_external_record_ids:
+        if record_id in seen_record_ids:
             continue
-        seen_external_record_ids.add(record_id)
-        merged_external_record_refs.append(item)
+        seen_record_ids.add(record_id)
+        merged.append(item)
+    return merged
 
-    local_anchor = _has_local_anchor(
-        attachments,
-        anchors,
-        current_record_id=page_identity.record_id,
-    )
-    has_explicit_external_context = _has_explicit_external_context(attachments, page_identity.record_id)
-    clarification_only = needs_clarification(
-        content,
-        anchors,
-        resolved_reference_status=resolved_reference.status,
-        has_explicit_external_context=has_explicit_external_context,
-    )
-    article_overview_needed = (
-        not clarification_only
-        and not merged_external_record_refs
-        and resolved_reference.status != "resolved"
-        and _is_article_level_question(content, entry_action)
-        and page_identity.has_article_overview
-    )
-    dictionary_needed = (
-        not clarification_only
-        and _has_dictionary_request(
-            content=content,
-            entry_action=entry_action,
-            attachments=attachments,
-            anchors=anchors,
-        )
-    )
-    record_insights_needed = (
-        not clarification_only
-        and local_anchor
-        and resolved_intent in {"grammar", "breakdown"}
-    )
-    local_context_window_needed = (
-        not clarification_only
-        and local_anchor
-        and not article_overview_needed
-    )
-    cross_record_context_allowed = bool(merged_external_record_refs) or resolved_reference.status == "resolved"
-    retrieval_needs: ReaderAskRetrievalNeeds = "known_reference_only" if cross_record_context_allowed else "none"
-    resolved_external_asset_refs = [
+
+def _merge_external_asset_refs(
+    explicit_refs: list[dict[str, str]],
+    structured_asset_resolution: ReaderAskStructuredAssetResolution,
+) -> list[dict[str, str]]:
+    resolved_refs = [
         {
             "record_id": item["record_id"],
             "record_title": item.get("record_title"),
@@ -691,30 +549,77 @@ def plan_request(
             "content_summary": item.get("summary"),
             "reason": "structured_asset_resolved",
         }
-        for item in resolved_asset_resolution.resolved_assets
+        for item in structured_asset_resolution.resolved_assets
     ]
-    merged_external_asset_refs: list[dict[str, str]] = []
-    seen_external_asset_keys: set[tuple[str, str]] = set()
-    for item in [*explicit_external_asset_refs, *resolved_external_asset_refs]:
+    merged: list[dict[str, str]] = []
+    seen_asset_keys: set[tuple[str, str]] = set()
+    for item in [*explicit_refs, *resolved_refs]:
         key = (item["asset_type"], item["asset_id"])
-        if key in seen_external_asset_keys:
+        if key in seen_asset_keys:
             continue
-        seen_external_asset_keys.add(key)
-        merged_external_asset_refs.append(item)
+        seen_asset_keys.add(key)
+        merged.append(item)
+    return merged
+
+
+def plan_request(
+    *,
+    content: str,
+    page_identity: ReaderAskPageIdentity,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    planner_decision: ReaderAskPlannerDecision,
+    planner_validation_status: str = "valid",
+    reference_resolution: ReaderAskReferenceResolution | None = None,
+    structured_asset_resolution: ReaderAskStructuredAssetResolution | None = None,
+) -> ReaderAskPlanningSnapshot:
+    del content
+    resolved_reference = reference_resolution or ReaderAskReferenceResolution()
+    resolved_asset_resolution = structured_asset_resolution or ReaderAskStructuredAssetResolution()
+    reference_needs = _reference_needs_from_decision(planner_decision)
+    structured_asset_needs = _structured_asset_needs_from_decision(planner_decision)
+
+    explicit_external_record_refs = _explicit_external_record_refs(attachments)
+    explicit_external_asset_refs = _explicit_external_asset_refs(
+        attachments,
+        current_record_id=page_identity.record_id,
+    )
+    merged_external_record_refs = _merge_external_record_refs(
+        explicit_external_record_refs,
+        resolved_reference,
+    )
+    merged_external_asset_refs = _merge_external_asset_refs(
+        explicit_external_asset_refs,
+        resolved_asset_resolution,
+    )
+
+    clarification_only = planner_decision.clarification_only
+    if resolved_reference.status in {"ambiguous", "not_found"}:
+        clarification_only = True
     if resolved_asset_resolution.status == "ambiguous":
         clarification_only = True
 
+    decision_working_set = planner_decision.working_set
+    cross_record_context_allowed = bool(merged_external_record_refs) or decision_working_set.cross_record_context_allowed
+    retrieval_needs: ReaderAskRetrievalNeeds = "known_reference_only" if cross_record_context_allowed else "none"
     working_set = ReaderAskWorkingSet(
         primary_anchor=anchors[0] if anchors else None,
-        local_context_window_needed=local_context_window_needed,
-        record_insights_needed=record_insights_needed,
-        article_overview_needed=article_overview_needed,
-        dictionary_needed=dictionary_needed,
+        local_context_window_needed=decision_working_set.local_context_window_needed and not clarification_only,
+        record_insights_needed=decision_working_set.record_insights_needed and not clarification_only,
+        article_overview_needed=decision_working_set.article_overview_needed and not clarification_only,
+        dictionary_needed=decision_working_set.dictionary_needed and not clarification_only,
         cross_record_context_allowed=cross_record_context_allowed,
         external_record_refs=merged_external_record_refs,
         external_asset_refs=merged_external_asset_refs,
         external_asset_lookup_needed=bool(
-            structured_asset_needs.requested and merged_external_record_refs and not merged_external_asset_refs
+            (
+                decision_working_set.external_asset_lookup_needed
+                or structured_asset_needs.requested
+                or explicit_external_asset_refs
+            )
+            and merged_external_record_refs
+            and not merged_external_asset_refs
         ),
     )
     resolved_context_input = build_resolved_context_input(
@@ -727,6 +632,7 @@ def plan_request(
         entry_action=entry_action,
         attachments=attachments,
         anchors=anchors,
+        planner_decision=planner_decision,
         working_set=working_set,
         reference_resolution=resolved_reference,
         structured_asset_resolution=resolved_asset_resolution,
@@ -741,6 +647,7 @@ def plan_request(
         clarification_only=clarification_only,
     )
     trace_summary = _planned_trace_summary(
+        planner_decision=planner_decision,
         reference_resolution=resolved_reference,
         working_set=working_set,
         clarification_only=clarification_only,
@@ -748,7 +655,9 @@ def plan_request(
         external_asset_disambiguation_state=external_asset_disambiguation_state,
     )
     return ReaderAskPlanningSnapshot(
-        resolved_intent=resolved_intent,
+        resolved_intent=planner_decision.resolved_intent,
+        planner_decision=planner_decision,
+        planner_validation_status=planner_validation_status,
         resolved_context_input=resolved_context_input,
         reference_needs=reference_needs,
         retrieval_needs=retrieval_needs,

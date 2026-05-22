@@ -147,7 +147,7 @@ export function FavoriteButton({ recordId }: FavoriteButtonProps) {
         size="sm"
         className={`min-h-[3.25rem] justify-start rounded-[1rem] px-3.5 py-2 text-left ${
           favorited
-            ? "border-[rgba(228,176,0,0.3)] bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,250,235,0.98))] text-ink shadow-[0_10px_22px_rgba(166,121,0,0.08)]"
+            ? "border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(252,251,248,0.98))] text-ink shadow-surface-quiet"
             : "border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.72)]"
         }`}
       >

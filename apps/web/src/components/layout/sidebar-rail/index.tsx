@@ -34,15 +34,15 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
   return (
     <>
       <aside
-        className={`fixed inset-y-0 left-0 z-30 hidden border-r border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(247,246,242,0.96))] md:flex md:flex-col ${
+        className={`app-nav-surface fixed inset-y-0 left-0 z-30 hidden border-r border-hairline md:flex md:flex-col ${
           collapsed ? "w-[84px]" : "w-[232px]"
         }`}
         aria-label="Claread 产品导航"
       >
-        <div className="flex h-full flex-col px-3 py-4 shadow-[inset_-1px_0_0_rgba(232,228,218,0.9)]">
+        <div className="app-nav-surface-shadow flex h-full flex-col px-3 py-4">
           <Link
             href={"/read" as Route}
-            className={`focus-ring flex min-h-12 items-center rounded-note px-2 transition-colors hover:bg-reader-paper ${
+            className={`focus-ring flex min-h-12 items-center rounded-note px-2 transition-colors hover:bg-[var(--app-control-quiet)] ${
               collapsed ? "justify-center" : "gap-3"
             }`}
           >
@@ -75,8 +75,8 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
                     collapsed ? "justify-center px-0" : "gap-3 px-3"
                   } ${
                     active
-                      ? "bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(251,250,246,0.98))] text-ink shadow-surface-quiet"
-                      : "text-muted hover:bg-reader-paper/78 hover:text-ink"
+                      ? "app-nav-item--active text-ink"
+                      : "text-muted hover:bg-[var(--app-control-quiet)] hover:text-ink"
                   }`}
                 >
                   <Icon
@@ -91,7 +91,7 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
 
           <div className="space-y-3 border-t border-hairline/90 pt-4">
             {!collapsed ? (
-              <div className="rounded-note bg-reader-paper/65 px-3 py-3">
+              <div className="rounded-note bg-[var(--app-control-quiet)] px-3 py-3">
                 <div className="flex items-center gap-2 text-xs font-semibold text-ink">
                   <BookOpen aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />
                   阅读镜头
@@ -103,7 +103,7 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
             ) : null}
             <button
               type="button"
-              className={`focus-ring flex min-h-10 w-full items-center rounded-note text-sm font-semibold text-muted transition-colors hover:bg-reader-paper hover:text-ink ${
+              className={`focus-ring flex min-h-10 w-full items-center rounded-note text-sm font-semibold text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink ${
                 collapsed ? "justify-center" : "justify-between px-3"
               }`}
               onClick={onToggle}
@@ -117,7 +117,7 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
       </aside>
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-hairline bg-surface-warm px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_28px_rgba(17,17,17,0.06)] md:hidden"
+        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
         aria-label="移动端导航"
       >
         {navigationItems.map((item) => {

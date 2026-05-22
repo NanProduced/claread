@@ -9,6 +9,11 @@ export interface ReaderAskPageIdentity {
   recordTitle?: string | null;
   surface: "reader";
   source: "reader_2_0";
+  availableContextCapabilities?: string[];
+  hasArticleOverview?: boolean;
+  hasSentenceEntries?: boolean;
+  hasAnnotations?: boolean;
+  hasReaderNotes?: boolean;
 }
 
 export type ReaderAskAttachmentKind =

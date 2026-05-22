@@ -2,10 +2,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  READER_DEFAULT_PAPER_THEME_STORAGE_KEY,
   READER_SETTINGS_STORAGE_KEY,
+  createDefaultReaderSettings,
   defaultReaderSettings,
   normalizeReaderSettings,
+  persistDefaultReaderPaperTheme,
   persistReaderSettings,
+  readStoredDefaultReaderPaperTheme,
   readStoredReaderSettings,
 } from "./shared";
 
@@ -87,22 +91,30 @@ describe("reader settings storage", () => {
       normalizeReaderSettings({ theme: "paper" }),
     ).toEqual({
       ...defaultReaderSettings,
-      theme: "warm",
+      readerPaperTheme: "warm",
     });
 
     expect(
       normalizeReaderSettings({ theme: "white" }),
     ).toEqual({
       ...defaultReaderSettings,
-      theme: "cool",
+      readerPaperTheme: "cool",
     });
 
     expect(
       normalizeReaderSettings({ theme: "green" }),
     ).toEqual({
       ...defaultReaderSettings,
-      theme: "sage",
+      readerPaperTheme: "sage",
     });
+  });
+
+  it("uses the default paper theme when no reader settings were persisted", () => {
+    persistDefaultReaderPaperTheme("sage");
+
+    expect(storageMock.getItem(READER_DEFAULT_PAPER_THEME_STORAGE_KEY)).toBe("sage");
+    expect(readStoredDefaultReaderPaperTheme()).toBe("sage");
+    expect(readStoredReaderSettings()).toEqual(createDefaultReaderSettings("sage"));
   });
 
   it("persists and restores reader settings from localStorage", () => {
@@ -113,7 +125,7 @@ describe("reader settings storage", () => {
       fontSize: "large" as const,
       density: "roomy" as const,
       columnWidth: "wide" as const,
-      theme: "sage" as const,
+      readerPaperTheme: "sage" as const,
       annotationVisibilityGroups: {
         lexical: false,
         analysis: true,
@@ -134,7 +146,7 @@ describe("reader settings storage", () => {
     expect(restored.fontSize).toBe("large");
     expect(restored.density).toBe("roomy");
     expect(restored.columnWidth).toBe("wide");
-    expect(restored.theme).toBe("sage");
+    expect(restored.readerPaperTheme).toBe("sage");
     expect(restored.annotationVisibilityGroups).toEqual({
       lexical: false,
       analysis: true,

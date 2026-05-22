@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import { autoUpdate } from "@floating-ui/react";
+import { autoUpdate, FloatingPortal } from "@floating-ui/react";
 import {
   flip,
   offset,
@@ -61,12 +61,14 @@ export function ReaderFloatingSurface({
   ...props
 }: ReaderFloatingSurfaceDivProps) {
   return (
-    <ReaderFloatingPanel
-      floatingRef={floatingRef}
-      className={className}
-      {...props}
-    >
-      {children}
-    </ReaderFloatingPanel>
+    <FloatingPortal>
+      <ReaderFloatingPanel
+        floatingRef={floatingRef}
+        className={className}
+        {...props}
+      >
+        {children}
+      </ReaderFloatingPanel>
+    </FloatingPortal>
   );
 }

@@ -4,6 +4,8 @@ agents:
     file: agents/vocabulary.yaml
   reader_ask:
     file: agents/reader_ask.yaml
+  reader_ask_planner:
+    file: agents/reader_ask_planner.yaml
   dict_context_explain:
     file: agents/dict_context_explain.yaml
   dict_missing_fallback:

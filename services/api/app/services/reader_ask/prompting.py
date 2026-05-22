@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 from cachetools import TTLCache
 
-_PROMPTS_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent / "prompts" / "reader_ask"
+_PROMPTS_ROOT = Path(__file__).resolve().parents[3] / "prompts" / "reader_ask"
 _CACHE: TTLCache[str, dict[str, str]] = TTLCache(maxsize=1, ttl=300)
 
 

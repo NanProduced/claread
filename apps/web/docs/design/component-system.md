@@ -240,7 +240,7 @@ Rules:
 It must not force ordinary words into separate interactive DOM nodes. Plain text should remain selectable as continuous text; click-to-lookup can be implemented from sentence-level hit testing.
 If a manual DOM selection exactly covers the full sentence text, the client should normalize it to a sentence anchor instead of persisting a fake full-length `text_range`.
 If a manual DOM selection crosses sentence or paragraph boundaries, the client should preserve it as `multi_text` and expose the mode explicitly in the toolbar instead of silently collapsing it into a sentence or partial `text_range`.
-When Library or miniprogram excerpts jump into a saved asset, Reader should use a short-lived route focus layer for favorites and annotations across sentence / `text_range` / `multi_text` anchors instead of reusing the live selection state.
+When Library history or the miniprogram result page deep-links into a saved favorite, highlight, or note, Reader should use a short-lived route focus layer across sentence / `text_range` / `multi_text` anchors instead of reusing the live selection state.
 
 ## 8. File Ownership
 
