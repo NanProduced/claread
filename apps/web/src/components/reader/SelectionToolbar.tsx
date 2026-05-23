@@ -74,6 +74,9 @@ export interface SelectionToolbarProps {
   onNote?: (selectedText: string) => void;
   onClearAnnotation?: () => void;
   onLookup?: (selectedText: string) => void;
+  canToggleHighlightPalette?: boolean;
+  highlightPaletteOpen?: boolean;
+  onToggleHighlightPalette?: () => void;
 }
 
 export const defaultSelectionToolbarColorOptions: SelectionToolbarColorOption[] = [

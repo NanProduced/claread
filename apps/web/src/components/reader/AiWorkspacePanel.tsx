@@ -5,6 +5,7 @@ import {
   BookPlus,
   Bot,
   ChevronDown,
+  Copy,
   FileText,
   GitBranch,
   LoaderCircle,
@@ -14,6 +15,8 @@ import {
   RotateCcw,
   Search,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -1503,6 +1506,7 @@ function MessageBubble({
   onRetry,
   onJumpToAttachment,
   onJumpToCitation,
+  isLastUserMessage,
 }: {
   item: AskPanelConversationItem;
   currentRecordId: string;
@@ -1521,6 +1525,7 @@ function MessageBubble({
   onRetry: (messageId: string) => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
+  isLastUserMessage?: boolean;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -1539,42 +1544,20 @@ function MessageBubble({
       <ChatMessage className={cn("w-full", isAssistant ? "items-start" : "justify-end")}>
         {isAssistant ? (
           <>
-            <Avatar className="mt-1 h-8 w-8 shrink-0 border border-hairline/80 bg-reader-paper">
-              <AvatarFallback className="bg-reader-paper text-ink">
-                <Bot className="h-4 w-4" />
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0 max-w-[calc(100%-3rem)] flex-1">
-              <div className="mb-2 flex items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">Claread</span>
-                {message.status === "streaming" ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-subtle">
-                    <LoaderCircle className="h-3 w-3 animate-spin" />
-                    正在生成
-                  </span>
-                ) : null}
-                {message.status === "completed" || message.status === "failed" ? (
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="sm"
-                    density="compact"
-                    className="ml-auto h-7 rounded-full px-2.5 text-[11px] text-muted"
-                    onClick={() => onRetry(message.id)}
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                    <span>重新生成</span>
-                  </Button>
-                ) : null}
-              </div>
-              <div className="space-y-3">
+            <div className="group min-w-0 flex-1 relative">
+              {message.status === "streaming" ? (
+                <div className="absolute -left-6 top-1.5 text-muted">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                </div>
+              ) : null}
+              <div className="space-y-4">
                 {blocks.map((block, index) => {
                   switch (block.kind) {
                     case "answer":
                       return (
                         <div
                           key={`${message.id}-${block.kind}-${index}`}
-                          className="rounded-[22px] border border-hairline/75 bg-[rgba(255,255,255,0.9)] px-4 py-3.5 shadow-[0_10px_26px_rgba(17,17,17,0.04)]"
+                          className="px-1 py-1"
                         >
                           {clarificationText ? (
                             <div className="mb-3 rounded-[14px] bg-reader-paper px-3 py-2 text-[11px] leading-5 text-muted">
@@ -1583,7 +1566,7 @@ function MessageBubble({
                           ) : null}
                           <MessageContent
                             markdown
-                            className="border-0 bg-transparent p-0 text-[15px] leading-7 text-ink-soft shadow-none prose prose-sm max-w-none prose-p:mb-3 prose-p:last:mb-0 prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
+                            className="border-0 bg-transparent p-0 text-[14.5px] leading-[1.8] text-ink-soft shadow-none prose prose-sm max-w-none prose-p:mb-4 prose-p:mt-2 prose-p:last:mb-0 prose-strong:font-semibold prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
                           >
                             {message.content_md || "…"}
                           </MessageContent>
@@ -1662,13 +1645,40 @@ function MessageBubble({
                   />
                 ) : null}
               </div>
+              {message.status === "completed" && (
+                <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="复制内容">
+                    <Copy className="h-3.5 w-3.5" />
+                    <span>复制</span>
+                  </button>
+                  <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="有帮助">
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="无帮助">
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           </>
         ) : (
-          <div className="max-w-[85%]">
-            <MessageContent className="rounded-[20px] bg-[linear-gradient(180deg,rgba(34,35,41,0.98),rgba(23,24,29,0.98))] px-4 py-3 text-[15px] leading-7 text-surface shadow-[0_12px_28px_rgba(17,17,17,0.12)]">
+          <div className="group relative flex max-w-[92%] flex-col items-end">
+            <MessageContent className="whitespace-pre-wrap rounded-[14px] bg-muted/10 border border-hairline/60 px-3.5 py-1.5 text-[14px] leading-[1.6] text-ink-soft shadow-none">
               {message.content_md}
             </MessageContent>
+            <div className="absolute -bottom-6 right-0 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+              <span className="text-[10px] text-muted">
+                {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+              </span>
+              <button className="text-muted hover:text-ink transition-colors" title="复制">
+                <Copy className="h-3 w-3" />
+              </button>
+              {isLastUserMessage && (
+                <button className="text-muted hover:text-ink transition-colors" title="重新生成" onClick={() => onRetry(message.id)}>
+                  <RotateCcw className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </div>
         )}
       </ChatMessage>
@@ -2409,14 +2419,14 @@ export function AiWorkspacePanel({
 
   return (
     <aside className="fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[28px] border border-hairline/85 bg-[linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] shadow-[0_26px_76px_rgba(17,17,17,0.12)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none">
-      <div className="border-b border-hairline/70 px-5 py-4">
+      <div className="border-b border-hairline/70 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-surface shadow-[0_10px_22px_rgba(17,17,17,0.04)]">
-              <Sparkles className="h-4 w-4 text-lens-blue" />
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-surface shadow-[0_10px_22px_rgba(17,17,17,0.04)]">
+              <Sparkles className="h-3.5 w-3.5 text-lens-blue" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-[17px] font-semibold tracking-[-0.03em] text-ink">Ask Claread</h2>
+              <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-ink">Ask Claread</h2>
             </div>
           </div>
           <div className="flex items-center gap-1.5">
@@ -2456,10 +2466,12 @@ export function AiWorkspacePanel({
                   }}
                 />
               ) : null}
-              {conversationItems.map((item) => (
-                <MessageBubble
-                  key={item.id}
-                  item={item}
+              {(() => {
+                const lastUserMessageId = [...conversationItems].reverse().find(i => i.role === 'user')?.id;
+                return conversationItems.map((item) => (
+                  <MessageBubble
+                    key={item.id}
+                    item={item}
                   currentRecordId={recordId}
                   pageIdentity={pageIdentity}
                   pendingActionId={pendingActionId}
@@ -2474,8 +2486,10 @@ export function AiWorkspacePanel({
                   onRetry={handleRetry}
                   onJumpToAttachment={onJumpToAttachment}
                   onJumpToCitation={onJumpToCitation}
+                  isLastUserMessage={item.id === lastUserMessageId}
                 />
-              ))}
+              ));
+              })()}
               <ChatContainerScrollAnchor />
             </ChatContainerContent>
           </ChatContainerRoot>
@@ -2498,7 +2512,7 @@ export function AiWorkspacePanel({
           className="flex flex-col gap-0 rounded-[24px] border border-hairline/80 bg-surface !px-0 !py-0 shadow-[0_12px_30px_rgba(17,17,17,0.04)] transition-all focus-within:border-muted focus-within:shadow-[0_16px_34px_rgba(17,17,17,0.06)]"
         >
           {(recordTitle || visibleContextAttachments.length > 0) && (
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline/40 px-3.5 pb-2.5 pt-3">
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline/40 px-3 py-2">
               <CurrentRecordChip recordTitle={recordTitle} />
               <AttachmentChips
                 attachments={visibleContextAttachments}
@@ -2509,14 +2523,14 @@ export function AiWorkspacePanel({
             </div>
           )}
 
-          <div className="px-3.5 py-3">
+          <div className="px-3 py-2">
             <PromptInputTextarea
               placeholder={COMPOSER_PLACEHOLDER}
-              className="min-h-[44px] text-[14px] leading-relaxed"
+              className="min-h-[40px] text-[14px] leading-relaxed"
             />
           </div>
 
-          <div className="flex items-center justify-between px-3.5 pb-2.5 pt-1">
+          <div className="flex items-center justify-between px-3 pb-2 pt-1">
             <div className="flex items-center gap-2">
               <Popover open={contextPickerOpen} onOpenChange={setContextPickerOpen}>
                 <PopoverTrigger asChild>
