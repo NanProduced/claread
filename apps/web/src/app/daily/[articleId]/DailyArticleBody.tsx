@@ -54,7 +54,7 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
   }
 
   return (
-    <div className="mt-14 max-w-[65ch] space-y-12 font-reading text-[1.22rem] leading-[2] text-ink sm:text-[1.28rem]">
+    <div className="mt-14 max-w-[65ch] space-y-14 font-reading text-[1.22rem] leading-[2] text-ink sm:text-[1.28rem]">
       {article.body.paragraphs.map((paragraph, index) => {
         const isFirst = index === 0;
 

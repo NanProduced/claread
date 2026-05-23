@@ -362,6 +362,42 @@ select {
   box-shadow: var(--app-panel-shadow-quiet);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Daily Reader — Magazine hero                                       */
+/* ------------------------------------------------------------------ */
+
+.daily-hero {
+  position: relative;
+  height: clamp(260px, 33vh, 480px);
+  background: #D4D0C8;
+}
+
+.daily-hero-fade {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 40%;
+  background: linear-gradient(to top, #FAF9F6 0%, rgba(250, 249, 246, 0.6) 50%, transparent 100%);
+  pointer-events: none;
+}
+
+@media (min-width: 640px) {
+  .daily-hero {
+    height: clamp(300px, 35vh, 520px);
+  }
+}
+
+.daily-lead-hero {
+  position: relative;
+  height: clamp(320px, 40vh, 500px);
+  width: 100%;
+}
+
+@media (min-width: 1024px) {
+  .daily-lead-hero {
+    height: clamp(380px, 45vh, 560px);
+  }
+}
+
 .paper-grain {
   background-image:
     linear-gradient(135deg, color-mix(in srgb, var(--app-ink) 8%, transparent) 0 1px, transparent 1px),

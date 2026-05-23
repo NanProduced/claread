@@ -2,6 +2,25 @@
 
 import { createContext, useContext, useEffect, useMemo } from "react";
 import { ThemeProvider, useTheme } from "next-themes";
+
+/**
+ * Suppress React 19 "Encountered a script tag" dev warning from next-themes.
+ * next-themes injects an inline <script> for FOUC prevention; React 19 warns
+ * about script tags inside client components. The script works correctly;
+ * only the console noise is filtered. See: https://github.com/pacocoursey/next-themes/issues/337
+ */
+if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+  const _origError = console.error;
+  console.error = (...args: unknown[]) => {
+    if (
+      typeof args[0] === "string" &&
+      args[0].includes("Encountered a script tag")
+    ) {
+      return;
+    }
+    _origError.apply(console, args);
+  };
+}
 import {
   APPEARANCE_STORAGE_KEY,
   normalizeAppearance,

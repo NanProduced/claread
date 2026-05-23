@@ -47,7 +47,7 @@ export function ReadingNoteExpander({ note }: ReadingNoteProps) {
         )}
       >
         <div className="overflow-hidden">
-          <div className="mt-4 border-l-[3px] border-ink/10 pl-5 pr-2">
+          <div className="mt-4 rounded-md bg-surface-warm/60 px-5 py-4">
             <p className="font-sans text-[0.95rem] leading-[1.8] text-ink-soft">
               {note.microSummary}
             </p>
