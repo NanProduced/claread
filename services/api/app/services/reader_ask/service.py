@@ -5,10 +5,10 @@ import logging
 import json
 import re
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any, Callable, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -30,6 +30,7 @@ from app.llm.agent_runner import extract_run_usage
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_ASK, MODEL_ROUTE_READER_ASK_PLANNER
 from app.llm.types import RunModelSettings
+from app.agents.grammar_agent import GrammarAgentDeps
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmRequest,
     ReaderAskActionConfirmResponse,
@@ -51,6 +52,8 @@ from app.schemas.reader_ask import (
     ReaderAskEntryAction,
     ReaderAskExternalAssetContext,
     ReaderAskExternalRecordContext,
+    ReaderAskGrammarNoteCard,
+    ReaderAskGrammarNoteCardSpan,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
     ReaderAskPageIdentity,
@@ -65,6 +68,7 @@ from app.schemas.reader_ask import (
     ReaderAskRunInfo,
     ReaderAskSentenceBreakdownCard,
     ReaderAskSentenceBreakdownPart,
+    ReaderAskSubmissionMode,
     ReaderAskSupplementCandidate,
     ReaderAskThreadCreateRequest,
     ReaderAskThreadDetail,
@@ -76,6 +80,15 @@ from app.schemas.reader_ask import (
     ReaderAskUserVisibleOutput,
     ReaderAskVocabularyInContextCard,
 )
+from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
+from app.services.analysis.planning.goal_planner import build_goal_execution_plan
+from app.services.analysis.postprocess.projection import (
+    _format_grammar_note_content,
+    _format_sentence_analysis_content,
+)
+from app.services.analysis.prompting.strategy_builder import build_grammar_bundle_async
+from app.services.analysis.runtime.runners import run_grammar_agent
+from app.services.analysis.validators import validate_grammar_note, validate_sentence_analysis
 from app.schemas.reader_notes import ReaderNoteCreateRequest
 from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
 from app.services.ai_usage import (
@@ -124,11 +137,11 @@ from app.services import user_annotations as user_annotations_svc
 from app.workflow.tracing import build_usage_metadata
 
 _MAX_HISTORY_MESSAGES = 8
-_MAX_CONTEXT_TEXT = 1200
+_MAX_CONTEXT_TEXT = 3200
 _MAX_MESSAGE_TEXT = 800
 _MAX_PROMPT_ASSET_ITEMS = 5
-_DEFAULT_MAX_OUTPUT_TOKENS = 700
-_MIN_MAX_OUTPUT_TOKENS = 160
+_DEFAULT_MAX_OUTPUT_TOKENS = 1600
+_MIN_MAX_OUTPUT_TOKENS = 400
 _PROMPT_BUDGET_BUFFER_TOKENS = 800
 _PLANNER_MAX_HISTORY_MESSAGES = 8
 _DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = 500
@@ -151,6 +164,7 @@ class _RecordBundle:
     title: str | None
     source_text: str
     render_scene: dict[str, Any]
+    page_state_json: dict[str, Any]
     workflow_version: str | None
     schema_version: str | None
 
@@ -162,6 +176,25 @@ class _SemanticPlanningResult:
     planner_usage_summary: dict[str, Any] | None
     reference_resolution: planner.ReaderAskReferenceResolution
     planning_snapshot: planner.ReaderAskPlanningSnapshot
+
+
+@dataclass(slots=True)
+class _AgentStreamOutcome:
+    content_md: str
+    usage_summary: dict[str, Any] | None
+    interrupted: bool
+    interruption_detail: str | None = None
+
+
+@dataclass(slots=True)
+class _AgentStreamRuntime:
+    content_parts: list[str] = field(default_factory=list)
+    usage_summary: dict[str, Any] | None = None
+    producer_done: asyncio.Event = field(default_factory=asyncio.Event)
+    producer_error: Exception | None = None
+    emitted_text: str = ""
+    emitted_reasoning: str = ""
+    reasoning_started: bool = False
 
 
 def _iso_now() -> str:
@@ -379,7 +412,7 @@ async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT r.id, r.title, r.source_text, a.render_scene_json, a.workflow_version, a.schema_version
+            SELECT r.id, r.title, r.source_text, a.render_scene_json, a.page_state_json, a.workflow_version, a.schema_version
             FROM analysis_records r
             LEFT JOIN analysis_results a ON a.record_id = r.id
             WHERE r.id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL
@@ -394,6 +427,7 @@ async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
         title=row["title"],
         source_text=row["source_text"] or "",
         render_scene=ensure_json_dict(row["render_scene_json"]),
+        page_state_json=ensure_json_dict(row["page_state_json"]),
         workflow_version=row["workflow_version"],
         schema_version=row["schema_version"],
     )
@@ -423,7 +457,12 @@ def _translations_map(record: _RecordBundle) -> dict[str, str]:
 
 
 def _render_scene_article_overview(record: _RecordBundle) -> str | None:
-    return utils.extract_article_overview(record.render_scene)
+    resolved = utils.resolve_record_overview(
+        render_scene=record.render_scene,
+        page_state_json=getattr(record, "page_state_json", None),
+    )
+    overview = resolved.get("overview")
+    return str(overview).strip() or None if isinstance(overview, str) else None
 
 
 def _render_scene_has_sentence_entries(record: _RecordBundle) -> bool:
@@ -444,6 +483,216 @@ def _current_record_affordances(
         has_annotations=page_identity.has_annotations,
         has_reader_notes=page_identity.has_reader_notes,
     )
+
+
+def _reading_goal_from_record(record: _RecordBundle) -> ReadingGoal:
+    request = record.render_scene.get("request")
+    goal = request.get("reading_goal") if isinstance(request, dict) else None
+    if goal in {"exam", "daily_reading", "academic"}:
+        return cast(ReadingGoal, goal)
+    return "daily_reading"
+
+
+def _reading_variant_from_record(record: _RecordBundle, reading_goal: ReadingGoal) -> ReadingVariant:
+    request = record.render_scene.get("request")
+    variant = request.get("reading_variant") if isinstance(request, dict) else None
+    if variant in {
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+        "beginner_reading",
+        "intermediate_reading",
+        "intensive_reading",
+        "academic_general",
+    }:
+        return cast(ReadingVariant, variant)
+    return "academic_general" if reading_goal == "academic" else "intermediate_reading"
+
+
+def _annotation_quick_action_kind(
+    task_mode: ReaderAskTaskMode,
+    entry_action: ReaderAskEntryAction,
+) -> Literal["grammar_note", "sentence_analysis"] | None:
+    if task_mode == "grammar" or entry_action == "why_here":
+        return "grammar_note"
+    if task_mode == "breakdown" or entry_action == "explain_this":
+        return "sentence_analysis"
+    return None
+
+
+def _submission_mode(
+    *,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+) -> ReaderAskSubmissionMode:
+    if entry_action not in {"why_here", "explain_this"}:
+        return "chat"
+    if any(attachment.metadata.source_surface == "selection_toolbar" for attachment in attachments):
+        return "quick_action"
+    return "chat"
+
+
+def _focus_guidance_from_anchor(
+    anchor: ReaderAskAnchorRef | None,
+    sentence_text: str,
+) -> dict[str, object] | None:
+    if anchor is None:
+        return None
+    focus_text = (anchor.selected_text or sentence_text or "").strip()
+    if not focus_text:
+        return None
+    selection_mode = anchor.anchor_type if anchor.anchor_type in {"sentence", "text_range"} else "sentence"
+    guidance: dict[str, object] = {
+        "focus_text": focus_text,
+        "selection_mode": selection_mode,
+        "sentence_id": anchor.sentence_id or "",
+        "analysis_scope_hint": "focus_span" if selection_mode == "text_range" else "full_sentence",
+    }
+    if selection_mode == "text_range" and anchor.start_offset is not None and anchor.end_offset is not None:
+        guidance["start_offset"] = anchor.start_offset
+        guidance["end_offset"] = anchor.end_offset
+    return guidance
+
+
+def _quick_action_not_applicable(
+    *,
+    kind: Literal["grammar_note", "sentence_analysis"],
+    sentence_id: str,
+    sentence_text: str,
+    focus_text: str,
+    reason: str,
+    suggestion: str,
+) -> dict[str, Any]:
+    return {
+        "status": "not_applicable",
+        "kind": kind,
+        "sentence_id": sentence_id,
+        "source_sentence": sentence_text,
+        "focus_text": focus_text,
+        "reason": reason,
+        "suggestion": suggestion,
+    }
+
+
+def _textual_overlap(left: str, right: str) -> bool:
+    left_normalized = re.sub(r"\s+", " ", left).strip().lower()
+    right_normalized = re.sub(r"\s+", " ", right).strip().lower()
+    if not left_normalized or not right_normalized:
+        return False
+    if left_normalized in right_normalized or right_normalized in left_normalized:
+        return True
+    left_tokens = {token for token in re.split(r"\W+", left_normalized) if token}
+    right_tokens = {token for token in re.split(r"\W+", right_normalized) if token}
+    return bool(left_tokens and right_tokens and left_tokens.intersection(right_tokens))
+
+
+async def _generate_sentence_annotation(
+    *,
+    record: _RecordBundle,
+    anchor: ReaderAskAnchorRef | None,
+    kind: Literal["grammar_note", "sentence_analysis"],
+) -> dict[str, Any] | None:
+    sentence_id = anchor.sentence_id if anchor is not None else None
+    sentence_text = _render_scene_sentence_text(record, sentence_id)
+    if not sentence_id or not sentence_text:
+        return None
+    focus_text = (anchor.selected_text or sentence_text).strip()
+    focus_guidance = _focus_guidance_from_anchor(anchor, sentence_text)
+    selection_mode = anchor.anchor_type if anchor is not None else "sentence"
+
+    if kind == "sentence_analysis" and selection_mode != "sentence":
+        return _quick_action_not_applicable(
+            kind=kind,
+            sentence_id=sentence_id,
+            sentence_text=sentence_text,
+            focus_text=focus_text,
+            reason="当前片段不足以稳定拆出整句结构。",
+            suggestion="建议先扩展到整句，再使用“句子拆分”。",
+        )
+
+    reading_goal = _reading_goal_from_record(record)
+    reading_variant = _reading_variant_from_record(record, reading_goal)
+    plan = build_goal_execution_plan(reading_goal, reading_variant)
+    sentences = [{"sentence_id": sentence_id, "text": sentence_text}]
+    grammar_bundle = await build_grammar_bundle_async(plan, sentences=sentences)
+    result = await run_grammar_agent(
+        GrammarAgentDeps(
+            sentences=sentences,
+            prompt_strategy=grammar_bundle.prompt_strategy,
+            examples=grammar_bundle.example_strategy.entries,
+            focus_guidance=focus_guidance,
+        )
+    )
+    usage_summary = extract_run_usage(result)
+    draft = result.output if hasattr(result, "output") else result
+    sentence_map_payload = {sentence_id: sentence_text}
+
+    if kind == "grammar_note":
+        chosen_note = None
+        for note in draft.grammar_notes:
+            validation = validate_grammar_note(note, sentence_map_payload)
+            if not validation.is_valid:
+                continue
+            if selection_mode == "text_range":
+                if not any(_textual_overlap(str(span.text), focus_text) for span in note.spans):
+                    continue
+            chosen_note = note
+            break
+        if chosen_note is None:
+            result = _quick_action_not_applicable(
+                kind=kind,
+                sentence_id=sentence_id,
+                sentence_text=sentence_text,
+                focus_text=focus_text,
+                reason="当前片段没有稳定到值得单独讲解的语法点。",
+                suggestion="可以改为选中更完整的从句或整句，再做语法解析。",
+            )
+            result["usage_summary"] = usage_summary
+            return result
+        return {
+            "status": "ready",
+            "kind": "grammar_note",
+            "sentence_id": chosen_note.sentence_id,
+            "label": chosen_note.label,
+            "content": _format_grammar_note_content(chosen_note),
+            "note_zh": chosen_note.note_zh,
+            "source_sentence": sentence_text,
+            "annotation": chosen_note.model_dump(mode="json"),
+            "focus_text": focus_text,
+            "analysis_scope": "focus_span" if selection_mode == "text_range" else "full_sentence",
+            "spans": [span.model_dump(mode="json") for span in chosen_note.spans],
+            "usage_summary": usage_summary,
+        }
+
+    for analysis in draft.sentence_analyses:
+        validation = validate_sentence_analysis(analysis, sentence_map_payload)
+        if validation.is_valid:
+            return {
+                "status": "ready",
+                "kind": "sentence_analysis",
+                "sentence_id": analysis.sentence_id,
+                "label": analysis.label,
+                "content": _format_sentence_analysis_content(analysis),
+                "source_sentence": sentence_text,
+                "focus_text": focus_text,
+                "analysis_scope": "full_sentence",
+                "chunks": [chunk.model_dump(mode="json") for chunk in analysis.chunks or []],
+                "analysis_zh": analysis.analysis_zh,
+                "annotation": analysis.model_dump(mode="json"),
+                "usage_summary": usage_summary,
+            }
+    result = _quick_action_not_applicable(
+        kind=kind,
+        sentence_id=sentence_id,
+        sentence_text=sentence_text,
+        focus_text=focus_text,
+        reason="当前句子没有稳定到值得单独拆分的结构层次。",
+        suggestion="可以改问这句话在段落中的作用，或换一条更复杂的句子再拆解。",
+    )
+    result["usage_summary"] = usage_summary
+    return result
 
 
 def _planner_history_messages(
@@ -468,6 +717,20 @@ def _planner_history_messages(
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _fallback_reference_query(user_message: str) -> str | None:
+    normalized = _normalize_text(user_message)
+    if not normalized:
+        return None
+    for pattern in (r"《([^》]+)》", r"“([^”]+)”", r"\"([^\"]+)\"", r"'([^']+)'"):
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        query = utils.clean_reference_query(match.group(1))
+        if query:
+            return query
+    return None
 
 
 def _fallback_semantic_planner_decision(
@@ -495,6 +758,7 @@ def _fallback_semantic_planner_decision(
     )
     has_dictionary_anchor = any(anchor.anchor_type == "dictionary_entry" for anchor in anchors)
     has_local_anchor = bool(anchors)
+    fallback_reference_query = _fallback_reference_query(user_message)
     has_article_overview = _render_scene_article_overview(record) is not None
     has_sentence_entries = _render_scene_has_sentence_entries(record)
 
@@ -544,7 +808,11 @@ def _fallback_semantic_planner_decision(
         resolved_intent=resolved_intent,
         clarification_only=clarification_only,
         clarification_reason=clarification_reason,
-        reference_request={"requested": False},
+        reference_request={
+            "requested": bool(fallback_reference_query),
+            "query": fallback_reference_query,
+            "reason": "fallback_title_like_reference" if fallback_reference_query else None,
+        },
         structured_asset_request={
             "requested": structured_asset_requested,
             "requested_asset_type": structured_asset_type,
@@ -618,6 +886,7 @@ async def _load_external_record_contexts(
             record_id=str(bundle.record_id),
             record_title=bundle.title or item.get("title"),
             render_scene=bundle.render_scene,
+            page_state_json=bundle.page_state_json,
             reason=str(item.get("reason") or "explicit_attachment"),
             updated_at=item.get("updated_at"),
         )
@@ -626,6 +895,9 @@ async def _load_external_record_contexts(
                 record_id=str(structured_assets["record_id"]),
                 record_title=structured_assets.get("record_title"),
                 article_overview=structured_assets.get("article_overview"),
+                article_overview_status=structured_assets.get("article_overview_status"),
+                article_overview_source=structured_assets.get("article_overview_source"),
+                article_overview_confidence=structured_assets.get("article_overview_confidence"),
                 record_insights=list(structured_assets.get("record_insights") or []),
                 source_labels=list(structured_assets.get("source_labels") or []),
                 reason=str(structured_assets.get("reason") or "explicit_attachment"),
@@ -637,7 +909,7 @@ async def _load_external_record_contexts(
 def _load_external_asset_contexts(
     *,
     current_record_id: UUID,
-    planned_external_assets: list[dict[str, str]],
+    planned_external_assets: list[dict[str, object]],
 ) -> list[ReaderAskExternalAssetContext]:
     contexts: list[ReaderAskExternalAssetContext] = []
     seen: set[tuple[str, str]] = set()
@@ -661,7 +933,13 @@ def _load_external_asset_contexts(
                 asset_id=asset_id,
                 entry_type=str(item.get("entry_type") or "") or None,
                 asset_title=str(item.get("asset_title") or "") or None,
+                content_md=str(item.get("content_md") or "") or None,
                 content_summary=str(item.get("content_summary") or "") or None,
+                source_labels=[
+                    str(label).strip()
+                    for label in (item.get("source_labels") or [])
+                    if str(label).strip()
+                ],
                 reason=str(item.get("reason") or "structured_asset_resolved"),
             )
         )
@@ -832,6 +1110,10 @@ async def _materialize_planned_context(
     get_record_insights_cb: Callable[[], Any],
 ) -> ReaderAskResolvedContextInput:
     working_set = planning_snapshot.working_set
+    resolved_overview = utils.resolve_record_overview(
+        render_scene=record.render_scene,
+        page_state_json=record.page_state_json,
+    )
     if working_set.local_context_window_needed and runtime_state.latest_record_context is None:
         runtime_state.latest_record_context = await get_record_context_cb()
         if runtime_state.latest_record_context is not None:
@@ -844,7 +1126,7 @@ async def _materialize_planned_context(
         article_overview = _render_scene_article_overview(record)
         if article_overview:
             runtime_state.latest_article_overview = article_overview
-            runtime_state.source_labels.add("article_overview")
+            runtime_state.source_labels.add(str(resolved_overview.get("source") or "article_overview"))
 
     external_record_contexts = await _load_external_record_contexts(
         user_id,
@@ -876,6 +1158,9 @@ async def _materialize_planned_context(
         local_context=runtime_state.latest_record_context,
         record_insights=runtime_state.latest_record_insights,
         article_overview=runtime_state.latest_article_overview,
+        article_overview_status=str(resolved_overview.get("status") or "") or None,
+        article_overview_source=str(resolved_overview.get("source") or "") or None,
+        article_overview_confidence=str(resolved_overview.get("confidence") or "") or None,
         source_labels=_current_record_source_labels(runtime_state),
     )
     return planner.build_resolved_context_input(
@@ -1307,10 +1592,12 @@ def _user_message_metadata(
     *,
     resolved_intent: ReaderAskResolvedIntent | None = None,
     resolved_context_input: ReaderAskResolvedContextInput | None = None,
+    submission_mode: ReaderAskSubmissionMode = "chat",
 ) -> dict[str, Any]:
     return output_contract_svc.build_user_message_metadata(
         resolved_intent=resolved_intent,
         resolved_context_input=resolved_context_input,
+        submission_mode=submission_mode,
     )
 
 
@@ -1320,18 +1607,21 @@ def _assistant_message_metadata(
     run_info: dict[str, Any] | None = None,
     run_history: list[dict[str, Any]] | None = None,
     resolved_context_input: ReaderAskResolvedContextInput | None = None,
+    submission_mode: ReaderAskSubmissionMode = "chat",
 ) -> dict[str, Any]:
     return output_contract_svc.build_assistant_message_metadata(
         resolved_intent=resolved_intent,
         run_info=run_info,
         run_history=run_history,
         resolved_context_input=resolved_context_input,
+        submission_mode=submission_mode,
     )
 
 
 def _build_user_visible_output(
     *,
     content_md: str,
+    submission_mode: ReaderAskSubmissionMode,
     resolved_intent: ReaderAskResolvedIntent | None,
     citations: list[ReaderAskCitation],
     action_proposals: list[ReaderAskActionProposal],
@@ -1352,6 +1642,7 @@ def _build_user_visible_output(
 ) -> ReaderAskUserVisibleOutput:
     return output_contract_svc.build_user_visible_output(
         content_md=content_md,
+        submission_mode=submission_mode,
         resolved_intent=resolved_intent,
         citations=citations,
         action_proposals=action_proposals,
@@ -1556,6 +1847,131 @@ async def _upsert_eval_trace_record(
     )
 
 
+def _reasoning_enabled_settings(route_settings: RunModelSettings) -> RunModelSettings:
+    extra_body = dict(route_settings.extra_body or {})
+    if "thinking" in extra_body and isinstance(extra_body["thinking"], dict):
+        thinking = dict(cast(dict[str, Any], extra_body["thinking"]))
+        if thinking.get("type") == "disabled":
+            thinking["type"] = "enabled"
+        extra_body["thinking"] = thinking
+    elif extra_body.get("enable_thinking") is False:
+        extra_body["enable_thinking"] = True
+    return RunModelSettings(
+        max_tokens=route_settings.max_tokens,
+        temperature=route_settings.temperature,
+        top_p=route_settings.top_p,
+        timeout=route_settings.timeout,
+        parallel_tool_calls=route_settings.parallel_tool_calls,
+        seed=route_settings.seed,
+        presence_penalty=route_settings.presence_penalty,
+        frequency_penalty=route_settings.frequency_penalty,
+        stop_sequences=route_settings.stop_sequences,
+        extra_headers=route_settings.extra_headers,
+        extra_body=extra_body or None,
+    )
+
+
+def _start_reader_ask_agent_stream(
+    *,
+    agent: Any,
+    deps: ReaderAskAgentDeps,
+    model: Any,
+    route_settings: RunModelSettings,
+    assistant_message_id: str,
+) -> tuple[asyncio.Task[None], _AgentStreamRuntime]:
+    event_queue = deps.event_queue
+    runtime = _AgentStreamRuntime()
+
+    async def run_agent_stream() -> None:
+        try:
+            async with agent.run_stream(
+                build_reader_ask_prompt(deps),
+                deps=deps,
+                model=model,
+                model_settings=_reasoning_enabled_settings(route_settings).to_pydantic_ai(),
+            ) as result:
+                async for response, _last in result.stream_responses(debounce_by=None):
+                    thinking_text = response.thinking or ""
+                    if thinking_text and not runtime.reasoning_started:
+                        runtime.reasoning_started = True
+                        await event_queue.put(("reasoning.started", {"message_id": assistant_message_id}))
+                    if thinking_text.startswith(runtime.emitted_reasoning):
+                        reasoning_delta = thinking_text[len(runtime.emitted_reasoning):]
+                    else:
+                        reasoning_delta = thinking_text
+                    if reasoning_delta:
+                        runtime.emitted_reasoning = thinking_text
+                        await event_queue.put(
+                            ("reasoning.delta", {"message_id": assistant_message_id, "delta": reasoning_delta})
+                        )
+
+                    text_value = response.text or ""
+                    if text_value.startswith(runtime.emitted_text):
+                        text_delta = text_value[len(runtime.emitted_text):]
+                    else:
+                        text_delta = text_value
+                    if text_delta:
+                        runtime.emitted_text = text_value
+                        runtime.content_parts.append(text_delta)
+                        await event_queue.put(
+                            ("message.delta", {"message_id": assistant_message_id, "delta": text_delta})
+                        )
+                if runtime.reasoning_started:
+                    await event_queue.put(("reasoning.completed", {"message_id": assistant_message_id}))
+                runtime.usage_summary = build_usage_metadata(result.usage())
+        except Exception as exc:
+            runtime.producer_error = exc
+        finally:
+            runtime.producer_done.set()
+
+    return asyncio.create_task(run_agent_stream()), runtime
+
+
+async def _stream_reader_ask_events(
+    *,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    producer_done: asyncio.Event,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    while not producer_done.is_set() or not event_queue.empty():
+        try:
+            event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+        except TimeoutError:
+            continue
+        yield event_name, event_payload
+
+
+def _finish_reader_ask_agent_stream(
+    *,
+    runtime: _AgentStreamRuntime,
+    assistant_message_id: str,
+) -> tuple[_AgentStreamOutcome, tuple[str, dict[str, Any]] | None]:
+    final_content_md = "".join(runtime.content_parts).strip()
+    if runtime.producer_error is not None:
+        if final_content_md:
+            return (
+                _AgentStreamOutcome(
+                    content_md=final_content_md,
+                    usage_summary=runtime.usage_summary,
+                    interrupted=True,
+                    interruption_detail=str(runtime.producer_error) or "输出中断",
+                ),
+                (
+                    "message.interrupted",
+                    {
+                        "message_id": assistant_message_id,
+                        "content_md": final_content_md,
+                        "detail": str(runtime.producer_error) or "输出中断",
+                        "can_retry": True,
+                    },
+                ),
+            )
+        raise runtime.producer_error
+    return (
+        _AgentStreamOutcome(content_md=final_content_md, usage_summary=runtime.usage_summary, interrupted=False),
+        None,
+    )
+
+
 def _normalize_persisted_supplements(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1670,16 +2086,35 @@ def _sentence_analysis_card(
     anchors: list[ReaderAskAnchorRef],
     runtime_state: ReaderAskRuntimeState,
 ) -> ReaderAskSentenceBreakdownCard | None:
-    insights = runtime_state.latest_record_insights
-    if not insights:
-        return None
-    analysis_entry = next((item for item in insights if item.get("entry_type") == "sentence_analysis"), None)
-    if not analysis_entry:
-        return None
-    analysis_text, parts = _extract_sentence_analysis_parts(str(analysis_entry.get("content") or ""))
-    if not parts:
-        return None
-    sentence_id = str(analysis_entry.get("sentence_id") or anchors[0].sentence_id or "")
+    generated = next(
+        (item for item in runtime_state.latest_generated_annotations if item.get("kind") == "sentence_analysis"),
+        None,
+    )
+    if generated is not None:
+        sentence_id = str(generated.get("sentence_id") or anchors[0].sentence_id or "")
+        parts = [
+            ReaderAskSentenceBreakdownPart(
+                label=str(chunk.get("label") or ""),
+                text=str(chunk.get("text") or ""),
+            )
+            for chunk in generated.get("chunks") or []
+            if isinstance(chunk, dict) and str(chunk.get("label") or "").strip() and str(chunk.get("text") or "").strip()
+        ]
+        if not parts:
+            return None
+        analysis_text = str(generated.get("analysis_zh") or generated.get("content") or "").strip() or None
+    else:
+        insights = runtime_state.latest_record_insights
+        if not insights:
+            return None
+        analysis_entry = next((item for item in insights if item.get("entry_type") == "sentence_analysis"), None)
+        if not analysis_entry:
+            return None
+        analysis_text, parts = _extract_sentence_analysis_parts(str(analysis_entry.get("content") or ""))
+        if not parts:
+            return None
+        sentence_id = str(analysis_entry.get("sentence_id") or anchors[0].sentence_id or "")
+
     sentence_text = _render_scene_sentence_text(record, sentence_id) or _first_anchor_text(anchors[0])
     if not sentence_text:
         return None
@@ -1691,6 +2126,42 @@ def _sentence_analysis_card(
         main_clause=main_clause,
         analysis_zh=analysis_text,
         parts=parts,
+    )
+
+
+def _grammar_note_card(runtime_state: ReaderAskRuntimeState) -> ReaderAskGrammarNoteCard | None:
+    generated = next(
+        (
+            item
+            for item in runtime_state.latest_generated_annotations
+            if item.get("kind") == "grammar_note" and item.get("status") == "ready"
+        ),
+        None,
+    )
+    if generated is None:
+        return None
+    sentence_text = str(generated.get("source_sentence") or "").strip()
+    focus_text = str(generated.get("focus_text") or "").strip() or sentence_text
+    label = str(generated.get("label") or "").strip()
+    note_zh = str(generated.get("note_zh") or generated.get("content") or "").strip()
+    analysis_scope = str(generated.get("analysis_scope") or "full_sentence")
+    if not sentence_text or not focus_text or not label or not note_zh:
+        return None
+    spans = [
+        ReaderAskGrammarNoteCardSpan(
+            text=str(span.get("text") or "").strip(),
+            role=str(span.get("role") or "").strip() or None,
+        )
+        for span in generated.get("spans") or []
+        if isinstance(span, dict) and str(span.get("text") or "").strip()
+    ]
+    return ReaderAskGrammarNoteCard(
+        sentence_text=sentence_text,
+        focus_text=focus_text,
+        label=label,
+        note_zh=note_zh,
+        spans=spans,
+        analysis_scope="focus_span" if analysis_scope == "focus_span" else "full_sentence",
     )
 
 
@@ -1787,7 +2258,11 @@ def _build_response_cards(
     runtime_state: ReaderAskRuntimeState,
 ) -> list[ReaderAskResponseCard]:
     cards: list[ReaderAskResponseCard] = []
-    if task_mode == "breakdown":
+    if task_mode == "grammar":
+        card = _grammar_note_card(runtime_state)
+        if card is not None:
+            cards.append(card)
+    elif task_mode == "breakdown":
         card = _sentence_analysis_card(record=record, anchors=anchors, runtime_state=runtime_state)
         if card is not None:
             cards.append(card)
@@ -1800,6 +2275,147 @@ def _build_response_cards(
         if card is not None:
             cards.append(card)
     return cards
+
+
+def _build_supplement_candidates_from_runtime(
+    *,
+    resolved_intent: ReaderAskResolvedIntent,
+    anchors: list[ReaderAskAnchorRef],
+    runtime_state: ReaderAskRuntimeState,
+    assistant_content_md: str,
+    created_from_turn_run_id: str,
+) -> list[ReaderAskSupplementCandidate]:
+    generated_grammar_note = next(
+        (
+            item
+            for item in runtime_state.latest_generated_annotations
+            if item.get("kind") == "grammar_note" and item.get("status") == "ready"
+        ),
+        None,
+    )
+    if generated_grammar_note is not None and anchors:
+        content = str(generated_grammar_note.get("content") or "").strip()
+        if content:
+            candidate = supplements_svc.build_grammar_note_candidate(
+                anchor=anchors[0],
+                assistant_content_md=content,
+                created_from_turn_run_id=created_from_turn_run_id,
+            )
+            return [candidate] if candidate is not None else []
+    return capabilities_svc.build_supplement_candidates(
+        resolved_intent=resolved_intent,
+        anchors=anchors,
+        assistant_content_md=assistant_content_md,
+        created_from_turn_run_id=created_from_turn_run_id,
+    )
+
+
+def _quick_action_label(entry_action: ReaderAskEntryAction) -> str:
+    if entry_action == "why_here":
+        return "语法解析"
+    if entry_action == "explain_this":
+        return "句子拆分"
+    return "快捷分析"
+
+
+def _quick_action_content(
+    *,
+    entry_action: ReaderAskEntryAction,
+    generated_annotation: dict[str, Any] | None,
+) -> str:
+    if generated_annotation is None:
+        return f"{_quick_action_label(entry_action)}暂时无法完成。"
+    if generated_annotation.get("status") == "not_applicable":
+        reason = str(generated_annotation.get("reason") or "").strip()
+        suggestion = str(generated_annotation.get("suggestion") or "").strip()
+        pieces = [f"这次没有直接生成{_quick_action_label(entry_action)}卡。"]
+        if reason:
+            pieces.append(reason)
+        if suggestion:
+            pieces.append(suggestion)
+        return "\n\n".join(pieces)
+
+    label = str(generated_annotation.get("label") or "").strip()
+    focus_text = str(generated_annotation.get("focus_text") or "").strip()
+    if generated_annotation.get("kind") == "grammar_note":
+        note = str(generated_annotation.get("note_zh") or generated_annotation.get("content") or "").strip()
+        scope_hint = (
+            "我先基于整句理解，再聚焦你选中的片段。"
+            if generated_annotation.get("analysis_scope") == "focus_span"
+            else "我直接围绕这句话的关键结构来解释。"
+        )
+        pieces = [scope_hint]
+        if label:
+            pieces.append(f"关键语法点：**{label}**")
+        if focus_text and generated_annotation.get("analysis_scope") == "focus_span":
+            pieces.append(f"聚焦片段：`{focus_text}`")
+        if note:
+            pieces.append(note)
+        return "\n\n".join(pieces)
+
+    analysis = str(generated_annotation.get("analysis_zh") or generated_annotation.get("content") or "").strip()
+    pieces = ["我先给你一个结构拆解卡，再补一句阅读顺序说明。"]
+    if label:
+        pieces.append(f"句型概述：**{label}**")
+    if analysis:
+        pieces.append(analysis)
+    return "\n\n".join(pieces)
+
+
+def _tool_trace_entry(
+    *,
+    tool_name: str,
+    status: Literal["started", "completed", "failed"],
+    summary: str | None = None,
+) -> ReaderAskToolTraceEntry:
+    now = datetime.now(UTC).isoformat()
+    if status == "started":
+        return ReaderAskToolTraceEntry(tool_name=tool_name, status=status, started_at=now)
+    return ReaderAskToolTraceEntry(
+        tool_name=tool_name,
+        status=status,
+        started_at=now,
+        completed_at=now,
+        summary=summary,
+    )
+
+
+async def _run_explicit_quick_action_annotation(
+    *,
+    submission_mode: ReaderAskSubmissionMode,
+    task_mode: ReaderAskTaskMode,
+    entry_action: ReaderAskEntryAction,
+    record: _RecordBundle,
+    primary_anchor: ReaderAskAnchorRef | None,
+    runtime_state: ReaderAskRuntimeState,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] | None = None,
+) -> dict[str, Any] | None:
+    if submission_mode != "quick_action":
+        return None
+    kind = _annotation_quick_action_kind(task_mode, entry_action)
+    if kind is None or primary_anchor is None:
+        return None
+
+    runtime_state.tool_trace.append(_tool_trace_entry(tool_name="generate_sentence_annotation", status="started"))
+    if event_queue is not None:
+        await event_queue.put(("tool.started", {"tool_name": "generate_sentence_annotation"}))
+    generated = await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
+    if generated is not None:
+        runtime_state.latest_generated_annotations.append(generated)
+        if generated.get("status") == "ready":
+            runtime_state.source_labels.add("record_assets")
+    summary = (
+        "Generated structured analysis"
+        if generated and generated.get("status") == "ready"
+        else str(generated.get("reason") or "No stable structured analysis") if generated
+        else "No stable structured analysis"
+    )
+    runtime_state.tool_trace.append(
+        _tool_trace_entry(tool_name="generate_sentence_annotation", status="completed", summary=summary)
+    )
+    if event_queue is not None:
+        await event_queue.put(("tool.completed", {"tool_name": "generate_sentence_annotation", "summary": summary}))
+    return generated
 
 
 async def _ensure_task_card_data(
@@ -2120,6 +2736,17 @@ async def list_context_records(
                 "record_id": row["id"],
                 "title": row.get("title"),
                 "updated_at": row.get("updated_at"),
+                "overview_hint": utils.truncate_text_optional(
+                    (
+                        overview := utils.resolve_record_overview(
+                            render_scene=ensure_json_dict(row.get("render_scene_json")),
+                            page_state_json=ensure_json_dict(row.get("page_state_json")),
+                        )
+                    ).get("overview"),
+                    140,
+                ),
+                "overview_hint_status": overview.get("status"),
+                "overview_hint_source": overview.get("source"),
             }
             for row in rows
         ]
@@ -2229,6 +2856,7 @@ async def stream_thread_message(
     disambiguation: ReaderAskDisambiguation | None = None
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
+    final_content_md = ""
     persisted_supplements_json: list[dict[str, Any]] = []
 
     try:
@@ -2268,6 +2896,7 @@ async def stream_thread_message(
         disambiguation = planning_snapshot.disambiguation_state
         external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
         clarification_only = planning_snapshot.clarification_only
+        submission_mode = _submission_mode(entry_action=body.entry_action, attachments=attachments)
         if clarification_only:
             user_message = await repo.create_message(
                 thread_id=thread_id,
@@ -2278,6 +2907,7 @@ async def stream_thread_message(
                 metadata=_user_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
                 ),
             )
             yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
@@ -2296,6 +2926,7 @@ async def stream_thread_message(
                 metadata=_assistant_message_metadata(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
                 ),
             )
             turn_run = await repo.create_turn_run(
@@ -2345,6 +2976,7 @@ async def stream_thread_message(
             )
             output = _build_user_visible_output(
                 content_md=assistant_md,
+                submission_mode=submission_mode,
                 resolved_intent=resolved_intent,
                 citations=citations,
                 action_proposals=[],
@@ -2379,6 +3011,7 @@ async def stream_thread_message(
                 resolved_intent=resolved_intent,
                 run_info=run_info,
                 resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             )
             yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
             yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
@@ -2462,6 +3095,7 @@ async def stream_thread_message(
             metadata=_user_message_metadata(
                 resolved_intent=resolved_intent,
                 resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             ),
         )
         yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
@@ -2475,6 +3109,7 @@ async def stream_thread_message(
             metadata=_assistant_message_metadata(
                 resolved_intent=resolved_intent,
                 resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             ),
         )
         turn_run = await repo.create_turn_run(
@@ -2502,6 +3137,7 @@ async def stream_thread_message(
                 resolved_intent=resolved_intent,
                 run_info=run_info,
                 resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             ),
             usage_event_id=None,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -2526,13 +3162,21 @@ async def stream_thread_message(
         if model is None:
             raise RuntimeError("model route is not configured: reader_ask")
 
-        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=45.0)
+        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=90.0)
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
         route_settings = RunModelSettings(
             max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
+            top_p=route_settings.top_p,
+            parallel_tool_calls=route_settings.parallel_tool_calls,
+            seed=route_settings.seed,
+            presence_penalty=route_settings.presence_penalty,
+            frequency_penalty=route_settings.frequency_penalty,
+            stop_sequences=route_settings.stop_sequences,
+            extra_headers=route_settings.extra_headers,
+            extra_body=route_settings.extra_body,
         )
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -2590,6 +3234,22 @@ async def stream_thread_message(
                 nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
             return result
 
+        async def generate_sentence_annotation_cb(
+            kind: Literal["grammar_note", "sentence_analysis"],
+        ) -> dict[str, Any] | None:
+            existing = next(
+                (
+                    item
+                    for item in reversed(runtime_state.latest_generated_annotations)
+                    if item.get("kind") == kind
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing
+            return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
+
+        quick_action_annotation: dict[str, Any] | None = None
         resolved_context_input = await _materialize_planned_context(
             user_id=user_id,
             record=record,
@@ -2602,6 +3262,22 @@ async def stream_thread_message(
             get_record_context_cb=get_record_context_cb,
             get_record_insights_cb=get_record_insights_cb,
         )
+        quick_action_annotation = await _run_explicit_quick_action_annotation(
+            submission_mode=submission_mode,
+            task_mode=resolved_intent,
+            entry_action=body.entry_action,
+            record=record,
+            primary_anchor=primary_anchor,
+            runtime_state=runtime_state,
+            event_queue=event_queue,
+        )
+        if quick_action_annotation and isinstance(quick_action_annotation.get("usage_summary"), dict):
+            nested_tool_usages.append(
+                {
+                    "tool_name": "generate_sentence_annotation",
+                    "usage_summary": quick_action_annotation["usage_summary"],
+                }
+            )
         context_plan = _build_context_plan(
             entry_action=body.entry_action,
             attachments=attachments,
@@ -2635,8 +3311,10 @@ async def stream_thread_message(
                 resolved_intent=resolved_intent,
                 resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
                 entry_action=body.entry_action,
+                submission_mode=submission_mode,
                 cross_record_context_allowed=cross_record_context_allowed,
                 resolved_context_input=resolved_context_input,
+                quick_action_annotation=quick_action_annotation,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
                 max_history_messages=_MAX_HISTORY_MESSAGES,
@@ -2672,56 +3350,36 @@ async def stream_thread_message(
             search_user_vocabulary_fn=search_user_vocabulary_cb,
             lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
             run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+            generate_sentence_annotation_fn=generate_sentence_annotation_cb,
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
-
-        content_parts: list[str] = []
-        usage_summary: dict[str, Any] | None = None
-        producer_done = asyncio.Event()
-        producer_error: Exception | None = None
-
-        async def run_agent_stream() -> None:
-            nonlocal usage_summary, producer_error
-            try:
-                async with agent.run_stream(
-                    build_reader_ask_prompt(deps),
-                    deps=deps,
-                    model=model,
-                    model_settings=route_settings.to_pydantic_ai(),
-                ) as result:
-                    async for delta in result.stream_text(delta=True, debounce_by=None):
-                        if not delta:
-                            continue
-                        content_parts.append(delta)
-                        await event_queue.put(
-                            (
-                                "message.delta",
-                                {"message_id": assistant_message["id"], "delta": delta},
-                            )
-                        )
-                    usage_summary = build_usage_metadata(result.usage())
-            except Exception as exc:
-                producer_error = exc
-            finally:
-                producer_done.set()
-
-        producer_task = asyncio.create_task(run_agent_stream())
+        producer_task, stream_runtime = _start_reader_ask_agent_stream(
+            agent=agent,
+            deps=deps,
+            model=model,
+            route_settings=route_settings,
+            assistant_message_id=assistant_message["id"],
+        )
         try:
-            while not producer_done.is_set() or not event_queue.empty():
-                try:
-                    event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                except TimeoutError:
-                    continue
+            async for event_name, event_payload in _stream_reader_ask_events(
+                event_queue=event_queue,
+                producer_done=stream_runtime.producer_done,
+            ):
                 yield _sse(event_name, event_payload)
         finally:
             await producer_task
 
-        if producer_error is not None:
-            raise producer_error
+        stream_outcome, interrupted_event = _finish_reader_ask_agent_stream(
+            runtime=stream_runtime,
+            assistant_message_id=assistant_message["id"],
+        )
+        if interrupted_event is not None:
+            yield _sse(interrupted_event[0], interrupted_event[1])
 
-        final_content_md = "".join(content_parts).strip()
+        final_content_md = stream_outcome.content_md
+        usage_summary = stream_outcome.usage_summary
         if resolved_intent == "vocabulary":
             if runtime_state.latest_dictionary_entry is not None:
                 runtime_state.source_labels.add("dictionary")
@@ -2765,9 +3423,10 @@ async def stream_thread_message(
             used_cross_record_context=runtime_state.used_cross_record_context,
             citations=runtime_state.citations,
         )
-        typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
+        typed_supplement_candidates = _build_supplement_candidates_from_runtime(
             resolved_intent=resolved_intent,
             anchors=resolved_anchors,
+            runtime_state=runtime_state,
             assistant_content_md=final_content_md,
             created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
         )
@@ -2850,6 +3509,7 @@ async def stream_thread_message(
 
         output = _build_user_visible_output(
             content_md=final_content_md,
+            submission_mode=submission_mode,
             resolved_intent=resolved_intent,
             citations=runtime_state.citations,
             action_proposals=action_proposals,
@@ -2868,9 +3528,10 @@ async def stream_thread_message(
             supplement_candidates=typed_supplement_candidates,
             persisted_supplements=[],
         )
+        final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         updated = await repo.update_message(
             message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
-            status="completed",
+            status=final_message_status,
             content_md=final_content_md,
             context_anchors=anchor_payload,
             citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
@@ -2880,23 +3541,21 @@ async def stream_thread_message(
                 resolved_intent=resolved_intent,
                 run_info=run_info,
                 resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             ),
             usage_event_id=usage_event_id,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
-        payload = _build_completed_payload(
-            message_id=updated["id"],
-            thread_id=str(thread_id),
-            output=output,
-        )
+        payload = _build_completed_payload(message_id=updated["id"], thread_id=str(thread_id), output=output)
         await repo.update_turn_run(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-            status="completed",
+            status="interrupted" if stream_outcome.interrupted else "completed",
             resolved_intent=resolved_intent,
             user_visible_output_json=output.model_dump(mode="json"),
             usage_summary_json=usage_summary,
             usage_event_id=usage_event_id,
-            completed_at=datetime.now(UTC),
+            completed_at=None if stream_outcome.interrupted else datetime.now(UTC),
+            failed_at=None if stream_outcome.interrupted else None,
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -2917,7 +3576,8 @@ async def stream_thread_message(
             billed_points=billed_points,
             usage_event_id=usage_event_id,
         )
-        yield _sse("message.completed", payload.model_dump(mode="json"))
+        if not stream_outcome.interrupted:
+            yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
         if reservation is not None and reservation.total_points > 0 and record is not None:
             await refund_reserved_points(
@@ -2933,7 +3593,7 @@ async def stream_thread_message(
             await repo.update_message(
                 message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
                 status="failed",
-                content_md="",
+                content_md=final_content_md,
                 context_anchors=anchor_payload,
                 citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
                 action_proposals=[],
@@ -2942,6 +3602,7 @@ async def stream_thread_message(
                     resolved_intent=resolved_intent,
                     resolved_context_input=resolved_context_input,
                     run_info=run_info,
+                    submission_mode=submission_mode,
                 ),
                 usage_event_id=None,
                 current_turn_run_id=active_turn_run_id,
@@ -3016,6 +3677,7 @@ async def retry_thread_message(
     disambiguation: ReaderAskDisambiguation | None = None
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
+    final_content_md = ""
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -3090,6 +3752,7 @@ async def retry_thread_message(
         resolved_context_input = planning_snapshot.resolved_context_input
         disambiguation = planning_snapshot.disambiguation_state
         external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+        submission_mode = _submission_mode(entry_action=body.entry_action, attachments=attachments)
         run_info, run_history = _next_run_info(assistant_message)
         turn_run = await repo.create_turn_run(
             message_id=message_id,
@@ -3175,12 +3838,14 @@ async def retry_thread_message(
                     run_info=run_info,
                     run_history=run_history,
                     resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
                 ),
                 usage_event_id=None,
                 current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             )
             output = _build_user_visible_output(
                 content_md=assistant_md,
+                submission_mode=submission_mode,
                 resolved_intent=resolved_intent,
                 citations=citations,
                 action_proposals=[],
@@ -3277,6 +3942,7 @@ async def retry_thread_message(
                 run_info=run_info,
                 run_history=run_history,
                 resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             ),
             usage_event_id=None,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3302,13 +3968,21 @@ async def retry_thread_message(
         if model is None:
             raise RuntimeError("model route is not configured: reader_ask")
 
-        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=45.0)
+        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=90.0)
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
         route_settings = RunModelSettings(
             max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
+            top_p=route_settings.top_p,
+            parallel_tool_calls=route_settings.parallel_tool_calls,
+            seed=route_settings.seed,
+            presence_penalty=route_settings.presence_penalty,
+            frequency_penalty=route_settings.frequency_penalty,
+            stop_sequences=route_settings.stop_sequences,
+            extra_headers=route_settings.extra_headers,
+            extra_body=route_settings.extra_body,
         )
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -3366,6 +4040,22 @@ async def retry_thread_message(
                 nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
             return result
 
+        async def generate_sentence_annotation_cb(
+            kind: Literal["grammar_note", "sentence_analysis"],
+        ) -> dict[str, Any] | None:
+            existing = next(
+                (
+                    item
+                    for item in reversed(runtime_state.latest_generated_annotations)
+                    if item.get("kind") == kind
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing
+            return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
+
+        quick_action_annotation: dict[str, Any] | None = None
         resolved_context_input = await _materialize_planned_context(
             user_id=user_id,
             record=record,
@@ -3378,6 +4068,22 @@ async def retry_thread_message(
             get_record_context_cb=get_record_context_cb,
             get_record_insights_cb=get_record_insights_cb,
         )
+        quick_action_annotation = await _run_explicit_quick_action_annotation(
+            submission_mode=submission_mode,
+            task_mode=resolved_intent,
+            entry_action=body.entry_action,
+            record=record,
+            primary_anchor=primary_anchor,
+            runtime_state=runtime_state,
+            event_queue=event_queue,
+        )
+        if quick_action_annotation and isinstance(quick_action_annotation.get("usage_summary"), dict):
+            nested_tool_usages.append(
+                {
+                    "tool_name": "generate_sentence_annotation",
+                    "usage_summary": quick_action_annotation["usage_summary"],
+                }
+            )
         context_plan = _build_context_plan(
             entry_action=body.entry_action,
             attachments=attachments,
@@ -3411,8 +4117,10 @@ async def retry_thread_message(
                 resolved_intent=resolved_intent,
                 resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
                 entry_action=body.entry_action,
+                submission_mode=submission_mode,
                 cross_record_context_allowed=cross_record_context_allowed,
                 resolved_context_input=resolved_context_input,
+                quick_action_annotation=quick_action_annotation,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
                 max_history_messages=_MAX_HISTORY_MESSAGES,
@@ -3448,56 +4156,36 @@ async def retry_thread_message(
             search_user_vocabulary_fn=search_user_vocabulary_cb,
             lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
             run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+            generate_sentence_annotation_fn=generate_sentence_annotation_cb,
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
-
-        content_parts: list[str] = []
-        usage_summary: dict[str, Any] | None = None
-        producer_done = asyncio.Event()
-        producer_error: Exception | None = None
-
-        async def run_agent_stream() -> None:
-            nonlocal usage_summary, producer_error
-            try:
-                async with agent.run_stream(
-                    build_reader_ask_prompt(deps),
-                    deps=deps,
-                    model=model,
-                    model_settings=route_settings.to_pydantic_ai(),
-                ) as result:
-                    async for delta in result.stream_text(delta=True, debounce_by=None):
-                        if not delta:
-                            continue
-                        content_parts.append(delta)
-                        await event_queue.put(
-                            (
-                                "message.delta",
-                                {"message_id": assistant_message["id"], "delta": delta},
-                            )
-                        )
-                    usage_summary = build_usage_metadata(result.usage())
-            except Exception as exc:
-                producer_error = exc
-            finally:
-                producer_done.set()
-
-        producer_task = asyncio.create_task(run_agent_stream())
+        producer_task, stream_runtime = _start_reader_ask_agent_stream(
+            agent=agent,
+            deps=deps,
+            model=model,
+            route_settings=route_settings,
+            assistant_message_id=assistant_message["id"],
+        )
         try:
-            while not producer_done.is_set() or not event_queue.empty():
-                try:
-                    event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                except TimeoutError:
-                    continue
+            async for event_name, event_payload in _stream_reader_ask_events(
+                event_queue=event_queue,
+                producer_done=stream_runtime.producer_done,
+            ):
                 yield _sse(event_name, event_payload)
         finally:
             await producer_task
 
-        if producer_error is not None:
-            raise producer_error
+        stream_outcome, interrupted_event = _finish_reader_ask_agent_stream(
+            runtime=stream_runtime,
+            assistant_message_id=assistant_message["id"],
+        )
+        if interrupted_event is not None:
+            yield _sse(interrupted_event[0], interrupted_event[1])
 
-        final_content_md = "".join(content_parts).strip()
+        final_content_md = stream_outcome.content_md
+        usage_summary = stream_outcome.usage_summary
         if resolved_intent == "vocabulary":
             if runtime_state.latest_dictionary_entry is not None:
                 runtime_state.source_labels.add("dictionary")
@@ -3541,9 +4229,10 @@ async def retry_thread_message(
             used_cross_record_context=runtime_state.used_cross_record_context,
             citations=runtime_state.citations,
         )
-        typed_supplement_candidates = capabilities_svc.build_supplement_candidates(
+        typed_supplement_candidates = _build_supplement_candidates_from_runtime(
             resolved_intent=resolved_intent,
             anchors=resolved_anchors,
+            runtime_state=runtime_state,
             assistant_content_md=final_content_md,
             created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
         )
@@ -3627,6 +4316,7 @@ async def retry_thread_message(
 
         output = _build_user_visible_output(
             content_md=final_content_md,
+            submission_mode=submission_mode,
             resolved_intent=resolved_intent,
             citations=runtime_state.citations,
             action_proposals=action_proposals,
@@ -3645,9 +4335,10 @@ async def retry_thread_message(
             supplement_candidates=typed_supplement_candidates,
             persisted_supplements=persisted_supplements_json,
         )
+        final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         await repo.update_message(
             message_id=message_id,
-            status="completed",
+            status=final_message_status,
             content_md=final_content_md,
             context_anchors=anchor_payload,
             citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
@@ -3658,6 +4349,7 @@ async def retry_thread_message(
                 run_info=run_info,
                 run_history=run_history,
                 resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             ),
             usage_event_id=usage_event_id,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3669,12 +4361,13 @@ async def retry_thread_message(
         )
         await repo.update_turn_run(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-            status="completed",
+            status="interrupted" if stream_outcome.interrupted else "completed",
             resolved_intent=resolved_intent,
             user_visible_output_json=output.model_dump(mode="json"),
             usage_summary_json=usage_summary,
             usage_event_id=usage_event_id,
-            completed_at=datetime.now(UTC),
+            completed_at=None if stream_outcome.interrupted else datetime.now(UTC),
+            failed_at=None if stream_outcome.interrupted else None,
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3695,7 +4388,8 @@ async def retry_thread_message(
             billed_points=billed_points,
             usage_event_id=usage_event_id,
         )
-        yield _sse("message.completed", payload.model_dump(mode="json"))
+        if not stream_outcome.interrupted:
+            yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
         if reservation is not None and reservation.total_points > 0 and record is not None:
             await refund_reserved_points(
@@ -3712,7 +4406,7 @@ async def retry_thread_message(
             await repo.update_message(
                 message_id=message_id,
                 status="failed",
-                content_md="",
+                content_md=final_content_md,
                 context_anchors=anchor_payload,
                 citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
                 action_proposals=[],
@@ -3722,6 +4416,7 @@ async def retry_thread_message(
                     run_info=run_info,
                     run_history=run_history,
                     resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
                 ),
                 usage_event_id=None,
                 current_turn_run_id=active_turn_run_id,

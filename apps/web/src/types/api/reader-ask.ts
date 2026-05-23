@@ -8,7 +8,7 @@ export type ReaderAskAnchorTypeDto =
   | "dictionary_entry";
 
 export type ReaderAskMessageRoleDto = "user" | "assistant" | "system";
-export type ReaderAskMessageStatusDto = "pending" | "streaming" | "completed" | "failed";
+export type ReaderAskMessageStatusDto = "pending" | "streaming" | "completed" | "failed" | "interrupted";
 export type ReaderAskCitationKindDto =
   | "anchor"
   | "vocabulary"
@@ -173,7 +173,10 @@ export interface ReaderAskToolTraceEntryDto {
   status: ReaderAskToolStatusDto;
   started_at?: string | null;
   completed_at?: string | null;
+  input_summary?: string | null;
   summary?: string | null;
+  next_actions: string[];
+  artifacts: string[];
   metadata_json: Record<string, unknown>;
 }
 
@@ -236,6 +239,9 @@ export interface ReaderAskCurrentRecordContextDto {
   local_context?: Record<string, unknown> | null;
   record_insights: Record<string, unknown>[];
   article_overview?: string | null;
+  article_overview_status?: string | null;
+  article_overview_source?: string | null;
+  article_overview_confidence?: string | null;
   source_labels: string[];
 }
 
@@ -243,6 +249,9 @@ export interface ReaderAskExternalRecordContextDto {
   record_id: string;
   record_title?: string | null;
   article_overview?: string | null;
+  article_overview_status?: string | null;
+  article_overview_source?: string | null;
+  article_overview_confidence?: string | null;
   record_insights: string[];
   source_labels: string[];
   reason?: string | null;
@@ -255,7 +264,9 @@ export interface ReaderAskExternalAssetContextDto {
   asset_id: string;
   entry_type?: string | null;
   asset_title?: string | null;
+  content_md?: string | null;
   content_summary?: string | null;
+  source_labels: string[];
   reason?: string | null;
 }
 
@@ -280,6 +291,7 @@ export interface ReaderAskDisambiguationCandidateDto {
   record_id: string;
   title?: string | null;
   updated_at?: string | null;
+  overview_hint?: string | null;
 }
 
 export interface ReaderAskDisambiguationDto {
@@ -334,6 +346,9 @@ export interface ReaderAskContextRecordItemDto {
   record_id: string;
   title?: string | null;
   updated_at?: string | null;
+  overview_hint?: string | null;
+  overview_hint_status?: string | null;
+  overview_hint_source?: string | null;
 }
 
 export interface ReaderAskContextRecordSearchResponseDto {
@@ -378,6 +393,22 @@ export interface ReaderAskSentenceBreakdownPartDto {
   note?: string | null;
 }
 
+export interface ReaderAskGrammarNoteCardSpanDto {
+  text: string;
+  role?: string | null;
+}
+
+export interface ReaderAskGrammarNoteCardDto {
+  card_type: "grammar_note_card";
+  sentence_text: string;
+  focus_text: string;
+  label: string;
+  note_zh: string;
+  spans: ReaderAskGrammarNoteCardSpanDto[];
+  analysis_scope: "focus_span" | "full_sentence";
+  origin: "ask_ai";
+}
+
 export interface ReaderAskSentenceBreakdownCardDto {
   card_type: "sentence_breakdown_card";
   sentence_text: string;
@@ -385,6 +416,7 @@ export interface ReaderAskSentenceBreakdownCardDto {
   main_clause?: string | null;
   analysis_zh?: string | null;
   parts: ReaderAskSentenceBreakdownPartDto[];
+  origin: "ask_ai";
 }
 
 export interface ReaderAskVocabularyInContextCardDto {
@@ -410,6 +442,7 @@ export interface ReaderAskPracticeCardDto {
 }
 
 export type ReaderAskResponseCardDto =
+  | ReaderAskGrammarNoteCardDto
   | ReaderAskSentenceBreakdownCardDto
   | ReaderAskVocabularyInContextCardDto
   | ReaderAskPracticeCardDto;
@@ -420,6 +453,7 @@ export interface ReaderAskMessageDto {
   role: ReaderAskMessageRoleDto;
   status: ReaderAskMessageStatusDto;
   content_md: string;
+  submission_mode?: "chat" | "quick_action";
   resolved_intent?: ReaderAskResolvedIntentDto | null;
   context_anchors: ReaderAskAnchorRefDto[];
   citations: ReaderAskCitationDto[];
@@ -436,6 +470,8 @@ export interface ReaderAskMessageDto {
   run_info?: ReaderAskRunInfoDto | null;
   supplement_candidates: ReaderAskSupplementCandidateDto[];
   persisted_supplements: ReaderAskPersistedSupplementDto[];
+  reasoning_md?: string | null;
+  reasoning_status?: "idle" | "streaming" | "completed" | null;
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -488,6 +524,7 @@ export interface ReaderAskCompletedPayloadDto {
   id: string;
   thread_id: string;
   content_md: string;
+  submission_mode?: "chat" | "quick_action";
   resolved_intent?: ReaderAskResolvedIntentDto | null;
   citations: ReaderAskCitationDto[];
   action_proposals: ReaderAskActionProposalDto[];
@@ -528,9 +565,13 @@ export type ReaderAskStreamEventName =
   | "thread.ready"
   | "message.started"
   | "message.delta"
+  | "reasoning.started"
+  | "reasoning.delta"
+  | "reasoning.completed"
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
+  | "message.interrupted"
   | "message.completed"
   | "error";
 

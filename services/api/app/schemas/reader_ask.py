@@ -16,7 +16,7 @@ ReaderAskAnchorType = Literal[
     "dictionary_entry",
 ]
 ReaderAskMessageRole = Literal["user", "assistant", "system"]
-ReaderAskMessageStatus = Literal["pending", "streaming", "completed", "failed"]
+ReaderAskMessageStatus = Literal["pending", "streaming", "completed", "failed", "interrupted"]
 ReaderAskCitationKind = Literal[
     "anchor",
     "vocabulary",
@@ -48,10 +48,12 @@ ReaderAskAttachmentKind = Literal[
     "record_ref",
 ]
 ReaderAskResponseCardType = Literal[
+    "grammar_note_card",
     "sentence_breakdown_card",
     "vocabulary_in_context_card",
     "practice_card",
 ]
+ReaderAskSubmissionMode = Literal["chat", "quick_action"]
 ReaderAskSupplementType = Literal["grammar_note"]
 ReaderAskSupplementLifecycleStatus = Literal["candidate", "persisted", "deleted"]
 ReaderAskEvidenceKind = Literal[
@@ -235,7 +237,10 @@ class ReaderAskToolTraceEntry(BaseModel):
     status: ReaderAskToolStatus
     started_at: str | None = None
     completed_at: str | None = None
+    input_summary: str | None = None
     summary: str | None = None
+    next_actions: list[str] = Field(default_factory=list)
+    artifacts: list[str] = Field(default_factory=list)
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -298,6 +303,9 @@ class ReaderAskCurrentRecordContext(BaseModel):
     local_context: dict[str, Any] | None = None
     record_insights: list[dict[str, Any]] = Field(default_factory=list)
     article_overview: str | None = None
+    article_overview_status: str | None = None
+    article_overview_source: str | None = None
+    article_overview_confidence: str | None = None
     source_labels: list[str] = Field(default_factory=list)
 
 
@@ -305,6 +313,9 @@ class ReaderAskExternalRecordContext(BaseModel):
     record_id: str
     record_title: str | None = None
     article_overview: str | None = None
+    article_overview_status: str | None = None
+    article_overview_source: str | None = None
+    article_overview_confidence: str | None = None
     record_insights: list[str] = Field(default_factory=list)
     source_labels: list[str] = Field(default_factory=list)
     reason: str | None = None
@@ -317,7 +328,9 @@ class ReaderAskExternalAssetContext(BaseModel):
     asset_id: str
     entry_type: str | None = None
     asset_title: str | None = None
+    content_md: str | None = None
     content_summary: str | None = None
+    source_labels: list[str] = Field(default_factory=list)
     reason: str | None = None
 
 
@@ -420,7 +433,7 @@ _ASSET_TYPE_ALIASES: dict[str, ReaderAskPlannerAssetType] = {
 
 
 class ReaderAskPlannerDecision(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
     resolved_intent: ReaderAskResolvedIntent
     clarification_only: bool = False
@@ -438,7 +451,7 @@ class ReaderAskPlannerDecision(BaseModel):
         if not isinstance(value, str):
             return value
         normalized = value.strip().lower()
-        return _INTENT_ALIASES.get(normalized, "explain")
+        return _INTENT_ALIASES.get(normalized, value)
 
 
 class ReaderAskRunInfo(BaseModel):
@@ -452,6 +465,7 @@ class ReaderAskDisambiguationCandidate(BaseModel):
     record_id: str
     title: str | None = None
     updated_at: str | None = None
+    overview_hint: str | None = None
 
 
 class ReaderAskDisambiguation(BaseModel):
@@ -507,6 +521,9 @@ class ReaderAskContextRecordItem(BaseModel):
     record_id: str
     title: str | None = None
     updated_at: str | None = None
+    overview_hint: str | None = None
+    overview_hint_status: str | None = None
+    overview_hint_source: str | None = None
 
 
 class ReaderAskContextRecordSearchResponse(BaseModel):
@@ -551,6 +568,22 @@ class ReaderAskSentenceBreakdownPart(BaseModel):
     note: str | None = None
 
 
+class ReaderAskGrammarNoteCardSpan(BaseModel):
+    text: str
+    role: str | None = None
+
+
+class ReaderAskGrammarNoteCard(BaseModel):
+    card_type: Literal["grammar_note_card"] = "grammar_note_card"
+    sentence_text: str
+    focus_text: str
+    label: str
+    note_zh: str
+    spans: list[ReaderAskGrammarNoteCardSpan] = Field(default_factory=list)
+    analysis_scope: Literal["focus_span", "full_sentence"]
+    origin: Literal["ask_ai"] = "ask_ai"
+
+
 class ReaderAskSentenceBreakdownCard(BaseModel):
     card_type: Literal["sentence_breakdown_card"] = "sentence_breakdown_card"
     sentence_text: str
@@ -558,6 +591,7 @@ class ReaderAskSentenceBreakdownCard(BaseModel):
     main_clause: str | None = None
     analysis_zh: str | None = None
     parts: list[ReaderAskSentenceBreakdownPart] = Field(default_factory=list)
+    origin: Literal["ask_ai"] = "ask_ai"
 
 
 class ReaderAskVocabularyInContextCard(BaseModel):
@@ -583,7 +617,7 @@ class ReaderAskPracticeCard(BaseModel):
 
 
 ReaderAskResponseCard = Annotated[
-    ReaderAskSentenceBreakdownCard | ReaderAskVocabularyInContextCard | ReaderAskPracticeCard,
+    ReaderAskGrammarNoteCard | ReaderAskSentenceBreakdownCard | ReaderAskVocabularyInContextCard | ReaderAskPracticeCard,
     Field(discriminator="card_type"),
 ]
 
@@ -594,6 +628,7 @@ class ReaderAskMessage(BaseModel):
     role: ReaderAskMessageRole
     status: ReaderAskMessageStatus
     content_md: str
+    submission_mode: ReaderAskSubmissionMode = "chat"
     resolved_intent: ReaderAskResolvedIntent | None = None
     context_anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
     citations: list[ReaderAskCitation] = Field(default_factory=list)
@@ -683,6 +718,7 @@ class ReaderAskMessageStreamRequest(BaseModel):
 
 class ReaderAskUserVisibleOutput(BaseModel):
     content_md: str
+    submission_mode: ReaderAskSubmissionMode = "chat"
     resolved_intent: ReaderAskResolvedIntent | None = None
     citations: list[ReaderAskCitation] = Field(default_factory=list)
     action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
@@ -735,7 +771,7 @@ class ReaderAskTurnRunRecord(BaseModel):
     turn_id: str
     run_attempt: int
     supersedes_run_id: str | None = None
-    status: Literal["streaming", "completed", "failed"]
+    status: Literal["streaming", "completed", "failed", "interrupted"]
     resolved_intent: ReaderAskResolvedIntent | None = None
     user_visible_output_json: dict[str, Any] | None = None
     usage_summary_json: dict[str, Any] | None = None

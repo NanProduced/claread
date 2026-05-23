@@ -20,6 +20,7 @@ infra/migrations/0001_initial_schema.sql
 - `dict_ai_candidate_entries`
 - `reader_ask_threads` / `reader_ask_messages` / `reader_ask_supplements`
 - `reader_ask_turn_runs` / `reader_ask_eval_traces`
+- `analysis_overview_tasks` / `analysis_overview_task_events`
 
 ## 词典数据
 

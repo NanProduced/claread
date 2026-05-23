@@ -32,3 +32,5 @@ agents:
     file: agents/daily_review.yaml
   daily_refinement:
     file: agents/daily_refinement.yaml
+  learning_overview_hint:
+    file: agents/learning_overview_hint.yaml

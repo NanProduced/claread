@@ -69,8 +69,8 @@ class ReaderAskStructuredAssetResolution:
     reason: str | None = None
     record_id: str | None = None
     record_title: str | None = None
-    resolved_assets: list[dict[str, str]] = field(default_factory=list)
-    ambiguous_assets: list[dict[str, str]] = field(default_factory=list)
+    resolved_assets: list[dict[str, object]] = field(default_factory=list)
+    ambiguous_assets: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -426,6 +426,7 @@ def _planned_disambiguation_state(
             record_id=item["record_id"],
             title=item.get("title"),
             updated_at=item.get("updated_at"),
+            overview_hint=item.get("overview_hint"),
         )
         for item in reference_resolution.ambiguous_records
         if item.get("record_id")
@@ -535,7 +536,7 @@ def _merge_external_record_refs(
 def _merge_external_asset_refs(
     explicit_refs: list[dict[str, str]],
     structured_asset_resolution: ReaderAskStructuredAssetResolution,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     resolved_refs = [
         {
             "record_id": item["record_id"],
@@ -544,15 +545,17 @@ def _merge_external_asset_refs(
             "asset_id": item["asset_id"],
             "entry_type": item.get("entry_type"),
             "asset_title": item.get("title"),
+            "content_md": item.get("content_md"),
             "content_summary": item.get("summary"),
+            "source_labels": item.get("source_labels") or [],
             "reason": "structured_asset_resolved",
         }
         for item in structured_asset_resolution.resolved_assets
     ]
-    merged: list[dict[str, str]] = []
+    merged: list[dict[str, object]] = []
     seen_asset_keys: set[tuple[str, str]] = set()
-    for item in [*explicit_refs, *resolved_refs]:
-        key = (item["asset_type"], item["asset_id"])
+    for item in [*resolved_refs, *explicit_refs]:
+        key = (str(item["asset_type"]), str(item["asset_id"]))
         if key in seen_asset_keys:
             continue
         seen_asset_keys.add(key)

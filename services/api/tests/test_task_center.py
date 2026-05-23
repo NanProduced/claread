@@ -36,7 +36,9 @@ if "asyncpg" not in sys.modules:
 from app.api.routes.health import health_check, readiness_check
 from app.api.routes.tasks import submit_analysis_task
 from app.schemas.analysis import RenderSceneModel
+from app.schemas.internal.overview_hint import LearningOverviewHintDraft
 from app.schemas.tasks import TaskSubmitRequest
+from app.services.analysis.overview_task_executor import OverviewTaskWorker
 from app.services.analysis.task_executor import (
     AnalysisTaskWorker,
     compute_cost_points,
@@ -594,6 +596,10 @@ class TestTaskExecutorCharging:
                 AsyncMock(),
             ),
             patch(
+                "app.services.analysis.task_executor.enqueue_overview_task_if_needed",
+                AsyncMock(return_value=None),
+            ),
+            patch(
                 "app.services.analysis.task_executor.records_svc.increment_user_reading_count",
                 AsyncMock(return_value=True),
             ),
@@ -699,6 +705,10 @@ class TestTaskExecutorCharging:
                 AsyncMock(),
             ) as update_record_mock,
             patch(
+                "app.services.analysis.task_executor.enqueue_overview_task_if_needed",
+                AsyncMock(return_value=None),
+            ),
+            patch(
                 "app.services.analysis.task_executor.deduct_credits",
                 AsyncMock(return_value=4),
             ) as deduct_mock,
@@ -772,6 +782,169 @@ class TestWorkerLoop:
         launch_mock.assert_called_once()
 
 
+class TestOverviewTaskExecutor:
+    """Overview worker should persist lightweight overview hints without affecting main analysis state."""
+
+    @pytest.mark.anyio
+    async def test_overview_execute_task_persists_ready_hint(self):
+        payload = SimpleNamespace(
+            task_id=uuid4(),
+            record_id=uuid4(),
+            user_id=uuid4(),
+            text="This article argues that handedness emerged from posture and brain specialization.",
+            source_text_hash="hash-1",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+            render_scene_json={"article": {"sentences": [{"text": "Sentence one."}]}},
+            workflow_version="3.0.0",
+            schema_version="3.0.0",
+            worker_token="overview-worker-1",
+        )
+
+        with (
+            patch(
+                "app.services.analysis.overview_task_executor._run_learning_overview_hint_llm_span",
+                AsyncMock(
+                    return_value={
+                        "output": LearningOverviewHintDraft(
+                            status="ready",
+                            overview="文章比较灵长类与人类的右利手倾向。",
+                            confidence="medium",
+                        ),
+                        "usage_metadata": {"input_tokens": 120, "output_tokens": 40, "total_tokens": 160},
+                    }
+                ),
+            ),
+            patch(
+                "app.services.analysis.overview_task_executor.update_record_overview_hint",
+                AsyncMock(),
+            ) as update_hint_mock,
+            patch(
+                "app.services.analysis.overview_task_executor.update_task_status",
+                AsyncMock(),
+            ) as status_mock,
+            patch(
+                "app.services.analysis.overview_task_executor.insert_task_event",
+                AsyncMock(),
+            ) as event_mock,
+            patch(
+                "app.services.analysis.overview_task_executor.record_ai_usage_event",
+                AsyncMock(),
+            ) as usage_mock,
+        ):
+            from app.services.analysis import overview_task_executor as executor
+
+            await executor.execute_task(payload)
+
+        hint = update_hint_mock.await_args.kwargs["hint"]
+        assert hint.status == "ready"
+        assert hint.overview == "文章比较灵长类与人类的右利手倾向。"
+        assert hint.source == "learning_overview_hint_agent"
+        assert any(call.kwargs.get("status") == "succeeded" for call in status_mock.await_args_list)
+        assert any(call.args[1] == "task_succeeded" for call in event_mock.await_args_list)
+        usage_event = usage_mock.await_args.args[0]
+        assert usage_event.capability_code == "analysis_overview_hint"
+        assert usage_event.billing_mode == "internal_only"
+        assert usage_event.billed_points == 0
+
+    @pytest.mark.anyio
+    async def test_overview_execute_task_persists_unavailable_hint(self):
+        payload = SimpleNamespace(
+            task_id=uuid4(),
+            record_id=uuid4(),
+            user_id=uuid4(),
+            text="however although but and",
+            source_text_hash="hash-2",
+            reading_goal="daily_reading",
+            reading_variant="beginner_reading",
+            render_scene_json={"article": {"sentences": [{"text": "however although but and"}]}},
+            workflow_version="3.0.0",
+            schema_version="3.0.0",
+            worker_token="overview-worker-2",
+        )
+
+        with (
+            patch(
+                "app.services.analysis.overview_task_executor._run_learning_overview_hint_llm_span",
+                AsyncMock(
+                    return_value={
+                        "output": LearningOverviewHintDraft(
+                            status="unavailable",
+                            reason="文本过碎，无法形成稳定的文章级概览。",
+                        ),
+                        "usage_metadata": {"input_tokens": 50, "output_tokens": 12, "total_tokens": 62},
+                    }
+                ),
+            ),
+            patch(
+                "app.services.analysis.overview_task_executor.update_record_overview_hint",
+                AsyncMock(),
+            ) as update_hint_mock,
+            patch(
+                "app.services.analysis.overview_task_executor.update_task_status",
+                AsyncMock(),
+            ) as status_mock,
+            patch(
+                "app.services.analysis.overview_task_executor.insert_task_event",
+                AsyncMock(),
+            ),
+            patch(
+                "app.services.analysis.overview_task_executor.record_ai_usage_event",
+                AsyncMock(),
+            ),
+        ):
+            from app.services.analysis import overview_task_executor as executor
+
+            await executor.execute_task(payload)
+
+        hint = update_hint_mock.await_args.kwargs["hint"]
+        assert hint.status == "unavailable"
+        assert hint.reason == "文本过碎，无法形成稳定的文章级概览。"
+        assert any(call.kwargs.get("status") == "succeeded" for call in status_mock.await_args_list)
+
+    @pytest.mark.anyio
+    async def test_overview_worker_claims_and_launches_tasks(self):
+        payload = SimpleNamespace(
+            task_id=uuid4(),
+            record_id=uuid4(),
+            user_id=uuid4(),
+            text="Hello world",
+            source_text_hash="hash-3",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+            render_scene_json={},
+            workflow_version="3.0.0",
+            schema_version="3.0.0",
+            worker_token="overview-worker-3",
+        )
+        launched_task: asyncio.Task = asyncio.create_task(asyncio.sleep(0))
+        responses = iter([payload, None])
+
+        async def claim_once_then_idle(_: str):
+            try:
+                return next(responses)
+            except StopIteration:
+                return None
+
+        with (
+            patch(
+                "app.services.analysis.overview_task_executor.claim_next_queued_task",
+                AsyncMock(side_effect=claim_once_then_idle),
+            ) as claim_mock,
+            patch(
+                "app.services.analysis.overview_task_executor.launch_task",
+                MagicMock(return_value=launched_task),
+            ) as launch_mock,
+        ):
+            worker = OverviewTaskWorker(max_concurrency=1, poll_interval_seconds=0.01)
+            worker.start()
+            await asyncio.sleep(0.05)
+            await worker.stop()
+
+        assert claim_mock.await_count >= 1
+        launch_mock.assert_called_once()
+
+
 class TestHealthRoutes:
     """Health endpoints should reflect DB + worker readiness."""
 
@@ -785,9 +958,20 @@ class TestHealthRoutes:
             "stopping": False,
             "inflight_tasks": 2,
         }
+        overview_worker = MagicMock()
+        overview_worker.health_snapshot.return_value = {
+            "healthy": True,
+            "worker_token": "overview-1",
+            "runner_running": True,
+            "stopping": False,
+            "inflight_tasks": 1,
+        }
         request = SimpleNamespace(
             app=SimpleNamespace(
-                state=SimpleNamespace(analysis_task_worker=worker)
+                state=SimpleNamespace(
+                    analysis_task_worker=worker,
+                    overview_task_worker=overview_worker,
+                )
             )
         )
 
@@ -801,6 +985,8 @@ class TestHealthRoutes:
         assert payload["postgres"] is True
         assert payload["worker"] is True
         assert payload["worker_inflight_tasks"] == 2
+        assert payload["overview_worker"] is True
+        assert payload["overview_worker_inflight_tasks"] == 1
 
     @pytest.mark.anyio
     async def test_readiness_fails_when_worker_unhealthy(self):
@@ -812,9 +998,53 @@ class TestHealthRoutes:
             "stopping": False,
             "inflight_tasks": 0,
         }
+        overview_worker = MagicMock()
+        overview_worker.health_snapshot.return_value = {
+            "healthy": True,
+            "worker_token": "overview-1",
+            "runner_running": True,
+            "stopping": False,
+            "inflight_tasks": 0,
+        }
         request = SimpleNamespace(
             app=SimpleNamespace(
-                state=SimpleNamespace(analysis_task_worker=worker)
+                state=SimpleNamespace(
+                    analysis_task_worker=worker,
+                    overview_task_worker=overview_worker,
+                )
+            )
+        )
+
+        with patch("app.api.routes.health.is_db_ready", AsyncMock(return_value=True)):
+            with pytest.raises(Exception) as exc_info:
+                await readiness_check(request)
+
+        assert getattr(exc_info.value, "status_code", None) == 503
+
+    @pytest.mark.anyio
+    async def test_readiness_fails_when_overview_worker_unhealthy(self):
+        worker = MagicMock()
+        worker.health_snapshot.return_value = {
+            "healthy": True,
+            "worker_token": "worker-1",
+            "runner_running": True,
+            "stopping": False,
+            "inflight_tasks": 0,
+        }
+        overview_worker = MagicMock()
+        overview_worker.health_snapshot.return_value = {
+            "healthy": False,
+            "worker_token": "overview-1",
+            "runner_running": False,
+            "stopping": False,
+            "inflight_tasks": 0,
+        }
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    analysis_task_worker=worker,
+                    overview_task_worker=overview_worker,
+                )
             )
         )
 

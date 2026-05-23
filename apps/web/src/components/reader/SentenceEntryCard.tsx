@@ -7,6 +7,9 @@ interface SentenceEntryCardProps {
   entry: SentenceEntryModel;
   active?: boolean;
   onActivate?: (entry: SentenceEntryModel) => void;
+  badgeLabel?: string;
+  footerAnchorLabel?: string;
+  footerSourceLabel?: string;
 }
 
 const entryToneHeaderClass: Record<string, string> = {
@@ -31,7 +34,14 @@ function cardLabel(entry: SentenceEntryModel) {
   return entryTypeLabel[entry.entryType] ?? entry.label ?? "解析";
 }
 
-export function SentenceEntryCard({ entry, active = false, onActivate }: SentenceEntryCardProps) {
+export function SentenceEntryCard({
+  entry,
+  active = false,
+  onActivate,
+  badgeLabel,
+  footerAnchorLabel,
+  footerSourceLabel,
+}: SentenceEntryCardProps) {
   const label = entry.title ?? entry.label ?? "解析";
   const iconClass = entryToneHeaderClass[entry.entryType] ?? entryToneHeaderClass.content_summary;
   const category = cardLabel(entry);
@@ -68,7 +78,7 @@ export function SentenceEntryCard({ entry, active = false, onActivate }: Sentenc
             </div>
           </div>
           <span className="shrink-0 rounded-full border border-hairline bg-surface-warm px-2.5 py-1 text-[0.7rem] font-semibold text-muted">
-            本句解析
+            {badgeLabel ?? "本句解析"}
           </span>
         </div>
         <div className="mt-4">
@@ -102,8 +112,8 @@ export function SentenceEntryCard({ entry, active = false, onActivate }: Sentenc
           ) : null}
         </div>
         <div className="mt-4 flex items-center justify-between border-t border-hairline/60 pt-3 text-xs text-muted">
-          <span>结构拆解</span>
-          <span>来源: 机器解析</span>
+          <span>{footerAnchorLabel ?? "结构拆解"}</span>
+          <span>{footerSourceLabel ?? "来源: 机器解析"}</span>
         </div>
       </section>
     );
@@ -125,15 +135,15 @@ export function SentenceEntryCard({ entry, active = false, onActivate }: Sentenc
           </div>
         </div>
         <span className="shrink-0 rounded-full border border-hairline bg-surface-warm px-2.5 py-1 text-[0.7rem] font-semibold text-muted">
-          机器解析
+          {badgeLabel ?? "机器解析"}
         </span>
       </div>
       <div className="mt-4">
         <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">{entry.content}</p>
       </div>
       <div className="mt-4 flex items-center justify-between border-t border-hairline/60 pt-3 text-xs text-muted">
-        <span>锚定本句</span>
-        <span>来源: 机器解析</span>
+        <span>{footerAnchorLabel ?? "锚定本句"}</span>
+        <span>{footerSourceLabel ?? "来源: 机器解析"}</span>
       </div>
     </section>
   );

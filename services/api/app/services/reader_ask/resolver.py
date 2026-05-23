@@ -68,14 +68,19 @@ def lookup_structured_record_assets(
     record_id: str,
     record_title: str | None,
     render_scene: dict[str, Any],
+    page_state_json: dict[str, Any] | None = None,
     reason: str | None,
     updated_at: str | None = None,
 ) -> dict[str, Any]:
-    article_overview = _extract_article_overview(render_scene)
+    overview = utils.resolve_record_overview(
+        render_scene=render_scene,
+        page_state_json=page_state_json,
+    )
+    article_overview = overview.get("overview")
     record_insights = _extract_stable_record_insights(render_scene)
     source_labels = ["external_record"]
     if article_overview:
-        source_labels.append("article_overview")
+        source_labels.append(str(overview.get("source") or "article_overview"))
     if record_insights:
         source_labels.append("record_assets")
     if not article_overview:
@@ -85,6 +90,9 @@ def lookup_structured_record_assets(
         "record_title": record_title,
         "updated_at": updated_at,
         "article_overview": article_overview,
+        "article_overview_status": overview.get("status"),
+        "article_overview_source": overview.get("source"),
+        "article_overview_confidence": overview.get("confidence"),
         "record_insights": record_insights,
         "reason": reason or "explicit_attachment",
         "source_labels": source_labels,
@@ -124,6 +132,8 @@ def _analysis_asset_candidates(
                 "entry_type": entry_type,
                 "title": title or entry_type,
                 "summary": summary or "稳定分析对象",
+                "content_md": str(entry.get("content") or "").strip(),
+                "source_labels": ["external_asset", "analysis"],
             }
         )
     return candidates
@@ -152,6 +162,8 @@ def _supplement_asset_candidates(
                 "entry_type": entry_type,
                 "title": title or "AI 补充",
                 "summary": summary or "AI 补充",
+                "content_md": str(row.get("content") or "").strip(),
+                "source_labels": ["external_asset", "supplement"],
             }
         )
     return candidates
@@ -331,32 +343,53 @@ async def resolve_known_references(
     high_confidence_single_hit = top_score >= 90 and len(top_hits) == 1
     clear_margin = runner_up_score is None or (top_score - runner_up_score) >= 20
     if not high_confidence_single_hit or not clear_margin:
+        def _candidate_payload(row: dict[str, Any]) -> dict[str, Any]:
+            payload = {
+                "record_id": row["id"],
+                "title": row.get("title") or "Untitled",
+                "updated_at": row.get("updated_at"),
+            }
+            overview_hint = utils.truncate_text_optional(
+                utils.resolve_record_overview(
+                    render_scene=row.get("render_scene_json") or {},
+                    page_state_json=row.get("page_state_json") or {},
+                ).get("overview"),
+                140,
+            )
+            if overview_hint:
+                payload["overview_hint"] = overview_hint
+            return payload
+
         return planner.ReaderAskReferenceResolution(
             attempted=True,
             status="ambiguous",
             query=reference_needs.query,
             reason=f"“{reference_needs.query}”命中了多个候选，请补充更完整的标题。",
             ambiguous_records=[
-                {
-                    "record_id": row["id"],
-                    "title": row.get("title") or "Untitled",
-                    "updated_at": row.get("updated_at"),
-                }
+                _candidate_payload(row)
                 for row in (top_hits[:3] if top_hits else [candidate for _, candidate in ranked[:3]])
             ],
         )
 
     match = top_hits[0]
+    resolved_payload = {
+        "record_id": match["id"],
+        "title": match.get("title") or reference_needs.query,
+        "updated_at": match.get("updated_at"),
+    }
+    overview_hint = utils.truncate_text_optional(
+        utils.resolve_record_overview(
+            render_scene=match.get("render_scene_json") or {},
+            page_state_json=match.get("page_state_json") or {},
+        ).get("overview"),
+        140,
+    )
+    if overview_hint:
+        resolved_payload["overview_hint"] = overview_hint
     return planner.ReaderAskReferenceResolution(
         attempted=True,
         status="resolved",
         query=reference_needs.query,
         reason=f"已命中历史文章“{match.get('title') or reference_needs.query}”。",
-        resolved_records=[
-            {
-                "record_id": match["id"],
-                "title": match.get("title") or reference_needs.query,
-                "updated_at": match.get("updated_at"),
-            }
-        ],
+        resolved_records=[resolved_payload],
     )

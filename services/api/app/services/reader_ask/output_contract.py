@@ -14,6 +14,7 @@ from app.schemas.reader_ask import (
     ReaderAskResolvedIntent,
     ReaderAskResponseCard,
     ReaderAskRunInfo,
+    ReaderAskSubmissionMode,
     ReaderAskSupplementCandidate,
     ReaderAskToolTraceEntry,
     ReaderAskTraceSummary,
@@ -28,8 +29,9 @@ def build_user_message_metadata(
     *,
     resolved_intent: ReaderAskResolvedIntent | None = None,
     resolved_context_input: ReaderAskResolvedContextInput | None = None,
+    submission_mode: ReaderAskSubmissionMode = "chat",
 ) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = {"submission_mode": submission_mode}
     if resolved_intent is not None:
         metadata["resolved_intent"] = resolved_intent
     if resolved_context_input is not None:
@@ -43,8 +45,9 @@ def build_assistant_message_metadata(
     run_info: dict[str, Any] | None = None,
     run_history: list[dict[str, Any]] | None = None,
     resolved_context_input: ReaderAskResolvedContextInput | None = None,
+    submission_mode: ReaderAskSubmissionMode = "chat",
 ) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = {"submission_mode": submission_mode}
     if resolved_intent is not None:
         metadata["resolved_intent"] = resolved_intent
     if run_info is not None:
@@ -59,6 +62,7 @@ def build_assistant_message_metadata(
 def build_user_visible_output(
     *,
     content_md: str,
+    submission_mode: ReaderAskSubmissionMode,
     resolved_intent: ReaderAskResolvedIntent | None,
     citations: list[ReaderAskCitation],
     action_proposals: list[ReaderAskActionProposal],
@@ -92,6 +96,7 @@ def build_user_visible_output(
     ]
     return ReaderAskUserVisibleOutput(
         content_md=content_md,
+        submission_mode=submission_mode,
         resolved_intent=resolved_intent,
         citations=citations,
         action_proposals=action_proposals,
@@ -129,8 +134,10 @@ def visible_output_from_message(message: ReaderAskMessage, message_dict: dict[st
     current = message_dict.get("current_user_visible_output")
     if isinstance(current, dict):
         return dict(current)
+    current_turn_run = message_dict.get("current_turn_run") or {}
     output = build_user_visible_output(
         content_md=message.content_md,
+        submission_mode=message.submission_mode,
         resolved_intent=message.resolved_intent,
         citations=message.citations,
         action_proposals=message.action_proposals,
@@ -140,8 +147,8 @@ def visible_output_from_message(message: ReaderAskMessage, message_dict: dict[st
         disambiguation=message.disambiguation,
         external_asset_disambiguation=message.external_asset_disambiguation,
         response_cards=message.response_cards,
-        usage_summary=None,
-        billed_points=0,
+        usage_summary=current_turn_run.get("usage_summary_json"),
+        billed_points=int((current_turn_run.get("user_visible_output_json") or {}).get("billed_points") or 0),
         resolved_context=message.resolved_context,
         context_plan=message.context_plan,
         resolved_context_input=message.resolved_context_input,

@@ -45,11 +45,22 @@ Ask Claread 当前采用四层真相源：
 4. 调用 semantic planner，产出结构化 `planner_decision`
 5. 基于 planner 决定调用 reference resolver / structured asset lookup
 6. materialize current / external record / external asset contexts
-7. 构建 answer runtime input contract
-8. 生成回答或生成 disambiguation output
-9. post-process 为 `user_visible_output`
-10. 写入 `turn_run.user_visible_output_json`
-11. 更新 assistant message 的最小兼容状态指针
+7. 若为 `selection_toolbar` 触发的快捷分析操作，先执行结构化句法生成
+8. 构建 answer runtime input contract
+9. 生成回答或生成 disambiguation output
+10. post-process 为 `user_visible_output`
+11. 写入 `turn_run.user_visible_output_json`
+12. 更新 assistant message 的最小兼容状态指针
+
+其中第 7 步的快捷分析路径具有固定约束：
+
+- `entry_action in {"why_here", "explain_this"}`
+- 且主 attachment `metadata.source_surface == "selection_toolbar"`
+- Ask 会先运行 `generate_sentence_annotation`
+- `grammar` 可基于整句理解，但必须保留 focus span
+- `breakdown` 只接受 sentence-level 输入；片段级输入会返回结构化 `not_applicable`
+
+这意味着快捷分析已经不是“先发一条默认聊天消息，再希望 agent 自己选 tool”，而是 Ask 主链中的显式结构化预处理阶段。
 
 ## 当前核心模块
 
@@ -92,6 +103,11 @@ Ask Claread 当前采用四层真相源：
 - external stable `analysis_ref`
 - external stable `supplement_ref`
 
+补充约束：
+
+- external `analysis_ref / supplement_ref` 的 resolved asset 现在必须带正文级 `content_md` 与 compact summary，供 Ask runtime 直接回答
+- explicit asset ref 与 resolver 命中同一对象时，以 resolver 返回的富上下文对象为准，不保留摘要级占位 ref
+
 当前不支持：
 
 - hybrid retrieval
@@ -107,6 +123,8 @@ Ask Claread 当前采用四层真相源：
 - `resolved_context_input`
 - `response_contract`
 - 必要的 history / attachment / citation 摘要
+- `submission_mode`
+- `quick_action_annotation`
 
 ### Output Contract
 
@@ -124,6 +142,7 @@ Ask Claread 当前采用四层真相源：
 
 1. 有 `current_turn_run_id` 时，优先 hydrate `user_visible_output_json`
 2. 旧数据没有 current run 时，回退到 legacy metadata
+3. `interrupted` 是正式持久状态，不再在 hydration 时退化成 `failed`
 
 ## 当前公开 contract
 
@@ -136,6 +155,16 @@ Ask Claread 当前采用四层真相源：
 - 可选 `model`
 
 当前完成态 payload 的正式来源是 `ReaderAskUserVisibleOutput`，对外仍保持兼容 DTO，不额外暴露内部 trace 结构。
+
+当前 SSE 额外稳定事件包括：
+
+- `reasoning.started / reasoning.delta / reasoning.completed`
+- `message.interrupted`
+
+当前完成态 payload 额外暴露两个与快捷分析相关的稳定字段：
+
+- `submission_mode`：`chat | quick_action`
+- `response_cards`：包含 `grammar_note_card` 与 `sentence_breakdown_card`
 
 ## 当前上下文模型
 
@@ -151,6 +180,24 @@ Ask Claread 当前采用四层真相源：
 
 这些内容是否进入运行，由 planner 决定。
 
+### Article Overview / Overview Hint
+
+`article overview` 当前被视为可选增强 observation，而不是 Ask 的必要前提。
+
+读取优先级：
+
+1. learning `analysis_results.page_state_json.derived.overview_hint`，仅 `status=ready`
+2. academic `render_scene.content_summary.overview`
+3. academic `sentence_entries.content_summary` 的兼容降级文本
+4. 无 overview
+
+补充语义：
+
+- learning overview 通过异步、best-effort 的轻量 `overview hint` 生成
+- overview hint 允许返回 `unavailable`，表示文本过碎、过短或缺乏篇章逻辑
+- Ask planner / answer agent 只把它当弱线索，用于 record 判别和 article-level 首轮理解
+- 需要更高覆盖度时，仍应主动拉 `record_context`、`source_excerpt` 或 external context
+
 ### 跨文章上下文
 
 当前跨文章上下文是受控扩展，只允许：
@@ -164,6 +211,32 @@ Ask Claread 当前采用四层真相源：
 
 - `external_record_contexts`
 - `external_asset_contexts`
+
+其中 external record context 的 article overview 同样遵循“有则用之”的弱增强语义，并保留来源标识：
+
+- `learning_overview_hint_agent`
+- `academic_render_scene`
+
+## 当前快捷分析模型
+
+快捷分析仍属于 Ask 线程，但不再伪装成普通聊天提问。
+
+### Grammar Quick Action
+
+- `sentence` 选区：按整句分析
+- `text_range` 选区：保留原始 focus span，并自动扩展到所在整句理解
+- 若片段过短、无法稳定套用语法结构，返回结构化 `not_applicable`
+
+### Breakdown Quick Action
+
+- 仅 `sentence` 选区允许产出正式 `sentence_breakdown_card`
+- `text_range` 不强行拆句，会返回“建议扩展到整句”的结构化不可分析结果
+
+### Frontend Rendering
+
+- `submission_mode=quick_action` 的 assistant turn 采用 `response_cards -> answer -> citations` 的 block 顺序
+- user turn 采用 compact operation header，不再显示伪聊天气泡
+- composer context 只表示“下一轮待发送的上下文”，发送成功后清空
 
 ## 当前 HITP / Disambiguation
 

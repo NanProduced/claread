@@ -153,6 +153,41 @@ CREATE TABLE analysis_task_events (
 
 CREATE INDEX idx_task_events_task_created ON analysis_task_events(task_id, created_at);
 
+CREATE TABLE analysis_overview_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  analysis_record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'finalizing', 'succeeded', 'failed', 'cancelled', 'expired')),
+  worker_token TEXT,
+  attempt_no INTEGER NOT NULL DEFAULT 1,
+  failure_code TEXT,
+  failure_message TEXT,
+  usage_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_analysis_overview_tasks_record_active
+  ON analysis_overview_tasks(analysis_record_id)
+  WHERE status IN ('queued', 'running', 'finalizing');
+CREATE INDEX idx_analysis_overview_tasks_status_queued_at
+  ON analysis_overview_tasks(status, queued_at);
+
+CREATE TABLE analysis_overview_task_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id UUID NOT NULL REFERENCES analysis_overview_tasks(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  event_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_overview_task_events_task_created
+  ON analysis_overview_task_events(task_id, created_at);
+
 CREATE TABLE ai_usage_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   usage_scope TEXT NOT NULL CHECK (usage_scope IN (
@@ -859,6 +894,19 @@ COMMENT ON TABLE analysis_task_events IS '分析任务过程审计日志，appen
 COMMENT ON COLUMN analysis_task_events.task_id IS '关联的任务 ID。';
 COMMENT ON COLUMN analysis_task_events.event_type IS '事件类型，如 task_submitted, task_started, task_succeeded 等。';
 COMMENT ON COLUMN analysis_task_events.event_payload_json IS '事件载荷 JSON。';
+
+COMMENT ON TABLE analysis_overview_tasks IS 'learning overview hint 派生任务表，负责异步生成供 Ask 使用的轻量文章概览提示。';
+COMMENT ON COLUMN analysis_overview_tasks.analysis_record_id IS '关联的分析记录 ID。';
+COMMENT ON COLUMN analysis_overview_tasks.status IS '任务状态：queued, running, finalizing, succeeded, failed, cancelled, expired。';
+COMMENT ON COLUMN analysis_overview_tasks.worker_token IS '执行器标识，用于多实例场景下的任务认领。';
+COMMENT ON COLUMN analysis_overview_tasks.failure_code IS '失败错误码。';
+COMMENT ON COLUMN analysis_overview_tasks.failure_message IS '失败错误信息。';
+COMMENT ON COLUMN analysis_overview_tasks.usage_summary_json IS 'overview hint 生成的 token 使用摘要 JSON。';
+
+COMMENT ON TABLE analysis_overview_task_events IS 'overview hint 任务过程审计日志，append-only。';
+COMMENT ON COLUMN analysis_overview_task_events.task_id IS '关联的 overview hint 任务 ID。';
+COMMENT ON COLUMN analysis_overview_task_events.event_type IS '事件类型，如 task_submitted, task_started, task_succeeded 等。';
+COMMENT ON COLUMN analysis_overview_task_events.event_payload_json IS '事件载荷 JSON。';
 
 COMMENT ON TABLE ai_usage_events IS '统一 AI 使用审计事件表，记录用户计费、系统内部、匿名试用和调试评测等 AI 调用。';
 COMMENT ON COLUMN ai_usage_events.usage_scope IS '调用作用域：user_billed、system_internal、anonymous_trial、eval_debug。';

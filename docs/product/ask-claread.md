@@ -79,6 +79,11 @@ Ask Claread 是 Reader 内、围绕当前文章工作的阅读助手。它的当
 - `has_annotations`
 - `has_reader_notes`
 
+补充：
+
+- `has_article_overview` 只是前端 affordance hint，不是 Ask 的唯一真相源
+- Ask 当前会优先读取后端可用的 article overview / overview hint，再决定是否把它纳入 runtime
+
 ## 当前交互模型
 
 ### 会话模型
@@ -93,6 +98,8 @@ Ask Claread 是 Reader 内、围绕当前文章工作的阅读助手。它的当
 - `retry / regenerate` 是同一 user turn 的新 run
 - 不新增 user turn
 - 当前用户可见结果始终以最新 run 为准
+- retry 入口绑定 assistant run，不直接绑 user bubble
+- 若上一轮流式中断并保留 partial output，前端文案显示为“继续生成”
 
 ### 输入与附件
 
@@ -106,6 +113,14 @@ Ask 当前采用 `attachment-first` 入口。显式带入当前讨论的对象�
 
 Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.related_record`。
 
+补充：
+
+- Reader 工具条里的 `语法解析 / 句子拆分` 已视为 Ask 内的快捷分析操作
+- 这类操作仍进入当前 Ask 线程，但不是普通聊天提问
+- 当前 UI 以结构化分析结果卡为主，文字说明为辅助层
+- composer context 只表示“下一轮待发送的上下文”，发送成功后会清空
+- live selection 只作为“当前可带入”的阅读态提示，不等于已经排队发送
+
 ## 当前已实现能力
 
 ### 当前文章内能力
@@ -115,6 +130,12 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - 当前文章 stable record insights
 - 当前文章 article overview（若已有）
 - 词典与词典 AI 辅助
+
+补充：
+
+- learning workflow 的 article overview 当前通过异步、best-effort 的 `overview hint` 提供
+- `overview hint` 允许返回 `unavailable`，表示文本过碎、过短或缺乏篇章逻辑，不视为失败
+- Ask 只把 overview 当成弱增强线索，用于首轮理解和 record 判别；深入问题仍会按需拉全文 excerpt / record context
 
 ### 跨文章能力
 
@@ -127,6 +148,13 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - external `analysis_ref`
 - external `supplement_ref`
 - external record article overview + stable insights
+- external `analysis_ref / supplement_ref` 当前会把被显式引用对象的正文级内容并入 Ask runtime，不再只提供标题或短摘要
+
+补充：
+
+- external record overview 当前也遵循“有则用之”的语义
+- academic record 继续复用现有 `content_summary.overview`
+- learning record 若 overview hint 仍处于 `pending / failed / unavailable`，Ask 会正常回退到其他上下文，不进入特殊错误路径
 
 当前不承诺：
 
@@ -141,6 +169,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 当前每轮 Ask 的正式输出真相源是 `turn_run.user_visible_output_json`。其中包含：
 
 - `content_md`
+- `submission_mode`
 - `resolved_intent`
 - `citations`
 - `evidence`
@@ -157,7 +186,18 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - `usage_summary`
 - `billed_points`
 
+与 article overview 相关的补充字段：
+
+- `article_overview_status`
+- `article_overview_source`
+- `article_overview_confidence`
+
 前端当前仍消费兼容 DTO，但新运行不再以 assistant message metadata 作为主输出承载。
+
+补充：
+
+- `context_plan / resolved_context_input / evidence / trace_summary` 在 Ask 面板中默认折叠展示
+- `reasoning.*` 只作为流式临时 UI 能力，不是长期持久化正式字段
 
 ## 当前写动作边界
 
@@ -180,6 +220,11 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 
 - `assistant_supplement.grammar_note`
 
+同时，Ask 当前也可在对话内直接生成两类结构化阅读卡：
+
+- `grammar_note_card`
+- `sentence_breakdown_card`
+
 当前链路已经支持：
 
 - candidate
@@ -188,6 +233,12 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - delete
 - 当前页投影
 - 后续作为 `supplement_ref` 再次进入 Ask
+
+补充约束：
+
+- `grammar_note_card` 与 `sentence_breakdown_card` 明确标记为 `AI 助手生成`
+- `grammar` 快捷分析允许从片段扩展到所在整句理解，但必须保留 focus span
+- `breakdown` 快捷分析坚持 sentence-level，不为零散片段伪造拆句结果
 
 ## 当前冻结边界
 

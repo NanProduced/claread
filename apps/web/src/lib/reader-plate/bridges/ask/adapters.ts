@@ -1,6 +1,6 @@
 import { TEXT_RANGE_HASH_ALGORITHM, TEXT_RANGE_OFFSET_UNIT } from "@claread/contracts";
 
-import type { ReaderAskAnchorRefDto, ReaderAskCitationDto } from "@/types/api/reader-ask";
+import type { ReaderAskAnchorRefDto, ReaderAskAttachmentDto, ReaderAskCitationDto } from "@/types/api/reader-ask";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import type { WebReaderNoteVm } from "@/types/api/reader-notes";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
@@ -186,6 +186,17 @@ export function askAttachmentKey(attachment: ReaderAskAttachment): string {
 
 export function askAttachmentLabel(attachment: ReaderAskAttachment): string {
   return attachment.label.trim() || attachment.selectedText?.trim() || attachment.kind;
+}
+
+export function askAttachmentShortLabel(
+  attachment: ReaderAskAttachment,
+  maxLength = 56,
+): string {
+  const base = askAttachmentLabel(attachment).replace(/\s+/g, " ").trim();
+  if (base.length <= maxLength) {
+    return base;
+  }
+  return `${base.slice(0, Math.max(maxLength - 1, 1)).trimEnd()}…`;
 }
 
 export function askAttachmentFromSelection(
@@ -677,6 +688,48 @@ export function askAttachmentFromAnchor(
       sentenceId: anchor.sentence_id,
     },
   };
+}
+
+export function askAttachmentFromDto(
+  raw: ReaderAskAttachmentDto,
+  fallbackPageIdentity?: ReaderAskPageIdentity,
+): ReaderAskAttachment {
+  const pageIdentity =
+    ((raw.metadata as unknown as Record<string, unknown> | undefined)?.page_identity as ReaderAskPageIdentity | undefined);
+  const resolvedPageIdentity =
+    pageIdentity ??
+    fallbackPageIdentity ??
+    pageIdentityFromTargetKey(raw.target_key);
+  return buildAttachment({
+    kind: raw.kind as ReaderAskAttachment["kind"],
+    subtype: raw.subtype as ReaderAskAttachment["subtype"],
+    label: raw.label,
+    selectedText: raw.selected_text ?? undefined,
+    targetKey: raw.target_key ?? undefined,
+    anchorPayload: payloadFromUnknown(raw.anchor_payload),
+    jumpTarget: null,
+    metadata: {
+      pageIdentity: resolvedPageIdentity,
+      sourceSurface: raw.metadata.source_surface,
+      entryAction: raw.metadata.entry_action ?? undefined,
+      recordId: raw.metadata.record_id ?? null,
+      recordTitle: raw.metadata.record_title ?? null,
+      sentenceId: raw.metadata.sentence_id ?? null,
+      paragraphId: raw.metadata.paragraph_id ?? null,
+      entryId: raw.metadata.entry_id ?? null,
+      entryType: raw.metadata.entry_type ?? null,
+      assetId: raw.metadata.asset_id ?? null,
+      annotationType: raw.metadata.annotation_type ?? null,
+      startOffset: raw.metadata.start_offset ?? null,
+      endOffset: raw.metadata.end_offset ?? null,
+      translationZh: raw.metadata.translation_zh ?? null,
+      note: raw.metadata.note ?? null,
+      title: raw.metadata.title ?? null,
+      query: raw.metadata.query ?? null,
+      lookupText: raw.metadata.lookup_text ?? null,
+      visualTone: raw.metadata.visual_tone ?? null,
+    },
+  });
 }
 
 export function jumpTargetFromAskAttachment(

@@ -22,6 +22,8 @@ import {
 
 export type SelectionToolbarAction =
   | "ask"
+  | "grammar"
+  | "breakdown"
   | "selectSentence"
   | "highlight"
   | "note"
@@ -39,6 +41,8 @@ export interface SelectionToolbarColorOption {
 
 export interface SelectionToolbarDisabledStates {
   ask?: boolean;
+  grammar?: boolean;
+  breakdown?: boolean;
   selectSentence?: boolean;
   highlight?: boolean;
   note?: boolean;
@@ -60,6 +64,8 @@ export interface SelectionToolbarProps {
   className?: string;
   style?: CSSProperties;
   onAsk?: (selectedText: string) => void;
+  onGrammar?: (selectedText: string) => void;
+  onBreakdown?: (selectedText: string) => void;
   onSelectSentence?: (selectedText: string) => void;
   onHighlight?: (
     color: SelectionToolbarColorValue,
@@ -107,6 +113,8 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     className,
     style,
     onAsk,
+    onGrammar,
+    onBreakdown,
     onSelectSentence,
     onHighlight,
     onNote,
@@ -120,6 +128,8 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
   const hasSelection = selectedText.trim().length > 0;
   const askComingSoon = Boolean(disabled?.ask);
   const askDisabled = !hasSelection || askComingSoon || !onAsk;
+  const grammarDisabled = !hasSelection || Boolean(disabled?.grammar) || !onGrammar;
+  const breakdownDisabled = !hasSelection || Boolean(disabled?.breakdown) || !onBreakdown;
   const selectSentenceDisabled =
     selectionMode !== "text_range" || !hasSelection || Boolean(disabled?.selectSentence) || !onSelectSentence;
   const highlightDisabled = !hasSelection || Boolean(disabled?.highlight) || !onHighlight;
@@ -158,7 +168,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
                 <button
                   key={option.value}
                   type="button"
-                  aria-label={option.label}
+                  aria-label={`切换为${option.label}`}
                   disabled={Boolean(option.disabled)}
                   onClick={(e) => {
                     e.preventDefault();
@@ -182,6 +192,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
                   active={hasHighlight}
                   disabled={highlightDisabled}
                   onClick={handleHighlight}
+                  aria-label={hasHighlight ? "切换高亮颜色" : "高亮"}
                 >
                   <Highlighter aria-hidden="true" className="h-4 w-4" />
                 </ReaderToolbarIconButton>
@@ -219,6 +230,40 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               </ReaderToolbarIconButton>
             </TooltipTrigger>
             <TooltipContent side="top" className="text-xs">扩展到整句</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={grammarDisabled}
+                onClick={() => onGrammar?.(selectedText)}
+                aria-label="语法解析"
+                className="px-2.5"
+              >
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold leading-none">
+                  <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
+                  <span>语法</span>
+                </span>
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">语法解析</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={breakdownDisabled}
+                onClick={() => onBreakdown?.(selectedText)}
+                aria-label="句子拆分"
+                className="px-2.5"
+              >
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold leading-none">
+                  <Quote aria-hidden="true" className="h-3.5 w-3.5" />
+                  <span>拆句</span>
+                </span>
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">句子拆分</TooltipContent>
           </Tooltip>
 
           <Tooltip>

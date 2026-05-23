@@ -35,10 +35,12 @@ from app.services.ai_usage import (
     resolve_model_metadata,
 )
 from app.services.analysis.credit_service import deduct_credits
+from app.services.analysis.overview_task_service import enqueue_overview_task_if_needed
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.analysis.task_service import (
     TaskExecutionPayload,
     claim_next_queued_task,
+    compute_source_text_hash,
     insert_task_event,
     requeue_stale_tasks,
     touch_task_heartbeat,
@@ -269,6 +271,15 @@ async def execute_task(
             render_scene_json=render_scene_dict,
             page_state_json={"pageState": user_facing_state},
             user_facing_state=user_facing_state,
+            workflow_version=WORKFLOW_VERSION,
+            schema_version=render_scene_dict.get("schema_version", ANALYZE_SCHEMA_VERSION),
+        )
+        await enqueue_overview_task_if_needed(
+            user_id=user_id,
+            record_id=record_id,
+            source_text_hash=compute_source_text_hash(text),
+            reading_goal=reading_goal,
+            reading_variant=reading_variant,
             workflow_version=WORKFLOW_VERSION,
             schema_version=render_scene_dict.get("schema_version", ANALYZE_SCHEMA_VERSION),
         )

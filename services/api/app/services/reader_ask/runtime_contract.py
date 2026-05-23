@@ -29,8 +29,10 @@ class ReaderAskAnswerRuntimeInput:
     resolved_intent: ReaderAskResolvedIntent
     resolved_intent_label: str
     entry_action: ReaderAskEntryAction
+    submission_mode: str
     cross_record_context_allowed: bool
     resolved_context_input: ReaderAskResolvedContextInput | None
+    quick_action_annotation: dict[str, Any] | None
     reference_resolution: planner.ReaderAskReferenceResolution | None
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None
     max_history_messages: int
@@ -55,14 +57,14 @@ def _estimate_token_count(payload: dict[str, Any]) -> int:
 def _compact_prompt_payload(
     payload: dict[str, Any],
     *,
-    max_history: int = 4,
+    max_history: int = 6,
     max_record_assets: int = 3,
     max_external_assets: int = 3,
     max_vocabulary: int = 3,
     max_insights: int = 3,
-    max_sentence_windows: int = 3,
-    max_source_excerpt: int = 800,
-    max_article_overview: int = 400,
+    max_sentence_windows: int = 5,
+    max_source_excerpt: int = 2400,
+    max_article_overview: int = 1200,
 ) -> dict[str, Any]:
     compact = json.loads(json.dumps(payload, ensure_ascii=False))
     history = compact.get("history")
@@ -76,6 +78,13 @@ def _compact_prompt_payload(
     external_asset_contexts = compact.get("external_asset_contexts")
     if isinstance(external_asset_contexts, list) and len(external_asset_contexts) > max_external_assets:
         compact["external_asset_contexts"] = external_asset_contexts[:max_external_assets]
+    if isinstance(external_asset_contexts, list):
+        for item in external_asset_contexts:
+            if not isinstance(item, dict):
+                continue
+            content_md = item.get("content_md")
+            if isinstance(content_md, str) and len(content_md) > 900:
+                item["content_md"] = _truncate_text(content_md, 900)
 
     vocabulary_items = compact.get("vocabulary_items")
     if isinstance(vocabulary_items, list) and len(vocabulary_items) > max_vocabulary:
@@ -96,6 +105,16 @@ def _compact_prompt_payload(
     article_overview = compact.get("article_overview")
     if isinstance(article_overview, str) and len(article_overview) > max_article_overview:
         compact["article_overview"] = _truncate_text(article_overview, max_article_overview)
+    planning = compact.get("planning")
+    if isinstance(planning, dict):
+        trace_summary = planning.get("trace_summary")
+        if isinstance(trace_summary, dict):
+            notes = trace_summary.get("notes")
+            if isinstance(notes, list) and len(notes) > 4:
+                trace_summary["notes"] = notes[:4]
+            tool_steps = trace_summary.get("tool_steps")
+            if isinstance(tool_steps, list) and len(tool_steps) > 6:
+                trace_summary["tool_steps"] = tool_steps[:6]
     return compact
 
 
@@ -111,7 +130,7 @@ def prepare_prompt_payload(
 ) -> tuple[dict[str, Any], int]:
     prompt_payload = payload
     estimated_input_tokens = _estimate_token_count(prompt_payload)
-    if estimated_input_tokens > 4500:
+    if estimated_input_tokens > 16000:
         prompt_payload = _compact_prompt_payload(payload)
         estimated_input_tokens = _estimate_token_count(prompt_payload)
 
@@ -168,13 +187,19 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
         },
         "page_identity": contract.page_identity.model_dump(mode="json"),
         "entry_action": contract.entry_action,
+        "submission_mode": contract.submission_mode,
         "user_message": contract.user_message,
         "resolved_intent": contract.resolved_intent,
         "resolved_intent_label": contract.resolved_intent_label,
         "prompt_layers": prompt_layers,
         "history": history,
-        "attachments": attachment_payload,
-        "anchors": anchor_payload,
+        "canonical_context": {
+            "attachments": attachment_payload,
+            "anchors": anchor_payload,
+            "resolved_context_input": contract.resolved_context_input.model_dump(mode="json")
+            if contract.resolved_context_input
+            else None,
+        },
         "reference_resolution": {
             "status": contract.reference_resolution.status if contract.reference_resolution else "not_needed",
             "query": contract.reference_resolution.query if contract.reference_resolution else None,
@@ -182,9 +207,7 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             "resolved_records": contract.reference_resolution.resolved_records if contract.reference_resolution else [],
             "ambiguous_records": contract.reference_resolution.ambiguous_records if contract.reference_resolution else [],
         },
-        "resolved_context_input": contract.resolved_context_input.model_dump(mode="json")
-        if contract.resolved_context_input
-        else None,
+        "quick_action_annotation": contract.quick_action_annotation,
         "planning": {
             "retrieval_needs": contract.planning_snapshot.retrieval_needs if contract.planning_snapshot else "none",
             "working_set": {
@@ -236,6 +259,7 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             "article_bound": True,
             "do_not_claim_unknown_history": True,
             "structured_cards_available": [
+                "grammar_note_card",
                 "sentence_breakdown_card",
                 "vocabulary_in_context_card",
                 "practice_card",

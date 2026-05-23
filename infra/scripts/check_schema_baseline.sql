@@ -62,6 +62,20 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'missing table: reader_ask_eval_traces';
   END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'analysis_overview_tasks'
+  ) THEN
+    RAISE EXCEPTION 'missing table: analysis_overview_tasks';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'analysis_overview_task_events'
+  ) THEN
+    RAISE EXCEPTION 'missing table: analysis_overview_task_events';
+  END IF;
 END $$;
 
 DO $$
@@ -170,6 +184,13 @@ BEGIN
     WHERE schemaname = 'public' AND indexname = 'idx_reader_ask_turn_runs_usage_event'
   ) THEN
     RAISE EXCEPTION 'missing index: idx_reader_ask_turn_runs_usage_event';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'uq_analysis_overview_tasks_record_active'
+  ) THEN
+    RAISE EXCEPTION 'missing index: uq_analysis_overview_tasks_record_active';
   END IF;
 
   IF NOT EXISTS (

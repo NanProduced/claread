@@ -15,32 +15,49 @@ def _iso(value: datetime | None) -> str | None:
     return value.astimezone(UTC).isoformat()
 
 
+def _json_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _message_row_to_dict(row: Any) -> dict[str, Any]:
     metadata = row["metadata_json"] or {}
     hydrated_output = row.get("user_visible_output_json")
     if not isinstance(hydrated_output, dict):
         hydrated_output = None
     visible = hydrated_output or {}
-    # TODO(migration): 移除 legacy metadata fallback，统一从 user_visible_output_json 读取
-    resolved_intent = visible.get("resolved_intent", metadata.get("resolved_intent"))
+    use_legacy_fallback = hydrated_output is None and row.get("current_turn_run_id") is None
+    status = row["status"]
+    if row.get("current_turn_run_status") == "interrupted":
+        status = "interrupted"
+    resolved_intent = visible.get("resolved_intent", metadata.get("resolved_intent") if use_legacy_fallback else None)
+    submission_mode = visible.get("submission_mode", metadata.get("submission_mode") if use_legacy_fallback else None) or "chat"
     content_md = visible.get("content_md", row["content_md"] or "")
     citations = visible.get("citations", row["citations_json"] or [])
     action_proposals = visible.get("action_proposals", row["action_proposals_json"] or [])
     tool_trace = visible.get("tool_trace", row["tool_trace_json"] or [])
-    evidence = visible.get("evidence", metadata.get("evidence") or [])  # TODO(migration)
-    trace_summary = visible.get("trace_summary", metadata.get("trace_summary"))  # TODO(migration)
-    disambiguation = visible.get("disambiguation", metadata.get("disambiguation"))  # TODO(migration)
+    evidence = visible.get("evidence", metadata.get("evidence") if use_legacy_fallback else []) or []
+    trace_summary = visible.get("trace_summary", metadata.get("trace_summary") if use_legacy_fallback else None)
+    disambiguation = visible.get("disambiguation", metadata.get("disambiguation") if use_legacy_fallback else None)
     external_asset_disambiguation = visible.get(
         "external_asset_disambiguation",
-        metadata.get("external_asset_disambiguation"),  # TODO(migration)
+        metadata.get("external_asset_disambiguation") if use_legacy_fallback else None,
     )
-    response_cards = visible.get("response_cards", metadata.get("response_cards") or [])  # TODO(migration)
-    resolved_context = visible.get("resolved_context", metadata.get("resolved_context"))  # TODO(migration)
-    context_plan = visible.get("context_plan", metadata.get("context_plan"))  # TODO(migration)
-    resolved_context_input = visible.get("resolved_context_input", metadata.get("resolved_context_input"))  # TODO(migration)
-    run_info = visible.get("run_info", metadata.get("run_info"))  # TODO(migration)
-    supplement_candidates = visible.get("supplement_candidates", metadata.get("supplement_candidates") or [])  # TODO(migration)
-    persisted_supplements = visible.get("persisted_supplements", metadata.get("persisted_supplements") or [])  # TODO(migration)
+    response_cards = visible.get("response_cards", metadata.get("response_cards") if use_legacy_fallback else []) or []
+    resolved_context = visible.get("resolved_context", metadata.get("resolved_context") if use_legacy_fallback else None)
+    context_plan = visible.get("context_plan", metadata.get("context_plan") if use_legacy_fallback else None)
+    resolved_context_input = visible.get(
+        "resolved_context_input",
+        metadata.get("resolved_context_input") if use_legacy_fallback else None,
+    )
+    run_info = visible.get("run_info", metadata.get("run_info") if use_legacy_fallback else None)
+    supplement_candidates = visible.get(
+        "supplement_candidates",
+        metadata.get("supplement_candidates") if use_legacy_fallback else [],
+    ) or []
+    persisted_supplements = visible.get(
+        "persisted_supplements",
+        metadata.get("persisted_supplements") if use_legacy_fallback else [],
+    ) or []
     usage_event_id = (
         str(row["current_turn_run_usage_event_id"])
         if row.get("current_turn_run_usage_event_id")
@@ -52,8 +69,9 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "id": str(row["id"]),
         "thread_id": str(row["thread_id"]),
         "role": row["role"],
-        "status": row["status"],
+        "status": status,
         "content_md": content_md,
+        "submission_mode": submission_mode,
         "resolved_intent": resolved_intent,
         "context_anchors": row["context_anchors_json"] or [],
         "citations": citations,
@@ -214,14 +232,15 @@ async def search_records_by_title(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, title, updated_at
-            FROM analysis_records
-            WHERE user_id = $1
-              AND deleted_at IS NULL
-              AND ($2::uuid IS NULL OR id <> $2)
-              AND title IS NOT NULL
-              AND title ILIKE $3 ESCAPE '\\'
-            ORDER BY updated_at DESC
+            SELECT r.id, r.title, r.updated_at, c.render_scene_json, c.page_state_json
+            FROM analysis_records r
+            LEFT JOIN analysis_results c ON c.record_id = r.id
+            WHERE r.user_id = $1
+              AND r.deleted_at IS NULL
+              AND ($2::uuid IS NULL OR r.id <> $2)
+              AND r.title IS NOT NULL
+              AND r.title ILIKE $3 ESCAPE '\\'
+            ORDER BY r.updated_at DESC
             LIMIT $4
             """,
             user_id,
@@ -234,6 +253,8 @@ async def search_records_by_title(
             "id": str(row["id"]),
             "title": row["title"],
             "updated_at": _iso(row["updated_at"]),
+            "render_scene_json": _json_dict(row.get("render_scene_json")),
+            "page_state_json": _json_dict(row.get("page_state_json")),
         }
         for row in rows
     ]
@@ -252,13 +273,14 @@ async def list_recent_records(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, title, updated_at
-            FROM analysis_records
-            WHERE user_id = $1
-              AND deleted_at IS NULL
-              AND ($2::uuid IS NULL OR id <> $2)
-              AND title IS NOT NULL
-            ORDER BY updated_at DESC
+            SELECT r.id, r.title, r.updated_at, c.render_scene_json, c.page_state_json
+            FROM analysis_records r
+            LEFT JOIN analysis_results c ON c.record_id = r.id
+            WHERE r.user_id = $1
+              AND r.deleted_at IS NULL
+              AND ($2::uuid IS NULL OR r.id <> $2)
+              AND r.title IS NOT NULL
+            ORDER BY r.updated_at DESC
             LIMIT $3
             """,
             user_id,
@@ -270,6 +292,8 @@ async def list_recent_records(
             "id": str(row["id"]),
             "title": row["title"],
             "updated_at": _iso(row["updated_at"]),
+            "render_scene_json": _json_dict(row.get("render_scene_json")),
+            "page_state_json": _json_dict(row.get("page_state_json")),
         }
         for row in rows
     ]
@@ -541,7 +565,7 @@ async def find_action_proposal(
     if thread is None:
         return None, None
 
-    messages = await list_messages(thread_id, limit=20)
+    messages = await list_messages(thread_id, limit=None)
     for message in reversed(messages):
         if message.get("role") != "assistant":
             continue

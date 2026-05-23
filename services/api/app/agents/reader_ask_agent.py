@@ -19,16 +19,32 @@ def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _tool_trace(tool_name: str, status: Literal["started", "completed", "failed"], *, summary: str | None = None) -> ReaderAskToolTraceEntry:
+def _tool_trace(
+    tool_name: str,
+    status: Literal["started", "completed", "failed"],
+    *,
+    input_summary: str | None = None,
+    summary: str | None = None,
+    next_actions: list[str] | None = None,
+    artifacts: list[str] | None = None,
+) -> ReaderAskToolTraceEntry:
     now = _iso_now()
     if status == "started":
-        return ReaderAskToolTraceEntry(tool_name=tool_name, status=status, started_at=now)
+        return ReaderAskToolTraceEntry(
+            tool_name=tool_name,
+            status=status,
+            started_at=now,
+            input_summary=input_summary,
+        )
     return ReaderAskToolTraceEntry(
         tool_name=tool_name,
         status=status,
         started_at=now,
         completed_at=now,
+        input_summary=input_summary,
         summary=summary,
+        next_actions=next_actions or [],
+        artifacts=artifacts or [],
     )
 
 
@@ -58,6 +74,7 @@ class ReaderAskRuntimeState:
     latest_user_vocabulary: list[dict[str, Any]] = field(default_factory=list)
     latest_dictionary_entry: dict[str, Any] | None = None
     latest_dictionary_ai: dict[str, Any] | None = None
+    latest_generated_annotations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -75,6 +92,7 @@ class ReaderAskAgentDeps:
     search_user_vocabulary_fn: Callable[[str], Awaitable[list[dict[str, Any]]]]
     lookup_dictionary_entry_fn: Callable[[str | None, int | None, str | None, str | None, int | None], Awaitable[dict[str, Any] | None]]
     run_dictionary_ai_context_explain_fn: Callable[[str, int, str, Literal["word", "phrase"], int | None], Awaitable[dict[str, Any] | None]]
+    generate_sentence_annotation_fn: Callable[[Literal["grammar_note", "sentence_analysis"]], Awaitable[dict[str, Any] | None]]
     vocabulary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation]
     dictionary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation]
     dictionary_ai_to_citation_fn: Callable[[dict[str, Any], str, int], ReaderAskCitation]
@@ -113,10 +131,31 @@ async def _emit_tool_event(
     await deps.event_queue.put((event, payload))
 
 
+def _tool_observation(result: Any) -> tuple[str, list[str], list[str]]:
+    if isinstance(result, dict):
+        summary = str(result.get("summary") or result.get("reason") or "Loaded")
+        next_actions = [
+            str(item).strip()
+            for item in result.get("next_actions") or []
+            if isinstance(item, str) and item.strip()
+        ]
+        artifacts = [
+            str(item).strip()
+            for item in result.get("artifacts") or []
+            if isinstance(item, str) and item.strip()
+        ]
+        return summary, next_actions, artifacts
+    if isinstance(result, list):
+        return f"{len(result)} item(s)", [], []
+    return "Loaded", [], []
+
+
 async def _run_tool(
     ctx: RunContext[ReaderAskAgentDeps],
     tool_name: str,
     runner: Callable[[], Awaitable[Any]],
+    *,
+    input_summary: str | None = None,
 ) -> Any:
     deps = ctx.deps
     deps.state.tool_call_count += 1
@@ -125,24 +164,45 @@ async def _run_tool(
             f"Tool call limit exceeded ({deps.state.max_tool_calls}). "
             "Please provide a direct answer without additional tool calls."
         )
-        deps.state.tool_trace.append(_tool_trace(tool_name, "failed", summary=detail))
+        deps.state.tool_trace.append(
+            _tool_trace(
+                tool_name,
+                "failed",
+                input_summary=input_summary,
+                summary=detail,
+                next_actions=["Answer directly without more tool calls."],
+            )
+        )
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
         raise RuntimeError(detail)
-    deps.state.tool_trace.append(_tool_trace(tool_name, "started"))
+    deps.state.tool_trace.append(_tool_trace(tool_name, "started", input_summary=input_summary))
     await _emit_tool_event(deps, "tool.started", tool_name=tool_name)
     try:
         result = await runner()
     except Exception as exc:
         detail = str(exc) or "Tool failed"
-        deps.state.tool_trace.append(_tool_trace(tool_name, "failed", summary=detail))
+        deps.state.tool_trace.append(
+            _tool_trace(
+                tool_name,
+                "failed",
+                input_summary=input_summary,
+                summary=detail,
+                next_actions=["Retry only after clarifying the missing input or context."],
+            )
+        )
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
         raise
-    summary = (
-        f"{len(result)} item(s)"
-        if isinstance(result, list)
-        else "Loaded"
+    summary, next_actions, artifacts = _tool_observation(result)
+    deps.state.tool_trace.append(
+        _tool_trace(
+            tool_name,
+            "completed",
+            input_summary=input_summary,
+            summary=summary,
+            next_actions=next_actions,
+            artifacts=artifacts,
+        )
     )
-    deps.state.tool_trace.append(_tool_trace(tool_name, "completed", summary=summary))
     await _emit_tool_event(deps, "tool.completed", tool_name=tool_name, summary=summary)
     return result
 
@@ -196,7 +256,7 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                 _append_citation(ctx.deps.state, ctx.deps.vocabulary_item_to_citation_fn(item))
             return items
 
-        return await _run_tool(ctx, "search_user_vocabulary", runner)
+        return await _run_tool(ctx, "search_user_vocabulary", runner, input_summary=_truncate_tool_arg(query))
 
     @agent.tool(name="lookup_dictionary_entry")
     async def lookup_dictionary_entry(
@@ -215,7 +275,13 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                 _append_citation(ctx.deps.state, ctx.deps.dictionary_item_to_citation_fn(item))
             return item
 
-        return await _run_tool(ctx, "lookup_dictionary_entry", runner)
+        summary_bits = [query, str(entry_id) if entry_id is not None else None, query_type, context_sentence]
+        return await _run_tool(
+            ctx,
+            "lookup_dictionary_entry",
+            runner,
+            input_summary=_truncate_tool_arg(" | ".join(bit for bit in summary_bits if bit)),
+        )
 
     @agent.tool(name="run_dictionary_ai_context_explain")
     async def run_dictionary_ai_context_explain(
@@ -243,7 +309,31 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                 )
             return item
 
-        return await _run_tool(ctx, "run_dictionary_ai_context_explain", runner)
+        return await _run_tool(
+            ctx,
+            "run_dictionary_ai_context_explain",
+            runner,
+            input_summary=_truncate_tool_arg(query),
+        )
+
+    @agent.tool(name="generate_sentence_annotation")
+    async def generate_sentence_annotation(
+        ctx: RunContext[ReaderAskAgentDeps],
+        kind: Literal["grammar_note", "sentence_analysis"],
+    ) -> dict[str, Any] | None:
+        async def runner() -> dict[str, Any] | None:
+            item = await ctx.deps.generate_sentence_annotation_fn(kind)
+            if item is not None:
+                ctx.deps.state.source_labels.add("record_assets")
+                ctx.deps.state.latest_generated_annotations.append(item)
+            return item
+
+        return await _run_tool(
+            ctx,
+            "generate_sentence_annotation",
+            runner,
+            input_summary=f"kind={kind}",
+        )
 
     @agent.tool(name="propose_save_note")
     async def propose_save_note(
@@ -252,7 +342,19 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     ) -> dict[str, Any]:
         async def runner() -> dict[str, Any]:
             if ctx.deps.primary_anchor is None:
-                return {"ok": False, "reason": "No anchor available"}
+                return {
+                    "status": "error",
+                    "summary": "No anchor available",
+                    "next_actions": ["Ask the user to select a sentence or text span first."],
+                    "artifacts": [],
+                }
+            if not isinstance(note_text, str) or not note_text.strip():
+                return {
+                    "status": "error",
+                    "summary": "Missing note_text",
+                    "next_actions": ["Provide the note content before proposing save_note."],
+                    "artifacts": [],
+                }
             ctx.deps.state.action_requests.append(
                 ReaderAskRuntimeActionRequest(
                     action_type="save_note",
@@ -265,15 +367,27 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                     },
                 )
             )
-            return {"ok": True, "action_type": "save_note"}
+            return {
+                "status": "success",
+                "summary": "Prepared save_note confirmation",
+                "next_actions": ["Wait for user confirmation before writing the note."],
+                "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
+                "ok": True,
+                "action_type": "save_note",
+            }
 
-        return await _run_tool(ctx, "propose_save_note", runner)
+        return await _run_tool(ctx, "propose_save_note", runner, input_summary=_truncate_tool_arg(note_text))
 
     @agent.tool(name="propose_save_highlight")
     async def propose_save_highlight(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
         async def runner() -> dict[str, Any]:
             if ctx.deps.primary_anchor is None:
-                return {"ok": False, "reason": "No anchor available"}
+                return {
+                    "status": "error",
+                    "summary": "No anchor available",
+                    "next_actions": ["Ask the user to select a sentence or text span first."],
+                    "artifacts": [],
+                }
             ctx.deps.state.action_requests.append(
                 ReaderAskRuntimeActionRequest(
                     action_type="save_highlight",
@@ -285,8 +399,24 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                     },
                 )
             )
-            return {"ok": True, "action_type": "save_highlight"}
+            return {
+                "status": "success",
+                "summary": "Prepared save_highlight confirmation",
+                "next_actions": ["Wait for user confirmation before saving the highlight."],
+                "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
+                "ok": True,
+                "action_type": "save_highlight",
+            }
 
         return await _run_tool(ctx, "propose_save_highlight", runner)
 
     return agent
+
+
+def _truncate_tool_arg(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split()).strip()
+    if not text:
+        return None
+    return text[:120]

@@ -29,6 +29,7 @@ from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import service as reader_ask_service
 from app.services.reader_ask import supplements as supplements_svc
+from app.services.reader_ask import utils as reader_ask_utils
 from app.services.reader_ask.service import (
     _attachment_to_anchor,
     _attachments_to_anchor_refs,
@@ -39,6 +40,7 @@ from app.services.reader_ask.service import (
     _planning_snapshot_json,
     _build_resolved_context_input,
     _build_response_cards,
+    _build_supplement_candidates_from_runtime,
     _build_unused_reservation,
     _dictionary_ai_to_citation,
     _merge_usage_summaries,
@@ -46,6 +48,7 @@ from app.services.reader_ask.service import (
     _next_run_info,
     _resolve_intent,
     _resolved_context_summary,
+    _submission_mode,
 )
 from app.services.reader_ask.supplements import build_grammar_note_candidate
 
@@ -258,7 +261,115 @@ def test_build_response_cards_creates_sentence_breakdown_card() -> None:
 
     assert len(cards) == 1
     assert cards[0].card_type == "sentence_breakdown_card"
+    assert cards[0].origin == "ask_ai"
     assert cards[0].parts[0].label == "主干"
+
+
+def test_build_response_cards_creates_grammar_note_card() -> None:
+    runtime_state = ReaderAskRuntimeState(
+        latest_generated_annotations=[
+            {
+                "status": "ready",
+                "kind": "grammar_note",
+                "sentence_id": "s1",
+                "focus_text": "compared human behaviour and brain patterns",
+                "analysis_scope": "focus_span",
+                "note_zh": "这里的 compare A with B 用来引出对比对象。",
+                "label": "Compare A with B",
+                    "source_sentence": "The researchers compared human behaviour and brain patterns with 41 species of monkeys and apes.",
+                    "spans": [
+                        {"text": "compared", "role": "谓语"},
+                        {"text": "with 41 species of monkeys and apes", "role": "比较对象"},
+                    ],
+                }
+            ]
+    )
+    record = type("Record", (), {
+        "render_scene": {
+            "article": {"sentences": [{"sentence_id": "s1", "text": "The researchers compared human behaviour and brain patterns with 41 species of monkeys and apes.", "paragraph_id": "p1"}]},
+            "translations": [{"sentence_id": "s1", "translation_zh": "研究人员将人类的行为和脑部模式与 41 种猴子和猿类进行了比较。"}],
+        }
+    })()
+    record.record_id = "00000000-0000-0000-0000-000000000001"
+    record.title = "Test"
+
+    cards = _build_response_cards(
+        task_mode="grammar",
+        record=record,
+        anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="The researchers compared human behaviour and brain patterns with 41 species of monkeys and apes.")],
+        runtime_state=runtime_state,
+    )
+
+    assert len(cards) == 1
+    assert cards[0].card_type == "grammar_note_card"
+    assert cards[0].origin == "ask_ai"
+    assert cards[0].analysis_scope == "focus_span"
+    assert cards[0].focus_text == "compared human behaviour and brain patterns"
+    assert cards[0].spans[1].role == "比较对象"
+
+
+def test_submission_mode_uses_toolbar_quick_actions_only() -> None:
+    quick_action_attachment = ReaderAskAttachment(
+        kind="text_selection",
+        subtype="sentence",
+        label="整句",
+        selected_text="The researchers compared human behaviour and brain patterns.",
+        metadata=ReaderAskAttachmentMetadata(
+            source_surface="selection_toolbar",
+            entry_action="why_here",
+            sentence_id="s1",
+            paragraph_id="p1",
+        ),
+    )
+    ordinary_attachment = ReaderAskAttachment(
+        kind="text_selection",
+        subtype="sentence",
+        label="整句",
+        selected_text="The researchers compared human behaviour and brain patterns.",
+        metadata=ReaderAskAttachmentMetadata(
+            source_surface="ask_panel",
+            entry_action="why_here",
+            sentence_id="s1",
+            paragraph_id="p1",
+        ),
+    )
+
+    assert _submission_mode(entry_action="why_here", attachments=[quick_action_attachment]) == "quick_action"
+    assert _submission_mode(entry_action="explain_this", attachments=[quick_action_attachment]) == "quick_action"
+    assert _submission_mode(entry_action="why_here", attachments=[ordinary_attachment]) == "chat"
+    assert _submission_mode(entry_action="ask_about_this", attachments=[quick_action_attachment]) == "chat"
+
+
+def test_build_supplement_candidates_ignores_not_applicable_quick_action_result() -> None:
+    runtime_state = ReaderAskRuntimeState(
+        latest_generated_annotations=[
+            {
+                "status": "not_applicable",
+                "kind": "grammar_note",
+                "reason": "选区过短，无法稳定判断语法作用。",
+                "suggestion": "请扩展到完整分句或整句后再试。",
+            }
+        ]
+    )
+
+    candidates = _build_supplement_candidates_from_runtime(
+        resolved_intent="explain",
+        anchors=[
+            ReaderAskAnchorRef(
+                anchor_type="sentence",
+                sentence_id="s1",
+                paragraph_id="p1",
+                target_key="record:r1:sentence:s1",
+                selected_text="Even if he knew the risk",
+                label="句子",
+            )
+        ],
+        runtime_state=runtime_state,
+        assistant_content_md="过短",
+        created_from_turn_run_id="run-1",
+    )
+
+    assert candidates == []
 
 
 def test_current_record_affordances_use_backend_render_scene_over_frontend_hint() -> None:
@@ -290,13 +401,44 @@ def test_current_record_affordances_use_backend_render_scene_over_frontend_hint(
     assert affordances.has_sentence_entries is True
     assert affordances.has_annotations is True
 
+def test_resolve_record_overview_prefers_learning_overview_hint_when_ready() -> None:
+    resolved = reader_ask_utils.resolve_record_overview(
+        render_scene={"content_summary": {"overview": "academic overview"}},
+        page_state_json={
+            "derived": {
+                "overview_hint": {
+                    "status": "ready",
+                    "overview": "learning overview hint",
+                    "confidence": "medium",
+                    "source": "learning_overview_hint_agent",
+                }
+            }
+        },
+    )
+
+    assert resolved["overview"] == "learning overview hint"
+    assert resolved["status"] == "ready"
+    assert resolved["source"] == "learning_overview_hint_agent"
+    assert resolved["confidence"] == "medium"
+
+def test_resolve_record_overview_uses_academic_fallback_when_no_learning_hint() -> None:
+    resolved = reader_ask_utils.resolve_record_overview(
+        render_scene={"content_summary": {"overview": "academic overview"}},
+        page_state_json={"derived": {"overview_hint": {"status": "pending", "source": "learning_overview_hint_agent"}}},
+    )
+
+    assert resolved["overview"] == "academic overview"
+    assert resolved["status"] == "ready"
+    assert resolved["source"] == "academic_render_scene"
+
 
 def test_planner_decision_normalizes_chinese_labels() -> None:
     decision = ReaderAskPlannerDecision.model_validate(
         {
             "resolved_intent": "拆句",
             "structured_asset_request": {"requested": True, "requested_asset_type": "解析"},
-            "working_set": {"article_overview_needed": True},
+            "working_set": {"article_overview_needed": True, "extra_field": "ignored"},
+            "extra_top_level": "ignored",
         }
     )
 
@@ -340,6 +482,70 @@ def test_fallback_semantic_planner_decision_handles_article_level_question() -> 
     assert decision.clarification_only is False
     assert decision.working_set.article_overview_needed is True
     assert decision.working_set.local_context_window_needed is True
+
+def test_list_context_records_includes_overview_hint_fields(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    user_id = uuid4()
+
+    async def fake_search_records_by_title(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        return [
+            {
+                "id": "record-1",
+                "title": "Primates",
+                "updated_at": "2026-05-23T00:00:00Z",
+                "render_scene_json": {},
+                "page_state_json": {
+                    "derived": {
+                        "overview_hint": {
+                            "status": "ready",
+                            "overview": "文章比较灵长类和人类的用手偏好。",
+                            "source": "learning_overview_hint_agent",
+                        }
+                    }
+                },
+            }
+        ]
+
+    monkeypatch.setattr(reader_ask_service.repo, "search_records_by_title", fake_search_records_by_title)
+
+    response = asyncio.run(
+        reader_ask_service.list_context_records(
+            user_id,
+            query="primates",
+            exclude_record_id=None,
+        )
+    )
+
+    assert len(response.items) == 1
+    assert response.items[0].overview_hint == "文章比较灵长类和人类的用手偏好。"
+    assert response.items[0].overview_hint_status == "ready"
+    assert response.items[0].overview_hint_source == "learning_overview_hint_agent"
+
+
+def test_fallback_semantic_planner_decision_preserves_title_like_reference_request() -> None:
+    record = type("Record", (), {"title": "Current", "render_scene": {"sentence_entries": []}})()
+    page_identity = ReaderAskPageIdentity(
+        record_id="00000000-0000-0000-0000-000000000001",
+        title="Current",
+        available_context_capabilities=["record_context"],
+        has_article_overview=False,
+        has_sentence_entries=False,
+        has_annotations=False,
+        has_reader_notes=False,
+    )
+
+    decision = reader_ask_service._fallback_semantic_planner_decision(
+        user_message='我之前那篇《Climate Policy》里也提过这个吗？',
+        entry_action="ask_about_this",
+        page_identity=page_identity,
+        attachments=[],
+        anchors=[],
+        record=record,
+        failure_reason="validation failed",
+    )
+
+    assert decision.reference_request.requested is True
+    assert decision.reference_request.query == "Climate Policy"
 
 
 def test_resolved_context_summary_marks_article_assets_and_history_usage() -> None:
@@ -539,6 +745,7 @@ def test_assistant_message_metadata_keeps_only_minimal_turn_run_compat_fields() 
 def test_user_visible_output_round_trips_to_completed_payload() -> None:
     output = output_contract_svc.build_user_visible_output(
         content_md="解释完成。",
+        submission_mode="chat",
         resolved_intent="explain",
         citations=[],
         action_proposals=[],
@@ -1453,13 +1660,17 @@ def test_build_resolved_context_input_carries_external_asset_contexts() -> None:
                 asset_id="analysis-1",
                 entry_type="sentence_analysis",
                 asset_title="Concept analysis",
+                content_md="完整分析正文。",
                 content_summary="解释概念的制度语境。",
+                source_labels=["external_asset", "analysis"],
                 reason="structured_asset_resolved",
             )
         ],
     )
 
     assert len(context.external_asset_contexts) == 1
+    assert context.external_asset_contexts[0].content_md == "完整分析正文。"
+    assert context.external_asset_contexts[0].source_labels == ["external_asset", "analysis"]
     assert context.external_asset_contexts[0].asset_type == "analysis"
 
 
