@@ -2,7 +2,6 @@ import {
   Eraser,
   Highlighter,
   MessageSquare,
-  MoreHorizontal,
   NotebookPen,
   Quote,
   Search,
@@ -10,20 +9,16 @@ import {
 import { forwardRef, type CSSProperties } from "react";
 import { cn } from "../../lib/cn";
 import {
-  ReaderToolbarActionButton,
-  ReaderToolbarButton,
   ReaderToolbarIconButton,
-  ReaderToolbarMenu,
-  ReaderToolbarMenuContent,
-  ReaderToolbarMenuItem,
-  ReaderToolbarMenuLabel,
-  ReaderToolbarMenuRadioGroup,
-  ReaderToolbarMenuRadioItem,
-  ReaderToolbarMenuSeparator,
-  ReaderToolbarMenuTrigger,
   ReaderToolbarRoot,
   ReaderToolbarSeparator,
 } from "./plate-ui-adapter";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export type SelectionToolbarAction =
   | "ask"
@@ -97,26 +92,6 @@ export const defaultSelectionToolbarColorOptions: SelectionToolbarColorOption[] 
   },
 ];
 
-function selectedTextSummary(selectedText: string) {
-  const normalized = selectedText.trim().replace(/\s+/g, " ");
-
-  if (normalized.length <= 42) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, 42)}...`;
-}
-
-function selectionModeLabel(selectionMode: NonNullable<SelectionToolbarProps["selectionMode"]>) {
-  if (selectionMode === "sentence") {
-    return "整句";
-  }
-  if (selectionMode === "multi_text") {
-    return "跨句";
-  }
-  return "已选文本";
-}
-
 export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps>(function SelectionToolbar(
   {
     selectedText,
@@ -137,11 +112,12 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     onNote,
     onClearAnnotation,
     onLookup,
+    onToggleHighlightPalette,
+    highlightPaletteOpen,
   },
   ref,
 ) {
   const hasSelection = selectedText.trim().length > 0;
-  const selectionLabel = selectedTextSummary(selectedText);
   const askComingSoon = Boolean(disabled?.ask);
   const askDisabled = !hasSelection || askComingSoon || !onAsk;
   const selectSentenceDisabled =
@@ -150,124 +126,145 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
   const noteDisabled = !hasSelection || Boolean(disabled?.note) || !onNote;
   const lookupDisabled = !hasSelection || Boolean(disabled?.lookup) || !onLookup;
   const clearDisabled = !hasAnnotation || Boolean(disabled?.clear) || !onClearAnnotation;
-  const moreDisabled = !hasSelection;
+
+  const handleHighlight = () => {
+    if (!hasHighlight) {
+      const defaultOption =
+        colorOptions.find((option) => option.value === activeColor && !option.disabled) ??
+        colorOptions.find((option) => !option.disabled);
+      if (defaultOption) {
+        onHighlight?.(defaultOption.value, selectedText, defaultOption);
+        if (!highlightPaletteOpen) {
+          onToggleHighlightPalette?.();
+        }
+      }
+    } else {
+      onToggleHighlightPalette?.();
+    }
+  };
 
   return (
     <div
       ref={ref}
-      aria-label={selectionLabel ? `选区工具栏，已选文本：${selectionLabel}` : "选区工具栏"}
-      title={selectionLabel ? `已选文本：${selectionLabel}` : undefined}
       style={style}
       className={cn("w-max max-w-[calc(100vw-1rem)] text-ink", className)}
     >
-      <ReaderToolbarRoot aria-label={selectionLabel ? `选区工具栏，已选文本：${selectionLabel}` : "选区工具栏"}>
-        <span className="inline-flex h-10 shrink-0 items-center rounded-md border border-border/55 bg-background/56 px-2.5 text-[0.72rem] font-medium text-muted-foreground">
-          {selectionModeLabel(selectionMode)}
-        </span>
+      <TooltipProvider delayDuration={200}>
+        <div className="relative flex flex-col items-center gap-2">
+          {/* Floating Color Palette */}
+          {hasHighlight && highlightPaletteOpen && (
+            <div className="flex items-center gap-3 rounded-[10px] border border-border/60 bg-background/95 p-2 px-3 shadow-sm backdrop-blur-sm animate-in fade-in zoom-in-95 slide-in-from-bottom-2">
+              {colorOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-label={option.label}
+                  disabled={Boolean(option.disabled)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onHighlight?.(option.value, selectedText, option);
+                  }}
+                  className={cn(
+                    "h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 transition-all hover:scale-110",
+                    option.swatchClassName,
+                    activeColor === option.value ? "ring-ring ring-offset-2 ring-offset-background" : ""
+                  )}
+                />
+              ))}
+            </div>
+          )}
 
-        <ReaderToolbarMenu>
-          <ReaderToolbarMenuTrigger asChild disabled={highlightDisabled}>
-            <ReaderToolbarIconButton
-              active={hasHighlight}
-              aria-label={hasHighlight ? "更换高亮颜色" : "高亮"}
-              title={hasHighlight ? "更换高亮颜色" : "高亮"}
-              onClick={() => {
-                if (!hasHighlight) {
-                  const defaultOption =
-                    colorOptions.find((option) => option.value === activeColor && !option.disabled) ??
-                    colorOptions.find((option) => !option.disabled);
-                  if (defaultOption) {
-                    onHighlight?.(defaultOption.value, selectedText, defaultOption);
-                  }
-                }
-              }}
-            >
-              <Highlighter aria-hidden="true" className="h-4 w-4" />
-            </ReaderToolbarIconButton>
-          </ReaderToolbarMenuTrigger>
-          {hasHighlight ? (
-            <ReaderToolbarMenuContent align="start" className="w-44">
-              <ReaderToolbarMenuLabel>选择高亮颜色</ReaderToolbarMenuLabel>
-              <ReaderToolbarMenuSeparator />
-              <ReaderToolbarMenuRadioGroup value={activeColor ?? undefined}>
-                {colorOptions.map((option) => (
-                  <ReaderToolbarMenuRadioItem
-                    key={option.value}
-                    value={option.value}
-                    disabled={Boolean(option.disabled)}
-                    onSelect={(event) => {
-                      event.preventDefault();
-                      onHighlight?.(option.value, selectedText, option);
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={cn("mr-1.5 h-3.5 w-3.5 rounded-[4px] ring-1 ring-inset ring-border/70", option.swatchClassName)}
-                    />
-                    {option.label}
-                  </ReaderToolbarMenuRadioItem>
-                ))}
-              </ReaderToolbarMenuRadioGroup>
-            </ReaderToolbarMenuContent>
-          ) : null}
-        </ReaderToolbarMenu>
+          <ReaderToolbarRoot>
+            {/* Highlight Action */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ReaderToolbarIconButton
+                  active={hasHighlight}
+                  disabled={highlightDisabled}
+                  onClick={handleHighlight}
+                >
+                  <Highlighter aria-hidden="true" className="h-4 w-4" />
+                </ReaderToolbarIconButton>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                {hasHighlight ? "更换高亮颜色" : "高亮"}
+              </TooltipContent>
+            </Tooltip>
 
-        <ReaderToolbarIconButton
-          aria-label={hasNote ? "编辑笔记" : "笔记"}
-          title={hasNote ? "编辑笔记" : "笔记"}
-          disabled={noteDisabled}
-          active={hasNote}
-          onClick={() => onNote?.(selectedText)}
-        >
-          <NotebookPen aria-hidden="true" className="h-4 w-4" />
-        </ReaderToolbarIconButton>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={noteDisabled}
+                active={hasNote}
+                onClick={() => onNote?.(selectedText)}
+              >
+                <NotebookPen aria-hidden="true" className="h-4 w-4" />
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {hasNote ? "编辑笔记" : "新建笔记"}
+            </TooltipContent>
+          </Tooltip>
 
-        <ReaderToolbarSeparator aria-hidden="true" />
+          <ReaderToolbarSeparator aria-hidden="true" />
 
-        <ReaderToolbarActionButton
-          className="gap-2 px-3 font-medium text-foreground/78"
-          disabled={askDisabled}
-          aria-label={askComingSoon ? "Ask Claread，稍后开放" : "Ask Claread"}
-          title={askComingSoon ? "Ask Claread coming soon" : "Ask Claread"}
-          onClick={() => onAsk?.(selectedText)}
-        >
-          <MessageSquare aria-hidden="true" className="h-4 w-4 text-lens-blue/75" />
-          <span>Ask</span>
-          {askComingSoon ? (
-            <span className="rounded-full border border-border bg-background px-1.5 py-0.5 text-[0.625rem] font-semibold leading-none text-muted-foreground">
-              soon
-            </span>
-          ) : null}
-        </ReaderToolbarActionButton>
+          {/* Flattened Menu Items */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={selectSentenceDisabled}
+                onClick={() => onSelectSentence?.(selectedText)}
+              >
+                <Quote aria-hidden="true" className="h-4 w-4" />
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">扩展到整句</TooltipContent>
+          </Tooltip>
 
-        <ReaderToolbarMenu>
-          <ReaderToolbarMenuTrigger asChild disabled={moreDisabled}>
-            <ReaderToolbarIconButton
-              aria-label="更多选区操作"
-              title="更多选区操作"
-            >
-              <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
-            </ReaderToolbarIconButton>
-          </ReaderToolbarMenuTrigger>
-          <ReaderToolbarMenuContent align="end" className="w-52">
-            <ReaderToolbarMenuLabel>选区操作</ReaderToolbarMenuLabel>
-            <ReaderToolbarMenuSeparator />
-            <ReaderToolbarMenuItem disabled={selectSentenceDisabled} onSelect={() => onSelectSentence?.(selectedText)}>
-              <Quote aria-hidden="true" className="h-4 w-4" />
-              扩展到整句
-            </ReaderToolbarMenuItem>
-            <ReaderToolbarMenuItem disabled={lookupDisabled} onSelect={() => onLookup?.(selectedText)}>
-              <Search aria-hidden="true" className="h-4 w-4" />
-              查词
-            </ReaderToolbarMenuItem>
-            <ReaderToolbarMenuSeparator />
-            <ReaderToolbarMenuItem disabled={clearDisabled} onSelect={onClearAnnotation}>
-              <Eraser aria-hidden="true" className="h-4 w-4" />
-              取消标注
-            </ReaderToolbarMenuItem>
-          </ReaderToolbarMenuContent>
-        </ReaderToolbarMenu>
-      </ReaderToolbarRoot>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={lookupDisabled}
+                onClick={() => onLookup?.(selectedText)}
+              >
+                <Search aria-hidden="true" className="h-4 w-4" />
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">查词</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={clearDisabled}
+                onClick={onClearAnnotation}
+              >
+                <Eraser aria-hidden="true" className="h-4 w-4" />
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">取消标注</TooltipContent>
+          </Tooltip>
+          
+          <ReaderToolbarSeparator aria-hidden="true" />
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={askDisabled}
+                onClick={() => onAsk?.(selectedText)}
+                className="text-lens-blue/80 hover:bg-lens-blue/10 hover:text-lens-blue"
+              >
+                <MessageSquare aria-hidden="true" className="h-4 w-4" />
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {askComingSoon ? "Ask Claread (稍后开放)" : "Ask Claread"}
+            </TooltipContent>
+          </Tooltip>
+        </ReaderToolbarRoot>
+        </div>
+      </TooltipProvider>
+
       {statusMessage ? (
         <div
           className={cn(

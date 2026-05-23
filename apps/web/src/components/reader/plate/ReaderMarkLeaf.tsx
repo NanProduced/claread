@@ -28,6 +28,8 @@ interface ReaderMarkLeafProps {
   noteFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   hoveredAnnotationTargetKey?: string | null;
   activeAnalysisEntryId?: string | null;
+  expandedAnalysisEntryIds?: Set<string>;
+  activeGrammarNoteSentenceIds?: Set<string>;
   sentenceTextBySentence?: Map<string, string>;
   sourceContextBySentence?: Map<string, string | undefined>;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
@@ -311,6 +313,8 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   annotationRangesBySentence,
   annotationVisibilityGroups,
   hoveredAnnotationTargetKey = null,
+  expandedAnalysisEntryIds,
+  activeGrammarNoteSentenceIds,
   jumpFocusRangesBySentence,
   selectionFocusRangesBySentence,
   noteFocusRangesBySentence,
@@ -447,13 +451,21 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   }
 
   const className = readerMarkClassName(visualTone, annotationVisibilityGroups);
-  const isLinkedToActiveEntry =
-    activeAnalysisEntryId &&
-    (leaf.readerMarkParentId === activeAnalysisEntryId ||
-      leaf.readerMarkId === activeAnalysisEntryId ||
+  
+  const isLinkedToEntryId = (entryId: string | null | undefined) => {
+    if (!entryId) return false;
+    return leaf.readerMarkParentId === entryId ||
+      leaf.readerMarkId === entryId ||
       (leaf.readerMarkId?.startsWith("im_") &&
-        activeAnalysisEntryId.startsWith("se_") &&
-        leaf.readerMarkId.slice(3) === activeAnalysisEntryId.slice(3)));
+        entryId.startsWith("se_") &&
+        leaf.readerMarkId.slice(3) === entryId.slice(3));
+  };
+
+  const isLinkedToActiveEntry =
+    isLinkedToEntryId(activeAnalysisEntryId) ||
+    (expandedAnalysisEntryIds && Array.from(expandedAnalysisEntryIds).some(isLinkedToEntryId)) ||
+    (leaf.readerMarkAnnotationType === "grammar_note" && leaf.readerSentenceId && activeGrammarNoteSentenceIds?.has(leaf.readerSentenceId));
+
   const entryActiveClass = isLinkedToActiveEntry ? "reader-mark--entry-active" : "";
   const isClickable = Boolean(className && leaf.readerMarkClickable && leaf.readerSentenceId);
 

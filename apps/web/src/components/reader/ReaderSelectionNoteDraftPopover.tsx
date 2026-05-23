@@ -23,16 +23,7 @@ interface ReaderSelectionNoteDraftPopoverProps {
   onClose: () => void;
 }
 
-function trimQuote(value: string, limit = 120) {
-  const normalized = value.trim().replace(/\s+/g, " ");
-  if (!normalized) {
-    return "";
-  }
-  if (normalized.length <= limit) {
-    return normalized;
-  }
-  return `${normalized.slice(0, limit)}...`;
-}
+
 
 function quoteBadgeLabel(quoteMode: WebReaderNoteCreateRequest["quoteMode"]) {
   if (quoteMode === "sentence") {
@@ -75,33 +66,20 @@ export function ReaderSelectionNoteDraftPopover({
       }}
       data-selection-note-input="true"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <MessageSquare aria-hidden="true" className="h-4 w-4 text-amber-700" />
-            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-amber-700">
-              新建笔记
-            </p>
-          </div>
-          <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-[0.84rem] leading-6 text-amber-950">
-            {trimQuote(draft.selectedText)}
-          </p>
-        </div>
-        <div className="flex items-start gap-2">
-          <span className="rounded-full border border-border/70 bg-muted/30 px-2 py-1 text-[0.68rem] font-semibold text-muted-foreground">
-            {quoteBadgeLabel(draft.quoteMode)}
-          </span>
-          <button
-            type="button"
-            className="focus-ring inline-flex h-11 w-11 items-center justify-center rounded-full border border-hairline/70 bg-white/88 text-muted transition-colors hover:border-muted hover:text-ink"
-            aria-label="关闭笔记草稿"
-            onClick={onClose}
-          >
-            <X aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </div>
+      <div className="flex items-center justify-between pb-3">
+        <span className="rounded-md bg-muted/40 px-2 py-0.5 text-[0.68rem] font-medium text-muted-foreground">
+          {quoteBadgeLabel(draft.quoteMode)}
+        </span>
+        <button
+          type="button"
+          className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          aria-label="关闭笔记草稿"
+          onClick={onClose}
+        >
+          <X aria-hidden="true" className="h-4 w-4" />
+        </button>
       </div>
-      <div className="mt-3 space-y-3">
+      <div className="space-y-3">
         <label className="block text-xs font-medium text-foreground">
           内容
         </label>

@@ -1114,7 +1114,7 @@ select {
 }
 
 .reader-mark--grammar {
-  background-image: repeating-linear-gradient(to right, rgba(116, 102, 148, 0.8) 0, rgba(116, 102, 148, 0.8) 3px, transparent 3px, transparent 5px);
+  background-image: repeating-linear-gradient(to right, rgba(116, 102, 148, 0.6) 0, rgba(116, 102, 148, 0.6) 3px, transparent 3px, transparent 5px);
   background-position: 0 100%;
   background-repeat: no-repeat;
   background-size: 100% 2px;
@@ -1124,15 +1124,16 @@ select {
   color: var(--ink);
   transition:
     background-color 200ms ease,
+    background-image 200ms ease,
     color 200ms ease;
 }
 
 .reader-mark--grammar:hover,
 .reader-mark--grammar.reader-mark--entry-active {
-  background-image: linear-gradient(to right, rgb(116, 102, 148), rgb(116, 102, 148));
+  background-image: linear-gradient(to right, rgba(116, 102, 148, 0.9), rgba(116, 102, 148, 0.9));
   background-color: rgba(116, 102, 148, 0.15);
   border-radius: 0.2em;
-  color: rgb(116, 102, 148) !important;
+  color: var(--ink);
   box-shadow: none;
 }
 

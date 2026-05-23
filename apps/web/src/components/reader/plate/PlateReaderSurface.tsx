@@ -261,7 +261,23 @@ export function PlateReaderSurface({
     });
 
     return map;
-  }, [activeAnalysisEntryId, paragraphNodes]);
+  }, [paragraphNodes, activeAnalysisEntryId]);
+
+  const activeGrammarNoteSentenceIds = useMemo(() => {
+    const ids = new Set<string>();
+    paragraphNodes.forEach((paragraph) => {
+      paragraph.children.forEach((sentenceNode) => {
+        const hasExpandedGrammarNote = sentenceNode.children.some(
+          (child): child is ReaderAnalysisBlockNode =>
+            child.type === "reader_grammar_note" && expandedIds.has(child.entryId)
+        );
+        if (hasExpandedGrammarNote) {
+          ids.add(sentenceNode.sentenceId);
+        }
+      });
+    });
+    return ids;
+  }, [paragraphNodes, expandedIds]);
 
   const editor = usePlateEditor(
     {
@@ -422,12 +438,15 @@ export function PlateReaderSurface({
         hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
         activeAnalysisEntryId={activeAnalysisEntryId}
+        expandedAnalysisEntryIds={expandedIds}
+        activeGrammarNoteSentenceIds={activeGrammarNoteSentenceIds}
         sentenceTextBySentence={sentenceTextBySentence}
         sourceContextBySentence={sourceContextBySentence}
       />
     ),
     [
       activeAnalysisEntryId,
+      activeGrammarNoteSentenceIds,
       activeSentenceAnalysisSegmentsBySentence,
       assetRangesBySentence,
       annotationVisibilityGroups,
