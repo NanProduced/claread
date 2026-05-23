@@ -7,6 +7,7 @@ from uuid import UUID
 
 from app.services.reader_ask import planner
 from app.services.reader_ask import repository as repo
+from app.services.reader_ask import utils
 
 
 def _normalize_title(value: str | None) -> str:
@@ -31,35 +32,11 @@ def _score_title_match(query: str, title: str) -> int:
 
 
 def _truncate_text(value: str | None, limit: int) -> str | None:
-    normalized = re.sub(r"\s+", " ", (value or "").strip())
-    if not normalized:
-        return None
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[:limit]}..."
+    return utils.truncate_text_optional(value, limit)
 
 
 def _extract_article_overview(render_scene: dict[str, Any]) -> str | None:
-    direct = render_scene.get("content_summary")
-    if isinstance(direct, dict):
-        overview = _truncate_text(direct.get("overview"), 220)
-        if overview:
-            return overview
-
-    queue: list[Any] = [render_scene]
-    while queue:
-        current = queue.pop(0)
-        if isinstance(current, dict):
-            entry_type = current.get("entryType") or current.get("entry_type")
-            node_type = current.get("type")
-            if entry_type == "content_summary" or node_type == "reader_content_summary":
-                overview = _truncate_text(current.get("overview"), 220)
-                if overview:
-                    return overview
-            queue.extend(current.values())
-        elif isinstance(current, list):
-            queue.extend(current)
-    return None
+    return utils.extract_article_overview(render_scene)
 
 
 def _extract_stable_record_insights(render_scene: dict[str, Any], *, limit: int = 3) -> list[str]:

@@ -296,8 +296,7 @@ def test_planner_decision_normalizes_chinese_labels() -> None:
         {
             "resolved_intent": "拆句",
             "structured_asset_request": {"requested": True, "requested_asset_type": "解析"},
-            "working_set": {"article_overview_needed": True, "extra_field": "ignored"},
-            "extra_top_level": "ignored",
+            "working_set": {"article_overview_needed": True},
         }
     )
 
@@ -479,7 +478,7 @@ def test_build_grammar_note_candidate_requires_sentence_target() -> None:
             selected_text="Even if he knew the risk",
             label="语法旁注",
         ),
-        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。",
+        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。即使他知道风险，他也会继续前行。这种让步结构在英语中非常常见。",
         created_from_turn_run_id="run-1",
     )
 
@@ -673,7 +672,7 @@ def test_candidate_to_persisted_supplement_separates_lifecycle_contract() -> Non
             selected_text="Even if he knew the risk",
             label="语法旁注",
         ),
-        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。",
+        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。即使他知道风险，他也会继续前行。这种让步结构在英语中非常常见。",
         created_from_turn_run_id="run-1",
     )
 
@@ -1391,7 +1390,7 @@ def test_typed_supplement_capability_builds_grammar_note_candidates() -> None:
                 label="语法旁注",
             )
         ],
-        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。",
+        assistant_content_md="这里的 even if 引出让步从句，用来先让步再转主句判断。即使他知道风险，他也会继续前行。这种让步结构在英语中非常常见。",
         created_from_turn_run_id="run-2",
     )
 

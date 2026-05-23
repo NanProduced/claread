@@ -360,17 +360,7 @@ class ReaderAskPlannerStructuredAssetRequest(BaseModel):
         if not isinstance(value, str):
             return value
         normalized = value.strip().lower()
-        mapping = {
-            "analysis": "analysis",
-            "解析": "analysis",
-            "分析": "analysis",
-            "sentence_analysis": "analysis",
-            "supplement": "supplement",
-            "补充": "supplement",
-            "旁注": "supplement",
-            "grammar_note": "supplement",
-        }
-        return mapping.get(normalized, value)
+        return _ASSET_TYPE_ALIASES.get(normalized, value)
 
 
 class ReaderAskPlannerWorkingSetDecision(BaseModel):
@@ -396,8 +386,41 @@ class ReaderAskPlannerInput(BaseModel):
     history: list[ReaderAskPlannerHistoryMessage] = Field(default_factory=list)
 
 
+_INTENT_ALIASES: dict[str, ReaderAskResolvedIntent] = {
+    "explain": "explain",
+    "解释": "explain",
+    "讲解": "explain",
+    "explanation": "explain",
+    "breakdown": "breakdown",
+    "拆句": "breakdown",
+    "拆解": "breakdown",
+    "语法拆解": "breakdown",
+    "vocabulary": "vocabulary",
+    "词义": "vocabulary",
+    "词汇": "vocabulary",
+    "单词": "vocabulary",
+    "grammar": "grammar",
+    "语法": "grammar",
+    "syntax": "grammar",
+    "practice": "practice",
+    "练习": "practice",
+    "exercise": "practice",
+}
+
+_ASSET_TYPE_ALIASES: dict[str, ReaderAskPlannerAssetType] = {
+    "analysis": "analysis",
+    "解析": "analysis",
+    "分析": "analysis",
+    "sentence_analysis": "analysis",
+    "supplement": "supplement",
+    "补充": "supplement",
+    "旁注": "supplement",
+    "grammar_note": "supplement",
+}
+
+
 class ReaderAskPlannerDecision(BaseModel):
-    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     resolved_intent: ReaderAskResolvedIntent
     clarification_only: bool = False
@@ -415,27 +438,7 @@ class ReaderAskPlannerDecision(BaseModel):
         if not isinstance(value, str):
             return value
         normalized = value.strip().lower()
-        mapping = {
-            "explain": "explain",
-            "解释": "explain",
-            "讲解": "explain",
-            "explanation": "explain",
-            "breakdown": "breakdown",
-            "拆句": "breakdown",
-            "拆解": "breakdown",
-            "语法拆解": "breakdown",
-            "vocabulary": "vocabulary",
-            "词义": "vocabulary",
-            "词汇": "vocabulary",
-            "单词": "vocabulary",
-            "grammar": "grammar",
-            "语法": "grammar",
-            "syntax": "grammar",
-            "practice": "practice",
-            "练习": "practice",
-            "exercise": "practice",
-        }
-        return mapping.get(normalized, value)
+        return _INTENT_ALIASES.get(normalized, "explain")
 
 
 class ReaderAskRunInfo(BaseModel):

@@ -14,6 +14,7 @@ from app.schemas.reader_ask import (
 )
 from app.services.reader_ask import planner
 from app.services.reader_ask import prompting as prompt_layers_svc
+from app.services.reader_ask import utils
 
 
 @dataclass(slots=True)
@@ -37,56 +38,64 @@ class ReaderAskAnswerRuntimeInput:
 
 
 def _normalize_text(value: str | None) -> str:
-    if not value:
-        return ""
-    return " ".join(value.split()).strip()
+    return utils.normalize_text(value)
 
 
 def _truncate_text(value: str | None, limit: int) -> str:
-    normalized = _normalize_text(value)
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[:limit]}..."
+    return utils.truncate_text(value, limit)
 
 
 def _estimate_token_count(payload: dict[str, Any]) -> int:
     serialized = json.dumps(payload, ensure_ascii=False)
-    return max((len(serialized) + 3) // 4, 1)
+    cjk_count = sum(1 for c in serialized if '\u4e00' <= c <= '\u9fff' or '\u3400' <= c <= '\u4dbf')
+    non_cjk_len = len(serialized) - cjk_count
+    return max(int(non_cjk_len / 4 + cjk_count / 1.5), 1)
 
 
-def _compact_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _compact_prompt_payload(
+    payload: dict[str, Any],
+    *,
+    max_history: int = 4,
+    max_record_assets: int = 3,
+    max_external_assets: int = 3,
+    max_vocabulary: int = 3,
+    max_insights: int = 3,
+    max_sentence_windows: int = 3,
+    max_source_excerpt: int = 800,
+    max_article_overview: int = 400,
+) -> dict[str, Any]:
     compact = json.loads(json.dumps(payload, ensure_ascii=False))
     history = compact.get("history")
-    if isinstance(history, list) and len(history) > 4:
-        compact["history"] = history[-4:]
+    if isinstance(history, list) and len(history) > max_history:
+        compact["history"] = history[-max_history:]
 
     record_assets = compact.get("record_assets")
-    if isinstance(record_assets, list) and len(record_assets) > 3:
-        compact["record_assets"] = record_assets[:3]
+    if isinstance(record_assets, list) and len(record_assets) > max_record_assets:
+        compact["record_assets"] = record_assets[:max_record_assets]
 
     external_asset_contexts = compact.get("external_asset_contexts")
-    if isinstance(external_asset_contexts, list) and len(external_asset_contexts) > 3:
-        compact["external_asset_contexts"] = external_asset_contexts[:3]
+    if isinstance(external_asset_contexts, list) and len(external_asset_contexts) > max_external_assets:
+        compact["external_asset_contexts"] = external_asset_contexts[:max_external_assets]
 
     vocabulary_items = compact.get("vocabulary_items")
-    if isinstance(vocabulary_items, list) and len(vocabulary_items) > 3:
-        compact["vocabulary_items"] = vocabulary_items[:3]
+    if isinstance(vocabulary_items, list) and len(vocabulary_items) > max_vocabulary:
+        compact["vocabulary_items"] = vocabulary_items[:max_vocabulary]
 
     record_insights = compact.get("record_insights")
-    if isinstance(record_insights, list) and len(record_insights) > 3:
-        compact["record_insights"] = record_insights[:3]
+    if isinstance(record_insights, list) and len(record_insights) > max_insights:
+        compact["record_insights"] = record_insights[:max_insights]
 
     record_context = compact.get("record_context")
     if isinstance(record_context, dict):
         sentence_windows = record_context.get("sentence_windows")
-        if isinstance(sentence_windows, list) and len(sentence_windows) > 3:
-            record_context["sentence_windows"] = sentence_windows[:3]
+        if isinstance(sentence_windows, list) and len(sentence_windows) > max_sentence_windows:
+            record_context["sentence_windows"] = sentence_windows[:max_sentence_windows]
         source_excerpt = record_context.get("source_excerpt")
-        if isinstance(source_excerpt, str) and len(source_excerpt) > 800:
-            record_context["source_excerpt"] = _truncate_text(source_excerpt, 800)
+        if isinstance(source_excerpt, str) and len(source_excerpt) > max_source_excerpt:
+            record_context["source_excerpt"] = _truncate_text(source_excerpt, max_source_excerpt)
     article_overview = compact.get("article_overview")
-    if isinstance(article_overview, str) and len(article_overview) > 400:
-        compact["article_overview"] = _truncate_text(article_overview, 400)
+    if isinstance(article_overview, str) and len(article_overview) > max_article_overview:
+        compact["article_overview"] = _truncate_text(article_overview, max_article_overview)
     return compact
 
 

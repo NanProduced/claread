@@ -21,25 +21,26 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
     if not isinstance(hydrated_output, dict):
         hydrated_output = None
     visible = hydrated_output or {}
+    # TODO(migration): 移除 legacy metadata fallback，统一从 user_visible_output_json 读取
     resolved_intent = visible.get("resolved_intent", metadata.get("resolved_intent"))
     content_md = visible.get("content_md", row["content_md"] or "")
     citations = visible.get("citations", row["citations_json"] or [])
     action_proposals = visible.get("action_proposals", row["action_proposals_json"] or [])
     tool_trace = visible.get("tool_trace", row["tool_trace_json"] or [])
-    evidence = visible.get("evidence", metadata.get("evidence") or [])
-    trace_summary = visible.get("trace_summary", metadata.get("trace_summary"))
-    disambiguation = visible.get("disambiguation", metadata.get("disambiguation"))
+    evidence = visible.get("evidence", metadata.get("evidence") or [])  # TODO(migration)
+    trace_summary = visible.get("trace_summary", metadata.get("trace_summary"))  # TODO(migration)
+    disambiguation = visible.get("disambiguation", metadata.get("disambiguation"))  # TODO(migration)
     external_asset_disambiguation = visible.get(
         "external_asset_disambiguation",
-        metadata.get("external_asset_disambiguation"),
+        metadata.get("external_asset_disambiguation"),  # TODO(migration)
     )
-    response_cards = visible.get("response_cards", metadata.get("response_cards") or [])
-    resolved_context = visible.get("resolved_context", metadata.get("resolved_context"))
-    context_plan = visible.get("context_plan", metadata.get("context_plan"))
-    resolved_context_input = visible.get("resolved_context_input", metadata.get("resolved_context_input"))
-    run_info = visible.get("run_info", metadata.get("run_info"))
-    supplement_candidates = visible.get("supplement_candidates", metadata.get("supplement_candidates") or [])
-    persisted_supplements = visible.get("persisted_supplements", metadata.get("persisted_supplements") or [])
+    response_cards = visible.get("response_cards", metadata.get("response_cards") or [])  # TODO(migration)
+    resolved_context = visible.get("resolved_context", metadata.get("resolved_context"))  # TODO(migration)
+    context_plan = visible.get("context_plan", metadata.get("context_plan"))  # TODO(migration)
+    resolved_context_input = visible.get("resolved_context_input", metadata.get("resolved_context_input"))  # TODO(migration)
+    run_info = visible.get("run_info", metadata.get("run_info"))  # TODO(migration)
+    supplement_candidates = visible.get("supplement_candidates", metadata.get("supplement_candidates") or [])  # TODO(migration)
+    persisted_supplements = visible.get("persisted_supplements", metadata.get("persisted_supplements") or [])  # TODO(migration)
     usage_event_id = (
         str(row["current_turn_run_usage_event_id"])
         if row.get("current_turn_run_usage_event_id")
@@ -208,6 +209,8 @@ async def search_records_by_title(
     if not normalized_query:
         return []
 
+    escaped_query = normalized_query.replace('%', '\\%').replace('_', '\\_')
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -217,13 +220,13 @@ async def search_records_by_title(
               AND deleted_at IS NULL
               AND ($2::uuid IS NULL OR id <> $2)
               AND title IS NOT NULL
-              AND title ILIKE $3
+              AND title ILIKE $3 ESCAPE '\\'
             ORDER BY updated_at DESC
             LIMIT $4
             """,
             user_id,
             exclude_record_id,
-            f"%{normalized_query}%",
+            f"%{escaped_query}%",
             limit,
         )
     return [
@@ -538,9 +541,11 @@ async def find_action_proposal(
     if thread is None:
         return None, None
 
-    messages = await list_messages(thread_id, limit=None)
+    messages = await list_messages(thread_id, limit=20)
     for message in reversed(messages):
-        for proposal in message["action_proposals"]:
+        if message.get("role") != "assistant":
+            continue
+        for proposal in message.get("action_proposals", []):
             if proposal.get("id") == action_id:
                 return message, proposal
     return None, None
@@ -674,8 +679,8 @@ async def update_turn_run(
             UPDATE reader_ask_turn_runs
             SET status = $2,
                 resolved_intent = COALESCE($3, resolved_intent),
-                user_visible_output_json = COALESCE($4::jsonb, user_visible_output_json),
-                usage_summary_json = COALESCE($5::jsonb, usage_summary_json),
+                user_visible_output_json = CASE WHEN $4::jsonb IS NOT NULL THEN $4::jsonb ELSE user_visible_output_json END,
+                usage_summary_json = CASE WHEN $5::jsonb IS NOT NULL THEN $5::jsonb ELSE usage_summary_json END,
                 usage_event_id = COALESCE($6, usage_event_id),
                 completed_at = COALESCE($7, completed_at),
                 failed_at = COALESCE($8, failed_at),

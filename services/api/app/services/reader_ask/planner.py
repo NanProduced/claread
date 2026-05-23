@@ -32,6 +32,7 @@ from app.schemas.reader_ask import (
     ReaderAskTraceSummary,
     ReaderAskWorkingSetMode,
 )
+from app.services.reader_ask import utils
 
 ReaderAskRetrievalNeeds = Literal["none", "known_reference_only"]
 
@@ -105,14 +106,11 @@ class ReaderAskPlanningSnapshot:
 
 
 def _normalize_text(value: str | None) -> str:
-    if not value:
-        return ""
-    return " ".join(value.split()).strip()
+    return utils.normalize_text(value)
 
 
 def _clean_reference_query(value: str | None) -> str | None:
-    cleaned = _normalize_text(value).strip(" \t\r\n,.;:!?，。；：！？")
-    return cleaned or None
+    return utils.clean_reference_query(value)
 
 
 def _attachment_target_record(attachment: ReaderAskAttachment) -> str | None:
@@ -573,6 +571,7 @@ def plan_request(
     planner_validation_status: str = "valid",
     reference_resolution: ReaderAskReferenceResolution | None = None,
     structured_asset_resolution: ReaderAskStructuredAssetResolution | None = None,
+    skip_expensive_fields: bool = False,
 ) -> ReaderAskPlanningSnapshot:
     del content
     resolved_reference = reference_resolution or ReaderAskReferenceResolution()
@@ -628,6 +627,24 @@ def plan_request(
         attachments=attachments,
         anchors=anchors,
     )
+    if skip_expensive_fields:
+        return ReaderAskPlanningSnapshot(
+            resolved_intent=planner_decision.resolved_intent,
+            planner_decision=planner_decision,
+            planner_validation_status=planner_validation_status,
+            resolved_context_input=resolved_context_input,
+            reference_needs=reference_needs,
+            retrieval_needs=retrieval_needs,
+            resolved_references=resolved_reference,
+            structured_asset_needs=structured_asset_needs,
+            structured_asset_resolution=resolved_asset_resolution,
+            working_set=working_set,
+            context_plan=None,  # type: ignore[arg-type]
+            trace_summary=None,  # type: ignore[arg-type]
+            disambiguation_state=None,
+            external_asset_disambiguation_state=None,
+            clarification_only=clarification_only,
+        )
     context_plan = _planned_context_plan(
         entry_action=entry_action,
         attachments=attachments,

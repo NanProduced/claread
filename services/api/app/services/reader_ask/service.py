@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import re
 from collections.abc import AsyncIterator
@@ -113,6 +114,9 @@ from app.services.reader_ask import repository as repo
 from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
 from app.services.reader_ask import supplements as supplements_svc
+from app.services.reader_ask import utils
+
+logger = logging.getLogger(__name__)
 from app.services.text_anchors import ensure_json_dict, sentence_map
 from app.services.user_assets import vocabulary as vocabulary_svc
 from app.services import reader_notes as reader_notes_svc
@@ -165,16 +169,11 @@ def _iso_now() -> str:
 
 
 def _normalize_text(value: str | None) -> str:
-    if not value:
-        return ""
-    return " ".join(value.split()).strip()
+    return utils.normalize_text(value)
 
 
 def _truncate_text(value: str | None, limit: int) -> str:
-    normalized = _normalize_text(value)
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[:limit]}..."
+    return utils.truncate_text(value, limit)
 
 
 def _parse_uuid(value: str, detail: str) -> UUID:
@@ -308,6 +307,8 @@ def _resolve_intent(
     attachments: list[ReaderAskAttachment],
     entry_action: ReaderAskEntryAction,
 ) -> ReaderAskResolvedIntent:
+    # DEPRECATED: 不再被主流程调用，intent 解析由 planner agent + fallback 完成。
+    # 保留仅供现有测试兼容。
     del content, attachments
     if entry_action == "lookup_in_context":
         return "vocabulary"
@@ -317,6 +318,8 @@ def _resolve_intent(
 
 
 def _needs_clarification(content: str, anchors: list[ReaderAskAnchorRef]) -> bool:
+    # DEPRECATED: 不再被主流程调用，clarification 由 planning_snapshot.clarification_only 决定。
+    # 保留仅供现有测试兼容。
     del content
     return not anchors
 
@@ -420,26 +423,7 @@ def _translations_map(record: _RecordBundle) -> dict[str, str]:
 
 
 def _render_scene_article_overview(record: _RecordBundle) -> str | None:
-    direct = record.render_scene.get("content_summary")
-    if isinstance(direct, dict):
-        overview = direct.get("overview")
-        if isinstance(overview, str) and overview.strip():
-            return overview.strip()
-
-    queue: list[Any] = [record.render_scene]
-    while queue:
-        current = queue.pop(0)
-        if isinstance(current, dict):
-            entry_type = current.get("entryType") or current.get("entry_type")
-            node_type = current.get("type")
-            overview = current.get("overview")
-            if entry_type == "content_summary" or node_type == "reader_content_summary":
-                if isinstance(overview, str) and overview.strip():
-                    return overview.strip()
-            queue.extend(current.values())
-        elif isinstance(current, list):
-            queue.extend(current)
-    return None
+    return utils.extract_article_overview(record.render_scene)
 
 
 def _render_scene_has_sentence_entries(record: _RecordBundle) -> bool:
@@ -611,7 +595,7 @@ async def _load_external_record_contexts(
     current_record_id: UUID,
     planned_external_refs: list[dict[str, str]],
 ) -> list[ReaderAskExternalRecordContext]:
-    contexts: list[ReaderAskExternalRecordContext] = []
+    unique_refs: list[tuple[str, UUID, dict[str, str]]] = []
     seen: set[str] = set()
     for item in planned_external_refs:
         record_id = str(item.get("record_id") or "").strip()
@@ -621,7 +605,15 @@ async def _load_external_record_contexts(
         record_uuid = _parse_uuid(record_id, "external record id is invalid")
         if record_uuid == current_record_id:
             continue
-        bundle = await _load_record_bundle(user_id, record_uuid)
+        unique_refs.append((record_id, record_uuid, item))
+
+    bundles = await asyncio.gather(*[
+        _load_record_bundle(user_id, record_uuid)
+        for _, record_uuid, _ in unique_refs
+    ])
+
+    contexts: list[ReaderAskExternalRecordContext] = []
+    for (_, record_uuid, item), bundle in zip(unique_refs, bundles):
         structured_assets = resolver_svc.lookup_structured_record_assets(
             record_id=str(bundle.record_id),
             record_title=bundle.title or item.get("title"),
@@ -728,6 +720,11 @@ async def _run_semantic_planner(
             return result.output, validation_status, extract_run_usage(result)
         except Exception as exc:
             last_error = exc
+    logger.warning(
+        "reader_ask planner agent failed after retries, using deterministic fallback: %s",
+        last_error,
+        extra={"failure_reason": str(last_error) if last_error else None},
+    )
     return (
         _fallback_semantic_planner_decision(
             user_message=user_message,
@@ -782,6 +779,7 @@ async def _resolve_semantic_planning(
         planner_decision=planner_decision,
         planner_validation_status=planner_validation_status,
         reference_resolution=reference_resolution,
+        skip_expensive_fields=True,
     )
 
     async def _bundle_loader(lookup_user_id: UUID, lookup_record_id: UUID) -> dict[str, Any]:
@@ -1122,6 +1120,8 @@ def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnch
 
 
 async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[str, Any]]:
+    # NOTE(optimization): vocabulary API 不支持搜索参数，当前仍需全量加载后内存过滤。
+    # 后续若 vocabulary service 支持搜索参数，应改为数据库侧过滤。
     items, _ = await vocabulary_svc.list_vocabulary(
         user_id=user_id,
         page=1,
@@ -1269,16 +1269,7 @@ def _dictionary_ai_to_citation(item: dict[str, Any], query: str, entry_id: int) 
 
 
 def _merge_citation(citations: list[ReaderAskCitation], citation: ReaderAskCitation) -> None:
-    for existing in citations:
-        if (
-            existing.kind == citation.kind
-            and existing.label == citation.label
-            and existing.record_id == citation.record_id
-            and existing.target_key == citation.target_key
-            and existing.sentence_id == citation.sentence_id
-        ):
-            return
-    citations.append(citation)
+    utils.merge_citation(citations, citation)
 
 
 def _current_turn_run_id(message_dict: dict[str, Any], run_info: ReaderAskRunInfo | None = None) -> UUID | None:

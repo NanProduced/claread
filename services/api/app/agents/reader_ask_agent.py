@@ -121,7 +121,10 @@ async def _run_tool(
     deps = ctx.deps
     deps.state.tool_call_count += 1
     if deps.state.tool_call_count > deps.state.max_tool_calls:
-        detail = f"Tool call limit exceeded ({deps.state.max_tool_calls})"
+        detail = (
+            f"Tool call limit exceeded ({deps.state.max_tool_calls}). "
+            "Please provide a direct answer without additional tool calls."
+        )
         deps.state.tool_trace.append(_tool_trace(tool_name, "failed", summary=detail))
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
         raise RuntimeError(detail)

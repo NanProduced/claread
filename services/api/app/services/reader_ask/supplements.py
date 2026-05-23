@@ -190,9 +190,6 @@ async def delete_supplement(user_id: UUID, supplement_id: UUID) -> dict[str, Any
 
 
 def supplement_projection_entry(row: dict[str, Any]) -> dict[str, Any]:
-    metadata = row.get("metadata_json")
-    if isinstance(metadata, dict) and metadata:
-        return metadata
     supplement_id = str(row["id"])
     return {
         "id": _entry_id(supplement_id),
@@ -247,7 +244,7 @@ def build_grammar_note_candidate(
         return None
 
     content = assistant_content_md.strip()
-    if not content or len(content) < 20:
+    if not content or len(content) < 60:
         return None
 
     title = anchor.label or anchor.selected_text or "AI 补充语法旁注"

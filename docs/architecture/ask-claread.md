@@ -3,7 +3,7 @@
 ## 文档状态
 
 - 状态：current implementation architecture
-- 日期：2026-05-20
+- 日期：2026-05-23
 - 适用范围：Claread Web Reader 内当前 Ask Claread 模块
 - 文档关系：
   - 当前产品边界见 `docs/product/ask-claread.md`
@@ -41,32 +41,42 @@ Ask Claread 当前采用四层真相源：
 
 1. 读取请求与线程状态
 2. 解析 attachments / anchors / page identity
-3. 调用 `planner.plan_request(...)`
-4. 调用 reference resolver / structured asset lookup
-5. materialize current / external record / external asset contexts
-6. 构建 answer runtime input contract
-7. 生成回答或生成 disambiguation output
-8. post-process 为 `user_visible_output`
-9. 写入 `turn_run.user_visible_output_json`
-10. 更新 assistant message 的最小兼容状态指针
+3. 构建 planner input（user message / history / attachments / normalized anchors / backend affordances）
+4. 调用 semantic planner，产出结构化 `planner_decision`
+5. 基于 planner 决定调用 reference resolver / structured asset lookup
+6. materialize current / external record / external asset contexts
+7. 构建 answer runtime input contract
+8. 生成回答或生成 disambiguation output
+9. post-process 为 `user_visible_output`
+10. 写入 `turn_run.user_visible_output_json`
+11. 更新 assistant message 的最小兼容状态指针
 
 ## 当前核心模块
 
 ### Planner
 
-`planner.py` 当前统一产出：
+`planner.py` 当前统一产出 `ReaderAskPlanningSnapshot`。当前字段为：
 
 - `resolved_intent`
+- `planner_decision`
+- `planner_validation_status`
 - `reference_needs`
 - `retrieval_needs`
 - `resolved_references`
+- `structured_asset_needs`
+- `structured_asset_resolution`
 - `working_set`
 - `context_plan`
 - `trace_summary`
 - `disambiguation_state`
 - `external_asset_disambiguation_state`
+- `clarification_only`
 
-Planner 负责决定“用什么上下文”，不负责直接生成最终回答。
+其中职责边界为：
+
+- semantic planner model 负责产出 `planner_decision`
+- `planner.py` 负责把 planner decision、resolver 输出和 working set 合成为 typed planning snapshot
+- planner 负责决定“用什么上下文”，不负责直接生成最终回答
 
 ### Resolver
 
@@ -269,7 +279,7 @@ Reader 标注体系完成重构后，Ask Claread 已不再依赖“用户学习�
 `ReaderAskAttachmentKind` 枚举当前值：
 
 - `text_selection` — 用户选区
-- `annotation_ref` — 引用用户批注（高亮）
+- `annotation_ref` — 引用用户批注资产；具体是高亮还是笔记，由 attachment payload / metadata 决定
 - `analysis_ref` — 引用分析结果
 - `supplement_ref` — 引用 AI 补充
 - `record_ref` — 引用文章
@@ -284,4 +294,21 @@ Reader 标注体系完成重构后，Ask Claread 已不再依赖“用户学习�
 - `reader_note` — 锚点类型：用户笔记
 - `dictionary_entry`
 
-`annotation_ref` 通过其 `anchor_payload.anchor_type` 区分高亮（`user_annotation`）和笔记（`reader_note`）。
+当前明确不存在：
+
+- `paragraph`
+- `article`
+- 独立的 `highlight` anchor type
+- 独立的 `annotation` anchor type
+
+当前公开 `ReaderAskAttachmentPayload.anchor_type` 只允许：
+
+- `sentence`
+- `text_range`
+- `multi_text`
+
+`annotation_ref` 在服务端解析后，才会被映射成 `user_annotation` 或 `reader_note`。也就是说：
+
+- `annotation_ref` 是 attachment kind
+- `user_annotation` / `reader_note` 是 normalized anchor type
+- 不能把两者混写成同一层枚举
