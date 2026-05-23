@@ -42,11 +42,14 @@ import {
 import { Tool, type ToolPart } from "@/components/ui/tool";
 import { IconButton } from "@/components/primitives/icon-button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
+import { SentenceEntryCard } from "@/components/reader/SentenceEntryCard";
 import { cn } from "@/lib/cn";
 import {
   askAttachmentFromAnchor,
+  askAttachmentFromDto,
   askAttachmentKey,
   askAttachmentLabel,
+  askAttachmentShortLabel,
   askCitationViewFromDto,
   citationCanJump,
   type ReaderAskAttachment,
@@ -60,6 +63,7 @@ import type {
   ReaderAskAssetDisambiguationDto,
   ReaderAskCitationDto,
   ReaderAskCompletedPayloadDto,
+  ReaderAskContextPlanDto,
   ReaderAskContextRecordItemDto,
   ReaderAskContextRecordSearchResponseDto,
   ReaderAskDeleteSupplementResponseDto,
@@ -80,6 +84,7 @@ import type {
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
 } from "@/types/api/reader-ask";
+import type { SentenceEntryModel } from "@/types/view/ReaderMockVm";
 import { consumeReaderAskSse } from "./ask/sse";
 
 type ErrorEnvelope = {
@@ -90,6 +95,7 @@ type ErrorEnvelope = {
 };
 
 const IS_DEV = process.env.NODE_ENV !== "production";
+const SHOW_ASK_DEBUG_DISCLOSURES = process.env.NEXT_PUBLIC_ASK_CLAREAD_DEBUG === "true";
 const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
 type StarterMode = "record" | "sentence" | "selection";
 
@@ -169,6 +175,26 @@ type AskComposerDockState = {
   canSend: boolean;
   sending: boolean;
 };
+
+type ReaderAskQuickActionRequest = {
+  content: string;
+  entryAction: ReaderAskEntryActionDto;
+  attachments: ReaderAskAttachment[];
+};
+
+function submissionModeOf(message: Pick<ReaderAskMessageDto, "submission_mode"> | Pick<ReaderAskCompletedPayloadDto, "submission_mode">) {
+  return message.submission_mode === "quick_action" ? "quick_action" : "chat";
+}
+
+function quickActionLabel(entryAction?: ReaderAskEntryActionDto | null) {
+  if (entryAction === "why_here") {
+    return "语法解析";
+  }
+  if (entryAction === "explain_this") {
+    return "句子拆分";
+  }
+  return "快捷分析";
+}
 
 function deriveAvailableContextCapabilities(pageIdentity: ReaderAskPageIdentity): string[] {
   if (Array.isArray(pageIdentity.availableContextCapabilities)) {
@@ -327,6 +353,34 @@ function mergeAttachments(
   return merged;
 }
 
+function attachmentsFromResolvedContext(
+  message: ReaderAskMessageDto | null | undefined,
+  fallbackPageIdentity: ReaderAskPageIdentity,
+): ReaderAskAttachment[] {
+  if (!message?.resolved_context_input?.attachments?.length) {
+    return [];
+  }
+  return message.resolved_context_input.attachments.map((attachment) =>
+    askAttachmentFromDto(attachment, fallbackPageIdentity),
+  );
+}
+
+function buildOptimisticResolvedContextInput(
+  pageIdentity: ReaderAskPageIdentity,
+  entryAction: ReaderAskEntryActionDto,
+  attachments: ReaderAskAttachment[],
+): ReaderAskResolvedContextInputDto {
+  return {
+    page_identity: serializePageIdentity(pageIdentity),
+    entry_action: entryAction,
+    attachments: attachments.map(serializeAttachment),
+    normalized_anchors: [],
+    current_record_context: null,
+    external_record_contexts: [],
+    external_asset_contexts: [],
+  };
+}
+
 function toThreadSummary(detail: ReaderAskThreadDetailDto): ReaderAskThreadSummaryDto {
   return {
     id: detail.id,
@@ -409,7 +463,10 @@ function syncToolTrace(
         status: "started",
         started_at: new Date().toISOString(),
         completed_at: null,
+        input_summary: null,
         summary: null,
+        next_actions: [],
+        artifacts: [],
         metadata_json: {},
       },
     ];
@@ -444,15 +501,18 @@ function syncToolTrace(
     ...entries,
     {
       tool_name: toolName,
-      status,
-      started_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-      summary:
-        typeof (event.data as { summary?: unknown; detail?: unknown }).summary === "string"
-          ? String((event.data as { summary?: string }).summary)
-          : typeof (event.data as { detail?: unknown }).detail === "string"
-            ? String((event.data as { detail?: string }).detail)
-            : null,
+        status,
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+        input_summary: null,
+        summary:
+          typeof (event.data as { summary?: unknown; detail?: unknown }).summary === "string"
+            ? String((event.data as { summary?: string }).summary)
+            : typeof (event.data as { detail?: unknown }).detail === "string"
+              ? String((event.data as { detail?: string }).detail)
+              : null,
+      next_actions: [],
+      artifacts: [],
       metadata_json: {},
     },
   ];
@@ -485,6 +545,44 @@ function createSseMessageHandler(
       return;
     }
 
+    if (event.event === "reasoning.started") {
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? { ...message, reasoning_status: "streaming", reasoning_md: message.reasoning_md ?? "" }
+            : message,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "reasoning.delta") {
+      const delta = String((event.data as { delta?: unknown }).delta ?? "");
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? {
+                ...message,
+                reasoning_status: "streaming",
+                reasoning_md: `${message.reasoning_md ?? ""}${delta}`,
+              }
+            : message,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "reasoning.completed") {
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? { ...message, reasoning_status: "completed" }
+            : message,
+        ),
+      );
+      return;
+    }
+
     if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
       updateMessage((messages) =>
         messages.map((message) =>
@@ -498,30 +596,74 @@ function createSseMessageHandler(
 
     if (event.event === "message.completed") {
       const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
+      updateMessage((messages) => {
+        const assistantIndex = messages.findIndex(
+          (candidate) => candidate.id === targetMessageId || (candidate.role === "assistant" && candidate.status === "streaming"),
+        );
+        const priorUserIndex =
+          assistantIndex > 0
+            ? [...messages.slice(0, assistantIndex)].reverse().findIndex((candidate) => candidate.role === "user")
+            : -1;
+        const normalizedPriorUserIndex =
+          priorUserIndex >= 0 && assistantIndex > 0 ? assistantIndex - 1 - priorUserIndex : -1;
+        return messages.map((message, index) => {
+          const isStreamingAssistant =
+            message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming");
+          if (isStreamingAssistant) {
+            return {
+              ...message,
+              id: payload.id,
+              thread_id: payload.thread_id,
+              status: "completed",
+              content_md: payload.content_md,
+              submission_mode: payload.submission_mode ?? message.submission_mode ?? "chat",
+              resolved_intent: payload.resolved_intent ?? null,
+              citations: payload.citations,
+              action_proposals: payload.action_proposals,
+              tool_trace: payload.tool_trace,
+              evidence: payload.evidence ?? [],
+              trace_summary: payload.trace_summary ?? null,
+              disambiguation: payload.disambiguation ?? null,
+              external_asset_disambiguation: payload.external_asset_disambiguation ?? null,
+              response_cards: payload.response_cards,
+              resolved_context: payload.resolved_context,
+              context_plan: payload.context_plan ?? null,
+              resolved_context_input: payload.resolved_context_input ?? null,
+              run_info: payload.run_info ?? null,
+              supplement_candidates: payload.supplement_candidates ?? [],
+              persisted_supplements: payload.persisted_supplements ?? [],
+              reasoning_status: message.reasoning_md ? "completed" : null,
+            };
+          }
+          const isPriorUser =
+            payload.resolved_context_input &&
+            message.role === "user" &&
+            index === normalizedPriorUserIndex;
+          if (isPriorUser) {
+            return {
+              ...message,
+              submission_mode: payload.submission_mode ?? message.submission_mode ?? "chat",
+              resolved_context_input: payload.resolved_context_input ?? message.resolved_context_input ?? null,
+              context_anchors:
+                payload.resolved_context_input?.normalized_anchors ?? message.context_anchors,
+            };
+          }
+          return message;
+        });
+      });
+      return;
+    }
+
+    if (event.event === "message.interrupted") {
+      const payload = event.data as { content_md?: unknown };
       updateMessage((messages) =>
         messages.map((message) =>
           message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
             ? {
                 ...message,
-                id: payload.id,
-                thread_id: payload.thread_id,
-                status: "completed",
-                content_md: payload.content_md,
-                resolved_intent: payload.resolved_intent ?? null,
-                citations: payload.citations,
-                action_proposals: payload.action_proposals,
-                tool_trace: payload.tool_trace,
-                evidence: payload.evidence ?? [],
-                trace_summary: payload.trace_summary ?? null,
-                disambiguation: payload.disambiguation ?? null,
-                external_asset_disambiguation: payload.external_asset_disambiguation ?? null,
-                response_cards: payload.response_cards,
-                resolved_context: payload.resolved_context,
-                context_plan: payload.context_plan ?? null,
-                resolved_context_input: payload.resolved_context_input ?? null,
-                run_info: payload.run_info ?? null,
-                supplement_candidates: payload.supplement_candidates ?? [],
-                persisted_supplements: payload.persisted_supplements ?? [],
+                status: "interrupted",
+                content_md: typeof payload.content_md === "string" ? payload.content_md : message.content_md,
+                reasoning_status: message.reasoning_md ? "completed" : message.reasoning_status,
               }
             : message,
         ),
@@ -554,6 +696,8 @@ function toolLabel(toolName: string) {
       return "词典";
     case "run_dictionary_ai_context_explain":
       return "词典 AI";
+    case "generate_sentence_annotation":
+      return "句法生成";
     case "propose_save_note":
       return "保存笔记确认";
     case "propose_save_highlight":
@@ -592,11 +736,13 @@ function AttachmentChips({
   removable = false,
   onRemove,
   onJump,
+  variant = "history",
 }: {
   attachments: ReaderAskAttachment[];
   removable?: boolean;
   onRemove?: (attachmentKey: string) => void;
   onJump?: (attachment: ReaderAskAttachment) => void;
+  variant?: "history" | "composer" | "live";
 }) {
   if (attachments.length === 0) {
     return null;
@@ -607,26 +753,28 @@ function AttachmentChips({
       {attachments.map((attachment) => {
         const attachmentKey = askAttachmentKey(attachment);
         const clickable = Boolean(onJump && attachment.kind !== "record_ref");
+        const displayLabel =
+          variant === "history" ? askAttachmentLabel(attachment) : askAttachmentShortLabel(attachment, variant === "composer" ? 44 : 56);
         return (
           <span
             key={attachmentKey}
             className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-[rgba(250,249,246,0.92)] px-2.5 py-1.5 text-xs font-medium text-ink-soft"
           >
             <span className="shrink-0 rounded-full bg-reader-paper px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.02em] text-muted">
-              {attachment.kind === "record_ref" ? "页" : "AI"}
+              {variant === "live" ? "当前" : attachment.kind === "record_ref" ? "页" : "AI"}
             </span>
             {clickable ? (
               <button
                 type="button"
-                className="truncate text-left transition-colors hover:text-ink"
+                className="max-w-[12rem] truncate text-left transition-colors hover:text-ink sm:max-w-[15rem]"
                 onClick={() => onJump?.(attachment)}
                 title={askAttachmentLabel(attachment)}
               >
-                {askAttachmentLabel(attachment)}
+                {displayLabel}
               </button>
             ) : (
-              <span className="truncate" title={askAttachmentLabel(attachment)}>
-                {askAttachmentLabel(attachment)}
+              <span className="max-w-[12rem] truncate sm:max-w-[15rem]" title={askAttachmentLabel(attachment)}>
+                {displayLabel}
               </span>
             )}
             {removable ? (
@@ -658,6 +806,23 @@ function CurrentRecordChip({ recordTitle }: { recordTitle?: string | null }) {
         {recordTitle}
       </span>
     </span>
+  );
+}
+
+function LiveSelectionHint({ attachment }: { attachment?: ReaderAskAttachment | null }) {
+  if (!attachment) {
+    return null;
+  }
+
+  return (
+    <div className="px-3 pb-1 pt-1.5">
+      <div className="flex items-center gap-2 text-[11px] text-muted">
+        <span className="shrink-0 rounded-full bg-reader-paper px-2 py-0.5 font-semibold uppercase tracking-[0.12em] text-subtle">
+          当前可带入
+        </span>
+        <AttachmentChips attachments={[attachment]} variant="live" />
+      </div>
+    </div>
   );
 }
 
@@ -726,24 +891,24 @@ function contextSummaryChips(
   summary?: ReaderAskResolvedContextSummaryDto | null,
   contextInput?: ReaderAskResolvedContextInputDto | null,
 ) {
-  if (!summary) {
-    return [];
-  }
   const chips: string[] = [];
-  if (summary.current_sentence_used) {
+  if (summary?.current_sentence_used) {
     chips.push("当前句");
   }
-  if (summary.current_paragraph_used) {
+  if (summary?.current_paragraph_used) {
     chips.push("当前段");
   }
-  if (summary.used_record_insights) {
+  if (summary?.used_record_insights || (contextInput?.current_record_context?.record_insights.length ?? 0) > 0) {
     chips.push("本文解析");
   }
-  if (summary.used_cross_record_context) {
+  if (summary?.used_cross_record_context) {
     chips.push("跨文章上下文");
   }
-  if (summary.used_dictionary) {
+  if (summary?.used_dictionary) {
     chips.push("词典");
+  }
+  if (contextInput?.current_record_context?.article_overview) {
+    chips.push("文章概览");
   }
   if ((contextInput?.external_record_contexts.length ?? 0) > 0) {
     chips.push(`外部文章 ${contextInput?.external_record_contexts.length}`);
@@ -752,6 +917,68 @@ function contextSummaryChips(
     chips.push(`外部资产 ${contextInput?.external_asset_contexts.length}`);
   }
   return chips.length > 0 ? chips : ["当前文章"];
+}
+
+function overviewStatusLabel(status?: string | null) {
+  switch (status) {
+    case "ready":
+      return "概览可用";
+    case "pending":
+      return "概览生成中";
+    case "stale":
+      return "概览待刷新";
+    case "failed":
+      return "概览生成失败";
+    case "unavailable":
+      return "不适合生成概览";
+    default:
+      return null;
+  }
+}
+
+function overviewSourceLabel(source?: string | null) {
+  switch (source) {
+    case "learning_overview_hint":
+      return "Learning Overview Hint";
+    case "academic_render_scene":
+      return "Academic Render Scene";
+    default:
+      return source ?? null;
+  }
+}
+
+function plannerModeLabel(mode: ReaderAskTraceSummaryDto["planner_mode"]) {
+  switch (mode) {
+    case "direct_answer":
+      return "直接回答";
+    case "needs_local_clarification":
+      return "需要局部澄清";
+    case "known_reference_resolved":
+      return "已命中历史文章";
+    case "known_reference_ambiguous":
+      return "历史文章候选冲突";
+    case "known_reference_not_found":
+      return "未命中历史文章";
+    default:
+      return mode;
+  }
+}
+
+function workingSetModeLabel(mode: ReaderAskTraceSummaryDto["working_set_mode"]) {
+  switch (mode) {
+    case "anchor_local":
+      return "围绕当前选区";
+    case "article_overview":
+      return "围绕文章概览";
+    case "explicit_external_record":
+      return "围绕显式外部文章";
+    case "known_reference":
+      return "围绕历史文章引用";
+    case "clarification":
+      return "等待补充定位";
+    default:
+      return mode;
+  }
 }
 
 function supplementCandidateIdFromProposal(proposal: ReaderAskActionProposalDto): string | null {
@@ -778,15 +1005,38 @@ function pendingSupplementCandidates(message: ReaderAskMessageDto | null): Reade
   });
 }
 
+function messageOperationSummary(message: ReaderAskMessageDto) {
+  const entryAction = message.resolved_context_input?.entry_action ?? null;
+  const firstAttachment =
+    message.resolved_context_input?.attachments[0]?.selected_text ??
+    message.context_anchors[0]?.selected_text ??
+    "";
+  const compactTarget = firstAttachment.replace(/\s+/g, " ").trim();
+  return compactTarget
+    ? `${quickActionLabel(entryAction)} · ${compactTarget.length > 42 ? `${compactTarget.slice(0, 41).trimEnd()}…` : compactTarget}`
+    : quickActionLabel(entryAction);
+}
+
 function buildAssistantBlocks(message: ReaderAskMessageDto): AskPanelBlock[] {
-  const blocks: AskPanelBlock[] = [{ kind: "answer" }];
+  const blocks: AskPanelBlock[] = [];
+
+  if (submissionModeOf(message) === "quick_action" && message.response_cards.length > 0) {
+    blocks.push({ kind: "response_cards" });
+  }
+  blocks.push({ kind: "answer" });
 
   if (message.citations.length > 0) {
     blocks.push({ kind: "citations" });
   }
 
-  if (message.response_cards.length > 0) {
+  if (message.response_cards.length > 0 && !(submissionModeOf(message) === "quick_action")) {
     blocks.push({ kind: "response_cards" });
+  }
+  if (
+    SHOW_ASK_DEBUG_DISCLOSURES &&
+    (message.context_plan || message.resolved_context_input || message.evidence.length > 0 || message.trace_summary)
+  ) {
+    blocks.push({ kind: "context_summary" });
   }
   if (message.disambiguation?.required) {
     blocks.push({ kind: "disambiguation" });
@@ -805,6 +1055,17 @@ function buildAssistantBlocks(message: ReaderAskMessageDto): AskPanelBlock[] {
   }
 
   return blocks;
+}
+
+function contextPlanSummary(plan: ReaderAskContextPlanDto) {
+  return [
+    plan.entry_action,
+    plan.used_article_overview ? "文章概览" : null,
+    plan.used_record_context ? "正文上下文" : null,
+    plan.used_dictionary ? "词典" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function SupplementCandidateTray({
@@ -952,7 +1213,7 @@ function ContextSummaryDisclosure({
   summary?: ReaderAskResolvedContextSummaryDto | null;
   contextInput?: ReaderAskResolvedContextInputDto | null;
 }) {
-  if (!summary) {
+  if (!summary && !contextInput) {
     return null;
   }
 
@@ -962,7 +1223,7 @@ function ContextSummaryDisclosure({
   const externalAssetContexts = contextInput?.external_asset_contexts ?? [];
 
   return (
-    <DisclosureSection label="使用上下文" summary={chips.join(" · ")}>
+    <DisclosureSection label="依据与上下文" summary={chips.join(" · ")}>
       <div className="space-y-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">当前文章</p>
@@ -983,6 +1244,33 @@ function ContextSummaryDisclosure({
               </span>
             ) : null}
           </div>
+          {currentRecordContext?.article_overview || currentRecordContext?.article_overview_status ? (
+            <div className="mt-2 rounded-note border border-hairline bg-surface px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                  {overviewStatusLabel(currentRecordContext.article_overview_status) || "概览状态未知"}
+                </span>
+                {currentRecordContext.article_overview_source ? (
+                  <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                    {overviewSourceLabel(currentRecordContext.article_overview_source)}
+                  </span>
+                ) : null}
+                {currentRecordContext.article_overview_confidence ? (
+                  <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                    置信度 {currentRecordContext.article_overview_confidence}
+                  </span>
+                ) : null}
+              </div>
+              {currentRecordContext.article_overview ? (
+                <p className="mt-2 text-[11px] leading-5 text-muted">{currentRecordContext.article_overview}</p>
+              ) : null}
+            </div>
+          ) : null}
+          {currentRecordContext?.record_insights.length ? (
+            <p className="mt-2 text-[11px] leading-5 text-muted">
+              已并入 {currentRecordContext.record_insights.length} 条当前文章的稳定解析。
+            </p>
+          ) : null}
         </div>
         {externalRecordContexts.length > 0 ? (
           <div>
@@ -1008,6 +1296,28 @@ function ContextSummaryDisclosure({
                         ? "已并入记录级稳定解析资产。"
                         : "已定位到文章，但当前没有可用概览。"}
                   </p>
+                  {(item.article_overview_status || item.article_overview_source || item.article_overview_confidence) ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {item.article_overview_status ? (
+                        <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                          {overviewStatusLabel(item.article_overview_status) || item.article_overview_status}
+                        </span>
+                      ) : null}
+                      {item.article_overview_source ? (
+                        <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                          {overviewSourceLabel(item.article_overview_source)}
+                        </span>
+                      ) : null}
+                      {item.article_overview_confidence ? (
+                        <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                          置信度 {item.article_overview_confidence}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {item.article_overview ? (
+                    <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-muted">{item.article_overview}</p>
+                  ) : null}
                   {item.record_insights.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {item.record_insights.slice(0, 2).map((insight) => (
@@ -1049,6 +1359,9 @@ function ContextSummaryDisclosure({
                   </div>
                   {item.content_summary ? (
                     <p className="mt-1 text-[11px] leading-5 text-muted">{item.content_summary}</p>
+                  ) : null}
+                  {!item.content_summary && item.content_md ? (
+                    <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-muted">{item.content_md}</p>
                   ) : null}
                 </div>
               ))}
@@ -1249,19 +1562,28 @@ function TraceSummaryDisclosure({
   }
 
   const summary = [
-    traceSummary.planner_mode,
-    `working-set:${traceSummary.working_set_mode}`,
-    traceSummary.reference_resolution_status !== "not_needed"
-      ? `reference:${traceSummary.reference_resolution_status}`
-      : null,
-    traceSummary.cross_record_context_used ? "cross-record:on" : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+    plannerModeLabel(traceSummary.planner_mode),
+    workingSetModeLabel(traceSummary.working_set_mode),
+    traceSummary.cross_record_context_used ? "已并入跨文章上下文" : "仅使用当前文章",
+    traceSummary.used_external_asset_context ? "并入外部资产" : null,
+  ].filter(Boolean).join(" · ");
 
   return (
-    <DisclosureSection label="规划摘要" summary={summary}>
+    <DisclosureSection label="运行轨迹" summary={summary}>
       <div className="space-y-3 text-xs text-muted">
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted">
+            {plannerModeLabel(traceSummary.planner_mode)}
+          </span>
+          <span className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted">
+            {workingSetModeLabel(traceSummary.working_set_mode)}
+          </span>
+          {traceSummary.reference_resolution_status !== "not_needed" ? (
+            <span className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted">
+              引用解析 · {traceSummary.reference_resolution_status}
+            </span>
+          ) : null}
+        </div>
         {traceSummary.notes.length > 0 ? (
           <div className="space-y-1.5">
             {traceSummary.notes.map((note, index) => (
@@ -1296,10 +1618,57 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
   return (
     <div className="mt-3 space-y-3">
       {cards.map((card, index) => {
+        if (card.card_type === "grammar_note_card") {
+          const entry: SentenceEntryModel = {
+            id: `ask-grammar-${index}`,
+            sentenceId: `ask-grammar-${index}`,
+            entryType: "grammar_note",
+            label: card.label,
+            title: card.label,
+            content: card.note_zh,
+            sourceKind: "ask_supplement",
+          };
+          const focusHint =
+            card.analysis_scope === "focus_span" && card.focus_text.trim() && card.focus_text.trim() !== card.sentence_text.trim()
+              ? `聚焦片段 · ${card.focus_text}`
+              : "锚定本句";
+          return (
+            <div key={`${card.card_type}-${index}`} className="space-y-2">
+              <SentenceEntryCard
+                entry={entry}
+                badgeLabel="AI 助手生成"
+                footerAnchorLabel={focusHint}
+                footerSourceLabel="来源: Ask Claread"
+              />
+              {card.spans.length > 0 ? (
+                <div className="rounded-note border border-hairline bg-surface px-3 py-2.5 text-xs text-muted">
+                  <p className="font-semibold text-ink-soft">关键锚点</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {card.spans.map((span, spanIndex) => (
+                      <span
+                        key={`${span.text}-${spanIndex}`}
+                        className="rounded-pill border border-hairline bg-reader-paper px-2.5 py-1"
+                      >
+                        {span.role ? `${span.role} · ` : ""}
+                        {span.text}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        }
+
         if (card.card_type === "sentence_breakdown_card") {
           return (
             <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">拆句卡</p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">拆句卡</p>
+                <span className="rounded-pill border border-hairline bg-surface px-2 py-0.5 text-[10px] font-medium text-muted">
+                  AI 助手生成
+                </span>
+              </div>
               <p className="mt-2 text-sm font-semibold text-ink">{card.sentence_text}</p>
               {card.translation_zh ? <p className="mt-2 text-xs leading-5 text-muted">{card.translation_zh}</p> : null}
               {card.main_clause ? (
@@ -1439,7 +1808,7 @@ function ToolTraceBlock({ entries }: { entries: ReaderAskToolTraceEntryDto[] }) 
 
   return (
     <DisclosureSection
-      label="高级"
+      label="工具步骤"
       summary={`${entries.length} 个工具步骤`}
     >
       <div className="space-y-2">
@@ -1506,7 +1875,6 @@ function MessageBubble({
   onRetry,
   onJumpToAttachment,
   onJumpToCitation,
-  isLastUserMessage,
 }: {
   item: AskPanelConversationItem;
   currentRecordId: string;
@@ -1525,7 +1893,6 @@ function MessageBubble({
   onRetry: (messageId: string) => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
-  isLastUserMessage?: boolean;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -1533,6 +1900,7 @@ function MessageBubble({
   const clarificationText = clarificationHint(message.trace_summary, message.evidence);
   const candidateSupplements = pendingSupplementCandidates(message);
   const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
+  const hasReasoning = Boolean(message.reasoning_md?.trim());
 
   return (
     <div className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}>
@@ -1564,12 +1932,28 @@ function MessageBubble({
                               {clarificationText}
                             </div>
                           ) : null}
+                          {hasReasoning ? (
+                            <Collapsible defaultOpen={false} className="mb-3 rounded-[14px] border border-hairline/70 bg-[rgba(250,249,246,0.82)] px-3 py-2">
+                              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left text-[11px] font-medium text-muted">
+                                <span>{message.reasoning_status === "streaming" ? "思考中" : "模型思考过程"}</span>
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </CollapsibleTrigger>
+                              <CollapsibleContent className="pt-2 text-[12px] leading-6 text-muted">
+                                <Markdown>{message.reasoning_md ?? ""}</Markdown>
+                              </CollapsibleContent>
+                            </Collapsible>
+                          ) : null}
                           <MessageContent
                             markdown
                             className="border-0 bg-transparent p-0 text-[14.5px] leading-[1.8] text-ink-soft shadow-none prose prose-sm max-w-none prose-p:mb-4 prose-p:mt-2 prose-p:last:mb-0 prose-strong:font-semibold prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
                           >
                             {message.content_md || "…"}
                           </MessageContent>
+                          {message.status === "interrupted" ? (
+                            <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
+                              输出中断，可继续生成。
+                            </div>
+                          ) : null}
                         </div>
                       );
                     case "response_cards":
@@ -1628,6 +2012,32 @@ function MessageBubble({
                         />
                       );
                     case "context_summary":
+                      return (
+                        <div key={`${message.id}-${block.kind}-${index}`} className="space-y-3">
+                          <ContextSummaryDisclosure
+                            summary={message.resolved_context}
+                            contextInput={message.resolved_context_input}
+                          />
+                          {message.context_plan ? (
+                            <DisclosureSection label="上下文策略" summary={contextPlanSummary(message.context_plan)}>
+                              <div className="rounded-note border border-hairline bg-surface px-3 py-2.5 text-[11px] leading-5 text-muted">
+                                <p className="font-semibold text-ink-soft">本轮决策</p>
+                                <p className="mt-1">
+                                  {message.context_plan.entry_action} · {message.context_plan.source_labels.join(" · ") || "当前文章"}
+                                </p>
+                                <p className="mt-1">
+                                  {message.context_plan.used_article_overview ? "已使用文章概览" : "未使用文章概览"} ·
+                                  {message.context_plan.used_record_context ? " 已使用正文上下文" : " 未使用正文上下文"} ·
+                                  {message.context_plan.used_dictionary ? " 已查词典" : " 未查词典"}
+                                </p>
+                              </div>
+                            </DisclosureSection>
+                          ) : null}
+                          <EvidenceDisclosure evidence={message.evidence} />
+                          <TraceSummaryDisclosure traceSummary={message.trace_summary} />
+                          <ToolTraceBlock entries={message.tool_trace} />
+                        </div>
+                      );
                     case "evidence":
                     case "trace_summary":
                     case "tool_trace":
@@ -1645,7 +2055,7 @@ function MessageBubble({
                   />
                 ) : null}
               </div>
-              {message.status === "completed" && (
+              {(message.status === "completed" || message.status === "interrupted") && (
                 <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="复制内容">
                     <Copy className="h-3.5 w-3.5" />
@@ -1657,15 +2067,40 @@ function MessageBubble({
                   <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="无帮助">
                     <ThumbsDown className="h-3.5 w-3.5" />
                   </button>
+                  {message.status === "interrupted" ? (
+                    <button
+                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors"
+                      title="继续生成"
+                      onClick={() => onRetry(message.id)}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      <span>继续</span>
+                    </button>
+                  ) : (
+                    <button
+                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors"
+                      title="重新生成"
+                      onClick={() => onRetry(message.id)}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      <span>重试</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           </>
         ) : (
           <div className="group relative flex max-w-[92%] flex-col items-end">
-            <MessageContent className="whitespace-pre-wrap rounded-[14px] bg-muted/10 border border-hairline/60 px-3.5 py-1.5 text-[14px] leading-[1.6] text-ink-soft shadow-none">
-              {message.content_md}
-            </MessageContent>
+            {submissionModeOf(message) === "quick_action" ? (
+              <div className="rounded-full border border-hairline/70 bg-reader-paper px-3.5 py-2 text-[12px] font-medium text-ink-soft">
+                {messageOperationSummary(message)}
+              </div>
+            ) : (
+              <MessageContent className="whitespace-pre-wrap rounded-[14px] bg-muted/10 border border-hairline/60 px-3.5 py-1.5 text-[14px] leading-[1.6] text-ink-soft shadow-none">
+                {message.content_md}
+              </MessageContent>
+            )}
             <div className="absolute -bottom-6 right-0 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
               <span className="text-[10px] text-muted">
                 {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
@@ -1673,11 +2108,6 @@ function MessageBubble({
               <button className="text-muted hover:text-ink transition-colors" title="复制">
                 <Copy className="h-3 w-3" />
               </button>
-              {isLastUserMessage && (
-                <button className="text-muted hover:text-ink transition-colors" title="重新生成" onClick={() => onRetry(message.id)}>
-                  <RotateCcw className="h-3 w-3" />
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -1787,6 +2217,8 @@ export interface AiWorkspacePanelProps {
   recordId: string;
   recordTitle?: string | null;
   attachments: ReaderAskAttachment[];
+  liveAttachment?: ReaderAskAttachment | null;
+  pendingQuickActionRequest?: ReaderAskQuickActionRequest | null;
   hideLauncherOnMobile?: boolean;
   hideLauncherInCompactLayout?: boolean;
   onRemoveAttachment: (attachmentKey: string) => void;
@@ -1796,12 +2228,15 @@ export interface AiWorkspacePanelProps {
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
   onActionExecuted?: (result: ReaderAskActionConfirmResponseDto["result"]) => void;
   onSupplementDeleted?: (supplementId: string) => void | Promise<void>;
+  onPendingQuickActionConsumed?: () => void;
   onToggle: () => void;
 }
 
 export function AiWorkspacePanel({
   attachments,
+  liveAttachment = null,
   pageIdentity,
+  pendingQuickActionRequest,
   open,
   recordId,
   recordTitle,
@@ -1812,6 +2247,7 @@ export function AiWorkspacePanel({
   onJumpToAttachment,
   onJumpToCitation,
   onActionExecuted,
+  onPendingQuickActionConsumed,
   onSupplementDeleted,
   onRemoveAttachment,
   onToggle,
@@ -1979,6 +2415,22 @@ export function AiWorkspacePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, recordId]);
 
+  useEffect(() => {
+    if (!open || sending || loading || !pendingQuickActionRequest) {
+      return;
+    }
+    void sendMessage({
+      content: pendingQuickActionRequest.content,
+      attachments: pendingQuickActionRequest.attachments,
+      entryAction: pendingQuickActionRequest.entryAction,
+      submissionMode: "quick_action",
+      clearComposer: false,
+    }).finally(() => {
+      onPendingQuickActionConsumed?.();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, sending, loading, pendingQuickActionRequest]);
+
   async function handleResetConversation() {
     if (!activeThreadId || sending) {
       return;
@@ -2133,7 +2585,6 @@ export function AiWorkspacePanel({
       return;
     }
     const candidateAttachment = buildRelatedRecordAttachment(pageIdentity, candidate);
-    const nextAttachments = mergeAttachments(attachments, [candidateAttachment]);
     const assistantIndex = messages.findIndex((message) => message.id === messageId);
     const priorUserMessage =
       assistantIndex > 0
@@ -2143,13 +2594,12 @@ export function AiWorkspacePanel({
       setErrorMessage("没有找到这轮澄清对应的原始问题，暂时无法继续当前讨论。");
       return;
     }
-    if (!attachments.some((item) => askAttachmentKey(item) === askAttachmentKey(candidateAttachment))) {
-      onAppendAttachments?.([candidateAttachment]);
-    }
+    const baseAttachments = attachmentsFromResolvedContext(priorUserMessage, pageIdentity);
+    const nextAttachments = mergeAttachments(baseAttachments, [candidateAttachment]);
     await sendMessage({
       content: priorUserMessage.content_md,
       attachments: nextAttachments,
-      entryAction: defaultEntryAction(nextAttachments),
+      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(nextAttachments),
       clearComposer: false,
     });
   }
@@ -2168,7 +2618,6 @@ export function AiWorkspacePanel({
       assetDisambiguation.record_title,
       candidate,
     );
-    const nextAttachments = mergeAttachments(attachments, [candidateAttachment]);
     const assistantIndex = messages.findIndex((message) => message.id === messageId);
     const priorUserMessage =
       assistantIndex > 0
@@ -2178,13 +2627,12 @@ export function AiWorkspacePanel({
       setErrorMessage("没有找到这轮资产澄清对应的原始问题，暂时无法继续当前讨论。");
       return;
     }
-    if (!attachments.some((item) => askAttachmentKey(item) === askAttachmentKey(candidateAttachment))) {
-      onAppendAttachments?.([candidateAttachment]);
-    }
+    const baseAttachments = attachmentsFromResolvedContext(priorUserMessage, pageIdentity);
+    const nextAttachments = mergeAttachments(baseAttachments, [candidateAttachment]);
     await sendMessage({
       content: priorUserMessage.content_md,
       attachments: nextAttachments,
-      entryAction: defaultEntryAction(nextAttachments),
+      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(nextAttachments),
       clearComposer: false,
     });
   }
@@ -2193,6 +2641,7 @@ export function AiWorkspacePanel({
     content?: string;
     attachments?: ReaderAskAttachment[];
     entryAction?: ReaderAskEntryActionDto;
+    submissionMode?: "chat" | "quick_action";
     clearComposer?: boolean;
   }) {
     const content = (options?.content ?? composer).trim();
@@ -2210,6 +2659,7 @@ export function AiWorkspacePanel({
 
     const usedAttachments = [...(options?.attachments ?? attachments)];
     const entryAction = options?.entryAction ?? defaultEntryAction(usedAttachments);
+    const submissionMode = options?.submissionMode ?? "chat";
     const now = Date.now();
     const tempUserId = `local-user-${now}`;
     const tempAssistantId = `local-assistant-${now}`;
@@ -2219,6 +2669,7 @@ export function AiWorkspacePanel({
       role: "user",
       status: "completed",
       content_md: content,
+      submission_mode: submissionMode,
       context_anchors: [],
       citations: [],
       action_proposals: [],
@@ -2231,10 +2682,12 @@ export function AiWorkspacePanel({
       resolved_context: null,
       resolved_intent: null,
       context_plan: null,
-      resolved_context_input: null,
+      resolved_context_input: buildOptimisticResolvedContextInput(pageIdentity, entryAction, usedAttachments),
       run_info: null,
       supplement_candidates: [],
       persisted_supplements: [],
+      reasoning_md: null,
+      reasoning_status: null,
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -2245,6 +2698,7 @@ export function AiWorkspacePanel({
       role: "assistant",
       status: "streaming",
       content_md: "",
+      submission_mode: submissionMode,
       context_anchors: [],
       citations: [],
       action_proposals: [],
@@ -2261,6 +2715,8 @@ export function AiWorkspacePanel({
       run_info: null,
       supplement_candidates: [],
       persisted_supplements: [],
+      reasoning_md: "",
+      reasoning_status: "idle",
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -2312,6 +2768,7 @@ export function AiWorkspacePanel({
           (errorMsg) => setErrorMessage(errorMsg),
         ),
       );
+      onClearAttachments();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Ask Claread 暂时不可用。");
       setMessages((current) =>
@@ -2340,7 +2797,7 @@ export function AiWorkspacePanel({
           ? {
               ...message,
               status: "streaming",
-              content_md: "",
+              content_md: message.status === "interrupted" ? message.content_md : "",
               citations: [],
               action_proposals: [],
               tool_trace: [],
@@ -2351,9 +2808,11 @@ export function AiWorkspacePanel({
               response_cards: [],
               resolved_context: null,
               context_plan: null,
-              resolved_context_input: null,
+              resolved_context_input: message.resolved_context_input,
               supplement_candidates: [],
-              persisted_supplements: [],
+              persisted_supplements: message.persisted_supplements,
+              reasoning_status: "idle",
+              reasoning_md: "",
             }
           : message,
       ),
@@ -2467,7 +2926,6 @@ export function AiWorkspacePanel({
                 />
               ) : null}
               {(() => {
-                const lastUserMessageId = [...conversationItems].reverse().find(i => i.role === 'user')?.id;
                 return conversationItems.map((item) => (
                   <MessageBubble
                     key={item.id}
@@ -2486,7 +2944,6 @@ export function AiWorkspacePanel({
                   onRetry={handleRetry}
                   onJumpToAttachment={onJumpToAttachment}
                   onJumpToCitation={onJumpToCitation}
-                  isLastUserMessage={item.id === lastUserMessageId}
                 />
               ));
               })()}
@@ -2519,9 +2976,12 @@ export function AiWorkspacePanel({
                 removable
                 onRemove={onRemoveAttachment}
                 onJump={onJumpToAttachment}
+                variant="composer"
               />
             </div>
           )}
+
+          {visibleContextAttachments.length === 0 ? <LiveSelectionHint attachment={liveAttachment} /> : null}
 
           <div className="px-3 py-2">
             <PromptInputTextarea

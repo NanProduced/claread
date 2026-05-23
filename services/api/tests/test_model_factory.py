@@ -216,3 +216,24 @@ def test_deepseek_v4_profile_uses_prompted_json_output() -> None:
     assert model.profile.supports_json_object_output is True
     assert model.profile.supports_json_schema_output is False
     assert model.profile.openai_supports_tool_choice_required is False
+
+
+def test_qwen_profile_maps_reasoning_content_for_visible_thinking() -> None:
+    model = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            profile_name="qwen35",
+            provider="openai_compatible",
+            model_name="qwen3.5-122b-a10b",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key="test-key",
+            provider_options={},
+            model_settings=RunModelSettings(
+                extra_body={"enable_thinking": True},
+            ),
+        )
+    )
+
+    assert model is not None
+    assert model.profile.openai_chat_thinking_field == "reasoning_content"
+    assert model.profile.openai_chat_send_back_thinking_parts == "field"

@@ -8,6 +8,7 @@ const completedPayload = {
   id: "msg-assistant-1",
   thread_id: "thread-1",
   content_md: "解释完成。",
+  submission_mode: "chat" as const,
   resolved_intent: "explain",
   citations: [],
   action_proposals: [],
@@ -413,6 +414,7 @@ describe("AiWorkspacePanel", () => {
   });
 
   it("sends only the current reader ask request shape", async () => {
+    const onClearAttachments = vi.fn();
     render(
       <AiWorkspacePanel
         open
@@ -421,7 +423,7 @@ describe("AiWorkspacePanel", () => {
         recordTitle="Test Reader"
         attachments={[attachment]}
         onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
+        onClearAttachments={onClearAttachments}
         onToggle={vi.fn()}
       />,
     );
@@ -481,6 +483,7 @@ describe("AiWorkspacePanel", () => {
     expect(body).not.toHaveProperty("task_mode");
     expect(body).not.toHaveProperty("anchors");
     expect(body).not.toHaveProperty("reader_focus");
+    expect(onClearAttachments).toHaveBeenCalledTimes(1);
   });
 
   it("serializes page identity from current reader facts instead of hardcoded capability flags", async () => {
@@ -567,7 +570,7 @@ describe("AiWorkspacePanel", () => {
     ).toBe(true);
   });
 
-  it("keeps evidence and planner diagnostics out of the default assistant surface", async () => {
+  it("keeps explainability disclosures out of the default assistant surface", async () => {
     render(
       <AiWorkspacePanel
         open
@@ -594,9 +597,10 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("解释完成。")).not.toBeNull();
     });
 
-    expect(screen.queryByText("证据")).toBeNull();
-    expect(screen.queryByText("规划摘要")).toBeNull();
-    expect(screen.queryByText("自动命中")).toBeNull();
+    expect(screen.queryByRole("button", { name: /依据与上下文/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /证据/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /运行轨迹/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /工具步骤/i })).toBeNull();
   });
 
   it("shows the current page chip and recent related-article search from the add menu", async () => {
@@ -628,8 +632,6 @@ describe("AiWorkspacePanel", () => {
   });
 
   it("renders disambiguation candidate cards and re-sends the current question after selection", async () => {
-    const onAppendAttachments = vi.fn();
-
     vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
@@ -661,7 +663,25 @@ describe("AiWorkspacePanel", () => {
               response_cards: [],
               resolved_context: null,
               context_plan: null,
-              resolved_context_input: null,
+              resolved_context_input: {
+                page_identity: {
+                  record_id: "record-1",
+                  title: "Test Reader",
+                  surface: "reader",
+                  source: "reader_2_0",
+                  available_context_capabilities: ["record_context"],
+                  has_article_overview: true,
+                  has_sentence_entries: true,
+                  has_annotations: true,
+                  has_reader_notes: true,
+                },
+                entry_action: "ask_about_this",
+                attachments: [],
+                normalized_anchors: [],
+                current_record_context: null,
+                external_record_contexts: [],
+                external_asset_contexts: [],
+              },
               run_info: null,
               supplement_candidates: [],
               persisted_supplements: [],
@@ -750,7 +770,6 @@ describe("AiWorkspacePanel", () => {
         recordId="record-1"
         recordTitle="Test Reader"
         attachments={[]}
-        onAppendAttachments={onAppendAttachments}
         onRemoveAttachment={vi.fn()}
         onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
@@ -762,18 +781,6 @@ describe("AiWorkspacePanel", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "加入当前讨论" }));
-
-    await waitFor(() => {
-      expect(onAppendAttachments).toHaveBeenCalledTimes(1);
-    });
-    expect(onAppendAttachments.mock.calls[0]?.[0]).toMatchObject([
-      {
-        kind: "record_ref",
-        subtype: "related_record",
-        label: "Climate Policy",
-        targetKey: "record:record-2:record",
-      },
-    ]);
 
     await waitFor(() => {
       const streamCall = vi
@@ -954,8 +961,6 @@ describe("AiWorkspacePanel", () => {
   });
 
   it("renders asset disambiguation cards and re-sends the current question after selection", async () => {
-    const onAppendAttachments = vi.fn();
-
     vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
@@ -987,7 +992,25 @@ describe("AiWorkspacePanel", () => {
               response_cards: [],
               resolved_context: null,
               context_plan: null,
-              resolved_context_input: null,
+              resolved_context_input: {
+                page_identity: {
+                  record_id: "record-1",
+                  title: "Test Reader",
+                  surface: "reader",
+                  source: "reader_2_0",
+                  available_context_capabilities: ["record_context"],
+                  has_article_overview: true,
+                  has_sentence_entries: true,
+                  has_annotations: true,
+                  has_reader_notes: true,
+                },
+                entry_action: "ask_about_this",
+                attachments: [],
+                normalized_anchors: [],
+                current_record_context: null,
+                external_record_contexts: [],
+                external_asset_contexts: [],
+              },
               run_info: null,
               supplement_candidates: [],
               persisted_supplements: [],
@@ -1078,7 +1101,6 @@ describe("AiWorkspacePanel", () => {
         recordId="record-1"
         recordTitle="Test Reader"
         attachments={[]}
-        onAppendAttachments={onAppendAttachments}
         onRemoveAttachment={vi.fn()}
         onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
@@ -1090,24 +1112,6 @@ describe("AiWorkspacePanel", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "加入当前讨论" }));
-
-    await waitFor(() => {
-      expect(onAppendAttachments).toHaveBeenCalledTimes(1);
-    });
-    expect(onAppendAttachments.mock.calls[0]?.[0]).toMatchObject([
-      {
-        kind: "analysis_ref",
-        subtype: "sentence_analysis",
-        label: "Concept analysis",
-        targetKey: "record:record-2:analysis:sentence_analysis:analysis-1",
-        metadata: {
-          sourceSurface: "ask_hitp_asset_picker",
-          recordId: "record-2",
-          recordTitle: "Climate Policy",
-          assetId: "analysis-1",
-        },
-      },
-    ]);
 
     await waitFor(() => {
       const streamCall = vi
@@ -1129,5 +1133,162 @@ describe("AiWorkspacePanel", () => {
         },
       ]);
     });
+  });
+
+  it("renders quick actions as compact operation headers and shows AI grammar cards first", async () => {
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            {
+              id: "msg-user-1",
+              thread_id: "thread-1",
+              role: "user",
+              status: "completed",
+              content_md: "请解释这里的语法作用。",
+              submission_mode: "quick_action",
+              resolved_intent: null,
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: null,
+              disambiguation: null,
+              external_asset_disambiguation: null,
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: {
+                page_identity: {
+                  record_id: "record-1",
+                  title: "Test Reader",
+                  surface: "reader",
+                  source: "reader_2_0",
+                  available_context_capabilities: ["record_context"],
+                  has_article_overview: true,
+                  has_sentence_entries: true,
+                  has_annotations: true,
+                  has_reader_notes: true,
+                },
+                entry_action: "why_here",
+                attachments: [
+                  {
+                    kind: "text_selection",
+                    subtype: "text_range",
+                    label: "选区",
+                    selected_text: "compared human behaviour and brain patterns",
+                    target_key: "record:record-1:range:s1:16:61:hash",
+                    anchor_payload: {
+                      anchor_type: "text_range",
+                      target_key: "record:record-1:range:s1:16:61:hash",
+                      record_id: "record-1",
+                      paragraph_id: "p1",
+                      sentence_id: "s1",
+                      selected_text: "compared human behaviour and brain patterns",
+                      start_offset: 16,
+                      end_offset: 61,
+                      text_hash: "hash",
+                      segments: [],
+                    },
+                    metadata: {
+                      source_surface: "selection_toolbar",
+                      entry_action: "why_here",
+                      sentence_id: "s1",
+                      paragraph_id: "p1",
+                    },
+                  },
+                ],
+                normalized_anchors: [],
+                current_record_context: null,
+                external_record_contexts: [],
+                external_asset_contexts: [],
+              },
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+            {
+              id: "msg-assistant-1",
+              thread_id: "thread-1",
+              role: "assistant",
+              status: "completed",
+              content_md: "这里的 compare A with B 用来引出比较对象。",
+              submission_mode: "quick_action",
+              resolved_intent: "grammar",
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: null,
+              disambiguation: null,
+              external_asset_disambiguation: null,
+              response_cards: [
+                {
+                  card_type: "grammar_note_card",
+                  sentence_text: "The researchers compared human behaviour and brain patterns with 41 species of monkeys and apes.",
+                  focus_text: "compared human behaviour and brain patterns",
+                  label: "Compare A with B",
+                  note_zh: "这里的 compare A with B 用来引出比较对象。",
+                  spans: [
+                    { text: "compared", role: "谓语" },
+                    { text: "with 41 species of monkeys and apes", role: "比较对象" },
+                  ],
+                  analysis_scope: "focus_span",
+                  origin: "ask_ai",
+                },
+              ],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+          ],
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText((value) => value.includes("语法解析") && value.includes("compared human behaviour")),
+      ).not.toBeNull();
+    });
+
+    expect(screen.queryByText("请解释这里的语法作用。")).toBeNull();
+    expect(screen.getByText("AI 助手生成")).not.toBeNull();
+    expect(screen.getByText("Compare A with B")).not.toBeNull();
+    expect(screen.getByText(/聚焦片段/)).not.toBeNull();
   });
 });

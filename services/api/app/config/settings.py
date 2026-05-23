@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     default_model_profile: str = ""
     annotation_model_profile: str = ""
     dict_ai_model_profile: str = ""
-    reader_ask_model_profile: str = ""
+    ask_claread_profile: str = ""
     reader_ask_planner_model_profile: str = ""
     daily_annotation_model_profile: str = ""
     daily_analysis_model_profile: str = ""
