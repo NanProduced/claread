@@ -40,7 +40,8 @@ export default async function DailyReaderPage() {
     fetchDailyReaderList({ limit: 8 }),
   ]);
   const todayArticles = todayResult.ok ? todayResult.data : [];
-  const firstArticle = todayArticles[0] ?? null;
+  const leadArticle = todayArticles[0] ?? null;
+  const otherTodayArticles = todayArticles.slice(1);
   const todayIds = new Set(todayArticles.map((article) => article.id));
   const archiveItems = listResult.ok
     ? listResult.data.items.filter((article) => !todayIds.has(article.id)).slice(0, 5)
@@ -83,11 +84,11 @@ export default async function DailyReaderPage() {
                 className="absolute -bottom-28 -right-24 h-80 w-80 opacity-[0.07]"
               />
               <div className="relative">
-                {firstArticle ? (
+                {leadArticle ? (
                   <>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-xs font-semibold text-lens-blue">
-                        今日精读 · {formatPublishDate(firstArticle.publishDate)}
+                        今日精读 · {formatPublishDate(leadArticle.publishDate)}
                       </p>
                       <span className="inline-flex items-center gap-2 rounded-pill border border-hairline bg-reader-paper px-3 py-1.5 text-xs font-semibold text-muted">
                         <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />
@@ -95,31 +96,31 @@ export default async function DailyReaderPage() {
                       </span>
                     </div>
                     <h2 className="mt-6 max-w-2xl font-headline text-3xl font-semibold leading-tight tracking-normal text-ink sm:text-[2.65rem]">
-                      {firstArticle.title}
+                      {leadArticle.title}
                     </h2>
-                    {firstArticle.subtitle ? (
+                    {leadArticle.subtitle ? (
                       <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
-                        {firstArticle.subtitle}
+                        {leadArticle.subtitle}
                       </p>
                     ) : null}
                     <p className="mt-3 text-sm leading-6 text-muted">
-                      {firstArticle.source} · {firstArticle.difficulty} · {firstArticle.readTimeMinutes} 分钟
-                      {firstArticle.tags.length > 0 ? ` · ${firstArticle.tags.slice(0, 2).join(" / ")}` : ""}
+                      {leadArticle.source} · {leadArticle.difficulty} · {leadArticle.readTimeMinutes} 分钟
+                      {leadArticle.tags.length > 0 ? ` · ${leadArticle.tags.slice(0, 2).join(" / ")}` : ""}
                     </p>
                     <div className="mt-8 border-t border-hairline pt-7 font-reading text-[1.35rem] leading-[1.85] text-ink">
-                      {firstArticle.subtitle || "今日精读已经准备好。打开文章，阅读正文、段落透读和关键表达。"}
+                      {leadArticle.subtitle || "今日精读已经准备好。打开文章，阅读正文、段落透读和关键表达。"}
                     </div>
                     <div className="mt-7 grid gap-4 md:grid-cols-[minmax(0,1fr)_270px]">
                       <div className="flex flex-wrap items-start gap-4">
                         <Link
-                          href={dailyArticleRoute(firstArticle.id)}
+                          href={dailyArticleRoute(leadArticle.id)}
                           className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
                         >
                           打开今日
                           <ArrowRight aria-hidden="true" className="h-4 w-4" />
                         </Link>
                         <Link
-                          href={loginSaveRoute(firstArticle.id)}
+                          href={loginSaveRoute(leadArticle.id)}
                           className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill px-1 text-sm font-semibold text-lens-blue"
                         >
                           加入我的阅读记录
@@ -128,8 +129,8 @@ export default async function DailyReaderPage() {
                       <div className="border-l border-hairline pl-4">
                         <p className="text-xs font-semibold text-ink">Claread 标注预览</p>
                         <p className="mt-2 text-sm leading-6 text-muted">
-                          {firstArticle.tags.length > 0
-                            ? `主题：${firstArticle.tags.slice(0, 3).join("、")}`
+                          {leadArticle.tags.length > 0
+                            ? `主题：${leadArticle.tags.slice(0, 3).join("、")}`
                             : "打开后查看词汇、语境和段落透读。"}
                         </p>
                       </div>
@@ -163,6 +164,39 @@ export default async function DailyReaderPage() {
             </article>
 
             <aside id="archive">
+              {otherTodayArticles.length > 0 && (
+                <div className="mb-8">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold text-lens-blue">更多今日</h2>
+                  </div>
+                  <div className="divide-y divide-hairline border-y border-hairline">
+                    {otherTodayArticles.map((article) => (
+                      <Link
+                        key={article.id}
+                        href={dailyArticleRoute(article.id)}
+                        className="focus-ring group block py-5 transition-colors hover:bg-surface-warm/70"
+                      >
+                        <div className="grid grid-cols-[4.7rem_minmax(0,1fr)_1.25rem] gap-3">
+                          <p className="text-xs font-semibold leading-5 text-lens-blue">
+                            {formatPublishDate(article.publishDate)}
+                            <span className="mt-1 block text-muted">{article.tags[0] ?? article.difficulty}</span>
+                          </p>
+                          <div>
+                            <h3 className="font-headline text-xl font-semibold leading-snug tracking-normal text-ink">
+                              {article.title}
+                            </h3>
+                            <p className="mt-2 text-xs leading-5 text-muted">{articleMeta(article)}</p>
+                          </div>
+                          <ArrowRight
+                            aria-hidden="true"
+                            className="mt-1 h-4 w-4 text-subtle transition-transform group-hover:translate-x-0.5 group-hover:text-lens-blue"
+                          />
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-ink">往期精选</h2>
                 <ClareadStamp label="READ DEEPLY" className="bg-surface-warm/80" />

@@ -57,11 +57,16 @@ function renderHighlightedText(text: string, highlights: DailyReaderHighlight[])
       nodes.push(text.slice(cursor, highlight.start));
     }
 
+    const tooltipParts = [highlight.gloss];
+    if (highlight.detail?.phonetic) tooltipParts.push(highlight.detail.phonetic);
+    if (highlight.detail?.pos) tooltipParts.push(highlight.detail.pos);
+    if (highlight.detail?.contextExplanation) tooltipParts.push(highlight.detail.contextExplanation);
+
     nodes.push(
       <span
         key={highlight.id}
         className={`rounded-sm px-1 py-0.5 ring-1 ${highlightClass[highlight.type]}`}
-        title={highlight.gloss}
+        title={tooltipParts.join(" · ")}
       >
         {text.slice(highlight.start, highlight.end)}
       </span>,
@@ -115,10 +120,10 @@ function ArticleBody({ article }: { article: DailyReaderArticle }) {
 function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
   const analysis = article.footerAnalysis;
   const hasAnalysis =
-    analysis.summary ||
     analysis.articleTakeaway ||
-    analysis.structure.length > 0 ||
     analysis.keyExpressions.length > 0 ||
+    (analysis.writingMoves && analysis.writingMoves.length > 0) ||
+    (analysis.sentenceNotes && analysis.sentenceNotes.length > 0) ||
     analysis.discussionQuestions.length > 0;
 
   if (!hasAnalysis) {
@@ -127,35 +132,87 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
 
   return (
     <section className="mt-10 border-t border-hairline pt-7">
-      <h2 className="text-sm font-semibold text-ink">今日精读收束</h2>
-      {analysis.summary ? (
-        <p className="mt-3 text-sm leading-7 text-muted">{analysis.summary}</p>
-      ) : null}
+      <h2 className="text-sm font-semibold text-ink">精读收束</h2>
+
       {analysis.articleTakeaway ? (
         <p className="mt-3 rounded-[12px] border border-hairline bg-surface-warm px-4 py-3 text-sm leading-7 text-ink-soft">
           {analysis.articleTakeaway}
         </p>
       ) : null}
-      {analysis.structure.length > 0 ? (
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
-          {analysis.structure.slice(0, 3).map((part) => (
-            <div key={`${part.label}-${part.title}`} className="border-t border-hairline pt-3">
-              <p className="text-xs font-semibold text-structure-green">{part.label}</p>
-              <h3 className="mt-1 text-sm font-semibold text-ink">{part.title}</h3>
-              <p className="mt-2 text-xs leading-6 text-muted">{part.summary}</p>
-            </div>
-          ))}
+
+      {analysis.writingMoves && analysis.writingMoves.length > 0 ? (
+        <div className="mt-6">
+          <h3 className="text-xs font-semibold text-ink">写作手法</h3>
+          <div className="mt-3 space-y-4">
+            {analysis.writingMoves.map((move, i) => (
+              <div key={`wm-${i}`} className="rounded-[12px] border border-hairline bg-reader-paper px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-pill bg-lens-blue/10 px-2 py-0.5 text-[0.7rem] font-semibold text-lens-blue">
+                    {move.moveType}
+                  </span>
+                </div>
+                <p className="mt-2 font-reading text-sm italic leading-6 text-ink-soft">
+                  &ldquo;{move.anchor}&rdquo;
+                </p>
+                <p className="mt-2 text-sm leading-7 text-muted">{move.explanation}</p>
+                {move.reusablePattern ? (
+                  <p className="mt-2 rounded-[8px] border border-hairline bg-surface-warm px-3 py-2 text-xs leading-6 text-ink-soft">
+                    {move.reusablePattern}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
+
+      {analysis.sentenceNotes && analysis.sentenceNotes.length > 0 ? (
+        <div className="mt-6">
+          <h3 className="text-xs font-semibold text-ink">难句解析</h3>
+          <div className="mt-3 space-y-4">
+            {analysis.sentenceNotes.map((note, i) => (
+              <div key={`sn-${i}`} className="rounded-[12px] border border-hairline bg-reader-paper px-4 py-3">
+                <p className="font-reading text-sm leading-6 text-ink">{note.sentence}</p>
+                <p className="mt-2 text-sm leading-7 text-ink-soft">{note.translation}</p>
+                {note.breakdown ? (
+                  <p className="mt-2 text-xs leading-6 text-muted">{note.breakdown}</p>
+                ) : null}
+                {note.takeaway ? (
+                  <p className="mt-2 rounded-[8px] border border-hairline bg-surface-warm px-3 py-2 text-xs leading-6 text-ink-soft">
+                    {note.takeaway}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {analysis.keyExpressions.length > 0 ? (
         <div className="mt-6">
           <h3 className="text-xs font-semibold text-ink">关键表达</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {analysis.keyExpressions.slice(0, 4).map((item) => (
-              <div key={`${item.expression}-${item.contextSentence}`} className="rounded-[12px] border border-hairline bg-reader-paper px-4 py-3">
+            {analysis.keyExpressions.map((item, i) => (
+              <div key={`ke-${i}`} className="rounded-[12px] border border-hairline bg-reader-paper px-4 py-3">
                 <p className="font-reading text-base leading-6 text-ink">{item.expression}</p>
                 <p className="mt-1 text-xs leading-5 text-muted">{item.gloss}</p>
+                {item.usageNote ? (
+                  <p className="mt-2 text-xs leading-6 text-ink-soft">{item.usageNote}</p>
+                ) : null}
               </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {analysis.discussionQuestions.length > 0 ? (
+        <div className="mt-6">
+          <h3 className="text-xs font-semibold text-ink">讨论题</h3>
+          <div className="mt-3 space-y-2">
+            {analysis.discussionQuestions.map((question, i) => (
+              <p key={`dq-${i}`} className="rounded-[8px] border border-hairline bg-surface-warm px-3 py-2 text-sm leading-7 text-ink-soft">
+                {question}
+              </p>
             ))}
           </div>
         </div>

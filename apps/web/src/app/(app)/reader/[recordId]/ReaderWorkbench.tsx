@@ -182,6 +182,30 @@ function mergedSelectionText(segments: ReaderSelectionSegment[]) {
     .trim();
 }
 
+function approximateTokenCount(text: string) {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function canQuickAnalyzeGrammar(selection: ReaderTextSelection | null) {
+  if (!selection) {
+    return false;
+  }
+  if (selection.anchorType === "sentence") {
+    return true;
+  }
+  if (selection.anchorType === "text_range") {
+    return approximateTokenCount(selection.selectedText) >= 2 || selection.selectedText.trim().length >= 8;
+  }
+  return false;
+}
+
+function canQuickBreakdown(selection: ReaderTextSelection | null) {
+  return selection?.anchorType === "sentence";
+}
+
 function mergeSelectionSegments(
   sentenceById: ReadonlyMap<string, SentenceModel>,
   sentenceOrderById: ReadonlyMap<string, number>,
@@ -619,6 +643,11 @@ export function ReaderWorkbench({
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
   const [dismissedLiveAskAttachmentKey, setDismissedLiveAskAttachmentKey] = useState<string | null>(null);
+  const [pendingAskQuickAction, setPendingAskQuickAction] = useState<{
+    content: string;
+    entryAction: "ask_about_this" | "explain_this" | "why_here" | "lookup_in_context" | "compare_translation";
+    attachments: ReaderAskAttachment[];
+  } | null>(null);
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
   const [dictionaryRailOpen, setDictionaryRailOpen] = useState(false);
   const [dictionaryQuery, setDictionaryQuery] = useState("");
@@ -1024,24 +1053,12 @@ export function ReaderWorkbench({
       setDismissedLiveAskAttachmentKey(null);
     }
   }, [liveAskAttachmentKey]);
-  const askPanelAttachments = useMemo(() => {
-    const merged: ReaderAskAttachment[] = [];
-    const seen = new Set<string>();
-    if (liveAskAttachment && liveAskAttachmentKey !== dismissedLiveAskAttachmentKey) {
-      merged.push(liveAskAttachment);
-      if (liveAskAttachmentKey) {
-        seen.add(liveAskAttachmentKey);
-      }
+  const askLiveAttachment = useMemo(() => {
+    if (!liveAskAttachment || liveAskAttachmentKey === dismissedLiveAskAttachmentKey) {
+      return null;
     }
-    askAttachments.forEach((attachment) => {
-      const key = askAttachmentKey(attachment);
-      if (!seen.has(key)) {
-        merged.push(attachment);
-        seen.add(key);
-      }
-    });
-    return merged;
-  }, [askAttachments, dismissedLiveAskAttachmentKey, liveAskAttachment, liveAskAttachmentKey]);
+    return liveAskAttachment;
+  }, [dismissedLiveAskAttachmentKey, liveAskAttachment, liveAskAttachmentKey]);
   const pendingReaderCommentId = pendingReaderNote ? readerCommentDraftId() : null;
   const selectionTargetKey = useMemo(
     () => (textSelection ? targetKeyForSelection(record.id, textSelection) : null),
@@ -2717,7 +2734,6 @@ export function ReaderWorkbench({
 
   function clearAskAttachments() {
     setAskAttachments([]);
-    setDismissedLiveAskAttachmentKey(null);
   }
 
   function openAskWithAttachments(nextAttachments: ReaderAskAttachment[]) {
@@ -2739,6 +2755,53 @@ export function ReaderWorkbench({
     setContextPanelOpen(false);
     setSentencePopoverAnchorEl(null);
     setAiOpen(true);
+  }
+
+  function triggerAskQuickAction(config: {
+    content: string;
+    entryAction: "explain_this" | "why_here";
+    attachment: ReaderAskAttachment;
+  }) {
+    setPendingAskQuickAction({
+      content: config.content,
+      entryAction: config.entryAction,
+      attachments: [config.attachment],
+    });
+    setDismissedLiveAskAttachmentKey(null);
+    setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
+    setAiOpen(true);
+  }
+
+  function openAskWithGrammarQuickAction() {
+    if (!textSelection || !canQuickAnalyzeGrammar(textSelection)) {
+      return;
+    }
+    setActiveSentence(textSelection.sentence);
+    triggerAskQuickAction({
+      content: "请解释这里的语法作用。",
+      entryAction: "why_here",
+      attachment: askAttachmentFromSelection(pageIdentity, textSelection, {
+        sourceSurface: "selection_toolbar",
+        entryAction: "why_here",
+      }),
+    });
+  }
+
+  function openAskWithBreakdownQuickAction() {
+    if (!textSelection || !canQuickBreakdown(textSelection)) {
+      return;
+    }
+    const sentence = textSelection.sentence;
+    setActiveSentence(sentence);
+    triggerAskQuickAction({
+      content: "请拆解这个句子。",
+      entryAction: "explain_this",
+      attachment: askAttachmentFromSentence(pageIdentity, sentence, {
+        sourceSurface: "selection_toolbar",
+        entryAction: "explain_this",
+      }),
+    });
   }
 
   function openAskWithSentenceContext() {
@@ -3256,6 +3319,10 @@ export function ReaderWorkbench({
             <SelectionToolbar
               selectedText={textSelection.selectedText}
               selectionMode={textSelection.anchorType}
+              disabled={{
+                grammar: !canQuickAnalyzeGrammar(textSelection),
+                breakdown: !canQuickBreakdown(textSelection),
+              }}
               activeColor={selectedAnnotation?.color ?? annotationColor}
               hasAnnotation={Boolean(selectedAnnotation)}
               hasHighlight={Boolean(selectedHighlight)}
@@ -3268,6 +3335,8 @@ export function ReaderWorkbench({
               onNote={openTextSelectionNote}
               onClearAnnotation={deleteTextSelectionAnnotation}
               onLookup={lookupTextSelection}
+              onGrammar={openAskWithGrammarQuickAction}
+              onBreakdown={openAskWithBreakdownQuickAction}
               onAsk={openAskWithSelection}
             />
           </div>
@@ -3434,7 +3503,9 @@ export function ReaderWorkbench({
           recordId={record.id}
           recordTitle={record.title}
           pageIdentity={pageIdentity}
-          attachments={askPanelAttachments}
+          attachments={askAttachments}
+          liveAttachment={askLiveAttachment}
+          pendingQuickActionRequest={pendingAskQuickAction}
           hideLauncherOnMobile={Boolean(dictionaryPanelVisible)}
           hideLauncherInCompactLayout={Boolean(dictionaryPanelVisible)}
           onRemoveAttachment={removeAskAttachment}
@@ -3444,6 +3515,7 @@ export function ReaderWorkbench({
           onJumpToCitation={jumpToAskCitation}
           onActionExecuted={handleAskActionExecuted}
           onSupplementDeleted={deleteAnalysisSupplement}
+          onPendingQuickActionConsumed={() => setPendingAskQuickAction(null)}
           onToggle={toggleAiWorkspace}
         />
       ) : null}

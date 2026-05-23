@@ -12,7 +12,6 @@ import type {
   DailyReaderHighlight,
   DailyReaderListItem,
 } from "@/types/view/DailyReaderVm";
-
 function stripHtml(value: string | null | undefined): string | null {
   if (!value) {
     return value ?? null;
@@ -93,24 +92,10 @@ function dtoToPreReadingGuide(
 }
 
 function dtoToFooterAnalysis(
-  dto: DailyReaderArticleDto["footer_analysis"],
   takeaways?: DailyReaderTakeawaysDto | null,
 ): DailyReaderFooterAnalysis {
-  const thesisAndIntent = dto?.thesis_and_intent;
-
   return {
-    summary: cleanText(dto?.summary),
-    thesisAndIntent: {
-      thesis: cleanText(thesisAndIntent?.thesis),
-      authorIntent: cleanText(thesisAndIntent?.author_intent),
-    },
-    structure: Array.isArray(dto?.structure)
-      ? dto.structure.map((item) => ({
-          label: cleanText(item.label),
-          title: cleanText(item.title),
-          summary: cleanText(item.summary),
-        }))
-      : [],
+    summary: takeaways?.article_takeaway ? cleanText(takeaways.article_takeaway) : "",
     keyExpressions: Array.isArray(takeaways?.key_expressions)
       ? takeaways.key_expressions.map((item) => ({
           expression: cleanText(item.expression),
@@ -119,25 +104,10 @@ function dtoToFooterAnalysis(
           paragraphId: item.paragraph_id,
           usageNote: cleanText(item.usage_note),
         }))
-      : Array.isArray(dto?.key_expressions)
-        ? dto.key_expressions.map((item) => ({
-            expression: cleanText(item.expression),
-            gloss: cleanText(item.gloss),
-            contextSentence: cleanText(item.context_sentence),
-          }))
-        : [],
-    misreadingPoints: Array.isArray(dto?.misreading_points)
-      ? dto.misreading_points.map((item) => ({
-          point: cleanText(item.point),
-          clarification: cleanText(item.clarification),
-        }))
       : [],
-    fullArticleAnalysis: cleanText(dto?.full_article_analysis),
     discussionQuestions: Array.isArray(takeaways?.discussion_questions)
       ? takeaways.discussion_questions.map((item) => cleanText(item)).filter(Boolean)
-      : Array.isArray(dto?.discussion_questions)
-        ? dto.discussion_questions.map((item) => cleanText(item)).filter(Boolean)
-        : [],
+      : [],
     articleTakeaway: takeaways?.article_takeaway ? cleanText(takeaways.article_takeaway) : undefined,
     sentenceNotes: Array.isArray(takeaways?.sentence_notes)
       ? takeaways.sentence_notes.map((note) => ({
@@ -199,7 +169,7 @@ export function dtoToDailyReaderArticle(dto: DailyReaderArticleDto): DailyReader
         : [],
     },
     highlights: Array.isArray(dto.highlights) ? dto.highlights.map(dtoToHighlight) : [],
-    footerAnalysis: dtoToFooterAnalysis(dto.footer_analysis, dto.takeaways),
+    footerAnalysis: dtoToFooterAnalysis(dto.takeaways),
   };
 }
 
