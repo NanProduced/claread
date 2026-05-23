@@ -1,19 +1,12 @@
-import type { ReactNode } from "react";
 import { ArrowLeft, BookMarked, ExternalLink, Star } from "lucide-react";
 import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchDailyReaderArticle } from "@/services/api/daily-reader";
-import type { DailyReaderArticle, DailyReaderHighlight } from "@/types/view/DailyReaderVm";
+import type { DailyReaderArticle } from "@/types/view/DailyReaderVm";
 
 export const dynamic = "force-dynamic";
-
-const highlightClass: Record<DailyReaderHighlight["type"], string> = {
-  vocab_highlight: "bg-vocab-amber/25 text-ink ring-vocab-amber/35",
-  phrase_gloss: "bg-phrase-lavender/25 text-ink ring-phrase-lavender/35",
-  context_gloss: "bg-context-blue/18 text-ink ring-context-blue/30",
-};
 
 function loginSaveRoute(articleId: string): Route {
   return `/login?next=/daily/${encodeURIComponent(articleId)}&intent=save` as Route;
@@ -32,90 +25,7 @@ function formatPublishDate(value: string): string {
   }).format(date);
 }
 
-function renderHighlightedText(text: string, highlights: DailyReaderHighlight[]): ReactNode {
-  const ranges = highlights
-    .filter((highlight) => highlight.start >= 0 && highlight.end > highlight.start && highlight.end <= text.length)
-    .sort((a, b) => a.start - b.start);
-  const accepted: DailyReaderHighlight[] = [];
-
-  for (const range of ranges) {
-    const previous = accepted[accepted.length - 1];
-    if (!previous || range.start >= previous.end) {
-      accepted.push(range);
-    }
-  }
-
-  if (accepted.length === 0) {
-    return text;
-  }
-
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-
-  accepted.forEach((highlight) => {
-    if (highlight.start > cursor) {
-      nodes.push(text.slice(cursor, highlight.start));
-    }
-
-    const tooltipParts = [highlight.gloss];
-    if (highlight.detail?.phonetic) tooltipParts.push(highlight.detail.phonetic);
-    if (highlight.detail?.pos) tooltipParts.push(highlight.detail.pos);
-    if (highlight.detail?.contextExplanation) tooltipParts.push(highlight.detail.contextExplanation);
-
-    nodes.push(
-      <span
-        key={highlight.id}
-        className={`rounded-sm px-1 py-0.5 ring-1 ${highlightClass[highlight.type]}`}
-        title={tooltipParts.join(" · ")}
-      >
-        {text.slice(highlight.start, highlight.end)}
-      </span>,
-    );
-    cursor = highlight.end;
-  });
-
-  if (cursor < text.length) {
-    nodes.push(text.slice(cursor));
-  }
-
-  return nodes;
-}
-
-function ArticleBody({ article }: { article: DailyReaderArticle }) {
-  if (article.body.paragraphs.length === 0) {
-    return (
-      <p className="text-sm leading-7 text-muted">
-        这篇每日精读暂无可展示正文。请稍后再试。
-      </p>
-    );
-  }
-
-  return (
-    <div className="mt-10 max-w-[68ch] space-y-8 font-reading text-[1.22rem] leading-[1.95] text-ink sm:text-[1.28rem]">
-      {article.body.paragraphs.map((paragraph, index) => (
-        <section key={paragraph.id} className="group">
-          <p>{renderHighlightedText(paragraph.text, paragraph.highlights)}</p>
-          {paragraph.readingNote || paragraph.translation ? (
-            <div className="mt-4 border-l border-hairline pl-4 font-sans text-sm leading-7 text-muted">
-              {paragraph.readingNote?.focusQuestion ? (
-                <p className="font-semibold text-ink">{paragraph.readingNote.focusQuestion}</p>
-              ) : null}
-              {paragraph.readingNote?.microSummary ? (
-                <p className="mt-1">{paragraph.readingNote.microSummary}</p>
-              ) : null}
-              {paragraph.translation ? (
-                <p className="mt-2 text-ink-soft">{paragraph.translation}</p>
-              ) : null}
-            </div>
-          ) : null}
-          <span className="mt-3 block font-sans text-[0.7rem] font-semibold text-subtle">
-            {String(index + 1).padStart(2, "0")}
-          </span>
-        </section>
-      ))}
-    </div>
-  );
-}
+import { DailyArticleBody } from "./DailyArticleBody";
 
 function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
   const analysis = article.footerAnalysis;
@@ -131,92 +41,99 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
   }
 
   return (
-    <section className="mt-10 border-t border-hairline pt-7">
-      <h2 className="text-sm font-semibold text-ink">精读收束</h2>
+    <section className="relative mt-20 border-t border-hairline pt-16">
+      <div className="mb-12 flex items-center justify-center">
+        <span className="block h-px w-12 bg-hairline"></span>
+        <h2 className="mx-4 text-xs font-bold uppercase tracking-[0.2em] text-muted">Analysis</h2>
+        <span className="block h-px w-12 bg-hairline"></span>
+      </div>
 
       {analysis.articleTakeaway ? (
-        <p className="mt-3 rounded-[12px] border border-hairline bg-surface-warm px-4 py-3 text-sm leading-7 text-ink-soft">
-          {analysis.articleTakeaway}
+        <p className="mx-auto text-center font-reading text-lg font-medium leading-[1.7] text-ink">
+          &ldquo;{analysis.articleTakeaway}&rdquo;
         </p>
       ) : null}
 
-      {analysis.writingMoves && analysis.writingMoves.length > 0 ? (
-        <div className="mt-6">
-          <h3 className="text-xs font-semibold text-ink">写作手法</h3>
-          <div className="mt-3 space-y-4">
-            {analysis.writingMoves.map((move, i) => (
-              <div key={`wm-${i}`} className="rounded-[12px] border border-hairline bg-reader-paper px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="rounded-pill bg-lens-blue/10 px-2 py-0.5 text-[0.7rem] font-semibold text-lens-blue">
+      <div className="mx-auto mt-16 space-y-16">
+        {analysis.writingMoves && analysis.writingMoves.length > 0 ? (
+          <div>
+            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Writing Moves</h3>
+            <div className="space-y-10">
+              {analysis.writingMoves.map((move, i) => (
+                <div key={`wm-${i}`} className="border-l-2 border-hairline pl-5">
+                  <span className="inline-block font-sans text-[0.7rem] font-bold uppercase tracking-wider text-lens-blue">
                     {move.moveType}
                   </span>
+                  <p className="mt-3 font-reading text-[1.1rem] italic leading-[1.8] text-ink">
+                    &ldquo;{move.anchor}&rdquo;
+                  </p>
+                  <p className="mt-3 text-[0.95rem] leading-[1.8] text-ink-soft">{move.explanation}</p>
+                  {move.reusablePattern ? (
+                    <p className="mt-4 font-sans text-[0.85rem] font-medium tracking-wide text-muted">
+                      PATTERN: {move.reusablePattern}
+                    </p>
+                  ) : null}
                 </div>
-                <p className="mt-2 font-reading text-sm italic leading-6 text-ink-soft">
-                  &ldquo;{move.anchor}&rdquo;
-                </p>
-                <p className="mt-2 text-sm leading-7 text-muted">{move.explanation}</p>
-                {move.reusablePattern ? (
-                  <p className="mt-2 rounded-[8px] border border-hairline bg-surface-warm px-3 py-2 text-xs leading-6 text-ink-soft">
-                    {move.reusablePattern}
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {analysis.sentenceNotes && analysis.sentenceNotes.length > 0 ? (
+          <div className="border-t border-hairline pt-12">
+            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Sentence Analysis</h3>
+            <div className="space-y-10">
+              {analysis.sentenceNotes.map((note, i) => (
+                <div key={`sn-${i}`}>
+                  <p className="font-reading text-[1.1rem] leading-[1.8] text-ink">{note.sentence}</p>
+                  <p className="mt-3 text-[0.95rem] leading-[1.8] text-ink-soft">{note.translation}</p>
+                  {note.breakdown ? (
+                    <p className="mt-4 border-l border-hairline pl-4 text-[0.9rem] leading-[1.7] text-muted">{note.breakdown}</p>
+                  ) : null}
+                  {note.takeaway ? (
+                    <p className="mt-4 inline-block border border-hairline px-3 py-1 font-sans text-[0.85rem] font-medium text-ink-soft">
+                      {note.takeaway}
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {analysis.keyExpressions.length > 0 ? (
+          <div className="border-t border-hairline pt-12">
+            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Key Expressions</h3>
+            <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+              {analysis.keyExpressions.map((item, i) => (
+                <div key={`ke-${i}`}>
+                  <p className="font-sans text-[1.05rem] font-bold text-ink">{item.expression}</p>
+                  <p className="mt-1 text-[0.95rem] leading-[1.6] text-ink-soft">{item.gloss}</p>
+                  {item.usageNote ? (
+                    <p className="mt-2 text-[0.85rem] leading-[1.6] text-muted">{item.usageNote}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {analysis.discussionQuestions.length > 0 ? (
+          <div className="border-t border-hairline pt-12">
+            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Discussion</h3>
+            <div className="space-y-4">
+              {analysis.discussionQuestions.map((question, i) => (
+                <div key={`dq-${i}`} className="flex gap-3">
+                  <span className="mt-1 shrink-0 font-serif text-lg text-ink-soft opacity-40">Q.</span>
+                  <p className="text-[1.05rem] font-medium leading-[1.7] text-ink">
+                    {question}
                   </p>
-                ) : null}
-              </div>
-            ))}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
-
-      {analysis.sentenceNotes && analysis.sentenceNotes.length > 0 ? (
-        <div className="mt-6">
-          <h3 className="text-xs font-semibold text-ink">难句解析</h3>
-          <div className="mt-3 space-y-4">
-            {analysis.sentenceNotes.map((note, i) => (
-              <div key={`sn-${i}`} className="rounded-[12px] border border-hairline bg-reader-paper px-4 py-3">
-                <p className="font-reading text-sm leading-6 text-ink">{note.sentence}</p>
-                <p className="mt-2 text-sm leading-7 text-ink-soft">{note.translation}</p>
-                {note.breakdown ? (
-                  <p className="mt-2 text-xs leading-6 text-muted">{note.breakdown}</p>
-                ) : null}
-                {note.takeaway ? (
-                  <p className="mt-2 rounded-[8px] border border-hairline bg-surface-warm px-3 py-2 text-xs leading-6 text-ink-soft">
-                    {note.takeaway}
-                  </p>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {analysis.keyExpressions.length > 0 ? (
-        <div className="mt-6">
-          <h3 className="text-xs font-semibold text-ink">关键表达</h3>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {analysis.keyExpressions.map((item, i) => (
-              <div key={`ke-${i}`} className="rounded-[12px] border border-hairline bg-reader-paper px-4 py-3">
-                <p className="font-reading text-base leading-6 text-ink">{item.expression}</p>
-                <p className="mt-1 text-xs leading-5 text-muted">{item.gloss}</p>
-                {item.usageNote ? (
-                  <p className="mt-2 text-xs leading-6 text-ink-soft">{item.usageNote}</p>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {analysis.discussionQuestions.length > 0 ? (
-        <div className="mt-6">
-          <h3 className="text-xs font-semibold text-ink">讨论题</h3>
-          <div className="mt-3 space-y-2">
-            {analysis.discussionQuestions.map((question, i) => (
-              <p key={`dq-${i}`} className="rounded-[8px] border border-hairline bg-surface-warm px-3 py-2 text-sm leading-7 text-ink-soft">
-                {question}
-              </p>
-            ))}
-          </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -236,83 +153,85 @@ export default async function DailyArticlePage({
   const article = result.data;
 
   return (
-    <main className="min-h-screen bg-[oklch(97%_0.012_84)] px-5 py-6 text-ink sm:px-8 lg:px-12">
-      <div className="mx-auto max-w-5xl">
-        <header className="flex items-center justify-between gap-6">
-          <Link
-            href={"/daily" as Route}
-            className="focus-ring inline-flex items-center gap-2 rounded-pill text-sm font-semibold text-muted hover:text-ink"
-          >
-            <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-            返回每日精读
-          </Link>
-          <Image
-            src="/brand/claread-horizontal-bilingual.png"
-            alt="Claread 透读"
-            width={260}
-            height={76}
-            priority
-            className="h-auto w-40"
-          />
-        </header>
+    <main className="min-h-screen bg-[#FAF9F6] pb-24 text-ink">
+      <header className="mx-auto flex max-w-[720px] items-center justify-between px-5 pt-8 sm:px-8">
+        <Link
+          href={"/daily" as Route}
+          className="focus-ring inline-flex items-center gap-2 rounded-pill text-sm font-semibold text-muted hover:text-ink"
+        >
+          <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+          返回每日精读
+        </Link>
+        <Image
+          src="/brand/claread-horizontal-bilingual.png"
+          alt="Claread 透读"
+          width={260}
+          height={76}
+          priority
+          className="h-auto w-40"
+        />
+      </header>
 
-        <article className="reading-paper relative mt-8 overflow-hidden rounded-[2rem] border border-hairline px-6 py-8 shadow-[0_28px_80px_rgba(35,28,18,0.12)] sm:px-12 sm:py-12">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lens-blue">
-            Daily Reader · {formatPublishDate(article.publishDate)}
-          </p>
-          <h1 className="mt-5 max-w-3xl font-headline text-[2.5rem] font-semibold leading-tight tracking-normal text-ink sm:text-[3.6rem]">
-            {article.title}
-          </h1>
-          {article.subtitle ? (
-            <p className="mt-4 max-w-2xl text-base leading-7 text-muted">{article.subtitle}</p>
-          ) : null}
-          <p className="mt-4 text-sm leading-6 text-muted">
-            {article.source} · {article.difficulty} · {article.readTimeMinutes} 分钟
-            {article.tags.length > 0 ? ` · ${article.tags.join(" / ")}` : ""}
-          </p>
-          {article.preReadingGuide ? (
-            <section className="mt-8 rounded-[16px] border border-hairline bg-surface-warm px-5 py-4">
-              {article.preReadingGuide.overview ? (
-                <p className="text-sm leading-7 text-ink-soft">{article.preReadingGuide.overview}</p>
-              ) : null}
-              {article.preReadingGuide.questions.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {article.preReadingGuide.questions.map((question) => (
-                    <span key={question} className="rounded-pill border border-hairline bg-reader-paper px-3 py-1.5 text-xs font-semibold text-muted">
+      <article className="mx-auto mt-16 max-w-[680px] px-5 sm:px-8">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lens-blue">
+          Daily Reader · {formatPublishDate(article.publishDate)}
+        </p>
+        <h1 className="mt-5 font-headline text-[2.5rem] font-semibold leading-tight tracking-normal text-ink sm:text-[3.6rem]">
+          {article.title}
+        </h1>
+        {article.subtitle ? (
+          <p className="mt-4 text-base leading-7 text-muted">{article.subtitle}</p>
+        ) : null}
+        <p className="mt-4 text-sm leading-6 text-muted">
+          {article.source} · {article.difficulty} · {article.readTimeMinutes} 分钟
+          {article.tags.length > 0 ? ` · ${article.tags.join(" / ")}` : ""}
+        </p>
+        {article.preReadingGuide ? (
+          <section className="mt-12 border-l-2 border-lens-blue/30 pl-5">
+            <h2 className="mb-2 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-muted">Editor&apos;s Note</h2>
+            {article.preReadingGuide.overview ? (
+              <p className="font-reading text-[1.05rem] italic leading-[1.8] text-ink-soft">{article.preReadingGuide.overview}</p>
+            ) : null}
+            {article.preReadingGuide.questions.length > 0 ? (
+              <div className="mt-4 flex flex-col gap-2">
+                {article.preReadingGuide.questions.map((question) => (
+                  <div key={question} className="flex gap-2">
+                    <span className="mt-0.5 shrink-0 text-[0.7rem] text-lens-blue">✦</span>
+                    <span className="font-sans text-[0.95rem] font-medium leading-snug text-ink-soft">
                       {question}
                     </span>
-                  ))}
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-
-          <ArticleBody article={article} />
-          <FooterAnalysis article={article} />
-
-          <section className="mt-10 grid gap-4 border-t border-hairline pt-6 md:grid-cols-2">
-            <div>
-              <h2 className="text-sm font-semibold text-ink">来源</h2>
-              <a
-                href={article.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 inline-flex items-center gap-2 text-sm leading-6 text-lens-blue"
-              >
-                {article.source}
-                <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
-              </a>
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold text-ink">标注说明</h2>
-              <p className="mt-2 text-sm leading-6 text-muted">
-                词汇、短语和语境标注只作用于英文原文。中文译文不做逐词颜色映射。
-              </p>
-            </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </section>
-        </article>
+        ) : null}
 
-        <div className="mt-6 flex flex-wrap items-center gap-3">
+        <DailyArticleBody article={article} />
+        <FooterAnalysis article={article} />
+
+        <section className="mt-16 grid gap-6 border-t border-hairline pt-8 md:grid-cols-2">
+          <div>
+            <h2 className="text-sm font-semibold text-ink">来源</h2>
+            <a
+              href={article.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-2 text-sm leading-6 text-lens-blue"
+            >
+              {article.source}
+              <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+            </a>
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-ink">标注说明</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              词汇、短语和语境标注只作用于英文原文。中文译文不做逐词颜色映射。
+            </p>
+          </div>
+        </section>
+
+        <div className="mt-12 flex flex-wrap items-center gap-3">
           <Link
             href={loginSaveRoute(article.id)}
             className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill bg-lens-blue px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
@@ -328,7 +247,7 @@ export default async function DailyArticlePage({
             收藏
           </Link>
         </div>
-      </div>
+      </article>
     </main>
   );
 }

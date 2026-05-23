@@ -2762,6 +2762,13 @@ export function ReaderWorkbench({
     entryAction: "explain_this" | "why_here";
     attachment: ReaderAskAttachment;
   }) {
+    if (askAttachments.length > 0) {
+      const shouldReplace = window.confirm("当前输入框里还有待发送的上下文。快捷分析将只保留当前选中的分析对象，是否继续替换？");
+      if (!shouldReplace) {
+        return;
+      }
+      clearAskAttachments();
+    }
     setPendingAskQuickAction({
       content: config.content,
       entryAction: config.entryAction,
