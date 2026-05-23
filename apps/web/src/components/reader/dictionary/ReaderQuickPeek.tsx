@@ -23,6 +23,7 @@ function getInspectColorClass(annotationType: string) {
 interface ReaderQuickPeekProps {
   lookup?: DictionaryLookupSnapshot | null;
   inspect?: ReaderStructuredInspectIntent | null;
+  className?: string;
   floatingRef?: (node: HTMLDivElement | null) => void;
   style?: CSSProperties;
   onDismiss: () => void;
@@ -32,6 +33,7 @@ interface ReaderQuickPeekProps {
 }
 
 interface ReaderQuickPeekShellProps {
+  className?: string;
   titleId: string;
   title: ReactNode;
   eyebrow?: ReactNode;
@@ -49,6 +51,7 @@ function ReaderQuickPeekShell({
   aside,
   body,
   bodyId,
+  className,
   footer,
   eyebrow,
   eyebrowClassName = "text-muted",
@@ -61,7 +64,7 @@ function ReaderQuickPeekShell({
   return (
     <ReaderFloatingSurface
       floatingRef={floatingRef}
-      className="reader-lookup-preview"
+      className={`reader-lookup-preview ${className ?? ""}`.trim()}
       role="dialog"
       aria-modal="false"
       aria-labelledby={titleId}
@@ -114,6 +117,7 @@ function ReaderQuickPeekShell({
 }
 
 export function ReaderQuickPeek({
+  className,
   floatingRef,
   inspect = null,
   lookup = null,
@@ -130,6 +134,7 @@ export function ReaderQuickPeek({
   if (inspect) {
     return (
       <ReaderQuickPeekShell
+        className={className}
         floatingRef={floatingRef}
         titleId={inspectTitleId}
         eyebrow={structuredInspectLabel(inspect.annotationType, inspect.glossary?.phraseType)}
@@ -202,6 +207,7 @@ export function ReaderQuickPeek({
 
   return (
     <ReaderQuickPeekShell
+      className={className}
       floatingRef={floatingRef}
       titleId={lookupTitleId}
       eyebrow={lookup.label ?? (lookup.lookupType === "phrase" ? "短语" : "词典")}

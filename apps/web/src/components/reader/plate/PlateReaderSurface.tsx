@@ -39,17 +39,13 @@ import {
 } from "../reader-entry-utils";
 import {
   analysisEntryVisible,
-  readerColumnWidthClassName,
   type ReaderAnnotationVisibilityGroups,
-  type ReaderColumnWidth,
-  type TranslationDisplay,
 } from "../settings";
 
 export interface PlateReaderSurfaceProps {
   document: ReaderPlateDocument;
-  translationDisplay: TranslationDisplay;
+  showTranslation: boolean;
   readingClassName: string;
-  columnWidth?: ReaderColumnWidth;
   annotationVisibilityGroups?: ReaderAnnotationVisibilityGroups;
   themeClassName?: string;
   activeSentenceId?: string | null;
@@ -134,8 +130,7 @@ export function PlateReaderSurface({
     userAssets: true,
   },
   assetProjection = null,
-  columnWidth = "standard",
-  document,
+    document,
   expandedAnalysisEntryId = null,
   expandedAnalysisEntryIds = [],
   jumpTarget = null,
@@ -156,9 +151,9 @@ export function PlateReaderSurface({
   onSentenceActivate,
   onHoverAnnotationTargetKeyChange,
   readingClassName,
-  translationDisplay,
-  themeClassName,
-}: PlateReaderSurfaceProps) {
+    showTranslation,
+    themeClassName,
+  }: PlateReaderSurfaceProps) {
   const paragraphNodes = useMemo(
     () => document.children.filter((node): node is ReaderParagraphNode => node.type === "reader_paragraph"),
     [document.children],
@@ -354,14 +349,16 @@ export function PlateReaderSurface({
               onLookupIntent={onLookupIntent}
             />
           );
-        case "reader_translation":
-          return (
-            <ReaderTranslationElement
-              props={props}
-              translationDisplay={translationDisplay}
-              onAsk={onAskTranslation ? () => onAskTranslation(element.sentenceId, element.translationZh) : undefined}
-            />
-          );
+          case "reader_translation":
+            if (!showTranslation) {
+              return null;
+            }
+            return (
+              <ReaderTranslationElement
+                props={props}
+                onAsk={onAskTranslation ? () => onAskTranslation(element.sentenceId, element.translationZh) : undefined}
+              />
+            );
         case "reader_grammar_note":
         case "reader_sentence_analysis":
         case "reader_term_note":
@@ -415,10 +412,10 @@ export function PlateReaderSurface({
       routeFocusSentenceIds,
       sourceContextBySentence,
       sentenceAssetsBySentence,
-      translationDisplay,
-      activeReaderNoteId,
-      onOpenSentenceNotes,
-    ],
+        showTranslation,
+        activeReaderNoteId,
+        onOpenSentenceNotes,
+      ],
   );
 
   const renderLeaf = useCallback(
@@ -464,7 +461,7 @@ export function PlateReaderSurface({
 
   return (
     <div className={`px-5 py-7 sm:px-8 lg:px-10 lg:py-9 ${themeClassName ?? ""}`.trim()}>
-      <div className={`mx-auto ${readerColumnWidthClassName(columnWidth)}`}>
+      <div className="mx-auto max-w-[96ch]">
         <Plate editor={editor} readOnly>
           <EditorContainer className="h-auto cursor-default overflow-visible bg-transparent px-0 py-0 [&_.slate-selection-area]:hidden">
             <Editor

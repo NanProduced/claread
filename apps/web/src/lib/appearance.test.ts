@@ -1,20 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
-  normalizeAppearance,
-  themeColorForAppearance,
+  migrateLegacyAppearanceTheme,
+  normalizeThemeName,
+  themeColorForTheme,
 } from "./appearance";
 
 describe("appearance helpers", () => {
-  it("normalizes unsupported values back to system", () => {
-    expect(normalizeAppearance("light")).toBe("light");
-    expect(normalizeAppearance("dark")).toBe("dark");
-    expect(normalizeAppearance("system")).toBe("system");
-    expect(normalizeAppearance("sepia")).toBe("system");
+  it("normalizes unsupported values back to paper", () => {
+    expect(normalizeThemeName("paper")).toBe("paper");
+    expect(normalizeThemeName("light")).toBe("light");
+    expect(normalizeThemeName("dark")).toBe("dark");
+    expect(normalizeThemeName("system")).toBe("paper");
+    expect(normalizeThemeName("sepia")).toBe("paper");
   });
 
-  it("maps appearances to theme-color values", () => {
-    expect(themeColorForAppearance("light")).toBe("#f7f6f2");
-    expect(themeColorForAppearance("dark")).toBe("#181713");
-    expect(themeColorForAppearance("system")).toBe("#f7f6f2");
+  it("migrates legacy appearance values into the new theme names", () => {
+    expect(migrateLegacyAppearanceTheme("light")).toBe("light");
+    expect(migrateLegacyAppearanceTheme("dark")).toBe("dark");
+    expect(migrateLegacyAppearanceTheme("system", "dark")).toBe("dark");
+    expect(migrateLegacyAppearanceTheme("system", "light")).toBe("light");
+    expect(migrateLegacyAppearanceTheme("unknown")).toBe("paper");
+  });
+
+  it("maps themes to theme-color values", () => {
+    expect(themeColorForTheme("paper")).toBe("#f3efe6");
+    expect(themeColorForTheme("light")).toBe("#f7f5f0");
+    expect(themeColorForTheme("dark")).toBe("#121518");
   });
 });

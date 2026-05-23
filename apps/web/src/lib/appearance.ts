@@ -1,25 +1,47 @@
-export type AppearanceState = "light" | "dark" | "system";
-export type ResolvedAppearanceState = Exclude<AppearanceState, "system">;
+export type ThemeName = "paper" | "light" | "dark";
 
-export const APPEARANCE_STORAGE_KEY = "claread.appearance.v1";
+export const THEME_STORAGE_KEY = "claread.theme.v1";
+export const LEGACY_APPEARANCE_STORAGE_KEY = "claread.appearance.v1";
 
-export const appearanceThemeColor: Record<ResolvedAppearanceState, string> = {
-  light: "#f7f6f2",
-  dark: "#181713",
+export const themeColorByTheme: Record<ThemeName, string> = {
+  paper: "#f3efe6",
+  light: "#f7f5f0",
+  dark: "#121518",
 };
 
-export function normalizeAppearance(value: unknown): AppearanceState {
-  if (value === "light" || value === "dark" || value === "system") {
+export function normalizeThemeName(value: unknown): ThemeName {
+  if (value === "paper" || value === "light" || value === "dark") {
     return value;
   }
-  return "system";
+
+  if (value === "system") {
+    return "paper";
+  }
+
+  return "paper";
 }
 
-export function themeColorForAppearance(
-  value: AppearanceState | ResolvedAppearanceState | null | undefined,
-): string {
-  if (value === "dark") {
-    return appearanceThemeColor.dark;
+export function migrateLegacyAppearanceTheme(
+  value: unknown,
+  resolvedTheme: ThemeName = "paper",
+): ThemeName {
+  if (value === "light" || value === "dark") {
+    return value;
   }
-  return appearanceThemeColor.light;
+
+  if (value === "system") {
+    return resolvedTheme === "dark" ? "dark" : "light";
+  }
+
+  return "paper";
+}
+
+export function themeColorForTheme(
+  value: ThemeName | null | undefined,
+): string {
+  if (!value) {
+    return themeColorByTheme.paper;
+  }
+
+  return themeColorByTheme[normalizeThemeName(value)];
 }

@@ -2213,6 +2213,7 @@ function StarterState({
 
 export interface AiWorkspacePanelProps {
   open: boolean;
+  presentation?: "intensive" | "immersive";
   pageIdentity: ReaderAskPageIdentity;
   recordId: string;
   recordTitle?: string | null;
@@ -2237,6 +2238,7 @@ export function AiWorkspacePanel({
   liveAttachment = null,
   pageIdentity,
   pendingQuickActionRequest,
+  presentation = "intensive",
   open,
   recordId,
   recordTitle,
@@ -2858,18 +2860,18 @@ export function AiWorkspacePanel({
     return (
       <button
         type="button"
-        className={`focus-ring group fixed bottom-[5.25rem] right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-full border border-hairline/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] shadow-[0_14px_34px_rgba(17,17,17,0.08)] transition-[transform,border-color,box-shadow,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:translate-y-0 active:scale-[0.98] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)] md:bottom-6 md:right-6 ${launcherVisibilityClass}`}
+        className={`ai-workspace-launcher ai-workspace-launcher--${presentation} focus-ring group fixed bottom-[5.25rem] right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-full border border-hairline/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] shadow-[0_14px_34px_rgba(17,17,17,0.08)] transition-[transform,border-color,box-shadow,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:translate-y-0 active:scale-[0.98] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)] md:bottom-6 md:right-6 ${launcherVisibilityClass}`}
         onClick={onToggle}
         aria-label="打开 AI 工作区"
         title="打开 Ask Claread"
       >
-        <span className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_32%_28%,rgba(255,255,255,0.98),rgba(242,239,231,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.65),0_8px_18px_rgba(17,17,17,0.08)]">
+        <span className="brand-aperture-shell relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border">
           <span className="absolute inset-[3px] rounded-full border border-hairline/65" />
           <img
             src="/brand/claread-icon-fullcolor.png"
             alt=""
             aria-hidden="true"
-            className="h-[22px] w-[22px] object-contain transition-transform duration-200 ease-out group-hover:scale-105"
+            className="brand-aperture-mark h-[22px] w-[22px] object-contain transition-transform duration-200 ease-out group-hover:scale-105"
           />
         </span>
       </button>
@@ -2877,7 +2879,7 @@ export function AiWorkspacePanel({
   }
 
   return (
-    <aside className="fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[28px] border border-hairline/85 bg-[linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] shadow-[0_26px_76px_rgba(17,17,17,0.12)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none">
+    <aside className={`ai-workspace-panel ai-workspace-panel--${presentation} fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[28px] border border-hairline/85 bg-[linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] shadow-[0_26px_76px_rgba(17,17,17,0.12)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none`}>
       <div className="border-b border-hairline/70 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">

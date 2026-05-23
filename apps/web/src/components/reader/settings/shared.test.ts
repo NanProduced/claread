@@ -2,14 +2,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  READER_DEFAULT_PAPER_THEME_STORAGE_KEY,
   READER_SETTINGS_STORAGE_KEY,
   createDefaultReaderSettings,
   defaultReaderSettings,
+  modeShowsTranslation,
+  modeVisibility,
   normalizeReaderSettings,
-  persistDefaultReaderPaperTheme,
   persistReaderSettings,
-  readStoredDefaultReaderPaperTheme,
   readStoredReaderSettings,
 } from "./shared";
 
@@ -44,113 +43,98 @@ afterEach(() => {
 });
 
 describe("reader settings storage", () => {
-  it("normalizes partial payloads back to supported defaults", () => {
+  it("normalizes supported payloads back to the new shape", () => {
     expect(
       normalizeReaderSettings({
-        translationDisplay: "muted",
-        fontSize: "invalid",
-        annotationVisibilityGroups: {
-          lexical: false,
-        },
+        mode: "immersive",
+        fontScale: "lg",
+        fontFamily: "book",
       }),
     ).toEqual({
       ...defaultReaderSettings,
-      translationDisplay: "muted",
-      annotationVisibilityGroups: {
-        lexical: false,
-        analysis: true,
-        userAssets: true,
-      },
+      mode: "immersive",
+      fontScale: "lg",
+      fontFamily: "book",
     });
   });
 
-  it("migrates legacy boolean showTranslation to translationDisplay", () => {
+  it("migrates legacy reader settings to the new structure while ignoring legacy theme fields", () => {
     expect(
       normalizeReaderSettings({
-        showTranslation: false,
-        fontSize: "normal",
+        readingMode: "immersive",
+        fontSize: "xlarge",
+        readerPaperTheme: "cool",
+        theme: "dark",
       }),
     ).toEqual({
       ...defaultReaderSettings,
-      translationDisplay: "hidden",
+      mode: "immersive",
+      fontScale: "lg",
     });
 
     expect(
       normalizeReaderSettings({
-        showTranslation: true,
-        fontSize: "normal",
+        readingMode: "annotated",
+        fontSize: "compact",
+        readerPaperTheme: "sage",
       }),
     ).toEqual({
-      ...defaultReaderSettings,
-      translationDisplay: "visible",
+      ...createDefaultReaderSettings(),
+      mode: "intensive",
+      fontScale: "sm",
     });
   });
 
-  it("migrates legacy theme values", () => {
-    expect(
-      normalizeReaderSettings({ theme: "paper" }),
-    ).toEqual({
-      ...defaultReaderSettings,
-      readerPaperTheme: "warm",
-    });
-
-    expect(
-      normalizeReaderSettings({ theme: "white" }),
-    ).toEqual({
-      ...defaultReaderSettings,
-      readerPaperTheme: "cool",
-    });
-
-    expect(
-      normalizeReaderSettings({ theme: "green" }),
-    ).toEqual({
-      ...defaultReaderSettings,
-      readerPaperTheme: "sage",
-    });
-  });
-
-  it("uses the default paper theme when no reader settings were persisted", () => {
-    persistDefaultReaderPaperTheme("sage");
-
-    expect(storageMock.getItem(READER_DEFAULT_PAPER_THEME_STORAGE_KEY)).toBe("sage");
-    expect(readStoredDefaultReaderPaperTheme()).toBe("sage");
-    expect(readStoredReaderSettings()).toEqual(createDefaultReaderSettings("sage"));
+  it("uses defaults when no reader settings were persisted", () => {
+    expect(readStoredReaderSettings()).toEqual(createDefaultReaderSettings());
   });
 
   it("persists and restores reader settings from localStorage", () => {
     const nextSettings = {
       ...defaultReaderSettings,
-      readingMode: "immersive" as const,
-      translationDisplay: "muted" as const,
-      fontSize: "large" as const,
-      density: "roomy" as const,
-      columnWidth: "wide" as const,
-      readerPaperTheme: "sage" as const,
-      annotationVisibilityGroups: {
-        lexical: false,
-        analysis: true,
-        userAssets: false,
-      },
+      mode: "immersive" as const,
+      fontFamily: "book" as const,
+      fontScale: "lg" as const,
     };
 
     persistReaderSettings(nextSettings);
 
-    expect(storageMock.getItem(READER_SETTINGS_STORAGE_KEY)).toContain("\"columnWidth\":\"wide\"");
-    expect(storageMock.getItem(READER_SETTINGS_STORAGE_KEY)).toContain("\"translationDisplay\":\"muted\"");
-    expect(storageMock.getItem(READER_SETTINGS_STORAGE_KEY)).toContain("\"readingMode\":\"immersive\"");
+    expect(storageMock.getItem(READER_SETTINGS_STORAGE_KEY)).toContain("\"mode\":\"immersive\"");
     expect(storageMock.getItem(READER_SETTINGS_STORAGE_KEY)).toContain("\"updatedAt\"");
+    expect(storageMock.getItem(READER_SETTINGS_STORAGE_KEY)).not.toContain("\"theme\"");
 
     const restored = readStoredReaderSettings();
-    expect(restored.readingMode).toBe("immersive");
-    expect(restored.translationDisplay).toBe("muted");
-    expect(restored.fontSize).toBe("large");
-    expect(restored.density).toBe("roomy");
-    expect(restored.columnWidth).toBe("wide");
-    expect(restored.readerPaperTheme).toBe("sage");
-    expect(restored.annotationVisibilityGroups).toEqual({
-      lexical: false,
-      analysis: true,
-      userAssets: false,
+    expect(restored.mode).toBe("immersive");
+    expect(restored.fontFamily).toBe("book");
+    expect(restored.fontScale).toBe("lg");
+  });
+
+  it("migrates legacy storage when the new key is absent", () => {
+    storageMock.setItem("claread.reader.settings.v3", JSON.stringify({
+      mode: "immersive",
+      theme: "dark",
+      fontFamily: "book",
+      fontScale: "lg",
+    }));
+
+    expect(readStoredReaderSettings()).toEqual({
+      ...defaultReaderSettings,
+      mode: "immersive",
+      fontFamily: "book",
+      fontScale: "lg",
+    });
+
+    storageMock.clear();
+    storageMock.setItem("claread.reader.settings.v2", JSON.stringify({
+      readingMode: "immersive",
+      fontSize: "large",
+      readerPaperTheme: "warm",
+    }));
+
+    expect(readStoredReaderSettings()).toEqual({
+      ...createDefaultReaderSettings(),
+      mode: "immersive",
+      fontScale: "lg",
     });
   });
 
@@ -159,13 +143,18 @@ describe("reader settings storage", () => {
     expect(readStoredReaderSettings()).toEqual(defaultReaderSettings);
   });
 
-  it("handles xlarge font size", () => {
-    const result = normalizeReaderSettings({ fontSize: "xlarge" });
-    expect(result.fontSize).toBe("xlarge");
-  });
-
-  it("handles compact density", () => {
-    const result = normalizeReaderSettings({ density: "compact" });
-    expect(result.density).toBe("compact");
+  it("derives mode visibility from the official two-mode model", () => {
+    expect(modeVisibility("intensive")).toEqual({
+      lexical: true,
+      analysis: true,
+      userAssets: true,
+    });
+    expect(modeVisibility("immersive")).toEqual({
+      lexical: true,
+      analysis: false,
+      userAssets: true,
+    });
+    expect(modeShowsTranslation("intensive")).toBe(true);
+    expect(modeShowsTranslation("immersive")).toBe(false);
   });
 });

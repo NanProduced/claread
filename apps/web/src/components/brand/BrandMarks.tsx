@@ -54,7 +54,7 @@ export function ApertureWatermark({ className, size = 320 }: ApertureWatermarkPr
       aria-hidden="true"
       width={size}
       height={size}
-      className={cx("pointer-events-none select-none", className)}
+      className={cx("brand-aperture-mark pointer-events-none select-none", className)}
     />
   );
 }
@@ -78,7 +78,7 @@ export function ClareadStamp({ className, label = "CLAREAD EDITION" }: ClareadSt
         aria-hidden="true"
         width={18}
         height={18}
-        className="h-4 w-4"
+        className="brand-aperture-mark h-4 w-4"
       />
       <span>{label}</span>
     </div>

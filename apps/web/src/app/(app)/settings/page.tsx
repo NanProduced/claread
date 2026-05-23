@@ -77,11 +77,11 @@ export default async function SettingsPage() {
             </SectionCard>
 
             <SectionCard
-              title="外观与 Reader 默认纸面"
+              title="主题"
               icon={Palette}
               footer={
                 <p className="text-xs leading-5 text-muted">
-                  Appearance 影响全站界面；Reader 默认纸面决定新打开文章时的初始纸面风格。
+                  当前主题会同时影响全站壳层、功能页和 Reader，不再区分单独的 Reader 默认纸面。
                 </p>
               }
             >

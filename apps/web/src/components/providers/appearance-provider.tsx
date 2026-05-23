@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ThemeProvider, useTheme } from "next-themes";
 
 /**
@@ -21,32 +21,33 @@ if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
     _origError.apply(console, args);
   };
 }
+
 import {
-  APPEARANCE_STORAGE_KEY,
-  normalizeAppearance,
-  themeColorForAppearance,
-  type AppearanceState,
-  type ResolvedAppearanceState,
+  LEGACY_APPEARANCE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+  migrateLegacyAppearanceTheme,
+  normalizeThemeName,
+  themeColorForTheme,
+  type ThemeName,
 } from "@/lib/appearance";
 
 interface AppearanceContextValue {
-  appearance: AppearanceState;
-  resolvedAppearance: ResolvedAppearanceState;
-  isSystem: boolean;
-  setAppearance: (value: AppearanceState) => void;
+  themeName: ThemeName;
+  setThemeName: (value: ThemeName) => void;
 }
 
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
 
 function ThemeColorSync() {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, theme } = useTheme();
 
   useEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
 
-    const content = themeColorForAppearance(resolvedTheme as ResolvedAppearanceState | undefined);
+    const nextTheme = normalizeThemeName(resolvedTheme ?? theme);
+    const content = themeColorForTheme(nextTheme);
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
 
     if (!meta) {
@@ -56,23 +57,54 @@ function ThemeColorSync() {
     }
 
     meta.content = content;
-  }, [resolvedTheme]);
+    document.documentElement.dataset.appTheme = nextTheme;
+  }, [resolvedTheme, theme]);
 
   return null;
 }
 
 function AppearanceContextBridge({ children }: { children: React.ReactNode }) {
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const nextStoredTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+      if (nextStoredTheme) {
+        return;
+      }
+
+      const legacyStoredTheme = window.localStorage.getItem(LEGACY_APPEARANCE_STORAGE_KEY);
+      if (!legacyStoredTheme) {
+        return;
+      }
+
+      const migratedTheme = migrateLegacyAppearanceTheme(
+        legacyStoredTheme,
+        typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light",
+      );
+
+      setTheme(migratedTheme);
+    } catch {
+    }
+  }, [setTheme]);
 
   const value = useMemo<AppearanceContextValue>(
     () => ({
-      appearance: normalizeAppearance(theme),
-      resolvedAppearance:
-        resolvedTheme === "dark" ? "dark" : "light",
-      isSystem: normalizeAppearance(theme) === "system",
-      setAppearance: (next) => setTheme(next),
+      themeName: mounted ? normalizeThemeName(theme) : "paper",
+      setThemeName: (next) => setTheme(next),
     }),
-    [resolvedTheme, setTheme, theme],
+    [mounted, setTheme, theme],
   );
 
   return (
@@ -87,10 +119,10 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
   return (
     <ThemeProvider
       attribute="class"
-      defaultTheme="system"
-      enableSystem
+      defaultTheme="paper"
+      enableSystem={false}
       disableTransitionOnChange
-      storageKey={APPEARANCE_STORAGE_KEY}
+      storageKey={THEME_STORAGE_KEY}
     >
       <AppearanceContextBridge>{children}</AppearanceContextBridge>
     </ThemeProvider>

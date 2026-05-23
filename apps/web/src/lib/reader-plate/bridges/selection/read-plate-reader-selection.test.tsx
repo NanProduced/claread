@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 
 import { render } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ReaderMockVm, SentenceModel } from "@/types/view/ReaderMockVm";
+import { ImmersiveReaderSurface } from "../../../../components/reader/plate";
 import { PlateReaderSurface } from "../../../../components/reader/plate";
 import { renderSceneToPlateDocument } from "../../projection";
 import { readPlateReaderSelection } from "./read-plate-reader-selection";
@@ -135,7 +136,7 @@ describe("readPlateReaderSelection", () => {
       <article data-testid="reader-article">
         <PlateReaderSurface
           document={documentValue}
-          translationDisplay="visible"
+          showTranslation
           readingClassName="reader-serif text-ink"
         />
       </article>,
@@ -194,7 +195,7 @@ describe("readPlateReaderSelection", () => {
       <article data-testid="reader-article">
         <PlateReaderSurface
           document={documentValue}
-          translationDisplay="visible"
+          showTranslation
           readingClassName="reader-serif text-ink"
         />
       </article>,
@@ -221,5 +222,41 @@ describe("readPlateReaderSelection", () => {
 
     applySelection(external.firstChild, 0, external.firstChild, 7);
     expect(readPlateReaderSelection(articleElement, sentenceByIdFromScene(scene))).toBeNull();
+  });
+
+  it("keeps immersive selections readable through the same anchor contract", () => {
+    const scene = createBaseScene();
+    const documentValue = renderSceneToPlateDocument(scene);
+    const { container } = render(
+      <article data-testid="reader-article">
+        <ImmersiveReaderSurface
+          document={documentValue}
+          readingClassName="reader-serif text-ink"
+        />
+      </article>,
+    );
+
+    const articleElement = container.querySelector("article");
+    const firstSentence = container.querySelector<HTMLElement>(
+      '[data-reader-anchor="sentence"][data-sentence-id="s1"] [data-reader-sentence-text="true"]',
+    );
+    const secondSentence = container.querySelector<HTMLElement>(
+      '[data-reader-anchor="sentence"][data-sentence-id="s2"] [data-reader-sentence-text="true"]',
+    );
+    const firstSentenceTextNode = firstTextNode(firstSentence ?? document.createElement("span"));
+    const secondSentenceTextNode = firstTextNode(secondSentence ?? document.createElement("span"));
+    if (!articleElement || !firstSentenceTextNode || !secondSentenceTextNode) {
+      throw new Error("Expected rendered immersive sentence text nodes");
+    }
+
+    applySelection(firstSentenceTextNode, 14, firstSentenceTextNode, 20);
+    const textRangeSelection = readPlateReaderSelection(articleElement, sentenceByIdFromScene(scene));
+    expect(textRangeSelection?.anchorType).toBe("text_range");
+    expect(textRangeSelection?.selectedText).toBe("memory");
+
+    applySelection(firstSentenceTextNode, 22, secondSentenceTextNode, 20);
+    const multiTextSelection = readPlateReaderSelection(articleElement, sentenceByIdFromScene(scene));
+    expect(multiTextSelection?.anchorType).toBe("multi_text");
+    expect(multiTextSelection?.segments).toHaveLength(2);
   });
 });

@@ -3,22 +3,23 @@
   --font-reading-en: Newsreader;
   --font-ui-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-reading-zh: "Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", serif;
+  --font-reading-book: Georgia, "Times New Roman", "Songti SC", "STSong", serif;
 
-  --cl-color-app-canvas: #f7f6f2;
-  --cl-color-app-surface: #ffffff;
-  --cl-color-app-surface-raised: #fdfcf8;
-  --cl-color-app-ink: #111111;
-  --cl-color-app-muted: #62656d;
-  --cl-color-app-subtle: #858a92;
-  --cl-color-app-hairline: #e8e4da;
-  --cl-color-app-accent: #2563eb;
-  --cl-color-app-accent-soft: #eaf1ff;
+  --cl-color-app-canvas: #f3efe6;
+  --cl-color-app-surface: #fbf7ee;
+  --cl-color-app-surface-raised: #f8f4ea;
+  --cl-color-app-ink: #171511;
+  --cl-color-app-muted: #6e685e;
+  --cl-color-app-subtle: #928978;
+  --cl-color-app-hairline: #d9d1c3;
+  --cl-color-app-accent: #1f5eff;
+  --cl-color-app-accent-soft: #e8efff;
 
-  --cl-color-reader-paper: #faf9f6;
-  --cl-color-reader-paper-elevated: #fbfaf6;
-  --cl-color-reader-paper-ink: #111111;
-  --cl-color-reader-paper-muted: #62656d;
-  --cl-color-reader-paper-line: #e8e4da;
+  --cl-color-reader-paper: #f8f4ea;
+  --cl-color-reader-paper-elevated: #fbf7ee;
+  --cl-color-reader-paper-ink: #171511;
+  --cl-color-reader-paper-muted: #6e685e;
+  --cl-color-reader-paper-line: #d9d1c3;
 
   --cl-color-vocab-amber: #e4b000;
   --cl-color-phrase-lavender: #b9a8e6;
@@ -127,14 +128,14 @@
   --destructive-foreground: var(--cl-color-destructive-foreground);
   --radius: var(--cl-radius-surface-sm);
 
-  --app-panel-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(251, 250, 246, 0.98));
-  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(250, 249, 246, 0.92));
-  --app-nav-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 246, 242, 0.96));
-  --app-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 247, 241, 0.98));
-  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 244, 236, 1));
-  --app-control-quiet: rgba(250, 249, 246, 0.82);
-  --app-segmented-surface: linear-gradient(180deg, rgba(244, 241, 233, 0.72), rgba(251, 249, 244, 0.9));
-  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 1));
+  --app-panel-gradient: linear-gradient(180deg, rgba(254, 251, 245, 0.96), rgba(249, 244, 234, 0.98));
+  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 250, 242, 0.72), rgba(249, 244, 234, 0.92));
+  --app-nav-gradient: linear-gradient(180deg, rgba(251, 247, 238, 0.9), rgba(243, 239, 230, 0.96));
+  --app-control-gradient: linear-gradient(180deg, rgba(255, 251, 244, 0.96), rgba(247, 241, 230, 0.98));
+  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(245, 238, 225, 1));
+  --app-control-quiet: rgba(248, 243, 234, 0.82);
+  --app-segmented-surface: linear-gradient(180deg, rgba(242, 236, 225, 0.76), rgba(249, 244, 235, 0.9));
+  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(248, 243, 234, 1));
   --app-segmented-hover-surface: rgba(255, 255, 255, 0.58);
   --app-panel-shadow-quiet: 0 1px 2px rgba(17, 17, 17, 0.03), 0 8px 24px rgba(17, 17, 17, 0.04);
   --app-control-shadow: 0 8px 20px rgba(17, 17, 17, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.72);
@@ -161,66 +162,141 @@
   --app-danger-border: rgba(190, 18, 60, 0.18);
   --app-danger-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 247, 249, 0.98));
   --app-danger-gradient-hover: linear-gradient(180deg, rgba(255, 249, 251, 1), rgba(255, 241, 245, 1));
+  --reader-shell-gradient:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, rgba(251, 247, 239, 0.98), rgba(247, 241, 231, 0.96));
+  --reader-shell-shadow: 0 1px 2px rgba(17, 17, 17, 0.025), 0 26px 64px rgba(28, 24, 18, 0.08);
+  --reader-header-surface: rgba(250, 246, 238, 0.86);
+  --reader-header-shadow: 0 18px 42px rgba(28, 24, 18, 0.06);
+  --reader-stage-rule: rgba(216, 206, 188, 0.92);
+  --reader-stage-glow: rgba(39, 77, 166, 0.045);
+  --reader-tool-surface-top: rgba(255, 255, 255, 0.92);
+  --reader-tool-surface-bottom: rgba(248, 244, 236, 0.96);
+  --reader-tool-shadow: 0 16px 42px rgba(28, 24, 18, 0.07);
+  --reader-tool-shadow-recessed: 0 12px 28px rgba(28, 24, 18, 0.045);
+  --reader-tool-border: rgba(217, 209, 195, 0.82);
+  --reader-immersive-cue-surface: rgba(251, 247, 239, 0.74);
+  --reader-immersive-cue-hover: rgba(228, 219, 202, 0.64);
+  --reader-immersive-focus: rgba(219, 210, 193, 0.32);
+}
+
+.light {
+  --cl-color-app-canvas: #f7f5f0;
+  --cl-color-app-surface: #ffffff;
+  --cl-color-app-surface-raised: #fbfaf6;
+  --cl-color-app-ink: #151515;
+  --cl-color-app-muted: #666a73;
+  --cl-color-app-subtle: #858a92;
+  --cl-color-app-hairline: #e3ded3;
+  --cl-color-app-accent: #1f5eff;
+  --cl-color-app-accent-soft: #eaf1ff;
+
+  --cl-color-reader-paper: #faf9f6;
+  --cl-color-reader-paper-elevated: #fbfaf6;
+  --cl-color-reader-paper-ink: #151515;
+  --cl-color-reader-paper-muted: #666a73;
+  --cl-color-reader-paper-line: #e3ded3;
+
+  --app-panel-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(251, 250, 246, 0.98));
+  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(250, 249, 246, 0.92));
+  --app-nav-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 245, 240, 0.96));
+  --app-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 247, 241, 0.98));
+  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 244, 236, 1));
+  --app-control-quiet: rgba(250, 249, 246, 0.82);
+  --app-segmented-surface: linear-gradient(180deg, rgba(244, 241, 233, 0.72), rgba(251, 249, 244, 0.9));
+  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 1));
+  --reader-shell-gradient:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 0.98));
+  --reader-shell-shadow: 0 1px 2px rgba(17, 17, 17, 0.03), 0 20px 46px rgba(17, 17, 17, 0.05);
+  --reader-header-surface: rgba(255, 255, 255, 0.88);
+  --reader-header-shadow: 0 16px 34px rgba(17, 17, 17, 0.045);
+  --reader-stage-rule: rgba(227, 222, 211, 0.94);
+  --reader-stage-glow: rgba(31, 94, 255, 0.035);
+  --reader-tool-surface-top: rgba(255, 255, 255, 0.94);
+  --reader-tool-surface-bottom: rgba(250, 248, 243, 0.98);
+  --reader-tool-shadow: 0 14px 34px rgba(17, 17, 17, 0.055);
+  --reader-tool-shadow-recessed: 0 10px 22px rgba(17, 17, 17, 0.035);
+  --reader-tool-border: rgba(227, 222, 211, 0.88);
+  --reader-immersive-cue-surface: rgba(252, 251, 247, 0.8);
+  --reader-immersive-cue-hover: rgba(234, 229, 220, 0.62);
+  --reader-immersive-focus: rgba(223, 216, 204, 0.28);
 }
 
 .dark {
-  --cl-color-app-canvas: #181713;
-  --cl-color-app-surface: #22201b;
-  --cl-color-app-surface-raised: #2b2823;
-  --cl-color-app-ink: #f6f3ec;
-  --cl-color-app-muted: #bbb2a5;
-  --cl-color-app-subtle: #958d81;
-  --cl-color-app-hairline: #3a362f;
-  --cl-color-app-accent: #7aa2ff;
-  --cl-color-app-accent-soft: rgba(122, 162, 255, 0.16);
+  --cl-color-app-canvas: #121518;
+  --cl-color-app-surface: #191d21;
+  --cl-color-app-surface-raised: #21262c;
+  --cl-color-app-ink: #f3efe7;
+  --cl-color-app-muted: #c7bcae;
+  --cl-color-app-subtle: #9a9084;
+  --cl-color-app-hairline: #4b5057;
+  --cl-color-app-accent: #8cb2ff;
+  --cl-color-app-accent-soft: rgba(140, 178, 255, 0.18);
 
-  --cl-color-reader-paper: #25231e;
-  --cl-color-reader-paper-elevated: #2b2822;
-  --cl-color-reader-paper-ink: #f6f3ec;
-  --cl-color-reader-paper-muted: #b8b0a3;
-  --cl-color-reader-paper-line: #3c3831;
+  --cl-color-reader-paper: #1c2024;
+  --cl-color-reader-paper-elevated: #24292f;
+  --cl-color-reader-paper-ink: #f3efe7;
+  --cl-color-reader-paper-muted: #cbc1b4;
+  --cl-color-reader-paper-line: #545a62;
 
-  --cl-color-popover: #2b2823;
-  --cl-color-popover-foreground: #f6f3ec;
-  --cl-color-primary-foreground: #141517;
-  --cl-color-secondary: #2a2722;
-  --cl-color-secondary-foreground: #f1ede3;
+  --cl-color-popover: #262b31;
+  --cl-color-popover-foreground: #f3efe6;
+  --cl-color-primary-foreground: #151719;
+  --cl-color-secondary: #24292f;
+  --cl-color-secondary-foreground: #f2ede2;
   --cl-color-destructive-foreground: #fff4f7;
 
   --ink-soft: color-mix(in srgb, var(--app-ink) 92%, black);
 
-  --app-panel-gradient: linear-gradient(180deg, rgba(44, 41, 35, 0.96), rgba(31, 29, 25, 0.98));
-  --app-panel-muted-gradient: linear-gradient(180deg, rgba(49, 45, 39, 0.92), rgba(36, 33, 28, 0.96));
-  --app-nav-gradient: linear-gradient(180deg, rgba(35, 33, 28, 0.95), rgba(25, 24, 20, 0.98));
-  --app-control-gradient: linear-gradient(180deg, rgba(47, 43, 37, 0.96), rgba(36, 33, 28, 0.98));
-  --app-control-hover-gradient: linear-gradient(180deg, rgba(54, 49, 43, 0.98), rgba(40, 37, 31, 1));
-  --app-control-quiet: rgba(41, 38, 33, 0.92);
-  --app-segmented-surface: linear-gradient(180deg, rgba(40, 37, 32, 0.96), rgba(31, 29, 25, 0.98));
-  --app-segmented-active-surface: linear-gradient(180deg, rgba(58, 53, 46, 0.98), rgba(44, 41, 35, 1));
-  --app-segmented-hover-surface: rgba(61, 56, 48, 0.72);
+  --app-panel-gradient: linear-gradient(180deg, rgba(33, 37, 42, 0.96), rgba(22, 25, 29, 0.98));
+  --app-panel-muted-gradient: linear-gradient(180deg, rgba(39, 43, 48, 0.92), rgba(29, 32, 36, 0.96));
+  --app-nav-gradient: linear-gradient(180deg, rgba(24, 28, 32, 0.95), rgba(17, 20, 24, 0.98));
+  --app-control-gradient: linear-gradient(180deg, rgba(41, 45, 50, 0.96), rgba(30, 34, 38, 0.98));
+  --app-control-hover-gradient: linear-gradient(180deg, rgba(47, 52, 58, 0.98), rgba(35, 40, 45, 1));
+  --app-control-quiet: rgba(34, 38, 43, 0.92);
+  --app-segmented-surface: linear-gradient(180deg, rgba(33, 37, 42, 0.96), rgba(25, 29, 33, 0.98));
+  --app-segmented-active-surface: linear-gradient(180deg, rgba(52, 57, 64, 0.98), rgba(38, 43, 49, 1));
+  --app-segmented-hover-surface: rgba(61, 67, 76, 0.72);
   --app-panel-shadow-quiet: 0 1px 2px rgba(8, 8, 8, 0.32), 0 12px 28px rgba(0, 0, 0, 0.22);
   --app-control-shadow: 0 12px 26px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --app-control-shadow-strong: 0 14px 32px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --app-control-border-hover: rgba(162, 152, 139, 0.34);
+  --app-control-border-hover: rgba(170, 178, 190, 0.32);
   --app-overlay: rgba(6, 6, 6, 0.42);
-  --app-tooltip-surface: rgba(242, 238, 230, 0.96);
+  --app-tooltip-surface: rgba(244, 240, 232, 0.96);
   --app-tooltip-foreground: rgba(25, 24, 20, 0.95);
-  --app-scroll-thumb: rgba(187, 178, 165, 0.28);
-  --app-switch-track: rgba(75, 70, 62, 0.9);
+  --app-scroll-thumb: rgba(198, 188, 174, 0.32);
+  --app-switch-track: rgba(68, 74, 84, 0.9);
   --app-switch-thumb-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
   --app-mobile-nav-shadow: 0 -14px 34px rgba(0, 0, 0, 0.22);
-  --app-primary-border: rgba(122, 162, 255, 0.36);
-  --app-primary-border-hover: rgba(135, 172, 255, 0.46);
-  --app-primary-gradient: linear-gradient(180deg, rgba(132, 171, 255, 0.96), rgba(98, 136, 228, 0.98));
-  --app-primary-gradient-hover: linear-gradient(180deg, rgba(144, 181, 255, 0.98), rgba(108, 145, 236, 1));
-  --app-primary-shadow: 0 14px 30px rgba(72, 104, 180, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  --app-primary-shadow-hover: 0 18px 34px rgba(72, 104, 180, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
-  --app-secondary-border: rgba(82, 77, 69, 0.84);
-  --app-secondary-gradient: linear-gradient(180deg, rgba(57, 52, 45, 0.98), rgba(42, 39, 34, 0.98));
-  --app-secondary-gradient-hover: linear-gradient(180deg, rgba(64, 58, 50, 0.98), rgba(47, 43, 37, 1));
+  --app-primary-border: rgba(140, 178, 255, 0.42);
+  --app-primary-border-hover: rgba(157, 192, 255, 0.52);
+  --app-primary-gradient: linear-gradient(180deg, rgba(151, 190, 255, 0.97), rgba(111, 151, 242, 0.98));
+  --app-primary-gradient-hover: linear-gradient(180deg, rgba(164, 201, 255, 0.99), rgba(121, 160, 248, 1));
+  --app-primary-shadow: 0 14px 30px rgba(67, 100, 173, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --app-primary-shadow-hover: 0 18px 34px rgba(67, 100, 173, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --app-secondary-border: rgba(86, 92, 102, 0.84);
+  --app-secondary-gradient: linear-gradient(180deg, rgba(46, 51, 57, 0.98), rgba(31, 36, 41, 0.98));
+  --app-secondary-gradient-hover: linear-gradient(180deg, rgba(53, 58, 64, 0.98), rgba(37, 42, 47, 1));
   --app-secondary-shadow: 0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --app-secondary-shadow-hover: 0 16px 28px rgba(0, 0, 0, 0.22);
   --app-danger-border: rgba(190, 18, 60, 0.32);
-  --app-danger-gradient: linear-gradient(180deg, rgba(73, 36, 46, 0.92), rgba(55, 26, 35, 0.96));
-  --app-danger-gradient-hover: linear-gradient(180deg, rgba(84, 40, 51, 0.96), rgba(62, 28, 39, 1));
+  --app-danger-gradient: linear-gradient(180deg, rgba(74, 39, 49, 0.92), rgba(56, 29, 37, 0.96));
+  --app-danger-gradient-hover: linear-gradient(180deg, rgba(85, 44, 55, 0.96), rgba(63, 31, 40, 1));
+  --reader-shell-gradient:
+    radial-gradient(circle at top center, rgba(140, 178, 255, 0.08), transparent 42%),
+    linear-gradient(180deg, rgba(35, 39, 44, 0.98), rgba(24, 28, 32, 0.98));
+  --reader-shell-shadow: 0 1px 2px rgba(0, 0, 0, 0.34), 0 28px 72px rgba(0, 0, 0, 0.26);
+  --reader-header-surface: rgba(23, 26, 30, 0.88);
+  --reader-header-shadow: 0 20px 44px rgba(0, 0, 0, 0.24);
+  --reader-stage-rule: rgba(86, 92, 102, 0.92);
+  --reader-stage-glow: rgba(140, 178, 255, 0.08);
+  --reader-tool-surface-top: rgba(38, 42, 47, 0.94);
+  --reader-tool-surface-bottom: rgba(28, 32, 36, 0.98);
+  --reader-tool-shadow: 0 20px 48px rgba(0, 0, 0, 0.24);
+  --reader-tool-shadow-recessed: 0 12px 24px rgba(0, 0, 0, 0.18);
+  --reader-tool-border: rgba(81, 86, 95, 0.92);
+  --reader-immersive-cue-surface: rgba(38, 42, 47, 0.76);
+  --reader-immersive-cue-hover: rgba(58, 64, 72, 0.72);
+  --reader-immersive-focus: rgba(87, 94, 105, 0.42);
 }

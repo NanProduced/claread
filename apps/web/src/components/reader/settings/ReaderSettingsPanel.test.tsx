@@ -6,75 +6,44 @@ import { defaultReaderSettings } from "./shared";
 import { ReaderSettingsPanel } from "./ReaderSettingsPanel";
 
 describe("ReaderSettingsPanel", () => {
-  it("renders and emits updated reader settings", () => {
+  it("renders only the new calibration controls and emits updated settings", () => {
     const onChange = vi.fn();
+    const onThemeChange = vi.fn();
 
     render(
       <ReaderSettingsPanel
+        themeName="paper"
         value={defaultReaderSettings}
         onChange={onChange}
+        onThemeChange={onThemeChange}
       />,
     );
 
-    expect(screen.getByText("阅读显示")).toBeTruthy();
-    expect(screen.getByText("标注层")).toBeTruthy();
-    expect(screen.getByText("阅读预设")).toBeTruthy();
-    expect(screen.getByText("纸面主题")).toBeTruthy();
+    expect(screen.getByText("阅读设置")).toBeTruthy();
+    expect(screen.getByText("主题")).toBeTruthy();
+    expect(screen.getByText("字号")).toBeTruthy();
+    expect(screen.getByText("字体")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /隐藏/i }));
+    expect(screen.queryByText("阅读预设")).toBeNull();
+    expect(screen.queryByText("译文")).toBeNull();
+    expect(screen.queryByText("行距")).toBeNull();
+    expect(screen.queryByText("版心")).toBeNull();
+    expect(screen.queryByText("纸面主题")).toBeNull();
+    expect(screen.queryByText("标注层")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /深色 dark/i }));
+    expect(onThemeChange).toHaveBeenCalledWith("dark");
+
+    fireEvent.click(screen.getByRole("button", { name: /^大$/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
-      readingMode: "custom",
-      translationDisplay: "hidden",
+      fontScale: "lg",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /^大/i }));
+    fireEvent.click(screen.getByRole("button", { name: /书页衬线/i }));
     expect(onChange).toHaveBeenCalledWith({
       ...defaultReaderSettings,
-      readingMode: "custom",
-      fontSize: "large",
+      fontFamily: "book",
     });
-
-    fireEvent.click(screen.getByRole("button", { name: /舒展/i }));
-    expect(onChange).toHaveBeenCalledWith({
-      ...defaultReaderSettings,
-      readingMode: "custom",
-      density: "roomy",
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /^宽/i }));
-    expect(onChange).toHaveBeenCalledWith({
-      ...defaultReaderSettings,
-      readingMode: "custom",
-      columnWidth: "wide",
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /鼠尾草/i }));
-    expect(onChange).toHaveBeenCalledWith({
-      ...defaultReaderSettings,
-      readingMode: "custom",
-      readerPaperTheme: "sage",
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /词汇 \/ 短语/i }));
-    expect(onChange).toHaveBeenCalledWith({
-      ...defaultReaderSettings,
-      readingMode: "custom",
-      annotationVisibilityGroups: {
-        ...defaultReaderSettings.annotationVisibilityGroups,
-        lexical: false,
-      },
-    });
-  });
-
-  it("has a renamed annotation group label", () => {
-    render(
-      <ReaderSettingsPanel
-        value={defaultReaderSettings}
-        onChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryAllByText("我的高亮与笔记").length).toBeGreaterThan(0);
   });
 });

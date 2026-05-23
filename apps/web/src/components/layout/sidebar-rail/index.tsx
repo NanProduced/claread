@@ -51,7 +51,7 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
               alt="Claread"
               width={36}
               height={36}
-              className="h-9 w-9 shrink-0 rounded-full"
+              className="brand-aperture-shell brand-aperture-mark h-9 w-9 shrink-0 rounded-full border"
             />
             {!collapsed ? (
               <div className="min-w-0">

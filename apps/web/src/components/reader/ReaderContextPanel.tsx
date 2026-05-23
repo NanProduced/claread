@@ -34,6 +34,7 @@ export interface ReaderContextPanelProps {
   sentence: SentenceModel | null;
   selectedText?: string | null;
   annotationScope?: "sentence" | "text_range";
+  className?: string;
   color: UserAnnotationColorDto;
   saveState: AnnotationSaveState;
   onColorChange: (value: UserAnnotationColorDto) => void;
@@ -54,6 +55,7 @@ export function ReaderContextPanel({
   sentence,
   selectedText,
   annotationScope = "sentence",
+  className,
   color,
   saveState,
   onColorChange,
@@ -77,7 +79,7 @@ export function ReaderContextPanel({
       aria-modal="false"
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
-      className="w-[min(23rem,calc(100vw-1rem))] rounded-[1.05rem] border border-border/80 bg-popover/98 p-4 text-popover-foreground shadow-xl"
+      className={`w-[min(23rem,calc(100vw-1rem))] rounded-[1.05rem] border border-border/80 bg-popover/98 p-4 text-popover-foreground shadow-xl ${className ?? ""}`.trim()}
     >
       <div className="flex items-start justify-between gap-3">
         <div>

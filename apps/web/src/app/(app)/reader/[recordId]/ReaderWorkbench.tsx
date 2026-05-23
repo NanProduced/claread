@@ -11,7 +11,6 @@ import {
   USER_ANNOTATION_COLORS,
 } from "@claread/contracts";
 import {
-  BookOpen,
   Type,
   X,
 } from "lucide-react";
@@ -22,24 +21,25 @@ import {
   AiWorkspacePanel,
   ReaderContextPanel,
   ReaderDictionaryRail,
+  ImmersiveReaderSurface,
+  IntensiveReaderSurface,
   ReaderNotePanel,
   ReaderSelectionNoteDraftPopover,
   ReaderQuickPeek,
   ReaderSettingsPanel,
-  PlateReaderSurface,
   SelectionToolbar,
   defaultReaderSettings,
+  modeShowsTranslation,
+  modeVisibility,
   persistReaderSettings,
-  readerColumnWidthClassName,
-  readerPaperThemeClassName,
-  readerPaperThemeDataValue,
   readStoredReaderSettings,
+  readerThemeClassName,
   readerTextClassName,
-  translationVisible,
   type ReaderSettingsState,
   textRangeAnchorAttributes,
   useReaderFloatingLayer,
 } from "@/components/reader";
+import { useAppearance } from "@/components/providers/appearance-provider";
 import {
   askAttachmentFromAnnotation,
   askAttachmentFromAnalysisBlock,
@@ -640,6 +640,7 @@ export function ReaderWorkbench({
   const [hoveredAnnotationTargetKey, setHoveredAnnotationTargetKey] = useState<string | null>(null);
   const [activeAnnotationTargetKey, setActiveAnnotationTargetKey] = useState<string | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
+  const [immersiveHeaderCondensed, setImmersiveHeaderCondensed] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
   const [dismissedLiveAskAttachmentKey, setDismissedLiveAskAttachmentKey] = useState<string | null>(null);
@@ -676,6 +677,7 @@ export function ReaderWorkbench({
   const previousLiveAskAttachmentKeyRef = useRef<string | null>(null);
   const [dictionaryDockLayout, setDictionaryDockLayout] = useState<DictionaryDockLayout | null>(null);
   const dictionaryPanelVisible = Boolean(dictionaryRailOpen || dictionaryPinned);
+  const { themeName, setThemeName } = useAppearance();
 
   const {
     refs: {
@@ -730,12 +732,32 @@ export function ReaderWorkbench({
   });
 
   useEffect(() => {
+    persistReaderSettings(readerSettings);
+  }, [readerSettings]);
+
+  useEffect(() => {
     setReaderSettings(readStoredReaderSettings());
   }, []);
 
   useEffect(() => {
-    persistReaderSettings(readerSettings);
-  }, [readerSettings]);
+    if (readerSettings.mode !== "immersive") {
+      setImmersiveHeaderCondensed(false);
+      return;
+    }
+
+    const updateHeaderState = () => {
+      const articleTop = articleRef.current?.getBoundingClientRect().top ?? 0;
+      setImmersiveHeaderCondensed(window.scrollY > 120 || articleTop < -32);
+    };
+
+    updateHeaderState();
+    window.addEventListener("scroll", updateHeaderState, { passive: true });
+    window.addEventListener("resize", updateHeaderState);
+    return () => {
+      window.removeEventListener("scroll", updateHeaderState);
+      window.removeEventListener("resize", updateHeaderState);
+    };
+  }, [readerSettings.mode]);
 
   useEffect(() => {
     if (!settingsPanelOpen) {
@@ -3108,11 +3130,12 @@ export function ReaderWorkbench({
     });
   }
 
-  const canvasThemeClass = readerPaperThemeClassName(readerSettings.readerPaperTheme);
-  const canvasThemeData = readerPaperThemeDataValue(readerSettings.readerPaperTheme);
+  const isImmersiveMode = readerSettings.mode === "immersive";
+  const canvasThemeClass = readerThemeClassName(themeName);
   const readingClass = readerTextClassName(readerSettings);
-  const readingColumnClass = readerColumnWidthClassName(readerSettings.columnWidth);
-  const showTranslation = translationVisible(readerSettings.translationDisplay);
+  const readingColumnClass = isImmersiveMode ? "max-w-[82ch]" : "max-w-[104ch]";
+  const contentVisibility = modeVisibility(readerSettings.mode);
+  const showTranslation = modeShowsTranslation(readerSettings.mode);
   const contextPanelVisible = Boolean(contextPanelOpen && activeSentence);
   const compactDictionaryPanelVisible = Boolean(
     dictionaryPanelVisible && !dictionaryDockLayout && !contextPanelVisible && !settingsPanelOpen,
@@ -3124,16 +3147,45 @@ export function ReaderWorkbench({
   const mobileSettingsPanelStyle = compactDictionaryPanelVisible
     ? ({ bottom: "min(calc(72vh + 6.5rem), calc(100vh - 18rem))" } satisfies CSSProperties)
     : undefined;
+  const shellModeClass = isImmersiveMode ? "reader-shell--immersive" : "reader-shell--intensive";
+
+  const headerShellClass = isImmersiveMode
+    ? `reader-header-band reader-header-band--immersive sticky top-3 z-20 border-b border-hairline/90 bg-background/88 backdrop-blur transition-[padding,background-color,border-color,box-shadow,transform] ${
+        immersiveHeaderCondensed
+          ? "px-5 py-3 shadow-[0_12px_28px_rgba(28,24,18,0.08)] sm:px-6 lg:px-8"
+          : "px-5 py-6 sm:px-8 lg:px-10 lg:py-8"
+      }`
+    : "reader-header-band reader-header-band--intensive border-b border-hairline px-5 py-4 sm:px-8 lg:px-10";
+  const headerTitleClass = isImmersiveMode
+    ? `font-headline font-semibold tracking-[-0.02em] text-ink transition-[font-size,max-width,margin] ${
+        immersiveHeaderCondensed
+          ? "mt-1 max-w-[28ch] text-[1.55rem] leading-[1.02] md:text-[1.9rem]"
+          : "mt-3 max-w-[20ch] text-[3rem] leading-[0.94] md:text-[4.35rem]"
+      }`
+    : "mt-2 max-w-[24ch] font-headline text-3xl font-semibold leading-tight tracking-normal text-ink md:text-[2.35rem]";
+  const headerMetaClass = `flex flex-wrap items-center gap-2 text-muted transition-[opacity,max-height,margin] ${
+    isImmersiveMode
+      ? immersiveHeaderCondensed
+        ? "mt-2 max-h-0 overflow-hidden opacity-0"
+        : "mt-4 max-h-16 text-[0.74rem] opacity-100"
+      : "mt-3 text-xs opacity-100"
+  }`;
+  const headerEyebrowClass = isImmersiveMode
+    ? "text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-lens-blue"
+    : "text-xs font-semibold text-muted";
+
+  function handleReaderSettingsChange(next: ReaderSettingsState) {
+    setReaderSettings(next);
+  }
 
   return (
-    <main className="paper-grain min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5">
+    <main className="paper-grain reader-shell-page min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5">
       <div className="relative">
         <div className="relative min-w-0">
           <article
-          ref={articleRef}
-          className={`min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${canvasThemeClass}`}
-          data-reader-theme={canvasThemeData}
-          onClick={(event) => {
+            ref={articleRef}
+            className={`reader-shell min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${shellModeClass} ${canvasThemeClass}`}
+            onClick={(event) => {
             const target = event.target instanceof HTMLElement ? event.target : null;
             const nativeSelection = window.getSelection();
             if (nativeSelection && !nativeSelection.isCollapsed && nativeSelection.toString().trim()) {
@@ -3169,71 +3221,71 @@ export function ReaderWorkbench({
             window.requestAnimationFrame(updateTextSelectionFromDom);
           }}
         >
-          <header className="border-b border-hairline px-5 py-4 sm:px-8 lg:px-10">
+          <header className={headerShellClass}>
             <div
               ref={readingColumnRef}
-              className={`mx-auto flex ${readingColumnClass} flex-col gap-4 lg:flex-row lg:items-start lg:justify-between`}
+              className={`reader-header-band-inner mx-auto flex ${readingColumnClass} flex-col ${
+                isImmersiveMode && !immersiveHeaderCondensed ? "gap-6 lg:gap-8" : "gap-4"
+              } lg:flex-row lg:items-start lg:justify-between`}
             >
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-muted">透读正文</p>
-                <h1 className="mt-2 max-w-[24ch] font-headline text-3xl font-semibold leading-tight tracking-normal text-ink md:text-[2.35rem]">
+                <p className={headerEyebrowClass}>
+                  {isImmersiveMode ? "沉浸阅读" : "透读正文"}
+                </p>
+                <h1 className={headerTitleClass}>
                   {record.title}
                 </h1>
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+                <div className={headerMetaClass}>
                   <span>{dataSourceLabel[dataSource]}</span>
                   <span aria-hidden="true" className="h-1 w-1 rounded-full bg-hairline" />
                   <span>{reader.article.sentences.length} 句</span>
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 lg:gap-2.5">
+              <div className="reader-shell-controls flex shrink-0 flex-wrap items-center justify-end gap-2 lg:gap-2.5">
                 <FavoriteButton recordId={record.id} />
-                <div className="flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/72 p-1 shadow-sm">
+                <div className="reader-mode-cluster flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/72 p-1 shadow-sm">
+                  {([
+                    { value: "intensive", label: "精读" },
+                    { value: "immersive", label: "沉浸" },
+                  ] as const).map((option) => {
+                    const active = readerSettings.mode === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`reader-mode-cluster__option focus-ring inline-flex min-h-[2.55rem] min-w-[4.8rem] items-center justify-center rounded-[0.85rem] border px-3 text-center text-[0.84rem] font-semibold leading-none transition-[background-color,border-color,color,box-shadow,transform] ${
+                          active
+                            ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
+                            : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
+                        }`}
+                        onClick={() =>
+                          handleReaderSettingsChange({
+                            ...readerSettings,
+                            mode: option.value,
+                          })}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
                     <button
-                    type="button"
-                    className={`focus-ring inline-flex min-h-[2.55rem] min-w-[6rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
-                      showTranslation
-                        ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
-                        : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
-                    }`}
-                    onClick={() => {
-                      const nextDisplay = readerSettings.translationDisplay === "hidden" ? "visible"
-                        : readerSettings.translationDisplay === "visible" ? "muted"
-                        : "hidden";
-                      setReaderSettings((current) => ({
-                        ...current,
-                        readingMode: "custom",
-                        translationDisplay: nextDisplay,
-                      }));
-                    }}
-                  >
-                    <BookOpen
-                      aria-hidden="true"
-                      className={`h-4 w-4 shrink-0 ${showTranslation ? "text-lens-blue" : "text-muted"}`}
-                    />
-                      <span className="flex min-w-0 flex-col">
-                        <span className="text-[0.84rem] font-semibold leading-none">
-                          {readerSettings.translationDisplay === "visible" ? "原文 + 译文"
-                            : readerSettings.translationDisplay === "muted" ? "译文淡显"
-                            : "仅看原文"}
-                        </span>
-                      </span>
-                    </button>
-                  <button
-                    ref={settingsButtonRef}
-                    type="button"
-                    className={`focus-ring inline-flex min-h-[2.55rem] min-w-[5.2rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
-                      settingsPanelOpen
-                        ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
+                      ref={settingsButtonRef}
+                      type="button"
+                      aria-expanded={settingsPanelOpen}
+                      aria-haspopup="dialog"
+                      className={`reader-mode-cluster__settings focus-ring inline-flex min-h-[2.55rem] min-w-[5.2rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
+                        settingsPanelOpen
+                          ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
                         : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
                     }`}
                     onClick={openSettingsPanel}
-                  >
-                    <Type
-                      aria-hidden="true"
-                      className={`h-4 w-4 shrink-0 ${settingsPanelOpen ? "text-lens-blue" : "text-muted"}`}
-                    />
+                    >
+                      <Type
+                        aria-hidden="true"
+                        className={`h-4 w-4 shrink-0 ${settingsPanelOpen ? "text-lens-blue" : "text-muted"}`}
+                      />
                       <span className="flex min-w-0 flex-col">
-                        <span className="text-[0.84rem] font-semibold leading-none">阅读显示</span>
+                        <span className="text-[0.84rem] font-semibold leading-none">阅读设置</span>
                       </span>
                     </button>
                 </div>
@@ -3241,52 +3293,76 @@ export function ReaderWorkbench({
             </div>
 
             {message ? (
-              <div className={`mx-auto mt-5 ${readingColumnClass} rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft`}>
+              <div className={`reader-shell-message mx-auto mt-5 ${readingColumnClass} rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft`}>
                 {message}
               </div>
             ) : null}
           </header>
 
-          <PlateReaderSurface
-            document={plateDocument}
-            translationDisplay={readerSettings.translationDisplay}
-            readingClassName={readingClass}
-            columnWidth={readerSettings.columnWidth}
-            themeClassName={canvasThemeClass}
-            activeSentenceId={activeSentence?.sentenceId ?? null}
-            selectedSentenceId={textSelection?.anchorType === "sentence" ? textSelection.sentence.sentenceId : null}
-            activeAnalysisEntryId={activeEntryId}
-            expandedAnalysisEntryIds={expandedAnalysisEntryIds}
-            jumpTarget={jumpTarget}
-            focusTarget={focusedReaderNoteTarget}
-            selectionFocusRangesBySentence={selectionFocusRangesBySentence}
-            hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
-            assetProjection={assetProjection}
-            readerNotesBySentence={readerNotesBySentence}
-            activeReaderNoteId={activeReaderNoteId}
-            annotationVisibilityGroups={readerSettings.annotationVisibilityGroups}
-            onAnalysisFocusChange={setAnalysisEntryFocus}
-            onAnalysisToggle={toggleAnalysisEntry}
-            onAnnotationJump={jumpToAnnotation}
-            onHoverAnnotationTargetKeyChange={setHoveredAnnotationTargetKey}
-            onOpenSentenceNotes={openSentenceNotes}
-            onDeleteAnalysisSupplement={deleteAnalysisSupplement}
-            onAskTranslation={openAskWithTranslation}
-            onAskAnalysis={openAskWithAnalysis}
-            onAskContentSummary={openAskWithContentSummary}
-            onLookupIntent={(intent, anchor, triggerEl) =>
-              handleLookupIntent(intent, anchor, { showPreview: true }, triggerEl)
-            }
-            onInspectIntent={(intent, anchor, triggerEl) =>
-              handleInspectIntent(intent, anchor, { showPreview: true }, triggerEl)
-            }
-            onSentenceActivate={(sentenceId, anchorEl) => {
-              const sentence = sentenceById.get(sentenceId);
-              if (sentence) {
-                selectSentence(sentence, anchorEl);
-              }
-            }}
-          />
+            <div className={`reader-reading-stage ${isImmersiveMode ? "reader-reading-stage--immersive" : "reader-reading-stage--intensive"}`}>
+              {isImmersiveMode ? (
+                <ImmersiveReaderSurface
+                  document={plateDocument}
+                  readingClassName={readingClass}
+                  themeClassName={canvasThemeClass}
+                  jumpTarget={jumpTarget}
+                  focusTarget={focusedReaderNoteTarget}
+                  selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+                  hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+                  assetProjection={assetProjection}
+                  readerNotesBySentence={readerNotesBySentence}
+                  onAnnotationJump={jumpToAnnotation}
+                  onHoverAnnotationTargetKeyChange={setHoveredAnnotationTargetKey}
+                  onOpenSentenceNotes={openSentenceNotes}
+                  onLookupIntent={(intent, anchor, triggerEl) =>
+                    handleLookupIntent(intent, anchor, { showPreview: true }, triggerEl)
+                  }
+                  onInspectIntent={(intent, anchor, triggerEl) =>
+                    handleInspectIntent(intent, anchor, { showPreview: true }, triggerEl)
+                  }
+                />
+              ) : (
+                <IntensiveReaderSurface
+                  document={plateDocument}
+                  showTranslation={showTranslation}
+                  readingClassName={readingClass}
+                  themeClassName={canvasThemeClass}
+                  annotationVisibilityGroups={contentVisibility}
+                  activeSentenceId={activeSentence?.sentenceId ?? null}
+                  selectedSentenceId={textSelection?.anchorType === "sentence" ? textSelection.sentence.sentenceId : null}
+                  activeAnalysisEntryId={activeEntryId}
+                  expandedAnalysisEntryIds={expandedAnalysisEntryIds}
+                  jumpTarget={jumpTarget}
+                  focusTarget={focusedReaderNoteTarget}
+                  selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+                  hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+                  assetProjection={assetProjection}
+                  readerNotesBySentence={readerNotesBySentence}
+                  activeReaderNoteId={activeReaderNoteId}
+                  onAnalysisFocusChange={setAnalysisEntryFocus}
+                  onAnalysisToggle={toggleAnalysisEntry}
+                  onAnnotationJump={jumpToAnnotation}
+                  onHoverAnnotationTargetKeyChange={setHoveredAnnotationTargetKey}
+                  onOpenSentenceNotes={openSentenceNotes}
+                  onDeleteAnalysisSupplement={deleteAnalysisSupplement}
+                  onAskTranslation={openAskWithTranslation}
+                  onAskAnalysis={openAskWithAnalysis}
+                  onAskContentSummary={openAskWithContentSummary}
+                  onLookupIntent={(intent, anchor, triggerEl) =>
+                    handleLookupIntent(intent, anchor, { showPreview: true }, triggerEl)
+                  }
+                  onInspectIntent={(intent, anchor, triggerEl) =>
+                    handleInspectIntent(intent, anchor, { showPreview: true }, triggerEl)
+                  }
+                  onSentenceActivate={(sentenceId, anchorEl) => {
+                    const sentence = sentenceById.get(sentenceId);
+                    if (sentence) {
+                      selectSentence(sentence, anchorEl);
+                    }
+                  }}
+                />
+              )}
+            </div>
         </article>
 
         {notePanelSentence ? (
@@ -3324,6 +3400,7 @@ export function ReaderWorkbench({
             }}
           >
             <SelectionToolbar
+              className={isImmersiveMode ? "reader-selection-toolbar reader-selection-toolbar--immersive" : "reader-selection-toolbar"}
               selectedText={textSelection.selectedText}
               selectionMode={textSelection.anchorType}
               disabled={{
@@ -3365,6 +3442,7 @@ export function ReaderWorkbench({
           <ReaderQuickPeek
             lookup={activeLookup}
             inspect={activeInspect}
+            className={isImmersiveMode ? "reader-tool-float reader-tool-float--immersive" : "reader-tool-float"}
             floatingRef={(node) => {
               setLookupPreviewFloating(node);
               lookupPreviewPanelRef.current = node;
@@ -3381,7 +3459,7 @@ export function ReaderWorkbench({
 
       {dictionaryPanelVisible && dictionaryDockLayout ? (
         <div
-          className="fixed top-3 bottom-3 z-40 hidden xl:block"
+          className={`reader-tool-surface reader-tool-surface--rail fixed top-3 bottom-3 z-40 hidden xl:block ${isImmersiveMode ? "reader-tool-surface--immersive" : "reader-tool-surface--intensive"}`}
           style={{ left: `${dictionaryDockLayout.left}px`, width: `${dictionaryDockLayout.width}px` }}
         >
           <ReaderDictionaryRail
@@ -3419,7 +3497,7 @@ export function ReaderWorkbench({
       ) : null}
 
       {dictionaryPanelVisible && !dictionaryDockLayout && !contextPanelVisible ? (
-        <div className="fixed inset-x-3 z-50 flex max-h-[72vh] flex-col md:bottom-6" style={{ bottom: compactSurfaceBottom }}>
+        <div className={`reader-tool-surface reader-tool-surface--compact fixed inset-x-3 z-50 flex max-h-[72vh] flex-col md:bottom-6 ${isImmersiveMode ? "reader-tool-surface--immersive" : "reader-tool-surface--intensive"}`} style={{ bottom: compactSurfaceBottom }}>
           <ReaderDictionaryRail
             lookup={activeLookup}
             inspect={activeInspect}
@@ -3457,7 +3535,7 @@ export function ReaderWorkbench({
               sentencePopoverPanelRef.current = node;
             }}
             style={sentencePopoverStyles}
-            className="z-50"
+            className={`reader-tool-surface reader-tool-surface--context z-50 ${isImmersiveMode ? "reader-tool-surface--immersive" : "reader-tool-surface--intensive"}`}
             data-reader-sentence-popover="true"
             onPointerDown={(event) => {
               event.stopPropagation();
@@ -3470,6 +3548,7 @@ export function ReaderWorkbench({
             }}
           >
           <ReaderContextPanel
+            className={isImmersiveMode ? "reader-context-panel reader-context-panel--immersive" : "reader-context-panel"}
             sentence={activeSentence}
             selectedText={textSelection?.selectedText ?? null}
             annotationScope={textSelection ? "text_range" : "sentence"}
@@ -3486,20 +3565,22 @@ export function ReaderWorkbench({
 
         {settingsPanelOpen ? (
           <div
-            className="fixed inset-x-0 top-3 bottom-3 z-50 overflow-y-auto px-3 md:inset-x-auto md:top-auto md:bottom-auto md:overflow-visible md:px-0"
+            className={`reader-tool-surface reader-tool-surface--settings fixed inset-x-0 top-3 bottom-3 z-50 overflow-y-auto px-3 md:inset-x-auto md:top-auto md:bottom-auto md:overflow-visible md:px-0 ${isImmersiveMode ? "reader-tool-surface--immersive" : "reader-tool-surface--intensive"}`}
             style={{
               bottom: compactSurfaceBottom,
               ...(mobileSettingsPanelStyle ?? {}),
               ...(settingsFloatingStyle ?? {}),
             }}
           >
-            <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[0_-20px_40px_rgba(17,17,17,0.12)] backdrop-blur md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-0">
-              <ReaderSettingsPanel
-                value={readerSettings}
-                onChange={setReaderSettings}
-                onClose={() => setSettingsPanelOpen(false)}
-              />
-            </div>
+              <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[0_-20px_40px_rgba(17,17,17,0.12)] backdrop-blur md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-0">
+                <ReaderSettingsPanel
+                  themeName={themeName}
+                  value={readerSettings}
+                  onChange={handleReaderSettingsChange}
+                  onThemeChange={setThemeName}
+                  onClose={() => setSettingsPanelOpen(false)}
+                />
+              </div>
           </div>
         ) : null}
 
@@ -3507,6 +3588,7 @@ export function ReaderWorkbench({
         <AiWorkspacePanel
           key={record.id}
           open={aiOpen}
+          presentation={isImmersiveMode ? "immersive" : "intensive"}
           recordId={record.id}
           recordTitle={record.title}
           pageIdentity={pageIdentity}

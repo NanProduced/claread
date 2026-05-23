@@ -74,6 +74,7 @@ body {
   font-kerning: normal;
 }
 
+.paper,
 .light {
   color-scheme: light;
 }
@@ -253,89 +254,259 @@ body {
   --reader-slip-icon-ink: rgba(166, 119, 0, 0.96);
   --reader-slip-icon-ring: rgba(228, 176, 0, 0.16);
   --reader-slip-time: rgba(98, 101, 109, 0.68);
+  --reader-entry-note-icon-surface: rgba(255, 255, 255, 0.88);
+  --reader-entry-note-icon-highlight: rgba(255, 255, 255, 0.82);
+  --reader-entry-note-icon-shadow: rgba(28, 24, 18, 0.04);
+  --reader-entry-icon-surface: rgba(255, 255, 255, 0.64);
+  --reader-gutter-note-surface: rgba(228, 176, 0, 0.13);
+  --reader-gutter-note-ink: rgba(166, 119, 0, 0.96);
+  --reader-gutter-note-ring: rgba(228, 176, 0, 0.2);
+  --reader-gutter-note-shadow: rgba(91, 68, 9, 0.06);
+  --reader-gutter-highlight-surface: rgba(60, 140, 104, 0.1);
+  --reader-gutter-highlight-ink: rgba(39, 108, 77, 0.96);
+  --reader-gutter-highlight-ring: rgba(60, 140, 104, 0.18);
+  --reader-gutter-hover-ring: rgba(98, 101, 109, 0.18);
+  --reader-gutter-hover-shadow: rgba(28, 24, 18, 0.08);
+  --reader-gutter-active-ring: rgba(177, 135, 77, 0.26);
+  --reader-gutter-active-shadow: rgba(177, 135, 77, 0.14);
+  --reader-gutter-focus-ring: rgba(40, 92, 255, 0.12);
+  --reader-gutter-count-surface: rgba(60, 140, 104, 0.92);
+  --reader-gutter-count-ink: rgba(252, 249, 242, 0.98);
+  --reader-gutter-count-shadow: rgba(60, 140, 104, 0.24);
+  --reader-gutter-strip-border: rgba(109, 113, 123, 0.16);
+  --reader-gutter-strip-surface: rgba(252, 249, 242, 0.96);
+  --reader-gutter-strip-shadow: rgba(28, 24, 18, 0.12);
+  --reader-gutter-strip-item-ink: rgba(43, 45, 50, 0.86);
+  --reader-gutter-strip-item-hover-surface: rgba(60, 140, 104, 0.1);
+  --reader-gutter-strip-item-hover-ink: rgba(25, 31, 28, 0.96);
+  --reader-gutter-strip-index-ink: rgba(60, 140, 104, 0.84);
+  --reader-route-focus-frame-ring: rgba(177, 135, 77, 0.26);
+  --reader-route-focus-frame-shadow: rgba(177, 135, 77, 0.08);
+  --reader-route-focus-line: rgba(177, 135, 77, 0.48);
+  --reader-route-focus-fill: rgba(226, 194, 142, 0.18);
+  --reader-route-focus-range-outline: rgba(177, 135, 77, 0.12);
+  --reader-route-focus-range-edge: rgba(145, 106, 55, 0.1);
+  --reader-note-focus-surface: rgba(255, 248, 214, 0.72);
+  --reader-note-focus-line: rgba(224, 172, 31, 0.98);
+  --reader-note-focus-fill: rgba(255, 241, 187, 0.64);
+  --reader-note-focus-edge: rgba(171, 123, 9, 0.22);
+  --reader-note-focus-outline: rgba(240, 196, 59, 0.14);
+  --reader-note-focus-shadow: rgba(255, 243, 184, 0.34);
+  --reader-note-focus-underline: rgba(171, 123, 9, 0.96);
+  --reader-user-highlight-warm-fill: rgba(229, 132, 103, 0.3);
+  --reader-user-highlight-warm-line: rgba(157, 95, 74, 0.66);
+  --reader-user-highlight-warm-edge: rgba(157, 95, 74, 0.12);
+  --reader-user-highlight-green-fill: rgba(126, 139, 88, 0.24);
+  --reader-user-highlight-green-line: rgba(106, 112, 79, 0.58);
+  --reader-user-highlight-green-edge: rgba(106, 112, 79, 0.1);
+  --reader-user-highlight-blue-fill: rgba(80, 169, 178, 0.22);
+  --reader-user-highlight-blue-line: rgba(47, 116, 123, 0.58);
+  --reader-user-highlight-blue-edge: rgba(47, 116, 123, 0.1);
+  --reader-user-highlight-purple-fill: rgba(190, 133, 164, 0.24);
+  --reader-user-highlight-purple-line: rgba(139, 78, 112, 0.52);
+  --reader-user-highlight-purple-edge: rgba(139, 78, 112, 0.1);
+  --reader-user-range-warm-line: rgba(157, 95, 74, 0.4);
+  --reader-user-range-warm-fill-hover: rgba(229, 132, 103, 0.15);
+  --reader-user-range-warm-line-hover: rgba(157, 95, 74, 0.7);
+  --reader-user-range-green-line: rgba(106, 112, 79, 0.4);
+  --reader-user-range-green-fill-hover: rgba(126, 139, 88, 0.15);
+  --reader-user-range-green-line-hover: rgba(106, 112, 79, 0.7);
+  --reader-user-range-blue-line: rgba(47, 116, 123, 0.4);
+  --reader-user-range-blue-fill-hover: rgba(80, 169, 178, 0.15);
+  --reader-user-range-blue-line-hover: rgba(47, 116, 123, 0.7);
+  --reader-user-range-purple-line: rgba(139, 78, 112, 0.4);
+  --reader-user-range-purple-fill-hover: rgba(190, 133, 164, 0.15);
+  --reader-user-range-purple-line-hover: rgba(139, 78, 112, 0.7);
+  --reader-user-range-stacked-line: rgba(145, 106, 55, 0.4);
+  --reader-user-range-stacked-fill-hover: rgba(177, 135, 77, 0.15);
+  --reader-user-range-stacked-line-hover: rgba(145, 106, 55, 0.7);
+  --reader-user-range-stacked-dot-1: rgba(228, 176, 0, 0.1);
+  --reader-user-range-stacked-dot-2: rgba(47, 116, 123, 0.1);
   --reader-user-range-focus-outline: rgba(145, 106, 55, 0.18);
   --reader-user-range-focus-shadow: rgba(145, 106, 55, 0.08);
+  --reader-mark-dimmed-ink: rgba(17, 17, 17, 0.25);
+  --reader-mark-term-hover-ink: rgb(39, 108, 77);
+  --reader-mark-term-hover-line-strong: rgba(39, 108, 77, 0.76);
+  --reader-mark-term-hover-fill: rgba(60, 140, 104, 0.18);
+  --reader-mark-logic-hover-ink: rgb(38, 105, 153);
+  --reader-mark-logic-hover-line-strong: rgba(37, 99, 235, 0.84);
+  --reader-mark-logic-hover-line-soft: rgba(37, 99, 235, 0.46);
+  --reader-mark-logic-hover-fill: rgba(37, 99, 235, 0.16);
+  --reader-analysis-tone-1: rgb(39, 108, 77);
+  --reader-analysis-tone-2: rgb(166, 104, 14);
+  --reader-analysis-tone-3: rgb(126, 91, 198);
+  --reader-analysis-tone-4: rgb(38, 105, 153);
+  --reader-analysis-tone-5: rgb(86, 72, 121);
+  --reader-analysis-tone-6: rgb(82, 115, 96);
+  --reader-entry-note-grammar-accent: rgba(116, 102, 148, 0.48);
+  --reader-entry-note-grammar-accent-soft: rgba(116, 102, 148, 0.05);
+  --reader-entry-note-analysis-accent: rgba(60, 140, 104, 0.5);
+  --reader-entry-note-analysis-accent-soft: rgba(60, 140, 104, 0.05);
+  --reader-entry-note-term-accent: rgba(166, 119, 0, 0.5);
+  --reader-entry-note-term-accent-soft: rgba(228, 176, 0, 0.05);
+  --reader-entry-note-logic-accent: rgba(37, 99, 235, 0.48);
+  --reader-entry-note-logic-accent-soft: rgba(37, 99, 235, 0.05);
+  --reader-entry-note-context-accent: rgba(49, 110, 151, 0.48);
+  --reader-entry-note-context-accent-soft: rgba(137, 183, 217, 0.05);
+  --brand-aperture-shell-top: rgba(255, 255, 255, 0.98);
+  --brand-aperture-shell-bottom: rgba(242, 239, 231, 0.9);
+  --brand-aperture-shell-border: rgba(217, 209, 195, 0.7);
+  --brand-aperture-shell-shadow: 0 8px 18px rgba(17, 17, 17, 0.08);
+  --brand-aperture-mark-filter: none;
 }
 
 .dark {
-  --reader-floating-surface: rgba(44, 41, 35, 0.985);
-  --reader-floating-surface-strong: rgba(36, 33, 28, 0.965);
+  --reader-floating-surface: rgba(42, 47, 53, 0.985);
+  --reader-floating-surface-strong: rgba(30, 34, 39, 0.965);
   --reader-floating-border: color-mix(in srgb, var(--hairline) 84%, rgba(244, 240, 232, 0.08));
   --reader-floating-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
-  --reader-entry-surface: rgba(47, 44, 38, 0.82);
-  --reader-entry-surface-strong: rgba(52, 48, 42, 0.92);
+  --reader-entry-surface: rgba(39, 44, 50, 0.82);
+  --reader-entry-surface-strong: rgba(45, 50, 56, 0.92);
   --reader-entry-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
-  --reader-selection-highlight: rgba(122, 162, 255, 0.24);
-  --reader-mark-active-surface: rgba(55, 51, 45, 0.82);
-  --reader-mark-active-outline: rgba(122, 162, 255, 0.24);
+  --reader-selection-highlight: rgba(140, 178, 255, 0.24);
+  --reader-mark-active-surface: rgba(52, 58, 66, 0.82);
+  --reader-mark-active-outline: rgba(140, 178, 255, 0.24);
   --reader-mark-active-shadow: rgba(0, 0, 0, 0.16);
-  --reader-mark-focus-outline: rgba(122, 162, 255, 0.2);
-  --reader-mark-focus-shadow: rgba(122, 162, 255, 0.12);
-  --reader-entry-expanded-surface: rgba(47, 44, 38, 0.96);
+  --reader-mark-focus-outline: rgba(140, 178, 255, 0.2);
+  --reader-mark-focus-shadow: rgba(140, 178, 255, 0.12);
+  --reader-entry-expanded-surface: rgba(39, 44, 50, 0.96);
   --reader-entry-active-shadow: rgba(0, 0, 0, 0.22);
   --reader-entry-active-outline: rgba(255, 255, 255, 0.05);
-  --reader-entry-focus-outline: rgba(122, 162, 255, 0.18);
+  --reader-entry-focus-outline: rgba(140, 178, 255, 0.18);
   --reader-entry-focus-shadow: rgba(0, 0, 0, 0.22);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Reader theme overrides                                             */
-/* ------------------------------------------------------------------ */
-
-[data-reader-theme="cool"] {
-  --reader-paper: #F8F8F6;
-  --hairline: #E0E0DE;
-  --reader-floating-surface: rgba(252, 252, 250, 0.985);
-  --reader-floating-surface-strong: rgba(248, 248, 246, 0.965);
-  --reader-entry-surface: rgba(252, 252, 250, 0.8);
-  --reader-entry-surface-strong: rgba(252, 252, 250, 0.92);
-  --reader-entry-expanded-surface: rgba(248, 248, 246, 0.96);
-  --reader-translation-line: rgba(208, 208, 204, 0.92);
-  --reader-translation-line-strong: rgba(186, 186, 180, 0.9);
-  --reader-translation-copy: rgba(68, 70, 74, 0.92);
-  --reader-translation-copy-strong: rgba(46, 48, 52, 0.96);
-  --reader-entry-chip-border: rgba(224, 224, 218, 0.82);
-  --reader-entry-chip-surface: rgba(248, 248, 246, 0.76);
-  --reader-entry-chip-surface-hover: rgba(252, 252, 250, 0.88);
-  --reader-slip-border: rgba(224, 224, 218, 0.66);
-  --reader-slip-surface-top: rgba(252, 252, 250, 0.54);
-  --reader-slip-surface-bottom: rgba(248, 248, 246, 0.72);
-}
-
-[data-reader-theme="sage"] {
-  --reader-paper: #F0F4EE;
-  --hairline: #D0DAD0;
-  --ink: #2A2F2A;
-  --ink-soft: #323832;
-  --muted: #5A645A;
-  --subtle: #7A887A;
-  --reader-floating-surface: rgba(246, 250, 244, 0.985);
-  --reader-floating-surface-strong: rgba(242, 248, 240, 0.965);
-  --reader-entry-surface: rgba(246, 250, 244, 0.8);
-  --reader-entry-surface-strong: rgba(246, 250, 244, 0.92);
-  --reader-entry-expanded-surface: rgba(242, 248, 240, 0.96);
-  --reader-translation-line: rgba(192, 208, 192, 0.92);
-  --reader-translation-line-strong: rgba(168, 188, 168, 0.9);
-  --reader-translation-copy: rgba(56, 66, 56, 0.92);
-  --reader-translation-copy-strong: rgba(38, 48, 38, 0.96);
-  --reader-entry-chip-border: rgba(208, 218, 208, 0.82);
-  --reader-entry-chip-surface: rgba(242, 248, 240, 0.76);
-  --reader-entry-chip-surface-hover: rgba(246, 250, 244, 0.88);
-  --reader-slip-border: rgba(208, 218, 208, 0.66);
-  --reader-slip-surface-top: rgba(246, 250, 244, 0.54);
-  --reader-slip-surface-bottom: rgba(242, 248, 240, 0.72);
-}
-
-[data-reader-theme="cool"] .paper-grain {
-  background-image:
-    linear-gradient(135deg, rgba(17, 17, 17, 0.018) 0 1px, transparent 1px),
-    linear-gradient(45deg, rgba(252, 252, 250, 0.36), rgba(246, 246, 242, 0.42));
-}
-
-[data-reader-theme="sage"] .paper-grain {
-  background-image:
-    linear-gradient(135deg, rgba(42, 47, 42, 0.02) 0 1px, transparent 1px),
-    linear-gradient(45deg, rgba(240, 244, 238, 0.36), rgba(232, 240, 228, 0.42));
+  --reader-mark-grammar-line-strong: rgba(186, 166, 232, 0.9);
+  --reader-mark-grammar-line-soft: rgba(163, 145, 206, 0.56);
+  --reader-mark-grammar-fill: rgba(129, 114, 176, 0.24);
+  --reader-mark-term-line-strong: rgba(131, 206, 171, 0.88);
+  --reader-mark-term-line-soft: rgba(111, 182, 149, 0.56);
+  --reader-mark-term-fill: rgba(76, 144, 112, 0.26);
+  --reader-mark-logic-line-strong: rgba(142, 179, 255, 0.92);
+  --reader-mark-logic-line-soft: rgba(122, 160, 238, 0.58);
+  --reader-mark-logic-fill: rgba(92, 132, 226, 0.26);
+  --reader-entry-chip-border: rgba(83, 89, 99, 0.86);
+  --reader-entry-chip-hover-border: rgba(176, 185, 198, 0.34);
+  --reader-entry-chip-surface: rgba(37, 42, 48, 0.84);
+  --reader-entry-chip-surface-hover: rgba(47, 53, 60, 0.96);
+  --reader-translation-line: rgba(84, 91, 101, 0.92);
+  --reader-translation-line-strong: rgba(110, 118, 130, 0.94);
+  --reader-translation-copy: rgba(202, 197, 188, 0.92);
+  --reader-translation-copy-strong: rgba(236, 232, 225, 0.98);
+  --reader-translation-selection: rgba(104, 136, 214, 0.34);
+  --reader-translation-selection-ink: rgba(241, 237, 228, 0.98);
+  --reader-mark-vocab-fill: rgba(227, 193, 103, 0.28);
+  --reader-mark-vocab-fill-soft: rgba(227, 193, 103, 0.2);
+  --reader-mark-vocab-ink: rgba(246, 220, 151, 0.98);
+  --reader-mark-vocab-hover-fill: rgba(233, 200, 115, 0.44);
+  --reader-mark-vocab-hover-fill-soft: rgba(233, 200, 115, 0.36);
+  --reader-mark-vocab-hover-ink: rgba(252, 231, 180, 0.98);
+  --reader-mark-phrase-fill: rgba(172, 150, 228, 0.26);
+  --reader-mark-phrase-fill-soft: rgba(172, 150, 228, 0.18);
+  --reader-mark-phrase-ink: rgba(221, 209, 251, 0.98);
+  --reader-mark-phrase-hover-fill: rgba(186, 166, 238, 0.4);
+  --reader-mark-phrase-hover-fill-soft: rgba(186, 166, 238, 0.34);
+  --reader-mark-phrase-hover-ink: rgba(236, 228, 254, 0.98);
+  --reader-mark-context-fill: rgba(126, 183, 227, 0.26);
+  --reader-mark-context-fill-quiet: rgba(126, 183, 227, 0.18);
+  --reader-mark-context-ink: rgba(197, 228, 248, 0.98);
+  --reader-mark-context-hover-fill: rgba(139, 193, 236, 0.42);
+  --reader-mark-context-hover-ink: rgba(227, 242, 252, 0.98);
+  --reader-mark-dimmed-ink: rgba(243, 239, 230, 0.44);
+  --reader-mark-term-hover-ink: rgba(185, 233, 210, 0.98);
+  --reader-mark-term-hover-line-strong: rgba(131, 206, 171, 0.94);
+  --reader-mark-term-hover-fill: rgba(76, 144, 112, 0.36);
+  --reader-mark-logic-hover-ink: rgba(210, 229, 255, 0.98);
+  --reader-mark-logic-hover-line-strong: rgba(142, 179, 255, 0.98);
+  --reader-mark-logic-hover-line-soft: rgba(142, 179, 255, 0.64);
+  --reader-mark-logic-hover-fill: rgba(92, 132, 226, 0.36);
+  --reader-analysis-tone-1: rgba(172, 230, 205, 0.98);
+  --reader-analysis-tone-2: rgba(246, 206, 139, 0.98);
+  --reader-analysis-tone-3: rgba(217, 198, 255, 0.98);
+  --reader-analysis-tone-4: rgba(198, 223, 255, 0.98);
+  --reader-analysis-tone-5: rgba(209, 197, 240, 0.98);
+  --reader-analysis-tone-6: rgba(191, 223, 202, 0.98);
+  --reader-entry-note-grammar-accent: rgba(186, 166, 232, 0.58);
+  --reader-entry-note-grammar-accent-soft: rgba(186, 166, 232, 0.12);
+  --reader-entry-note-analysis-accent: rgba(131, 206, 171, 0.58);
+  --reader-entry-note-analysis-accent-soft: rgba(131, 206, 171, 0.12);
+  --reader-entry-note-term-accent: rgba(227, 193, 103, 0.58);
+  --reader-entry-note-term-accent-soft: rgba(227, 193, 103, 0.12);
+  --reader-entry-note-logic-accent: rgba(142, 179, 255, 0.58);
+  --reader-entry-note-logic-accent-soft: rgba(142, 179, 255, 0.12);
+  --reader-entry-note-context-accent: rgba(126, 183, 227, 0.58);
+  --reader-entry-note-context-accent-soft: rgba(126, 183, 227, 0.12);
+  --reader-entry-note-icon-surface: rgba(67, 74, 84, 0.58);
+  --reader-entry-note-icon-highlight: rgba(255, 255, 255, 0.06);
+  --reader-entry-note-icon-shadow: rgba(0, 0, 0, 0.22);
+  --reader-entry-icon-surface: rgba(59, 65, 73, 0.58);
+  --reader-gutter-note-surface: rgba(227, 193, 103, 0.18);
+  --reader-gutter-note-ink: rgba(247, 223, 164, 0.98);
+  --reader-gutter-note-ring: rgba(227, 193, 103, 0.3);
+  --reader-gutter-note-shadow: rgba(0, 0, 0, 0.18);
+  --reader-gutter-highlight-surface: rgba(131, 206, 171, 0.18);
+  --reader-gutter-highlight-ink: rgba(183, 235, 208, 0.98);
+  --reader-gutter-highlight-ring: rgba(131, 206, 171, 0.3);
+  --reader-gutter-hover-ring: rgba(166, 175, 188, 0.22);
+  --reader-gutter-hover-shadow: rgba(0, 0, 0, 0.22);
+  --reader-gutter-active-ring: rgba(140, 178, 255, 0.3);
+  --reader-gutter-active-shadow: rgba(52, 88, 170, 0.24);
+  --reader-gutter-focus-ring: rgba(140, 178, 255, 0.18);
+  --reader-gutter-count-surface: rgba(131, 206, 171, 0.94);
+  --reader-gutter-count-ink: rgba(24, 31, 28, 0.98);
+  --reader-gutter-count-shadow: rgba(0, 0, 0, 0.24);
+  --reader-gutter-strip-border: rgba(89, 95, 105, 0.42);
+  --reader-gutter-strip-surface: rgba(34, 38, 43, 0.96);
+  --reader-gutter-strip-shadow: rgba(0, 0, 0, 0.24);
+  --reader-gutter-strip-item-ink: rgba(214, 208, 198, 0.88);
+  --reader-gutter-strip-item-hover-surface: rgba(131, 206, 171, 0.16);
+  --reader-gutter-strip-item-hover-ink: rgba(239, 242, 246, 0.98);
+  --reader-gutter-strip-index-ink: rgba(178, 231, 210, 0.9);
+  --reader-route-focus-frame-ring: rgba(140, 178, 255, 0.28);
+  --reader-route-focus-frame-shadow: rgba(52, 88, 170, 0.18);
+  --reader-route-focus-line: rgba(140, 178, 255, 0.62);
+  --reader-route-focus-fill: rgba(140, 178, 255, 0.2);
+  --reader-route-focus-range-outline: rgba(140, 178, 255, 0.16);
+  --reader-route-focus-range-edge: rgba(140, 178, 255, 0.14);
+  --reader-note-focus-surface: rgba(74, 63, 21, 0.34);
+  --reader-note-focus-line: rgba(240, 198, 98, 0.98);
+  --reader-note-focus-fill: rgba(186, 145, 37, 0.3);
+  --reader-note-focus-edge: rgba(240, 198, 98, 0.2);
+  --reader-note-focus-outline: rgba(240, 198, 98, 0.18);
+  --reader-note-focus-shadow: rgba(240, 198, 98, 0.14);
+  --reader-note-focus-underline: rgba(248, 214, 130, 0.98);
+  --reader-user-highlight-warm-fill: rgba(235, 163, 127, 0.24);
+  --reader-user-highlight-warm-line: rgba(248, 194, 168, 0.8);
+  --reader-user-highlight-warm-edge: rgba(248, 194, 168, 0.12);
+  --reader-user-highlight-green-fill: rgba(126, 182, 142, 0.22);
+  --reader-user-highlight-green-line: rgba(174, 219, 186, 0.72);
+  --reader-user-highlight-green-edge: rgba(174, 219, 186, 0.12);
+  --reader-user-highlight-blue-fill: rgba(104, 172, 209, 0.2);
+  --reader-user-highlight-blue-line: rgba(166, 216, 242, 0.72);
+  --reader-user-highlight-blue-edge: rgba(166, 216, 242, 0.12);
+  --reader-user-highlight-purple-fill: rgba(169, 146, 219, 0.22);
+  --reader-user-highlight-purple-line: rgba(220, 205, 251, 0.72);
+  --reader-user-highlight-purple-edge: rgba(220, 205, 251, 0.12);
+  --reader-user-range-warm-line: rgba(248, 194, 168, 0.52);
+  --reader-user-range-warm-fill-hover: rgba(235, 163, 127, 0.2);
+  --reader-user-range-warm-line-hover: rgba(248, 194, 168, 0.82);
+  --reader-user-range-green-line: rgba(174, 219, 186, 0.48);
+  --reader-user-range-green-fill-hover: rgba(126, 182, 142, 0.18);
+  --reader-user-range-green-line-hover: rgba(174, 219, 186, 0.8);
+  --reader-user-range-blue-line: rgba(166, 216, 242, 0.48);
+  --reader-user-range-blue-fill-hover: rgba(104, 172, 209, 0.18);
+  --reader-user-range-blue-line-hover: rgba(166, 216, 242, 0.82);
+  --reader-user-range-purple-line: rgba(220, 205, 251, 0.48);
+  --reader-user-range-purple-fill-hover: rgba(169, 146, 219, 0.18);
+  --reader-user-range-purple-line-hover: rgba(220, 205, 251, 0.82);
+  --reader-user-range-stacked-line: rgba(208, 183, 126, 0.48);
+  --reader-user-range-stacked-fill-hover: rgba(208, 183, 126, 0.18);
+  --reader-user-range-stacked-line-hover: rgba(227, 204, 151, 0.78);
+  --reader-user-range-stacked-dot-1: rgba(227, 193, 103, 0.14);
+  --reader-user-range-stacked-dot-2: rgba(131, 206, 171, 0.14);
+  --brand-aperture-shell-top: rgba(44, 49, 56, 0.98);
+  --brand-aperture-shell-bottom: rgba(29, 33, 38, 0.92);
+  --brand-aperture-shell-border: rgba(86, 92, 102, 0.76);
+  --brand-aperture-shell-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  --brand-aperture-mark-filter: saturate(0.92) brightness(1.08);
 }
 
 a {
@@ -352,6 +523,14 @@ select {
 
 .reader-serif {
   font-family: var(--font-reading);
+}
+
+.reader-font-editorial {
+  font-family: var(--font-reading);
+}
+
+.reader-font-book {
+  font-family: var(--font-reading-book);
 }
 
 .reader-serif[data-reader-sentence-text="true"] {
@@ -409,46 +588,244 @@ select {
   background-size: 18px 18px, auto;
 }
 
+.reader-shell-page {
+  background-color: var(--app-canvas);
+}
+
 .reading-paper {
+  --reading-paper-surface: var(--reader-paper);
   background:
-    radial-gradient(circle at 88% 12%, rgba(37, 99, 235, 0.028), transparent 14rem),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(251, 250, 246, 0.82)),
-    var(--reader-paper);
+    radial-gradient(circle at 88% 12%, var(--reader-stage-glow), transparent 14rem),
+    var(--reader-shell-gradient),
+    var(--reading-paper-surface);
 }
 
-.reading-paper-cool {
+.reading-paper-light {
+  --reading-paper-surface: #faf9f6;
   background:
-    radial-gradient(circle at 88% 12%, rgba(37, 99, 235, 0.02), transparent 14rem),
-    linear-gradient(180deg, rgba(252, 252, 250, 0.76), rgba(248, 248, 246, 0.86)),
-    #F8F8F6;
+    radial-gradient(circle at 88% 12%, var(--reader-stage-glow), transparent 14rem),
+    var(--reader-shell-gradient),
+    var(--reading-paper-surface);
 }
 
-.reading-paper-sage {
+.reading-paper-dark {
+  --reading-paper-surface: #1b1f23;
   background:
-    radial-gradient(circle at 88% 12%, rgba(60, 140, 104, 0.028), transparent 14rem),
-    linear-gradient(180deg, rgba(248, 252, 248, 0.72), rgba(240, 244, 238, 0.84)),
-    #F0F4EE;
+    radial-gradient(circle at 88% 12%, var(--reader-stage-glow), transparent 14rem),
+    var(--reader-shell-gradient),
+    var(--reading-paper-surface);
 }
 
-.dark .reading-paper {
+.theme-preview-surface {
+  --theme-preview-surface: #f8f4ea;
+  --theme-preview-surface-raised: rgba(255, 255, 255, 0.68);
+  --theme-preview-line: rgba(68, 64, 58, 0.18);
+  --theme-preview-line-strong: rgba(24, 22, 18, 0.78);
+  --theme-preview-chip-surface: rgba(255, 255, 255, 0.72);
+  --theme-preview-chip-ink: rgba(88, 82, 74, 0.82);
+  --theme-preview-chip-border: rgba(217, 209, 195, 0.7);
+
   background:
-    radial-gradient(circle at 88% 12%, rgba(122, 162, 255, 0.058), transparent 14rem),
-    linear-gradient(180deg, rgba(52, 48, 42, 0.74), rgba(36, 33, 28, 0.88)),
-    var(--reader-paper);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
+    var(--theme-preview-surface);
 }
 
-.dark .reading-paper-cool {
-  background:
-    radial-gradient(circle at 88% 12%, rgba(122, 162, 255, 0.048), transparent 14rem),
-    linear-gradient(180deg, rgba(52, 52, 48, 0.72), rgba(38, 38, 35, 0.88)),
-    #2a2924;
+.theme-preview-surface--paper {
+  --theme-preview-surface: #f8f4ea;
+  --theme-preview-surface-raised: rgba(255, 255, 255, 0.68);
+  --theme-preview-line: rgba(68, 64, 58, 0.18);
+  --theme-preview-line-strong: rgba(24, 22, 18, 0.78);
+  --theme-preview-chip-surface: rgba(255, 255, 255, 0.72);
+  --theme-preview-chip-ink: rgba(88, 82, 74, 0.82);
+  --theme-preview-chip-border: rgba(217, 209, 195, 0.7);
 }
 
-.dark .reading-paper-sage {
+.theme-preview-surface--light {
+  --theme-preview-surface: #faf9f6;
+  --theme-preview-surface-raised: rgba(255, 255, 255, 0.9);
+  --theme-preview-line: rgba(82, 88, 96, 0.14);
+  --theme-preview-line-strong: rgba(24, 25, 27, 0.82);
+  --theme-preview-chip-surface: rgba(245, 247, 250, 0.92);
+  --theme-preview-chip-ink: rgba(92, 98, 108, 0.9);
+  --theme-preview-chip-border: rgba(227, 222, 211, 0.76);
+}
+
+.theme-preview-surface--dark {
+  --theme-preview-surface: #1b1f23;
+  --theme-preview-surface-raised: rgba(49, 56, 64, 0.72);
+  --theme-preview-line: rgba(157, 167, 180, 0.18);
+  --theme-preview-line-strong: rgba(243, 239, 231, 0.88);
+  --theme-preview-chip-surface: rgba(47, 53, 60, 0.92);
+  --theme-preview-chip-ink: rgba(209, 216, 226, 0.92);
+  --theme-preview-chip-border: rgba(86, 92, 102, 0.82);
+}
+
+.theme-preview-surface__eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.theme-preview-surface__eyebrow-label {
+  color: color-mix(in srgb, var(--theme-preview-line-strong) 74%, transparent);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.theme-preview-surface__eyebrow-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--theme-preview-line-strong);
+  opacity: 0.72;
+}
+
+.theme-preview-surface__line {
+  height: 0.36rem;
+  border-radius: 999px;
+  background: var(--theme-preview-line);
+}
+
+.theme-preview-surface__line--title {
+  width: 66%;
+  background: var(--theme-preview-line-strong);
+}
+
+.theme-preview-surface__line--body {
+  width: 100%;
+}
+
+.theme-preview-surface__line--short {
+  width: 74%;
+}
+
+.theme-preview-surface__chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--theme-preview-chip-border);
+  background: var(--theme-preview-chip-surface);
+  padding: 0 0.65rem;
+  color: var(--theme-preview-chip-ink);
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.reader-settings-theme-swatch {
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  margin-top: 0.1rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.reader-settings-theme-swatch--paper {
+  border-color: rgba(210, 198, 181, 0.88);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(246, 239, 226, 0.98));
+}
+
+.reader-settings-theme-swatch--light {
+  border-color: rgba(220, 225, 232, 0.9);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(241, 244, 248, 0.98));
+}
+
+.reader-settings-theme-swatch--dark {
+  border-color: rgba(86, 92, 102, 0.94);
+  background: linear-gradient(180deg, rgba(46, 52, 59, 0.98), rgba(25, 29, 33, 1));
+}
+
+.reader-shell {
+  position: relative;
+  background-clip: padding-box;
+  box-shadow: var(--reader-shell-shadow);
+}
+
+.reader-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  opacity: 0.7;
+}
+
+.reader-shell--immersive {
+  border-color: color-mix(in srgb, var(--reader-stage-rule) 82%, transparent);
+}
+
+.reader-shell--intensive {
+  border-color: color-mix(in srgb, var(--reader-stage-rule) 78%, transparent);
+}
+
+.reader-header-band {
+  position: relative;
   background:
-    radial-gradient(circle at 88% 12%, rgba(100, 160, 128, 0.054), transparent 14rem),
-    linear-gradient(180deg, rgba(45, 53, 45, 0.74), rgba(31, 38, 32, 0.88)),
-    #232922;
+    linear-gradient(180deg, var(--reader-header-surface), color-mix(in srgb, var(--reader-header-surface) 62%, transparent)),
+    transparent;
+}
+
+.reader-header-band::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--reader-stage-rule) 12%, var(--reader-stage-rule) 88%, transparent);
+  opacity: 0.9;
+}
+
+.reader-header-band--immersive {
+  box-shadow: var(--reader-header-shadow);
+}
+
+.reader-header-band-inner {
+  position: relative;
+  z-index: 1;
+}
+
+.reader-shell-controls {
+  align-self: flex-start;
+}
+
+.reader-mode-cluster {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 84%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--reader-header-surface) 90%, transparent), transparent),
+    color-mix(in srgb, var(--reader-paper-elevated) 74%, transparent);
+  box-shadow: var(--reader-tool-shadow-recessed);
+}
+
+.reader-mode-cluster__option,
+.reader-mode-cluster__settings {
+  box-shadow: none;
+}
+
+.reader-shell-message {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--lens-blue-soft) 92%, var(--reader-paper)), color-mix(in srgb, var(--lens-blue-soft) 70%, var(--reader-paper)));
+  box-shadow: 0 14px 30px rgba(21, 92, 255, 0.06);
+}
+
+.reader-reading-stage {
+  position: relative;
+}
+
+.reader-reading-stage--intensive {
+  padding-bottom: 1.75rem;
+}
+
+.reader-reading-stage--immersive {
+  padding-top: 0.45rem;
+  padding-bottom: 2.5rem;
 }
 
 .focus-ring {
@@ -461,14 +838,12 @@ select {
 }
 
 .reader-tool-panel {
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--reader-tool-border);
   border-radius: var(--radius-panel);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(251, 250, 246, 0.92)),
+    linear-gradient(180deg, var(--reader-tool-surface-top), var(--reader-tool-surface-bottom)),
     var(--surface-warm);
-  box-shadow:
-    0 1px 2px rgba(17, 17, 17, 0.035),
-    0 18px 48px rgba(28, 24, 18, 0.06);
+  box-shadow: var(--reader-tool-shadow);
 }
 
 .reader-settings-panel {
@@ -553,39 +928,83 @@ select {
     0 10px 18px rgba(28, 24, 18, 0.05);
 }
 
-.dark .reader-tool-panel {
+[data-app-theme="light"] .reader-tool-panel {
+  border-color: var(--reader-tool-border);
   background:
-    linear-gradient(180deg, rgba(49, 46, 40, 0.92), rgba(36, 33, 28, 0.96)),
-    var(--reader-paper-elevated);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.28),
-    0 22px 50px rgba(0, 0, 0, 0.24);
-}
-
-[data-reader-theme="cool"] .reader-tool-panel {
-  border-color: var(--hairline);
-  background:
-    linear-gradient(180deg, rgba(252, 252, 250, 0.9), rgba(248, 248, 246, 0.94)),
+    linear-gradient(180deg, var(--reader-tool-surface-top), var(--reader-tool-surface-bottom)),
     #F8F8F6;
 }
 
-[data-reader-theme="sage"] .reader-tool-panel {
-  border-color: var(--hairline);
+[data-app-theme="dark"] .reader-tool-panel {
   background:
-    linear-gradient(180deg, rgba(248, 252, 248, 0.9), rgba(240, 244, 238, 0.94)),
-    #F0F4EE;
+    linear-gradient(180deg, var(--reader-tool-surface-top), var(--reader-tool-surface-bottom)),
+    #2a2621;
 }
 
-.dark [data-reader-theme="cool"] .reader-tool-panel {
-  background:
-    linear-gradient(180deg, rgba(50, 50, 46, 0.92), rgba(39, 39, 35, 0.96)),
-    #2a2924;
+.reader-tool-surface--rail,
+.reader-tool-surface--compact,
+.reader-tool-surface--context,
+.reader-tool-surface--settings {
+  transition:
+    opacity 180ms var(--ease-out-quart, cubic-bezier(0.22, 1, 0.36, 1)),
+    transform 180ms var(--ease-out-quart, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
-.dark [data-reader-theme="sage"] .reader-tool-panel {
+.reader-tool-surface--immersive.reader-tool-surface--rail {
+  opacity: 0.92;
+}
+
+.reader-tool-surface--immersive.reader-tool-surface--compact,
+.reader-tool-surface--immersive.reader-tool-surface--context,
+.reader-tool-surface--immersive.reader-tool-surface--settings {
+  opacity: 0.96;
+}
+
+.reader-tool-surface--immersive .reader-tool-panel,
+.reader-tool-surface--immersive .reader-settings-panel {
+  box-shadow: var(--reader-tool-shadow-recessed);
+}
+
+.reader-selection-toolbar [role="toolbar"] {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 84%, transparent);
   background:
-    linear-gradient(180deg, rgba(43, 51, 43, 0.92), rgba(31, 38, 32, 0.96)),
-    #232922;
+    linear-gradient(180deg, color-mix(in srgb, var(--reader-tool-surface-top) 96%, transparent), color-mix(in srgb, var(--reader-tool-surface-bottom) 96%, transparent)),
+    color-mix(in srgb, var(--reader-paper-elevated) 86%, transparent);
+  box-shadow: var(--reader-tool-shadow-recessed);
+}
+
+.reader-selection-toolbar--immersive [role="toolbar"] {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 70%, transparent);
+  box-shadow: 0 12px 22px rgba(28, 24, 18, 0.08);
+}
+
+.reader-tool-float,
+.reader-context-panel {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 88%, transparent);
+  box-shadow: var(--reader-tool-shadow);
+}
+
+.reader-context-panel--immersive {
+  box-shadow: var(--reader-tool-shadow-recessed);
+}
+
+.ai-workspace-launcher {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 90%, transparent);
+  box-shadow: var(--reader-tool-shadow);
+}
+
+.ai-workspace-launcher--immersive {
+  opacity: 0.94;
+  box-shadow: var(--reader-tool-shadow-recessed);
+}
+
+.ai-workspace-panel {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 90%, transparent);
+  box-shadow: var(--reader-tool-shadow);
+}
+
+.ai-workspace-panel--immersive {
+  box-shadow: var(--reader-tool-shadow-recessed);
 }
 
 .dark .reader-settings-section {
@@ -951,6 +1370,105 @@ select {
   letter-spacing: 0.08em;
 }
 
+.reader-immersive-stage {
+  position: relative;
+}
+
+.reader-immersive-paragraph {
+  position: relative;
+  padding-left: 2.4rem;
+}
+
+.reader-immersive-paragraph + .reader-immersive-paragraph {
+  margin-top: 2.75rem;
+}
+
+.reader-immersive-paragraph--lead {
+  padding-top: 0.4rem;
+}
+
+.reader-immersive-paragraph-copy {
+  color: var(--ink);
+}
+
+.reader-immersive-paragraph-cue {
+  position: absolute;
+  left: 0;
+  top: 0.5rem;
+  display: inline-flex;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.22rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 0.42rem;
+  background: var(--reader-immersive-cue-surface);
+  color: var(--subtle);
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.reader-immersive-paragraph-cue:hover,
+.reader-immersive-paragraph-cue:focus-visible {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 74%, transparent);
+  background: var(--reader-immersive-cue-hover);
+  color: var(--ink-soft);
+  box-shadow: var(--reader-tool-shadow-recessed);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.reader-immersive-paragraph-cue--note {
+  color: rgba(167, 119, 0, 0.9);
+}
+
+.reader-immersive-paragraph-cue--highlight {
+  color: rgba(53, 126, 95, 0.92);
+}
+
+.reader-immersive-paragraph-cue-count {
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.reader-immersive-sentence {
+  display: inline;
+}
+
+.reader-immersive-sentence-text {
+  display: inline;
+}
+
+.reader-immersive-sentence-text--lead::first-letter {
+  float: left;
+  margin-right: 0.14em;
+  padding-top: 0.1em;
+  color: var(--ink);
+  font-family: var(--font-reading);
+  font-size: 3.75em;
+  font-weight: 640;
+  line-height: 0.8;
+}
+
+.reader-immersive-sentence--route-focused {
+  border-radius: 0.3rem;
+  background: var(--reader-immersive-focus);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.reader-immersive-sentence-gap {
+  display: inline;
+}
+
 .reader-active-dot {
   position: absolute;
   top: 0.9rem;
@@ -1150,7 +1668,13 @@ select {
 }
 
 .reader-mark--grammar {
-  background-image: repeating-linear-gradient(to right, rgba(116, 102, 148, 0.6) 0, rgba(116, 102, 148, 0.6) 3px, transparent 3px, transparent 5px);
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--reader-mark-grammar-line-strong) 0,
+    var(--reader-mark-grammar-line-strong) 3px,
+    transparent 3px,
+    transparent 5px
+  );
   background-position: 0 100%;
   background-repeat: no-repeat;
   background-size: 100% 2px;
@@ -1166,8 +1690,12 @@ select {
 
 .reader-mark--grammar:hover,
 .reader-mark--grammar.reader-mark--entry-active {
-  background-image: linear-gradient(to right, rgba(116, 102, 148, 0.9), rgba(116, 102, 148, 0.9));
-  background-color: rgba(116, 102, 148, 0.15);
+  background-image: linear-gradient(
+    to right,
+    var(--reader-mark-entry-grammar-line-strong),
+    var(--reader-mark-entry-grammar-line-strong)
+  );
+  background-color: var(--reader-mark-entry-grammar-fill);
   border-radius: 0.2em;
   color: var(--ink);
   box-shadow: none;
@@ -1186,14 +1714,14 @@ select {
 }
 
 .reader-mark--term.reader-mark--interactive:hover {
-  color: rgb(39, 108, 77);
+  color: var(--reader-mark-term-hover-ink);
   background:
     repeating-linear-gradient(
       to right,
-      rgba(39, 108, 77, 0.76) 0 0.28em,
+      var(--reader-mark-term-hover-line-strong) 0 0.28em,
       transparent 0.28em 0.42em
     ) 0 100% / 100% 0.1em no-repeat,
-    linear-gradient(to top, rgba(60, 140, 104, 0.18) 0 42%, transparent 42%) 0 88% / 100% 0.72em no-repeat;
+    linear-gradient(to top, var(--reader-mark-term-hover-fill) 0 42%, transparent 42%) 0 88% / 100% 0.72em no-repeat;
 }
 
 .reader-mark--logic {
@@ -1206,11 +1734,11 @@ select {
 }
 
 .reader-mark--logic.reader-mark--interactive:hover {
-  color: rgb(38, 105, 153);
+  color: var(--reader-mark-logic-hover-ink);
   background:
-    linear-gradient(to right, rgba(37, 99, 235, 0.84), rgba(37, 99, 235, 0.52)) 0 calc(100% - 0.14em) / 100% 0.08em no-repeat,
-    linear-gradient(to right, rgba(37, 99, 235, 0.46), transparent) 0 100% / 100% 0.08em no-repeat,
-    linear-gradient(to top, rgba(37, 99, 235, 0.16) 0 38%, transparent 38%) 0 88% / 100% 0.68em no-repeat;
+    linear-gradient(to right, var(--reader-mark-logic-hover-line-strong), var(--reader-mark-logic-hover-line-soft)) 0 calc(100% - 0.14em) / 100% 0.08em no-repeat,
+    linear-gradient(to right, var(--reader-mark-logic-hover-line-soft), transparent) 0 100% / 100% 0.08em no-repeat,
+    linear-gradient(to top, var(--reader-mark-logic-hover-fill) 0 38%, transparent 38%) 0 88% / 100% 0.68em no-repeat;
 }
 
 .reader-mark--quiet.reader-mark--vocab {
@@ -1252,7 +1780,7 @@ select {
 }
 
 .reader-mark--term.reader-mark--entry-active {
-  color: rgb(39, 108, 77);
+  color: var(--reader-mark-term-hover-ink);
   background:
     repeating-linear-gradient(
       to right,
@@ -1263,7 +1791,7 @@ select {
 }
 
 .reader-mark--logic.reader-mark--entry-active {
-  color: rgb(38, 105, 153);
+  color: var(--reader-mark-logic-hover-ink);
   background:
     linear-gradient(to right, var(--reader-mark-entry-logic-line-strong), var(--reader-mark-entry-logic-line-soft)) 0 100% / 100% 0.12em no-repeat,
     linear-gradient(to top, var(--reader-mark-entry-logic-fill) 0 42%, transparent 42%) 0 88% / 100% 0.74em no-repeat;
@@ -1303,7 +1831,7 @@ select {
   box-shadow: none !important;
   border-bottom-color: transparent !important;
   text-decoration: none !important;
-  color: rgba(17, 17, 17, 0.25) !important; /* Soft dimming using color instead of opacity */
+  color: var(--reader-mark-dimmed-ink) !important; /* Soft dimming using color instead of opacity */
 }
 
 .reader-sentence--has-active-analysis .reader-user-range {
@@ -1312,7 +1840,7 @@ select {
   box-shadow: none !important;
   border-bottom-color: transparent !important;
   text-decoration: none !important;
-  color: rgba(17, 17, 17, 0.25) !important;
+  color: var(--reader-mark-dimmed-ink) !important;
 }
 
 /* Exception: Analysis atoms (chunk numbers/highlights) should NEVER be dimmed when focus mode is on for analysis */
@@ -1361,32 +1889,32 @@ select {
 
 .reader-analysis-atom--1,
 .reader-analysis-row-index--1 {
-  --analysis-accent: rgb(39, 108, 77);
+  --analysis-accent: var(--reader-analysis-tone-1);
 }
 
 .reader-analysis-atom--2,
 .reader-analysis-row-index--2 {
-  --analysis-accent: rgb(166, 104, 14);
+  --analysis-accent: var(--reader-analysis-tone-2);
 }
 
 .reader-analysis-atom--3,
 .reader-analysis-row-index--3 {
-  --analysis-accent: rgb(126, 91, 198);
+  --analysis-accent: var(--reader-analysis-tone-3);
 }
 
 .reader-analysis-atom--4,
 .reader-analysis-row-index--4 {
-  --analysis-accent: rgb(38, 105, 153);
+  --analysis-accent: var(--reader-analysis-tone-4);
 }
 
 .reader-analysis-atom--5,
 .reader-analysis-row-index--5 {
-  --analysis-accent: rgb(86, 72, 121);
+  --analysis-accent: var(--reader-analysis-tone-5);
 }
 
 .reader-analysis-atom--6,
 .reader-analysis-row-index--6 {
-  --analysis-accent: rgb(82, 115, 96);
+  --analysis-accent: var(--reader-analysis-tone-6);
 }
 
 .reader-analysis-row-index {
@@ -1427,9 +1955,9 @@ select {
 }
 
 .reader-entry-note {
-  --reader-entry-accent: rgba(116, 102, 148, 0.42);
-  --reader-entry-accent-soft: rgba(116, 102, 148, 0.08);
-  --reader-entry-connector: rgba(232, 228, 218, 0.92);
+  --reader-entry-accent: var(--reader-entry-note-grammar-accent);
+  --reader-entry-accent-soft: var(--reader-entry-note-grammar-accent-soft);
+  --reader-entry-connector: color-mix(in srgb, var(--reader-stage-rule) 88%, transparent);
 
   position: relative;
   display: inline-flex;
@@ -1451,6 +1979,16 @@ select {
     border-radius 400ms cubic-bezier(0.22, 1, 0.36, 1),
     border-color 400ms cubic-bezier(0.22, 1, 0.36, 1);
   cursor: pointer;
+}
+
+.brand-aperture-shell {
+  background: linear-gradient(180deg, var(--brand-aperture-shell-top), var(--brand-aperture-shell-bottom));
+  border-color: var(--brand-aperture-shell-border) !important;
+  box-shadow: var(--brand-aperture-shell-shadow);
+}
+
+.brand-aperture-mark {
+  filter: var(--brand-aperture-mark-filter);
 }
 
 .reader-entry-note::before {
@@ -1481,28 +2019,28 @@ select {
 }
 
 .reader-entry-note--sentence-analysis {
-  --reader-entry-accent: rgba(60, 140, 104, 0.5);
-  --reader-entry-accent-soft: rgba(60, 140, 104, 0.05);
+  --reader-entry-accent: var(--reader-entry-note-analysis-accent);
+  --reader-entry-accent-soft: var(--reader-entry-note-analysis-accent-soft);
 }
 
 .reader-entry-note--grammar-note {
-  --reader-entry-accent: rgba(116, 102, 148, 0.48);
-  --reader-entry-accent-soft: rgba(116, 102, 148, 0.05);
+  --reader-entry-accent: var(--reader-entry-note-grammar-accent);
+  --reader-entry-accent-soft: var(--reader-entry-note-grammar-accent-soft);
 }
 
 .reader-entry-note--term-note {
-  --reader-entry-accent: rgba(166, 119, 0, 0.5);
-  --reader-entry-accent-soft: rgba(228, 176, 0, 0.05);
+  --reader-entry-accent: var(--reader-entry-note-term-accent);
+  --reader-entry-accent-soft: var(--reader-entry-note-term-accent-soft);
 }
 
 .reader-entry-note--logic-note {
-  --reader-entry-accent: rgba(37, 99, 235, 0.48);
-  --reader-entry-accent-soft: rgba(37, 99, 235, 0.05);
+  --reader-entry-accent: var(--reader-entry-note-logic-accent);
+  --reader-entry-accent-soft: var(--reader-entry-note-logic-accent-soft);
 }
 
 .reader-entry-note--interpretation-note {
-  --reader-entry-accent: rgba(49, 110, 151, 0.48);
-  --reader-entry-accent-soft: rgba(137, 183, 217, 0.05);
+  --reader-entry-accent: var(--reader-entry-note-context-accent);
+  --reader-entry-accent-soft: var(--reader-entry-note-context-accent-soft);
 }
 
 .reader-entry-note--collapsed {
@@ -1593,10 +2131,10 @@ select {
 }
 
 .reader-entry-note-icon {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--reader-entry-note-icon-surface);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 0.35rem 0.9rem rgba(28, 24, 18, 0.04);
+    inset 0 1px 0 var(--reader-entry-note-icon-highlight),
+    0 0.35rem 0.9rem var(--reader-entry-note-icon-shadow);
 }
 
 .reader-entry-note-meta {
@@ -1684,7 +2222,7 @@ select {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--reader-entry-icon-surface);
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
@@ -1738,28 +2276,28 @@ select {
 }
 
 .reader-user-highlight--warm-yellow {
-  --reader-user-highlight-fill: rgba(229, 132, 103, 0.3);
-  --reader-user-highlight-line: rgba(157, 95, 74, 0.66);
-  --reader-user-highlight-edge: rgba(157, 95, 74, 0.12);
+  --reader-user-highlight-fill: var(--reader-user-highlight-warm-fill);
+  --reader-user-highlight-line: var(--reader-user-highlight-warm-line);
+  --reader-user-highlight-edge: var(--reader-user-highlight-warm-edge);
 }
 
 .reader-user-highlight--soft-green,
 .reader-user-highlight--sage-green {
-  --reader-user-highlight-fill: rgba(126, 139, 88, 0.24);
-  --reader-user-highlight-line: rgba(106, 112, 79, 0.58);
-  --reader-user-highlight-edge: rgba(106, 112, 79, 0.1);
+  --reader-user-highlight-fill: var(--reader-user-highlight-green-fill);
+  --reader-user-highlight-line: var(--reader-user-highlight-green-line);
+  --reader-user-highlight-edge: var(--reader-user-highlight-green-edge);
 }
 
 .reader-user-highlight--soft-blue {
-  --reader-user-highlight-fill: rgba(80, 169, 178, 0.22);
-  --reader-user-highlight-line: rgba(47, 116, 123, 0.58);
-  --reader-user-highlight-edge: rgba(47, 116, 123, 0.1);
+  --reader-user-highlight-fill: var(--reader-user-highlight-blue-fill);
+  --reader-user-highlight-line: var(--reader-user-highlight-blue-line);
+  --reader-user-highlight-edge: var(--reader-user-highlight-blue-edge);
 }
 
 .reader-user-highlight--soft-purple {
-  --reader-user-highlight-fill: rgba(190, 133, 164, 0.24);
-  --reader-user-highlight-line: rgba(139, 78, 112, 0.52);
-  --reader-user-highlight-edge: rgba(139, 78, 112, 0.1);
+  --reader-user-highlight-fill: var(--reader-user-highlight-purple-fill);
+  --reader-user-highlight-line: var(--reader-user-highlight-purple-line);
+  --reader-user-highlight-edge: var(--reader-user-highlight-purple-edge);
 }
 
 .reader-user-range {
@@ -1789,32 +2327,32 @@ select {
 
 .reader-user-range--warm-yellow {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: rgba(157, 95, 74, 0.4);
+  --reader-user-range-line: var(--reader-user-range-warm-line);
   --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--soft-green,
 .reader-user-range--sage-green {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: rgba(106, 112, 79, 0.4);
+  --reader-user-range-line: var(--reader-user-range-green-line);
   --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--soft-blue {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: rgba(47, 116, 123, 0.4);
+  --reader-user-range-line: var(--reader-user-range-blue-line);
   --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--soft-purple {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: rgba(139, 78, 112, 0.4);
+  --reader-user-range-line: var(--reader-user-range-purple-line);
   --reader-user-range-edge: transparent;
 }
 
 .reader-user-range--stacked {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: rgba(145, 106, 55, 0.4);
+  --reader-user-range-line: var(--reader-user-range-stacked-line);
   --reader-user-range-edge: transparent;
   background-image:
     linear-gradient(
@@ -1823,8 +2361,8 @@ select {
       var(--reader-user-range-fill) 0.08em 0.8em,
       transparent 0.8em
     ),
-    radial-gradient(circle at 18% 40%, rgba(228, 176, 0, 0.1) 0 0.18em, transparent 0.2em),
-    radial-gradient(circle at 82% 60%, rgba(47, 116, 123, 0.1) 0 0.18em, transparent 0.2em);
+    radial-gradient(circle at 18% 40%, var(--reader-user-range-stacked-dot-1) 0 0.18em, transparent 0.2em),
+    radial-gradient(circle at 82% 60%, var(--reader-user-range-stacked-dot-2) 0 0.18em, transparent 0.2em);
 }
 
 .reader-user-range:hover,
@@ -1837,8 +2375,8 @@ select {
 .reader-user-range--warm-yellow:hover,
 .reader-user-range--warm-yellow.reader-user-range--hovered-group,
 .reader-user-range--warm-yellow.reader-mark--entry-active {
-  --reader-user-range-fill: rgba(229, 132, 103, 0.15);
-  --reader-user-range-line: rgba(157, 95, 74, 0.7);
+  --reader-user-range-fill: var(--reader-user-range-warm-fill-hover);
+  --reader-user-range-line: var(--reader-user-range-warm-line-hover);
 }
 
 .reader-user-range--soft-green:hover,
@@ -1847,35 +2385,35 @@ select {
 .reader-user-range--sage-green:hover,
 .reader-user-range--sage-green.reader-user-range--hovered-group,
 .reader-user-range--sage-green.reader-mark--entry-active {
-  --reader-user-range-fill: rgba(126, 139, 88, 0.15);
-  --reader-user-range-line: rgba(106, 112, 79, 0.7);
+  --reader-user-range-fill: var(--reader-user-range-green-fill-hover);
+  --reader-user-range-line: var(--reader-user-range-green-line-hover);
 }
 
 .reader-user-range--soft-blue:hover,
 .reader-user-range--soft-blue.reader-user-range--hovered-group,
 .reader-user-range--soft-blue.reader-mark--entry-active {
-  --reader-user-range-fill: rgba(80, 169, 178, 0.15);
-  --reader-user-range-line: rgba(47, 116, 123, 0.7);
+  --reader-user-range-fill: var(--reader-user-range-blue-fill-hover);
+  --reader-user-range-line: var(--reader-user-range-blue-line-hover);
 }
 
 .reader-user-range--soft-purple:hover,
 .reader-user-range--soft-purple.reader-user-range--hovered-group,
 .reader-user-range--soft-purple.reader-mark--entry-active {
-  --reader-user-range-fill: rgba(190, 133, 164, 0.15);
-  --reader-user-range-line: rgba(139, 78, 112, 0.7);
+  --reader-user-range-fill: var(--reader-user-range-purple-fill-hover);
+  --reader-user-range-line: var(--reader-user-range-purple-line-hover);
 }
 
 .reader-user-range--stacked:hover,
 .reader-user-range--stacked.reader-user-range--hovered-group,
 .reader-user-range--stacked.reader-mark--entry-active {
-  --reader-user-range-fill: rgba(177, 135, 77, 0.15);
-  --reader-user-range-line: rgba(145, 106, 55, 0.7);
+  --reader-user-range-fill: var(--reader-user-range-stacked-fill-hover);
+  --reader-user-range-line: var(--reader-user-range-stacked-line-hover);
 }
 
 .reader-route-focus-frame {
   box-shadow:
-    inset 0 0 0 1px rgba(177, 135, 77, 0.26),
-    0 10px 26px rgba(177, 135, 77, 0.08);
+    inset 0 0 0 1px var(--reader-route-focus-frame-ring),
+    0 10px 26px var(--reader-route-focus-frame-shadow);
 }
 
 .reader-route-focus-sentence {
@@ -1885,8 +2423,8 @@ select {
   background-image:
     linear-gradient(
       to top,
-      rgba(177, 135, 77, 0.48) 0 0.08em,
-      rgba(226, 194, 142, 0.18) 0.08em 0.72em,
+      var(--reader-route-focus-line) 0 0.08em,
+      var(--reader-route-focus-fill) 0.08em 0.72em,
       transparent 0.72em
     );
   background-repeat: no-repeat;
@@ -1903,16 +2441,16 @@ select {
   background-image:
     linear-gradient(
       to top,
-      rgba(177, 135, 77, 0.5) 0 0.08em,
-      rgba(226, 194, 142, 0.2) 0.08em 0.7em,
+      var(--reader-route-focus-line) 0 0.08em,
+      var(--reader-route-focus-fill) 0.08em 0.7em,
       transparent 0.7em
     );
   background-position: 0 78%;
   background-repeat: no-repeat;
   background-size: 100% 0.95em;
   box-shadow:
-    inset 0 -0.04em 0 rgba(145, 106, 55, 0.1),
-    0 0 0 1px rgba(177, 135, 77, 0.12);
+    inset 0 -0.04em 0 var(--reader-route-focus-range-edge),
+    0 0 0 1px var(--reader-route-focus-range-outline);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
@@ -1921,23 +2459,23 @@ select {
   margin-inline: -0.035em;
   padding: 0.02em 0.07em 0.08em;
   border-radius: 0.18em 0.14em 0.22em 0.16em;
-  background-color: rgba(255, 248, 214, 0.72);
+  background-color: var(--reader-note-focus-surface);
   background-image:
     linear-gradient(
       to top,
-      rgba(224, 172, 31, 0.98) 0 0.13em,
-      rgba(255, 241, 187, 0.64) 0.13em 0.9em,
+      var(--reader-note-focus-line) 0 0.13em,
+      var(--reader-note-focus-fill) 0.13em 0.9em,
       transparent 0.9em
     );
   background-position: 0 80%;
   background-repeat: no-repeat;
   background-size: 100% 1em;
   box-shadow:
-    inset 0 -0.05em 0 rgba(171, 123, 9, 0.22),
-    0 0 0 1px rgba(240, 196, 59, 0.14),
-    0 0 0 0.08em rgba(255, 243, 184, 0.34);
+    inset 0 -0.05em 0 var(--reader-note-focus-edge),
+    0 0 0 1px var(--reader-note-focus-outline),
+    0 0 0 0.08em var(--reader-note-focus-shadow);
   text-decoration-line: underline;
-  text-decoration-color: rgba(171, 123, 9, 0.96);
+  text-decoration-color: var(--reader-note-focus-underline);
   text-decoration-thickness: 0.14em;
   text-underline-offset: 0.18em;
   -webkit-box-decoration-break: clone;
@@ -1984,38 +2522,38 @@ select {
 }
 
 .reader-annotation-gutter-marker--note {
-  background: rgba(228, 176, 0, 0.13);
-  color: #A77700;
+  background: var(--reader-gutter-note-surface);
+  color: var(--reader-gutter-note-ink);
   box-shadow:
-    inset 0 0 0 1px rgba(228, 176, 0, 0.2),
-    0 0.35rem 0.85rem rgba(91, 68, 9, 0.06);
+    inset 0 0 0 1px var(--reader-gutter-note-ring),
+    0 0.35rem 0.85rem var(--reader-gutter-note-shadow);
 }
 
 .reader-annotation-gutter-marker--highlight {
-  background: rgba(60, 140, 104, 0.1);
-  color: var(--structure-green);
-  box-shadow: inset 0 0 0 1px rgba(60, 140, 104, 0.18);
+  background: var(--reader-gutter-highlight-surface);
+  color: var(--reader-gutter-highlight-ink);
+  box-shadow: inset 0 0 0 1px var(--reader-gutter-highlight-ring);
 }
 
 .reader-annotation-gutter-marker:hover {
   transform: translateY(-1px);
   box-shadow:
-    inset 0 0 0 1px rgba(98, 101, 109, 0.18),
-    0 0.45rem 0.95rem rgba(28, 24, 18, 0.08);
+    inset 0 0 0 1px var(--reader-gutter-hover-ring),
+    0 0.45rem 0.95rem var(--reader-gutter-hover-shadow);
 }
 
 .reader-annotation-gutter-marker--active {
   transform: translateY(-1px);
   box-shadow:
-    inset 0 0 0 1px rgba(177, 135, 77, 0.26),
-    0 0.55rem 1rem rgba(177, 135, 77, 0.14);
+    inset 0 0 0 1px var(--reader-gutter-active-ring),
+    0 0.55rem 1rem var(--reader-gutter-active-shadow);
 }
 
 .reader-annotation-gutter-marker:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px rgba(40, 92, 255, 0.12),
-    0 0.45rem 0.95rem rgba(28, 24, 18, 0.08);
+    0 0 0 2px var(--reader-gutter-focus-ring),
+    0 0.45rem 0.95rem var(--reader-gutter-hover-shadow);
 }
 
 .reader-annotation-gutter-count {
@@ -2028,13 +2566,13 @@ select {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: rgba(60, 140, 104, 0.92);
+  background: var(--reader-gutter-count-surface);
   padding: 0 0.18rem;
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1;
-  color: rgba(252, 249, 242, 0.98);
-  box-shadow: 0 0.25rem 0.6rem rgba(60, 140, 104, 0.24);
+  color: var(--reader-gutter-count-ink);
+  box-shadow: 0 0.25rem 0.6rem var(--reader-gutter-count-shadow);
 }
 
 .reader-annotation-gutter-strip {
@@ -2044,10 +2582,10 @@ select {
   flex-direction: column;
   gap: 0.32rem;
   border-radius: 0.95rem;
-  border: 1px solid rgba(109, 113, 123, 0.16);
-  background: rgba(252, 249, 242, 0.96);
+  border: 1px solid var(--reader-gutter-strip-border);
+  background: var(--reader-gutter-strip-surface);
   padding: 0.38rem;
-  box-shadow: 0 0.8rem 1.5rem rgba(28, 24, 18, 0.12);
+  box-shadow: 0 0.8rem 1.5rem var(--reader-gutter-strip-shadow);
   backdrop-filter: blur(10px);
 }
 
@@ -2060,7 +2598,7 @@ select {
   border: 0;
   border-radius: 0.7rem;
   background: transparent;
-  color: rgba(43, 45, 50, 0.86);
+  color: var(--reader-gutter-strip-item-ink);
   cursor: pointer;
   padding: 0.3rem 0.42rem;
   text-align: left;
@@ -2073,8 +2611,8 @@ select {
 .reader-annotation-gutter-strip-item:hover,
 .reader-annotation-gutter-strip-item:focus-visible,
 .reader-annotation-gutter-strip-item--active {
-  background: rgba(60, 140, 104, 0.1);
-  color: rgba(25, 31, 28, 0.96);
+  background: var(--reader-gutter-strip-item-hover-surface);
+  color: var(--reader-gutter-strip-item-hover-ink);
   outline: none;
 }
 
@@ -2092,7 +2630,7 @@ select {
   font-size: 0.68rem;
   font-weight: 700;
   line-height: 1;
-  color: rgba(60, 140, 104, 0.84);
+  color: var(--reader-gutter-strip-index-ink);
 }
 
 .reader-annotation-gutter-strip-label {
@@ -2166,6 +2704,23 @@ select {
   .reader-paragraph-index {
     font-size: 0.68rem;
     letter-spacing: 0.04em;
+  }
+
+  .reader-immersive-paragraph {
+    padding-left: 1.5rem;
+  }
+
+  .reader-immersive-paragraph + .reader-immersive-paragraph {
+    margin-top: 1.7rem;
+  }
+
+  .reader-immersive-paragraph-cue {
+    top: 0.42rem;
+    transform: translateX(-0.08rem) scale(0.92);
+  }
+
+  .reader-immersive-sentence-text--lead::first-letter {
+    font-size: 3.4em;
   }
 
   .reader-active-dot {

@@ -2,24 +2,20 @@
 
 import { MessageSquare } from "lucide-react";
 import type { RenderElement } from "platejs/react";
-import type { TranslationDisplay } from "../../settings";
-import { translationDisplayClassName } from "../../settings";
 
 interface ReaderTranslationElementProps {
   props: Parameters<RenderElement>[0];
-  translationDisplay: TranslationDisplay;
   onAsk?: () => void;
 }
 
 export function ReaderTranslationElement({
   onAsk,
   props,
-  translationDisplay,
 }: ReaderTranslationElementProps) {
   return (
     <div
       {...props.attributes}
-      className={translationDisplayClassName(translationDisplay)}
+      className="reader-translation-layer group/translation"
       data-reader-node="translation"
     >
       <div className="reader-translation-shell">
