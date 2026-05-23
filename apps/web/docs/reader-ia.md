@@ -1,6 +1,6 @@
 # Web Reader 信息架构
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-20
+> **状态**: `CURRENT` | **最后更新**: 2026-05-23
 
 本文设计 Claread Web Reader 的信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统和历史回看。
 
@@ -13,7 +13,7 @@
 - **不被小程序限制反向约束**：小程序 ScrollView 降级不是 Web 上限。
 - **阅读主线优先**：复杂能力渐进披露，不在第一屏暴露所有操作。
 - **反馈、收藏、生词、批注围绕阅读上下文出现**。
-- **三层基础设施先行**：Reader 继续围绕 Claread Paper theme、Reader Floating Layer、Annotation Anchor Model 演进。新组件必须先归入主题 token、浮层 slot 或锚点模型之一，避免为单个交互临时造一套定位和样式规则。
+- **三层基础设施先行**：Reader 继续围绕 Claread `Paper / Light / Dark` 主题体系、Reader Floating Layer、Annotation Anchor Model 演进。新组件必须先归入主题 token、浮层 slot 或锚点模型之一，避免为单个交互临时造一套定位和样式规则。
 
 ## 当前实现状态
 
@@ -64,11 +64,10 @@ Reader 桌面端采用“原文画布 + 边缘工具层”的 Canvas Workspace�
 
 | 模式 | 中心原文画布 | 左侧工具层 | 右侧工具层 |
 |------|---------|-----------|---------|
-| 沉浸 (Immersive) | 纯正文或仅保留最低限度词汇高亮 | 默认收起，查词时轻量展开 | 收起 |
-| 标准 (Standard) | 正文 + 译文 + 词汇/短语/语境标注 + 语法下划线 | 查词后展开词典详情，可钉住 | 收起，仅保留 Ask 入口 |
-| 精读 (Intensive) | 正文 + inline marks + grammar_note / sentence_analysis 句后卡 | 词典详情可钉住 | 可展开上下文问答 |
+| 沉浸 (Immersive) | 段落优先的原文阅读投影；保留 vocab 高亮、用户高亮与用户笔记；不显示译文、语法旁注与句子拆解；正文按 paragraph 分段，不做句子切分，首段允许首字母下沉 | 默认收起，查词时轻量展开 | 收起 |
+| 精读 (Intensive) | 结构化原文画布；显示译文段级辅层、词汇/短语/语境标注、语法旁注、句子拆解、用户高亮与用户笔记 | 查词后展开词典详情，可钉住 | 收起，仅保留 Ask 入口，可按需展开 |
 
-默认使用标准模式。语法下划线默认显示但不展开脚注；结构链默认不显示。用户可切换到原文 / 沉浸模式。
+默认使用精读模式。模式切换表达阅读意图，不是显示 preset；沉浸模式是独立的 paragraph-first projection，不是精读模式隐藏几层信息后的减配态。
 
 ## 核心交互模型
 
@@ -83,13 +82,13 @@ Reader 桌面端采用“原文画布 + 边缘工具层”的 Canvas Workspace�
 | 选句操作 | toolbar 中选择当前句，或点击句尾句柄 | 直接整句选中并弹出同一套 SelectionToolbar，不再打开独立句子操作卡片 |
 | 语法说明 | 点击 grammar_note 锚点 | 在当前句子下方展开 label + note_zh 卡 |
 | 句子拆解 | 点击 sentence_analysis 入口 | 在当前句子下方展开 analysis_zh 和 chunks 列表 |
-| 阅读设置 | 点击 `Aa` | 浮动上下文面板切换为字号、行距、背景、译文、标注显示控制 |
+| 阅读设置 | 点击 `Aa` | 浮动上下文面板切换为字号、字体、主题三项阅读校准，不承担模式切换职责 |
 
 ### 工作区联动
 
 | 交互 | 触发 | 行为 |
 |------|------|------|
-| 翻译切换 | 快捷键 `T` 或阅读设置 | 逐句翻译显示/隐藏，正文版心不跳动 |
+| 模式切换 | 顶部 segmented control，或快捷键 `I` / `X` | 在精读与沉浸两种阅读意图之间切换；不通过阅读设置反向拼装 |
 | 句子聚焦 | 点击句尾句柄或通过 toolbar 扩展到整句 | 句子轻高亮，SelectionToolbar 以句子级选区重新定位；后续高亮、笔记、查词、AI 共用同一入口 |
 | 查词历史 | 当前会话内多次查词 | 画布左侧词典层下方显示本次查词 chips，不进入长期资产 |
 | 写笔记 | SelectionToolbar 或句侧 note marker | 新建时走选区 draft popover；已有笔记通过句侧常显 marker 打开浮出式 note panel |
@@ -133,9 +132,8 @@ Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseli
 
 | 按键 | 功能 |
 |------|------|
-| `T` | 翻译显示切换 |
-| `I` | 沉浸模式（隐藏所有标注） |
-| `X` | 精读模式（显示全部标注+翻译） |
+| `I` | 沉浸模式 |
+| `X` | 精读模式 |
 | `[` | 缩小字体 |
 | `]` | 增大字体 |
 
@@ -147,6 +145,8 @@ Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseli
 | `E` | 对选中文本添加笔记 |
 | `S` | 分享/导出当前结果 |
 | `Cmd/Ctrl+F` | 文内搜索（浏览器原生） |
+
+`T` 不再承担译文显隐快捷键。译文属于精读模式的段级辅层，而不是用户在同一模式内随时开关的一层“显示选项”。
 
 ## 词典浮层设计
 
@@ -343,7 +343,7 @@ Academic `RenderSceneModel` 包含 Web 可结构化渲染的额外字段：
 | Store | 数据 |
 |-------|------|
 | `useAuthStore` | 登录态、session_token、用户信息 |
-| `useReaderStore` | 阅读模式、字体大小、翻译显示、面板开关 |
+| `useReaderStore` | 阅读模式、主题、字号、字体、面板开关 |
 | `useLayoutStore` | 侧栏宽度、面板折叠状态 |
 | `useAnnotationStore` | 当前选区、批注工具栏状态 |
 
@@ -352,6 +352,6 @@ Academic `RenderSceneModel` 包含 Web 可结构化渲染的额外字段：
 | 数据 | 存储位置 | 说明 |
 |------|---------|------|
 | session_token | httpOnly cookie | 安全 |
-| 阅读偏好（字体/模式） | localStorage | 跨 session 保持 |
+| 阅读偏好（模式/主题/字体/字号） | localStorage | 跨 session 保持 |
 | 面板布局状态 | localStorage | 跨 session 保持 |
 | 滚动位置 | sessionStorage | 同 session 内恢复 |

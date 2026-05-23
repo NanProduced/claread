@@ -1,65 +1,76 @@
 ---
-name: Claread Web Functional UI
-description: High-fidelity web reading, annotation, grammar visualization, and export design for Claread.
+name: Claread Web Design System
+description: A unified editorial web system for deep reading, product surfaces, and shareable learning artifacts.
 colors:
-  web-canvas: "#F7F6F2"
-  reader-paper: "#FAF9F6"
-  surface: "#FFFFFF"
-  surface-warm: "#FBFAF6"
-  surface-raised: "#FDFCF8"
-  ink: "#111111"
-  ink-soft: "#1A1A1A"
-  muted: "#62656D"
-  subtle: "#858A92"
-  hairline: "#E8E4DA"
-  lens-blue: "#2563EB"
-  lens-blue-soft: "#EAF1FF"
-  vocab-amber: "#E4B000"
-  phrase-lavender: "#B9A8E6"
-  context-blue: "#4C91C2"
-  grammar-violet: "#746694"
-  structure-green: "#3C8C68"
-  error-red: "#BE123C"
+  paper-canvas: "#F3EFE6"
+  paper-stage: "#F8F4EA"
+  paper-panel: "#FBF7EE"
+  paper-ink: "#171511"
+  paper-muted: "#6E685E"
+  paper-hairline: "#D9D1C3"
+  light-canvas: "#F7F5F0"
+  light-stage: "#FBFAF6"
+  light-panel: "#FFFFFF"
+  light-ink: "#151515"
+  light-muted: "#666A73"
+  light-hairline: "#E3DED3"
+  dark-canvas: "#161412"
+  dark-stage: "#221F1A"
+  dark-panel: "#2A2621"
+  dark-ink: "#F4EEDF"
+  dark-muted: "#B1A899"
+  dark-hairline: "#3A342D"
+  lens-blue: "#1F5EFF"
+  lens-blue-night: "#8CAEFF"
+  vocab-amber: "#D49A18"
+  phrase-plum: "#8E779F"
+  context-blue: "#4F89B3"
+  grammar-violet: "#6E6389"
+  structure-green: "#557B5C"
+  stamp-umber: "#8A5A2B"
 typography:
   display:
-    fontFamily: "Source Serif Pro, Georgia, Times New Roman, Noto Serif SC, serif"
-    fontSize: "clamp(2.25rem, 5vw, 4.5rem)"
-    fontWeight: 700
-    lineHeight: 1.06
+    fontFamily: "Source Serif 4, Source Han Serif SC, Georgia, Times New Roman, serif"
+    fontSize: "clamp(3rem, 5.2vw, 5.4rem)"
+    fontWeight: 400
+    lineHeight: 0.92
     letterSpacing: "normal"
   headline:
-    fontFamily: "Source Serif Pro, Georgia, Times New Roman, Noto Serif SC, serif"
-    fontSize: "clamp(1.75rem, 3vw, 2.75rem)"
-    fontWeight: 650
-    lineHeight: 1.18
+    fontFamily: "Source Serif 4, Source Han Serif SC, Georgia, Times New Roman, serif"
+    fontSize: "clamp(2rem, 3vw, 3rem)"
+    fontWeight: 500
+    lineHeight: 1.06
     letterSpacing: "normal"
-  reading:
-    fontFamily: "Source Serif Pro, Georgia, Times New Roman, serif"
-    fontSize: "1.1875rem"
-    fontWeight: 400
-    lineHeight: 1.9
   title:
-    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Inter, PingFang SC, Helvetica Neue, Arial, sans-serif"
-    fontSize: "1.125rem"
-    fontWeight: 650
-    lineHeight: 1.35
+    fontFamily: "Inter, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 600
+    lineHeight: 1.3
+    letterSpacing: "0.01em"
   body:
-    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Inter, PingFang SC, Helvetica Neue, Arial, sans-serif"
+    fontFamily: "Inter, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif"
     fontSize: "0.9375rem"
     fontWeight: 400
     lineHeight: 1.65
+    letterSpacing: "normal"
   label:
-    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Inter, PingFang SC, Helvetica Neue, Arial, sans-serif"
+    fontFamily: "Inter, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif"
     fontSize: "0.75rem"
-    fontWeight: 650
+    fontWeight: 700
     lineHeight: 1.2
+    letterSpacing: "0.12em"
+  reading:
+    fontFamily: "Source Serif 4, Source Han Serif SC, Georgia, Times New Roman, serif"
+    fontSize: "1.18rem"
+    fontWeight: 400
+    lineHeight: 1.92
+    letterSpacing: "normal"
 rounded:
   xs: "4px"
   sm: "8px"
   md: "12px"
-  note: "16px"
-  panel: "20px"
-  sheet: "28px"
+  lg: "18px"
+  xl: "24px"
   pill: "999px"
 spacing:
   xs: "4px"
@@ -69,206 +80,235 @@ spacing:
   xl: "32px"
   xxl: "48px"
 components:
-  app-shell:
-    backgroundColor: "{colors.web-canvas}"
-    textColor: "{colors.ink}"
-  reader-surface:
-    backgroundColor: "{colors.reader-paper}"
-    textColor: "{colors.ink}"
+  app-shell-default:
+    backgroundColor: "{colors.paper-canvas}"
+    textColor: "{colors.paper-ink}"
+    rounded: "{rounded.lg}"
+    padding: "24px 24px"
+  reader-stage-default:
+    backgroundColor: "{colors.paper-stage}"
+    textColor: "{colors.paper-ink}"
     typography: "{typography.reading}"
-  note-card:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.note}"
-    padding: "18px 20px"
-  primary-action:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.surface}"
+    rounded: "{rounded.xl}"
+    padding: "32px 40px"
+  mode-switch-active:
+    backgroundColor: "{colors.paper-panel}"
+    textColor: "{colors.paper-ink}"
     rounded: "{rounded.pill}"
-    padding: "11px 18px"
-  lens-focus:
-    backgroundColor: "{colors.lens-blue}"
-    textColor: "{colors.surface}"
+    padding: "10px 16px"
+  primary-action:
+    backgroundColor: "{colors.paper-ink}"
+    textColor: "{colors.paper-stage}"
+    rounded: "{rounded.pill}"
+    padding: "12px 18px"
+  reader-translation-layer:
+    backgroundColor: "{colors.paper-stage}"
+    textColor: "{colors.paper-muted}"
+    typography: "{typography.body}"
     rounded: "{rounded.sm}"
+    padding: "0 0 0 0"
+  sentence-note-card:
+    backgroundColor: "{colors.paper-panel}"
+    textColor: "{colors.paper-ink}"
+    rounded: "{rounded.lg}"
+    padding: "16px 18px"
 ---
 
-# Design System: Claread Web Functional UI
+# Design System: Claread Web Design System
 
-## 1. Overview
+## Overview
 
-**Creative North Star: "The Editorial Reading Instrument"**
+**Creative North Star: "带批注的编辑台"**
 
-Claread Web 是一个功能优先的高保真阅读空间。它不靠 landing 建立第一印象，而靠 `/read` 的粘贴即解读、`/reader/[recordId]` 的文章解析页、历史/生词/复习这些日常功能，以及后续分享和导出产物来建立品牌记忆。
+Claread Web 是 Claread 在浏览器中的完整设计系统，不是“当前先做功能页，所以设计只服务功能页”的阶段性风格说明。它必须同时约束功能页、Reader、未来产品页、分享页、导出页与后续内容型页面，让这些页面看起来像同一份被认真编辑过的出版物，而不是几套彼此脱节的 UI 风格碰巧共存于同一个产品中。
 
-Web 的默认体验是以原文画布为中心的 Reader 工作台。用户先看到一篇安静、可读、版心稳定的英文文章；当他需要理解时，词汇、语法、句子结构、用户笔记和 AI 追问都围绕原文锚点出现。Web 的能力要比小程序完整，但界面不应该把解析内容搬离正文，变成侧边列表或后台面板。
+这套系统的母语言来自“编辑性的阅读对象”，而不是“软件模板”。它像一张带批注的编辑台，也像一份尚在工作中的长杂志母本。这个母语言既要能够支撑产品页的开场气氛，也要能够支撑功能页的任务秩序、Reader 的深度阅读、以及分享导出的产物感。Reader 是 Claread 最完整的品牌现场，但不是唯一现场。产品页、分享页和导出页也必须说同一门语言，只是语气、密度和浓度不同。
 
-Web 可以拥有轻应用壳，但应用壳不是品牌。产品区第一版使用左侧可折叠 rail；顶部导航更适合后续 landing / 内容页，不作为登录后主应用导航。rail 必须像阅读仪器条一样服务阅读和产物，而不是把 Claread 拉成 SaaS 后台。
+`纸质 Paper` 是 Claread 的母主题，`浅色 Light` 与 `深色 Dark` 是同一语言的浓度调节，而不是三套彼此陌生的皮肤。Paper 保留 Claread 最完整的气味；Light 把暖意调淡，更偏功能化工作面；Dark 把暖意换夜，更偏夜读。三者共享同一套批注语法、同一套间距纪律、同一组组件系统。变化的是氛围，不是系统。
+
+Reader 只有两种模式。`精读 Intensive` 是主工作模式，强调批注感与校读纪律；`沉浸 Immersive` 是回到文章，强调编排感与篇章开场。它们不是“预设 + 自定义”的关系，也不是一套控制面板调出来的显示组合，而是同一阅读系统中的两种阅读意图。
 
 **Key Characteristics:**
 
-- Functional pages first, but with premium craft.
-- Article canvas first, with left/right canvas tool layers instead of a fixed three-column workbench.
-- Current Reader baseline adapts `grammar_note` and `sentence_analysis` faithfully before any Web-only grammar visualization.
-- Grammar X-Ray remains a future Web-native capability that depends on a dedicated structured xray payload.
-- Artifact Studio as a second-stage export/share surface.
-- Calm app shell, expressive artifacts.
+- 全站是一套统一编辑语言，而不是若干页面风格拼接
+- 产品页、功能页、Reader、分享页共享同一母语言
+- 阅读舞台优先于应用壳，但产品页也必须有开场仪式感
+- 纸感随距离原文的远近递增
+- 精读模式说批注语言，沉浸模式说编排语言
+- 句后批注展开是 Claread 最有记忆点的动作
 
-## 2. Colors
+## Colors
 
-Web 使用更清洁的 paper/canvas 分层：页面外层可以稍冷更干净，Reader 内层保持暖纸。Lens Blue `#2563EB` 只用于 CTA 主按钮、当前激活状态、品牌符号和内嵌链接；禁止大面积铺色。
+Claread 的色彩不是“暖纸 + 蓝色按钮”，而是一套可跨全站复用的编辑阅读配色。离原文越近，纸感越明确；离原文越远，纸感越克制。外层是干净的工作台面，内层是摊开的稿纸。进入 Reader 时，用户应当感到一点纸的气味；进入功能页或产品页时，这种纸感应当被稀释成受控氛围，而不是变成表面装饰。
 
 ### Primary
 
-- **Reader Paper**: Reader 主阅读面，承载文章和轻标注。
-- **Web Canvas**: 功能页外层背景，比小程序纸色更干净，避免 Web 端显得发黄。
-- **Printed Ink**: 正文、标题、主操作和关键结构。
-- **Lens Blue**: CTA 主按钮、当前激活状态、品牌光、内嵌链接和分享中的 Claread 记忆点。
+- **纸面母色组** (`#F3EFE6`, `#F8F4EA`, `#FBF7EE`)：`paper-canvas` 是工作台面与产品级背景，`paper-stage` 是正文舞台与核心内容区，`paper-panel` 是贴近内容的面板、旁注层与精选内容卡。三者共同构成 Claread 的母主题。
+- **Lens Blue** (`#1F5EFF`)：只用于焦点、当前选择、模式激活和少量品牌记忆点。在夜读里转成 **Lens Blue Night** (`#8CAEFF`)，不变成霓虹。
 
 ### Secondary
 
-- **Vocabulary Amber**: 重点词和词义。
-- **Phrase Lavender**: 短语、搭配和轻语法提示。
-- **Context Blue**: 语境说明和原文回源。
-- **Grammar Violet**: 语法结构和句法关系。
-- **Structure Green**: 段落逻辑、篇章结构、理解完成状态。
-- **Error Red**: 分析失败、风险和极少数考试重点。
+- **Vocabulary Amber** (`#D49A18`)：词汇高亮与重点词标记。它应像克制的荧光笔，不像装饰色块。
+- **Grammar Violet** (`#6E6389`)：语法关系与句法提示。它是一种结构信号，不是一层紫色背景。
+- **Structure Green** (`#557B5C`)：理解完成、句子结构、冷静的分析感。
+
+### Tertiary
+
+- **Phrase Plum** (`#8E779F`)：短语单位、搭配关系与轻分组。
+- **Context Blue** (`#4F89B3`)：语境说明、回源与上下文连接。
+- **Stamp Umber** (`#8A5A2B`)：极少量签名印章。它只能稀疏存在，不能膨胀成装饰主题。
 
 ### Neutral
 
-- **Surface White**: note card、历史列表、输入区、设置面板。
-- **Surface Warm**: Reader 里的解释浮层和导出预览。
-- **Muted / Subtle**: 元信息、辅助说明、inactive 状态。
-- **Hairline**: 分隔、面板边界、工具区和 AI 工作区边界。
+- **浅色工作面** (`#F7F5F0`, `#FBFAF6`, `#FFFFFF`)：Paper 的稀释版本，用于更功能化的工作页与更克制的产品层。
+- **夜读工作面** (`#161412`, `#221F1A`, `#2A2621`)：Paper 的夜读版本。必须暖、深、有层次，但不能是企业后台黑，也不能像游戏启动器。
+- **Editorial Ink** (`#171511`, `#151515`, `#F4EEDF`)：三主题通用的主文字家族。
+- **Muted Reading Voice** (`#6E685E`, `#666A73`, `#B1A899`)：译文、元信息、辅文与第二层界面声音。
+- **Hairline Rule** (`#D9D1C3`, `#E3DED3`, `#3A342D`)：1px 引线、边界、分隔和结构规则。
 
 ### Named Rules
 
-**The Reader Paper Rule.** 文章所在区域必须有明确阅读面。不要让文章漂在普通后台灰底上。
+**The Mother Theme Rule.** `纸质 Paper` 定义系统，`浅色 Light` 与 `深色 Dark` 只调浓度，不换语法。未来产品页也必须从这里出发。
 
-**The Blue As Focus Rule.** Lens Blue 只用于焦点和品牌记忆，不用于普通按钮海洋。普通按钮使用墨色、灰色、透明或纸面边界。
+**The Distance Rule.** 越远离原文，纸感越干净；越靠近原文，纸感越明确。
 
-**The Semantic Mark Rule.** 标注颜色必须对应语义层，不允许随意装饰。
+**The No-Fake-Paper Rule.** 禁止纸面纹理、旧化肌理、纤维噪点和伪书页做旧。只要纸感来自装饰，而不是来自层次和用色，它就失败了。
 
-## 3. Typography
+## Typography
 
-**Display Font:** Editorial serif for share/export and rare brand moments.  
-**Body Font:** Apple system / Inter / PingFang SC for controls and Chinese explanation.  
-**Reading Font:** Serif for English article body and example sentences.
+**Display Font:** Source Serif 4 搭配 Source Han Serif SC 回退。  
+**Body Font:** Inter 搭配 PingFang SC 回退。  
+**Label/Mono Font:** 核心产品不需要另一套 mono 主语汇，标签仍由 Inter 承担。
 
-**Character:** Web 端应该比小程序更像一份被排版过的英文阅读材料。Reader 正文有文学和杂志感，解释和工具有系统 UI 的清晰度。
+**Character:** Claread 的字体系是 `60%` 学术骨架与 `40%` 文学气味。它不是 JAMA 式冷白学术，也不是 Granta 式文学封面。它更接近 LRB、The Atlantic、Aeon 那种长杂志语气：骨架严谨，开场有气味，正文始终可读。这个判断同时适用于产品页 hero、Reader 标题、精选卡、分享封面和导出物。
 
 ### Hierarchy
 
-- **Display** (700, clamp 2.25rem to 4.5rem): 分享、导出、少量品牌封面，不用于普通功能页堆标题。
-- **Headline** (650, serif): 文章标题、Reader 模式标题、导出笔记标题。
-- **Reading** (400, 1.1875rem, 1.9): 英文正文。桌面默认正文文本列控制在 65-75ch；外层 Reader 内容容器可在宽屏放宽到约 96ch，用来容纳段落编号、句后卡和工具避让。
-- **Title** (650, 1.125rem): 解释卡、工具区、历史项标题、设置组。
-- **Body** (400, 0.9375rem, 1.65): 中文解释、定义、按钮说明、面板正文。
-- **Label** (650, 0.75rem): 注释类别、模式切换、元信息和导出控件。
+- **Display** (`400`, `clamp(3rem, 5.2vw, 5.4rem)`, `0.92`)：只用于开篇时刻。首页级功能页、未来产品页 hero、分享封面可以像杂志封面一样使用它，但不能把所有页面都做成封面。
+- **Headline** (`500`, `clamp(2rem, 3vw, 3rem)`, `1.06`)：文章标题、精选卡标题、沉浸模式开篇标题。存在感强，但不喊叫。
+- **Title** (`600`, `1rem`, `1.3`)：面板小标题、设置组标题、句后卡标题。清楚、克制、产品化。
+- **Body** (`400`, `0.9375rem`, `1.65`)：中文说明、辅助文字、元信息、控制文案。
+- **Label** (`700`, `0.75rem`, `0.12em`)：模式标签、主题标签、分组标签、轻元信息。
+- **Reading** (`400`, `1.18rem`, `1.92`)：正文主阅读层。精读模式使用它的稳定节奏，沉浸模式在同一家族内增强段落开场与篇章感。
 
 ### Named Rules
 
-**The Reader Weight Rule.** 正文不能被控件字体压过。控件可以清晰，但不应比文章更有存在感。
+**The Low-Voice Translation Rule.** 译文是段级句下辅层，是“低声脚注”，不是并列正文，不是对照表，也不是旁注。
 
-**The Sentence Room Rule.** 长难句拆解必须给足水平和垂直空间。当前 `sentence_analysis` 是 chunks + 文本解释，不要把它伪装成语法树。
+**The Serif Alignment Rule.** 译文出现在原文下方时，必须与原文的衬线节奏对位，即使字号和颜色降一档，也不能失去“同属一段”的归属性。
 
-## 4. Elevation
+**The Cover-Moment Rule.** 大标题只属于开场时刻。如果每一页都像封面，就没有任何一页真正像封面。
 
-Web 的层级应像纸面、工具面板和 AI 工作区，而不是卡片堆。Reader 内保持低阴影；词典、句子卡片、selection toolbar、AI 面板和导出预览才允许更明确的 elevation。
+## Elevation
+
+Claread 不靠厚重阴影制造层级，而靠纸面分层、1px 规则、边距纪律与结构性留白建立秩序。深度存在，但应该是结构深度，不是戏剧深度。正文舞台始终是最值得看的平面；产品页与功能页也必须遵守同样的层级纪律，只是在开场与密度上有所区别。
 
 ### Shadow Vocabulary
 
-- **Surface Quiet** (`0 1px 2px rgba(17, 17, 17, 0.03), 0 8px 24px rgba(17, 17, 17, 0.04)`): 普通 note、历史项、输入面。
-- **Reader Float** (`0 14px 42px rgba(28, 24, 18, 0.11)`): 词典浮层、语法解释、selection toolbar。
-- **Workbench Layer** (`inset 1px 0 0 rgba(17, 17, 17, 0.06)`): 画布边缘工具层、右侧 AI 工作区和边界。
-- **Artifact Lift** (`0 28px 90px rgba(17, 17, 17, 0.16)`): 导出/分享预览。
+- **Desk Quiet** (`0 1px 2px rgba(23, 21, 17, 0.03), 0 8px 20px rgba(23, 21, 17, 0.04)`)：应用外层和普通容器的最低层阴影。几乎不应被察觉。
+- **Reader Lift** (`0 12px 28px rgba(23, 21, 17, 0.08)`)：正文舞台从外层台面轻轻抬起时使用。
+- **Note Unfold** (`0 14px 32px rgba(23, 21, 17, 0.10)`)：句后批注卡、短时 Reader 面板和贴近原文的解释层。它是 Claread 的签名抬升。
+- **Night Layer** (`0 18px 36px rgba(0, 0, 0, 0.20)`)：深色夜读层的暖暗分层，不得发硬发脏。
 
 ### Named Rules
 
-**The Shell Recedes Rule.** 应用壳永远比 Reader 轻。侧栏、顶栏、历史面板不能抢正文。
+**The Shell-Recedes Rule.** 应用壳必须比正文舞台更轻。如果用户先看到壳而不是文章，层级就错了。
 
-**The Artifact Performs Rule.** 分享/导出预览可以更有材质和舞台感，因为它是传播对象。
+**The One-Pixel Discipline Rule.** 引线、边界和分隔线是结构工具，不是装饰。它们必须直、薄、准。
 
-## 5. Components
+**The No-Theatrical-Shadow Rule.** 如果阴影让界面变得“更像组件”而不是“更像结构”，就应该删掉。
 
-### App Shell
+## Components
 
-- **Role:** 承载 `/read`、Library、Vocabulary、Settings 等功能页。
-- **Character:** 左侧可折叠 rail，默认显示图标 + 文字，手动折叠后只保留图标。它是阅读仪器条，不是传统 SaaS sidebar。
-- **State:** Reader 中 rail 应自动弱化，阅读优先。移动 Web 退化为四个底部入口，不含复习。
+### Buttons
 
-### Paste-to-Read Entry
+- **Shape:** 克制的圆角按钮与 pill 控件（`18px` 到 `999px`），不软塌，不游戏化。
+- **Primary:** 纸上墨，或墨上纸，取决于当前主题。主动作应果断，但不发亮。
+- **Hover / Focus:** 动作幅度极小。焦点来自边界、对比与对齐，而不是发光效果。
+- **Secondary / Ghost:** 应像工作台上的阅读工具，不是被稀释的 CTA。
 
-- **Role:** `/read` 的主入口。
-- **Character:** 像一张干净纸面或编辑台，而不是表单。
-- **Content:** 输入区、解析目标、最近记录、少量模式入口。
-- **Anonymous:** 未登录不开放模型试用；可展示精选解析示例让用户理解效果。
-- **Constraint:** 不要让用户先配置复杂选项。
+### Product Page Hero
 
-### Editorial Reader
+- **Role:** Claread Web 的产品页开场。虽然开发顺序靠后，但不属于系统边角。
+- **Character:** 杂志封面式开场，带有明确标题场与留白秩序，但仍服务“进入 Claread”这件事，不做纯视觉展台。
+- **Typography:** 允许使用 Display 级大标题，但正文说明与入口动作必须迅速把用户带回产品。
+- **Constraint:** 不做 SaaS landing clichés，不做空洞的 hero + metrics 模板。
 
-- **Role:** 默认 Reader。
-- **Character:** 中心文章画布、暖纸阅读面、行内标注、句后解释卡、用户笔记痕迹。
-- **Width:** 正文 65-75ch，左右工具区不能压缩正文到不可读。
-- **Behavior:** 词典、语法说明、句子拆解、用户笔记都从原文锚点触发；主解释优先贴回正文。
+### Feature / Editorial Card
 
-### Reader Canvas Tool Layers
+- **Role:** 首页精选、未来产品页 feature block、分享前置内容卡的统一母组件。
+- **Character:** 像编辑选题卡，而不是运营卡片网格。
+- **Structure:** 标题、摘要、元信息、少量图像与明确去向。
+- **Constraint:** 不堆相同卡片网格，不靠过多彩色边框建立层次。
 
-- **Role:** 桌面端 Reader 的画布边缘工具层。用户感知到的是一整张原文画布，正文在中心，左右空白区按需承载工具。
-- **Left Canvas Layer:** 词典详情、术语、短语和其他偏确定性详情展示。用户点击词/短语时，原文附近先显示可关闭的轻释义；完整释义、例句、短语、加入生词本、手动查词和本次会话查词痕迹进入画布左侧词典卡片。
-- **Center Core:** 正文、译文、语法说明、句子拆解、用户高亮和笔记。常驻视窗不得覆盖或压缩这里；只有选区二级菜单、轻释义、临时 selection toolbar 这类短时操作浮层可以出现在核心区。
-- **Right Canvas Layer:** AI chatbox 和后续 AI 能力落地区。默认可收起，仅作为 Ask Claread 入口；展开后围绕当前句子、选区或全文对话。
-- **Constraint:** 这不是固定三栏。词典和 AI 是画布边缘层，可以按需展开或钉住；新增视窗必须先声明放入左侧工具层、右侧工具层、正文内卡片或移动端 bottom sheet，并检查和已有组件的冲突。
+### Mode Switch
 
-### Grammar Notes / Sentence Analysis Baseline
+- **Role:** 精读模式顶部控制带中的第一主控件。
+- **Character:** 模式切换表达阅读意图，不表达“显示选项”。因此它必须视觉上压过阅读设置。
+- **Shape:** 靠近标题区的短 segmented capsule，当前项使用激活 pill。
+- **Language:** 中文主，英文辅。英文是注记，不是装饰。
 
-- **Role:** 首版 Reader 适配当前 workflow schema 中的两类结构说明。
-- **Character:** `grammar_note` 是原文锚点 + 语法标签 + 中文说明；`sentence_analysis` 是长难句 `analysis_zh` + chunks 列表。
-- **Placement:** `grammar_note` 和 `sentence_analysis` 优先在相关句子下方展开；词典轻释义可贴近原文弹出，详细释义进入画布左侧词典卡片。
-- **Constraint:** 不使用 Grammar X-Ray 命名，不把 chunks 或普通语法说明渲染成未来语法透视模式。
+### Reader Header / Control Strip
 
-### Future Grammar X-Ray
+- **Presence:** 中等偏弱。初始进入时可见，滚动后应逐步淡出存在感。
+- **Structure:** 标题、元信息、模式切换，然后才是阅读设置。设置必须次于模式。
+- **Constraint:** 它不能像生产力软件的一整排 toolbar。
 
-- **Role:** Web 后续标志性语法可视化能力。
-- **Character:** 基于结构化 xray payload，用专门组件表达结构骨架、搭配槽、修饰挂靠、指代链、辨析卡等不同语法类型。
-- **Placement:** 后续 Reader 模式、分享/导出模板或按需展开能力。
-- **Constraint:** 当前 workflow schema 不支持。不得用 `grammar_note` 或 `sentence_analysis` 冒充 Grammar X-Ray。
+### Translation Layer
 
-### History / Library List
+- **Role:** 原文段下方的低声脚注。
+- **Placement:** 表面是句下，实际服从段级归属。译文必须清楚属于上方那一段原文。
+- **Style:** 字号降一档、颜色 muted、与原文保持衬线对位；段尾约 `12px` 收束，段间约 `24px` 保持归属关系。
+- **Constraint:** 它绝不能像第二篇正文，也不能像对照翻译表。
 
-- **Role:** 复看文章和用户资产。
-- **Character:** 安静列表，不做复杂 read-it-later inbox。
-- **Content:** 标题、时间、目标、状态、收藏、生词/语法数量摘要、客户端标题/片段搜索。
+### Sentence Note Card
 
-### Vocabulary / Review
+- **Role:** Reader 的签名组件。真正让 Claread 被记住的，不是切模式，而是句后批注像编辑旁注一样被翻出来。
+- **Character:** 批注应像从句子下方展开，而不是从一个浮动 inspector 里蹦出来。
+- **Language:** 序号、1px 直引线、margin 锚点、克制标签、正文内联高亮。
+- **Constraint:** 禁止 sticky-note 拟物、纸片拼贴、装饰性校读符号。
 
-- **Role:** 生词资产和轻复习。Vocabulary 是一级入口；Review 是 Vocabulary 内的动作按钮，不放入一级导航。
-- **Character:** 降权但可用，不做打卡中心。
-- **Content:** 词、语境句、来源文章、学习中/已掌握状态、复习入口。查词历史不保存，只有主动加入生词本的词进入资产。
+### Annotation Grammar
 
-### Artifact Studio
+- **Core Vocabulary:** 序号、1px 直引线、克制单一的 margin 标记、荧光笔式内联高亮、稀疏印章签名。
+- **Inline Highlight:** 应该像认真画下的一笔，不像一团涂抹。
+- **Theme Behavior:** `Light / Dark / Paper` 共享同一语法。Paper 只在靠近原文时更有物感，不增加额外装饰。
 
-- **Role:** 分享和导出预览。
-- **Character:** 中央预览 + 少量模板和导出控制。
-- **Templates:** Magazine Brief、Notebook Study、Minimal Card；Grammar X-Ray 模板后置到结构化 xray payload 可用之后。
-- **Constraint:** 第二阶段，不阻塞首期 Reader。
+### Immersive Paragraph Surface
 
-## 6. Do's and Don'ts
+- **Role:** 回到文章本身。
+- **Character:** 杂志开篇、段落优先、隐藏批注噪声。
+- **Typography:** 同一衬线家族，更强的开篇编排感，可使用首字母下沉，但不引入厚重工具感。
+- **Constraint:** 沉浸模式不是精读模式的“关闭若干项”，而是另一种排版表达。
+
+### Share / Export Surface
+
+- **Role:** 把一次 Claread 阅读结果沉淀成可传播的阅读产物。
+- **Character:** 可以比功能页更有文学气味，但始终受学术骨架约束。它应像“可保存的编辑成果”，而不是社交海报模板。
+- **Typography:** 可放大标题、强化版式节奏，但不能脱离 Claread 的正文逻辑。
+- **Constraint:** 不做花哨学习海报，不做高饱和传播图。
+
+## Do's and Don'ts
 
 ### Do:
 
-- **Do** 先做 `/read`、Reader、Library、Vocabulary、Settings 和后续 share 等功能页。
-- **Do** 让 Reader 成为 Web 端的品牌第一现场。
-- **Do** 让原文画布承载主要解析展示，左右区域只做工具、详情和 AI 辅助。
-- **Do** 先把 `grammar_note` 和 `sentence_analysis` 做成可读、可定位、可回到原文的 baseline 体验。
-- **Do** 把 Grammar X-Ray 保留为后续增强，不在首版 Reader 中提前命名或伪装。
-- **Do** 保持小程序功能兼容，同时利用 Web 做更完整的 render profile。
-- **Do** 为后续导出/分享预留 Artifact Studio 的信息架构。
+- **Do** 把 `纸质 Paper` 视为母主题，再从它推导 `浅色 Light` 与 `深色 Dark`。
+- **Do** 让纸感随着离原文的距离而增强，而不是在整站平均铺开。
+- **Do** 让精读模式成为工作台，让沉浸模式成为回到文章。
+- **Do** 把句后批注展开做成 Claread 最有识别度的交互瞬间。
+- **Do** 把译文保持为原文段下方的低声辅层。
+- **Do** 让 margin、引线、分隔和 baseline 对齐精确到像素。
+- **Do** 让功能页继承 Reader 的抽象纪律：节奏、层级、对齐、克制。
+- **Do** 让未来产品页、分享页、导出页也从同一母语言出发，而不是补一套“营销皮肤”。
 
 ### Don't:
 
-- **Don't** 先投入完整 landing 和产品介绍页。
-- **Don't** 使用传统 SaaS dashboard 作为 Web 默认形态。
-- **Don't** 把右侧栏做成批注仓库；AI 可以在右侧，但必须围绕当前原文上下文工作。
-- **Don't** 让历史、生词、设置这些功能页决定 Claread 的品牌气质。
-- **Don't** 让标注颜色失去语义。
-- **Don't** 为了视觉效果牺牲阅读行长、对比度和原文锚点。
+- **Don't** 把阅读模式做成设置 preset，也不要让阅读设置反向拼出模式效果。
+- **Don't** 在精读模式里把 Claread 的核心标注价值变成可有可无的隐藏层。
+- **Don't** 用后台暗黑逻辑套一层暖色补丁，然后把它叫夜读主题。
+- **Don't** 用纸张纹理、旧化肌理、纤维噪点、做旧边缘来伪造纸感。
+- **Don't** 用 Post-it 贴纸、装饰性校对符号、手账式拼贴来伪装编辑气质。
+- **Don't** 让应用壳定义品牌。定义品牌的是文章舞台。
+- **Don't** 让译文读起来像第二篇文章。
+- **Don't** 让功能页直接挪用 Reader 的显性符号。它们只能继承纪律，不能继承戏服。
+- **Don't** 把产品页当成系统之外的例外页。它只是后开发，不是后设计。

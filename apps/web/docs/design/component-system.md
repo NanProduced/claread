@@ -2,7 +2,7 @@
 
 > Reader 专项规范。全站功能页组件库、token、theme、目录结构和第三方准入流程请先参考 `component-library-v0.md`。本文只保留 Reader 画布、工具层、锚点和交互特例。
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-20
+> **状态**: `CURRENT` | **最后更新**: 2026-05-23
 > 本文把 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md` 和 `reader-ia.md` 中已经确认的方向落成 Reader 组件使用规范。方向探索和过程判断已吸收到正式文档，不再在这里重复保留。
 
 ## 1. Scope
@@ -50,7 +50,7 @@
 
 当前 Web Reader 先固定三层基础设施，再继续做组件扩展：
 
-1. **Claread Paper theme.** 现有暖纸、墨色、`lens-blue` 和语义标注色是 Claread 的主视觉基础。Vintage Paper 等 shadcn theme 只作为 moodboard，不直接套用。后续正式初始化 shadcn/ui 时，应把现有 token 映射到 shadcn semantic tokens，而不是用第三方主题覆盖 Claread 视觉。
+1. **Claread mother theme system.** `纸质 Paper` 是 Claread Web 的母主题，`浅色 Light` 与 `深色 Dark` 是同一语法下的浓度调节。现有暖纸、墨色、`lens-blue` 和语义标注色需要继续演进成这三套正式主题。Vintage Paper 等 shadcn theme 只作为 moodboard，不直接套用。后续正式初始化 shadcn/ui 时，应把 Claread token 映射到 shadcn semantic tokens，而不是用第三方主题覆盖 Claread 视觉。
 2. **Reader Floating Layer.** 所有锚定原文 token、句子或 DOM selection 的短时浮层统一走 Floating UI。Radix / shadcn Popover 继续用于按钮触发的常规菜单；原文画布上的轻释义、选区工具栏、语法 hover、二级操作菜单归入 Reader floating layer。
 3. **Annotation Anchor Model.** 当前已支持句子级批注、单句内 `text_range` 和跨句/跨段 `multi_text`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id` 和原文 selection 锚点；后端已按 UTF-16 offset、hash、render scene 切片和 sentence 顺序做严格校验。后续重点是资产跳转强调和跨文章资产索引。
 4. **Plate Runtime as Web Projection.** Reader 2.0 将逐步迁移到 `canonical render_scene -> Plate document` 的投影模式；后端 canonical render scene 与小程序消费链路保持不变，Plate 只作为 Web projection/document runtime。
@@ -84,8 +84,8 @@
 | 词典轻浮层、标注详情 | `Popover` / Floating UI |
 | 工具提示 | `Tooltip` |
 | 移动端 Reader 面板 | `Sheet` / `Drawer` |
-| 阅读模式、标注密度 | `ToggleGroup` |
-| 字号、行距 | `Slider` 或 segmented controls |
+| 阅读模式 | `ToggleGroup` |
+| 字号、字体、主题 | segmented controls |
 | 长面板滚动 | `ScrollArea` |
 | 空态 | `Empty` |
 | 保存/失败反馈 | `sonner` 或局部 inline status |
@@ -126,7 +126,8 @@
 | Component | Role |
 | --- | --- |
 | `ReaderWorkbench` | 页面级 orchestration hub：标题区、模式控制、面板状态、字典/AI/selection 交互 |
-| `PlateReaderSurface` | 当前正文主画布 runtime；负责段落、句子、inline marks、用户资产和句后卡的组合渲染 |
+| `PlateReaderSurface` | 精读模式正文主画布 runtime；负责段落、句子、inline marks、用户资产和句后卡的组合渲染 |
+| `ImmersiveReaderSurface` | 沉浸模式 paragraph-first projection；负责段落编排、杂志式开篇和更安静的工具退场 |
 | `ReaderParagraph` | 段落编号、段落内句子栈、段落结构线 |
 | `ReaderControls` | 顶部显示模式、收藏、Aa、更多操作 |
 
@@ -137,7 +138,7 @@
 | `ReaderSentence` | 单句焦点、译文、机器标注、用户批注、句后卡挂载 |
 | `ReaderMarkLeaf` | 当前 inline marks 与用户范围渲染入口，负责 lexical / structural / user range 的切片与叠加 |
 | `ReaderSentenceTextElement` | 原文 DOM 和点词 hit-test 入口，保留连续文本以兼容浏览器原生选区 |
-| `ReaderTranslationElement` | 第二阅读层译文，不再只是 muted 附属段落 |
+| `ReaderTranslationElement` | 第二阅读层译文；段级句下辅层，作为原文的低声脚注 |
 | `ReaderLookupPreview` | 原文附近轻释义，只做即时反馈 |
 | `ReaderFloatingLayer` | Floating UI 统一封装，用于原文锚点浮层和 selection toolbar |
 
@@ -166,7 +167,7 @@
 | --- | --- |
 | `DictionaryPanel` | 画布左侧词典详情层，完整词条、歧义选择、未收录、加入生词本、本次查词；默认按需展开，宽屏可钉住 |
 | `ReaderContextPanel` | 核心区短时浮层：句子操作或阅读设置，不作为常驻侧栏 |
-| `ReaderSettingsPanel` | 字号、行距、背景、译文、标注密度 |
+| `ReaderSettingsPanel` | 字号、字体、主题三项阅读校准；不承担模式切换，也不暴露标注显隐 |
 | `AiWorkspacePanel` | 画布右侧 AI 工作区 shell，默认收起，可展开为 chatbox |
 
 ## 6. Annotation Visual Rules
@@ -225,7 +226,8 @@ Rules:
 
 1. Click `Aa`.
 2. `ReaderContextPanel` switches to settings.
-3. Settings are local UI state first; persistence can be added later.
+3. Settings only calibrate `字号 / 字体 / 主题` and must not recreate mode effects.
+4. Settings are local UI state first; persistence can be added later.
 
 ### Text Range Selection
 

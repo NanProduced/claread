@@ -1,6 +1,6 @@
 # 技术栈
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-20
+> **状态**: `CURRENT` | **最后更新**: 2026-05-23
 
 本文记录 Claread Web 端当前使用的技术栈。决策过程和备选评估已归档；路由结构见 `implementation-plan.md`；后端接口契约见 `api-contract-audit.md`；验证命令见 `AGENTS.md` 和 `README.md`。
 
@@ -35,7 +35,7 @@ clsx + tailwind-merge        # 条件样式合并
 shadcn/ui 使用规则：
 
 - 选择性复制 Button、Dialog、Popover、Tooltip、Tabs、Sheet、ScrollArea 等组件源码，不引入完整模板。
-- 不直接套第三方 shadcn theme。Claread Web 使用 **Claread Paper theme**：暖纸背景、墨色文字、品牌 `lens-blue` 焦点色和语义标注色。
+- 不直接套第三方 shadcn theme。Claread Web 使用以 `纸质 Paper` 为母主题、`浅色 Light / 深色 Dark` 为浓度调节的正式主题体系：暖纸背景、墨色文字、品牌 `lens-blue` 焦点色和语义标注色都从这套体系推导。
 - 正式初始化前，先在 `globals.css` 维护 shadcn-compatible semantic token aliases。
 - 如果需要正式 shadcn 组件，先补 `components.json` 决策，再通过 CLI 添加，不手抄 registry 文件。
 
@@ -86,7 +86,7 @@ Reader 当前稳定基线已经进入：
 
 三层基础设施：
 
-1. **Claread Paper theme**：设计 token 是品牌事实，shadcn theme 只能承接这些 token。
+1. **Claread mother theme system**：`Paper / Light / Dark` 主题 token 是品牌事实，shadcn theme 只能承接这些 token。
 2. **Reader Floating Layer**：正文锚点浮层统一用 Floating UI，按钮菜单继续用 Radix/shadcn primitives。
 3. **Annotation Anchor Model**：句子级批注和单句内 `text_range` 已进入首期闭环；跨句/跨段 `multi_text` 已落地；Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id`、句内 offset 和 anchor text。
 
