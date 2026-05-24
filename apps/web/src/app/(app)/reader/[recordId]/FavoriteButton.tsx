@@ -21,6 +21,7 @@ type FavoriteApiResult =
 
 interface FavoriteButtonProps {
   recordId: string;
+  variant?: "default" | "action-bar";
 }
 
 async function readFavoriteResponse(response: Response): Promise<FavoriteApiResult> {
@@ -38,7 +39,7 @@ async function readFavoriteResponse(response: Response): Promise<FavoriteApiResu
   };
 }
 
-export function FavoriteButton({ recordId }: FavoriteButtonProps) {
+export function FavoriteButton({ recordId, variant = "default" }: FavoriteButtonProps) {
   const [favorited, setFavorited] = useState(false);
   const [state, setState] = useState<FavoriteState>("loading");
   const [message, setMessage] = useState("正在读取收藏状态...");
@@ -133,8 +134,42 @@ export function FavoriteButton({ recordId }: FavoriteButtonProps) {
         : state === "error"
           ? "稍后重试"
           : favorited
-            ? "已收入阅读资产"
+            ? "已收藏此文"
             : "加入阅读资产";
+
+  if (variant === "action-bar") {
+    return (
+      <>
+        <button
+          type="button"
+          aria-pressed={favorited}
+          disabled={disabled}
+          onClick={toggleFavorite}
+          className={`focus-ring flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
+            favorited ? "text-vocab-amber" : "text-ink hover:text-ink-soft"
+          }`}
+        >
+          <Heart
+            aria-hidden="true"
+            className={`h-[18px] w-[18px] shrink-0 transition-transform hover:scale-105 ${
+              favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted"
+            }`}
+            strokeWidth={1.5}
+          />
+          <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+            <span className="text-[0.85rem] font-semibold whitespace-nowrap">{favorited ? "已收藏" : "收藏"}</span>
+            <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">{statusLabel}</span>
+          </span>
+        </button>
+        <p
+          aria-live="polite"
+          className="sr-only"
+        >
+          {message}
+        </p>
+      </>
+    );
+  }
 
   return (
     <div className="flex min-w-[8.75rem] flex-col gap-1.5">

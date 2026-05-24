@@ -783,6 +783,10 @@ select {
   opacity: 0.9;
 }
 
+.reader-header-band--clean::after {
+  display: none !important;
+}
+
 .reader-header-band--immersive {
   box-shadow: var(--reader-header-shadow);
 }

@@ -13,6 +13,12 @@ import {
 import {
   Type,
   X,
+  Heart,
+  Eye,
+  BookOpen,
+  SlidersHorizontal,
+  Globe,
+  Sparkles,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
@@ -776,7 +782,7 @@ export function ReaderWorkbench({
       }
 
       const rect = settingsButtonRef.current.getBoundingClientRect();
-      const panelWidth = Math.min(464, Math.max(window.innerWidth - 40, 320));
+      const panelWidth = Math.min(360, Math.max(window.innerWidth - 40, 320));
       const maxLeft = Math.max(24, window.innerWidth - panelWidth - 24);
       const left = Math.min(maxLeft, Math.max(24, rect.right - panelWidth));
 
@@ -3149,13 +3155,11 @@ export function ReaderWorkbench({
     : undefined;
   const shellModeClass = isImmersiveMode ? "reader-shell--immersive" : "reader-shell--intensive";
 
-  const headerShellClass = isImmersiveMode
-    ? `reader-header-band reader-header-band--immersive sticky top-3 z-20 border-b border-hairline/90 bg-background/88 backdrop-blur transition-[padding,background-color,border-color,box-shadow,transform] ${
-        immersiveHeaderCondensed
-          ? "px-5 py-3 shadow-[0_12px_28px_rgba(28,24,18,0.08)] sm:px-6 lg:px-8"
-          : "px-5 py-6 sm:px-8 lg:px-10 lg:py-8"
-      }`
-    : "reader-header-band reader-header-band--intensive border-b border-hairline px-5 py-4 sm:px-8 lg:px-10";
+  const headerShellClass = `reader-header-band reader-header-band--immersive sticky top-3 z-20 bg-background/88 backdrop-blur transition-[padding,background-color,border-color,box-shadow,transform] border-b-0 ${
+    immersiveHeaderCondensed
+      ? "px-5 py-3 shadow-[0_12px_28px_rgba(28,24,18,0.08)] sm:px-6 lg:px-8 border-b border-hairline/90"
+      : "px-5 py-6 sm:px-8 lg:px-10 lg:py-8 shadow-none reader-header-band--clean"
+  }`;
   const headerTitleClass = isImmersiveMode
     ? `font-headline font-semibold tracking-[-0.02em] text-ink transition-[font-size,max-width,margin] ${
         immersiveHeaderCondensed
@@ -3173,6 +3177,48 @@ export function ReaderWorkbench({
   const headerEyebrowClass = isImmersiveMode
     ? "text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-lens-blue"
     : "text-xs font-semibold text-muted";
+
+  const formattedDate = useMemo(() => {
+    try {
+      if (!record.createdAt) return "";
+      const d = new Date(record.createdAt);
+      if (isNaN(d.getTime())) return "";
+      return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+    } catch (e) {
+      return "";
+    }
+  }, [record.createdAt]);
+
+  const readingGoalLabel = useMemo(() => {
+    const goals: Record<string, string> = {
+      daily_reading: "日常阅读",
+      academic: "学术及行业阅读",
+      exam: "备考精读",
+    };
+    return goals[record.readingGoal] || "透读文章";
+  }, [record.readingGoal]);
+
+  const articleSourceInfo = useMemo(() => {
+    try {
+      const payload = record.requestPayloadJson ?? {};
+      const urlStr = (payload.url || payload.source_url || "") as string;
+      if (urlStr) {
+        const url = new URL(urlStr);
+        let name = url.hostname.split(".")[0];
+        if (name) {
+          name = name.charAt(0).toUpperCase() + name.slice(1);
+        }
+        return {
+          domain: url.hostname.replace("www.", ""),
+          name: name || "外部来源",
+          url: urlStr,
+        };
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  }, [record.requestPayloadJson]);
 
   function handleReaderSettingsChange(next: ReaderSettingsState) {
     setReaderSettings(next);
@@ -3222,75 +3268,222 @@ export function ReaderWorkbench({
           }}
         >
           <header className={headerShellClass}>
-            <div
-              ref={readingColumnRef}
-              className={`reader-header-band-inner mx-auto flex ${readingColumnClass} flex-col ${
-                isImmersiveMode && !immersiveHeaderCondensed ? "gap-6 lg:gap-8" : "gap-4"
-              } lg:flex-row lg:items-start lg:justify-between`}
-            >
-              <div className="min-w-0">
-                <p className={headerEyebrowClass}>
-                  {isImmersiveMode ? "沉浸阅读" : "透读正文"}
-                </p>
-                <h1 className={headerTitleClass}>
-                  {record.title}
-                </h1>
-                <div className={headerMetaClass}>
-                  <span>{dataSourceLabel[dataSource]}</span>
-                  <span aria-hidden="true" className="h-1 w-1 rounded-full bg-hairline" />
-                  <span>{reader.article.sentences.length} 句</span>
+            {immersiveHeaderCondensed ? (
+              <div
+                ref={readingColumnRef}
+                className="reader-header-band-inner mx-auto flex max-w-[82ch] w-full items-center justify-between py-2"
+              >
+                <div className="flex items-center gap-3">
+                  <p className="text-[0.8rem] font-semibold tracking-wide">
+                    <span className="text-lens-blue">
+                      {isImmersiveMode ? "沉浸阅读" : "精读模式"}
+                    </span>
+                    <span className="text-muted/60 mx-1.5">·</span>
+                    <span className="text-ink font-bold font-headline line-clamp-1 max-w-[20ch] md:max-w-[40ch]">
+                      {record.title}
+                    </span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 bg-surface-warm/50 border border-hairline/80 rounded-xl p-0.5 divide-x divide-hairline">
+                  <button
+                    type="button"
+                    onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "intensive" })}
+                    className={`focus-ring flex items-center justify-center px-3 py-1.5 text-[0.8rem] font-semibold rounded-lg transition-colors cursor-pointer ${
+                      readerSettings.mode === "intensive" ? "text-vocab-amber bg-background shadow-[0_2px_6px_rgba(0,0,0,0.04)]" : "text-muted hover:text-ink"
+                    }`}
+                  >
+                    精读
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "immersive" })}
+                    className={`focus-ring flex items-center justify-center px-3 py-1.5 text-[0.8rem] font-semibold rounded-lg transition-colors cursor-pointer ${
+                      readerSettings.mode === "immersive" ? "text-vocab-amber bg-background shadow-[0_2px_6px_rgba(0,0,0,0.04)]" : "text-muted hover:text-ink"
+                    }`}
+                  >
+                    沉浸
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openSettingsPanel}
+                    className={`focus-ring flex items-center justify-center px-3 py-1.5 text-[0.8rem] font-semibold rounded-lg transition-colors cursor-pointer ${
+                      settingsPanelOpen ? "text-vocab-amber bg-background shadow-[0_2px_6px_rgba(0,0,0,0.04)]" : "text-muted hover:text-ink"
+                    }`}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
-              <div className="reader-shell-controls flex shrink-0 flex-wrap items-center justify-end gap-2 lg:gap-2.5">
-                <FavoriteButton recordId={record.id} />
-                <div className="reader-mode-cluster flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/72 p-1 shadow-sm">
-                  {([
-                    { value: "intensive", label: "精读" },
-                    { value: "immersive", label: "沉浸" },
-                  ] as const).map((option) => {
-                    const active = readerSettings.mode === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`reader-mode-cluster__option focus-ring inline-flex min-h-[2.55rem] min-w-[4.8rem] items-center justify-center rounded-[0.85rem] border px-3 text-center text-[0.84rem] font-semibold leading-none transition-[background-color,border-color,color,box-shadow,transform] ${
-                          active
-                            ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
-                            : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
+            ) : (
+              <div
+                ref={readingColumnRef}
+                className="reader-header-band-inner mx-auto flex max-w-[82ch] w-full flex-col gap-6 lg:gap-8"
+              >
+                {/* 1. Eyebrow */}
+                <div className="flex items-center gap-1.5 text-[0.8rem] font-semibold tracking-wide leading-none">
+                  <span className="text-lens-blue">
+                    {isImmersiveMode ? "沉浸阅读" : "精读模式"}
+                  </span>
+                  <span className="text-muted/60">·</span>
+                  <span className="text-muted font-medium">
+                    {formattedDate || "今日"}
+                  </span>
+                </div>
+
+                {/* 2. Main Title & Overview */}
+                <div className="min-w-0">
+                  <h1 className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] text-ink tracking-tight">
+                    {record.title}
+                  </h1>
+
+                  {/* 3. Subtitle / Overview */}
+                  {reader.contentSummary?.overview ? (
+                    <p className="mt-4 max-w-[72ch] text-[1.025rem] font-medium leading-[1.68] text-muted font-sans tracking-wide">
+                      {reader.contentSummary.overview}
+                    </p>
+                  ) : null}
+                </div>
+
+                {/* 4. Action & Control Bar */}
+                <div className="w-full border-t border-b border-hairline py-0 flex flex-col sm:flex-row items-stretch justify-between min-h-[56px] bg-transparent">
+                  {/* Left Metadata Status Block */}
+                  <div className="flex items-center gap-3.5 py-3 sm:py-0">
+                    <span className="px-3 py-1 text-[0.75rem] font-semibold text-ink-soft bg-surface-warm border border-hairline/80 rounded-[0.5rem] flex items-center gap-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.03)] select-none">
+                      <Sparkles className="h-3.5 w-3.5 text-vocab-amber fill-vocab-amber/10" />
+                      <span>{dataSourceLabel[dataSource]}</span>
+                    </span>
+                    <div className="w-[1px] h-3.5 bg-hairline" />
+                    <span className="text-[0.8rem] font-semibold text-muted">
+                      {reader.article.sentences.length} 句
+                    </span>
+                    <div className="w-[1px] h-3.5 bg-hairline" />
+                    <span className="text-[0.8rem] font-semibold text-muted">
+                      {readingGoalLabel}
+                    </span>
+                  </div>
+
+                  {/* Right Action Switchers Block */}
+                  <div className="flex items-stretch divide-x divide-hairline border-t border-hairline sm:border-t-0 select-none">
+                    {/* Button 1: Favorite */}
+                    <FavoriteButton recordId={record.id} variant="action-bar" />
+
+                    {/* Button 2: Intensive ("精读") */}
+                    <button
+                      type="button"
+                      onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "intensive" })}
+                      className={`focus-ring relative flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
+                        readerSettings.mode === "intensive"
+                          ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
+                          : "text-ink hover:text-ink-soft"
+                      }`}
+                    >
+                      <BookOpen
+                        aria-hidden="true"
+                        className={`h-[18px] w-[18px] shrink-0 transition-transform ${
+                          readerSettings.mode === "intensive" ? "text-vocab-amber" : "text-muted"
                         }`}
-                        onClick={() =>
-                          handleReaderSettingsChange({
-                            ...readerSettings,
-                            mode: option.value,
-                          })}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
+                        strokeWidth={1.5}
+                      />
+                      <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+                        <span className="text-[0.85rem] font-semibold whitespace-nowrap">精读</span>
+                        <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">逐句研读</span>
+                      </span>
+                    </button>
+
+                    {/* Button 3: Immersive ("沉浸") */}
+                    <button
+                      type="button"
+                      onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "immersive" })}
+                      className={`focus-ring relative flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
+                        readerSettings.mode === "immersive"
+                          ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
+                          : "text-ink hover:text-ink-soft"
+                      }`}
+                    >
+                      <Eye
+                        aria-hidden="true"
+                        className={`h-[18px] w-[18px] shrink-0 transition-transform ${
+                          readerSettings.mode === "immersive" ? "text-vocab-amber" : "text-muted"
+                        }`}
+                        strokeWidth={1.5}
+                      />
+                      <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+                        <span className="text-[0.85rem] font-semibold whitespace-nowrap">沉浸</span>
+                        <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">专注阅读</span>
+                      </span>
+                    </button>
+
+                    {/* Button 4: Settings */}
                     <button
                       ref={settingsButtonRef}
                       type="button"
                       aria-expanded={settingsPanelOpen}
                       aria-haspopup="dialog"
-                      className={`reader-mode-cluster__settings focus-ring inline-flex min-h-[2.55rem] min-w-[5.2rem] items-center gap-2 rounded-[0.85rem] border px-3 text-left transition-[background-color,border-color,color,box-shadow,transform] ${
+                      onClick={openSettingsPanel}
+                      className={`focus-ring relative flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
                         settingsPanelOpen
-                          ? "border-transparent bg-muted/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
-                        : "border-transparent bg-transparent text-ink-soft hover:border-border/55 hover:bg-muted/45 hover:text-ink"
-                    }`}
-                    onClick={openSettingsPanel}
+                          ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
+                          : "text-ink hover:text-ink-soft"
+                      }`}
                     >
-                      <Type
+                      <SlidersHorizontal
                         aria-hidden="true"
-                        className={`h-4 w-4 shrink-0 ${settingsPanelOpen ? "text-lens-blue" : "text-muted"}`}
+                        className={`h-[18px] w-[18px] shrink-0 transition-transform ${
+                          settingsPanelOpen ? "text-vocab-amber" : "text-muted"
+                        }`}
+                        strokeWidth={1.5}
                       />
-                      <span className="flex min-w-0 flex-col">
-                        <span className="text-[0.84rem] font-semibold leading-none">阅读设置</span>
+                      <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+                        <span className="text-[0.85rem] font-semibold whitespace-nowrap">阅读设置</span>
+                        <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">版式与偏好</span>
                       </span>
                     </button>
+                  </div>
+                </div>
+
+                {/* 5. Footer Metadata (sitting below the action bar) */}
+                <div className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0 text-[0.78rem] text-muted tracking-wide leading-normal sm:leading-none select-none">
+                  <div className="flex flex-wrap items-center gap-1.5 font-medium">
+                    <span>
+                      {articleSourceInfo
+                        ? `来源 ${articleSourceInfo.name} · ${articleSourceInfo.domain}`
+                        : "来源 粘贴导入"}
+                    </span>
+                    {formattedDate && (
+                      <>
+                        <span className="text-muted/60">·</span>
+                        <span>{formattedDate}</span>
+                      </>
+                    )}
+                    {reader.article.sentences.length > 0 && (
+                      <>
+                        <span className="text-muted/60">·</span>
+                        <span>约 {Math.max(1, Math.ceil(reader.article.sentences.length / 5))} 分钟阅读</span>
+                      </>
+                    )}
+                  </div>
+
+                  <div>
+                    {articleSourceInfo?.url ? (
+                      <a
+                        href={articleSourceInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="focus-ring inline-flex items-center gap-1.5 text-muted hover:text-ink transition-colors font-semibold cursor-pointer"
+                      >
+                        <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                        <span>英文原文</span>
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-muted/60">
+                        <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                        <span>粘贴导入</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {message ? (
               <div className={`reader-shell-message mx-auto mt-5 ${readingColumnClass} rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft`}>
@@ -3572,7 +3765,7 @@ export function ReaderWorkbench({
               ...(settingsFloatingStyle ?? {}),
             }}
           >
-              <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[0_-20px_40px_rgba(17,17,17,0.12)] backdrop-blur md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-0">
+              <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[0_-20px_40px_rgba(17,17,17,0.12)] md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none">
                 <ReaderSettingsPanel
                   themeName={themeName}
                   value={readerSettings}

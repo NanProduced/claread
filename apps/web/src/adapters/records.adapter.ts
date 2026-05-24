@@ -32,6 +32,7 @@ export interface ReaderRecordVm {
   readingVariant: string;
   analysisStatus: string;
   reader: ReaderMockVm;
+  requestPayloadJson?: Record<string, unknown>;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -390,6 +391,7 @@ export function adaptRecordToReaderRecord(record: RecordResponseDto): ReaderReco
     readingGoal: record.reading_goal ?? readString(request.reading_goal, "daily_reading"),
     readingVariant: record.reading_variant ?? readString(request.reading_variant, "intermediate_reading"),
     analysisStatus: record.analysis_status,
+    requestPayloadJson: record.request_payload_json,
     reader: {
       schemaVersion,
       request: {
