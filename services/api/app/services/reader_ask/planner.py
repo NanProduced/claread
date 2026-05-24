@@ -114,6 +114,7 @@ def _clean_reference_query(value: str | None) -> str | None:
 
 
 def _attachment_target_record(attachment: ReaderAskAttachment) -> str | None:
+    """用于 related_record 附件：record_id 可能来自 metadata.record_id 或 metadata.asset_id（asset_id 也可作为文章标识的备选来源）。"""
     record_id = attachment.metadata.record_id
     if isinstance(record_id, str) and record_id.strip():
         return record_id
@@ -131,6 +132,7 @@ def _attachment_target_record(attachment: ReaderAskAttachment) -> str | None:
 
 
 def _attachment_record_id(attachment: ReaderAskAttachment) -> str | None:
+    """用于 analysis_ref / supplement_ref 附件：仅从 metadata.record_id 获取文章 ID，不含 asset_id 备选（asset_id 由独立的 _attachment_asset_id 获取）。"""
     metadata_record_id = attachment.metadata.record_id
     if isinstance(metadata_record_id, str) and metadata_record_id.strip():
         return metadata_record_id
@@ -193,7 +195,7 @@ def build_planner_input(
     )
 
 
-def _reference_needs_from_decision(decision: ReaderAskPlannerDecision) -> ReaderAskReferenceNeeds:
+def reference_needs_from_decision(decision: ReaderAskPlannerDecision) -> ReaderAskReferenceNeeds:
     request = decision.reference_request
     return ReaderAskReferenceNeeds(
         requested=request.requested,
@@ -579,7 +581,7 @@ def plan_request(
     del content
     resolved_reference = reference_resolution or ReaderAskReferenceResolution()
     resolved_asset_resolution = structured_asset_resolution or ReaderAskStructuredAssetResolution()
-    reference_needs = _reference_needs_from_decision(planner_decision)
+    reference_needs = reference_needs_from_decision(planner_decision)
     structured_asset_needs = _structured_asset_needs_from_decision(planner_decision)
 
     explicit_external_record_refs = _explicit_external_record_refs(attachments)

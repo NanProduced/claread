@@ -26,6 +26,7 @@ from app.agents.reader_ask_planner_agent import (
     get_reader_ask_planner_agent,
 )
 from app.config.settings import get_settings
+from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_ASK, MODEL_ROUTE_READER_ASK_PLANNER
@@ -401,11 +402,7 @@ def _make_tool_trace(tool_name: str, status: str, *, summary: str | None = None,
 
 
 async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
-    pool = repo.db_connection.DB_POOL if hasattr(repo, "db_connection") else None
-    if pool is None:
-        from app.database import connection as db_connection
-
-        pool = db_connection.DB_POOL
+    pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
@@ -1042,11 +1039,7 @@ async def _resolve_semantic_planning(
     reference_resolution = await resolver_svc.resolve_known_references(
         user_id=user_id,
         current_record_id=record.record_id,
-        reference_needs=planner.ReaderAskReferenceNeeds(
-            requested=planner_decision.reference_request.requested,
-            query=planner_decision.reference_request.query,
-            reason=planner_decision.reference_request.reason,
-        ),
+        reference_needs=planner.reference_needs_from_decision(planner_decision),
     )
     pre_planning_snapshot = planner.plan_request(
         content=user_message,
@@ -1311,8 +1304,6 @@ async def _resolve_anchor_refs(
     *,
     anchors: list[ReaderAskAnchorRef],
 ) -> list[ReaderAskAnchorRef]:
-    from app.database import connection as db_connection
-
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
@@ -2493,6 +2484,8 @@ def _build_action_proposals(
     anchors: list[ReaderAskAnchorRef],
     assistant_content_md: str,
 ) -> list[ReaderAskActionProposal]:
+    # DEPRECATED: action proposals 已迁移至 agent runtime 生成（见 _build_action_proposals_from_runtime）。
+    # 此函数保留仅为兼容性占位，后续版本应删除。
     del user_message, record, anchors, assistant_content_md
     return []
 
@@ -2878,6 +2871,49 @@ async def stream_thread_message(
             anchors=incoming_anchors,
         )
         anchor_payload = [anchor.model_dump(mode="json") for anchor in resolved_anchors]
+
+        await ensure_credit_account(user_id)
+        remaining = await check_quota(user_id)
+        if remaining < READER_ASK_RESERVED_POINTS:
+            yield _sse(
+                "error",
+                {
+                    "code": "INSUFFICIENT_CREDITS",
+                    "detail": "Not enough credits for this Ask Claread request.",
+                    "remaining_points": remaining,
+                    "required_points": READER_ASK_RESERVED_POINTS,
+                },
+            )
+            return
+
+        reservation_metadata = {
+            "capability_code": CAPABILITY_READER_ASK,
+            "thread_id": str(thread_id),
+            "record_id": str(record.record_id),
+            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
+            "reserved_points": READER_ASK_RESERVED_POINTS,
+            "user_message": _truncate_text(body.content, 200),
+        }
+        reservation = await reserve_points(
+            user_id,
+            READER_ASK_RESERVED_POINTS,
+            task_id=None,
+            entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+            metadata=reservation_metadata,
+        )
+        if reservation is None:
+            remaining = await check_quota(user_id)
+            yield _sse(
+                "error",
+                {
+                    "code": "INSUFFICIENT_CREDITS",
+                    "detail": "Not enough credits for this Ask Claread request.",
+                    "remaining_points": remaining,
+                    "required_points": READER_ASK_RESERVED_POINTS,
+                },
+            )
+            return
+
         planning_result = await _resolve_semantic_planning(
             user_id=user_id,
             record=record,
@@ -2974,6 +3010,49 @@ async def stream_thread_message(
                 planning_snapshot=planning_snapshot,
                 clarification_only=True,
             )
+            computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
+            billed_points = min(computed_cost_points, reservation.total_points)
+            unused_reservation = _build_unused_reservation(reservation, billed_points)
+            if unused_reservation.total_points > 0:
+                await refund_reserved_points(
+                    user_id,
+                    unused_reservation,
+                    metadata={
+                        "reason": "reader_ask_unused_reservation_clarification",
+                        "thread_id": str(thread_id),
+                        "record_id": str(record.record_id),
+                    },
+                )
+            usage_event_id = await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope=USAGE_SCOPE_USER_BILLED,
+                    capability_code=CAPABILITY_READER_ASK,
+                    billing_mode=BILLING_MODE_USER_POINTS,
+                    status=STATUS_SUCCEEDED,
+                    user_id=user_id,
+                    record_id=record.record_id,
+                    workflow_name=_WORKFLOW_NAME,
+                    workflow_version=_WORKFLOW_VERSION,
+                    schema_version=_SCHEMA_VERSION,
+                    prompt_version=get_prompt_version(),
+                    usage_data=planner_usage_summary,
+                    latency_ms=int((perf_counter() - start_perf) * 1000),
+                    billed_points=billed_points,
+                    billing_policy_version=build_reader_ask_billing_metadata(planner_usage_summary).get(
+                        "billing_policy_version"
+                    ),
+                    metadata_json={
+                        "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
+                        "thread_id": str(thread_id),
+                        "message_id": assistant_message["id"],
+                        "cross_record_context_used": False,
+                        "anchor_count": len(resolved_anchors),
+                        "clarification_only": True,
+                        "reservation_points": READER_ASK_RESERVED_POINTS,
+                        "computed_cost_points": computed_cost_points,
+                    },
+                )
+            )
             output = _build_user_visible_output(
                 content_md=assistant_md,
                 submission_mode=submission_mode,
@@ -2987,7 +3066,7 @@ async def stream_thread_message(
                 external_asset_disambiguation=external_asset_disambiguation,
                 response_cards=[],
                 usage_summary=planner_usage_summary,
-                billed_points=0,
+                billed_points=billed_points,
                 resolved_context=_resolved_context_summary(
                     record=record,
                     anchors=resolved_anchors,
@@ -3024,7 +3103,7 @@ async def stream_thread_message(
                 action_proposals=[],
                 tool_trace=[],
                 metadata=assistant_metadata,
-                usage_event_id=None,
+                usage_event_id=usage_event_id,
                 current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             )
             await repo.update_turn_run(
@@ -3032,6 +3111,8 @@ async def stream_thread_message(
                 status="completed",
                 resolved_intent=resolved_intent,
                 user_visible_output_json=output.model_dump(mode="json"),
+                usage_summary_json=planner_usage_summary,
+                usage_event_id=usage_event_id,
                 completed_at=datetime.now(UTC),
             )
             await _upsert_eval_trace_record(
@@ -3042,48 +3123,6 @@ async def stream_thread_message(
                 trace_summary=trace_summary,
             )
             yield _sse("message.completed", payload.model_dump(mode="json"))
-            return
-
-        await ensure_credit_account(user_id)
-        remaining = await check_quota(user_id)
-        if remaining < READER_ASK_RESERVED_POINTS:
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
-            return
-
-        reservation_metadata = {
-            "capability_code": CAPABILITY_READER_ASK,
-            "thread_id": str(thread_id),
-            "record_id": str(record.record_id),
-            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
-            "reserved_points": READER_ASK_RESERVED_POINTS,
-            "user_message": _truncate_text(body.content, 200),
-        }
-        reservation = await reserve_points(
-            user_id,
-            READER_ASK_RESERVED_POINTS,
-            task_id=None,
-            entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
-            metadata=reservation_metadata,
-        )
-        if reservation is None:
-            remaining = await check_quota(user_id)
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
             return
 
         user_message = await repo.create_message(
@@ -3735,6 +3774,50 @@ async def retry_thread_message(
             anchors=incoming_anchors,
         )
         anchor_payload = [anchor.model_dump(mode="json") for anchor in resolved_anchors]
+
+        await ensure_credit_account(user_id)
+        remaining = await check_quota(user_id)
+        if remaining < READER_ASK_RESERVED_POINTS:
+            yield _sse(
+                "error",
+                {
+                    "code": "INSUFFICIENT_CREDITS",
+                    "detail": "Not enough credits for this Ask Claread request.",
+                    "remaining_points": remaining,
+                    "required_points": READER_ASK_RESERVED_POINTS,
+                },
+            )
+            return
+
+        reservation_metadata = {
+            "capability_code": CAPABILITY_READER_ASK,
+            "thread_id": str(thread_id),
+            "record_id": str(record.record_id),
+            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
+            "reserved_points": READER_ASK_RESERVED_POINTS,
+            "user_message": _truncate_text(body.content, 200),
+            "retry_message_id": str(message_id),
+        }
+        reservation = await reserve_points(
+            user_id,
+            READER_ASK_RESERVED_POINTS,
+            task_id=None,
+            entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+            metadata=reservation_metadata,
+        )
+        if reservation is None:
+            remaining = await check_quota(user_id)
+            yield _sse(
+                "error",
+                {
+                    "code": "INSUFFICIENT_CREDITS",
+                    "detail": "Not enough credits for this Ask Claread request.",
+                    "remaining_points": remaining,
+                    "required_points": READER_ASK_RESERVED_POINTS,
+                },
+            )
+            return
+
         planning_result = await _resolve_semantic_planning(
             user_id=user_id,
             record=record,
@@ -3822,6 +3905,50 @@ async def retry_thread_message(
                 planning_snapshot=planning_snapshot,
                 clarification_only=True,
             )
+            computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
+            billed_points = min(computed_cost_points, reservation.total_points)
+            unused_reservation = _build_unused_reservation(reservation, billed_points)
+            if unused_reservation.total_points > 0:
+                await refund_reserved_points(
+                    user_id,
+                    unused_reservation,
+                    metadata={
+                        "reason": "reader_ask_unused_reservation_clarification",
+                        "thread_id": str(thread_id),
+                        "record_id": str(record.record_id),
+                    },
+                )
+            usage_event_id = await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope=USAGE_SCOPE_USER_BILLED,
+                    capability_code=CAPABILITY_READER_ASK,
+                    billing_mode=BILLING_MODE_USER_POINTS,
+                    status=STATUS_SUCCEEDED,
+                    user_id=user_id,
+                    record_id=record.record_id,
+                    workflow_name=_WORKFLOW_NAME,
+                    workflow_version=_WORKFLOW_VERSION,
+                    schema_version=_SCHEMA_VERSION,
+                    prompt_version=get_prompt_version(),
+                    usage_data=planner_usage_summary,
+                    latency_ms=int((perf_counter() - start_perf) * 1000),
+                    billed_points=billed_points,
+                    billing_policy_version=build_reader_ask_billing_metadata(planner_usage_summary).get(
+                        "billing_policy_version"
+                    ),
+                    metadata_json={
+                        "entrypoint": "/reader-ask/threads/{thread_id}/messages/retry",
+                        "thread_id": str(thread_id),
+                        "message_id": str(message_id),
+                        "cross_record_context_used": False,
+                        "anchor_count": len(resolved_anchors),
+                        "clarification_only": True,
+                        "retry_message_id": str(message_id),
+                        "reservation_points": READER_ASK_RESERVED_POINTS,
+                        "computed_cost_points": computed_cost_points,
+                    },
+                )
+            )
             yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
             yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
             yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
@@ -3840,7 +3967,7 @@ async def retry_thread_message(
                     resolved_context_input=resolved_context_input,
                     submission_mode=submission_mode,
                 ),
-                usage_event_id=None,
+                usage_event_id=usage_event_id,
                 current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             )
             output = _build_user_visible_output(
@@ -3856,7 +3983,7 @@ async def retry_thread_message(
                 external_asset_disambiguation=external_asset_disambiguation,
                 response_cards=[],
                 usage_summary=planner_usage_summary,
-                billed_points=0,
+                billed_points=billed_points,
                 resolved_context=resolved_context,
                 context_plan=context_plan,
                 resolved_context_input=resolved_context_input,
@@ -3874,6 +4001,8 @@ async def retry_thread_message(
                 status="completed",
                 resolved_intent=resolved_intent,
                 user_visible_output_json=output.model_dump(mode="json"),
+                usage_summary_json=planner_usage_summary,
+                usage_event_id=usage_event_id,
                 completed_at=datetime.now(UTC),
             )
             await _upsert_eval_trace_record(
@@ -3884,49 +4013,6 @@ async def retry_thread_message(
                 trace_summary=trace_summary,
             )
             yield _sse("message.completed", payload.model_dump(mode="json"))
-            return
-
-        await ensure_credit_account(user_id)
-        remaining = await check_quota(user_id)
-        if remaining < READER_ASK_RESERVED_POINTS:
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
-            return
-
-        reservation_metadata = {
-            "capability_code": CAPABILITY_READER_ASK,
-            "thread_id": str(thread_id),
-            "record_id": str(record.record_id),
-            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
-            "reserved_points": READER_ASK_RESERVED_POINTS,
-            "user_message": _truncate_text(body.content, 200),
-            "retry_message_id": str(message_id),
-        }
-        reservation = await reserve_points(
-            user_id,
-            READER_ASK_RESERVED_POINTS,
-            task_id=None,
-            entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
-            metadata=reservation_metadata,
-        )
-        if reservation is None:
-            remaining = await check_quota(user_id)
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
             return
 
         assistant_message = await repo.update_message(
