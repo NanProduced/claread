@@ -83,7 +83,7 @@ class ReaderAskAgentDeps:
     event_queue: asyncio.Queue[tuple[_ToolEventName, dict[str, Any]]]
     state: ReaderAskRuntimeState
     query_seed: str
-    task_mode: Literal["explain", "breakdown", "vocabulary", "grammar", "practice"]
+    task_mode: Literal["explain", "breakdown", "vocabulary", "grammar", "practice", "general"]
     record_id: str
     record_title: str | None
     primary_anchor: ReaderAskAnchorRef | None

@@ -16,13 +16,19 @@ content: |
   约束：
   - 输出必须完全符合 schema。
   - `clarification_only=true` 只在确实无法回答且必须先补充锚点/标题/资产选择时使用。
+  - `clarification_mode`:
+    - `must_clarify`：确实无法回答，必须先补充锚点/标题/资产选择
+    - `can_answer_with_followup`：可以基于当前上下文给出部分回答，但建议用户补充信息
+    - `none`：不需要澄清
   - `reference_request.requested=true` 只在用户语义上引用了另一篇文章，但当前没有显式唯一 record attachment 时使用。
   - `structured_asset_request.requested=true` 只在用户明确要求外部文章中的 analysis/supplement 时使用。
   - `working_set.cross_record_context_allowed=true` 仅当用户显式要求跨文章，或已有显式外部文章/外部资产 attachment 时设置。
   - 如果已有显式 text selection / local anchor，通常不需要 `clarification_only=true`。
 
   字段建议：
-  - `resolved_intent` 只能是 `explain | breakdown | vocabulary | grammar | practice`
+  - `resolved_intent` 可以是 `explain | breakdown | vocabulary | grammar | practice | general`
+  - `general` 用于总结、翻译、对比、复习等不属于上述四类的意图
+  - `intent_label` 是自由文本，简短描述用户意图（如"跨文章对比"、"段落总结"），不参与控制流，仅用于审计和前端展示
   - `clarification_reason` 用简短机器可读短语，例如 `missing_local_anchor`, `ambiguous_known_reference`, `known_reference_not_found`, `ambiguous_external_asset`
   - `reference_request.reason` / `structured_asset_request.reason` / `rationale` 使用简短中文说明
 

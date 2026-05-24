@@ -156,6 +156,7 @@ _TASK_MODE_LABELS: dict[ReaderAskTaskMode, str] = {
     "vocabulary": "词义",
     "grammar": "语法",
     "practice": "练习",
+    "general": "通用",
 }
 
 
@@ -764,6 +765,8 @@ def _fallback_semantic_planner_decision(
         resolved_intent = "vocabulary"
     elif entry_action == "why_here":
         resolved_intent = "grammar"
+    elif entry_action == "compare_translation":
+        resolved_intent = "general"
     elif _contains_any(normalized_message, ("拆句", "拆解", "主干", "break down", "breakdown")):
         resolved_intent = "breakdown"
     elif _contains_any(normalized_message, ("练习", "exercise", "practice", "quiz")):
@@ -2655,13 +2658,13 @@ def _build_trace_summary(
     runtime_state: ReaderAskRuntimeState,
     context_plan: ReaderAskContextPlan,
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None,
-    clarification_only: bool = False,
+    clarification_mode: planner.ReaderAskClarificationMode = "none",
 ) -> ReaderAskTraceSummary:
     return planner.build_trace_summary(
         runtime_state=runtime_state,
         context_plan=context_plan,
         planning_snapshot=planning_snapshot,
-        clarification_only=clarification_only,
+        clarification_mode=clarification_mode,
     )
 
 
@@ -2932,8 +2935,9 @@ async def stream_thread_message(
         disambiguation = planning_snapshot.disambiguation_state
         external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
         clarification_only = planning_snapshot.clarification_only
+        clarification_mode = planning_snapshot.clarification_mode
         submission_mode = _submission_mode(entry_action=body.entry_action, attachments=attachments)
-        if clarification_only:
+        if clarification_only and clarification_mode == "must_clarify":
             user_message = await repo.create_message(
                 thread_id=thread_id,
                 role="user",
@@ -3008,7 +3012,7 @@ async def stream_thread_message(
                 runtime_state=runtime_state,
                 context_plan=context_plan,
                 planning_snapshot=planning_snapshot,
-                clarification_only=True,
+                clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
             )
             computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
             billed_points = min(computed_cost_points, reservation.total_points)
@@ -3330,6 +3334,7 @@ async def stream_thread_message(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
+            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "none",
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3419,6 +3424,128 @@ async def stream_thread_message(
 
         final_content_md = stream_outcome.content_md
         usage_summary = stream_outcome.usage_summary
+
+        # Bounded replan: if answer is empty/very short and not already clarified,
+        # attempt a single replan with expanded context
+        if (
+            len(final_content_md.strip()) < 20
+            and planning_snapshot is not None
+            and planning_snapshot.clarification_mode == "none"
+            and planning_snapshot.clarification_only is False
+        ):
+            logger.warning(
+                "reader_ask_replan_triggered: Answer too short (%d chars), attempting replan",
+                len(final_content_md.strip()),
+            )
+            try:
+                replan_result = await _resolve_semantic_planning(
+                    user_id=user_id,
+                    record=record,
+                    history_messages=history_messages,
+                    user_message=body.content,
+                    page_identity=body.page_identity,
+                    entry_action=body.entry_action,
+                    attachments=attachments,
+                    anchors=resolved_anchors,
+                )
+                if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
+                    planning_snapshot = replan_result.planning_snapshot
+                    resolved_intent = planning_snapshot.resolved_intent
+                    resolved_context_input = planning_snapshot.resolved_context_input
+                    reference_resolution = replan_result.reference_resolution
+                    disambiguation = planning_snapshot.disambiguation_state
+                    external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+                    resolved_context_input = await _materialize_planned_context(
+                        user_id=user_id,
+                        record=record,
+                        runtime_state=runtime_state,
+                        planning_snapshot=planning_snapshot,
+                        page_identity=body.page_identity,
+                        entry_action=body.entry_action,
+                        attachments=attachments,
+                        anchors=resolved_anchors,
+                        get_record_context_cb=get_record_context_cb,
+                        get_record_insights_cb=get_record_insights_cb,
+                    )
+                    cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+                    quick_action_annotation = await _run_explicit_quick_action_annotation(
+                        submission_mode=submission_mode,
+                        task_mode=resolved_intent,
+                        entry_action=body.entry_action,
+                        record=record,
+                        primary_anchor=primary_anchor,
+                        runtime_state=runtime_state,
+                        event_queue=event_queue,
+                    )
+                    replan_payload = runtime_contract_svc.build_prompt_payload(
+                        runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                            thread=thread,
+                            record=record,
+                            user_message=body.content,
+                            history_messages=history_messages,
+                            page_identity=body.page_identity,
+                            attachments=attachments,
+                            anchors=resolved_anchors,
+                            resolved_intent=resolved_intent,
+                            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                            entry_action=body.entry_action,
+                            submission_mode=submission_mode,
+                            cross_record_context_allowed=cross_record_context_allowed,
+                            resolved_context_input=resolved_context_input,
+                            quick_action_annotation=quick_action_annotation,
+                            reference_resolution=reference_resolution,
+                            planning_snapshot=planning_snapshot,
+                            max_history_messages=_MAX_HISTORY_MESSAGES,
+                            max_message_text=_MAX_MESSAGE_TEXT,
+                        )
+                    )
+                    replan_payload, replan_max_output = runtime_contract_svc.prepare_prompt_payload(
+                        replan_payload,
+                        reserved_points=READER_ASK_RESERVED_POINTS,
+                        tokens_per_point=TOKENS_PER_POINT,
+                        multiplier_output=MULTIPLIER_OUTPUT,
+                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+                        default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                    )
+                    replan_deps = ReaderAskAgentDeps(
+                        payload=replan_payload,
+                        event_queue=event_queue,
+                        state=runtime_state,
+                        query_seed=query_seed,
+                        task_mode=resolved_intent,
+                        record_id=str(record.record_id),
+                        record_title=record.title,
+                        primary_anchor=primary_anchor,
+                        get_record_context_fn=get_record_context_cb,
+                        get_record_insights_fn=get_record_insights_cb,
+                        search_user_vocabulary_fn=search_user_vocabulary_cb,
+                        lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
+                        run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+                        generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+                        vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
+                        dictionary_item_to_citation_fn=_dictionary_item_to_citation,
+                        dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+                    )
+                    replan_agent = get_reader_ask_agent()
+                    replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
+                    replan_route = RunModelSettings(
+                        max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
+                        temperature=route_settings.temperature,
+                        timeout=route_settings.timeout,
+                    )
+                    replan_result_text = await replan_agent.run(
+                        build_reader_ask_prompt(replan_deps),
+                        deps=replan_deps,
+                        model=replan_model,
+                        model_settings=replan_route.to_pydantic_ai(),
+                    )
+                    replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
+                    if len(replan_content) >= len(final_content_md.strip()):
+                        final_content_md = replan_content
+            except Exception:
+                logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
+
         if resolved_intent == "vocabulary":
             if runtime_state.latest_dictionary_entry is not None:
                 runtime_state.source_labels.add("dictionary")
@@ -3858,7 +3985,8 @@ async def retry_thread_message(
             supersedes_run_id=str(run_info.get("supersedes_run_id")) if run_info.get("supersedes_run_id") else None,
         )
         clarification_only = planning_snapshot.clarification_only
-        if clarification_only:
+        clarification_mode = planning_snapshot.clarification_mode
+        if clarification_only and clarification_mode == "must_clarify":
             assistant_md = post_process_svc.build_clarification_message(
                 local_anchor_required=planning_snapshot.context_plan.clarification_reason == "missing_required_context",
                 reference_resolution=reference_resolution,
@@ -3903,7 +4031,7 @@ async def retry_thread_message(
                 runtime_state=runtime_state,
                 context_plan=context_plan,
                 planning_snapshot=planning_snapshot,
-                clarification_only=True,
+                clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
             )
             computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
             billed_points = min(computed_cost_points, reservation.total_points)
@@ -4183,6 +4311,7 @@ async def retry_thread_message(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
+            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "none",
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -4272,6 +4401,128 @@ async def retry_thread_message(
 
         final_content_md = stream_outcome.content_md
         usage_summary = stream_outcome.usage_summary
+
+        # Bounded replan: if answer is empty/very short and not already clarified,
+        # attempt a single replan with expanded context
+        if (
+            len(final_content_md.strip()) < 20
+            and planning_snapshot is not None
+            and planning_snapshot.clarification_mode == "none"
+            and planning_snapshot.clarification_only is False
+        ):
+            logger.warning(
+                "reader_ask_replan_triggered: Answer too short (%d chars), attempting replan",
+                len(final_content_md.strip()),
+            )
+            try:
+                replan_result = await _resolve_semantic_planning(
+                    user_id=user_id,
+                    record=record,
+                    history_messages=history_messages,
+                    user_message=body.content,
+                    page_identity=body.page_identity,
+                    entry_action=body.entry_action,
+                    attachments=attachments,
+                    anchors=resolved_anchors,
+                )
+                if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
+                    planning_snapshot = replan_result.planning_snapshot
+                    resolved_intent = planning_snapshot.resolved_intent
+                    resolved_context_input = planning_snapshot.resolved_context_input
+                    reference_resolution = replan_result.reference_resolution
+                    disambiguation = planning_snapshot.disambiguation_state
+                    external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+                    resolved_context_input = await _materialize_planned_context(
+                        user_id=user_id,
+                        record=record,
+                        runtime_state=runtime_state,
+                        planning_snapshot=planning_snapshot,
+                        page_identity=body.page_identity,
+                        entry_action=body.entry_action,
+                        attachments=attachments,
+                        anchors=resolved_anchors,
+                        get_record_context_cb=get_record_context_cb,
+                        get_record_insights_cb=get_record_insights_cb,
+                    )
+                    cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+                    quick_action_annotation = await _run_explicit_quick_action_annotation(
+                        submission_mode=submission_mode,
+                        task_mode=resolved_intent,
+                        entry_action=body.entry_action,
+                        record=record,
+                        primary_anchor=primary_anchor,
+                        runtime_state=runtime_state,
+                        event_queue=event_queue,
+                    )
+                    replan_payload = runtime_contract_svc.build_prompt_payload(
+                        runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                            thread=thread,
+                            record=record,
+                            user_message=body.content,
+                            history_messages=history_messages,
+                            page_identity=body.page_identity,
+                            attachments=attachments,
+                            anchors=resolved_anchors,
+                            resolved_intent=resolved_intent,
+                            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                            entry_action=body.entry_action,
+                            submission_mode=submission_mode,
+                            cross_record_context_allowed=cross_record_context_allowed,
+                            resolved_context_input=resolved_context_input,
+                            quick_action_annotation=quick_action_annotation,
+                            reference_resolution=reference_resolution,
+                            planning_snapshot=planning_snapshot,
+                            max_history_messages=_MAX_HISTORY_MESSAGES,
+                            max_message_text=_MAX_MESSAGE_TEXT,
+                        )
+                    )
+                    replan_payload, replan_max_output = runtime_contract_svc.prepare_prompt_payload(
+                        replan_payload,
+                        reserved_points=READER_ASK_RESERVED_POINTS,
+                        tokens_per_point=TOKENS_PER_POINT,
+                        multiplier_output=MULTIPLIER_OUTPUT,
+                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+                        default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                    )
+                    replan_deps = ReaderAskAgentDeps(
+                        payload=replan_payload,
+                        event_queue=event_queue,
+                        state=runtime_state,
+                        query_seed=query_seed,
+                        task_mode=resolved_intent,
+                        record_id=str(record.record_id),
+                        record_title=record.title,
+                        primary_anchor=primary_anchor,
+                        get_record_context_fn=get_record_context_cb,
+                        get_record_insights_fn=get_record_insights_cb,
+                        search_user_vocabulary_fn=search_user_vocabulary_cb,
+                        lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
+                        run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+                        generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+                        vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
+                        dictionary_item_to_citation_fn=_dictionary_item_to_citation,
+                        dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+                    )
+                    replan_agent = get_reader_ask_agent()
+                    replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
+                    replan_route = RunModelSettings(
+                        max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
+                        temperature=route_settings.temperature,
+                        timeout=route_settings.timeout,
+                    )
+                    replan_result_text = await replan_agent.run(
+                        build_reader_ask_prompt(replan_deps),
+                        deps=replan_deps,
+                        model=replan_model,
+                        model_settings=replan_route.to_pydantic_ai(),
+                    )
+                    replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
+                    if len(replan_content) >= len(final_content_md.strip()):
+                        final_content_md = replan_content
+            except Exception:
+                logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
+
         if resolved_intent == "vocabulary":
             if runtime_state.latest_dictionary_entry is not None:
                 runtime_state.source_labels.add("dictionary")

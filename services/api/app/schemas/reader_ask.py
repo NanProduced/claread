@@ -30,7 +30,7 @@ ReaderAskActionType = Literal[
 ]
 ReaderAskActionStatus = Literal["pending", "confirmed", "executed", "rejected"]
 ReaderAskToolStatus = Literal["started", "completed", "failed"]
-ReaderAskTaskMode = Literal["explain", "breakdown", "vocabulary", "grammar", "practice"]
+ReaderAskTaskMode = Literal["explain", "breakdown", "vocabulary", "grammar", "practice", "general"]
 ReaderAskResolvedIntent = ReaderAskTaskMode
 ReaderAskReferenceResolutionStatus = Literal["not_needed", "resolved", "ambiguous", "not_found"]
 ReaderAskEntryAction = Literal[
@@ -418,6 +418,20 @@ _INTENT_ALIASES: dict[str, ReaderAskResolvedIntent] = {
     "practice": "practice",
     "练习": "practice",
     "exercise": "practice",
+    "general": "general",
+    "总结": "general",
+    "概括": "general",
+    "summarize": "general",
+    "summary": "general",
+    "翻译": "general",
+    "translate": "general",
+    "对比": "general",
+    "比较": "general",
+    "compare": "general",
+    "分析": "general",
+    "analyze": "general",
+    "复习": "general",
+    "review": "general",
 }
 
 _ASSET_TYPE_ALIASES: dict[str, ReaderAskPlannerAssetType] = {
@@ -432,11 +446,16 @@ _ASSET_TYPE_ALIASES: dict[str, ReaderAskPlannerAssetType] = {
 }
 
 
+ReaderAskClarificationMode = Literal["none", "must_clarify", "can_answer_with_followup"]
+
+
 class ReaderAskPlannerDecision(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
     resolved_intent: ReaderAskResolvedIntent
+    intent_label: str | None = None
     clarification_only: bool = False
+    clarification_mode: ReaderAskClarificationMode = "none"
     clarification_reason: str | None = None
     reference_request: ReaderAskPlannerReferenceRequest = Field(default_factory=ReaderAskPlannerReferenceRequest)
     structured_asset_request: ReaderAskPlannerStructuredAssetRequest = Field(
@@ -452,6 +471,19 @@ class ReaderAskPlannerDecision(BaseModel):
             return value
         normalized = value.strip().lower()
         return _INTENT_ALIASES.get(normalized, value)
+
+    @model_validator(mode="after")
+    def sync_clarification_fields(self) -> "ReaderAskPlannerDecision":
+        # clarification_mode is the source of truth; sync clarification_only from it
+        if self.clarification_mode == "must_clarify":
+            self.clarification_only = True
+        elif self.clarification_mode == "can_answer_with_followup":
+            self.clarification_only = False
+        # Backward compat: if clarification_only=True but clarification_mode="none",
+        # upgrade clarification_mode to "must_clarify"
+        elif self.clarification_only and self.clarification_mode == "none":
+            self.clarification_mode = "must_clarify"  # type: ignore[assignment]
+        return self
 
 
 class ReaderAskRunInfo(BaseModel):
@@ -496,6 +528,7 @@ class ReaderAskTraceSummary(BaseModel):
     planner_mode: Literal[
         "direct_answer",
         "needs_local_clarification",
+        "partial_answer_with_followup",
         "known_reference_resolved",
         "known_reference_ambiguous",
         "known_reference_not_found",

@@ -10,6 +10,7 @@ from app.schemas.reader_ask import (
     ReaderAskAssetDisambiguationCandidate,
     ReaderAskAttachment,
     ReaderAskCitation,
+    ReaderAskClarificationMode,
     ReaderAskContextPlan,
     ReaderAskCurrentRecordContext,
     ReaderAskCurrentRecordAffordances,
@@ -98,11 +99,12 @@ class ReaderAskPlanningSnapshot:
     structured_asset_needs: ReaderAskStructuredAssetNeeds
     structured_asset_resolution: ReaderAskStructuredAssetResolution
     working_set: ReaderAskWorkingSet
-    context_plan: ReaderAskContextPlan
-    trace_summary: ReaderAskTraceSummary
+    context_plan: ReaderAskContextPlan | None = None
+    trace_summary: ReaderAskTraceSummary | None = None
     disambiguation_state: ReaderAskDisambiguation | None = None
     external_asset_disambiguation_state: ReaderAskAssetDisambiguation | None = None
     clarification_only: bool = False
+    clarification_mode: ReaderAskClarificationMode = "none"
 
 
 def _normalize_text(value: str | None) -> str:
@@ -238,15 +240,17 @@ def build_resolved_context_input(
 
 def _working_set_mode(
     *,
-    clarification_only: bool,
+    clarification_mode: ReaderAskClarificationMode,
     working_set: ReaderAskWorkingSet,
     reference_resolution: ReaderAskReferenceResolution,
 ) -> ReaderAskWorkingSetMode:
-    if clarification_only:
+    if clarification_mode == "must_clarify":
         return "clarification"
     if reference_resolution.status == "resolved":
         return "known_reference"
     if working_set.external_record_refs:
+        return "explicit_external_record"
+    if working_set.external_asset_refs and not working_set.external_record_refs:
         return "explicit_external_record"
     if working_set.article_overview_needed:
         return "article_overview"
@@ -262,12 +266,12 @@ def _planned_context_plan(
     working_set: ReaderAskWorkingSet,
     reference_resolution: ReaderAskReferenceResolution,
     structured_asset_resolution: ReaderAskStructuredAssetResolution,
-    clarification_only: bool,
+    clarification_mode: ReaderAskClarificationMode,
 ) -> ReaderAskContextPlan:
     clarification_reason = None
     external_record_context_reason = None
     structured_asset_lookup_reason = None
-    if clarification_only:
+    if clarification_mode == "must_clarify":
         clarification_reason = planner_decision.clarification_reason
         if not clarification_reason:
             if reference_resolution.status == "ambiguous":
@@ -355,12 +359,14 @@ def _planned_trace_summary(
     planner_decision: ReaderAskPlannerDecision,
     reference_resolution: ReaderAskReferenceResolution,
     working_set: ReaderAskWorkingSet,
-    clarification_only: bool,
+    clarification_mode: ReaderAskClarificationMode,
     disambiguation_state: ReaderAskDisambiguation | None = None,
     external_asset_disambiguation_state: ReaderAskAssetDisambiguation | None = None,
 ) -> ReaderAskTraceSummary:
-    if clarification_only:
+    if clarification_mode == "must_clarify":
         planner_mode = "needs_local_clarification"
+    elif clarification_mode == "can_answer_with_followup":
+        planner_mode = "partial_answer_with_followup"
     elif reference_resolution.status == "resolved":
         planner_mode = "known_reference_resolved"
     elif reference_resolution.status == "ambiguous":
@@ -373,7 +379,7 @@ def _planned_trace_summary(
     notes: list[str] = []
     if planner_decision.rationale:
         notes.append(planner_decision.rationale)
-    if clarification_only and planner_decision.clarification_reason:
+    if clarification_mode != "none" and planner_decision.clarification_reason:
         notes.append(f"需要澄清：{planner_decision.clarification_reason}")
     if working_set.article_overview_needed:
         notes.append("本轮优先使用当前文章概览。")
@@ -392,7 +398,7 @@ def _planned_trace_summary(
         planner_mode=planner_mode,
         reference_resolution_status=reference_resolution.status,
         working_set_mode=_working_set_mode(
-            clarification_only=clarification_only,
+            clarification_mode=clarification_mode,
             working_set=working_set,
             reference_resolution=reference_resolution,
         ),
@@ -419,9 +425,9 @@ def _planned_trace_summary(
 def _planned_disambiguation_state(
     *,
     reference_resolution: ReaderAskReferenceResolution,
-    clarification_only: bool,
+    clarification_mode: ReaderAskClarificationMode = "none",
 ) -> ReaderAskDisambiguation | None:
-    if not clarification_only or reference_resolution.status != "ambiguous":
+    if clarification_mode == "none" or reference_resolution.status != "ambiguous":
         return None
     candidates = [
         ReaderAskDisambiguationCandidate(
@@ -447,9 +453,9 @@ def _planned_disambiguation_state(
 def _planned_external_asset_disambiguation_state(
     *,
     structured_asset_resolution: ReaderAskStructuredAssetResolution,
-    clarification_only: bool,
+    clarification_mode: ReaderAskClarificationMode = "none",
 ) -> ReaderAskAssetDisambiguation | None:
-    if not clarification_only or structured_asset_resolution.status != "ambiguous":
+    if clarification_mode == "none" or structured_asset_resolution.status != "ambiguous":
         return None
     candidates = [
         ReaderAskAssetDisambiguationCandidate(
@@ -599,20 +605,31 @@ def plan_request(
     )
 
     clarification_only = planner_decision.clarification_only
+    clarification_mode: ReaderAskClarificationMode = planner_decision.clarification_mode
     if resolved_reference.status in {"ambiguous", "not_found"}:
-        clarification_only = True
+        if anchors or (resolved_reference.status == "ambiguous" and planner_decision.working_set.local_context_window_needed):
+            clarification_mode = "can_answer_with_followup"
+        else:
+            clarification_mode = "must_clarify"
     if resolved_asset_resolution.status == "ambiguous":
+        # Asset ambiguity does not block answer generation; always downgrade to followup
+        clarification_mode = "can_answer_with_followup"
+
+    # Derive clarification_only from clarification_mode for backward compat
+    if clarification_mode == "must_clarify":
         clarification_only = True
+    elif clarification_mode == "can_answer_with_followup":
+        clarification_only = False
 
     decision_working_set = planner_decision.working_set
     cross_record_context_allowed = bool(merged_external_record_refs) or decision_working_set.cross_record_context_allowed
     retrieval_needs: ReaderAskRetrievalNeeds = "known_reference_only" if cross_record_context_allowed else "none"
     working_set = ReaderAskWorkingSet(
         primary_anchor=anchors[0] if anchors else None,
-        local_context_window_needed=decision_working_set.local_context_window_needed and not clarification_only,
-        record_insights_needed=decision_working_set.record_insights_needed and not clarification_only,
-        article_overview_needed=decision_working_set.article_overview_needed and not clarification_only,
-        dictionary_needed=decision_working_set.dictionary_needed and not clarification_only,
+        local_context_window_needed=decision_working_set.local_context_window_needed and clarification_mode != "must_clarify",
+        record_insights_needed=decision_working_set.record_insights_needed and clarification_mode != "must_clarify",
+        article_overview_needed=decision_working_set.article_overview_needed and clarification_mode != "must_clarify",
+        dictionary_needed=decision_working_set.dictionary_needed and clarification_mode != "must_clarify",
         cross_record_context_allowed=cross_record_context_allowed,
         external_record_refs=merged_external_record_refs,
         external_asset_refs=merged_external_asset_refs,
@@ -644,11 +661,12 @@ def plan_request(
             structured_asset_needs=structured_asset_needs,
             structured_asset_resolution=resolved_asset_resolution,
             working_set=working_set,
-            context_plan=None,  # type: ignore[arg-type]
-            trace_summary=None,  # type: ignore[arg-type]
+            context_plan=None,
+            trace_summary=None,
             disambiguation_state=None,
             external_asset_disambiguation_state=None,
             clarification_only=clarification_only,
+            clarification_mode=clarification_mode,
         )
     context_plan = _planned_context_plan(
         entry_action=entry_action,
@@ -658,21 +676,21 @@ def plan_request(
         working_set=working_set,
         reference_resolution=resolved_reference,
         structured_asset_resolution=resolved_asset_resolution,
-        clarification_only=clarification_only,
+        clarification_mode=clarification_mode,
     )
     disambiguation_state = _planned_disambiguation_state(
         reference_resolution=resolved_reference,
-        clarification_only=clarification_only,
+        clarification_mode=clarification_mode,
     )
     external_asset_disambiguation_state = _planned_external_asset_disambiguation_state(
         structured_asset_resolution=resolved_asset_resolution,
-        clarification_only=clarification_only,
+        clarification_mode=clarification_mode,
     )
     trace_summary = _planned_trace_summary(
         planner_decision=planner_decision,
         reference_resolution=resolved_reference,
         working_set=working_set,
-        clarification_only=clarification_only,
+        clarification_mode=clarification_mode,
         disambiguation_state=disambiguation_state,
         external_asset_disambiguation_state=external_asset_disambiguation_state,
     )
@@ -692,8 +710,8 @@ def plan_request(
         disambiguation_state=disambiguation_state,
         external_asset_disambiguation_state=external_asset_disambiguation_state,
         clarification_only=clarification_only,
+        clarification_mode=clarification_mode,
     )
-
 
 def build_context_plan(
     *,
@@ -858,10 +876,12 @@ def build_trace_summary(
     runtime_state: ReaderAskRuntimeState,
     context_plan: ReaderAskContextPlan,
     planning_snapshot: ReaderAskPlanningSnapshot | None = None,
-    clarification_only: bool = False,
+    clarification_mode: ReaderAskClarificationMode = "none",
 ) -> ReaderAskTraceSummary:
-    if clarification_only:
+    if clarification_mode == "must_clarify":
         planner_mode = "needs_local_clarification"
+    elif clarification_mode == "can_answer_with_followup":
+        planner_mode = "partial_answer_with_followup"
     elif context_plan.reference_resolution_status == "resolved":
         planner_mode = "known_reference_resolved"
     elif context_plan.reference_resolution_status == "ambiguous":
@@ -896,13 +916,18 @@ def build_trace_summary(
     working_set_mode = (
         planning_snapshot.trace_summary.working_set_mode
         if planning_snapshot is not None
-        else "clarification"
-        if clarification_only
-        else "known_reference"
-        if context_plan.reference_resolution_status == "resolved"
-        else "article_overview"
-        if context_plan.used_article_overview
-        else "anchor_local"
+        else _working_set_mode(
+            clarification_mode=clarification_mode,
+            working_set=ReaderAskWorkingSet(
+                cross_record_context_allowed=context_plan.used_cross_record_context,
+                external_record_refs=[{"record_id": rid} for rid in context_plan.expanded_record_ids],
+                article_overview_needed=context_plan.used_article_overview,
+                external_asset_refs=[{"asset_id": ctx.get("asset_id")} for ctx in (runtime_state.latest_external_asset_contexts or []) if ctx.get("asset_id")],
+            ),
+            reference_resolution=ReaderAskReferenceResolution(
+                status=context_plan.reference_resolution_status,
+            ),
+        )
     )
 
     return ReaderAskTraceSummary(

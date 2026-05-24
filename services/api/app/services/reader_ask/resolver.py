@@ -14,6 +14,37 @@ def _normalize_title(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").strip()).lower()
 
 
+def _normalize_title_for_matching(value: str | None) -> str:
+    """Normalize title for fuzzy matching: strip articles, punctuation, and lowercase."""
+    text = _normalize_title(value)
+    # Remove common English articles
+    for article in ("the ", "a ", "an "):
+        if text.startswith(article):
+            text = text[len(article):]
+            break
+    # Remove punctuation for matching
+    text = re.sub(r"[^\w\s]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _levenshtein_distance(s1: str, s2: str) -> int:
+    """Compute Levenshtein edit distance between two strings."""
+    if len(s1) < len(s2):
+        return _levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    prev_row = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = prev_row[j + 1] + 1
+            deletions = curr_row[j] + 1
+            substitutions = prev_row[j] + (c1 != c2)
+            curr_row.append(min(insertions, deletions, substitutions))
+        prev_row = curr_row
+    return prev_row[-1]
+
+
 def _score_title_match(query: str, title: str) -> int:
     normalized_query = _normalize_title(query)
     normalized_title = _normalize_title(title)
@@ -28,6 +59,21 @@ def _score_title_match(query: str, title: str) -> int:
     query_tokens = [token for token in re.split(r"[\s\-:]+", normalized_query) if token]
     if query_tokens and all(token in normalized_title for token in query_tokens):
         return 70
+    # Partial token match (>=50% tokens hit)
+    if query_tokens:
+        hit_count = sum(1 for token in query_tokens if token in normalized_title)
+        if hit_count >= max(len(query_tokens) // 2, 1) and hit_count < len(query_tokens):
+            return 50
+    # Fuzzy matching on normalized titles (strip articles/punctuation)
+    match_query = _normalize_title_for_matching(query)
+    match_title = _normalize_title_for_matching(title)
+    if match_query and match_title:
+        if match_query in match_title or match_title in match_query:
+            return 60
+        dist = _levenshtein_distance(match_query, match_title)
+        max_len = max(len(match_query), len(match_title))
+        if max_len > 0 and dist <= 3 and dist / max_len <= 0.3:
+            return 40
     return 0
 
 
@@ -306,11 +352,25 @@ async def resolve_known_references(
         return planner.ReaderAskReferenceResolution()
 
     if not reference_needs.query:
+        # When user references another article without a title, return recent records as candidates
+        rows = await repo.list_recent_records(
+            user_id,
+            exclude_record_id=current_record_id,
+            limit=5,
+        )
+        if not rows:
+            return planner.ReaderAskReferenceResolution(
+                attempted=True,
+                status="ambiguous",
+                query=None,
+                reason="请补充你想引用的文章标题，我再把它并入当前讨论。",
+            )
         return planner.ReaderAskReferenceResolution(
             attempted=True,
             status="ambiguous",
             query=None,
-            reason="请补充你想引用的文章标题，我再把它并入当前讨论。",
+            reason="请从以下最近阅读的文章中选择你想引用的：",
+            ambiguous_records=[_candidate_payload(row) for row in rows],
         )
 
     finder_fn = finder or repo.search_records_by_title
@@ -338,6 +398,14 @@ async def resolve_known_references(
         )
 
     top_score = ranked[0][0]
+    # Low confidence matches should not be treated as ambiguous candidates
+    if top_score < 70:
+        return planner.ReaderAskReferenceResolution(
+            attempted=True,
+            status="not_found",
+            query=reference_needs.query,
+            reason=f'没有找到标题能直接命中\u201c{reference_needs.query}\u201d的已知文章。',
+        )
     top_hits = [row for score, row in ranked if score == top_score]
     runner_up_score = ranked[1][0] if len(ranked) > 1 else None
     high_confidence_single_hit = top_score >= 90 and len(top_hits) == 1

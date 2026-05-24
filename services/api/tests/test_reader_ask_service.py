@@ -1428,7 +1428,7 @@ def test_plan_request_builds_external_asset_disambiguation_state_for_ambiguous_e
         ),
     )
 
-    assert snapshot.clarification_only is True
+    assert snapshot.clarification_mode == "can_answer_with_followup"
     assert snapshot.external_asset_disambiguation_state is not None
     assert snapshot.external_asset_disambiguation_state.required is True
     assert len(snapshot.external_asset_disambiguation_state.candidates) == 2

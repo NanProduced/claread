@@ -247,6 +247,11 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             else None,
         },
         "cross_record_context_allowed": contract.cross_record_context_allowed,
+        "followup_hint": (
+            contract.planning_snapshot.clarification_reason
+            if contract.planning_snapshot and contract.planning_snapshot.clarification_mode == "can_answer_with_followup"
+            else None
+        ),
         "tooling_contract": {
             "call_tools_on_demand": True,
             "cross_record_context_requires_explicit_intent": contract.cross_record_context_allowed,
@@ -271,5 +276,6 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             "vocabulary": "优先解释词义、短语义和为什么在这里是这个意思；需要时使用词典和词典 AI。",
             "grammar": "优先解释当前句子里的语法作用和句法关系，不要泛化成整节语法课。",
             "practice": "优先围绕当前句子或段落生成练习，帮助用户主动复述、辨析或判断结构。",
+            "general": "根据用户具体问题灵活回答，保持简洁，围绕当前文章和已提供的上下文。",
         }[contract.resolved_intent],
     }

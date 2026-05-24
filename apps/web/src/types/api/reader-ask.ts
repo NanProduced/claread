@@ -25,7 +25,12 @@ export type ReaderAskResolvedIntentDto =
   | "breakdown"
   | "vocabulary"
   | "grammar"
-  | "practice";
+  | "practice"
+  | "general";
+export type ReaderAskClarificationModeDto =
+  | "none"
+  | "must_clarify"
+  | "can_answer_with_followup";
 export type ReaderAskReferenceResolutionStatusDto =
   | "not_needed"
   | "resolved"
