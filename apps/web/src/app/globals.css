@@ -1946,6 +1946,12 @@ select {
   pointer-events: auto;
 }
 
+.reader-lookup-preview--compact {
+  width: min(18.5rem, calc(100vw - 2rem));
+  max-width: 18.5rem;
+  padding: 0.78rem;
+}
+
 @media (max-width: 1279px) {
   .reader-dictionary-panel {
     max-height: calc(100vh - 1rem);
@@ -1968,6 +1974,12 @@ select {
     width: min(21rem, calc(100vw - 1.25rem));
     max-width: 21rem;
     padding: 0.82rem;
+  }
+
+  .reader-lookup-preview--compact {
+    width: min(17rem, calc(100vw - 1.25rem));
+    max-width: 17rem;
+    padding: 0.74rem;
   }
 }
 

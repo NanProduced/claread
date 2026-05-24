@@ -216,6 +216,7 @@ export function ReaderQuickPeek({
   const entryResult = result?.kind === "entry" ? result : null;
   const disambiguationResult = result?.kind === "disambiguation" ? result : null;
   const notFoundResult = result?.kind === "not_found" ? result : null;
+  const previewMeaning = entryResult ? firstMeaning(entryResult) : "";
   const canRequestMissingFallback = Boolean(
     onRequestAI &&
       notFoundResult &&
@@ -229,11 +230,26 @@ export function ReaderQuickPeek({
       : result?.kind === "error"
         ? result.message
         : "";
+  const compactPreview =
+    Boolean(
+      entryResult &&
+        !glossaryText &&
+        !disambiguationResult &&
+        !notFoundResult &&
+        !errorMessage &&
+        lookup.lookupType === "word" &&
+        previewMeaning &&
+        previewMeaning.length <= 26 &&
+        (entryResult.entry.word ?? lookup.query).length <= 18,
+    );
+  const mergedClassName = [className, compactPreview ? "reader-lookup-preview--compact" : null]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <TooltipProvider>
       <ReaderQuickPeekShell
-        className={className}
+        className={mergedClassName}
         floatingRef={floatingRef}
         titleId={lookupTitleId}
         eyebrow={lookup.label ?? (lookup.lookupType === "phrase" ? "短语" : "词典")}
@@ -273,7 +289,7 @@ export function ReaderQuickPeek({
 
             {entryResult && !glossaryText ? (
               <span className="mt-3 block text-sm leading-6 text-ink-soft">
-                {firstMeaning(entryResult) || "当前词条暂无简短释义，打开详情可查看完整信息。"}
+                {previewMeaning || "当前词条暂无简短释义，打开详情可查看完整信息。"}
               </span>
             ) : null}
 
