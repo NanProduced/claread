@@ -123,7 +123,7 @@ export async function getReviewQueue(limit?: number): Promise<ReviewQueueVm> {
 
   if (session.kind === "mock_phone") {
     return {
-      state: "mock_session",
+      state: "limited_debug",
       items: [],
       total: 0,
       limit: normalizedLimit,

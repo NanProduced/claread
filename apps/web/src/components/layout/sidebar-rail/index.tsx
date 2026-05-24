@@ -3,6 +3,7 @@
 import {
   BookMarked,
   BookOpen,
+  Compass,
   ChevronsLeft,
   ChevronsRight,
   Library,
@@ -12,16 +13,23 @@ import {
 import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import {
+  appLibraryRoute,
+  appReadRoute,
+  appSettingsRoute,
+  appVocabularyRoute,
+  homeRoute,
+} from "@/lib/routes";
 
 const navigationItems = [
-  { href: "/read" as Route, label: "新解读", icon: Plus },
-  { href: "/library" as Route, label: "阅读记录", icon: Library },
-  { href: "/vocabulary" as Route, label: "生词本", icon: BookMarked },
-  { href: "/settings" as Route, label: "设置", icon: Settings },
+  { href: appReadRoute, label: "新解读", icon: Plus },
+  { href: appLibraryRoute, label: "阅读记录", icon: Library },
+  { href: appVocabularyRoute, label: "生词本", icon: BookMarked },
+  { href: appSettingsRoute, label: "设置", icon: Settings },
 ] as const;
 
 export function isSidebarActive(pathname: string, href: Route) {
-  return pathname === href || (href !== "/read" && pathname.startsWith(String(href)));
+  return pathname === href || (href !== appReadRoute && pathname.startsWith(String(href)));
 }
 
 export interface SidebarRailProps {
@@ -41,7 +49,7 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
       >
         <div className="app-nav-surface-shadow flex h-full flex-col px-3 py-4">
           <Link
-            href={"/read" as Route}
+            href={appReadRoute}
             className={`focus-ring flex min-h-12 items-center rounded-note px-2 transition-colors hover:bg-[var(--app-control-quiet)] ${
               collapsed ? "justify-center" : "gap-3"
             }`}
@@ -101,6 +109,15 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
                 </p>
               </div>
             ) : null}
+            <Link
+              href={homeRoute}
+              className={`focus-ring flex min-h-10 items-center rounded-note text-sm font-semibold text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink ${
+                collapsed ? "justify-center px-0" : "gap-3 px-3"
+              }`}
+            >
+              <Compass aria-hidden="true" className="h-4 w-4" />
+              {!collapsed ? <span>返回公共首页</span> : null}
+            </Link>
             <button
               type="button"
               className={`focus-ring flex min-h-10 w-full items-center rounded-note text-sm font-semibold text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink ${

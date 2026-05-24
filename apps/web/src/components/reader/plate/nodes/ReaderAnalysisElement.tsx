@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, ChevronDown, MessageSquare, Sparkles } from "lucide-react";
+import { ChevronDown, MessageSquare } from "lucide-react";
 import type { RenderElement } from "platejs/react";
 import type { ReaderAnalysisBlockNode } from "@/lib/reader-plate";
 import { parseSentenceAnalysisContent } from "../../reader-entry-utils";
@@ -186,46 +186,20 @@ export function ReaderAnalysisElement({
           aria-label={`${expanded ? "收起" : "展开"}${label}`}
         >
           {expanded ? (
-            <div className="flex items-center gap-2 min-w-0">
-              <span
-                className={`reader-entry-note-icon flex h-[1.35rem] w-[1.35rem] shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
-              >
-                {element.entryType === "sentence_analysis" ? (
-                  <BookOpen aria-hidden="true" className="h-[0.7rem] w-[0.7rem]" />
-                ) : (
-                  <Sparkles aria-hidden="true" className="h-[0.7rem] w-[0.7rem]" />
-                )}
+            <div className="flex items-center gap-2 min-w-0 font-mono text-[0.78rem] font-medium select-none">
+              <span className={labelToneClass}>
+                [{category} · {label}]
               </span>
-              <span className={`text-[0.7rem] font-semibold uppercase tracking-widest shrink-0 ${labelToneClass}`}>
-                {category}
-              </span>
-              <span className="text-hairline-strong/30 font-sans mx-0.5 font-medium shrink-0">/</span>
-              <h3 className="truncate text-[0.95rem] font-serif font-semibold text-ink">
-                {label}
-              </h3>
               {element.sourceKind === "ask_supplement" ? (
-                <span className="ml-1 shrink-0 rounded-full border border-lens-blue/15 bg-lens-blue/10 px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-lens-blue">
+                <span className="ml-1 shrink-0 rounded bg-lens-blue/10 px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-lens-blue">
                   AI 补充
                 </span>
               ) : null}
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span
-                className={`reader-entry-note-icon flex h-[1.15rem] w-[1.15rem] shrink-0 items-center justify-center rounded-full ring-1 ${iconClass}`}
-              >
-                {element.entryType === "sentence_analysis" ? (
-                  <BookOpen aria-hidden="true" className="h-[0.6rem] w-[0.6rem]" />
-                ) : (
-                  <Sparkles aria-hidden="true" className="h-[0.6rem] w-[0.6rem]" />
-                )}
-              </span>
-              <span className={`text-[0.7rem] font-semibold uppercase tracking-widest shrink-0 ${labelToneClass}`}>
-                {category}
-              </span>
-              <span className="text-hairline-strong/30 font-sans mx-0.5 font-medium shrink-0">/</span>
-              <span className="truncate text-[0.85rem] font-medium text-ink-soft max-w-[12rem] sm:max-w-[16rem]">
-                {label}
+            <div className="flex items-center gap-1 min-w-0 font-mono text-[0.76rem] font-medium select-none">
+              <span className={labelToneClass}>
+                [{category} · {label}]
               </span>
             </div>
           )}

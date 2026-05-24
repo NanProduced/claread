@@ -1,63 +1,78 @@
 # Web Auth Routing
 
-> **Status**: `CURRENT` | **Last updated**: 2026-05-14
+> **Status**: `CURRENT` | **Last updated**: 2026-05-25
 
-This document records the Web route boundary for Claread v1. It is a product and implementation contract, not a temporary tracker.
+This document defines Claread Web's route boundary and login redirect contract.
 
 ## Route Classes
 
-### Protected Personal Routes
+### Public Routes
 
-These routes represent a user's private reading workspace and assets. They must be intercepted by Next.js `proxy.ts` before page rendering when no Web session is present.
-
-| Route | Meaning |
-| --- | --- |
-| `/read` | Authenticated article canvas and analysis submission |
-| `/library` | User reading records |
-| `/vocabulary` | User vocabulary assets |
-| `/review` | Review queue entered from Vocabulary |
-| `/settings` | Account, quota, feedback, and preferences |
-| `/reader/:id` | Current Web private reader route |
-| `/reader/r/:id` | Future private reader route |
-
-Protected pages should not render anonymous empty states. If a session is missing, the user is redirected to `/login?next=<path>`.
-
-### Public Content Routes
-
-These routes are public product samples and editorial content. They do not require login and should be suitable for SSG or ISR once the content source is finalized.
+These routes are publicly reachable and do not require a Web session.
 
 | Route | Meaning |
 | --- | --- |
-| `/daily` | Public Daily Reader entry and archive |
-| `/daily/:date` | Public Daily Reader article |
-| `/examples/:slug` | Public long-lived examples |
+| `/` | Claread public home |
+| `/about` | Public product/about placeholder |
+| `/help` | Public help placeholder |
+| `/blog` | Public blog placeholder |
+| `/daily` | Public Daily Reader index |
+| `/daily/:articleId` | Public Daily Reader article |
+| `/examples/:slug` | Public annotated examples |
+| `/share/:shareId` | Public share page |
 
-Public reading is allowed, but asset actions such as saving, favoriting, adding vocabulary, or adding personal notes must require login.
+Public reading is allowed. Saving, adding vocabulary, writing personal notes, and other asset actions still require login.
 
-### Token-Gated Share Routes
+### Auth Route
 
-`/share/:token` is the only anonymous route for user-generated reading output. It is read-only and authenticated by the share token, not by the user's Web session.
+| Route | Meaning |
+| --- | --- |
+| `/login` | Web phone login entry |
 
-`/reader/r/:id` is strictly private. Even if an ID is sent to another person, anonymous access must not work. Sharing must be generated through `/share/:token`.
+`/login` is not part of the app shell. It is a dedicated auth boundary.
+
+### Private App Routes
+
+These routes are the authenticated Claread workspace. They are intercepted by `proxy.ts` before page render when no Web session is present.
+
+| Route | Meaning |
+| --- | --- |
+| `/app` | Private app entry, redirects to `/app/read` |
+| `/app/read` | Analysis submission and recent reading entry |
+| `/app/library` | User reading records |
+| `/app/vocabulary` | User vocabulary assets |
+| `/app/review` | Review queue entered from Vocabulary |
+| `/app/settings` | Account, quota, feedback, and preferences |
+| `/app/reader/:recordId` | Private Reader route |
+
+Protected pages must not render anonymous empty states. Missing sessions redirect to `/login?next=<path>`.
 
 ## Redirect Contract
 
 `next` and `intent` are constrained inputs, not arbitrary navigation commands.
 
-- `next` only accepts same-origin paths from an explicit allowlist: protected app routes, public Daily Reader routes, public example routes, and token share routes.
-- `intent` only accepts known values. v1 uses `save` for public content actions that should continue after login.
-- External URLs, protocol-relative URLs, control characters, and unknown intents must be ignored.
+- `next` only accepts same-origin paths from an explicit allowlist: public Claread routes, share routes, and `/app/*`.
+- `intent` only accepts known values. v1 uses `save`.
+- External URLs, protocol-relative URLs, control characters, and unknown intents are ignored.
 
 Examples:
 
 ```text
-/read -> /login?next=/read
-/reader/r/abc -> /login?next=/reader/r/abc
-/daily/2026-05-14 save action -> /login?next=/daily/2026-05-14&intent=save
+/app/read -> /login?next=/app/read
+/app/reader/abc -> /login?next=/app/reader/abc
+/daily/d-20260514 save action -> /login?next=/daily/d-20260514&intent=save
 ```
+
+## Session Projection
+
+The Web session contract exposes exactly three product states:
+
+- `signed_out`
+- `signed_in`
+- `limited_debug`
+
+`limited_debug` is a development-only constrained state. It is not treated as a fully signed-in personal account, and UI must describe it as limited.
 
 ## Backend Boundary
 
-The proxy is an early route guard for the browser experience. It does not replace BFF or FastAPI authorization. BFF route handlers must continue to validate the session before accessing user records, vocabulary, feedback, annotations, favorites, review, or analysis tasks.
-
-Daily Reader schema, public example content storage, and SSG/ISR publishing cadence are backend/architecture review items. UI work should not expand those decisions implicitly.
+`proxy.ts` is only an early browser guard. It does not replace BFF or upstream authorization. Web BFF handlers must continue to validate session state before touching user records, vocabulary, feedback, annotations, favorites, review, or analysis tasks.

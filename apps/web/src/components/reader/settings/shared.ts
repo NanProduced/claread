@@ -2,7 +2,7 @@ import type { ThemeName } from "@/lib/appearance";
 import type { VisualTone } from "@/types/view/ReaderMockVm";
 
 export type ReaderMode = "intensive" | "immersive";
-export type ReaderFontFamily = "editorial" | "book";
+export type ReaderFontFamily = "editorial" | "book" | "sans";
 export type ReaderFontScale = "sm" | "md" | "lg";
 
 export interface ReaderAnnotationVisibilityGroups {
@@ -39,7 +39,7 @@ function isReaderMode(value: unknown): value is ReaderMode {
 }
 
 function isReaderFontFamily(value: unknown): value is ReaderFontFamily {
-  return value === "editorial" || value === "book";
+  return value === "editorial" || value === "book" || value === "sans";
 }
 
 function isReaderFontScale(value: unknown): value is ReaderFontScale {
@@ -144,7 +144,11 @@ export function readerTextClassName({
   fontScale,
 }: Pick<ReaderSettingsState, "fontFamily" | "fontScale">) {
   const fontClass =
-    fontFamily === "book" ? "reader-font-book" : "reader-font-editorial";
+    fontFamily === "book"
+      ? "reader-font-book"
+      : fontFamily === "sans"
+        ? "reader-font-sans"
+        : "reader-font-editorial";
 
   const sizeClass =
     fontScale === "sm"

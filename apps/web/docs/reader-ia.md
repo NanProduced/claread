@@ -288,7 +288,7 @@ v1 操作流程：
 
 ### 列表页
 
-Library 承载阅读历史列表，提供文章索引和阅读记录管理（继续阅读、删除）；`/vocabulary` 继续是独立词汇资产入口。
+Library 承载阅读历史列表，提供文章索引和阅读记录管理（继续阅读、删除）；`/app/vocabulary` 继续是独立词汇资产入口。
 
 ### 筛选维度
 
@@ -300,7 +300,7 @@ Library 承载阅读历史列表，提供文章索引和阅读记录管理（继
 ### 详情进入
 
 - 点击记录 → `GET /records/{id}?include_render_scene=true` → 进入 Reader 页
-- Reader 页 URL：`/reader/{record_id}`
+- Reader 页 URL：`/app/reader/{record_id}`
 
 ### 与小程序差异
 

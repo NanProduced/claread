@@ -7,14 +7,14 @@ function cx(...values: Array<string | false | null | undefined>) {
 }
 
 type BrandLockupProps = {
-  href?: Route | null;
+  href: Route | null;
   className?: string;
   imageClassName?: string;
   priority?: boolean;
 };
 
 export function BrandLockup({
-  href = "/daily" as Route,
+  href,
   className,
   imageClassName,
   priority = false,

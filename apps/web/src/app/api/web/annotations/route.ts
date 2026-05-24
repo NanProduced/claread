@@ -22,7 +22,7 @@ export async function GET(request: Request) {
       ? 200
       : result.status === "upstream_unavailable"
         ? 503
-        : result.status === "unauthenticated" || result.status === "mock_session"
+        : result.status === "unauthenticated" || result.status === "limited_debug"
           ? 401
           : 502;
 

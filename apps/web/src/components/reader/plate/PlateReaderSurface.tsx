@@ -461,7 +461,7 @@ export function PlateReaderSurface({
 
   return (
     <div className={`px-5 py-7 sm:px-8 lg:px-10 lg:py-9 ${themeClassName ?? ""}`.trim()}>
-      <div className="mx-auto max-w-[96ch]">
+      <div className="mx-auto max-w-[72ch]">
         <Plate editor={editor} readOnly>
           <EditorContainer className="h-auto cursor-default overflow-visible bg-transparent px-0 py-0 [&_.slate-selection-area]:hidden">
             <Editor

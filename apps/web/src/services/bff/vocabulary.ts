@@ -13,7 +13,7 @@ import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 export type VocabularyBffStatus =
   | "ready"
   | "unauthenticated"
-  | "mock_session"
+  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -58,7 +58,7 @@ function unauthenticatedResult(
   options: Required<GetVocabularyOptions>,
 ): VocabularyBffResult {
   return {
-    status: session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
+    status: session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
     items: [],
     total: 0,
     page: options.page,

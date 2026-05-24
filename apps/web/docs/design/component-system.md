@@ -307,7 +307,7 @@ pnpm --filter=@claread/web build
 
 For visual changes, also verify in browser:
 
-- `/reader/[recordId]` desktop at a wide viewport.
+- `/app/reader/[recordId]` desktop at a wide viewport.
 - Reader with dictionary open.
 - Reader with sentence note/highlight.
 - Reader with `grammar_note` and `sentence_analysis` visible.

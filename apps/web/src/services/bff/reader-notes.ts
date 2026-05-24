@@ -22,7 +22,7 @@ type ReaderNotesBffStatus =
   | "deleted"
   | "invalid_request"
   | "unauthenticated"
-  | "mock_session"
+  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -34,12 +34,12 @@ export interface ReaderNotesBffResult {
 }
 
 function authError(session: WebSession): {
-  status: "unauthenticated" | "mock_session";
+  status: "unauthenticated" | "limited_debug";
   message: string;
   httpStatus: number;
 } {
   return {
-    status: session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
+    status: session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
     message:
       session.kind === "mock_phone"
         ? "当前登录态不能写入真实笔记，请使用真实登录会话后再试。"

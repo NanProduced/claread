@@ -1,10 +1,10 @@
 import type { DictLookupTypeDto } from "@/types/api/dict";
+import { tokenizeText } from "@/lib/reader-text";
 import type { ReaderTextSelection } from "../../primitives";
 import { hashAnchorText, rectForTextOffsets, textOffsetWithinElement } from "../../primitives";
 import type { ReaderLookupIntent, ReaderLookupPreviewAnchor, ReaderStructuredInspectIntent } from "./types";
 import type { DictionaryLookupSnapshot, LookupState } from "@/components/reader/dictionary/contracts";
 import type { InlineMarkModel, SentenceModel } from "@/types/view/ReaderMockVm";
-import { tokenizeText } from "../../../../app/(app)/reader/[recordId]/readerText";
 
 type ReaderLookupSentence = Pick<SentenceModel, "sentenceId" | "text">;
 type ReaderLookupMark = Pick<

@@ -8,13 +8,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const standalone = pathname === "/login";
   const [manualCollapsed, setManualCollapsed] = useState<boolean | null>(null);
-  const collapsed = manualCollapsed ?? pathname.startsWith("/reader/");
-
-  if (standalone) {
-    return <div className="min-h-screen bg-web-canvas text-ink">{children}</div>;
-  }
+  const collapsed = manualCollapsed ?? pathname.startsWith("/app/reader/");
 
   const railWidth = collapsed ? "md:pl-[84px]" : "md:pl-[232px]";
 

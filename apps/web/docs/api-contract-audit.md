@@ -268,4 +268,4 @@ adapter 层职责：
 - `services/bff/session.ts` 支持 httpOnly cookie 预留和开发期 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`；用户可见页面不再依赖 mock 数据回退。
 - `app/api/web/session` 和 `app/api/web/reader/[recordId]` 提供 Web BFF 投影接口。
 - `app/api/web/analysis/submit` 和 `app/api/web/analysis/tasks/[taskId]` 提供真实解析任务提交与状态轮询投影。
-- `/reader/[recordId]` Server Component 直接复用同一 BFF reader 服务，不让浏览器直连 FastAPI。
+- `/app/reader/[recordId]` Server Component 直接复用同一 BFF reader 服务，不让浏览器直连 FastAPI。

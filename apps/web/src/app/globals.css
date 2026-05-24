@@ -533,6 +533,10 @@ select {
   font-family: var(--font-reading-book);
 }
 
+.reader-font-sans {
+  font-family: var(--font-sans);
+}
+
 .reader-serif[data-reader-sentence-text="true"] {
   text-wrap: pretty;
 }
@@ -1344,7 +1348,7 @@ select {
   bottom: 0.25rem;
   left: 1.5rem;
   width: 1px;
-  background: linear-gradient(180deg, rgba(232, 228, 218, 0.92), rgba(232, 228, 218, 0.18));
+  border-left: 1px dotted var(--hairline);
 }
 
 .reader-paragraph-index {
@@ -1571,18 +1575,18 @@ select {
 
 .reader-translation-copy {
   margin: 0;
-  color: var(--reader-translation-copy);
-  font-family: var(--font-ui-zh), var(--font-ui-en), -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-  font-size: 0.97rem;
-  line-height: 1.82;
-  letter-spacing: 0;
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
   text-wrap: pretty;
   user-select: text;
 }
 
 .reader-translation-layer:hover .reader-translation-copy,
 .reader-translation-layer:focus-within .reader-translation-copy {
-  color: var(--reader-translation-copy-strong);
+  color: var(--color-ink-soft);
 }
 
 .reader-translation-action {
@@ -2073,20 +2077,21 @@ select {
 }
 
 .reader-entry-note--collapsed {
-  border-radius: 0.85rem;
-  padding: 0.4rem 0.85rem 0.4rem 0.45rem;
-  background: color-mix(in srgb, var(--reader-entry-accent) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--reader-entry-accent) 15%, transparent);
-  backdrop-filter: blur(4px);
+  border-radius: 0px;
+  padding: 0.1rem 0.2rem;
+  background: transparent;
+  border: none;
+  backdrop-filter: none;
   width: max-content;
   max-width: 100%;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+  box-shadow: none;
 }
 
 .reader-entry-note--collapsed:hover {
-  background: color-mix(in srgb, var(--reader-entry-accent) 12%, transparent);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  background: transparent;
+  transform: translateY(0);
+  box-shadow: none;
+  opacity: 0.82;
 }
 
 .reader-entry-note--expanded {

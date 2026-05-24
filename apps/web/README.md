@@ -2,7 +2,11 @@
 
 `apps/web/` 是 Claread 的 Web 客户端。Web 共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 utils 和 design tokens，但不复用小程序 UI，也不复制一套后端。
 
-当前 Web 已初始化为 Next.js App Router 项目。首期重点是功能页面、Reader、批注、词典、历史、每日精读和分享页骨架；landing、关于、帮助、博客等内容页先保留占位入口。
+当前 Web 已初始化为 Next.js App Router 项目，并采用三段式路由边界：
+
+- 公共区：`/`、`/about`、`/help`、`/blog`、`/daily`、`/daily/:articleId`、`/examples/:slug`、`/share/:shareId`
+- 认证区：`/login`
+- 私有应用区：`/app/read`、`/app/library`、`/app/vocabulary`、`/app/review`、`/app/settings`、`/app/reader/:recordId`
 
 ## 技术栈
 
@@ -52,7 +56,7 @@ $env:CLAREAD_WEB_DEBUG_SESSION_TOKEN="<dev session token>"
 
 未设置调试 session、上游不可用或记录缺少完整 `render_scene_json` 时，功能页显示明确错误态或空态，不再在产品路径回落到 mock demo。
 
-`/read` 的真实解析提交已通过 BFF 接入：浏览器提交到 `/api/web/analysis/submit`，Next.js BFF 携带 Web session 调 FastAPI `/analysis-tasks`；同步等待超时时，浏览器继续轮询 `/api/web/analysis/tasks/[taskId]`，任务成功后跳转到 `/reader/[cloudRecordId]`。
+`/app/read` 的真实解析提交已通过 BFF 接入：浏览器提交到 `/api/web/analysis/submit`，Next.js BFF 携带 Web session 调 FastAPI `/analysis-tasks`；同步等待超时时，浏览器继续轮询 `/api/web/analysis/tasks/[taskId]`，任务成功后跳转到 `/app/reader/[cloudRecordId]`。
 
 验证：
 

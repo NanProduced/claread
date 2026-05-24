@@ -28,6 +28,7 @@ const fontFamilyOptions: Array<{
 }> = [
   { value: "editorial", label: "编辑衬线", english: "Editorial" },
   { value: "book", label: "书页衬线", english: "Book" },
+  { value: "sans", label: "极简无衬线", english: "Sans" },
 ];
 
 const themeOptions: Array<{
@@ -234,7 +235,7 @@ export function ReaderSettingsPanel({
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-3 gap-2.5">
             {fontFamilyOptions.map((option) => {
               const active = value.fontFamily === option.value;
               return (

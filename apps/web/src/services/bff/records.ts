@@ -8,7 +8,7 @@ import type { RecordListItemVm } from "@/types/view/RecordListItemVm";
 export type RecordsBffStatus =
   | "ready"
   | "unauthenticated"
-  | "mock_session"
+  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -129,7 +129,7 @@ export async function getRecordList(options: GetRecordsOptions = {}): Promise<Re
     return emptyResult(
       session,
       normalizedOptions,
-      session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
+      session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
       session.kind === "mock_phone"
         ? "当前登录态不能访问真实记录，请使用真实登录会话后查看历史。"
         : "当前会话已过期，请重新登录。",
