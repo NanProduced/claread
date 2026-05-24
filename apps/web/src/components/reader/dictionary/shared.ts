@@ -11,7 +11,7 @@ import type { InlineGlossary } from "@/types/view/ReaderMockVm";
 import type { DictionaryLookupSnapshot } from "./contracts";
 import { firstMeaning } from "./contracts";
 
-export type DictionaryContentTab = "meanings" | "examples" | "phrases" | "forms";
+export type DictionaryContentTab = "meanings" | "phrases" | "forms";
 
 export type DictionarySenseExample = {
   key: string;

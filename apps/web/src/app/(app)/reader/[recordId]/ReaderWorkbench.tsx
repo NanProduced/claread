@@ -1572,7 +1572,7 @@ export function ReaderWorkbench({
       return;
     }
 
-    setDictionarySearchExpanded(true);
+    setDictionarySearchExpanded(false);
     setDictionaryRailOpen(true);
     void lookupPlainText(
       {
@@ -3645,6 +3645,8 @@ export function ReaderWorkbench({
             onOpenDetail={dictionaryPanelVisible ? undefined : openDictionaryRail}
             onLookupPhrase={activeInspect ? () => lookupPhraseFromInspect(activeInspect) : undefined}
             onAttachToAsk={activeInspect ? () => openAskWithStructuredInspect(activeInspect) : undefined}
+            onRequestAI={requestDictionaryAI}
+            dictionaryAI={dictionaryAI}
           />
         ) : null}
         </div>

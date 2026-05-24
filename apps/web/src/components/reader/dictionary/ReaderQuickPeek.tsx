@@ -2,12 +2,14 @@
 
 import { useId } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { ChevronRight, X, Sparkles } from "lucide-react";
+import { BookOpen, Bot, Search, Sparkles, X } from "lucide-react";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
 import { ReaderFloatingSurface } from "../ReaderFloatingLayer";
 import type { DictionaryLookupSnapshot } from "./contracts";
 import { firstMeaning } from "./contracts";
-import { contextualGlossaryText, contextualGlossaryTitle, structuredInspectLabel } from "./shared";
+import { contextualGlossaryText, contextualGlossaryTitle, dictionaryAIActionLabel, structuredInspectLabel } from "./shared";
+import type { DictionaryAIViewState, WebDictAIRequest } from "@/types/api/dict-ai";
 import { ReaderStructuredInspectCard } from "./ReaderStructuredInspectCard";
 
 function getInspectColorClass(annotationType: string) {
@@ -20,6 +22,33 @@ function getInspectColorClass(annotationType: string) {
   return "text-muted";
 }
 
+function PeekIconAction({
+  children,
+  label,
+  onClick,
+}: {
+  children: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-[0.7rem] border border-transparent bg-transparent text-muted transition-colors hover:border-hairline hover:bg-ink/[0.02] hover:text-ink cursor-pointer"
+          onClick={onClick}
+          aria-label={label}
+          title={label}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 interface ReaderQuickPeekProps {
   lookup?: DictionaryLookupSnapshot | null;
   inspect?: ReaderStructuredInspectIntent | null;
@@ -30,6 +59,8 @@ interface ReaderQuickPeekProps {
   onOpenDetail?: () => void;
   onLookupPhrase?: () => void;
   onAttachToAsk?: () => void;
+  onRequestAI?: (mode: WebDictAIRequest["mode"]) => void;
+  dictionaryAI?: DictionaryAIViewState;
 }
 
 interface ReaderQuickPeekShellProps {
@@ -94,7 +125,7 @@ function ReaderQuickPeekShell({
           {aside}
           <button
             type="button"
-            className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-surface text-muted transition-colors hover:border-muted hover:text-ink"
+            className="focus-ring inline-flex h-6 w-6 items-center justify-center rounded-md border border-transparent bg-transparent text-subtle transition-colors hover:text-ink"
             onClick={onDismiss}
             aria-label="关闭预览卡片"
           >
@@ -108,7 +139,7 @@ function ReaderQuickPeekShell({
         </div>
       ) : null}
       {footer ? (
-        <div className="mt-3 flex items-center justify-between border-t border-hairline/60 pt-2.5">
+        <div className="mt-3 border-t border-hairline/60 pt-2.5">
           {footer}
         </div>
       ) : null}
@@ -125,6 +156,8 @@ export function ReaderQuickPeek({
   onAttachToAsk,
   onLookupPhrase,
   onOpenDetail,
+  onRequestAI,
+  dictionaryAI,
   style,
 }: ReaderQuickPeekProps) {
   const inspectTitleId = useId();
@@ -133,58 +166,43 @@ export function ReaderQuickPeek({
 
   if (inspect) {
     return (
-      <ReaderQuickPeekShell
-        className={className}
-        floatingRef={floatingRef}
-        titleId={inspectTitleId}
-        eyebrow={structuredInspectLabel(inspect.annotationType, inspect.glossary?.phraseType)}
-        eyebrowClassName={getInspectColorClass(inspect.annotationType)}
-        title={inspect.anchorText}
-        body={
-          <ReaderStructuredInspectCard
-            intent={inspect}
-            variant="peek"
-          />
-        }
-        footer={
-          <>
+      <TooltipProvider>
+        <ReaderQuickPeekShell
+          className={className}
+          floatingRef={floatingRef}
+          titleId={inspectTitleId}
+          eyebrow={structuredInspectLabel(inspect.annotationType, inspect.glossary?.phraseType)}
+          eyebrowClassName={getInspectColorClass(inspect.annotationType)}
+          title={inspect.anchorText}
+          body={
+            <ReaderStructuredInspectCard
+              intent={inspect}
+              variant="peek"
+            />
+          }
+          footer={
             <div className="flex items-center gap-1">
               {onLookupPhrase ? (
-                <button
-                  type="button"
-                  className="focus-ring inline-flex h-8 items-center justify-center rounded-md px-2.5 text-[0.72rem] font-semibold text-muted transition-colors hover:bg-surface hover:text-ink"
-                  onClick={onLookupPhrase}
-                >
-                  查短语
-                </button>
+                <PeekIconAction label="查短语" onClick={onLookupPhrase}>
+                  <Search className="h-3.5 w-3.5" />
+                </PeekIconAction>
               ) : null}
               {onAttachToAsk ? (
-                <button
-                  type="button"
-                  className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface hover:text-ink"
-                  onClick={onAttachToAsk}
-                  title="带入 Ask"
-                  aria-label="带入 Ask"
-                >
+                <PeekIconAction label="带入 Ask" onClick={onAttachToAsk}>
                   <Sparkles className="h-3.5 w-3.5" />
-                </button>
+                </PeekIconAction>
+              ) : null}
+              {onOpenDetail ? (
+                <PeekIconAction label="打开词典" onClick={onOpenDetail}>
+                  <BookOpen className="h-3.5 w-3.5" />
+                </PeekIconAction>
               ) : null}
             </div>
-            {onOpenDetail ? (
-              <button
-                type="button"
-                className="focus-ring inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.72rem] font-semibold text-lens-blue transition-opacity hover:opacity-80"
-                onClick={onOpenDetail}
-              >
-                打开详情
-                <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </>
-        }
-        style={style}
-        onDismiss={onDismiss}
-      />
+          }
+          style={style}
+          onDismiss={onDismiss}
+        />
+      </TooltipProvider>
     );
   }
 
@@ -198,6 +216,13 @@ export function ReaderQuickPeek({
   const entryResult = result?.kind === "entry" ? result : null;
   const disambiguationResult = result?.kind === "disambiguation" ? result : null;
   const notFoundResult = result?.kind === "not_found" ? result : null;
+  const canRequestMissingFallback = Boolean(
+    onRequestAI &&
+      notFoundResult &&
+      lookup.contextSentence.trim() &&
+      lookup.sentenceId !== "__manual__" &&
+      lookup.label !== "手动查词",
+  );
   const errorMessage =
     lookup.state.kind === "error"
       ? lookup.state.message
@@ -206,71 +231,88 @@ export function ReaderQuickPeek({
         : "";
 
   return (
-    <ReaderQuickPeekShell
-      className={className}
-      floatingRef={floatingRef}
-      titleId={lookupTitleId}
-      eyebrow={lookup.label ?? (lookup.lookupType === "phrase" ? "短语" : "词典")}
-      title={
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className="block truncate reader-serif text-[1.35rem] leading-tight text-ink">
-            {entryResult?.entry.word ?? lookup.query}
-          </span>
-          {entryResult?.entry.phonetic ? (
-            <span className="text-xs text-muted font-sans font-normal tracking-normal">{entryResult.entry.phonetic}</span>
-          ) : null}
-        </div>
-      }
-      bodyId={lookupBodyId}
-      body={
-        <>
-          {glossaryTitle && glossaryText ? (
-            <span className="block rounded-[6px] bg-lens-blue-soft/80 px-3 py-2">
-              <span className="block text-xs font-semibold text-lens-blue">{glossaryTitle}</span>
-              <span className="mt-1 block text-sm leading-6 text-ink-soft">{glossaryText}</span>
+    <TooltipProvider>
+      <ReaderQuickPeekShell
+        className={className}
+        floatingRef={floatingRef}
+        titleId={lookupTitleId}
+        eyebrow={lookup.label ?? (lookup.lookupType === "phrase" ? "短语" : "词典")}
+        title={
+          <div className="flex max-w-full flex-wrap items-baseline gap-x-2">
+            <span className="block max-w-full break-words [overflow-wrap:anywhere] reader-serif text-[1.28rem] leading-tight text-ink">
+              {entryResult?.entry.word ?? lookup.query}
             </span>
-          ) : null}
-
-          {lookup.state.kind === "loading" ? (
-            <span className="mt-3 block text-sm leading-6 text-muted">正在查词...</span>
-          ) : null}
-
-          {entryResult && !glossaryText ? (
-            <span className="mt-3 block text-sm leading-6 text-ink-soft">
-              {firstMeaning(entryResult) || "当前词条暂无简短释义，打开详情可查看完整信息。"}
-            </span>
-          ) : null}
-
-          {disambiguationResult ? (
-            <span className="mt-3 block text-sm leading-6 text-muted">多个候选词条，打开详情继续选择。</span>
-          ) : null}
-
-          {notFoundResult ? (
-            <span className="mt-3 block text-sm leading-6 text-muted">当前词典暂未收录。</span>
-          ) : null}
-
-          {errorMessage ? (
-            <span className="mt-3 block text-sm leading-6 text-error-red">{errorMessage}</span>
-          ) : null}
-        </>
-      }
-      footer={
-        onOpenDetail ? (
+            {entryResult?.entry.phonetic ? (
+              <span className="text-xs text-muted font-sans font-normal tracking-normal">{entryResult.entry.phonetic}</span>
+            ) : null}
+          </div>
+        }
+        bodyId={lookupBodyId}
+        body={
           <>
-            <div />
-            <button
-              type="button"
-              className="focus-ring inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.72rem] font-semibold text-lens-blue transition-opacity hover:opacity-80"
-              onClick={onOpenDetail}
-            >
-              打开详情
-              <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
-            </button>
+            {glossaryTitle && glossaryText ? (
+              <span className="block rounded-[8px] border border-hairline/70 bg-ink/[0.015] px-3 py-2.5">
+                <span
+                  className={`block text-[0.68rem] font-semibold tracking-[0.08em] ${
+                    lookup.annotationType === "phrase_gloss" || lookup.lookupType === "phrase"
+                      ? "text-phrase-lavender"
+                      : lookup.annotationType === "context_gloss"
+                        ? "text-context-blue"
+                        : "text-vocab-amber"
+                  }`}
+                >
+                  {glossaryTitle}
+                </span>
+                <span className="mt-1.5 block text-[0.86rem] leading-6 text-ink-soft">{glossaryText}</span>
+              </span>
+            ) : null}
+
+            {lookup.state.kind === "loading" ? (
+              <span className="mt-3 block text-sm leading-6 text-muted">正在查词...</span>
+            ) : null}
+
+            {entryResult && !glossaryText ? (
+              <span className="mt-3 block text-sm leading-6 text-ink-soft">
+                {firstMeaning(entryResult) || "当前词条暂无简短释义，打开详情可查看完整信息。"}
+              </span>
+            ) : null}
+
+            {disambiguationResult ? (
+              <span className="mt-3 block text-sm leading-6 text-muted">多个候选词条，打开详情继续选择。</span>
+            ) : null}
+
+            {notFoundResult ? (
+              <span className="mt-3 block text-sm leading-6 text-muted">当前词典暂未收录，可用 AI 补充词义。</span>
+            ) : null}
+
+            {errorMessage ? (
+              <span className="mt-3 block text-sm leading-6 text-error-red">{errorMessage}</span>
+            ) : null}
+
+            {canRequestMissingFallback ? (
+              <div className="mt-3 flex items-center">
+                <PeekIconAction
+                  label={dictionaryAI ? dictionaryAIActionLabel("missing_fallback", dictionaryAI, false) : "AI 补充词义"}
+                  onClick={() => onRequestAI?.("missing_fallback")}
+                >
+                  <Bot aria-hidden="true" className="h-3.5 w-3.5 text-vocab-amber" />
+                </PeekIconAction>
+              </div>
+            ) : null}
           </>
-        ) : undefined
-      }
-      style={style}
-      onDismiss={onDismiss}
-    />
+        }
+        footer={
+          onOpenDetail ? (
+            <div className="flex items-center gap-1">
+              <PeekIconAction label="打开词典" onClick={onOpenDetail}>
+                <BookOpen className="h-3.5 w-3.5" />
+              </PeekIconAction>
+            </div>
+          ) : undefined
+        }
+        style={style}
+        onDismiss={onDismiss}
+      />
+    </TooltipProvider>
   );
 }

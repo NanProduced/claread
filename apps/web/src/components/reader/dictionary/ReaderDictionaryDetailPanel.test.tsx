@@ -183,4 +183,47 @@ describe("ReaderDictionaryDetailPanel", () => {
 
     expect(screen.queryByText("AI 生成笔记")).toBeNull();
   });
+
+  it("keeps recent history fully collapsible and removes the fake dictionary page action", () => {
+    render(
+      <ReaderDictionaryDetailPanel
+        lookup={createEntryLookup()}
+        readingGoal="general"
+        saveState={{ kind: "idle" }}
+        dictionaryAI={{ kind: "idle" }}
+        dictionaryAIPanelOpen={false}
+        dictionaryAINoteState={{ kind: "idle" }}
+        searchQuery="memory"
+        searchExpanded={false}
+        onSave={vi.fn()}
+        onRequestAI={vi.fn()}
+        onCreateAINote={vi.fn()}
+        onSelectAISuggestedQuery={vi.fn()}
+        onSearchQueryChange={vi.fn()}
+        onSearchSubmit={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onToggleAIPanel={vi.fn()}
+        onToggleSearchExpanded={vi.fn()}
+        history={[
+          createEntryLookup(),
+          {
+            ...createEntryLookup(),
+            query: "policy",
+            anchorText: "policy",
+            occurrence: 2,
+            textHash: hashAnchorText("policy"),
+          },
+        ]}
+        onSelectHistory={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("制度记忆会塑造政策选择。")).toBeNull();
+    expect(screen.queryByText("在词典页中查看")).toBeNull();
+    expect(screen.queryByPlaceholderText("搜索词典…")).toBeNull();
+    expect(screen.getAllByLabelText("搜索词典").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText("最近查阅"));
+    expect(screen.getByText("policy")).toBeTruthy();
+  });
 });

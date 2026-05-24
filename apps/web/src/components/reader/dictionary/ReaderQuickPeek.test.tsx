@@ -30,7 +30,7 @@ describe("ReaderQuickPeek", () => {
     expect(screen.getByText("memory")).toBeTruthy();
     expect(screen.getByText("正在查词...")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("打开详情"));
+    fireEvent.click(screen.getByLabelText("打开词典"));
     expect(onOpenDetail).toHaveBeenCalled();
   });
 
@@ -72,10 +72,49 @@ describe("ReaderQuickPeek", () => {
     expect(inspectView.getAllByText("policy choices").length).toBeGreaterThan(0);
     expect(inspectView.getByText("政策选择")).toBeTruthy();
 
-    fireEvent.click(inspectView.getByText("查短语"));
+    fireEvent.click(inspectView.getByLabelText("查短语"));
     expect(onLookupPhrase).toHaveBeenCalled();
 
     fireEvent.click(inspectView.getByLabelText("带入 Ask"));
     expect(onAttachToAsk).toHaveBeenCalled();
+  });
+
+  it("offers AI fallback when the dictionary has no entry", () => {
+    const onRequestAI = vi.fn();
+
+    render(
+      <ReaderQuickPeek
+        lookup={{
+          query: "restrainful",
+          lookupType: "word",
+          contextSentence: "The design felt strangely restrainful.",
+          recordId: "record-1",
+          sentenceId: "s2",
+          anchorText: "restrainful",
+          title: "查词",
+          state: {
+            kind: "ready",
+            result: {
+              kind: "not_found",
+              query: "restrainful",
+              provider: "mock-dict",
+              cached: false,
+              reason: "not_in_dictionary",
+            },
+          },
+        }}
+        onDismiss={vi.fn()}
+        onOpenDetail={vi.fn()}
+        onRequestAI={onRequestAI}
+        dictionaryAI={{ kind: "idle" }}
+      />,
+    );
+
+    const dialogs = screen.getAllByRole("dialog");
+    const fallbackDialog = within(dialogs[dialogs.length - 1]!);
+
+    expect(fallbackDialog.getByText("当前词典暂未收录，可用 AI 补充词义。")).toBeTruthy();
+    fireEvent.click(fallbackDialog.getByLabelText("词典未收录，试试 AI"));
+    expect(onRequestAI).toHaveBeenCalledWith("missing_fallback");
   });
 });

@@ -5,7 +5,6 @@ import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import type { DictionaryAIViewState, WebDictAIRequest } from "@/types/api/dict-ai";
 import type { DictionaryLookupSnapshot, SaveState } from "./contracts";
 import { ReaderDictionaryDetailPanel } from "./ReaderDictionaryDetailPanel";
-import { ReaderDictionaryRecentStrip } from "./ReaderDictionaryRecentStrip";
 
 interface ReaderDictionaryRailProps {
   lookup: DictionaryLookupSnapshot | null;
@@ -103,12 +102,7 @@ export function ReaderDictionaryRail({
             canCreateAINote={canCreateAINote}
             onAttachToAsk={onAttachToAsk}
             onLookupPhraseFromInspect={onLookupPhraseFromInspect}
-          />
-        </div>
-        <div className="shrink-0">
-          <ReaderDictionaryRecentStrip
             history={history}
-            activeLookup={lookup}
             onSelectHistory={onSelectHistory}
           />
         </div>
