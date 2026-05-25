@@ -200,9 +200,9 @@ body {
   --reader-mark-context-hover-dot: transparent;
   --reader-mark-context-hover-fill: rgba(138, 191, 232, 0.66);
   --reader-mark-context-hover-ink: rgb(29, 89, 134);
-  --reader-mark-grammar-line-strong: rgba(86, 72, 121, 0.78);
-  --reader-mark-grammar-line-soft: rgba(86, 72, 121, 0.48);
-  --reader-mark-grammar-fill: rgba(116, 102, 148, 0.08);
+  --reader-mark-grammar-line-strong: rgba(95, 78, 138, 0.82);
+  --reader-mark-grammar-line-soft: rgba(95, 78, 138, 0.5);
+  --reader-mark-grammar-fill: rgba(95, 78, 138, 0.08);
   --reader-mark-term-line-strong: rgba(39, 108, 77, 0.58);
   --reader-mark-term-line-soft: rgba(39, 108, 77, 0.24);
   --reader-mark-term-fill: rgba(60, 140, 104, 0.12);
@@ -214,13 +214,13 @@ body {
   --reader-mark-active-shadow: rgba(28, 24, 18, 0.055);
   --reader-mark-focus-outline: rgba(37, 99, 235, 0.18);
   --reader-mark-focus-shadow: rgba(37, 99, 235, 0.06);
-  --reader-mark-entry-underline: rgba(86, 72, 121, 0.44);
-  --reader-mark-entry-outline: rgba(86, 72, 121, 0.12);
-  --reader-mark-entry-shadow: rgba(86, 72, 121, 0.16);
+  --reader-mark-entry-underline: rgba(95, 78, 138, 0.42);
+  --reader-mark-entry-outline: rgba(95, 78, 138, 0.12);
+  --reader-mark-entry-shadow: rgba(95, 78, 138, 0.14);
   --reader-mark-entry-surface: rgba(255, 255, 255, 0.78);
-  --reader-mark-entry-grammar-line-strong: rgba(86, 72, 121, 0.94);
-  --reader-mark-entry-grammar-line-soft: rgba(86, 72, 121, 0.76);
-  --reader-mark-entry-grammar-fill: rgba(116, 102, 148, 0.26);
+  --reader-mark-entry-grammar-line-strong: rgba(95, 78, 138, 0.94);
+  --reader-mark-entry-grammar-line-soft: rgba(95, 78, 138, 0.74);
+  --reader-mark-entry-grammar-fill: rgba(95, 78, 138, 0.22);
   --reader-mark-entry-term-line-strong: rgba(39, 108, 77, 0.84);
   --reader-mark-entry-term-line-soft: rgba(39, 108, 77, 0.54);
   --reader-mark-entry-term-fill: rgba(60, 140, 104, 0.18);
@@ -332,16 +332,16 @@ body {
   --reader-mark-logic-hover-line-strong: rgba(37, 99, 235, 0.84);
   --reader-mark-logic-hover-line-soft: rgba(37, 99, 235, 0.46);
   --reader-mark-logic-hover-fill: rgba(37, 99, 235, 0.16);
-  --reader-analysis-tone-1: rgb(39, 108, 77);
-  --reader-analysis-tone-2: rgb(166, 104, 14);
-  --reader-analysis-tone-3: rgb(126, 91, 198);
-  --reader-analysis-tone-4: rgb(38, 105, 153);
-  --reader-analysis-tone-5: rgb(86, 72, 121);
-  --reader-analysis-tone-6: rgb(82, 115, 96);
-  --reader-entry-note-grammar-accent: rgba(116, 102, 148, 0.48);
-  --reader-entry-note-grammar-accent-soft: rgba(116, 102, 148, 0.05);
-  --reader-entry-note-analysis-accent: rgba(60, 140, 104, 0.5);
-  --reader-entry-note-analysis-accent-soft: rgba(60, 140, 104, 0.05);
+  --reader-analysis-tone-1: rgb(62, 129, 101);
+  --reader-analysis-tone-2: rgb(168, 118, 34);
+  --reader-analysis-tone-3: rgb(122, 89, 173);
+  --reader-analysis-tone-4: rgb(66, 111, 166);
+  --reader-analysis-tone-5: rgb(163, 90, 70);
+  --reader-analysis-tone-6: rgb(47, 124, 130);
+  --reader-entry-note-grammar-accent: rgb(95, 78, 138);
+  --reader-entry-note-grammar-accent-soft: rgba(95, 78, 138, 0.1);
+  --reader-entry-note-analysis-accent: rgb(63, 122, 96);
+  --reader-entry-note-analysis-accent-soft: rgba(63, 122, 96, 0.1);
   --reader-entry-note-term-accent: rgba(166, 119, 0, 0.5);
   --reader-entry-note-term-accent-soft: rgba(228, 176, 0, 0.05);
   --reader-entry-note-logic-accent: rgba(37, 99, 235, 0.48);
@@ -374,9 +374,9 @@ body {
   --reader-entry-active-outline: rgba(255, 255, 255, 0.05);
   --reader-entry-focus-outline: rgba(140, 178, 255, 0.18);
   --reader-entry-focus-shadow: rgba(0, 0, 0, 0.22);
-  --reader-mark-grammar-line-strong: rgba(186, 166, 232, 0.9);
-  --reader-mark-grammar-line-soft: rgba(163, 145, 206, 0.56);
-  --reader-mark-grammar-fill: rgba(129, 114, 176, 0.24);
+  --reader-mark-grammar-line-strong: rgba(176, 156, 231, 0.92);
+  --reader-mark-grammar-line-soft: rgba(156, 138, 210, 0.58);
+  --reader-mark-grammar-fill: rgba(95, 78, 138, 0.26);
   --reader-mark-term-line-strong: rgba(131, 206, 171, 0.88);
   --reader-mark-term-line-soft: rgba(111, 182, 149, 0.56);
   --reader-mark-term-fill: rgba(76, 144, 112, 0.26);
@@ -418,16 +418,16 @@ body {
   --reader-mark-logic-hover-line-strong: rgba(142, 179, 255, 0.98);
   --reader-mark-logic-hover-line-soft: rgba(142, 179, 255, 0.64);
   --reader-mark-logic-hover-fill: rgba(92, 132, 226, 0.36);
-  --reader-analysis-tone-1: rgba(172, 230, 205, 0.98);
-  --reader-analysis-tone-2: rgba(246, 206, 139, 0.98);
-  --reader-analysis-tone-3: rgba(217, 198, 255, 0.98);
-  --reader-analysis-tone-4: rgba(198, 223, 255, 0.98);
-  --reader-analysis-tone-5: rgba(209, 197, 240, 0.98);
-  --reader-analysis-tone-6: rgba(191, 223, 202, 0.98);
-  --reader-entry-note-grammar-accent: rgba(186, 166, 232, 0.58);
-  --reader-entry-note-grammar-accent-soft: rgba(186, 166, 232, 0.12);
-  --reader-entry-note-analysis-accent: rgba(131, 206, 171, 0.58);
-  --reader-entry-note-analysis-accent-soft: rgba(131, 206, 171, 0.12);
+  --reader-analysis-tone-1: rgba(146, 212, 181, 0.98);
+  --reader-analysis-tone-2: rgba(224, 181, 103, 0.98);
+  --reader-analysis-tone-3: rgba(194, 166, 241, 0.98);
+  --reader-analysis-tone-4: rgba(155, 190, 238, 0.98);
+  --reader-analysis-tone-5: rgba(214, 144, 124, 0.98);
+  --reader-analysis-tone-6: rgba(133, 204, 209, 0.98);
+  --reader-entry-note-grammar-accent: rgba(176, 156, 231, 0.96);
+  --reader-entry-note-grammar-accent-soft: rgba(176, 156, 231, 0.15);
+  --reader-entry-note-analysis-accent: rgba(146, 212, 181, 0.96);
+  --reader-entry-note-analysis-accent-soft: rgba(146, 212, 181, 0.15);
   --reader-entry-note-term-accent: rgba(227, 193, 103, 0.58);
   --reader-entry-note-term-accent-soft: rgba(227, 193, 103, 0.12);
   --reader-entry-note-logic-accent: rgba(142, 179, 255, 0.58);
@@ -1679,22 +1679,52 @@ select {
   padding-bottom: 0.1em;
   color: var(--ink);
   transition:
-    background-color 200ms ease,
-    background-image 200ms ease,
-    color 200ms ease;
+    background 180ms ease,
+    background-color 180ms ease,
+    background-image 180ms ease,
+    color 180ms ease;
 }
 
-.reader-mark--grammar:hover,
-.reader-mark--grammar.reader-mark--entry-active {
+.reader-mark--grammar.reader-mark--interactive:hover,
+.reader-mark--grammar.reader-mark--interactive:focus-visible,
+.reader-mark--grammar-linked {
   background-image: linear-gradient(
     to right,
     var(--reader-mark-entry-grammar-line-strong),
     var(--reader-mark-entry-grammar-line-strong)
   );
-  background-color: var(--reader-mark-entry-grammar-fill);
-  border-radius: 0.2em;
   color: var(--ink);
   box-shadow: none;
+}
+
+.reader-mark--grammar-pinned {
+  background:
+    linear-gradient(
+      to top,
+      color-mix(in srgb, var(--reader-mark-entry-grammar-fill) 45%, transparent) 0 36%,
+      transparent 36%
+    ) 0 88% / 100% 0.62em no-repeat,
+    linear-gradient(
+      to right,
+      var(--reader-mark-entry-grammar-line-strong),
+      var(--reader-mark-entry-grammar-line-strong)
+    ) 0 100% / 100% 2px no-repeat;
+  border-radius: 0.18em;
+}
+
+.reader-mark--grammar-pinned.reader-mark--interactive:hover,
+.reader-mark--grammar-pinned.reader-mark--interactive:focus-visible {
+  background:
+    linear-gradient(
+      to top,
+      color-mix(in srgb, var(--reader-mark-entry-grammar-fill) 70%, transparent) 0 40%,
+      transparent 40%
+    ) 0 88% / 100% 0.66em no-repeat,
+    linear-gradient(
+      to right,
+      var(--reader-mark-entry-grammar-line-strong),
+      var(--reader-mark-entry-grammar-line-strong)
+    ) 0 100% / 100% 2px no-repeat;
 }
 
 .reader-mark--term {
@@ -1823,7 +1853,9 @@ select {
 
 /* When an analysis entry is active (hovered or clicked), dim other lexical highlights and user ranges to focus on the structure */
 .reader-sentence--has-active-analysis .reader-mark {
+  background: none !important;
   background-color: transparent !important;
+  background-image: none !important;
   box-shadow: none !important;
   border-bottom-color: transparent !important;
   text-decoration: none !important;
@@ -1831,6 +1863,7 @@ select {
 }
 
 .reader-sentence--has-active-analysis .reader-user-range {
+  background: none !important;
   background-image: none !important;
   background-color: transparent !important;
   box-shadow: none !important;
@@ -1849,9 +1882,7 @@ select {
 }
 
 .reader-sentence--analysis-expanded {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(248, 252, 249, 0.92)),
-    var(--surface);
+  background: transparent;
 }
 
 .reader-sentence--user-highlight {
@@ -1863,9 +1894,13 @@ select {
   --analysis-fill: transparent;
 
   position: relative;
-  color: var(--ink); /* Keep text color as ink, use accent for underline */
+  display: inline;
+  color: var(--ink);
+  margin-inline: 0;
+  padding: 0.04em 0;
+  border-radius: 0.08em;
   background:
-    linear-gradient(to top, var(--analysis-accent) 0 2px, transparent 2px),
+    linear-gradient(to top, color-mix(in srgb, var(--analysis-accent) 88%, white) 0 2px, transparent 2px),
     linear-gradient(to top, var(--analysis-fill) 0 100%, transparent 100%);
   background-position: 0 100%, 0 0;
   background-repeat: no-repeat;
@@ -1879,7 +1914,7 @@ select {
 
 .reader-analysis-atom:hover,
 .reader-analysis-atom--active {
-  --analysis-fill: color-mix(in srgb, var(--analysis-accent) 15%, transparent);
+  --analysis-fill: color-mix(in srgb, var(--analysis-accent) 12%, transparent);
   color: var(--analysis-accent);
 }
 
@@ -1915,20 +1950,28 @@ select {
 
 .reader-analysis-row-index {
   display: flex;
-  width: 1.5rem;
-  padding-top: 0.2rem;
+  width: 1.3rem;
+  height: 1.3rem;
   flex-shrink: 0;
-  align-items: flex-start;
-  justify-content: flex-start;
-  border: none;
-  background: transparent;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--analysis-accent) 8%, transparent);
   color: var(--analysis-accent);
-  font-family: var(--font-serif);
-  font-size: 1.15rem;
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
   font-weight: 700;
   line-height: 1;
-  opacity: 0.85;
-  transition: opacity 160ms ease;
+  opacity: 0.82;
+  transition: all 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reader-entry-analysis-item-tint:hover .reader-analysis-row-index,
+.reader-entry-analysis-item-tint.reader-entry-analysis-item--active .reader-analysis-row-index {
+  background-color: var(--analysis-accent);
+  color: var(--paper);
+  opacity: 1;
+  transform: scale(1.05);
 }
 
 .reader-lookup-preview {
@@ -1993,24 +2036,23 @@ select {
   --reader-entry-connector: color-mix(in srgb, var(--reader-stage-rule) 88%, transparent);
 
   position: relative;
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
-  margin-top: 1rem;
-  margin-bottom: 1rem;
-  margin-right: 0.75rem;
-  max-width: 42rem;
+  width: min(100%, 41rem);
+  margin-top: 0.85rem;
+  margin-bottom: 0.9rem;
+  max-width: 41rem;
   border-radius: 1rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.4rem 0.55rem;
   background: transparent;
   outline: none;
   overflow: hidden;
   transition:
-    background-color 400ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 400ms cubic-bezier(0.22, 1, 0.36, 1),
-    padding 400ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-radius 400ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 400ms cubic-bezier(0.22, 1, 0.36, 1);
+    background-color 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
   cursor: pointer;
 }
 
@@ -2077,33 +2119,25 @@ select {
 }
 
 .reader-entry-note--collapsed {
-  border-radius: 0px;
-  padding: 0.1rem 0.2rem;
-  background: transparent;
-  border: none;
-  backdrop-filter: none;
-  width: max-content;
-  max-width: 100%;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--reader-entry-accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--reader-entry-accent) 22%, transparent);
   box-shadow: none;
 }
 
 .reader-entry-note--collapsed:hover {
-  background: transparent;
-  transform: translateY(0);
-  box-shadow: none;
-  opacity: 0.82;
+  background: color-mix(in srgb, var(--reader-entry-accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--reader-entry-accent) 30%, transparent);
+  opacity: 1;
 }
 
 .reader-entry-note--expanded {
-  border-radius: 1.25rem;
-  padding: 1.25rem 1.25rem 1.25rem 1.25rem;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(251, 250, 246, 0.92)),
-    var(--reader-entry-surface);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    var(--reader-entry-shadow);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem 1.15rem;
+  background: color-mix(in srgb, var(--reader-entry-accent) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--reader-entry-accent) 22%, transparent);
+  box-shadow: none;
 }
 
 .reader-entry-note--active {
@@ -2111,15 +2145,13 @@ select {
 }
 
 .reader-entry-note--active.reader-entry-note--expanded {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.84),
-    0 14px 32px var(--reader-entry-active-shadow),
-    0 0 0 1px color-mix(in srgb, var(--reader-entry-accent) 18%, white);
+  box-shadow: none;
+  border-color: color-mix(in srgb, var(--reader-entry-accent) 40%, transparent);
 }
 
 .reader-entry-note--active.reader-entry-note--expanded::before,
 .reader-entry-note--active.reader-entry-note--expanded::after {
-  opacity: 0.8;
+  opacity: 0;
 }
 
 .reader-entry-note--active-grammar,
@@ -2161,7 +2193,8 @@ select {
 }
 
 .reader-entry-note-trigger {
-  min-height: 2.8rem;
+  min-height: 2rem;
+  padding: 0;
 }
 
 .reader-entry-note-icon {
@@ -2181,6 +2214,11 @@ select {
 
 .reader-entry-note-title {
   max-width: 30rem;
+  text-wrap: pretty;
+}
+
+.reader-entry-note-heading-copy {
+  line-height: 1.35;
   text-wrap: pretty;
 }
 
@@ -2204,8 +2242,8 @@ select {
 
 .reader-entry-note-body {
   position: relative;
-  margin-left: 0.1rem;
-  padding-left: 0.1rem;
+  margin-left: 0;
+  padding-left: 0;
 }
 
 .reader-entry-note-summary,
@@ -2214,37 +2252,81 @@ select {
   text-wrap: pretty;
 }
 
+.reader-grammar-cue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.22rem;
+  color: color-mix(in srgb, var(--reader-entry-note-grammar-accent) 84%, var(--ink));
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  transform: translateY(-0.28em);
+  transform-origin: center;
+  vertical-align: super;
+}
+
 .reader-entry-analysis-list {
-  display: grid;
-  gap: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: none;
+  background: transparent;
 }
 
 .reader-entry-analysis-item {
   display: grid;
-  grid-template-columns: 1.5rem minmax(0, 1fr);
-  gap: 0.6rem;
+  grid-template-columns: 1.35rem minmax(0, 1fr);
+  gap: 0.65rem;
   align-items: start;
-  padding: 0.15rem 0;
+  border: none;
+  transition: opacity 180ms ease;
+}
+
+.reader-entry-analysis-item + .reader-entry-analysis-item {
+  border-top: 1px dashed color-mix(in srgb, var(--hairline) 70%, transparent);
+  padding-top: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+.reader-entry-analysis-item-tint {
+  padding: 0;
+}
+
+.reader-entry-analysis-item-tint:hover,
+.reader-entry-analysis-item-tint.reader-entry-analysis-item--active {
+  background-color: transparent;
 }
 
 .reader-entry-analysis-copy {
   min-width: 0;
-  padding-top: 0.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-top: 0.05rem;
 }
 
 .reader-entry-analysis-label {
-  color: var(--analysis-accent);
-  font-size: 0.73rem;
+  color: color-mix(in srgb, var(--analysis-accent) 90%, var(--ink));
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .reader-entry-analysis-text {
-  margin-top: 0.18rem;
+  margin-top: 0;
   color: var(--ink-soft);
-  font-size: 0.93rem;
-  line-height: 1.72;
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+@media (max-width: 640px) {
+  .reader-entry-analysis-item {
+    grid-template-columns: 1.45rem minmax(0, 1fr);
+  }
 }
 
 .reader-entry-icon {

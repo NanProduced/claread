@@ -490,7 +490,6 @@ export function ImmersiveReaderSurface({
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
         activeAnalysisEntryId={null}
         expandedAnalysisEntryIds={new Set()}
-        activeGrammarNoteSentenceIds={new Set()}
         sentenceTextBySentence={sentenceTextBySentence}
         sourceContextBySentence={sourceContextBySentence}
       />

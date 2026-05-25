@@ -21,7 +21,7 @@ import { readerMarkClassName } from "./shared";
 interface ReaderMarkLeafProps {
   props: Parameters<RenderLeaf>[0];
   annotationVisibilityGroups: ReaderAnnotationVisibilityGroups;
-  analysisSegmentsBySentence?: Map<string, SentenceAnalysisSegment[]>;
+  analysisSegmentsBySentence?: Map<string, Array<SentenceAnalysisSegment & { entryId?: string }>>;
   annotationRangesBySentence?: Map<string, ReaderAssetRange[]>;
   selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
@@ -29,7 +29,6 @@ interface ReaderMarkLeafProps {
   hoveredAnnotationTargetKey?: string | null;
   activeAnalysisEntryId?: string | null;
   expandedAnalysisEntryIds?: Set<string>;
-  activeGrammarNoteSentenceIds?: Set<string>;
   sentenceTextBySentence?: Map<string, string>;
   sourceContextBySentence?: Map<string, string | undefined>;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
@@ -43,6 +42,24 @@ interface ReaderMarkLeafProps {
     anchor: ReaderLookupPreviewAnchor | null,
     triggerEl?: HTMLElement | null,
   ) => void;
+  lastLeafOffsetsByMarkKey?: Map<string, number>;
+  grammarCueIndexByMarkKeyBySentence?: Map<string, Map<string, number>>;
+  grammarEntryIdByMarkKeyBySentence?: Map<string, Map<string, string>>;
+  onAnalysisToggle?: (entryId: string) => void;
+}
+
+function grammarMarkKey(
+  leaf: {
+    readerMarkId?: string;
+    readerMarkParentId?: string;
+  },
+) {
+  return leaf.readerMarkParentId ?? leaf.readerMarkId ?? null;
+}
+
+function circleNumber(num: number) {
+  const circles = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+  return circles[num - 1] ?? `(${num})`;
 }
 
 function routeFocusSegmentsForLeaf(
@@ -75,6 +92,7 @@ function renderLeafContent(
     endOffset: number;
     label: string;
     index: number;
+    entryId?: string;
   }>,
   annotationSegments: Array<{
     startOffset: number;
@@ -178,6 +196,21 @@ function renderLeafContent(
           className={`reader-analysis-atom reader-analysis-atom--${(overlappingAnalysis.index % 6) + 1}`}
           data-analysis-index={overlappingAnalysis.index + 1}
           data-analysis-label={overlappingAnalysis.label}
+          data-analysis-entry-id={overlappingAnalysis.entryId}
+          onMouseEnter={(event) => {
+            const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
+            const row = sentence?.querySelector(
+              `[data-entry-id="${overlappingAnalysis.entryId}"] [data-chunk-index="${overlappingAnalysis.index + 1}"]`
+            );
+            row?.classList.add("reader-entry-analysis-item--active");
+          }}
+          onMouseLeave={(event) => {
+            const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
+            const row = sentence?.querySelector(
+              `[data-entry-id="${overlappingAnalysis.entryId}"] [data-chunk-index="${overlappingAnalysis.index + 1}"]`
+            );
+            row?.classList.remove("reader-entry-analysis-item--active");
+          }}
         >
           {content}
         </span>
@@ -290,7 +323,7 @@ function analysisSegmentsForLeaf(
   sentenceId: string | undefined,
   leafStartOffset: number | undefined,
   leafEndOffset: number | undefined,
-  analysisSegmentsBySentence: Map<string, SentenceAnalysisSegment[]> | undefined,
+  analysisSegmentsBySentence: Map<string, Array<SentenceAnalysisSegment & { entryId?: string }>> | undefined,
 ) {
   if (!sentenceId || leafStartOffset === undefined || leafEndOffset === undefined || !analysisSegmentsBySentence) {
     return [];
@@ -302,6 +335,7 @@ function analysisSegmentsForLeaf(
       endOffset: Math.min(leafEndOffset, segment.end),
       label: segment.label,
       index: segment.index,
+      entryId: segment.entryId,
     }))
     .filter((segment) => segment.startOffset < segment.endOffset)
     .sort((left, right) => left.startOffset - right.startOffset);
@@ -314,7 +348,6 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   annotationVisibilityGroups,
   hoveredAnnotationTargetKey = null,
   expandedAnalysisEntryIds,
-  activeGrammarNoteSentenceIds,
   jumpFocusRangesBySentence,
   selectionFocusRangesBySentence,
   noteFocusRangesBySentence,
@@ -324,6 +357,10 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   props,
   sentenceTextBySentence,
   sourceContextBySentence,
+  lastLeafOffsetsByMarkKey,
+  grammarCueIndexByMarkKeyBySentence,
+  grammarEntryIdByMarkKeyBySentence,
+  onAnalysisToggle,
 }: ReaderMarkLeafProps) {
   const leaf = props.leaf as Parameters<RenderLeaf>[0]["leaf"] & {
     readerMarkAnnotationType?: ReaderLookupIntent["annotationType"];
@@ -446,6 +483,21 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     analysisSegments.length > 0 ||
     annotationSegments.length > 0;
   const visualTone = leaf.readerMarkVisualTone;
+  const markKey = grammarMarkKey(leaf);
+  const grammarCueIndex =
+    leaf.readerSentenceId && markKey
+      ? grammarCueIndexByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
+      : undefined;
+  const resolvedGrammarEntryId =
+    leaf.readerSentenceId && markKey
+      ? grammarEntryIdByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
+      : undefined;
+  const isLastLeafOfMark =
+    leaf.readerMarkAnnotationType === "grammar_note" &&
+    Boolean(markKey) &&
+    typeof leaf.readerTextEndOffset === "number" &&
+    leaf.readerTextEndOffset === lastLeafOffsetsByMarkKey?.get(markKey ?? "");
+
   if (!visualTone) {
     return <span {...props.attributes}>{hasDecoratedContent ? content : props.children}</span>;
   }
@@ -454,7 +506,8 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   
   const isLinkedToEntryId = (entryId: string | null | undefined) => {
     if (!entryId) return false;
-    return leaf.readerMarkParentId === entryId ||
+    return resolvedGrammarEntryId === entryId ||
+      leaf.readerMarkParentId === entryId ||
       leaf.readerMarkId === entryId ||
       (leaf.readerMarkId?.startsWith("im_") &&
         entryId.startsWith("se_") &&
@@ -462,17 +515,37 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   };
 
   const isLinkedToActiveEntry =
-    isLinkedToEntryId(activeAnalysisEntryId) ||
-    (expandedAnalysisEntryIds && Array.from(expandedAnalysisEntryIds).some(isLinkedToEntryId)) ||
-    (leaf.readerMarkAnnotationType === "grammar_note" && leaf.readerSentenceId && activeGrammarNoteSentenceIds?.has(leaf.readerSentenceId));
+    isLinkedToEntryId(activeAnalysisEntryId);
+  const isLinkedToExpandedEntry =
+    expandedAnalysisEntryIds ? Array.from(expandedAnalysisEntryIds).some(isLinkedToEntryId) : false;
 
-  const entryActiveClass = isLinkedToActiveEntry ? "reader-mark--entry-active" : "";
-  const isClickable = Boolean(className && leaf.readerMarkClickable && leaf.readerSentenceId);
+  const isGrammarLink = leaf.readerMarkAnnotationType === "grammar_note";
+  const grammarLinkStateClass = isGrammarLink && (isLinkedToActiveEntry || isLinkedToExpandedEntry)
+    ? "reader-mark--grammar-linked"
+    : "";
+  const grammarPinnedStateClass = isGrammarLink && isLinkedToExpandedEntry
+    ? "reader-mark--grammar-pinned"
+    : "";
+
+  const entryActiveClass = !isGrammarLink && (isLinkedToActiveEntry || isLinkedToExpandedEntry)
+    ? "reader-mark--entry-active"
+    : "";
+  const isClickable = Boolean(
+    className &&
+    (leaf.readerMarkClickable || leaf.readerMarkAnnotationType === "grammar_note") &&
+    leaf.readerSentenceId
+  );
 
   return (
     <span
       {...props.attributes}
-      className={[className, isClickable ? "reader-mark--interactive" : "", entryActiveClass].filter(Boolean).join(" ") || undefined}
+      className={[
+        className,
+        isClickable ? "reader-mark--interactive" : "",
+        entryActiveClass,
+        grammarLinkStateClass,
+        grammarPinnedStateClass,
+      ].filter(Boolean).join(" ") || undefined}
       data-reader-mark-id={leaf.readerMarkId}
       data-reader-mark-parent-id={leaf.readerMarkParentId}
       data-reader-mark-tone={visualTone}
@@ -486,6 +559,15 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
         const selection = window.getSelection();
         if (selection && !selection.isCollapsed && selection.toString().trim()) {
           return;
+        }
+
+        if (leaf.readerMarkAnnotationType === "grammar_note") {
+          const entryId = resolvedGrammarEntryId ?? leaf.readerMarkParentId ?? leaf.readerMarkId;
+          if (entryId) {
+            event.stopPropagation();
+            onAnalysisToggle?.(entryId);
+            return;
+          }
         }
 
         const sentenceText = sentenceTextBySentence?.get(leaf.readerSentenceId) ?? "";
@@ -552,6 +634,11 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
       }}
     >
       {hasDecoratedContent ? content : props.children}
+      {typeof grammarCueIndex === "number" && isLastLeafOfMark ? (
+        <span className="reader-grammar-cue" aria-hidden="true">
+          {circleNumber(grammarCueIndex)}
+        </span>
+      ) : null}
     </span>
   );
 });

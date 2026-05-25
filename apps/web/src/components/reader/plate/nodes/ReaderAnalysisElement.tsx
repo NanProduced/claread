@@ -1,18 +1,16 @@
 "use client";
 
 import { ChevronDown, MessageSquare } from "lucide-react";
+import type { CSSProperties } from "react";
 import type { RenderElement } from "platejs/react";
 import type { ReaderAnalysisBlockNode } from "@/lib/reader-plate";
 import { parseSentenceAnalysisContent } from "../../reader-entry-utils";
 import { entryLabel } from "../shared";
 
-const entryToneHeaderClass: Record<ReaderAnalysisBlockNode["entryType"], string> = {
-  grammar_note: "text-grammar-violet bg-grammar-violet/10 ring-grammar-violet/15",
-  sentence_analysis: "text-structure-green bg-structure-green/10 ring-structure-green/15",
-  term_note: "text-vocab-amber bg-vocab-amber/10 ring-vocab-amber/15",
-  logic_note: "text-lens-blue bg-lens-blue/10 ring-lens-blue/15",
-  interpretation_note: "text-context-blue bg-context-blue/10 ring-context-blue/15",
-};
+function getCircleNumber(num: number): string {
+  const circles = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+  return circles[num - 1] || `(${num})`;
+}
 
 function analysisCardToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) {
   switch (entryType) {
@@ -47,29 +45,6 @@ function entryLabelToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) {
   }
 }
 
-function collapsedPreview(
-  entry: ReaderAnalysisBlockNode,
-  parsed: ReturnType<typeof parseSentenceAnalysisContent> | null,
-) {
-  if (entry.entryType === "sentence_analysis" && parsed) {
-    const chunkLabels = parsed.chunks.slice(0, 3);
-    if (chunkLabels.length === 0) {
-      return parsed.summary || "";
-    }
-
-    return chunkLabels
-      .map((chunk, index) => `${index + 1} ${chunk.label}`)
-      .join(" · ");
-  }
-
-  const firstLine = entry.content
-    .split("\n")
-    .map((line) => line.trim())
-    .find(Boolean);
-
-  return firstLine ?? "";
-}
-
 function EnhancedText({ text }: { text: string }) {
   if (!text) return null;
 
@@ -91,14 +66,14 @@ function EnhancedText({ text }: { text: string }) {
                 return (
                   <span
                     key={pIdx}
-                    className="font-sans font-medium text-ink/90 antialiased tracking-normal mx-0.5"
+                    className="font-sans font-medium text-ink tracking-normal mx-[0.15em]"
                   >
                     {part}
                   </span>
                 );
               }
               return (
-                <span key={pIdx} className="font-sans text-ink-soft">
+                <span key={pIdx} className="font-sans">
                   {part}
                 </span>
               );
@@ -115,6 +90,7 @@ interface ReaderAnalysisElementProps {
   visible?: boolean;
   expanded?: boolean;
   active?: boolean;
+  cueIndex?: number;
   onAsk?: () => void;
   onDelete?: () => void;
   onToggle?: () => void;
@@ -124,6 +100,7 @@ interface ReaderAnalysisElementProps {
 export function ReaderAnalysisElement({
   active = false,
   expanded = false,
+  cueIndex,
   onAsk,
   onDelete,
   onFocusChange,
@@ -142,12 +119,17 @@ export function ReaderAnalysisElement({
 
   const category = entryLabel(element);
   const label = element.title ?? element.label ?? "解析";
-  const iconClass = entryToneHeaderClass[element.entryType];
   const cardToneClass = analysisCardToneClass(element.entryType);
   const labelToneClass = entryLabelToneClass(element.entryType);
   const activeClass = active
     ? `reader-entry-note--active reader-entry-note--active-${element.entryType.replace("_", "-")}`
     : "";
+  const headerCopy = `${category} · ${label}`;
+  const cueCopy =
+    element.entryType === "grammar_note" && typeof cueIndex === "number"
+      ? getCircleNumber(cueIndex)
+      : null;
+  const supportsSourceLinkPreview = element.entryType === "grammar_note";
 
   const parsed = element.entryType === "sentence_analysis"
     ? parseSentenceAnalysisContent(element.content)
@@ -159,8 +141,7 @@ export function ReaderAnalysisElement({
       className={[
         "reader-entry-note group/analysis",
         `reader-entry-note--${element.entryType.replace("_", "-")}`,
-        expanded ? "reader-entry-note--expanded block w-full" : "reader-entry-note--collapsed",
-        cardToneClass,
+        expanded ? "reader-entry-note--expanded" : "reader-entry-note--collapsed",
         activeClass,
       ]
         .filter(Boolean)
@@ -169,15 +150,15 @@ export function ReaderAnalysisElement({
       data-entry-id={element.entryId}
       data-entry-type={element.entryType}
       data-entry-expanded={expanded ? "true" : "false"}
-      onMouseEnter={() => onFocusChange?.(true)}
-      onMouseLeave={() => onFocusChange?.(false)}
-      onFocus={() => onFocusChange?.(true)}
-      onBlur={() => onFocusChange?.(false)}
+      onMouseEnter={supportsSourceLinkPreview ? () => onFocusChange?.(true) : undefined}
+      onMouseLeave={supportsSourceLinkPreview ? () => onFocusChange?.(false) : undefined}
+      onFocus={supportsSourceLinkPreview ? () => onFocusChange?.(true) : undefined}
+      onBlur={supportsSourceLinkPreview ? () => onFocusChange?.(false) : undefined}
     >
       <div className="reader-entry-note-head flex items-center justify-between gap-3">
         <button
           type="button"
-          className="min-w-0 text-left flex w-full items-center justify-between"
+          className="reader-entry-note-trigger min-w-0 flex-1 text-left"
           onClick={(event) => {
             event.stopPropagation();
             onToggle?.();
@@ -185,74 +166,87 @@ export function ReaderAnalysisElement({
           aria-expanded={expanded}
           aria-label={`${expanded ? "收起" : "展开"}${label}`}
         >
-          {expanded ? (
-            <div className="flex items-center gap-2 min-w-0 font-mono text-[0.78rem] font-medium select-none">
-              <span className={labelToneClass}>
-                [{category} · {label}]
-              </span>
-              {element.sourceKind === "ask_supplement" ? (
-                <span className="ml-1 shrink-0 rounded bg-lens-blue/10 px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-lens-blue">
-                  AI 补充
-                </span>
-              ) : null}
-            </div>
-          ) : (
-            <div className="flex items-center gap-1 min-w-0 font-mono text-[0.76rem] font-medium select-none">
-              <span className={labelToneClass}>
-                [{category} · {label}]
-              </span>
-            </div>
-          )}
-
-          {expanded ? (
-            <span className="reader-entry-note-toggle ml-3 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted/50 hover:bg-black/5 transition-colors">
-              <ChevronDown aria-hidden="true" className="h-4 w-4" />
+          <div className="flex min-w-0 items-center gap-2 select-none">
+            <span
+              className={`reader-entry-note-heading-copy truncate font-sans text-[0.88rem] font-bold tracking-wide ${labelToneClass}`}
+              style={{ color: "var(--reader-entry-accent)" }}
+            >
+              {headerCopy}
             </span>
-          ) : null}
+            {cueCopy ? (
+              <span
+                className={`reader-entry-note-heading-index shrink-0 font-sans text-[0.85rem] font-bold ${labelToneClass}`}
+                style={{ color: "var(--reader-entry-accent)" }}
+              >
+                {cueCopy}
+              </span>
+            ) : null}
+            {element.sourceKind === "ask_supplement" ? (
+              <span className="ml-1 shrink-0 rounded bg-lens-blue/10 px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.16em] text-lens-blue">
+                AI 补充
+              </span>
+            ) : null}
+          </div>
         </button>
-
-        {onAsk && expanded ? (
-          <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover/analysis:opacity-100 focus-within:opacity-100">
-            {onDelete && element.deletable ? (
+        <div className="flex shrink-0 items-center gap-1.5">
+          {expanded && onAsk ? (
+            <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover/analysis:opacity-100 focus-within:opacity-100">
+              {onDelete && element.deletable ? (
+                <button
+                  type="button"
+                  className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-destructive"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete();
+                  }}
+                  aria-label="删除 AI 补充"
+                >
+                  <span className="text-sm font-semibold">-</span>
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-destructive"
+                className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onDelete();
+                  onAsk();
                 }}
-                aria-label="删除 AI 补充"
+                aria-label="带解析进入 Ask"
               >
-                <span className="text-sm font-semibold">-</span>
+                <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue"
-              onClick={(event) => {
-                event.stopPropagation();
-                onAsk();
-              }}
-              aria-label="带解析进入 Ask"
-            >
-              <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="reader-entry-note-toggle focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted/55"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle?.();
+            }}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "收起" : "展开"}${label}`}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className={`h-4 w-4 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+            />
+          </button>
+        </div>
       </div>
 
       <div
-        className={`grid transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          expanded ? "grid-rows-[1fr] opacity-100 mt-4" : "grid-rows-[0fr] opacity-0 mt-0 pointer-events-none"
+        className={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          expanded ? "mt-4 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
         }`}
         aria-hidden={!expanded}
       >
-        <div className="overflow-hidden">
-          <div className="reader-entry-note-body border-t border-hairline/80 pt-3">
-            {parsed ? (
+        <div className="overflow-hidden px-1 -mx-1">
+          <div className="reader-entry-note-body border-t border-hairline/60 pt-4 mt-1">
+            {element.entryType === "sentence_analysis" && parsed ? (
               <>
                 {parsed.summary ? (
-                  <p className="reader-entry-note-summary mb-4 whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+                  <p className="reader-entry-note-summary mb-5 whitespace-pre-line text-[0.95rem] leading-[1.75] text-ink">
                     <EnhancedText text={parsed.summary} />
                   </p>
                 ) : null}
@@ -261,19 +255,25 @@ export function ReaderAnalysisElement({
                     {parsed.chunks.map((chunk, index) => (
                       <div
                         key={`${element.entryId}-chunk-${index}`}
-                        className="reader-entry-analysis-item group/chunk"
+                        className="reader-entry-analysis-item reader-entry-analysis-item-tint group/chunk"
+                        data-chunk-index={index + 1}
+                        style={{ "--analysis-accent": `var(--reader-analysis-tone-${(index % 6) + 1})` } as CSSProperties}
                         onMouseEnter={(event) => {
                           const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
-                          const atoms = sentence?.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
+                          const atoms = sentence?.querySelectorAll(
+                            `[data-analysis-entry-id="${element.entryId}"][data-analysis-index="${index + 1}"]`
+                          );
                           atoms?.forEach((atom) => atom.classList.add("reader-analysis-atom--active"));
                         }}
                         onMouseLeave={(event) => {
                           const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
-                          const atoms = sentence?.querySelectorAll(`[data-analysis-index="${index + 1}"]`);
+                          const atoms = sentence?.querySelectorAll(
+                            `[data-analysis-entry-id="${element.entryId}"][data-analysis-index="${index + 1}"]`
+                          );
                           atoms?.forEach((atom) => atom.classList.remove("reader-analysis-atom--active"));
                         }}
                       >
-                        <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1} reader-entry-analysis-index`}>
+                        <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1}`}>
                           {index + 1}
                         </div>
                         <div className="reader-entry-analysis-copy">
@@ -288,13 +288,13 @@ export function ReaderAnalysisElement({
                     ))}
                   </div>
                 ) : (
-                  <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+                  <p className="reader-entry-note-prose whitespace-pre-line text-[0.95rem] leading-[1.75] text-ink">
                     <EnhancedText text={element.content} />
                   </p>
                 )}
               </>
             ) : (
-              <p className="reader-entry-note-prose whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">
+              <p className="reader-entry-note-prose whitespace-pre-line text-[0.95rem] leading-[1.75] text-ink">
                 <EnhancedText text={element.content} />
               </p>
             )}

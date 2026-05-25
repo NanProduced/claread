@@ -231,48 +231,156 @@ export function PlateReaderSurface({
     [focusTarget, sentenceTextBySentence],
   );
 
-  const activeSentenceAnalysisSegmentsBySentence = useMemo(() => {
-    const map = new Map<string, SentenceAnalysisSegment[]>();
-    if (!activeAnalysisEntryId) {
-      return map;
-    }
+  const expandedSentenceAnalysisSegmentsBySentence = useMemo(() => {
+    const map = new Map<string, Array<SentenceAnalysisSegment & { entryId: string }>>();
+    paragraphNodes.forEach((paragraph) => {
+      paragraph.children.forEach((sentenceNode) => {
+        const segmentsList: Array<SentenceAnalysisSegment & { entryId: string }> = [];
+        sentenceNode.children.forEach((child) => {
+          if (child.type === "reader_sentence_analysis" && expandedIds.has(child.entryId)) {
+            const parsed = parseSentenceAnalysisContent(child.content);
+            const segments = buildSentenceAnalysisSegments(sentenceNode.sourceText, parsed.chunks);
+            segmentsList.push(
+              ...segments.map((segment) => ({
+                ...segment,
+                entryId: child.entryId,
+              })),
+            );
+          }
+        });
+        if (segmentsList.length > 0) {
+          map.set(sentenceNode.sentenceId, segmentsList);
+        }
+      });
+    });
+    return map;
+  }, [paragraphNodes, expandedIds]);
+
+  const lastLeafOffsetsByMarkKey = useMemo(() => {
+    const map = new Map<string, number>();
+    paragraphNodes.forEach((paragraph) => {
+      paragraph.children.forEach((sentence) => {
+        sentence.children.forEach((child) => {
+          if (child.type !== "reader_sentence_text") return;
+          child.children.forEach((leaf) => {
+            const markKey = leaf.readerMarkParentId ?? leaf.readerMarkId;
+            if (markKey && typeof leaf.readerTextEndOffset === "number") {
+              const currentMax = map.get(markKey) ?? -1;
+              if (leaf.readerTextEndOffset > currentMax) {
+                map.set(markKey, leaf.readerTextEndOffset);
+              }
+            }
+          });
+        });
+      });
+    });
+    return map;
+  }, [paragraphNodes]);
+
+  const grammarCueMetaBySentence = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        cueIndexByEntryId: Map<string, number>;
+        cueIndexByMarkKey: Map<string, number>;
+        entryIdByMarkKey: Map<string, string>;
+      }
+    >();
 
     paragraphNodes.forEach((paragraph) => {
       paragraph.children.forEach((sentenceNode) => {
-        const activeEntry = sentenceNode.children.find(
-          (child): child is ReaderAnalysisBlockNode =>
-            child.type === "reader_sentence_analysis" && child.entryId === activeAnalysisEntryId,
+        const grammarEntries = sentenceNode.children.filter(
+          (child): child is ReaderAnalysisBlockNode => child.type === "reader_grammar_note",
         );
-        if (!activeEntry) {
+        if (grammarEntries.length === 0) {
           return;
         }
 
-        const parsed = parseSentenceAnalysisContent(activeEntry.content);
-        const segments = buildSentenceAnalysisSegments(sentenceNode.sourceText, parsed.chunks);
-        if (segments.length > 0) {
-          map.set(sentenceNode.sentenceId, segments);
-        }
-      });
-    });
-
-    return map;
-  }, [paragraphNodes, activeAnalysisEntryId]);
-
-  const activeGrammarNoteSentenceIds = useMemo(() => {
-    const ids = new Set<string>();
-    paragraphNodes.forEach((paragraph) => {
-      paragraph.children.forEach((sentenceNode) => {
-        const hasExpandedGrammarNote = sentenceNode.children.some(
-          (child): child is ReaderAnalysisBlockNode =>
-            child.type === "reader_grammar_note" && expandedIds.has(child.entryId)
+        const cueIndexByEntryId = new Map<string, number>();
+        const cueIndexByMarkKey = new Map<string, number>();
+        const entryIdByMarkKey = new Map<string, string>();
+        const sentenceTextNode = sentenceNode.children.find(
+          (child): child is ReaderSentenceTextNode => child.type === "reader_sentence_text",
         );
-        if (hasExpandedGrammarNote) {
-          ids.add(sentenceNode.sentenceId);
+
+        const orderedMarkKeys: string[] = [];
+        const seenMarkKeys = new Set<string>();
+        sentenceTextNode?.children.forEach((leaf) => {
+          if (leaf.readerMarkAnnotationType !== "grammar_note") {
+            return;
+          }
+          const markKey = leaf.readerMarkParentId ?? leaf.readerMarkId;
+          if (!markKey || seenMarkKeys.has(markKey)) {
+            return;
+          }
+          seenMarkKeys.add(markKey);
+          orderedMarkKeys.push(markKey);
+        });
+
+        grammarEntries.forEach((entry, index) => {
+          cueIndexByEntryId.set(entry.entryId, index + 1);
+        });
+
+        const unresolvedEntryIds = new Set(grammarEntries.map((entry) => entry.entryId));
+        const unresolvedMarkKeys = [...orderedMarkKeys];
+
+        orderedMarkKeys.forEach((markKey) => {
+          if (!unresolvedEntryIds.has(markKey)) {
+            return;
+          }
+          entryIdByMarkKey.set(markKey, markKey);
+          unresolvedEntryIds.delete(markKey);
+          const nextIndex = cueIndexByEntryId.get(markKey);
+          if (nextIndex !== undefined && grammarEntries.length > 1) {
+            cueIndexByMarkKey.set(markKey, nextIndex);
+          }
+          const unresolvedIndex = unresolvedMarkKeys.indexOf(markKey);
+          if (unresolvedIndex >= 0) {
+            unresolvedMarkKeys.splice(unresolvedIndex, 1);
+          }
+        });
+
+        Array.from(unresolvedEntryIds).forEach((entryId, index) => {
+          const markKey = unresolvedMarkKeys[index];
+          if (!markKey) {
+            return;
+          }
+          entryIdByMarkKey.set(markKey, entryId);
+          const nextIndex = cueIndexByEntryId.get(entryId);
+          if (nextIndex !== undefined && grammarEntries.length > 1) {
+            cueIndexByMarkKey.set(markKey, nextIndex);
+          }
+        });
+
+        if (grammarEntries.length <= 1) {
+          cueIndexByEntryId.clear();
         }
+
+        map.set(sentenceNode.sentenceId, {
+          cueIndexByEntryId,
+          cueIndexByMarkKey,
+          entryIdByMarkKey,
+        });
       });
     });
-    return ids;
-  }, [paragraphNodes, expandedIds]);
+    return map;
+  }, [paragraphNodes]);
+
+  const grammarCueIndexByMarkKeyBySentence = useMemo(
+    () =>
+      new Map(
+        Array.from(grammarCueMetaBySentence.entries()).map(([sentenceId, meta]) => [sentenceId, meta.cueIndexByMarkKey]),
+      ),
+    [grammarCueMetaBySentence],
+  );
+
+  const grammarEntryIdByMarkKeyBySentence = useMemo(
+    () =>
+      new Map(
+        Array.from(grammarCueMetaBySentence.entries()).map(([sentenceId, meta]) => [sentenceId, meta.entryIdByMarkKey]),
+      ),
+    [grammarCueMetaBySentence],
+  );
 
   const editor = usePlateEditor(
     {
@@ -318,16 +426,17 @@ export function PlateReaderSurface({
           const sentenceNotes = readerNotesBySentence.get(element.sentenceId) ?? [];
           const activeSentenceNote =
             sentenceNotes.find((note) => note.id === activeReaderNoteId) ?? null;
+          const hasExpandedSentenceAnalysis = element.children.some(
+            (child: any) =>
+              child.type === "reader_sentence_analysis" &&
+              expandedIds.has(child.entryId)
+          );
           return (
             <ReaderSentenceElement
               props={props}
               active={activeSentenceId === element.sentenceId}
-              analysisActive={activeSentenceAnalysisSegmentsBySentence.has(element.sentenceId)}
-              analysisExpanded={element.children.some(
-                (child: any) =>
-                  child.type === "reader_sentence_analysis" &&
-                  expandedIds.has(child.entryId)
-              )}
+              analysisActive={hasExpandedSentenceAnalysis}
+              analysisExpanded={hasExpandedSentenceAnalysis}
               annotationVisibilityGroups={annotationVisibilityGroups}
               assetProjection={sentenceAssetsBySentence.get(element.sentenceId) ?? null}
               hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
@@ -364,12 +473,17 @@ export function PlateReaderSurface({
         case "reader_term_note":
         case "reader_logic_note":
         case "reader_interpretation_note":
+          const cueIndex =
+            element.type === "reader_grammar_note"
+              ? grammarCueMetaBySentence.get(element.sentenceId)?.cueIndexByEntryId.get(element.entryId)
+              : undefined;
           return (
             <ReaderAnalysisElement
               props={props}
               active={activeAnalysisEntryId === element.entryId}
               expanded={expandedIds.has(element.entryId)}
               visible={analysisEntryVisible(element.entryType, annotationVisibilityGroups)}
+              cueIndex={cueIndex}
               onAsk={onAskAnalysis ? () => onAskAnalysis(element.sentenceId, element.entryId) : undefined}
               onDelete={
                 onDeleteAnalysisSupplement && element.supplementId
@@ -395,7 +509,6 @@ export function PlateReaderSurface({
       expandedIds,
       activeSentenceId,
       selectedSentenceId,
-      activeSentenceAnalysisSegmentsBySentence,
       annotationVisibilityGroups,
       onInspectIntent,
       onLookupIntent,
@@ -412,10 +525,13 @@ export function PlateReaderSurface({
       routeFocusSentenceIds,
       sourceContextBySentence,
       sentenceAssetsBySentence,
-        showTranslation,
-        activeReaderNoteId,
-        onOpenSentenceNotes,
-      ],
+      showTranslation,
+      activeReaderNoteId,
+      onOpenSentenceNotes,
+      grammarCueMetaBySentence,
+      onAnalysisFocusChange,
+      onAnalysisToggle,
+    ],
   );
 
   const renderLeaf = useCallback(
@@ -428,7 +544,7 @@ export function PlateReaderSurface({
         onInspectIntent={onInspectIntent}
         onLookupIntent={onLookupIntent}
         props={props}
-        analysisSegmentsBySentence={activeSentenceAnalysisSegmentsBySentence}
+        analysisSegmentsBySentence={expandedSentenceAnalysisSegmentsBySentence}
         jumpFocusRangesBySentence={jumpFocusRangesBySentence}
         selectionFocusRangesBySentence={selectionFocusRangesBySentence}
         noteFocusRangesBySentence={noteFocusRangesBySentence}
@@ -436,15 +552,17 @@ export function PlateReaderSurface({
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
         activeAnalysisEntryId={activeAnalysisEntryId}
         expandedAnalysisEntryIds={expandedIds}
-        activeGrammarNoteSentenceIds={activeGrammarNoteSentenceIds}
         sentenceTextBySentence={sentenceTextBySentence}
         sourceContextBySentence={sourceContextBySentence}
+        lastLeafOffsetsByMarkKey={lastLeafOffsetsByMarkKey}
+        grammarCueIndexByMarkKeyBySentence={grammarCueIndexByMarkKeyBySentence}
+        grammarEntryIdByMarkKeyBySentence={grammarEntryIdByMarkKeyBySentence}
+        onAnalysisToggle={onAnalysisToggle}
       />
     ),
     [
       activeAnalysisEntryId,
-      activeGrammarNoteSentenceIds,
-      activeSentenceAnalysisSegmentsBySentence,
+      expandedSentenceAnalysisSegmentsBySentence,
       assetRangesBySentence,
       annotationVisibilityGroups,
       onInspectIntent,
@@ -456,6 +574,10 @@ export function PlateReaderSurface({
       onHoverAnnotationTargetKeyChange,
       sentenceTextBySentence,
       sourceContextBySentence,
+      lastLeafOffsetsByMarkKey,
+      grammarCueIndexByMarkKeyBySentence,
+      grammarEntryIdByMarkKeyBySentence,
+      onAnalysisToggle,
     ],
   );
 

@@ -3103,6 +3103,15 @@ export function ReaderWorkbench({
       const isExpanding = !current.includes(entryId);
       if (isExpanding) {
         setActiveEntryId(entryId);
+        const entry = reader.sentenceEntries.find((e) => e.id === entryId);
+        if (entry && entry.entryType === "grammar_note") {
+          // Find all other grammar notes for the same sentence
+          const otherGrammarEntryIds = reader.sentenceEntries
+            .filter((e) => e.sentenceId === entry.sentenceId && e.entryType === "grammar_note" && e.id !== entryId)
+            .map((e) => e.id);
+          // Filter out the other grammar notes of the same sentence
+          return [...current.filter((id) => !otherGrammarEntryIds.includes(id)), entryId];
+        }
         return [...current, entryId];
       } else {
         // If we are collapsing, we should clear the active state if it was this entry
@@ -3128,7 +3137,7 @@ export function ReaderWorkbench({
         // If the entry we left is NOT expanded, but there are OTHER expanded entries,
         // fall back to the last expanded one instead of clearing focus mode.
         if (expandedAnalysisEntryIds.length > 0) {
-          return expandedAnalysisEntryIds[expandedAnalysisEntryIds.length - 1];
+          return expandedAnalysisEntryIds[expandedAnalysisEntryIds.length - 1] ?? null;
         }
         return null;
       }
