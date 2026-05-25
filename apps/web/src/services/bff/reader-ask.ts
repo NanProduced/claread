@@ -251,6 +251,7 @@ export async function createReaderAskStreamForWeb(
   });
 }
 
+/** Regenerate (not resume/continue) the assistant answer for a message. */
 export async function retryReaderAskMessageForWeb(
   threadId: string,
   messageId: string,

@@ -354,6 +354,7 @@ class TestReaderAskRoute:
 
     @_mock_auth()
     def test_retry_stream_message_returns_sse_events(self, mock_auth) -> None:
+        """Retry is a full regenerate (new run_attempt), NOT a resume/continue."""
         client = create_client()
 
         async def fake_stream(user_id: UUID, thread_id: UUID, message_id: UUID):

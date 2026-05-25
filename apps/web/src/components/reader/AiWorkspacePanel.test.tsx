@@ -1291,4 +1291,140 @@ describe("AiWorkspacePanel", () => {
     expect(screen.getByText("Compare A with B")).not.toBeNull();
     expect(screen.getByText(/聚焦片段/)).not.toBeNull();
   });
+
+  it("shows '重新生成' (not '继续生成') for interrupted messages and triggers a full regenerate", async () => {
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            {
+              id: "msg-user-1",
+              thread_id: "thread-1",
+              role: "user",
+              status: "completed",
+              content_md: "解释一下这个语法点",
+              resolved_intent: "grammar",
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: null,
+              disambiguation: null,
+              external_asset_disambiguation: null,
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: {
+                page_identity: {
+                  record_id: "record-1",
+                  title: "Test Reader",
+                  surface: "reader",
+                  source: "reader_2_0",
+                  available_context_capabilities: ["record_context"],
+                  has_article_overview: true,
+                  has_sentence_entries: true,
+                  has_annotations: true,
+                  has_reader_notes: true,
+                },
+                entry_action: "why_here",
+                attachments: [],
+                normalized_anchors: [],
+                current_record_context: null,
+                external_record_contexts: [],
+                external_asset_contexts: [],
+              },
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+            {
+              id: "msg-assistant-1",
+              thread_id: "thread-1",
+              role: "assistant",
+              status: "interrupted",
+              content_md: "这是一个让步从句，even if 表示",
+              resolved_intent: "grammar",
+              context_anchors: [],
+              citations: [],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: null,
+              disambiguation: null,
+              external_asset_disambiguation: null,
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+              usage_event_id: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+            },
+          ],
+        });
+      }
+      // retry/stream endpoint — simulate a full regenerate
+      if (url.includes("/retry/stream")) {
+        return new Response("", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("输出中断，可重新生成。")).not.toBeNull();
+    });
+
+    // The button must say "重新生成", not "继续" or "继续生成"
+    const regenerateButton = screen.getByRole("button", { name: "重新生成" });
+    expect(regenerateButton).not.toBeNull();
+    expect(regenerateButton.getAttribute("title")).toBe("重新生成");
+
+    // Must NOT show "继续生成" or "继续" anywhere
+    expect(screen.queryByText("继续生成")).toBeNull();
+    expect(screen.queryByText("继续")).toBeNull();
+
+    // Clicking the button triggers a full regenerate (retry/stream endpoint)
+    fireEvent.click(regenerateButton);
+
+    await waitFor(() => {
+      const retryCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/retry/stream"));
+      expect(retryCall).toBeTruthy();
+      expect(String(retryCall?.[0])).toContain("/retry/stream");
+      expect(retryCall?.[1]?.method).toBe("POST");
+    });
+  });
 });

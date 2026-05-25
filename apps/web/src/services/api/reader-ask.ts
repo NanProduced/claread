@@ -127,6 +127,7 @@ export async function createUpstreamReaderAskStream(
   });
 }
 
+/** Regenerate (not resume/continue) the assistant answer. Calls the upstream retry endpoint. */
 export async function retryUpstreamReaderAskMessage(
   threadId: string,
   messageId: string,

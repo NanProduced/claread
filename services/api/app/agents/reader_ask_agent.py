@@ -207,6 +207,130 @@ async def _run_tool(
     return result
 
 
+async def _generate_sentence_annotation_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    kind: Literal["grammar_note", "sentence_analysis"],
+) -> dict[str, Any] | None:
+    """Agent tool: generate sentence annotation with cache short-circuit.
+
+    If a pre-generated annotation of the same kind already exists (from the
+    quick-action path), return it directly without consuming tool budget.
+    This is the backend protection layer — even if the prompt fails to
+    prevent the agent from calling this tool, the budget is preserved.
+    """
+    existing = next(
+        (
+            item
+            for item in reversed(ctx.deps.state.latest_generated_annotations)
+            if item.get("kind") == kind
+        ),
+        None,
+    )
+    if existing is not None:
+        return existing
+
+    async def runner() -> dict[str, Any] | None:
+        item = await ctx.deps.generate_sentence_annotation_fn(kind)
+        if item is not None:
+            ctx.deps.state.source_labels.add("record_assets")
+            ctx.deps.state.latest_generated_annotations.append(item)
+        return item
+
+    return await _run_tool(
+        ctx,
+        "generate_sentence_annotation",
+        runner,
+        input_summary=f"kind={kind}",
+    )
+
+
+_NO_ANCHOR_ERROR: dict[str, Any] = {
+    "status": "error",
+    "summary": "No anchor available",
+    "next_actions": ["Ask the user to select a sentence or text span first."],
+    "artifacts": [],
+}
+
+
+async def _propose_save_note_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    note_text: str | None = None,
+) -> dict[str, Any]:
+    """Agent tool: propose saving a note with anchor precondition check.
+
+    If no primary_anchor exists, returns error directly without consuming
+    tool budget. This is the backend protection layer.
+    """
+    if ctx.deps.primary_anchor is None:
+        return _NO_ANCHOR_ERROR
+
+    async def runner() -> dict[str, Any]:
+        if not isinstance(note_text, str) or not note_text.strip():
+            return {
+                "status": "error",
+                "summary": "Missing note_text",
+                "next_actions": ["Provide the note content before proposing save_note."],
+                "artifacts": [],
+            }
+        ctx.deps.state.action_requests.append(
+            ReaderAskRuntimeActionRequest(
+                action_type="save_note",
+                label="保存为笔记",
+                description="把当前解释或补充内容保存到当前锚点笔记",
+                payload_json={
+                    "record_id": ctx.deps.record_id,
+                    "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
+                    "note_text": note_text,
+                },
+            )
+        )
+        return {
+            "status": "success",
+            "summary": "Prepared save_note confirmation",
+            "next_actions": ["Wait for user confirmation before writing the note."],
+            "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
+            "ok": True,
+            "action_type": "save_note",
+        }
+
+    return await _run_tool(ctx, "propose_save_note", runner, input_summary=_truncate_tool_arg(note_text))
+
+
+async def _propose_save_highlight_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+) -> dict[str, Any]:
+    """Agent tool: propose saving a highlight with anchor precondition check.
+
+    If no primary_anchor exists, returns error directly without consuming
+    tool budget. This is the backend protection layer.
+    """
+    if ctx.deps.primary_anchor is None:
+        return _NO_ANCHOR_ERROR
+
+    async def runner() -> dict[str, Any]:
+        ctx.deps.state.action_requests.append(
+            ReaderAskRuntimeActionRequest(
+                action_type="save_highlight",
+                label="保存为高亮",
+                description="把当前锚点保存成高亮/摘录",
+                payload_json={
+                    "record_id": ctx.deps.record_id,
+                    "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
+                },
+            )
+        )
+        return {
+            "status": "success",
+            "summary": "Prepared save_highlight confirmation",
+            "next_actions": ["Wait for user confirmation before saving the highlight."],
+            "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
+            "ok": True,
+            "action_type": "save_highlight",
+        }
+
+    return await _run_tool(ctx, "propose_save_highlight", runner)
+
+
 @lru_cache(maxsize=1)
 def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     agent = Agent[ReaderAskAgentDeps, str](
@@ -321,94 +445,18 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
         ctx: RunContext[ReaderAskAgentDeps],
         kind: Literal["grammar_note", "sentence_analysis"],
     ) -> dict[str, Any] | None:
-        async def runner() -> dict[str, Any] | None:
-            item = await ctx.deps.generate_sentence_annotation_fn(kind)
-            if item is not None:
-                ctx.deps.state.source_labels.add("record_assets")
-                ctx.deps.state.latest_generated_annotations.append(item)
-            return item
-
-        return await _run_tool(
-            ctx,
-            "generate_sentence_annotation",
-            runner,
-            input_summary=f"kind={kind}",
-        )
+        return await _generate_sentence_annotation_tool(ctx, kind)
 
     @agent.tool(name="propose_save_note")
     async def propose_save_note(
         ctx: RunContext[ReaderAskAgentDeps],
         note_text: str | None = None,
     ) -> dict[str, Any]:
-        async def runner() -> dict[str, Any]:
-            if ctx.deps.primary_anchor is None:
-                return {
-                    "status": "error",
-                    "summary": "No anchor available",
-                    "next_actions": ["Ask the user to select a sentence or text span first."],
-                    "artifacts": [],
-                }
-            if not isinstance(note_text, str) or not note_text.strip():
-                return {
-                    "status": "error",
-                    "summary": "Missing note_text",
-                    "next_actions": ["Provide the note content before proposing save_note."],
-                    "artifacts": [],
-                }
-            ctx.deps.state.action_requests.append(
-                ReaderAskRuntimeActionRequest(
-                    action_type="save_note",
-                    label="保存为笔记",
-                    description="把当前解释或补充内容保存到当前锚点笔记",
-                    payload_json={
-                        "record_id": ctx.deps.record_id,
-                        "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
-                        "note_text": note_text,
-                    },
-                )
-            )
-            return {
-                "status": "success",
-                "summary": "Prepared save_note confirmation",
-                "next_actions": ["Wait for user confirmation before writing the note."],
-                "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
-                "ok": True,
-                "action_type": "save_note",
-            }
-
-        return await _run_tool(ctx, "propose_save_note", runner, input_summary=_truncate_tool_arg(note_text))
+        return await _propose_save_note_tool(ctx, note_text)
 
     @agent.tool(name="propose_save_highlight")
     async def propose_save_highlight(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
-        async def runner() -> dict[str, Any]:
-            if ctx.deps.primary_anchor is None:
-                return {
-                    "status": "error",
-                    "summary": "No anchor available",
-                    "next_actions": ["Ask the user to select a sentence or text span first."],
-                    "artifacts": [],
-                }
-            ctx.deps.state.action_requests.append(
-                ReaderAskRuntimeActionRequest(
-                    action_type="save_highlight",
-                    label="保存为高亮",
-                    description="把当前锚点保存成高亮/摘录",
-                    payload_json={
-                        "record_id": ctx.deps.record_id,
-                        "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
-                    },
-                )
-            )
-            return {
-                "status": "success",
-                "summary": "Prepared save_highlight confirmation",
-                "next_actions": ["Wait for user confirmation before saving the highlight."],
-                "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
-                "ok": True,
-                "action_type": "save_highlight",
-            }
-
-        return await _run_tool(ctx, "propose_save_highlight", runner)
+        return await _propose_save_highlight_tool(ctx)
 
     return agent
 

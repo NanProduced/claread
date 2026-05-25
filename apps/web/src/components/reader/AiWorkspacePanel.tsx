@@ -1951,7 +1951,7 @@ function MessageBubble({
                           </MessageContent>
                           {message.status === "interrupted" ? (
                             <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
-                              输出中断，可继续生成。
+                              输出中断，可重新生成。
                             </div>
                           ) : null}
                         </div>
@@ -2067,25 +2067,14 @@ function MessageBubble({
                   <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="无帮助">
                     <ThumbsDown className="h-3.5 w-3.5" />
                   </button>
-                  {message.status === "interrupted" ? (
-                    <button
-                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors"
-                      title="继续生成"
-                      onClick={() => onRetry(message.id)}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>继续</span>
-                    </button>
-                  ) : (
-                    <button
-                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors"
-                      title="重新生成"
-                      onClick={() => onRetry(message.id)}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>重试</span>
-                    </button>
-                  )}
+                  <button
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors"
+                    title="重新生成"
+                    onClick={() => onRetry(message.id)}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>重新生成</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -2785,6 +2774,7 @@ export function AiWorkspacePanel({
     await sendMessage();
   }
 
+  /** Regenerate (not resume/continue) the assistant answer for a given message. */
   async function handleRetry(messageId: string) {
     if (!activeThreadId || sending) {
       return;
@@ -2799,6 +2789,8 @@ export function AiWorkspacePanel({
           ? {
               ...message,
               status: "streaming",
+              // For interrupted messages, temporarily keep the partial content visible
+              // until the regenerated answer starts streaming in. This is NOT resume/continue.
               content_md: message.status === "interrupted" ? message.content_md : "",
               citations: [],
               action_proposals: [],
@@ -2829,8 +2821,8 @@ export function AiWorkspacePanel({
       );
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "重试失败");
-        throw new Error(errorText || "重试失败。");
+        const errorText = await response.text().catch(() => "重新生成失败");
+        throw new Error(errorText || "重新生成失败。");
       }
 
       await consumeReaderAskSse(

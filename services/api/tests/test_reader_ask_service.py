@@ -1778,3 +1778,274 @@ def test_delete_supplement_marks_all_runs_deleted(monkeypatch) -> None:  # type:
         assert isinstance(persisted_items, list)
         assert persisted_items[0]["lifecycle_status"] == "deleted"
     assert audit_payload["turn_run_id"] == source_turn_run_id
+
+
+async def test_generate_sentence_annotation_grammar_cache_hit_skips_run_tool() -> None:
+    """Quick-action grammar: when a pre-generated grammar_note exists, calling the
+    tool must return the cached result WITHOUT going through _run_tool — meaning
+    tool_call_count stays 0, tool_trace stays empty, no SSE events, and the
+    underlying generate_sentence_annotation_fn is never invoked."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pydantic_ai import RunContext
+
+    from app.agents.reader_ask_agent import (
+        ReaderAskAgentDeps,
+        ReaderAskRuntimeState,
+        _generate_sentence_annotation_tool,
+    )
+
+    grammar_annotation = {
+        "kind": "grammar_note",
+        "status": "ready",
+        "title": "语法旁注",
+        "content_md": "让步从句",
+    }
+    state = ReaderAskRuntimeState(
+        latest_generated_annotations=[grammar_annotation],
+    )
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+    annotation_fn = AsyncMock()
+
+    deps = ReaderAskAgentDeps(
+        payload={},
+        event_queue=event_queue,
+        state=state,
+        query_seed="test",
+        task_mode="grammar",
+        record_id="r1",
+        record_title="Test",
+        primary_anchor=None,
+        get_record_context_fn=AsyncMock(return_value={}),
+        get_record_insights_fn=AsyncMock(return_value=[]),
+        search_user_vocabulary_fn=AsyncMock(return_value=[]),
+        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
+        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        generate_sentence_annotation_fn=annotation_fn,
+        vocabulary_item_to_citation_fn=MagicMock(),
+        dictionary_item_to_citation_fn=MagicMock(),
+        dictionary_ai_to_citation_fn=MagicMock(),
+    )
+
+    ctx = MagicMock(spec=RunContext)
+    ctx.deps = deps
+
+    result = await _generate_sentence_annotation_tool(ctx, kind="grammar_note")
+
+    # Returns the cached annotation
+    assert result is grammar_annotation
+    # tool_call_count MUST NOT increment (budget preserved)
+    assert state.tool_call_count == 0
+    # tool_trace MUST NOT grow (no started/completed entries)
+    assert len(state.tool_trace) == 0
+    # event_queue MUST be empty (no tool.started / tool.completed SSE events)
+    assert event_queue.empty()
+    # The underlying generation function MUST NOT be called
+    annotation_fn.assert_not_called()
+
+
+async def test_generate_sentence_annotation_breakdown_cache_hit_skips_run_tool() -> None:
+    """Quick-action breakdown: same guarantee as grammar — cache hit must not
+    consume tool budget, produce trace entries, or emit SSE events."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pydantic_ai import RunContext
+
+    from app.agents.reader_ask_agent import (
+        ReaderAskAgentDeps,
+        ReaderAskRuntimeState,
+        _generate_sentence_annotation_tool,
+    )
+
+    breakdown_annotation = {
+        "kind": "sentence_analysis",
+        "status": "ready",
+        "title": "句子拆分",
+        "content_md": "主干 + 修饰",
+    }
+    state = ReaderAskRuntimeState(
+        latest_generated_annotations=[breakdown_annotation],
+    )
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+    annotation_fn = AsyncMock()
+
+    deps = ReaderAskAgentDeps(
+        payload={},
+        event_queue=event_queue,
+        state=state,
+        query_seed="test",
+        task_mode="breakdown",
+        record_id="r1",
+        record_title="Test",
+        primary_anchor=None,
+        get_record_context_fn=AsyncMock(return_value={}),
+        get_record_insights_fn=AsyncMock(return_value=[]),
+        search_user_vocabulary_fn=AsyncMock(return_value=[]),
+        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
+        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        generate_sentence_annotation_fn=annotation_fn,
+        vocabulary_item_to_citation_fn=MagicMock(),
+        dictionary_item_to_citation_fn=MagicMock(),
+        dictionary_ai_to_citation_fn=MagicMock(),
+    )
+
+    ctx = MagicMock(spec=RunContext)
+    ctx.deps = deps
+
+    result = await _generate_sentence_annotation_tool(ctx, kind="sentence_analysis")
+
+    assert result is breakdown_annotation
+    assert state.tool_call_count == 0
+    assert len(state.tool_trace) == 0
+    assert event_queue.empty()
+    annotation_fn.assert_not_called()
+
+
+def _make_agent_deps(
+    *,
+    primary_anchor: object = None,
+) -> tuple:
+    """Helper to construct ReaderAskAgentDeps + event_queue for tool tests."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.agents.reader_ask_agent import ReaderAskAgentDeps, ReaderAskRuntimeState
+    from app.schemas.reader_ask import ReaderAskAnchorRef
+
+    state = ReaderAskRuntimeState()
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+    anchor = primary_anchor if isinstance(primary_anchor, ReaderAskAnchorRef) else None
+
+    deps = ReaderAskAgentDeps(
+        payload={},
+        event_queue=event_queue,
+        state=state,
+        query_seed="test",
+        task_mode="grammar",
+        record_id="r1",
+        record_title="Test",
+        primary_anchor=anchor,
+        get_record_context_fn=AsyncMock(return_value={}),
+        get_record_insights_fn=AsyncMock(return_value=[]),
+        search_user_vocabulary_fn=AsyncMock(return_value=[]),
+        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
+        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        generate_sentence_annotation_fn=AsyncMock(return_value=None),
+        vocabulary_item_to_citation_fn=MagicMock(),
+        dictionary_item_to_citation_fn=MagicMock(),
+        dictionary_ai_to_citation_fn=MagicMock(),
+    )
+    return deps, event_queue
+
+
+async def test_propose_save_note_no_anchor_skips_run_tool() -> None:
+    """Without primary_anchor, propose_save_note must return error directly
+    without consuming tool budget, producing trace entries, or creating
+    action requests."""
+    from unittest.mock import MagicMock
+
+    from pydantic_ai import RunContext
+
+    from app.agents.reader_ask_agent import _propose_save_note_tool
+
+    deps, event_queue = _make_agent_deps(primary_anchor=None)
+    ctx = MagicMock(spec=RunContext)
+    ctx.deps = deps
+
+    result = await _propose_save_note_tool(ctx, note_text="some note")
+
+    assert result["status"] == "error"
+    assert "No anchor" in result["summary"]
+    assert deps.state.tool_call_count == 0
+    assert len(deps.state.tool_trace) == 0
+    assert event_queue.empty()
+    assert len(deps.state.action_requests) == 0
+
+
+async def test_propose_save_highlight_no_anchor_skips_run_tool() -> None:
+    """Without primary_anchor, propose_save_highlight must return error directly
+    without consuming tool budget, producing trace entries, or creating
+    action requests."""
+    from unittest.mock import MagicMock
+
+    from pydantic_ai import RunContext
+
+    from app.agents.reader_ask_agent import _propose_save_highlight_tool
+
+    deps, event_queue = _make_agent_deps(primary_anchor=None)
+    ctx = MagicMock(spec=RunContext)
+    ctx.deps = deps
+
+    result = await _propose_save_highlight_tool(ctx)
+
+    assert result["status"] == "error"
+    assert "No anchor" in result["summary"]
+    assert deps.state.tool_call_count == 0
+    assert len(deps.state.tool_trace) == 0
+    assert event_queue.empty()
+    assert len(deps.state.action_requests) == 0
+
+
+async def test_propose_save_note_with_anchor_consumes_budget_and_creates_action() -> None:
+    """With primary_anchor, propose_save_note must go through _run_tool normally:
+    increment tool_call_count, append trace, and create an action request."""
+    from unittest.mock import MagicMock
+
+    from pydantic_ai import RunContext
+
+    from app.agents.reader_ask_agent import _propose_save_note_tool
+    from app.schemas.reader_ask import ReaderAskAnchorRef
+
+    anchor = ReaderAskAnchorRef(
+        anchor_type="sentence",
+        target_key="record:r1:sentence:s1",
+        sentence_id="s1",
+        paragraph_id="p1",
+        selected_text="test sentence",
+        entry_type="sentence",
+    )
+    deps, event_queue = _make_agent_deps(primary_anchor=anchor)
+    ctx = MagicMock(spec=RunContext)
+    ctx.deps = deps
+
+    result = await _propose_save_note_tool(ctx, note_text="important note")
+
+    assert result["status"] == "success"
+    assert result["action_type"] == "save_note"
+    assert deps.state.tool_call_count == 1
+    assert len(deps.state.tool_trace) == 2  # started + completed
+    assert not event_queue.empty()  # tool.started + tool.completed events
+    assert len(deps.state.action_requests) == 1
+    assert deps.state.action_requests[0].action_type == "save_note"
+
+
+async def test_propose_save_highlight_with_anchor_consumes_budget_and_creates_action() -> None:
+    """With primary_anchor, propose_save_highlight must go through _run_tool normally:
+    increment tool_call_count, append trace, and create an action request."""
+    from unittest.mock import MagicMock
+
+    from pydantic_ai import RunContext
+
+    from app.agents.reader_ask_agent import _propose_save_highlight_tool
+    from app.schemas.reader_ask import ReaderAskAnchorRef
+
+    anchor = ReaderAskAnchorRef(
+        anchor_type="sentence",
+        target_key="record:r1:sentence:s1",
+        sentence_id="s1",
+        paragraph_id="p1",
+        selected_text="test sentence",
+        entry_type="sentence",
+    )
+    deps, event_queue = _make_agent_deps(primary_anchor=anchor)
+    ctx = MagicMock(spec=RunContext)
+    ctx.deps = deps
+
+    result = await _propose_save_highlight_tool(ctx)
+
+    assert result["status"] == "success"
+    assert result["action_type"] == "save_highlight"
+    assert deps.state.tool_call_count == 1
+    assert len(deps.state.tool_trace) == 2  # started + completed
+    assert not event_queue.empty()  # tool.started + tool.completed events
+    assert len(deps.state.action_requests) == 1
+    assert deps.state.action_requests[0].action_type == "save_highlight"

@@ -3280,16 +3280,8 @@ async def stream_thread_message(
         async def generate_sentence_annotation_cb(
             kind: Literal["grammar_note", "sentence_analysis"],
         ) -> dict[str, Any] | None:
-            existing = next(
-                (
-                    item
-                    for item in reversed(runtime_state.latest_generated_annotations)
-                    if item.get("kind") == kind
-                ),
-                None,
-            )
-            if existing is not None:
-                return existing
+            # Cache check is handled at the agent tool layer (reader_ask_agent.py).
+            # If we reach here, there is no pre-generated annotation of this kind.
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
@@ -3816,6 +3808,11 @@ async def retry_thread_message(
     thread_id: UUID,
     message_id: UUID,
 ) -> AsyncIterator[str]:
+    """Regenerate (not resume/continue) the assistant answer for a message.
+
+    This performs a full re-run: re-plan + re-materialize + re-generate.
+    The previous answer is replaced entirely; it is NOT a continuation.
+    """
     start_perf = perf_counter()
     thread: dict[str, Any] | None = None
     record: _RecordBundle | None = None
@@ -4257,16 +4254,8 @@ async def retry_thread_message(
         async def generate_sentence_annotation_cb(
             kind: Literal["grammar_note", "sentence_analysis"],
         ) -> dict[str, Any] | None:
-            existing = next(
-                (
-                    item
-                    for item in reversed(runtime_state.latest_generated_annotations)
-                    if item.get("kind") == kind
-                ),
-                None,
-            )
-            if existing is not None:
-                return existing
+            # Cache check is handled at the agent tool layer (reader_ask_agent.py).
+            # If we reach here, there is no pre-generated annotation of this kind.
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
