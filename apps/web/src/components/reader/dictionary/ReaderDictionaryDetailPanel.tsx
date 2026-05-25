@@ -790,10 +790,11 @@ export function ReaderDictionaryDetailPanel({
       : lookup
         ? "min-h-[14rem] md:min-h-[18rem] xl:max-h-[calc(100vh-1.5rem)]"
         : "min-h-[14rem]";
+  const panelWidthClass = isCard ? "w-full" : "w-full md:w-[26rem] xl:w-[28rem] 2xl:w-[30rem]";
 
   return (
     <TooltipProvider>
-      <section className={`reader-tool-panel reader-dictionary-panel ${isCard ? "reader-dictionary-card" : ""} relative flex flex-col overflow-hidden w-full md:w-[26rem] xl:w-[28rem] 2xl:w-[30rem] shadow-surface-quiet bg-paper-warm border border-hairline/80 ${panelSizing}`}>
+      <section className={`reader-tool-panel reader-dictionary-panel ${isCard ? "reader-dictionary-card" : ""} relative flex flex-col overflow-hidden ${panelWidthClass} shadow-surface-quiet bg-paper-warm border border-hairline/80 ${panelSizing}`}>
       
       {/* Absolute Folder Tab Index Handle (Decorative/Affordance) */}
       <div
@@ -806,10 +807,10 @@ export function ReaderDictionaryDetailPanel({
       </div>
 
       {/* Top Header Section with manual lookup entry & light tools */}
-      <div className="flex items-center gap-3 border-b border-hairline/80 px-4.5 py-3 select-none">
-        <div className="flex-1">
+      <div className="flex items-center gap-2 border-b border-hairline/80 px-4.5 py-3 select-none">
+        <div className="min-w-0 flex-1">
           {searchExpanded ? (
-            <form onSubmit={handleSearchSubmit} className="relative flex items-center w-full">
+            <form onSubmit={handleSearchSubmit} className="relative flex min-w-0 items-center w-full">
               <Search className="absolute left-3 h-3.5 w-3.5 text-muted pointer-events-none" />
               <input
                 ref={searchInputRef}
@@ -835,7 +836,7 @@ export function ReaderDictionaryDetailPanel({
           )}
         </div>
 
-        <div className="flex items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5">
           {onTogglePinned && (
             <DictionaryIconAction
               label={pinned ? "取消钉住词典" : "钉住词典"}
