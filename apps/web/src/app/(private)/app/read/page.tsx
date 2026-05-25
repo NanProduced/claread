@@ -21,23 +21,25 @@ export default async function PasteToReadPage() {
   const sideArchiveItems = fallbackLead ? archiveItems.slice(1) : archiveItems.slice(0, 2);
 
   return (
-    <main className="min-h-screen bg-[oklch(96.8%_0.012_84)] px-4 py-12 text-ink sm:px-8 lg:px-12">
-      <div className="mx-auto max-w-[1400px]">
-        <div className="grid gap-16 xl:grid-cols-[minmax(0,1.8fr)_340px]">
-          <div className="min-w-0">
-            <div className="mb-14 pl-2">
-              <p className="mb-5 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-lens-blue">Paste to read</p>
-              <h1 className="font-headline text-[3.5rem] font-medium leading-[1.05] tracking-tight text-ink md:text-[4rem]">
-                A Quiet Space <br /> for Deep Reading.
+    <main className="flex h-dvh flex-col overflow-hidden bg-[oklch(96.8%_0.012_84)] px-4 py-4 text-ink sm:px-8 sm:py-6 lg:px-12 lg:py-8">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col">
+        <div className="grid min-h-0 flex-1 gap-8 lg:gap-12 lg:grid-cols-[minmax(0,1fr)_280px] xl:gap-16 xl:grid-cols-[minmax(0,1.8fr)_340px]">
+          <div className="flex min-h-0 min-w-0 flex-col">
+            <div className="mb-4 shrink-0 pl-2 lg:mb-8">
+              <p className="mb-3 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-lens-blue lg:mb-5">Paste to read</p>
+              <h1 className="font-headline text-[2.5rem] font-medium leading-[1.05] tracking-tight text-ink md:text-[3rem] xl:text-[4rem]">
+                A Quiet Space <br className="hidden sm:block" /> for Deep Reading.
               </h1>
-              <p className="mt-6 max-w-xl text-[1rem] leading-relaxed text-muted">
+              <p className="mt-4 max-w-xl text-[0.95rem] leading-relaxed text-muted lg:mt-6 lg:text-[1rem]">
                 粘贴你需要精读的英文材料，Claread 将为你生成一份纯粹的、结构化的阅读体验。
               </p>
             </div>
-            <AnalyzeSubmitForm />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <AnalyzeSubmitForm />
+            </div>
           </div>
 
-          <aside className="min-w-0 xl:pt-4 space-y-16">
+          <aside className="hidden min-w-0 space-y-8 overflow-y-auto pb-8 pr-2 lg:block lg:space-y-10 lg:pr-4 xl:pt-2">
             {/* FEATURED */}
             <div>
               <h3 className="mb-6 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-ink">Featured</h3>
@@ -45,7 +47,7 @@ export default async function PasteToReadPage() {
                 <article>
                   <Link href={dailyArticleRoute(leadArticle.id)} className="group block focus-ring rounded-2xl outline-offset-8">
                     {leadArticle.coverImageUrl ? (
-                      <div className="mb-5 aspect-[4/3] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
+                      <div className="mb-5 aspect-[16/9] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
                           src={leadArticle.coverImageUrl} 
@@ -86,7 +88,7 @@ export default async function PasteToReadPage() {
                 <article>
                   <Link href={dailyArticleRoute(fallbackLead.id)} className="group block focus-ring rounded-2xl outline-offset-8">
                     {fallbackLead.coverImageUrl ? (
-                      <div className="mb-5 aspect-[4/3] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
+                      <div className="mb-5 aspect-[16/9] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
                           src={fallbackLead.coverImageUrl} 

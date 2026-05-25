@@ -9,6 +9,7 @@ import {
 import { forwardRef, type CSSProperties } from "react";
 import { cn } from "../../lib/cn";
 import {
+  ReaderToolbarActionButton,
   ReaderToolbarIconButton,
   ReaderToolbarRoot,
   ReaderToolbarSeparator,
@@ -22,8 +23,6 @@ import {
 
 export type SelectionToolbarAction =
   | "ask"
-  | "grammar"
-  | "breakdown"
   | "selectSentence"
   | "highlight"
   | "note"
@@ -41,8 +40,6 @@ export interface SelectionToolbarColorOption {
 
 export interface SelectionToolbarDisabledStates {
   ask?: boolean;
-  grammar?: boolean;
-  breakdown?: boolean;
   selectSentence?: boolean;
   highlight?: boolean;
   note?: boolean;
@@ -64,8 +61,6 @@ export interface SelectionToolbarProps {
   className?: string;
   style?: CSSProperties;
   onAsk?: (selectedText: string) => void;
-  onGrammar?: (selectedText: string) => void;
-  onBreakdown?: (selectedText: string) => void;
   onSelectSentence?: (selectedText: string) => void;
   onHighlight?: (
     color: SelectionToolbarColorValue,
@@ -98,6 +93,25 @@ export const defaultSelectionToolbarColorOptions: SelectionToolbarColorOption[] 
   },
 ];
 
+function compactStatusLabel(
+  statusMessage: string,
+  statusKind: "saving" | "saved" | "error" | undefined,
+) {
+  if (statusKind === "saving") {
+    return "保存中";
+  }
+  if (statusKind === "error") {
+    return "保存失败";
+  }
+  if (/颜色/.test(statusMessage)) {
+    return "颜色已更新";
+  }
+  if (/取消/.test(statusMessage)) {
+    return "已取消高亮";
+  }
+  return "已高亮";
+}
+
 export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps>(function SelectionToolbar(
   {
     selectedText,
@@ -113,13 +127,12 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     className,
     style,
     onAsk,
-    onGrammar,
-    onBreakdown,
     onSelectSentence,
     onHighlight,
     onNote,
     onClearAnnotation,
     onLookup,
+    canToggleHighlightPalette = false,
     onToggleHighlightPalette,
     highlightPaletteOpen,
   },
@@ -128,8 +141,6 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
   const hasSelection = selectedText.trim().length > 0;
   const askComingSoon = Boolean(disabled?.ask);
   const askDisabled = !hasSelection || askComingSoon || !onAsk;
-  const grammarDisabled = !hasSelection || Boolean(disabled?.grammar) || !onGrammar;
-  const breakdownDisabled = !hasSelection || Boolean(disabled?.breakdown) || !onBreakdown;
   const selectSentenceDisabled =
     selectionMode !== "text_range" || !hasSelection || Boolean(disabled?.selectSentence) || !onSelectSentence;
   const highlightDisabled = !hasSelection || Boolean(disabled?.highlight) || !onHighlight;
@@ -137,21 +148,22 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
   const lookupDisabled = !hasSelection || Boolean(disabled?.lookup) || !onLookup;
   const clearDisabled = !hasAnnotation || Boolean(disabled?.clear) || !onClearAnnotation;
 
+  const shouldToggleHighlightPalette = hasHighlight && canToggleHighlightPalette;
+
   const handleHighlight = () => {
-    if (!hasHighlight) {
+    if (!shouldToggleHighlightPalette) {
       const defaultOption =
         colorOptions.find((option) => option.value === activeColor && !option.disabled) ??
         colorOptions.find((option) => !option.disabled);
       if (defaultOption) {
         onHighlight?.(defaultOption.value, selectedText, defaultOption);
-        if (!highlightPaletteOpen) {
-          onToggleHighlightPalette?.();
-        }
       }
     } else {
       onToggleHighlightPalette?.();
     }
   };
+
+  const compactStatus = statusMessage ? compactStatusLabel(statusMessage, statusKind) : null;
 
   return (
     <div
@@ -189,16 +201,23 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
             <Tooltip>
               <TooltipTrigger asChild>
                 <ReaderToolbarIconButton
-                  active={hasHighlight}
+                  active={shouldToggleHighlightPalette || highlightPaletteOpen}
                   disabled={highlightDisabled}
                   onClick={handleHighlight}
-                  aria-label={hasHighlight ? "切换高亮颜色" : "高亮"}
+                  aria-label={shouldToggleHighlightPalette ? "切换高亮颜色" : "高亮"}
+                  className={cn(
+                    statusKind === "saving" && "animate-pulse text-muted-foreground",
+                    statusKind === "saved" &&
+                      "bg-structure-green/10 text-structure-green hover:bg-structure-green/15 hover:text-structure-green",
+                    statusKind === "error" &&
+                      "bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive",
+                  )}
                 >
                   <Highlighter aria-hidden="true" className="h-4 w-4" />
                 </ReaderToolbarIconButton>
               </TooltipTrigger>
               <TooltipContent side="top" className="text-xs">
-                {hasHighlight ? "更换高亮颜色" : "高亮"}
+                {shouldToggleHighlightPalette ? "更换高亮颜色" : "高亮"}
               </TooltipContent>
             </Tooltip>
 
@@ -208,6 +227,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
                 disabled={noteDisabled}
                 active={hasNote}
                 onClick={() => onNote?.(selectedText)}
+                aria-label={hasNote ? "编辑笔记" : "新建笔记"}
               >
                 <NotebookPen aria-hidden="true" className="h-4 w-4" />
               </ReaderToolbarIconButton>
@@ -222,12 +242,15 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           {/* Flattened Menu Items */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <ReaderToolbarIconButton
+              <ReaderToolbarActionButton
                 disabled={selectSentenceDisabled}
                 onClick={() => onSelectSentence?.(selectedText)}
+                aria-label="扩展到整句"
+                className="px-2.5 text-xs font-semibold"
               >
                 <Quote aria-hidden="true" className="h-4 w-4" />
-              </ReaderToolbarIconButton>
+                <span>整句</span>
+              </ReaderToolbarActionButton>
             </TooltipTrigger>
             <TooltipContent side="top" className="text-xs">扩展到整句</TooltipContent>
           </Tooltip>
@@ -235,42 +258,9 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
           <Tooltip>
             <TooltipTrigger asChild>
               <ReaderToolbarIconButton
-                disabled={grammarDisabled}
-                onClick={() => onGrammar?.(selectedText)}
-                aria-label="语法解析"
-                className="px-2.5"
-              >
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold leading-none">
-                  <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
-                  <span>语法</span>
-                </span>
-              </ReaderToolbarIconButton>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="text-xs">语法解析</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <ReaderToolbarIconButton
-                disabled={breakdownDisabled}
-                onClick={() => onBreakdown?.(selectedText)}
-                aria-label="句子拆分"
-                className="px-2.5"
-              >
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold leading-none">
-                  <Quote aria-hidden="true" className="h-3.5 w-3.5" />
-                  <span>拆句</span>
-                </span>
-              </ReaderToolbarIconButton>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="text-xs">句子拆分</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <ReaderToolbarIconButton
                 disabled={lookupDisabled}
                 onClick={() => onLookup?.(selectedText)}
+                aria-label="查词"
               >
                 <Search aria-hidden="true" className="h-4 w-4" />
               </ReaderToolbarIconButton>
@@ -283,6 +273,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               <ReaderToolbarIconButton
                 disabled={clearDisabled}
                 onClick={onClearAnnotation}
+                aria-label="取消高亮"
               >
                 <Eraser aria-hidden="true" className="h-4 w-4" />
               </ReaderToolbarIconButton>
@@ -297,6 +288,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               <ReaderToolbarIconButton
                 disabled={askDisabled}
                 onClick={() => onAsk?.(selectedText)}
+                aria-label={askComingSoon ? "Ask Claread（稍后开放）" : "Ask Claread"}
                 className="text-lens-blue/80 hover:bg-lens-blue/10 hover:text-lens-blue"
               >
                 <MessageSquare aria-hidden="true" className="h-4 w-4" />
@@ -306,22 +298,29 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               {askComingSoon ? "Ask Claread (稍后开放)" : "Ask Claread"}
             </TooltipContent>
           </Tooltip>
+
+          {compactStatus ? (
+            <>
+              <ReaderToolbarSeparator aria-hidden="true" />
+              <div
+                aria-live="polite"
+                className={cn(
+                  "inline-flex min-h-8 items-center rounded-full px-2.5 text-[11px] font-medium tracking-[0.01em] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200",
+                  statusKind === "saving" &&
+                    "bg-background/88 text-muted-foreground",
+                  statusKind === "saved" &&
+                    "bg-structure-green/10 text-structure-green",
+                  statusKind === "error" &&
+                    "bg-destructive/10 text-destructive",
+                )}
+              >
+                {compactStatus}
+              </div>
+            </>
+          ) : null}
         </ReaderToolbarRoot>
         </div>
       </TooltipProvider>
-
-      {statusMessage ? (
-        <div
-          className={cn(
-            "mt-2 rounded-md border px-3 py-2 text-xs font-medium shadow-sm",
-            statusKind === "error"
-              ? "border-destructive/20 bg-destructive/10 text-destructive"
-              : "border-border/65 bg-background/92 text-muted-foreground",
-          )}
-        >
-          {statusMessage}
-        </div>
-      ) : null}
     </div>
   );
 });

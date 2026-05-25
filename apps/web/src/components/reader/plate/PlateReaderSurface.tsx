@@ -49,6 +49,7 @@ export interface PlateReaderSurfaceProps {
   annotationVisibilityGroups?: ReaderAnnotationVisibilityGroups;
   themeClassName?: string;
   activeSentenceId?: string | null;
+  sentenceActionsOpenSentenceId?: string | null;
   selectedSentenceId?: string | null;
   selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpTarget?: ReaderJumpTarget | null;
@@ -60,7 +61,7 @@ export interface PlateReaderSurfaceProps {
   activeAnalysisEntryId?: string | null;
   expandedAnalysisEntryId?: string | null;
   expandedAnalysisEntryIds?: string[];
-  onSentenceActivate?: (sentenceId: string, anchorEl: HTMLElement) => void;
+  onOpenSentenceActions?: (sentenceId: string, anchorEl?: HTMLElement) => void;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
   onOpenSentenceNotes?: (sentenceId: string, anchorEl?: HTMLElement) => void;
   onAnalysisFocusChange?: (entryId: string, focused: boolean) => void;
@@ -76,7 +77,6 @@ export interface PlateReaderSurfaceProps {
     anchor: ReaderLookupPreviewAnchor | null,
     triggerEl?: HTMLElement | null,
   ) => void;
-  onAskTranslation?: (sentenceId: string, translationZh: string) => void;
   onAskAnalysis?: (sentenceId: string, entryId: string) => void;
   onAskContentSummary?: (summary: ReaderContentSummaryNode) => void;
   onDeleteAnalysisSupplement?: (supplementId: string) => void;
@@ -121,6 +121,7 @@ function focusRangesBySentence(
 
 export function PlateReaderSurface({
   activeSentenceId = null,
+  sentenceActionsOpenSentenceId = null,
   selectedSentenceId = null,
   selectionFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   activeAnalysisEntryId = null,
@@ -144,11 +145,10 @@ export function PlateReaderSurface({
   onOpenSentenceNotes,
   onAskAnalysis,
   onAskContentSummary,
-  onAskTranslation,
   onDeleteAnalysisSupplement,
   onInspectIntent,
   onLookupIntent,
-  onSentenceActivate,
+  onOpenSentenceActions,
   onHoverAnnotationTargetKeyChange,
   readingClassName,
     showTranslation,
@@ -439,12 +439,13 @@ export function PlateReaderSurface({
               analysisExpanded={hasExpandedSentenceAnalysis}
               annotationVisibilityGroups={annotationVisibilityGroups}
               assetProjection={sentenceAssetsBySentence.get(element.sentenceId) ?? null}
+              sentenceActionsActive={sentenceActionsOpenSentenceId === element.sentenceId}
               hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
               noteCount={sentenceNotes.length}
               noteActive={Boolean(activeSentenceNote)}
               routeFocused={Boolean(routeFocusSentenceIds?.has(element.sentenceId))}
               onAnnotationJump={onAnnotationJump}
-              onActivate={onSentenceActivate}
+              onOpenSentenceActions={onOpenSentenceActions}
               onOpenNotes={onOpenSentenceNotes}
               onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
             />
@@ -463,10 +464,7 @@ export function PlateReaderSurface({
               return null;
             }
             return (
-              <ReaderTranslationElement
-                props={props}
-                onAsk={onAskTranslation ? () => onAskTranslation(element.sentenceId, element.translationZh) : undefined}
-              />
+              <ReaderTranslationElement props={props} />
             );
         case "reader_grammar_note":
         case "reader_sentence_analysis":
@@ -508,15 +506,15 @@ export function PlateReaderSurface({
       expandedAnalysisEntryIds,
       expandedIds,
       activeSentenceId,
+      sentenceActionsOpenSentenceId,
       selectedSentenceId,
       annotationVisibilityGroups,
       onInspectIntent,
       onLookupIntent,
-      onSentenceActivate,
+      onOpenSentenceActions,
       onAnnotationJump,
       onAskAnalysis,
       onAskContentSummary,
-      onAskTranslation,
       onDeleteAnalysisSupplement,
       paragraphIndexById,
       paragraphNodes.length,

@@ -1,7 +1,9 @@
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import {
+  copyDomRect,
   firstUsableRangeRect,
   hashAnchorText,
+  rectForTextOffsets,
   textOffsetWithinElement,
 } from "../../primitives";
 import type {
@@ -81,11 +83,6 @@ export function readPlateReaderSelection(
     return null;
   }
 
-  const rect = firstUsableRangeRect(range);
-  if (!rect) {
-    return null;
-  }
-
   if (
     sentenceTextElement &&
     sentenceTextElement.contains(range.startContainer) &&
@@ -108,6 +105,11 @@ export function readPlateReaderSelection(
       return null;
     }
 
+    const selectionRect =
+      firstUsableRangeRect(range) ??
+      rectForTextOffsets(sentenceTextElement, startOffset, endOffset) ??
+      copyDomRect(sentenceTextElement.getBoundingClientRect());
+
     const segment = buildSelectionSegment(sentence, startOffset, endOffset);
     if (!segment) {
       return null;
@@ -121,7 +123,7 @@ export function readPlateReaderSelection(
         startOffset,
         endOffset,
         textHash: hashAnchorText(sentence.text),
-        rect,
+        rect: selectionRect,
         segments: [
           {
             ...segment,
@@ -139,7 +141,7 @@ export function readPlateReaderSelection(
       startOffset,
       endOffset,
       textHash: segment.textHash,
-      rect,
+      rect: selectionRect,
       range: range.cloneRange(),
       segments: [segment],
     };
@@ -189,6 +191,9 @@ export function readPlateReaderSelection(
   if (!selectedText) {
     return null;
   }
+
+  const fallbackSentenceRect = copyDomRect(startSentenceTextElement.getBoundingClientRect());
+  const rect = firstUsableRangeRect(range) ?? fallbackSentenceRect;
 
   return {
     anchorType: "multi_text",

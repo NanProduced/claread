@@ -62,12 +62,13 @@ export function LibraryClient({
   const hasQuery = normalizedQuery.length > 0;
 
   return (
-    <div className="space-y-2">
-      <div className="mb-10 flex items-center justify-between border-b border-hairline pb-4">
+    <div className="flex h-full min-h-0 flex-col space-y-2">
+      <div className="mb-10 shrink-0 flex items-center justify-between border-b border-hairline pb-4">
         <div className="flex w-full max-w-sm items-center gap-3">
           <Search className="h-4 w-4 text-muted" />
           <input
             type="text"
+            aria-label="搜索标题或原文片段"
             placeholder="搜索标题或原文片段..."
             className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted"
             value={query}
@@ -78,14 +79,15 @@ export function LibraryClient({
       </div>
 
       {filteredRecords.length > 0 ? (
-        <section className="flex flex-col">
+        <section className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-4">
           {filteredRecords.map((record) => (
             <div key={record.id} className="group relative flex items-start justify-between gap-6 border-b border-hairline py-10 transition-colors">
-              <Link href={appReaderRoute(record.id)} className="absolute inset-0 z-0 focus-ring rounded-xl outline-offset-4" aria-label={`阅读 ${record.title}`} />
-              <div className="relative z-10 min-w-0 pr-8 pointer-events-none">
-                 <h2 className="font-headline text-[1.4rem] font-semibold leading-[1.3] tracking-tight text-ink group-hover:text-lens-blue transition-colors">
-                   {record.title}
-                 </h2>
+              <div className="relative z-10 min-w-0 pr-8">
+                 <Link href={appReaderRoute(record.id)} className="focus-ring rounded-md outline-offset-4 inline-block">
+                   <h2 className="font-headline text-[1.4rem] font-semibold leading-[1.3] tracking-tight text-ink group-hover:text-lens-blue transition-colors">
+                     {record.title}
+                   </h2>
+                 </Link>
                  <p className="mt-2.5 line-clamp-2 max-w-3xl text-[0.95rem] leading-relaxed text-muted">
                    {excerpt(record.sourceText)}
                  </p>
@@ -120,9 +122,9 @@ export function LibraryClient({
                    </PopoverContent>
                  </Popover>
                  
-                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-hairline text-muted transition-colors group-hover:border-lens-blue group-hover:bg-lens-blue group-hover:text-surface">
+                 <Link href={appReaderRoute(record.id)} aria-label={`阅读 ${record.title}`} className="focus-ring flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-hairline text-muted transition-colors hover:border-lens-blue hover:bg-lens-blue hover:text-surface">
                    <ArrowRight className="h-4 w-4" />
-                 </div>
+                 </Link>
               </div>
             </div>
           ))}

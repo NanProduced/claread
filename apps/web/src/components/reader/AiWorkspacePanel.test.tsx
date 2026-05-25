@@ -2,7 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
-import { AiWorkspacePanel } from "./AiWorkspacePanel";
+import type { ReaderAskMessageDto } from "@/types/api/reader-ask";
+import { AiWorkspacePanel, createSseMessageHandler } from "./AiWorkspacePanel";
 
 const completedPayload = {
   id: "msg-assistant-1",
@@ -124,19 +125,6 @@ const completedPayload = {
   disambiguation: null,
   external_asset_disambiguation: null,
 };
-
-vi.mock("@/components/ui/message", () => ({
-  Message: ({ children, className }: { children: React.ReactNode; className?: string }) => (
-    <div className={className}>{children}</div>
-  ),
-  MessageContent: ({
-    children,
-    className,
-  }: {
-    children: React.ReactNode;
-    className?: string;
-  }) => <div className={className}>{children}</div>,
-}));
 
 vi.mock("./ask/sse", () => ({
   consumeReaderAskSse: vi.fn(async (_response: Response, onEvent: (event: { event: string; data: Record<string, unknown> }) => void) => {
@@ -1426,5 +1414,212 @@ describe("AiWorkspacePanel", () => {
       expect(String(retryCall?.[0])).toContain("/retry/stream");
       expect(retryCall?.[1]?.method).toBe("POST");
     });
+  });
+
+  it("renders the current selection inside the attachment chip row", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        liveAttachment={sentenceAttachment}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("当前可带入")).toBeNull();
+    expect(screen.getByText("当前")).not.toBeNull();
+
+    const selectionChip = screen.getByTitle("Climate change presents an existential challenge.");
+    expect(selectionChip.textContent).toContain("Climate change presents an existential");
+    expect(selectionChip.textContent).toContain("…");
+    expect(selectionChip.className).toContain("truncate");
+  });
+
+  it("renders light footnote style citations without redundant labels", async () => {
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            {
+              id: "msg-assistant-1",
+              thread_id: "thread-1",
+              role: "assistant",
+              status: "completed",
+              content_md: "Here is the answer.",
+              context_anchors: [],
+              citations: [
+                {
+                  citation_id: "cite-1",
+                  label: "Paragraph 1",
+                  record_id: "record-1",
+                  target_key: "p1",
+                  selected_text: "This is the source text that was cited.",
+                }
+              ],
+              action_proposals: [],
+              tool_trace: [],
+              evidence: [],
+              trace_summary: null,
+              disambiguation: null,
+              external_asset_disambiguation: null,
+              response_cards: [],
+              resolved_context: null,
+              context_plan: null,
+              resolved_context_input: null,
+              run_info: null,
+              supplement_candidates: [],
+              persisted_supplements: [],
+            },
+          ],
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("引用")).not.toBeNull();
+      expect(screen.getByText("当前文章")).not.toBeNull();
+      expect(screen.getByText("This is the source text that was cited.")).not.toBeNull();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// replan.started SSE handler tests
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – replan.started", () => {
+  it("sets replan_status to 'replanning' on replan.started event", () => {
+    type Msg = ReaderAskMessageDto;
+    const targetId = "msg-1";
+    const messages: Msg[] = [
+      {
+        id: targetId,
+        thread_id: "thread-1",
+        role: "assistant",
+        status: "streaming",
+        content_md: "",
+        context_anchors: [],
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        trace_summary: null,
+        disambiguation: null,
+        external_asset_disambiguation: null,
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        created_at: "2026-05-20T00:00:00Z",
+        updated_at: "2026-05-20T00:00:00Z",
+      },
+    ];
+
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+
+    const handler = createSseMessageHandler(
+      targetId,
+      updateMessage,
+      undefined,
+      vi.fn(),
+    );
+
+    handler({
+      event: "replan.started",
+      data: { message_id: targetId, reason: "degenerate_answer" },
+    });
+
+    expect(updatedMessages[0].replan_status).toBe("replanning");
+  });
+
+  it("resets replan_status to 'idle' on message.completed event", () => {
+    type Msg = ReaderAskMessageDto;
+    const targetId = "msg-1";
+    const messages: Msg[] = [
+      {
+        id: targetId,
+        thread_id: "thread-1",
+        role: "assistant",
+        status: "streaming",
+        content_md: "",
+        replan_status: "replanning",
+        context_anchors: [],
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        trace_summary: null,
+        disambiguation: null,
+        external_asset_disambiguation: null,
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        created_at: "2026-05-20T00:00:00Z",
+        updated_at: "2026-05-20T00:00:00Z",
+      },
+    ];
+
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+
+    const handler = createSseMessageHandler(
+      targetId,
+      updateMessage,
+      undefined,
+      vi.fn(),
+    );
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: targetId,
+        thread_id: "thread-1",
+        content_md: "This is the replanned answer.",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+      },
+    });
+
+    expect(updatedMessages[0].replan_status).toBe("idle");
+    expect(updatedMessages[0].content_md).toBe("This is the replanned answer.");
   });
 });

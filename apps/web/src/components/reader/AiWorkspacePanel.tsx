@@ -49,8 +49,6 @@ import {
   askAttachmentFromDto,
   askAttachmentKey,
   askAttachmentLabel,
-  askAttachmentShortLabel,
-  askCitationViewFromDto,
   citationCanJump,
   type ReaderAskAttachment,
   type ReaderAskPageIdentity,
@@ -520,7 +518,7 @@ function syncToolTrace(
 
 type MessageUpdater = ( updater: (messages: ReaderAskMessageDto[]) => ReaderAskMessageDto[] ) => void;
 
-function createSseMessageHandler(
+export function createSseMessageHandler(
   targetMessageId: string,
   updateMessage: MessageUpdater,
   onMessageIdAssigned: ((assignedId: string) => void) | undefined,
@@ -594,6 +592,17 @@ function createSseMessageHandler(
       return;
     }
 
+    if (event.event === "replan.started") {
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+            ? { ...message, replan_status: "replanning" }
+            : message,
+        ),
+      );
+      return;
+    }
+
     if (event.event === "message.completed") {
       const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
       updateMessage((messages) => {
@@ -633,6 +642,7 @@ function createSseMessageHandler(
               supplement_candidates: payload.supplement_candidates ?? [],
               persisted_supplements: payload.persisted_supplements ?? [],
               reasoning_status: message.reasoning_md ? "completed" : null,
+              replan_status: "idle",
             };
           }
           const isPriorUser =
@@ -753,27 +763,41 @@ function AttachmentChips({
       {attachments.map((attachment) => {
         const attachmentKey = askAttachmentKey(attachment);
         const clickable = Boolean(onJump && attachment.kind !== "record_ref");
+        const preferredText =
+          variant === "composer" && attachment.kind === "text_selection"
+            ? attachment.selectedText?.trim() || askAttachmentLabel(attachment)
+            : askAttachmentLabel(attachment);
         const displayLabel =
-          variant === "history" ? askAttachmentLabel(attachment) : askAttachmentShortLabel(attachment, variant === "composer" ? 44 : 56);
+          variant === "history"
+            ? preferredText
+            : preferredText.length <= (variant === "composer" ? 44 : 56)
+              ? preferredText
+              : `${preferredText.slice(0, Math.max((variant === "composer" ? 44 : 56) - 1, 1)).trimEnd()}…`;
+        const badgeLabel =
+          variant === "live" || (variant === "composer" && attachment.kind === "text_selection")
+            ? "当前"
+            : attachment.kind === "record_ref"
+              ? "页"
+              : "AI";
         return (
           <span
             key={attachmentKey}
             className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-[rgba(250,249,246,0.92)] px-2.5 py-1.5 text-xs font-medium text-ink-soft"
           >
             <span className="shrink-0 rounded-full bg-reader-paper px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.02em] text-muted">
-              {variant === "live" ? "当前" : attachment.kind === "record_ref" ? "页" : "AI"}
+              {badgeLabel}
             </span>
             {clickable ? (
               <button
                 type="button"
-                className="max-w-[12rem] truncate text-left transition-colors hover:text-ink sm:max-w-[15rem]"
+                className="max-w-[13rem] truncate text-left transition-colors hover:text-ink sm:max-w-[17rem]"
                 onClick={() => onJump?.(attachment)}
-                title={askAttachmentLabel(attachment)}
+                title={preferredText}
               >
                 {displayLabel}
               </button>
             ) : (
-              <span className="max-w-[12rem] truncate sm:max-w-[15rem]" title={askAttachmentLabel(attachment)}>
+              <span className="max-w-[13rem] truncate sm:max-w-[17rem]" title={preferredText}>
                 {displayLabel}
               </span>
             )}
@@ -806,23 +830,6 @@ function CurrentRecordChip({ recordTitle }: { recordTitle?: string | null }) {
         {recordTitle}
       </span>
     </span>
-  );
-}
-
-function LiveSelectionHint({ attachment }: { attachment?: ReaderAskAttachment | null }) {
-  if (!attachment) {
-    return null;
-  }
-
-  return (
-    <div className="px-3 pb-1 pt-1.5">
-      <div className="flex items-center gap-2 text-[11px] text-muted">
-        <span className="shrink-0 rounded-full bg-reader-paper px-2 py-0.5 font-semibold uppercase tracking-[0.12em] text-subtle">
-          当前可带入
-        </span>
-        <AttachmentChips attachments={[attachment]} variant="live" />
-      </div>
-    </div>
   );
 }
 
@@ -1009,7 +1016,7 @@ function messageOperationSummary(message: ReaderAskMessageDto) {
   const entryAction = message.resolved_context_input?.entry_action ?? null;
   const firstAttachment =
     message.resolved_context_input?.attachments[0]?.selected_text ??
-    message.context_anchors[0]?.selected_text ??
+    (message.context_anchors && message.context_anchors[0]?.selected_text) ??
     "";
   const compactTarget = firstAttachment.replace(/\s+/g, " ").trim();
   return compactTarget
@@ -1760,11 +1767,11 @@ function CitationList({
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">引用</p>
       <div className="flex flex-col gap-2">
         {citations.map((citation) => {
-          const citationView = askCitationViewFromDto(citation);
           const canJump = citationCanJump(citation, currentRecordId);
           const sourceLabel =
             citation.source_article_title ||
             (citation.record_id === currentRecordId ? "当前文章" : "外部引用");
+          const displayText = citation.selected_text?.trim() || citation.label.trim();
 
           return (
             <button
@@ -1777,22 +1784,18 @@ function CitationList({
                 }
               }}
               className={cn(
-                "w-full rounded-[18px] border border-hairline/80 bg-[rgba(255,255,255,0.72)] px-3 py-2.5 text-left transition-colors",
+                "w-full rounded-[14px] border border-hairline/70 bg-[rgba(255,255,255,0.6)] px-3 py-2.5 text-left transition-colors",
                 canJump ? "hover:border-muted hover:bg-reader-paper" : "cursor-default",
               )}
             >
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate text-xs font-semibold text-ink">{citation.label}</span>
+              <div className="flex items-start justify-between gap-3">
+                <p className="line-clamp-2 min-w-0 flex-1 text-xs leading-5 text-ink-soft">
+                  {displayText}
+                </p>
                 <span className="shrink-0 rounded-full bg-reader-paper px-2 py-0.5 text-[11px] text-muted">
                   {sourceLabel}
                 </span>
               </div>
-              {citationView.label && citationView.label !== citation.label ? (
-                <p className="mt-1 text-[11px] text-muted">{citationView.label}</p>
-              ) : null}
-              {citation.selected_text ? (
-                <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted">{citation.selected_text}</p>
-              ) : null}
             </button>
           );
         })}
@@ -1896,7 +1899,7 @@ function MessageBubble({
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
-  const historyAttachments = message.context_anchors.map((anchor) => askAttachmentFromAnchor(anchor, pageIdentity).attachment);
+  const historyAttachments = (message.context_anchors || []).map((anchor) => askAttachmentFromAnchor(anchor, pageIdentity).attachment);
   const clarificationText = clarificationHint(message.trace_summary, message.evidence);
   const candidateSupplements = pendingSupplementCandidates(message);
   const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
@@ -1930,6 +1933,11 @@ function MessageBubble({
                           {clarificationText ? (
                             <div className="mb-3 rounded-[14px] bg-reader-paper px-3 py-2 text-[11px] leading-5 text-muted">
                               {clarificationText}
+                            </div>
+                          ) : null}
+                          {message.replan_status === "replanning" ? (
+                            <div className="mb-3 rounded-[14px] bg-reader-paper px-3 py-2 text-[11px] leading-5 text-muted">
+                              正在补充上下文后重试...
                             </div>
                           ) : null}
                           {hasReasoning ? (
@@ -2277,6 +2285,11 @@ export function AiWorkspacePanel({
   const visibleContextAttachments = attachments.filter(
     (attachment) => !(attachment.kind === "record_ref" && attachment.metadata.recordId === recordId),
   );
+  const composerContextAttachments = liveAttachment
+    ? visibleContextAttachments.some((attachment) => askAttachmentKey(attachment) === askAttachmentKey(liveAttachment))
+      ? visibleContextAttachments
+      : [...visibleContextAttachments, liveAttachment]
+    : visibleContextAttachments;
   const composerDockState: AskComposerDockState = {
     canSend: composer.trim().length > 0 && !sending,
     sending,
@@ -2901,14 +2914,14 @@ export function AiWorkspacePanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 px-5 pb-3 pt-4">
+      <div className="min-h-0 flex-1 pb-3 pt-4">
         {loading ? (
           <div className="flex h-full items-center justify-center">
             <LoaderCircle className="h-5 w-5 animate-spin text-lens-blue" />
           </div>
         ) : (
           <ChatContainerRoot className="min-h-0 h-full w-full">
-            <ChatContainerContent className={cn("pr-1", messages.length === 0 ? "gap-0" : "gap-5")}>
+            <ChatContainerContent className={cn("px-5", messages.length === 0 ? "gap-0" : "gap-6")}>
               {messages.length === 0 ? (
                 <StarterState
                   attachments={attachments}
@@ -2962,11 +2975,11 @@ export function AiWorkspacePanel({
           maxHeight={220}
           className="flex flex-col gap-0 rounded-[24px] border border-hairline/80 bg-surface !px-0 !py-0 shadow-[0_12px_30px_rgba(17,17,17,0.04)] transition-all focus-within:border-muted focus-within:shadow-[0_16px_34px_rgba(17,17,17,0.06)]"
         >
-          {(recordTitle || visibleContextAttachments.length > 0) && (
+          {(recordTitle || composerContextAttachments.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline/40 px-3 py-2">
               <CurrentRecordChip recordTitle={recordTitle} />
               <AttachmentChips
-                attachments={visibleContextAttachments}
+                attachments={composerContextAttachments}
                 removable
                 onRemove={onRemoveAttachment}
                 onJump={onJumpToAttachment}
@@ -2974,8 +2987,6 @@ export function AiWorkspacePanel({
               />
             </div>
           )}
-
-          {visibleContextAttachments.length === 0 ? <LiveSelectionHint attachment={liveAttachment} /> : null}
 
           <div className="px-3 py-2">
             <PromptInputTextarea

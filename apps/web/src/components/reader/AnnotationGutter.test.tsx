@@ -137,4 +137,20 @@ describe("AnnotationGutter", () => {
 
     expect(onOpenNotes).toHaveBeenCalledWith("s1", expect.any(HTMLButtonElement));
   });
+
+  it("opens sentence actions from the rail handle", () => {
+    const onOpenSentenceActions = vi.fn();
+
+    render(
+      <AnnotationGutter
+        sentenceId="s1"
+        annotations={[]}
+        onOpenSentenceActions={onOpenSentenceActions}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("打开当前句操作"));
+
+    expect(onOpenSentenceActions).toHaveBeenCalledWith("s1", expect.any(HTMLButtonElement));
+  });
 });

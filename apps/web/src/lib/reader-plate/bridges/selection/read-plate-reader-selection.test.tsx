@@ -102,6 +102,21 @@ function firstTextNode(element: HTMLElement): Text | null {
   return node instanceof Text ? node : null;
 }
 
+function textNodesWithin(element: HTMLElement): Text[] {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  let current = walker.nextNode();
+
+  while (current) {
+    if (current instanceof Text) {
+      nodes.push(current);
+    }
+    current = walker.nextNode();
+  }
+
+  return nodes;
+}
+
 describe("readPlateReaderSelection", () => {
   beforeEach(() => {
     Object.defineProperty(rangePrototype, "getClientRects", {
@@ -258,5 +273,134 @@ describe("readPlateReaderSelection", () => {
     const multiTextSelection = readPlateReaderSelection(articleElement, sentenceByIdFromScene(scene));
     expect(multiTextSelection?.anchorType).toBe("multi_text");
     expect(multiTextSelection?.segments).toHaveLength(2);
+  });
+
+  it("reads selections whose boundaries sit exactly on a vocab mark edge", () => {
+    const scene = createBaseScene();
+    scene.article.sentences[0] = {
+      ...scene.article.sentences[0],
+      text: "At last I felt that subtle change in the air.",
+    };
+    scene.inlineMarks = [
+      {
+        id: "mark-1",
+        annotationType: "vocab_highlight",
+        anchor: {
+          kind: "text",
+          sentenceId: "s1",
+          anchorText: "subtle",
+        },
+        renderType: "background",
+        visualTone: "vocab",
+        clickable: true,
+        lookupKind: "word",
+        lookupText: "subtle",
+      },
+    ];
+
+    const documentValue = renderSceneToPlateDocument(scene);
+    const { container } = render(
+      <article data-testid="reader-article">
+        <PlateReaderSurface
+          document={documentValue}
+          showTranslation
+          readingClassName="reader-serif text-ink"
+        />
+      </article>,
+    );
+
+    const articleElement = container.querySelector("article");
+    const sentenceTextElement = container.querySelector<HTMLElement>(
+      '[data-reader-anchor="sentence"][data-sentence-id="s1"] [data-reader-sentence-text="true"]',
+    );
+    const markElement = sentenceTextElement?.querySelector<HTMLElement>("[data-reader-mark-id='mark-1']");
+    const markTextNode = firstTextNode(markElement ?? document.createElement("span"));
+    const firstSentenceTextNode = firstTextNode(sentenceTextElement ?? document.createElement("p"));
+    const textNodes = sentenceTextElement ? textNodesWithin(sentenceTextElement) : [];
+    const trailingTextNode = textNodes.at(-1) ?? null;
+
+    if (!articleElement || !sentenceTextElement || !markElement || !markTextNode || !firstSentenceTextNode || !trailingTextNode) {
+      throw new Error("Expected rendered marked sentence text nodes");
+    }
+
+    applySelection(firstSentenceTextNode, 0, markElement, 0);
+    const beforeMarkSelection = readPlateReaderSelection(articleElement, sentenceByIdFromScene(scene));
+    expect(beforeMarkSelection?.anchorType).toBe("text_range");
+    expect(beforeMarkSelection?.selectedText).toBe("At last I felt that ");
+    expect(beforeMarkSelection?.startOffset).toBe(0);
+    expect(beforeMarkSelection?.endOffset).toBe(20);
+
+    applySelection(markElement, markElement.childNodes.length, trailingTextNode, 18);
+    const afterMarkSelection = readPlateReaderSelection(articleElement, sentenceByIdFromScene(scene));
+    expect(afterMarkSelection?.anchorType).toBe("text_range");
+    expect(afterMarkSelection?.selectedText).toBe(" change in the air");
+    expect(afterMarkSelection?.startOffset).toBe(26);
+  });
+
+  it("falls back to sentence bounds when live range rects disappear on mark-edge selections", () => {
+    const scene = createBaseScene();
+    scene.article.sentences[0] = {
+      ...scene.article.sentences[0],
+      text: "At last I felt that subtle change in the air.",
+    };
+    scene.inlineMarks = [
+      {
+        id: "mark-1",
+        annotationType: "vocab_highlight",
+        anchor: {
+          kind: "text",
+          sentenceId: "s1",
+          anchorText: "subtle",
+        },
+        renderType: "background",
+        visualTone: "vocab",
+        clickable: true,
+        lookupKind: "word",
+        lookupText: "subtle",
+      },
+    ];
+
+    Object.defineProperty(rangePrototype, "getClientRects", {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+    Object.defineProperty(rangePrototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createRect(0, 0, 0, 0),
+    });
+
+    const documentValue = renderSceneToPlateDocument(scene);
+    const { container } = render(
+      <article data-testid="reader-article">
+        <PlateReaderSurface
+          document={documentValue}
+          showTranslation
+          readingClassName="reader-serif text-ink"
+        />
+      </article>,
+    );
+
+    const articleElement = container.querySelector("article");
+    const sentenceTextElement = container.querySelector<HTMLElement>(
+      '[data-reader-anchor="sentence"][data-sentence-id="s1"] [data-reader-sentence-text="true"]',
+    );
+    const markElement = sentenceTextElement?.querySelector<HTMLElement>("[data-reader-mark-id='mark-1']");
+    const firstSentenceTextNode = firstTextNode(sentenceTextElement ?? document.createElement("p"));
+
+    if (!articleElement || !sentenceTextElement || !markElement || !firstSentenceTextNode) {
+      throw new Error("Expected rendered marked sentence text nodes");
+    }
+
+    sentenceTextElement.getBoundingClientRect = () => createRect(40, 80, 320, 48);
+
+    applySelection(firstSentenceTextNode, 0, markElement, 0);
+    const selection = readPlateReaderSelection(articleElement, sentenceByIdFromScene(scene));
+    expect(selection?.anchorType).toBe("text_range");
+    expect(selection?.rect).toMatchObject({
+      x: 40,
+      y: 80,
+      width: 320,
+      height: 48,
+    });
   });
 });

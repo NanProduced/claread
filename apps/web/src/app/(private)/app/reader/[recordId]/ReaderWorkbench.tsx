@@ -30,7 +30,6 @@ import {
   ImmersiveReaderSurface,
   IntensiveReaderSurface,
   ReaderNotePanel,
-  ReaderSelectionNoteDraftPopover,
   ReaderQuickPeek,
   ReaderSettingsPanel,
   SelectionToolbar,
@@ -134,7 +133,6 @@ import {
   readStoredDictionaryAIArticleCache,
   type DictionaryAIArticleCache,
 } from "@/components/reader/dictionary";
-import { readerCommentDraftId } from "@/components/reader/plate-comment-adapter";
 import { FavoriteButton } from "./FavoriteButton";
 
 type ReaderDataSource = "upstream-render-scene" | "upstream-source-text";
@@ -149,7 +147,7 @@ interface ReaderWorkbenchProps {
 
 type AnnotationSaveState =
   | { kind: "idle" }
-  | { kind: "saving" }
+  | { kind: "saving"; message?: string }
   | { kind: "saved"; message: string }
   | { kind: "error"; message: string };
 
@@ -186,30 +184,6 @@ function mergedSelectionText(segments: ReaderSelectionSegment[]) {
     .filter(Boolean)
     .join(" ")
     .trim();
-}
-
-function approximateTokenCount(text: string) {
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
-}
-
-function canQuickAnalyzeGrammar(selection: ReaderTextSelection | null) {
-  if (!selection) {
-    return false;
-  }
-  if (selection.anchorType === "sentence") {
-    return true;
-  }
-  if (selection.anchorType === "text_range") {
-    return approximateTokenCount(selection.selectedText) >= 2 || selection.selectedText.trim().length >= 8;
-  }
-  return false;
-}
-
-function canQuickBreakdown(selection: ReaderTextSelection | null) {
-  return selection?.anchorType === "sentence";
 }
 
 function mergeSelectionSegments(
@@ -637,6 +611,7 @@ export function ReaderWorkbench({
   const [highlightPaletteOpen, setHighlightPaletteOpen] = useState(false);
   const [textSelectionSource, setTextSelectionSource] = useState<ReaderSelectionSource>("none");
   const [textSelectionVisualMode, setTextSelectionVisualMode] = useState<ReaderSelectionVisualMode>("selection");
+  const [selectionToolbarVisible, setSelectionToolbarVisible] = useState(false);
   const [activeReaderNoteId, setActiveReaderNoteId] = useState<string | null>(null);
   const [pendingReaderNote, setPendingReaderNote] = useState<WebReaderNoteCreateRequest | null>(null);
   const [pendingReaderNoteSource, setPendingReaderNoteSource] = useState<PendingReaderNoteSource | null>(null);
@@ -680,6 +655,7 @@ export function ReaderWorkbench({
   const focusedRouteTargetKeyRef = useRef<string | null>(null);
   const dictionaryAIRequestKeyRef = useRef<string | null>(null);
   const textSelectionSourceRef = useRef<ReaderSelectionSource>("none");
+  const pointerSelectionActiveRef = useRef(false);
   const previousLiveAskAttachmentKeyRef = useRef<string | null>(null);
   const [dictionaryDockLayout, setDictionaryDockLayout] = useState<DictionaryDockLayout | null>(null);
   const dictionaryPanelVisible = Boolean(dictionaryRailOpen || dictionaryPinned);
@@ -692,23 +668,10 @@ export function ReaderWorkbench({
     },
     floatingStyles: selectionToolbarStyles,
   } = useReaderFloatingLayer({
-    open: Boolean(textSelection),
+    open: Boolean(textSelection && selectionToolbarVisible),
     placement: "top-start",
     offsetPx: 14,
     crossAxisOffsetPx: 28,
-    strategy: "fixed",
-  });
-  const {
-    refs: {
-      setFloating: setSelectionNoteDraftFloating,
-      setPositionReference: setSelectionNoteDraftReference,
-    },
-    floatingStyles: selectionNoteDraftStyles,
-  } = useReaderFloatingLayer({
-    open: Boolean(pendingReaderNote && pendingReaderNoteSource === "selection"),
-    placement: "bottom-start",
-    offsetPx: 12,
-    crossAxisOffsetPx: 8,
     strategy: "fixed",
   });
   const {
@@ -841,7 +804,8 @@ export function ReaderWorkbench({
       }
       if (
         target.closest("[data-reader-sentence-popover='true']") ||
-        target.closest("[data-reader-sentence-handle='true']")
+        target.closest("[data-reader-sentence-handle='true']") ||
+        target.closest("[data-reader-sentence-rail='true']")
       ) {
         return;
       }
@@ -979,15 +943,8 @@ export function ReaderWorkbench({
 
     return notesBySentence;
   }, [readerNotes, sentenceById]);
-  const selectionDraftReaderNote = useMemo(
-    () => (pendingReaderNote && pendingReaderNoteSource === "selection" ? pendingReaderNote : null),
-    [pendingReaderNote, pendingReaderNoteSource],
-  );
-  const sentenceDraftReaderNote = useMemo(
-    () => (pendingReaderNote && pendingReaderNoteSource === "sentence" ? pendingReaderNote : null),
-    [pendingReaderNote, pendingReaderNoteSource],
-  );
-  const notePanelSentenceId = activeReaderNote?.anchorSentenceId ?? sentenceDraftReaderNote?.anchorSentenceId ?? null;
+  const noteDraftReaderNote = useMemo(() => pendingReaderNote, [pendingReaderNote]);
+  const notePanelSentenceId = activeReaderNote?.anchorSentenceId ?? noteDraftReaderNote?.anchorSentenceId ?? null;
   const notePanelSentence = notePanelSentenceId ? sentenceById.get(notePanelSentenceId) ?? null : null;
   const notePanelSentenceIndex = notePanelSentenceId
     ? reader.article.sentences.findIndex((item) => item.sentenceId === notePanelSentenceId) + 1
@@ -1000,7 +957,7 @@ export function ReaderWorkbench({
     },
     floatingStyles: notePanelStyles,
   } = useReaderFloatingLayer({
-    open: Boolean(notePanelOpen && (activeReaderNote || sentenceDraftReaderNote)),
+    open: Boolean(notePanelOpen && (activeReaderNote || noteDraftReaderNote)),
     placement: "right-start",
     offsetPx: 12,
     crossAxisOffsetPx: 8,
@@ -1087,7 +1044,6 @@ export function ReaderWorkbench({
     }
     return liveAskAttachment;
   }, [dismissedLiveAskAttachmentKey, liveAskAttachment, liveAskAttachmentKey]);
-  const pendingReaderCommentId = pendingReaderNote ? readerCommentDraftId() : null;
   const selectionTargetKey = useMemo(
     () => (textSelection ? targetKeyForSelection(record.id, textSelection) : null),
     [record.id, textSelection],
@@ -1110,12 +1066,40 @@ export function ReaderWorkbench({
       : activeAnnotation?.type === "highlight" && activeAnnotation.anchorType === "multi_text"
         ? activeAnnotation
         : null;
+  const selectionToolbarStatus =
+    annotationSaveState.kind === "idle"
+      ? null
+      : {
+          kind: annotationSaveState.kind,
+          message:
+            annotationSaveState.kind === "saving"
+              ? annotationSaveState.message ?? "正在处理当前高亮…"
+              : annotationSaveState.message,
+        };
 
   useEffect(() => {
     if (selectedAnnotation?.type === "highlight") {
       setAnnotationColor(selectedAnnotation.color);
     }
   }, [selectedAnnotation]);
+
+  useEffect(() => {
+    if (annotationSaveState.kind !== "saved" && annotationSaveState.kind !== "error") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setAnnotationSaveState((current) =>
+        current.kind === annotationSaveState.kind && current.message === annotationSaveState.message
+          ? { kind: "idle" }
+          : current,
+      );
+    }, annotationSaveState.kind === "error" ? 2600 : 1600);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [annotationSaveState]);
 
   useEffect(() => {
     const targetKey = searchParams.get("focusTargetKey") ?? searchParams.get("targetKey");
@@ -1429,18 +1413,6 @@ export function ReaderWorkbench({
   }, [setSelectionToolbarReference, textSelection]);
 
   useEffect(() => {
-    if (!textSelection || !pendingReaderNote || pendingReaderNoteSource !== "selection") {
-      setSelectionNoteDraftReference(null);
-      return;
-    }
-
-    setSelectionNoteDraftReference({
-      getBoundingClientRect: () => selectionToolbarRectForReaderSelection(articleRef.current, textSelection),
-      contextElement: articleRef.current ?? undefined,
-    });
-  }, [pendingReaderNote, pendingReaderNoteSource, setSelectionNoteDraftReference, textSelection]);
-
-  useEffect(() => {
     if (!notePanelOpen || !notePanelSentenceId) {
       setNotePanelReference(null);
       return;
@@ -1448,11 +1420,12 @@ export function ReaderWorkbench({
 
     const sentenceSelector = `[data-reader-anchor="sentence"][data-sentence-id="${CSS.escape(notePanelSentenceId)}"]`;
     const updateReference = () => {
-      const noteHandle =
-        articleRef.current?.querySelector<HTMLElement>(`${sentenceSelector} [data-reader-sentence-note-handle="true"]`) ??
+      const sentenceHandle =
+        articleRef.current?.querySelector<HTMLElement>(`${sentenceSelector} [data-reader-sentence-rail="true"]`) ??
+        articleRef.current?.querySelector<HTMLElement>(`${sentenceSelector} [data-reader-sentence-handle="true"]`) ??
         null;
       const sentenceSection = articleRef.current?.querySelector<HTMLElement>(sentenceSelector) ?? null;
-      const anchor = noteHandle ?? sentenceSection;
+      const anchor = sentenceHandle ?? sentenceSection;
       if (!anchor) {
         setNotePanelReference(null);
         return;
@@ -1884,10 +1857,12 @@ export function ReaderWorkbench({
         visualMode?: ReaderSelectionVisualMode;
         activeAnnotationTargetKey?: string | null;
         hoveredAnnotationTargetKey?: string | null;
+        toolbarVisible?: boolean;
       },
     ) => {
       setTextSelection(selection);
       setHighlightPaletteOpen(Boolean(options?.openHighlightPalette));
+      setSelectionToolbarVisible(Boolean(selection && options?.toolbarVisible));
       const nextSource = selection ? (options?.source ?? "programmatic") : "none";
       textSelectionSourceRef.current = nextSource;
       setTextSelectionSource(nextSource);
@@ -1922,6 +1897,7 @@ export function ReaderWorkbench({
     (options?: { preserveDomSelection?: boolean }) => {
       setTextSelection(null);
       setHighlightPaletteOpen(false);
+      setSelectionToolbarVisible(false);
       textSelectionSourceRef.current = "none";
       setTextSelectionSource("none");
       setTextSelectionVisualMode("selection");
@@ -2103,7 +2079,7 @@ export function ReaderWorkbench({
     [selectionFromAnnotation, sentenceById, sentenceOrderById],
   );
 
-  const updateTextSelectionFromDom = useCallback(() => {
+  const updateTextSelectionFromDom = useCallback((options?: { toolbarVisible?: boolean }) => {
     const nextSelection = readPlateReaderSelection(articleRef.current, sentenceById);
     if (!nextSelection && textSelectionSourceRef.current === "programmatic") {
       return;
@@ -2138,21 +2114,93 @@ export function ReaderWorkbench({
           : null;
 
     focusReaderSelection(nextSelection, {
-      openHighlightPalette: Boolean(matchingHighlight),
+      openHighlightPalette: Boolean(options?.toolbarVisible && matchingHighlight),
       source: nextSelection ? "dom" : "none",
       visualMode: "selection",
       activeAnnotationTargetKey: preservedActiveAnnotationTargetKey,
       hoveredAnnotationTargetKey: matchingHighlight?.targetKey ?? null,
+      toolbarVisible: Boolean(nextSelection && options?.toolbarVisible),
     });
   }, [annotations, focusReaderSelection, record.id, sentenceById]);
 
+  const commitDomTextSelection = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      updateTextSelectionFromDom({ toolbarVisible: true });
+    });
+  }, [updateTextSelectionFromDom]);
+
+  useEffect(() => {
+    function handlePointerSelectionEnd() {
+      if (!pointerSelectionActiveRef.current) {
+        return;
+      }
+      pointerSelectionActiveRef.current = false;
+      commitDomTextSelection();
+    }
+
+    window.addEventListener("pointerup", handlePointerSelectionEnd);
+    window.addEventListener("pointercancel", handlePointerSelectionEnd);
+    return () => {
+      window.removeEventListener("pointerup", handlePointerSelectionEnd);
+      window.removeEventListener("pointercancel", handlePointerSelectionEnd);
+    };
+  }, [commitDomTextSelection]);
+
+  useEffect(() => {
+    function handleSelectionChange() {
+      const nativeSelection = window.getSelection();
+      if (!nativeSelection || nativeSelection.isCollapsed || !nativeSelection.toString().trim()) {
+        if (pointerSelectionActiveRef.current) {
+          return;
+        }
+        if (textSelectionSourceRef.current === "dom") {
+          clearReaderSelection({ preserveDomSelection: true });
+        }
+        return;
+      }
+
+      const articleElement = articleRef.current;
+      const anchorElement =
+        nativeSelection.anchorNode instanceof Element
+          ? nativeSelection.anchorNode
+          : nativeSelection.anchorNode?.parentElement ?? null;
+      const focusElement =
+        nativeSelection.focusNode instanceof Element
+          ? nativeSelection.focusNode
+          : nativeSelection.focusNode?.parentElement ?? null;
+
+      if (
+        !articleElement ||
+        !anchorElement ||
+        !focusElement ||
+        !articleElement.contains(anchorElement) ||
+        !articleElement.contains(focusElement)
+      ) {
+        if (pointerSelectionActiveRef.current) {
+          return;
+        }
+        if (textSelectionSourceRef.current === "dom") {
+          clearReaderSelection({ preserveDomSelection: true });
+        }
+        return;
+      }
+
+      if (pointerSelectionActiveRef.current) {
+        return;
+      }
+
+      updateTextSelectionFromDom({ toolbarVisible: false });
+    }
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [clearReaderSelection, sentenceById, updateTextSelectionFromDom]);
+
   const selectionFocusRangesBySentence = useMemo(() => {
     const map = new Map<string, ReaderJumpRangeSegment[]>();
-    if (
-      !textSelection ||
-      textSelectionSource !== "programmatic" ||
-      textSelectionVisualMode !== "selection"
-    ) {
+    if (!textSelection || textSelectionVisualMode !== "selection") {
       return map;
     }
 
@@ -2172,7 +2220,7 @@ export function ReaderWorkbench({
     });
 
     return map;
-  }, [textSelection, textSelectionSource, textSelectionVisualMode]);
+  }, [textSelection, textSelectionVisualMode]);
 
   function mergeAnnotation(item: WebAnnotationVm) {
     setAnnotations((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
@@ -2304,7 +2352,10 @@ export function ReaderWorkbench({
       return;
     }
 
-    setAnnotationSaveState({ kind: "saving" });
+    setAnnotationSaveState({
+      kind: "saving",
+      message: options?.mode === "recolor" ? "正在更新高亮…" : "正在保存高亮…",
+    });
 
     const color = options?.color ?? annotationColor;
     const existingTargetAnnotation = targetSelection
@@ -2319,8 +2370,27 @@ export function ReaderWorkbench({
 
     if (options?.mode === "recolor" && existingTargetAnnotation?.type === "highlight") {
       try {
-        await patchAnnotation(existingTargetAnnotation.id, { color }, "高亮更新失败。");
-        setAnnotationSaveState({ kind: "idle" });
+        const updatedAnnotation = await patchAnnotation(
+          existingTargetAnnotation.id,
+          { color },
+          "高亮更新失败。",
+        );
+        const updatedSelection =
+          selectionFromAnnotation(updatedAnnotation, {
+            preferredSentenceId: targetSelection?.sentence.sentenceId,
+          }) ?? targetSelection;
+        if (updatedSelection) {
+          focusReaderSelection(updatedSelection, {
+            openHighlightPalette: true,
+            source: "programmatic",
+            visualMode: "annotation_hover",
+            activeAnnotationTargetKey: updatedAnnotation.targetKey,
+            hoveredAnnotationTargetKey: updatedAnnotation.targetKey,
+            toolbarVisible: true,
+          });
+          window.getSelection()?.removeAllRanges();
+        }
+        setAnnotationSaveState({ kind: "saved", message: "高亮颜色已更新。" });
         setHighlightPaletteOpen(true);
       } catch (error) {
         setAnnotationSaveState({
@@ -2370,23 +2440,29 @@ export function ReaderWorkbench({
           : null;
       const requestedTargetKey = requestedSelection ? targetKeyForSelection(record.id, requestedSelection) : null;
       const targetSelectionKey = targetSelection ? targetKeyForSelection(record.id, targetSelection) : null;
+      const exactRecalled =
+        Boolean(nextSelection) &&
+        payload.item.targetKey === targetKeyForSelection(record.id, nextSelection!);
       const shouldReplaceSelection =
         Boolean(nextSelection) &&
         (targetSelectionKey !== requestedTargetKey || payload.item.targetKey !== requestedTargetKey);
-      if (nextSelection && shouldReplaceSelection) {
-        const exactRecalled = payload.item.targetKey === targetKeyForSelection(record.id, nextSelection);
+      if (nextSelection && (shouldReplaceSelection || exactRecalled)) {
         focusReaderSelection(nextSelection, {
           openHighlightPalette: true,
           source: "programmatic",
           visualMode: exactRecalled ? "annotation_hover" : "selection",
           activeAnnotationTargetKey: payload.item.targetKey,
           hoveredAnnotationTargetKey: payload.item.targetKey,
+          toolbarVisible: true,
         });
+        if (exactRecalled) {
+          window.getSelection()?.removeAllRanges();
+        }
       }
       window.dispatchEvent(
         new CustomEvent<WebAnnotationVm>(ANNOTATION_CREATED_EVENT, { detail: payload.item }),
       );
-      setAnnotationSaveState({ kind: "idle" });
+      setAnnotationSaveState({ kind: "saved", message: "已高亮当前选区。" });
       setHighlightPaletteOpen(true);
     } catch (error) {
       setAnnotationSaveState({
@@ -2408,6 +2484,7 @@ export function ReaderWorkbench({
 
   function focusReaderNote(note: WebReaderNoteVm) {
     setAiOpen(false);
+    clearReaderSelection({ preserveDomSelection: true });
     setActiveReaderNoteId(note.id);
     setPendingReaderNote(null);
     setPendingReaderNoteSource(null);
@@ -2480,6 +2557,7 @@ export function ReaderWorkbench({
     setSettingsPanelOpen(false);
     setContextPanelOpen(false);
     setAiOpen(false);
+    setSelectionToolbarVisible(false);
 
     if (existing) {
       focusReaderNote(existing);
@@ -2493,7 +2571,7 @@ export function ReaderWorkbench({
     const nextJumpTarget = readerNoteJumpTargetFromRequest(request);
     setFocusedReaderNoteTarget(nextJumpTarget);
     setReaderNoteSaveState({ kind: "idle" });
-    setNotePanelOpen(source === "sentence");
+    setNotePanelOpen(true);
   }
 
   function highlightTextSelection(colorValue: string) {
@@ -2532,7 +2610,10 @@ export function ReaderWorkbench({
     if (sentenceNotes.length === 0) {
       return;
     }
+    setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
     setAiOpen(false);
+    setSelectionToolbarVisible(false);
     setNotePanelOpen(true);
 
     const activeInSentence = sentenceNotes.find((note) => note.id === activeReaderNoteId) ?? null;
@@ -2548,18 +2629,6 @@ export function ReaderWorkbench({
 
   function closeSentenceNotes() {
     closeReaderNoteUi();
-  }
-
-  function closeSelectionDraftNote() {
-    if (!selectionDraftReaderNote) {
-      return;
-    }
-    setPendingReaderNote(null);
-    setPendingReaderNoteSource(null);
-    setFocusedReaderNoteTarget(null);
-    setReaderNoteDraft("");
-    setReaderNoteSaveState({ kind: "idle" });
-    setNotePanelOpen(false);
   }
 
   async function saveActiveReaderNote() {
@@ -2659,12 +2728,20 @@ export function ReaderWorkbench({
         });
         return;
       }
+      const siblingNotes = (readerNotesBySentence.get(note.anchorSentenceId) ?? []).filter(
+        (candidate) => candidate.id !== note.id,
+      );
       removeReaderNote(note.id);
       if (activeReaderNoteId === note.id) {
-        setActiveReaderNoteId(null);
-        setFocusedReaderNoteTarget(null);
-        setReaderNoteDraft("");
-        setNotePanelOpen(false);
+        const nextNote = siblingNotes[0] ?? null;
+        if (nextNote) {
+          focusReaderNote(nextNote);
+        } else {
+          setActiveReaderNoteId(null);
+          setFocusedReaderNoteTarget(null);
+          setReaderNoteDraft("");
+          setNotePanelOpen(false);
+        }
       }
       setReaderNoteSaveState({ kind: "saved", message: "笔记已删除。" });
     } catch (error) {
@@ -2680,7 +2757,7 @@ export function ReaderWorkbench({
       return;
     }
 
-    setAnnotationSaveState({ kind: "saving" });
+    setAnnotationSaveState({ kind: "saving", message: "正在取消高亮…" });
     try {
       const response = await fetch("/api/web/annotations/" + encodeURIComponent(selectedAnnotation.id), {
         method: "DELETE",
@@ -2697,7 +2774,7 @@ export function ReaderWorkbench({
 
       setAnnotations((current) => current.filter((existing) => existing.id !== selectedAnnotation.id));
       setHighlightPaletteOpen(false);
-      setAnnotationSaveState({ kind: "idle" });
+      setAnnotationSaveState({ kind: "saved", message: "已取消高亮。" });
     } catch (error) {
       setAnnotationSaveState({
         kind: "error",
@@ -2721,6 +2798,7 @@ export function ReaderWorkbench({
       visualMode: "selection",
       activeAnnotationTargetKey: sentenceHighlight?.targetKey ?? null,
       hoveredAnnotationTargetKey: null,
+      toolbarVisible: true,
     });
     window.getSelection()?.removeAllRanges();
   }
@@ -2806,37 +2884,6 @@ export function ReaderWorkbench({
     setContextPanelOpen(false);
     setSentencePopoverAnchorEl(null);
     setAiOpen(true);
-  }
-
-  function openAskWithGrammarQuickAction() {
-    if (!textSelection || !canQuickAnalyzeGrammar(textSelection)) {
-      return;
-    }
-    setActiveSentence(textSelection.sentence);
-    triggerAskQuickAction({
-      content: "请解释这里的语法作用。",
-      entryAction: "why_here",
-      attachment: askAttachmentFromSelection(pageIdentity, textSelection, {
-        sourceSurface: "selection_toolbar",
-        entryAction: "why_here",
-      }),
-    });
-  }
-
-  function openAskWithBreakdownQuickAction() {
-    if (!textSelection || !canQuickBreakdown(textSelection)) {
-      return;
-    }
-    const sentence = textSelection.sentence;
-    setActiveSentence(sentence);
-    triggerAskQuickAction({
-      content: "请拆解这个句子。",
-      entryAction: "explain_this",
-      attachment: askAttachmentFromSentence(pageIdentity, sentence, {
-        sourceSurface: "selection_toolbar",
-        entryAction: "explain_this",
-      }),
-    });
   }
 
   function openAskWithSentenceContext() {
@@ -3000,11 +3047,14 @@ export function ReaderWorkbench({
       anchorEl,
     });
     if (nextSelection) {
+      setContextPanelOpen(false);
+      setSentencePopoverAnchorEl(null);
       focusReaderSelection(nextSelection, {
         openHighlightPalette: annotation.type === "highlight",
         visualMode: annotation.type === "highlight" ? "annotation_hover" : "selection",
         activeAnnotationTargetKey: annotation.targetKey,
         hoveredAnnotationTargetKey: annotation.targetKey,
+        toolbarVisible: false,
       });
       window.requestAnimationFrame(() => {
         articleRef.current
@@ -3064,8 +3114,40 @@ export function ReaderWorkbench({
       visualMode: "selection",
       activeAnnotationTargetKey: sentenceAnnotation?.targetKey ?? null,
       hoveredAnnotationTargetKey: null,
+      toolbarVisible: true,
     });
     window.getSelection()?.removeAllRanges();
+  }
+
+  function toggleSentenceActions(sentenceId: string, anchorEl?: HTMLElement | null) {
+    const sentence = sentenceById.get(sentenceId);
+    if (!sentence) {
+      return;
+    }
+
+    lastSentencePopoverTriggerRef.current = anchorEl ?? null;
+
+    if (contextPanelOpen && activeSentence?.sentenceId === sentenceId) {
+      closeContextPanel();
+      return;
+    }
+
+    const sentenceAnnotation =
+      (annotationsBySentence.get(sentence.sentenceId)?.annotations ?? []).find(
+        (item) => item.type === "highlight" && item.anchorType === "sentence",
+      ) ?? null;
+
+    setAnnotationColor(sentenceAnnotation?.color ?? "warm_yellow");
+    setActiveSentence(sentence);
+    setExpandedAnalysisEntryIds([]);
+    setActiveEntryId(null);
+    setHoveredAnnotationTargetKey(null);
+    clearReaderSelection();
+    setLookupPreviewOpen(false);
+    setLookupPreviewAnchor(null);
+    setSettingsPanelOpen(false);
+    setSentencePopoverAnchorEl(anchorEl ?? null);
+    setContextPanelOpen(true);
   }
 
   function openSettingsPanel() {
@@ -3146,6 +3228,7 @@ export function ReaderWorkbench({
   }
 
   const isImmersiveMode = readerSettings.mode === "immersive";
+  const managedSelectionVisible = Boolean(textSelection && textSelectionVisualMode === "selection");
   const canvasThemeClass = readerThemeClassName(themeName);
   const readingClass = readerTextClassName(readerSettings);
   const readingColumnClass = isImmersiveMode ? "max-w-[82ch]" : "max-w-[104ch]";
@@ -3237,9 +3320,40 @@ export function ReaderWorkbench({
     <main className="paper-grain reader-shell-page min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5">
       <div className="relative">
         <div className="relative min-w-0">
-          <article
+        <article
             ref={articleRef}
-            className={`reader-shell min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${shellModeClass} ${canvasThemeClass}`}
+            className={`reader-shell min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${shellModeClass} ${canvasThemeClass} ${
+              managedSelectionVisible ? "reader-shell--managed-selection" : ""
+            }`}
+            onPointerDownCapture={(event) => {
+            if (event.button !== 0) {
+              return;
+            }
+
+            const target = event.target instanceof HTMLElement ? event.target : null;
+            if (!target) {
+              return;
+            }
+
+            if (
+              target.closest(
+                "button,a,[role='dialog'],[data-reader-sentence-popover='true'],[data-reader-sentence-handle='true']",
+              )
+            ) {
+              pointerSelectionActiveRef.current = false;
+              return;
+            }
+
+            if (!target.closest("[data-reader-sentence-text='true']")) {
+              pointerSelectionActiveRef.current = false;
+              return;
+            }
+
+            pointerSelectionActiveRef.current = true;
+            if (textSelectionSourceRef.current === "dom" || textSelection) {
+              clearReaderSelection({ preserveDomSelection: true });
+            }
+          }}
             onClick={(event) => {
             const target = event.target instanceof HTMLElement ? event.target : null;
             const nativeSelection = window.getSelection();
@@ -3248,7 +3362,7 @@ export function ReaderWorkbench({
             }
             if (
               target?.closest(
-                "button,a,[role='dialog'],[data-reader-mark-id],[data-selection-note-input='true'],[data-reader-sentence-popover='true'],[data-reader-sentence-handle='true'],[data-reader-sentence-note-handle='true']",
+                "button,a,[role='dialog'],[data-reader-mark-id],[data-reader-sentence-popover='true'],[data-reader-sentence-handle='true']",
               )
             ) {
               if (lookupPreviewOpen) {
@@ -3265,15 +3379,12 @@ export function ReaderWorkbench({
               clearReaderSelection();
             }
           }}
-          onMouseUp={() => {
-            window.requestAnimationFrame(updateTextSelectionFromDom);
-          }}
           onKeyUp={(event) => {
             if (event.key === "Escape") {
               clearReaderSelection();
               return;
             }
-            window.requestAnimationFrame(updateTextSelectionFromDom);
+            commitDomTextSelection();
           }}
         >
           <header className={headerShellClass}>
@@ -3531,6 +3642,7 @@ export function ReaderWorkbench({
                   themeClassName={canvasThemeClass}
                   annotationVisibilityGroups={contentVisibility}
                   activeSentenceId={activeSentence?.sentenceId ?? null}
+                  sentenceActionsOpenSentenceId={contextPanelVisible ? activeSentence?.sentenceId ?? null : null}
                   selectedSentenceId={textSelection?.anchorType === "sentence" ? textSelection.sentence.sentenceId : null}
                   activeAnalysisEntryId={activeEntryId}
                   expandedAnalysisEntryIds={expandedAnalysisEntryIds}
@@ -3547,7 +3659,6 @@ export function ReaderWorkbench({
                   onHoverAnnotationTargetKeyChange={setHoveredAnnotationTargetKey}
                   onOpenSentenceNotes={openSentenceNotes}
                   onDeleteAnalysisSupplement={deleteAnalysisSupplement}
-                  onAskTranslation={openAskWithTranslation}
                   onAskAnalysis={openAskWithAnalysis}
                   onAskContentSummary={openAskWithContentSummary}
                   onLookupIntent={(intent, anchor, triggerEl) =>
@@ -3556,12 +3667,7 @@ export function ReaderWorkbench({
                   onInspectIntent={(intent, anchor, triggerEl) =>
                     handleInspectIntent(intent, anchor, { showPreview: true }, triggerEl)
                   }
-                  onSentenceActivate={(sentenceId, anchorEl) => {
-                    const sentence = sentenceById.get(sentenceId);
-                    if (sentence) {
-                      selectSentence(sentence, anchorEl);
-                    }
-                  }}
+                  onOpenSentenceActions={toggleSentenceActions}
                 />
               )}
             </div>
@@ -3569,12 +3675,12 @@ export function ReaderWorkbench({
 
         {notePanelSentence ? (
           <ReaderNotePanel
-            open={Boolean(notePanelOpen && (activeReaderNote || sentenceDraftReaderNote))}
+            open={Boolean(notePanelOpen && (activeReaderNote || noteDraftReaderNote))}
             sentence={notePanelSentence}
             sentenceIndex={notePanelSentenceIndex}
             notes={notePanelNotes}
             activeNote={activeReaderNote && activeReaderNote.anchorSentenceId === notePanelSentence.sentenceId ? activeReaderNote : null}
-            draft={sentenceDraftReaderNote && sentenceDraftReaderNote.anchorSentenceId === notePanelSentence.sentenceId ? sentenceDraftReaderNote : null}
+            draft={noteDraftReaderNote && noteDraftReaderNote.anchorSentenceId === notePanelSentence.sentenceId ? noteDraftReaderNote : null}
             draftText={readerNoteDraft}
             saveState={readerNoteSaveState}
             floatingRef={setNotePanelFloating}
@@ -3588,16 +3694,12 @@ export function ReaderWorkbench({
           />
         ) : null}
 
-        {textSelection && !contextPanelVisible ? (
+        {textSelection && selectionToolbarVisible && !contextPanelVisible ? (
           <div
             ref={setSelectionToolbarFloating}
             style={selectionToolbarStyles}
             className="z-50"
             onPointerDown={(event) => {
-              const target = event.target instanceof HTMLElement ? event.target : null;
-              if (target?.closest("[data-selection-note-input='true']")) {
-                return;
-              }
               event.preventDefault();
             }}
           >
@@ -3605,40 +3707,23 @@ export function ReaderWorkbench({
               className={isImmersiveMode ? "reader-selection-toolbar reader-selection-toolbar--immersive" : "reader-selection-toolbar"}
               selectedText={textSelection.selectedText}
               selectionMode={textSelection.anchorType}
-              disabled={{
-                grammar: !canQuickAnalyzeGrammar(textSelection),
-                breakdown: !canQuickBreakdown(textSelection),
-              }}
-              activeColor={selectedAnnotation?.color ?? annotationColor}
-              hasAnnotation={Boolean(selectedAnnotation)}
+              activeColor={selectedHighlight?.color ?? annotationColor}
+              hasAnnotation={Boolean(selectedHighlight)}
               hasHighlight={Boolean(selectedHighlight)}
               canToggleHighlightPalette={hasExactSelectedHighlight}
               hasNote={Boolean(selectedReaderNote)}
               highlightPaletteOpen={highlightPaletteOpen}
+              statusMessage={selectionToolbarStatus?.message}
+              statusKind={selectionToolbarStatus?.kind}
               onSelectSentence={selectCurrentSentenceFromToolbar}
               onHighlight={(color) => highlightTextSelection(color)}
               onToggleHighlightPalette={() => setHighlightPaletteOpen((current) => !current)}
               onNote={openTextSelectionNote}
               onClearAnnotation={deleteTextSelectionAnnotation}
               onLookup={lookupTextSelection}
-              onGrammar={openAskWithGrammarQuickAction}
-              onBreakdown={openAskWithBreakdownQuickAction}
               onAsk={openAskWithSelection}
             />
           </div>
-        ) : null}
-        {selectionDraftReaderNote ? (
-          <ReaderSelectionNoteDraftPopover
-            key={pendingReaderCommentId ?? undefined}
-            draft={selectionDraftReaderNote}
-            draftText={readerNoteDraft}
-            saveState={readerNoteSaveState}
-            floatingRef={setSelectionNoteDraftFloating}
-            style={selectionNoteDraftStyles}
-            onDraftTextChange={setReaderNoteDraft}
-            onSave={saveActiveReaderNote}
-            onClose={closeSelectionDraftNote}
-          />
         ) : null}
         {floatingLookupPreviewVisible ? (
           <ReaderQuickPeek
@@ -3754,14 +3839,35 @@ export function ReaderWorkbench({
           <ReaderContextPanel
             className={isImmersiveMode ? "reader-context-panel reader-context-panel--immersive" : "reader-context-panel"}
             sentence={activeSentence}
-            selectedText={textSelection?.selectedText ?? null}
-            annotationScope={textSelection ? "text_range" : "sentence"}
+            translationText={activeSentence ? translationBySentence.get(activeSentence.sentenceId) ?? null : null}
             color={annotationColor}
             saveState={annotationSaveState}
+            hasHighlight={Boolean(
+              activeSentence &&
+                annotationsBySentence.get(activeSentence.sentenceId)?.annotations.find(
+                  (item) => item.anchorType === "sentence" && item.type === "highlight"
+                )
+            )}
             onColorChange={setAnnotationColor}
+            onSelectSentence={() => {
+              if (!activeSentence) {
+                return;
+              }
+              selectSentence(activeSentence, sentencePopoverAnchorEl ?? lastSentencePopoverTriggerRef.current);
+            }}
             onHighlight={() => void saveHighlight()}
             onNote={() => activeSentence && openSentenceNote(activeSentence)}
             onAsk={openAskWithSentenceContext}
+            onAskTranslation={() => {
+              if (!activeSentence) {
+                return;
+              }
+              const translationZh = translationBySentence.get(activeSentence.sentenceId);
+              if (!translationZh) {
+                return;
+              }
+              openAskWithTranslation(activeSentence.sentenceId, translationZh);
+            }}
             onClose={closeContextPanel}
           />
         </div>

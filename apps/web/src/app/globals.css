@@ -986,6 +986,45 @@ select {
   box-shadow: 0 12px 22px rgba(28, 24, 18, 0.08);
 }
 
+.reader-sentence-selection-handle,
+.reader-sentence-rail-handle {
+  min-height: 1.85rem;
+  min-width: 1.85rem;
+  padding: 0 0.48rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--reader-tool-border) 84%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--reader-tool-surface-top) 95%, transparent),
+      color-mix(in srgb, var(--reader-tool-surface-bottom) 95%, transparent)
+    ),
+    color-mix(in srgb, var(--reader-paper-elevated) 84%, transparent);
+  color: color-mix(in srgb, var(--muted) 92%, var(--ink));
+  box-shadow: var(--reader-tool-shadow-recessed);
+}
+
+.reader-sentence-selection-handle:hover,
+.reader-sentence-selection-handle:focus-visible,
+.reader-sentence-selection-handle--active,
+.reader-sentence-rail-handle:hover,
+.reader-sentence-rail-handle:focus-visible,
+.reader-sentence-rail-handle--active {
+  border-color: color-mix(in srgb, var(--reader-tool-border) 96%, transparent);
+  color: var(--ink);
+}
+
+.reader-sentence-selection-handle--active,
+.reader-sentence-rail-handle--active {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--reader-tool-surface-top) 98%, transparent),
+      color-mix(in srgb, var(--reader-tool-surface-bottom) 98%, transparent)
+    ),
+    color-mix(in srgb, var(--reader-paper-elevated) 92%, transparent);
+}
+
 .reader-tool-float,
 .reader-context-panel {
   border-color: color-mix(in srgb, var(--reader-tool-border) 88%, transparent);
@@ -1545,12 +1584,22 @@ select {
     0 0.14em 0.38em var(--reader-mark-focus-shadow);
 }
 
-.reader-serif ::selection,
+[data-reader-sentence-text="true"]::selection,
+[data-reader-sentence-text="true"] *::selection,
 .reader-mark::selection,
 .reader-plain-word::selection,
 .reader-analysis-atom::selection {
   background: var(--reader-selection-highlight);
   color: var(--ink);
+}
+
+.reader-shell--managed-selection [data-reader-sentence-text="true"]::selection,
+.reader-shell--managed-selection [data-reader-sentence-text="true"] *::selection,
+.reader-shell--managed-selection .reader-mark::selection,
+.reader-shell--managed-selection .reader-plain-word::selection,
+.reader-shell--managed-selection .reader-analysis-atom::selection {
+  background: transparent;
+  color: inherit;
 }
 
 .reader-translation-layer {
@@ -1613,6 +1662,12 @@ select {
 .reader-translation-shell::selection {
   background: var(--reader-translation-selection);
   color: var(--reader-translation-selection-ink);
+}
+
+.reader-shell--managed-selection .reader-translation-copy::selection,
+.reader-shell--managed-selection .reader-translation-shell::selection {
+  background: transparent;
+  color: inherit;
 }
 
 .reader-mark--vocab {
@@ -1685,8 +1740,32 @@ select {
     color 180ms ease;
 }
 
+.reader-mark--grammar-segment {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--reader-mark-grammar-line-strong) 0,
+    var(--reader-mark-grammar-line-strong) 3px,
+    transparent 3px,
+    transparent 5px
+  );
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  background-size: 100% 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  padding-bottom: 0.1em;
+  color: var(--ink);
+  transition:
+    background 180ms ease,
+    background-color 180ms ease,
+    background-image 180ms ease,
+    color 180ms ease;
+}
+
 .reader-mark--grammar.reader-mark--interactive:hover,
 .reader-mark--grammar.reader-mark--interactive:focus-visible,
+.reader-mark--interactive:hover .reader-mark--grammar-segment,
+.reader-mark--interactive:focus-visible .reader-mark--grammar-segment,
 .reader-mark--grammar-linked {
   background-image: linear-gradient(
     to right,
@@ -1712,8 +1791,25 @@ select {
   border-radius: 0.18em;
 }
 
+.reader-mark--grammar-segment.reader-mark--grammar-pinned {
+  background:
+    linear-gradient(
+      to top,
+      color-mix(in srgb, var(--reader-mark-entry-grammar-fill) 45%, transparent) 0 36%,
+      transparent 36%
+    ) 0 88% / 100% 0.62em no-repeat,
+    linear-gradient(
+      to right,
+      var(--reader-mark-entry-grammar-line-strong),
+      var(--reader-mark-entry-grammar-line-strong)
+    ) 0 100% / 100% 2px no-repeat;
+  border-radius: 0.18em;
+}
+
 .reader-mark--grammar-pinned.reader-mark--interactive:hover,
-.reader-mark--grammar-pinned.reader-mark--interactive:focus-visible {
+.reader-mark--grammar-pinned.reader-mark--interactive:focus-visible,
+.reader-mark--interactive:hover .reader-mark--grammar-segment.reader-mark--grammar-pinned,
+.reader-mark--interactive:focus-visible .reader-mark--grammar-segment.reader-mark--grammar-pinned {
   background:
     linear-gradient(
       to top,
@@ -1885,6 +1981,14 @@ select {
   background: transparent;
 }
 
+.reader-mark--selection-muted {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+}
+
 .reader-sentence--user-highlight {
   /* Box visual shadows stripped to maintain pure text flow */
 }
@@ -1916,6 +2020,11 @@ select {
 .reader-analysis-atom--active {
   --analysis-fill: color-mix(in srgb, var(--analysis-accent) 12%, transparent);
   color: var(--analysis-accent);
+}
+
+.reader-analysis-atom--selection-muted {
+  --analysis-fill: transparent;
+  color: inherit;
 }
 
 .reader-analysis-atom--1,
@@ -2488,6 +2597,13 @@ select {
   box-shadow: inset 0 -0.04em 0 var(--reader-user-range-edge);
 }
 
+.reader-user-range--selection-muted {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
 .reader-user-range--warm-yellow:hover,
 .reader-user-range--warm-yellow.reader-user-range--hovered-group,
 .reader-user-range--warm-yellow.reader-mark--entry-active {
@@ -2696,6 +2812,7 @@ select {
   display: flex;
   max-width: 10rem;
   flex-direction: column;
+  align-self: flex-end;
   gap: 0.32rem;
   border-radius: 0.95rem;
   border: 1px solid var(--reader-gutter-strip-border);

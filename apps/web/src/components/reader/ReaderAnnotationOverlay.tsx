@@ -10,9 +10,11 @@ interface ReaderAnnotationOverlayProps {
   annotations: WebAnnotationVm[];
   visible?: boolean;
   activeIndex?: number | null;
+  actionsActive?: boolean;
   hoveredTargetKey?: string | null;
   noteCount?: number;
   noteActive?: boolean;
+  onOpenSentenceActions?: (sentenceId: string, triggerEl?: HTMLElement) => void;
   onHoverTargetKeyChange?: (targetKey: string | null) => void;
   onAnnotationJump?: (annotation: WebAnnotationVm, triggerEl?: HTMLElement, sentenceId?: string) => void;
   onOpenNotes?: (sentenceId: string, triggerEl?: HTMLElement) => void;
@@ -24,9 +26,11 @@ export function ReaderAnnotationOverlay({
   annotations,
   visible = true,
   activeIndex,
+  actionsActive = false,
   hoveredTargetKey,
   noteCount = 0,
   noteActive = false,
+  onOpenSentenceActions,
   onHoverTargetKeyChange,
   onAnnotationJump,
   onOpenNotes,
@@ -38,9 +42,11 @@ export function ReaderAnnotationOverlay({
         sentenceId={sentenceId}
         annotations={annotations}
         visible={visible}
+        actionsActive={actionsActive}
         hoveredTargetKey={hoveredTargetKey}
         noteCount={noteCount}
         noteActive={noteActive}
+        onOpenSentenceActions={onOpenSentenceActions}
         onHoverTargetKeyChange={onHoverTargetKeyChange}
         onAnnotationJump={onAnnotationJump}
         onOpenNotes={onOpenNotes}

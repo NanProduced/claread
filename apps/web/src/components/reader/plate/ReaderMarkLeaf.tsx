@@ -101,6 +101,7 @@ function renderLeafContent(
   }>,
   hoveredAnnotationTargetKey: string | null,
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void,
+  markSegmentClassName?: string | null,
 ): ReactNode {
   if (
     leafStartOffset === undefined ||
@@ -179,6 +180,7 @@ function renderLeafContent(
     );
     const className = [
       annotationClassName,
+      overlappingSelectionFocus && overlappingAnnotations.length > 0 ? "reader-user-range--selection-muted" : "",
       overlappingJumpFocus ? "reader-route-focus-range" : "",
       overlappingSelectionFocus ? "reader-selection-focus-range" : "",
       overlappingNoteFocus ? "reader-note-focus-range" : "",
@@ -193,7 +195,9 @@ function renderLeafContent(
     if (overlappingAnalysis) {
       content = (
         <span
-          className={`reader-analysis-atom reader-analysis-atom--${(overlappingAnalysis.index % 6) + 1}`}
+          className={`reader-analysis-atom reader-analysis-atom--${(overlappingAnalysis.index % 6) + 1} ${
+            overlappingSelectionFocus ? "reader-analysis-atom--selection-muted" : ""
+          }`}
           data-analysis-index={overlappingAnalysis.index + 1}
           data-analysis-label={overlappingAnalysis.label}
           data-analysis-entry-id={overlappingAnalysis.entryId}
@@ -211,6 +215,21 @@ function renderLeafContent(
             );
             row?.classList.remove("reader-entry-analysis-item--active");
           }}
+        >
+          {content}
+        </span>
+      );
+    }
+
+    if (markSegmentClassName) {
+      content = (
+        <span
+          className={[
+            markSegmentClassName,
+            overlappingSelectionFocus ? "reader-mark--selection-muted" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
         >
           {content}
         </span>
@@ -451,31 +470,6 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
       leaf.readerTextStartOffset,
     ],
   );
-  const content = useMemo(
-    () =>
-      renderLeafContent(
-        leaf.text,
-        leaf.readerTextStartOffset,
-        jumpFocusedSegments,
-        selectionFocusedSegments,
-        noteFocusedSegments,
-        analysisSegments,
-        annotationSegments,
-        hoveredAnnotationTargetKey,
-        onHoverAnnotationTargetKeyChange,
-      ),
-    [
-      analysisSegments,
-      annotationSegments,
-      hoveredAnnotationTargetKey,
-      jumpFocusedSegments,
-      leaf.text,
-      leaf.readerTextStartOffset,
-      selectionFocusedSegments,
-      noteFocusedSegments,
-      onHoverAnnotationTargetKeyChange,
-    ],
-  );
   const hasDecoratedContent =
     jumpFocusedSegments.length > 0 ||
     selectionFocusedSegments.length > 0 ||
@@ -483,6 +477,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     analysisSegments.length > 0 ||
     annotationSegments.length > 0;
   const visualTone = leaf.readerMarkVisualTone;
+  const useSegmentedGrammarMark = visualTone === "grammar" && hasDecoratedContent;
   const markKey = grammarMarkKey(leaf);
   const grammarCueIndex =
     leaf.readerSentenceId && markKey
@@ -498,12 +493,6 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     typeof leaf.readerTextEndOffset === "number" &&
     leaf.readerTextEndOffset === lastLeafOffsetsByMarkKey?.get(markKey ?? "");
 
-  if (!visualTone) {
-    return <span {...props.attributes}>{hasDecoratedContent ? content : props.children}</span>;
-  }
-
-  const className = readerMarkClassName(visualTone, annotationVisibilityGroups);
-  
   const isLinkedToEntryId = (entryId: string | null | undefined) => {
     if (!entryId) return false;
     return resolvedGrammarEntryId === entryId ||
@@ -526,6 +515,47 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   const grammarPinnedStateClass = isGrammarLink && isLinkedToExpandedEntry
     ? "reader-mark--grammar-pinned"
     : "";
+  const segmentedGrammarClassName = useSegmentedGrammarMark
+    ? [
+        "reader-mark--grammar-segment",
+        grammarLinkStateClass,
+        grammarPinnedStateClass,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : null;
+  const content = useMemo(
+    () =>
+      renderLeafContent(
+        leaf.text,
+        leaf.readerTextStartOffset,
+        jumpFocusedSegments,
+        selectionFocusedSegments,
+        noteFocusedSegments,
+        analysisSegments,
+        annotationSegments,
+        hoveredAnnotationTargetKey,
+        onHoverAnnotationTargetKeyChange,
+        segmentedGrammarClassName,
+      ),
+    [
+      analysisSegments,
+      annotationSegments,
+      hoveredAnnotationTargetKey,
+      jumpFocusedSegments,
+      leaf.text,
+      leaf.readerTextStartOffset,
+      noteFocusedSegments,
+      onHoverAnnotationTargetKeyChange,
+      segmentedGrammarClassName,
+      selectionFocusedSegments,
+    ],
+  );
+  if (!visualTone) {
+    return <span {...props.attributes}>{hasDecoratedContent ? content : props.children}</span>;
+  }
+
+  const className = readerMarkClassName(visualTone, annotationVisibilityGroups);
 
   const entryActiveClass = !isGrammarLink && (isLinkedToActiveEntry || isLinkedToExpandedEntry)
     ? "reader-mark--entry-active"
@@ -535,16 +565,19 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     (leaf.readerMarkClickable || leaf.readerMarkAnnotationType === "grammar_note") &&
     leaf.readerSentenceId
   );
+  const selectionMutedClass =
+    !useSegmentedGrammarMark && selectionFocusedSegments.length > 0 ? "reader-mark--selection-muted" : "";
 
   return (
     <span
       {...props.attributes}
       className={[
-        className,
+        useSegmentedGrammarMark ? "" : className,
         isClickable ? "reader-mark--interactive" : "",
+        selectionMutedClass,
         entryActiveClass,
-        grammarLinkStateClass,
-        grammarPinnedStateClass,
+        useSegmentedGrammarMark ? "" : grammarLinkStateClass,
+        useSegmentedGrammarMark ? "" : grammarPinnedStateClass,
       ].filter(Boolean).join(" ") || undefined}
       data-reader-mark-id={leaf.readerMarkId}
       data-reader-mark-parent-id={leaf.readerMarkParentId}

@@ -5,7 +5,6 @@ export * from "./AiWorkspacePanel";
 export * from "./ReaderAnnotationOverlay";
 export * from "./ReaderFloatingLayer";
 export * from "./ReaderNotePanel";
-export * from "./ReaderSelectionNoteDraftPopover";
 export * from "./SelectionToolbar";
 export * from "./dictionary";
 export * from "./plate";

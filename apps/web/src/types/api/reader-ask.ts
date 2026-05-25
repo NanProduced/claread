@@ -18,7 +18,7 @@ export type ReaderAskActionTypeDto =
   | "save_note"
   | "save_highlight"
   | "create_supplement_grammar_note";
-export type ReaderAskActionStatusDto = "pending" | "confirmed" | "executed" | "rejected";
+export type ReaderAskActionStatusDto = "pending" | "executing" | "confirmed" | "executed" | "rejected";
 export type ReaderAskToolStatusDto = "started" | "completed" | "failed";
 export type ReaderAskResolvedIntentDto =
   | "explain"
@@ -171,6 +171,7 @@ export interface ReaderAskActionProposalDto {
   requires_confirmation: boolean;
   status: ReaderAskActionStatusDto;
   payload_json: Record<string, unknown>;
+  result_json?: Record<string, unknown> | null;
 }
 
 export interface ReaderAskToolTraceEntryDto {
@@ -477,6 +478,7 @@ export interface ReaderAskMessageDto {
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
+  replan_status?: "idle" | "replanning" | null;
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -576,6 +578,7 @@ export type ReaderAskStreamEventName =
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
+  | "replan.started"
   | "message.interrupted"
   | "message.completed"
   | "error";

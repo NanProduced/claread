@@ -177,16 +177,16 @@ export function AnalyzeSubmitForm() {
   const showVariantOptions = activeVariantOptions.length > 1;
 
   return (
-    <div className="flex h-full min-h-[600px] flex-col">
-      <div className="flex-1">
+    <div className="flex min-h-0 flex-1 w-full flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <div className="sr-only">
         </div>
 
-        <div className="relative h-full w-full">
+        <div className="relative flex min-h-0 flex-1 w-full">
           <textarea
             id="analysis-text"
-              className="min-h-[500px] w-full resize-none bg-transparent font-reading text-[1.16rem] leading-[2.1] text-ink outline-none placeholder:text-[#999690] sm:text-[1.28rem]"
-              placeholder={`在此粘贴文章正文...`}
+            className="h-full w-full resize-none overflow-y-auto bg-transparent pb-4 font-reading text-[1.16rem] leading-[2.1] text-ink outline-none placeholder:text-[#999690] sm:text-[1.28rem]"
+            placeholder={`在此粘贴文章正文...`}
               value={text}
               onChange={(event) => setText(event.target.value)}
               onKeyDown={(event) => {
@@ -209,7 +209,7 @@ export function AnalyzeSubmitForm() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-hairline bg-transparent px-0 py-6">
+      <div className="flex shrink-0 flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-hairline bg-transparent px-0 py-4 lg:py-6">
         <div className="flex flex-col sm:flex-row gap-4 sm:gap-8 text-[0.8rem] text-muted font-medium uppercase tracking-widest">
           <Popover>
             <PopoverTrigger asChild>
@@ -257,7 +257,7 @@ export function AnalyzeSubmitForm() {
 
       {state.kind !== "idle" ? (
         <div
-          className={`border-t border-hairline bg-surface-warm px-5 py-3 text-[0.8125rem] ${
+          className={`shrink-0 border-t border-hairline bg-surface-warm px-5 py-3 text-[0.8125rem] ${
             state.kind === "error" ? "text-red-700" : "text-muted"
           }`}
         >
