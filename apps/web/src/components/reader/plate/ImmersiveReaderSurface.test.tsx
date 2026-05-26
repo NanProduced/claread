@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { ReaderAssetProjection } from "@/lib/reader-plate";
+import type { ReaderAssetProjection, ReaderJumpRangeSegment } from "@/lib/reader-plate";
 import { renderSceneToPlateDocument } from "@/lib/reader-plate";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import type { WebReaderNoteVm } from "@/types/api/reader-notes";
@@ -162,7 +162,7 @@ describe("ImmersiveReaderSurface", () => {
     expect(screen.queryByText("制度记忆会塑造政策选择。")).toBeNull();
     expect(screen.queryByText("语法旁注")).toBeNull();
     expect(container.querySelector(".reader-mark")).toBeTruthy();
-    expect(container.querySelector(".reader-immersive-sentence-text--lead")).toBeTruthy();
+    expect(container.querySelector(".reader-immersive-paragraph-copy--lead")).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText("打开本段相关笔记"));
     expect(onOpenSentenceNotes).toHaveBeenCalledWith("s1", expect.any(HTMLButtonElement));
@@ -184,5 +184,37 @@ describe("ImmersiveReaderSurface", () => {
 
     fireEvent.click(screen.getByLabelText("查看本段相关高亮"));
     expect(onAnnotationJump).toHaveBeenCalledWith(annotation, expect.any(HTMLButtonElement), "s1");
+  });
+
+  it("renders retained Ask context with muted reader marks", () => {
+    const scene = createScene();
+    const annotation = createHighlight();
+    const contextFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>([
+      [
+        "s1",
+        [
+          {
+            paragraphId: "p1",
+            sentenceId: "s1",
+            selectedText: "memory",
+            startOffset: 14,
+            endOffset: 20,
+            textHash: "hash-1",
+          },
+        ],
+      ],
+    ]);
+
+    const { container } = render(
+      <ImmersiveReaderSurface
+        document={renderSceneToPlateDocument(scene)}
+        readingClassName="reader-serif text-ink"
+        assetProjection={createAssetProjection(annotation)}
+        contextFocusRangesBySentence={contextFocusRangesBySentence}
+      />,
+    );
+
+    expect(container.querySelector(".reader-context-focus-range")).toBeTruthy();
+    expect(container.querySelector(".reader-mark--context-muted")).toBeTruthy();
   });
 });

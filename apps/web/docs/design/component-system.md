@@ -205,6 +205,15 @@ Rules:
 
 ## 7. Interaction Rules
 
+### Interaction State Contract
+
+- Reader 内交互统一收敛到 5 个家族：`Command Control`、`Floating Action`、`Inline Mark`、`Sentence Anchor`、`Panel Item`。
+- 盒子型控件统一使用同一套 focus ring；不得再为按钮、菜单项、切换项各自定义不同的 focus shadow。
+- 页面级和面板级控件的 pressed 反馈以背景加深为主；只有短时浮层工具按钮允许轻微 `scale`。
+- 并列句侧入口使用中性 hover 基底；语义色只用于 active / current / open，不用于制造三种不同 hover 背景。
+- inline mark 的 `hover` 与 `focus-visible` 必须可区分：hover 强调语义填充，focus-visible 在此基础上再叠加细 outline/ring。
+- 所有可点击 Reader 控件至少具备 `hover / focus-visible / disabled`；大多数按钮和切换项还必须具备 `active`。
+
 ### Inline Lookup
 
 1. Click inline mark or plain word.

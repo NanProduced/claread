@@ -14,6 +14,7 @@ import {
   ReaderToolbarRoot,
   ReaderToolbarSeparator,
 } from "./plate-ui-adapter";
+import { readerInlineFocusRing, readerTransitionFast } from "./interaction";
 import {
   Tooltip,
   TooltipContent,
@@ -187,7 +188,10 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
                     onHighlight?.(option.value, selectedText, option);
                   }}
                   className={cn(
-                    "h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 transition-all hover:scale-110",
+                    "h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 hover:ring-2 hover:ring-lens-blue/20",
+                    readerInlineFocusRing,
+                    readerTransitionFast,
+                    "hover:scale-110",
                     option.swatchClassName,
                     activeColor === option.value ? "ring-ring ring-offset-2 ring-offset-background" : ""
                   )}
@@ -289,7 +293,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
                 disabled={askDisabled}
                 onClick={() => onAsk?.(selectedText)}
                 aria-label={askComingSoon ? "Ask Claread（稍后开放）" : "Ask Claread"}
-                className="text-lens-blue/80 hover:bg-lens-blue/10 hover:text-lens-blue"
+                className="text-lens-blue/80 hover:bg-lens-blue/10 hover:text-lens-blue active:scale-[0.96]"
               >
                 <MessageSquare aria-hidden="true" className="h-4 w-4" />
               </ReaderToolbarIconButton>

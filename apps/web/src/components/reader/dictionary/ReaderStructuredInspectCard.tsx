@@ -1,6 +1,8 @@
 "use client";
 
 import { Sparkles } from "lucide-react";
+import { readerCommandControl, readerPanelItem } from "@/components/reader/interaction";
+import { cn } from "@/lib/cn";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import { contextualGlossaryText, structuredInspectLabel } from "./shared";
 
@@ -8,7 +10,6 @@ interface ReaderStructuredInspectCardProps {
   intent: ReaderStructuredInspectIntent;
   variant?: "peek" | "rail";
   onLookupPhrase?: () => void;
-  onOpenDetail?: () => void;
   onAttachToAsk?: () => void;
 }
 
@@ -16,7 +17,6 @@ export function ReaderStructuredInspectCard({
   onAttachToAsk,
   intent,
   onLookupPhrase,
-  onOpenDetail,
   variant = "peek",
 }: ReaderStructuredInspectCardProps) {
   const title = structuredInspectLabel(intent.annotationType, intent.glossary?.phraseType);
@@ -51,7 +51,7 @@ export function ReaderStructuredInspectCard({
           {onLookupPhrase ? (
             <button
               type="button"
-              className="focus-ring inline-flex h-8 items-center justify-center rounded-md px-2.5 text-[0.72rem] font-semibold text-muted transition-colors hover:bg-surface hover:text-ink"
+              className={cn(readerCommandControl, "h-8 rounded-md px-2.5 text-[0.72rem] font-semibold")}
               onClick={onLookupPhrase}
             >
               查短语
@@ -60,7 +60,7 @@ export function ReaderStructuredInspectCard({
           {onAttachToAsk ? (
             <button
               type="button"
-              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface hover:text-ink"
+              className={cn(readerPanelItem, "h-8 w-8 rounded-full")}
               onClick={onAttachToAsk}
               title="带入 Ask"
               aria-label="带入 Ask"

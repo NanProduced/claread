@@ -24,6 +24,7 @@ interface ReaderMarkLeafProps {
   analysisSegmentsBySentence?: Map<string, Array<SentenceAnalysisSegment & { entryId?: string }>>;
   annotationRangesBySentence?: Map<string, ReaderAssetRange[]>;
   selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
+  contextFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   noteFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   hoveredAnnotationTargetKey?: string | null;
@@ -86,6 +87,7 @@ function renderLeafContent(
   leafStartOffset: number | undefined,
   jumpFocusedSegments: Array<{ startOffset: number; endOffset: number }>,
   selectionFocusedSegments: Array<{ startOffset: number; endOffset: number }>,
+  contextFocusedSegments: Array<{ startOffset: number; endOffset: number }>,
   noteFocusedSegments: Array<{ startOffset: number; endOffset: number }>,
   analysisSegments: Array<{
     startOffset: number;
@@ -107,6 +109,7 @@ function renderLeafContent(
     leafStartOffset === undefined ||
     (jumpFocusedSegments.length === 0 &&
       selectionFocusedSegments.length === 0 &&
+      contextFocusedSegments.length === 0 &&
       noteFocusedSegments.length === 0 &&
       annotationSegments.length === 0 &&
       analysisSegments.length === 0)
@@ -121,6 +124,10 @@ function renderLeafContent(
     boundaries.add(segment.endOffset);
   });
   selectionFocusedSegments.forEach((segment) => {
+    boundaries.add(segment.startOffset);
+    boundaries.add(segment.endOffset);
+  });
+  contextFocusedSegments.forEach((segment) => {
     boundaries.add(segment.startOffset);
     boundaries.add(segment.endOffset);
   });
@@ -153,6 +160,9 @@ function renderLeafContent(
     const overlappingSelectionFocus = selectionFocusedSegments.some(
       (segment) => segment.startOffset < segmentEnd && segment.endOffset > segmentStart,
     );
+    const overlappingContextFocus = contextFocusedSegments.some(
+      (segment) => segment.startOffset < segmentEnd && segment.endOffset > segmentStart,
+    );
     const overlappingNoteFocus = noteFocusedSegments.some(
       (segment) => segment.startOffset < segmentEnd && segment.endOffset > segmentStart,
     );
@@ -166,6 +176,7 @@ function renderLeafContent(
     if (
       !overlappingJumpFocus &&
       !overlappingSelectionFocus &&
+      !overlappingContextFocus &&
       !overlappingNoteFocus &&
       overlappingAnnotations.length === 0 &&
       !overlappingAnalysis
@@ -181,8 +192,10 @@ function renderLeafContent(
     const className = [
       annotationClassName,
       overlappingSelectionFocus && overlappingAnnotations.length > 0 ? "reader-user-range--selection-muted" : "",
+      overlappingContextFocus && overlappingAnnotations.length > 0 ? "reader-user-range--context-muted" : "",
       overlappingJumpFocus ? "reader-route-focus-range" : "",
       overlappingSelectionFocus ? "reader-selection-focus-range" : "",
+      overlappingContextFocus ? "reader-context-focus-range" : "",
       overlappingNoteFocus ? "reader-note-focus-range" : "",
       hoveredAnnotationTargetKey && annotationTargetKeys.includes(hoveredAnnotationTargetKey)
         ? "reader-user-range--hovered-group"
@@ -197,7 +210,7 @@ function renderLeafContent(
         <span
           className={`reader-analysis-atom reader-analysis-atom--${(overlappingAnalysis.index % 6) + 1} ${
             overlappingSelectionFocus ? "reader-analysis-atom--selection-muted" : ""
-          }`}
+          } ${overlappingContextFocus ? "reader-analysis-atom--context-muted" : ""}`}
           data-analysis-index={overlappingAnalysis.index + 1}
           data-analysis-label={overlappingAnalysis.label}
           data-analysis-entry-id={overlappingAnalysis.entryId}
@@ -227,6 +240,7 @@ function renderLeafContent(
           className={[
             markSegmentClassName,
             overlappingSelectionFocus ? "reader-mark--selection-muted" : "",
+            overlappingContextFocus ? "reader-mark--context-muted" : "",
           ]
             .filter(Boolean)
             .join(" ")}
@@ -369,6 +383,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   expandedAnalysisEntryIds,
   jumpFocusRangesBySentence,
   selectionFocusRangesBySentence,
+  contextFocusRangesBySentence,
   noteFocusRangesBySentence,
   onHoverAnnotationTargetKeyChange,
   onInspectIntent,
@@ -440,6 +455,21 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
       leaf.readerTextEndOffset,
     ],
   );
+  const contextFocusedSegments = useMemo(
+    () =>
+      routeFocusSegmentsForLeaf(
+        leaf.readerSentenceId,
+        leaf.readerTextStartOffset,
+        leaf.readerTextEndOffset,
+        contextFocusRangesBySentence,
+      ),
+    [
+      contextFocusRangesBySentence,
+      leaf.readerSentenceId,
+      leaf.readerTextStartOffset,
+      leaf.readerTextEndOffset,
+    ],
+  );
   const annotationSegments = useMemo(
     () =>
       annotationSegmentsForLeaf(
@@ -473,6 +503,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   const hasDecoratedContent =
     jumpFocusedSegments.length > 0 ||
     selectionFocusedSegments.length > 0 ||
+    contextFocusedSegments.length > 0 ||
     noteFocusedSegments.length > 0 ||
     analysisSegments.length > 0 ||
     annotationSegments.length > 0;
@@ -531,6 +562,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
         leaf.readerTextStartOffset,
         jumpFocusedSegments,
         selectionFocusedSegments,
+        contextFocusedSegments,
         noteFocusedSegments,
         analysisSegments,
         annotationSegments,
@@ -541,6 +573,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     [
       analysisSegments,
       annotationSegments,
+      contextFocusedSegments,
       hoveredAnnotationTargetKey,
       jumpFocusedSegments,
       leaf.text,
@@ -567,6 +600,8 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   );
   const selectionMutedClass =
     !useSegmentedGrammarMark && selectionFocusedSegments.length > 0 ? "reader-mark--selection-muted" : "";
+  const contextMutedClass =
+    !useSegmentedGrammarMark && contextFocusedSegments.length > 0 ? "reader-mark--context-muted" : "";
 
   return (
     <span
@@ -575,6 +610,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
         useSegmentedGrammarMark ? "" : className,
         isClickable ? "reader-mark--interactive" : "",
         selectionMutedClass,
+        contextMutedClass,
         entryActiveClass,
         useSegmentedGrammarMark ? "" : grammarLinkStateClass,
         useSegmentedGrammarMark ? "" : grammarPinnedStateClass,

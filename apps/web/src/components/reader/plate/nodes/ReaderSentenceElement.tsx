@@ -13,6 +13,8 @@ interface ReaderSentenceElementProps {
   props: Parameters<RenderElement>[0];
   active?: boolean;
   sentenceActionsActive?: boolean;
+  hasTranslation?: boolean;
+  hasVisibleAnalysis?: boolean;
   analysisActive?: boolean;
   analysisExpanded?: boolean;
   routeFocused?: boolean;
@@ -30,6 +32,8 @@ interface ReaderSentenceElementProps {
 export function ReaderSentenceElement({
   active = false,
   sentenceActionsActive = false,
+  hasTranslation = false,
+  hasVisibleAnalysis = false,
   analysisActive = false,
   analysisExpanded = false,
   assetProjection = null,
@@ -46,8 +50,9 @@ export function ReaderSentenceElement({
 }: ReaderSentenceElementProps) {
   const element = props.element as unknown as ReaderSentenceNode;
   const frameClassName = [
-    "group/sentence relative scroll-mt-8 pl-2 pr-14 py-2 transition-colors rounded-[8px]",
-    active ? "bg-surface/42" : "hover:bg-surface/28",
+    "group/sentence reader-sentence-shell relative scroll-mt-8 pr-10 sm:pr-12 rounded-[10px]",
+    hasVisibleAnalysis ? "reader-sentence-shell--with-analysis" : hasTranslation ? "reader-sentence-shell--with-translation" : "reader-sentence-shell--plain",
+    active ? "reader-sentence-shell--active" : "reader-sentence-shell--idle",
     analysisActive ? "reader-sentence--analysis-active reader-sentence--has-active-analysis" : "",
     analysisExpanded ? "reader-sentence--analysis-expanded" : "",
     annotationVisibilityGroups.userAssets && assetProjection?.hasHighlight ? "reader-sentence--user-highlight" : "",

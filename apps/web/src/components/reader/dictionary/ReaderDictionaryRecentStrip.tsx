@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { cn } from "@/lib/cn";
+import { readerPanelItem } from "../interaction";
 import type { DictionaryLookupSnapshot } from "./contracts";
 import { dictionaryLookupHistoryKey, dictionaryLookupHistorySummary } from "./shared";
 
@@ -27,7 +29,7 @@ export function ReaderDictionaryRecentStrip({
     <section className="rounded-[18px] border border-hairline/85 bg-surface/84 px-3.5 py-3.5 shadow-[0_1px_2px_rgba(17,17,17,0.04)]">
       <button
         type="button"
-        className="focus-ring flex min-h-11 w-full items-center justify-between gap-3 text-left"
+        className={cn(readerPanelItem, "flex min-h-11 w-full justify-between rounded-[0.75rem] px-1 py-1 text-left")}
         onClick={() => setCollapsed((value) => !value)}
         aria-expanded={!collapsed}
       >
@@ -54,9 +56,11 @@ export function ReaderDictionaryRecentStrip({
                 <button
                   key={dictionaryLookupHistoryKey(item)}
                   type="button"
-                  className={`focus-ring reader-dictionary-history-row block w-full rounded-[10px] px-3 py-2 text-left transition-colors ${
-                    active ? "reader-dictionary-history-row--active bg-lens-blue/5" : "hover:bg-muted/10"
-                  }`}
+                  className={cn(
+                    readerPanelItem,
+                    "reader-dictionary-history-row block w-full rounded-[10px] px-3 py-2 text-left",
+                    active ? "reader-dictionary-history-row--active bg-lens-blue/5" : "hover:bg-muted/10",
+                  )}
                   onClick={() => onSelectHistory(item)}
                   title={`${item.query}: ${summary}`}
                 >

@@ -133,6 +133,8 @@ import {
   readStoredDictionaryAIArticleCache,
   type DictionaryAIArticleCache,
 } from "@/components/reader/dictionary";
+import { readerCommandControl, readerSegmentedOption } from "@/components/reader/interaction";
+import { cn } from "@/lib/cn";
 import { FavoriteButton } from "./FavoriteButton";
 
 type ReaderDataSource = "upstream-render-scene" | "upstream-source-text";
@@ -153,7 +155,7 @@ type AnnotationSaveState =
 
 type PendingReaderNoteSource = "selection" | "sentence";
 type ReaderSelectionSource = "dom" | "programmatic" | "none";
-type ReaderSelectionVisualMode = "selection" | "annotation_hover";
+type ReaderSelectionVisualMode = "selection" | "context" | "annotation_hover";
 
 const dataSourceLabel: Record<ReaderDataSource, string> = {
   "upstream-render-scene": "解析结果",
@@ -621,10 +623,11 @@ export function ReaderWorkbench({
   const [hoveredAnnotationTargetKey, setHoveredAnnotationTargetKey] = useState<string | null>(null);
   const [activeAnnotationTargetKey, setActiveAnnotationTargetKey] = useState<string | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
-  const [immersiveHeaderCondensed, setImmersiveHeaderCondensed] = useState(false);
+  const [immersiveHeaderHidden, setImmersiveHeaderHidden] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
-  const [dismissedLiveAskAttachmentKey, setDismissedLiveAskAttachmentKey] = useState<string | null>(null);
+  const [liveContextSelection, setLiveContextSelection] = useState<ReaderTextSelection | null>(null);
+  const [composerTextareaFocused, setComposerTextareaFocused] = useState(false);
   const [pendingAskQuickAction, setPendingAskQuickAction] = useState<{
     content: string;
     entryAction: "ask_about_this" | "explain_this" | "why_here" | "lookup_in_context" | "compare_translation";
@@ -656,7 +659,6 @@ export function ReaderWorkbench({
   const dictionaryAIRequestKeyRef = useRef<string | null>(null);
   const textSelectionSourceRef = useRef<ReaderSelectionSource>("none");
   const pointerSelectionActiveRef = useRef(false);
-  const previousLiveAskAttachmentKeyRef = useRef<string | null>(null);
   const [dictionaryDockLayout, setDictionaryDockLayout] = useState<DictionaryDockLayout | null>(null);
   const dictionaryPanelVisible = Boolean(dictionaryRailOpen || dictionaryPinned);
   const { themeName, setThemeName } = useAppearance();
@@ -710,13 +712,23 @@ export function ReaderWorkbench({
 
   useEffect(() => {
     if (readerSettings.mode !== "immersive") {
-      setImmersiveHeaderCondensed(false);
+      setImmersiveHeaderHidden(false);
       return;
     }
 
+    let lastScrollY = window.scrollY;
+
     const updateHeaderState = () => {
-      const articleTop = articleRef.current?.getBoundingClientRect().top ?? 0;
-      setImmersiveHeaderCondensed(window.scrollY > 120 || articleTop < -32);
+      const currentScrollY = window.scrollY;
+
+      // Autohide: hide when scrolling down past 260px, show when scrolling up or at top
+      if (currentScrollY > 260 && currentScrollY > lastScrollY) {
+        setImmersiveHeaderHidden(true);
+      } else if (currentScrollY < lastScrollY || currentScrollY < 60) {
+        setImmersiveHeaderHidden(false);
+      }
+
+      lastScrollY = currentScrollY;
     };
 
     updateHeaderState();
@@ -1022,31 +1034,27 @@ export function ReaderWorkbench({
     }
     return readerNotesByTargetKey.get(targetKeyForSelection(record.id, textSelection)) ?? null;
   }, [readerNotesByTargetKey, record.id, textSelection]);
-  const liveAskAttachment = useMemo(() => {
-    if (!textSelection) {
+  const liveContextAttachment = useMemo(() => {
+    if (!liveContextSelection) {
       return null;
     }
-    return askAttachmentFromSelection(pageIdentity, textSelection, {
+    return askAttachmentFromSelection(pageIdentity, liveContextSelection, {
       sourceSurface: "reader_live_selection",
-      entryAction: textSelection.anchorType === "sentence" ? "explain_this" : "ask_about_this",
+      entryAction: liveContextSelection.anchorType === "sentence" ? "explain_this" : "ask_about_this",
     });
-  }, [pageIdentity, textSelection]);
-  const liveAskAttachmentKey = liveAskAttachment ? askAttachmentKey(liveAskAttachment) : null;
-  useEffect(() => {
-    if (previousLiveAskAttachmentKeyRef.current !== liveAskAttachmentKey) {
-      previousLiveAskAttachmentKeyRef.current = liveAskAttachmentKey;
-      setDismissedLiveAskAttachmentKey(null);
-    }
-  }, [liveAskAttachmentKey]);
-  const askLiveAttachment = useMemo(() => {
-    if (!liveAskAttachment || liveAskAttachmentKey === dismissedLiveAskAttachmentKey) {
-      return null;
-    }
-    return liveAskAttachment;
-  }, [dismissedLiveAskAttachmentKey, liveAskAttachment, liveAskAttachmentKey]);
+  }, [liveContextSelection, pageIdentity]);
   const selectionTargetKey = useMemo(
     () => (textSelection ? targetKeyForSelection(record.id, textSelection) : null),
     [record.id, textSelection],
+  );
+  const liveContextSelectionTargetKey = useMemo(
+    () => (liveContextSelection ? targetKeyForSelection(record.id, liveContextSelection) : null),
+    [liveContextSelection, record.id],
+  );
+  const activeSelectionMatchesLiveContext = Boolean(
+    selectionTargetKey &&
+      liveContextSelectionTargetKey &&
+      selectionTargetKey === liveContextSelectionTargetKey,
   );
   const selectedHighlight = selectedAnnotation?.type === "highlight" ? selectedAnnotation : null;
   const activeAnnotation =
@@ -1910,6 +1918,27 @@ export function ReaderWorkbench({
     },
     [],
   );
+  const openAiWorkspace = useCallback(() => {
+    setAiOpen(true);
+    setComposerTextareaFocused(false);
+    setContextPanelOpen(false);
+    setSentencePopoverAnchorEl(null);
+  }, []);
+  const closeAiWorkspace = useCallback(
+    (options?: { clearSelectionIfLinked?: boolean }) => {
+      setAiOpen(false);
+      setComposerTextareaFocused(false);
+      const shouldClearSelection =
+        Boolean(options?.clearSelectionIfLinked) &&
+        textSelection &&
+        (activeSelectionMatchesLiveContext || textSelectionVisualMode === "context");
+      setLiveContextSelection(null);
+      if (shouldClearSelection) {
+        clearReaderSelection({ preserveDomSelection: true });
+      }
+    },
+    [activeSelectionMatchesLiveContext, clearReaderSelection, textSelection, textSelectionVisualMode],
+  );
 
   const selectionFromSentence = useCallback(
     (sentence: SentenceModel, anchorEl?: HTMLElement | null): Extract<ReaderTextSelection, { anchorType: "sentence" }> => {
@@ -2121,7 +2150,11 @@ export function ReaderWorkbench({
       hoveredAnnotationTargetKey: matchingHighlight?.targetKey ?? null,
       toolbarVisible: Boolean(nextSelection && options?.toolbarVisible),
     });
-  }, [annotations, focusReaderSelection, record.id, sentenceById]);
+    if (aiOpen && nextSelection) {
+      setLiveContextSelection(nextSelection);
+      setComposerTextareaFocused(false);
+    }
+  }, [aiOpen, annotations, focusReaderSelection, record.id, sentenceById]);
 
   const commitDomTextSelection = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -2201,6 +2234,29 @@ export function ReaderWorkbench({
   const selectionFocusRangesBySentence = useMemo(() => {
     const map = new Map<string, ReaderJumpRangeSegment[]>();
     if (!textSelection || textSelectionVisualMode !== "selection") {
+      return map;
+    }
+
+    textSelection.segments.forEach((segment) => {
+      const current = map.get(segment.sentenceId) ?? [];
+      map.set(segment.sentenceId, [
+        ...current,
+        {
+          paragraphId: segment.paragraphId ?? null,
+          sentenceId: segment.sentenceId,
+          selectedText: segment.selectedText,
+          startOffset: segment.startOffset,
+          endOffset: segment.endOffset,
+          textHash: segment.textHash,
+        },
+      ]);
+    });
+
+    return map;
+  }, [textSelection, textSelectionVisualMode]);
+  const contextFocusRangesBySentence = useMemo(() => {
+    const map = new Map<string, ReaderJumpRangeSegment[]>();
+    if (!textSelection || textSelectionVisualMode !== "context") {
       return map;
     }
 
@@ -2483,7 +2539,7 @@ export function ReaderWorkbench({
   }
 
   function focusReaderNote(note: WebReaderNoteVm) {
-    setAiOpen(false);
+    closeAiWorkspace({ clearSelectionIfLinked: true });
     clearReaderSelection({ preserveDomSelection: true });
     setActiveReaderNoteId(note.id);
     setPendingReaderNote(null);
@@ -2556,7 +2612,7 @@ export function ReaderWorkbench({
   ) {
     setSettingsPanelOpen(false);
     setContextPanelOpen(false);
-    setAiOpen(false);
+    closeAiWorkspace({ clearSelectionIfLinked: true });
     setSelectionToolbarVisible(false);
 
     if (existing) {
@@ -2612,7 +2668,7 @@ export function ReaderWorkbench({
     }
     setContextPanelOpen(false);
     setSentencePopoverAnchorEl(null);
-    setAiOpen(false);
+    closeAiWorkspace({ clearSelectionIfLinked: true });
     setSelectionToolbarVisible(false);
     setNotePanelOpen(true);
 
@@ -2831,8 +2887,12 @@ export function ReaderWorkbench({
   }
 
   function removeAskAttachment(attachmentKey: string) {
-    if (liveAskAttachmentKey && attachmentKey === liveAskAttachmentKey) {
-      setDismissedLiveAskAttachmentKey(attachmentKey);
+    if (liveContextAttachment && attachmentKey === askAttachmentKey(liveContextAttachment)) {
+      setLiveContextSelection(null);
+      setComposerTextareaFocused(false);
+      if (activeSelectionMatchesLiveContext) {
+        clearReaderSelection({ preserveDomSelection: true });
+      }
       return;
     }
     setAskAttachments((current) => current.filter((attachment) => askAttachmentKey(attachment) !== attachmentKey));
@@ -2847,9 +2907,8 @@ export function ReaderWorkbench({
       return;
     }
     appendAskAttachments(nextAttachments);
-    setContextPanelOpen(false);
-    setSentencePopoverAnchorEl(null);
-    setAiOpen(true);
+    setLiveContextSelection(null);
+    openAiWorkspace();
   }
 
   function openAskWithSelection() {
@@ -2857,10 +2916,8 @@ export function ReaderWorkbench({
       return;
     }
     setActiveSentence(textSelection.sentence);
-    setDismissedLiveAskAttachmentKey(null);
-    setContextPanelOpen(false);
-    setSentencePopoverAnchorEl(null);
-    setAiOpen(true);
+    setLiveContextSelection(textSelection);
+    openAiWorkspace();
   }
 
   function triggerAskQuickAction(config: {
@@ -2880,10 +2937,47 @@ export function ReaderWorkbench({
       entryAction: config.entryAction,
       attachments: [config.attachment],
     });
-    setDismissedLiveAskAttachmentKey(null);
-    setContextPanelOpen(false);
-    setSentencePopoverAnchorEl(null);
-    setAiOpen(true);
+    setLiveContextSelection(null);
+    openAiWorkspace();
+  }
+
+  function activateLiveContextSelection() {
+    if (!liveContextSelection) {
+      return;
+    }
+    setComposerTextareaFocused(false);
+    focusReaderSelection(liveContextSelection, {
+      source: "programmatic",
+      visualMode: "selection",
+      toolbarVisible: true,
+    });
+  }
+
+  function handleComposerTextareaFocus() {
+    setComposerTextareaFocused(true);
+    if (!liveContextSelection) {
+      return;
+    }
+    focusReaderSelection(liveContextSelection, {
+      source: "programmatic",
+      visualMode: "context",
+      toolbarVisible: false,
+    });
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function handleComposerTextareaBlur() {
+    setComposerTextareaFocused(false);
+  }
+
+  function handleAiPanelPointerDownOutsideComposer() {
+    if (!composerTextareaFocused && !textSelection) {
+      return;
+    }
+    setComposerTextareaFocused(false);
+    if (textSelection) {
+      clearReaderSelection({ preserveDomSelection: true });
+    }
   }
 
   function openAskWithSentenceContext() {
@@ -3049,13 +3143,13 @@ export function ReaderWorkbench({
     if (nextSelection) {
       setContextPanelOpen(false);
       setSentencePopoverAnchorEl(null);
-      focusReaderSelection(nextSelection, {
-        openHighlightPalette: annotation.type === "highlight",
-        visualMode: annotation.type === "highlight" ? "annotation_hover" : "selection",
-        activeAnnotationTargetKey: annotation.targetKey,
-        hoveredAnnotationTargetKey: annotation.targetKey,
-        toolbarVisible: false,
-      });
+        focusReaderSelection(nextSelection, {
+          openHighlightPalette: annotation.type === "highlight",
+          visualMode: annotation.type === "highlight" ? "annotation_hover" : "selection",
+          activeAnnotationTargetKey: annotation.targetKey,
+          hoveredAnnotationTargetKey: annotation.targetKey,
+          toolbarVisible: annotation.type === "highlight",
+        });
       window.requestAnimationFrame(() => {
         articleRef.current
           ?.querySelector<HTMLElement>(`#reader-sentence-${CSS.escape(nextSelection.sentence.sentenceId)}`)
@@ -3157,14 +3251,11 @@ export function ReaderWorkbench({
   }
 
   function toggleAiWorkspace() {
-    setAiOpen((value) => {
-      const nextValue = !value;
-      if (nextValue) {
-        setContextPanelOpen(false);
-        setSentencePopoverAnchorEl(null);
-      }
-      return nextValue;
-    });
+    if (aiOpen) {
+      closeAiWorkspace({ clearSelectionIfLinked: true });
+      return;
+    }
+    openAiWorkspace();
   }
 
   function closeContextPanel() {
@@ -3250,23 +3341,13 @@ export function ReaderWorkbench({
     : undefined;
   const shellModeClass = isImmersiveMode ? "reader-shell--immersive" : "reader-shell--intensive";
 
-  const headerShellClass = `reader-header-band reader-header-band--immersive sticky top-3 z-20 bg-background/88 backdrop-blur transition-[padding,background-color,border-color,box-shadow,transform] border-b-0 ${
-    immersiveHeaderCondensed
-      ? "px-5 py-3 shadow-[0_12px_28px_rgba(28,24,18,0.08)] sm:px-6 lg:px-8 border-b border-hairline/90"
-      : "px-5 py-6 sm:px-8 lg:px-10 lg:py-8 shadow-none reader-header-band--clean"
-  }`;
+  const headerShellClass = `reader-header-band reader-header-band--immersive sticky top-3 z-20 bg-background/88 backdrop-blur transition-[padding,background-color,border-color,box-shadow,transform] border-b-0 px-5 py-6 sm:px-8 lg:px-10 lg:py-8 shadow-none reader-header-band--clean ${isImmersiveMode && immersiveHeaderHidden ? "reader-header-band--hidden" : ""}`;
   const headerTitleClass = isImmersiveMode
-    ? `font-headline font-semibold tracking-[-0.02em] text-ink transition-[font-size,max-width,margin] ${
-        immersiveHeaderCondensed
-          ? "mt-1 max-w-[28ch] text-[1.55rem] leading-[1.02] md:text-[1.9rem]"
-          : "mt-3 max-w-[20ch] text-[3rem] leading-[0.94] md:text-[4.35rem]"
-      }`
+    ? `font-headline font-semibold tracking-[-0.02em] text-ink transition-[font-size,max-width,margin] mt-3 max-w-[20ch] text-[3rem] leading-[0.94] md:text-[4.35rem]`
     : "mt-2 max-w-[24ch] font-headline text-3xl font-semibold leading-tight tracking-normal text-ink md:text-[2.35rem]";
   const headerMetaClass = `flex flex-wrap items-center gap-2 text-muted transition-[opacity,max-height,margin] ${
     isImmersiveMode
-      ? immersiveHeaderCondensed
-        ? "mt-2 max-h-0 overflow-hidden opacity-0"
-        : "mt-4 max-h-16 text-[0.74rem] opacity-100"
+      ? "mt-4 max-h-16 text-[0.74rem] opacity-100"
       : "mt-3 text-xs opacity-100"
   }`;
   const headerEyebrowClass = isImmersiveMode
@@ -3391,57 +3472,10 @@ export function ReaderWorkbench({
           }}
         >
           <header className={headerShellClass}>
-            {immersiveHeaderCondensed ? (
-              <div
-                ref={readingColumnRef}
-                className="reader-header-band-inner mx-auto flex max-w-[82ch] w-full items-center justify-between py-2"
-              >
-                <div className="flex items-center gap-3">
-                  <p className="text-[0.8rem] font-semibold tracking-wide">
-                    <span className="text-lens-blue">
-                      {isImmersiveMode ? "沉浸阅读" : "精读模式"}
-                    </span>
-                    <span className="text-muted/60 mx-1.5">·</span>
-                    <span className="text-ink font-bold font-headline line-clamp-1 max-w-[20ch] md:max-w-[40ch]">
-                      {record.title}
-                    </span>
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 bg-surface-warm/50 border border-hairline/80 rounded-xl p-0.5 divide-x divide-hairline">
-                  <button
-                    type="button"
-                    onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "intensive" })}
-                    className={`focus-ring flex items-center justify-center px-3 py-1.5 text-[0.8rem] font-semibold rounded-lg transition-colors cursor-pointer ${
-                      readerSettings.mode === "intensive" ? "text-vocab-amber bg-background shadow-[0_2px_6px_rgba(0,0,0,0.04)]" : "text-muted hover:text-ink"
-                    }`}
-                  >
-                    精读
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "immersive" })}
-                    className={`focus-ring flex items-center justify-center px-3 py-1.5 text-[0.8rem] font-semibold rounded-lg transition-colors cursor-pointer ${
-                      readerSettings.mode === "immersive" ? "text-vocab-amber bg-background shadow-[0_2px_6px_rgba(0,0,0,0.04)]" : "text-muted hover:text-ink"
-                    }`}
-                  >
-                    沉浸
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openSettingsPanel}
-                    className={`focus-ring flex items-center justify-center px-3 py-1.5 text-[0.8rem] font-semibold rounded-lg transition-colors cursor-pointer ${
-                      settingsPanelOpen ? "text-vocab-amber bg-background shadow-[0_2px_6px_rgba(0,0,0,0.04)]" : "text-muted hover:text-ink"
-                    }`}
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div
-                ref={readingColumnRef}
-                className="reader-header-band-inner mx-auto flex max-w-[82ch] w-full flex-col gap-6 lg:gap-8"
-              >
+            <div
+              ref={readingColumnRef}
+              className="reader-header-band-inner mx-auto flex max-w-[82ch] w-full flex-col gap-6 lg:gap-8"
+            >
                 {/* 1. Eyebrow */}
                 <div className="flex items-center gap-1.5 text-[0.8rem] font-semibold tracking-wide leading-none">
                   <span className="text-lens-blue">
@@ -3494,11 +3528,13 @@ export function ReaderWorkbench({
                     <button
                       type="button"
                       onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "intensive" })}
-                      className={`focus-ring relative flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
+                      className={cn(
+                        readerCommandControl,
+                        "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
                         readerSettings.mode === "intensive"
                           ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
-                          : "text-ink hover:text-ink-soft"
-                      }`}
+                          : "text-ink hover:text-ink-soft",
+                      )}
                     >
                       <BookOpen
                         aria-hidden="true"
@@ -3517,11 +3553,13 @@ export function ReaderWorkbench({
                     <button
                       type="button"
                       onClick={() => handleReaderSettingsChange({ ...readerSettings, mode: "immersive" })}
-                      className={`focus-ring relative flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
+                      className={cn(
+                        readerCommandControl,
+                        "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
                         readerSettings.mode === "immersive"
                           ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
-                          : "text-ink hover:text-ink-soft"
-                      }`}
+                          : "text-ink hover:text-ink-soft",
+                      )}
                     >
                       <Eye
                         aria-hidden="true"
@@ -3543,11 +3581,13 @@ export function ReaderWorkbench({
                       aria-expanded={settingsPanelOpen}
                       aria-haspopup="dialog"
                       onClick={openSettingsPanel}
-                      className={`focus-ring relative flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
+                      className={cn(
+                        readerCommandControl,
+                        "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
                         settingsPanelOpen
                           ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
-                          : "text-ink hover:text-ink-soft"
-                      }`}
+                          : "text-ink hover:text-ink-soft",
+                      )}
                     >
                       <SlidersHorizontal
                         aria-hidden="true"
@@ -3606,7 +3646,6 @@ export function ReaderWorkbench({
                   </div>
                 </div>
               </div>
-            )}
 
             {message ? (
               <div className={`reader-shell-message mx-auto mt-5 ${readingColumnClass} rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft`}>
@@ -3626,6 +3665,7 @@ export function ReaderWorkbench({
                   jumpTarget={jumpTarget}
                   focusTarget={focusedReaderNoteTarget}
                   selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+                  contextFocusRangesBySentence={contextFocusRangesBySentence}
                   hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
                   assetProjection={assetProjection}
                   readerNotesBySentence={readerNotesBySentence}
@@ -3657,6 +3697,7 @@ export function ReaderWorkbench({
                   jumpTarget={jumpTarget}
                   focusTarget={focusedReaderNoteTarget}
                   selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+                  contextFocusRangesBySentence={contextFocusRangesBySentence}
                   hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
                   assetProjection={assetProjection}
                   readerNotesBySentence={readerNotesBySentence}
@@ -3911,7 +3952,7 @@ export function ReaderWorkbench({
           recordTitle={record.title}
           pageIdentity={pageIdentity}
           attachments={askAttachments}
-          liveAttachment={askLiveAttachment}
+          liveContextAttachment={liveContextAttachment}
           pendingQuickActionRequest={pendingAskQuickAction}
           hideLauncherOnMobile={Boolean(dictionaryPanelVisible)}
           hideLauncherInCompactLayout={Boolean(dictionaryPanelVisible)}
@@ -3923,6 +3964,10 @@ export function ReaderWorkbench({
           onActionExecuted={handleAskActionExecuted}
           onSupplementDeleted={deleteAnalysisSupplement}
           onPendingQuickActionConsumed={() => setPendingAskQuickAction(null)}
+          onActivateLiveContextSelection={activateLiveContextSelection}
+          onComposerTextareaFocus={handleComposerTextareaFocus}
+          onComposerTextareaBlur={handleComposerTextareaBlur}
+          onPanelPointerDownOutsideComposer={handleAiPanelPointerDownOutsideComposer}
           onToggle={toggleAiWorkspace}
         />
       ) : null}

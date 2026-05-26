@@ -180,11 +180,17 @@ export function readerModeTypography({
         : "reader-font-editorial";
 
   const bodySizeClass =
-    fontScale === "sm"
-      ? "text-[1.05rem] sm:text-[1.16rem]"
-      : fontScale === "lg"
-        ? "text-[1.24rem] sm:text-[1.4rem]"
-        : "text-[1.14rem] sm:text-[1.28rem]";
+    mode === "immersive"
+      ? fontScale === "sm"
+        ? "text-[1.02rem] sm:text-[1.12rem]"
+        : fontScale === "lg"
+          ? "text-[1.2rem] sm:text-[1.36rem]"
+          : "text-[1.1rem] sm:text-[1.24rem]"
+      : fontScale === "sm"
+        ? "text-[1.05rem] sm:text-[1.16rem]"
+        : fontScale === "lg"
+          ? "text-[1.24rem] sm:text-[1.4rem]"
+          : "text-[1.14rem] sm:text-[1.28rem]";
 
   const translationSizeClass =
     fontScale === "sm"
@@ -195,12 +201,14 @@ export function readerModeTypography({
 
   return {
     bodyClassName: `${fontClass} text-ink ${bodySizeClass} ${
-      mode === "immersive" ? "leading-[1.84]" : "leading-[1.76]"
+      mode === "immersive"
+        ? "leading-[1.86] tracking-[0.002em] text-ink/95"
+        : "leading-[1.85] tracking-[0.001em] text-ink/96"
     }`,
     translationClassName: `reader-font-sans ${translationSizeClass} ${
-      mode === "immersive" ? "leading-[1.7]" : "leading-[1.62]"
+      mode === "immersive" ? "leading-[1.66]" : "leading-[1.7] tracking-[0.006em]"
     }`,
-    columnClassName: mode === "immersive" ? "max-w-[82ch]" : "max-w-[72ch]",
+    columnClassName: mode === "immersive" ? "max-w-[68ch]" : "max-w-[69ch]",
     paragraphDensityClassName:
       mode === "immersive" ? "reader-density-immersive" : "reader-density-intensive",
   };

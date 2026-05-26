@@ -43,6 +43,7 @@ interface ImmersiveReaderSurfaceProps {
   paragraphDensityClassName?: string;
   themeClassName?: string;
   selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
+  contextFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpTarget?: ReaderJumpTarget | null;
   focusTarget?: ReaderJumpTarget | null;
   hoveredAnnotationTargetKey?: string | null;
@@ -114,10 +115,10 @@ function ImmersiveSentenceTextElement({
   readingClassName,
   sourceContext,
 }: {
+  leadSentence?: boolean;
   props: Parameters<RenderElement>[0];
   readingClassName: string;
   sourceContext?: string;
-  leadSentence?: boolean;
   onLookupIntent?: (
     intent: ReaderLookupIntent,
     anchor: ReaderLookupPreviewAnchor | null,
@@ -228,7 +229,11 @@ function ImmersiveReaderParagraphElement({
           ) : null}
         </button>
       ) : null}
-      <div className="reader-immersive-paragraph-copy">{props.children}</div>
+      <div
+        className={`reader-immersive-paragraph-copy ${isLead ? "reader-immersive-paragraph-copy--lead" : ""}`.trim()}
+      >
+        {props.children}
+      </div>
     </section>
   );
 }
@@ -236,10 +241,11 @@ function ImmersiveReaderParagraphElement({
 export function ImmersiveReaderSurface({
   document,
   readingClassName,
-  columnClassName = "max-w-[82ch]",
+  columnClassName = "max-w-[68ch]",
   paragraphDensityClassName = "reader-density-immersive",
   themeClassName,
   selectionFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
+  contextFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   jumpTarget = null,
   focusTarget = null,
   hoveredAnnotationTargetKey = null,
@@ -446,9 +452,9 @@ export function ImmersiveReaderSurface({
           return (
             <ImmersiveSentenceTextElement
               props={props}
+              leadSentence={Boolean(sentenceLayout?.isLead)}
               readingClassName={readingClassName}
               sourceContext={sourceContextBySentence.get(element.sentenceId)}
-              leadSentence={Boolean(sentenceLayout?.isLead)}
               onLookupIntent={onLookupIntent}
             />
           );
@@ -489,6 +495,7 @@ export function ImmersiveReaderSurface({
         analysisSegmentsBySentence={new Map()}
         jumpFocusRangesBySentence={jumpFocusRangesBySentence}
         selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+        contextFocusRangesBySentence={contextFocusRangesBySentence}
         noteFocusRangesBySentence={noteFocusRangesBySentence}
         hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
@@ -507,6 +514,7 @@ export function ImmersiveReaderSurface({
       onInspectIntent,
       onLookupIntent,
       selectionFocusRangesBySentence,
+      contextFocusRangesBySentence,
       sentenceTextBySentence,
       sourceContextBySentence,
     ],
@@ -514,7 +522,7 @@ export function ImmersiveReaderSurface({
 
   return (
     <div
-      className={`reader-immersive-stage px-5 py-7 sm:px-8 lg:px-10 lg:py-10 ${themeClassName ?? ""} ${paragraphDensityClassName}`.trim()}
+      className={`reader-immersive-stage px-5 py-8 sm:px-8 sm:py-9 lg:px-10 lg:py-12 ${themeClassName ?? ""} ${paragraphDensityClassName}`.trim()}
     >
       <div className={`mx-auto ${columnClassName}`.trim()}>
         <Plate editor={editor} readOnly>
@@ -522,7 +530,7 @@ export function ImmersiveReaderSurface({
             <Editor
               readOnly
               disableDefaultStyles
-              className="space-y-9 px-0 py-0 outline-none"
+              className="space-y-0 px-0 py-0 outline-none"
               renderElement={renderElement as never}
               renderLeaf={renderLeaf as never}
             />

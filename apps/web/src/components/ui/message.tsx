@@ -58,7 +58,7 @@ function MessageContent({
   ...props
 }: MessageContentProps) {
   const classNames = cn(
-    "break-words whitespace-normal rounded-[20px] border border-hairline/80 bg-[rgba(255,255,255,0.9)] px-4 py-3 text-ink-soft shadow-[0_14px_34px_rgba(17,17,17,0.05)]",
+    "break-words whitespace-normal rounded-[20px] border border-hairline/80 bg-surface dark:bg-[#252a30] px-4 py-3 text-ink-soft shadow-[0_14px_34px_rgba(17,17,17,0.05)] dark:shadow-[0_14px_34px_rgba(0,0,0,0.18)]",
     className,
   );
 

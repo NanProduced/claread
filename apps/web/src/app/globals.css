@@ -897,8 +897,7 @@ select {
 }
 
 .reader-settings-option,
-.reader-settings-chip,
-.reader-settings-dismiss {
+.reader-settings-chip {
   transition:
     transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
     border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -909,14 +908,12 @@ select {
 }
 
 .reader-settings-option:hover,
-.reader-settings-chip:hover,
-.reader-settings-dismiss:hover {
+.reader-settings-chip:hover {
   transform: translateY(-1px);
 }
 
 .reader-settings-option:active,
-.reader-settings-chip:active,
-.reader-settings-dismiss:active {
+.reader-settings-chip:active {
   transform: translateY(0) scale(0.985);
 }
 
@@ -1108,17 +1105,14 @@ select {
   }
 
   .reader-settings-option,
-  .reader-settings-chip,
-  .reader-settings-dismiss {
+  .reader-settings-chip {
     transition: none !important;
   }
 
   .reader-settings-option:hover,
   .reader-settings-chip:hover,
-  .reader-settings-dismiss:hover,
   .reader-settings-option:active,
-  .reader-settings-chip:active,
-  .reader-settings-dismiss:active {
+  .reader-settings-chip:active {
     transform: none !important;
   }
 }
@@ -1301,78 +1295,6 @@ select {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
 }
 
-.reader-dictionary-primary-button {
-  background:
-    linear-gradient(180deg, rgba(34, 34, 34, 0.98), rgba(17, 17, 17, 1)),
-    var(--ink);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 12px 24px rgba(17, 17, 17, 0.18);
-  transition:
-    transform 160ms ease,
-    box-shadow 160ms ease,
-    background-color 160ms ease,
-    opacity 160ms ease;
-}
-
-.reader-dictionary-primary-button:hover {
-  transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 16px 28px rgba(17, 17, 17, 0.22);
-}
-
-.reader-dictionary-inline-action {
-  border-color: rgba(232, 228, 218, 0.92);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 249, 246, 0.96)),
-    var(--surface);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.76),
-    0 6px 16px rgba(17, 17, 17, 0.05);
-  color: var(--muted);
-  transition:
-    transform 160ms ease,
-    border-color 160ms ease,
-    background-color 160ms ease,
-    box-shadow 160ms ease,
-    color 160ms ease,
-    opacity 160ms ease;
-}
-
-.reader-dictionary-inline-action:hover {
-  transform: translateY(-1px);
-  border-color: rgba(98, 101, 109, 0.26);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    0 10px 20px rgba(17, 17, 17, 0.08);
-  color: var(--ink);
-}
-
-.reader-dictionary-inline-action--accent {
-  border-color: rgba(37, 99, 235, 0.18);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(234, 241, 255, 0.94)),
-    var(--lens-blue-soft);
-  color: var(--lens-blue);
-}
-
-.reader-dictionary-inline-action--saved {
-  border-color: rgba(60, 140, 104, 0.18);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(239, 248, 244, 0.96)),
-    rgba(60, 140, 104, 0.08);
-  color: var(--structure-green);
-}
-
-.reader-dictionary-inline-action--error {
-  border-color: rgba(190, 18, 60, 0.16);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 243, 246, 0.96)),
-    rgba(190, 18, 60, 0.06);
-  color: var(--error-red);
-}
-
 .reader-paragraph {
   position: relative;
   display: grid;
@@ -1482,15 +1404,16 @@ select {
   display: inline;
 }
 
-.reader-immersive-sentence-text--lead::first-letter {
+.reader-immersive-paragraph-copy--lead::first-letter {
   float: left;
-  margin-right: 0.14em;
-  padding-top: 0.1em;
+  margin-right: 0.12em;
+  margin-top: 0.05em;
+  padding-bottom: 0.02em;
   color: var(--ink);
   font-family: var(--font-reading);
   font-size: 3.75em;
   font-weight: 640;
-  line-height: 0.8;
+  line-height: 0.82;
 }
 
 .reader-immersive-sentence--route-focused {
@@ -1984,6 +1907,15 @@ select {
   text-decoration: none !important;
 }
 
+.reader-mark--context-muted {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  color: rgba(17, 17, 17, 0.76) !important;
+}
+
 .reader-sentence--user-highlight {
   /* Box visual shadows stripped to maintain pure text flow */
 }
@@ -2020,6 +1952,11 @@ select {
 .reader-analysis-atom--selection-muted {
   --analysis-fill: transparent;
   color: inherit;
+}
+
+.reader-analysis-atom--context-muted {
+  --analysis-fill: transparent;
+  color: rgba(17, 17, 17, 0.76);
 }
 
 .reader-analysis-atom--1,
@@ -2340,7 +2277,6 @@ select {
 
 .group\/analysis:hover .reader-entry-note-toggle,
 .group\/analysis:focus-within .reader-entry-note-toggle {
-  border-color: rgba(98, 101, 109, 0.2);
   color: var(--ink);
 }
 
@@ -2599,6 +2535,14 @@ select {
   box-shadow: none !important;
 }
 
+.reader-user-range--context-muted {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  color: rgba(17, 17, 17, 0.76) !important;
+}
+
 .reader-user-range--warm-yellow:hover,
 .reader-user-range--warm-yellow.reader-user-range--hovered-group,
 .reader-user-range--warm-yellow.reader-mark--entry-active {
@@ -2711,6 +2655,13 @@ select {
 
 .reader-selection-focus-range {
   background: var(--reader-selection-highlight);
+  color: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.reader-context-focus-range {
+  background: rgba(120, 124, 132, 0.18);
   color: inherit;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
@@ -2947,7 +2898,7 @@ select {
     transform: translateX(-0.08rem) scale(0.92);
   }
 
-  .reader-immersive-sentence-text--lead::first-letter {
+  .reader-immersive-paragraph-copy--lead::first-letter {
     font-size: 3.4em;
   }
 
@@ -2974,4 +2925,239 @@ select {
   .reader-annotation-slip {
     padding: 0.68rem 0.78rem;
   }
+}
+
+/* Claread Visual Refinement - Immersion & Translation Improvements */
+.reader-translation-copy {
+  font-size: 0.84rem !important;
+  font-weight: 380 !important;
+  line-height: 1.62 !important;
+  color: color-mix(in srgb, var(--ink) 54%, transparent) !important;
+  letter-spacing: 0.01em !important;
+  text-indent: 0 !important; /* Ensure translation never indents first line */
+}
+
+/* Header Auto-hide transition */
+.reader-header-band--hidden {
+  transform: translateY(-135%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.reader-header-band {
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 320ms cubic-bezier(0.22, 1, 0.36, 1), padding 300ms ease, background-color 300ms ease, box-shadow 300ms ease !important;
+}
+
+/* Claread Visual Refinement - Quieter Immersive Annotations */
+.reader-shell--immersive .reader-mark--vocab,
+.reader-shell--immersive .reader-mark--phrase,
+.reader-shell--immersive .reader-mark--context,
+.reader-shell--immersive .reader-mark--term,
+.reader-shell--immersive .reader-mark--logic {
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  border-bottom: 1px dotted color-mix(in srgb, var(--ink) 25%, transparent) !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.reader-shell--immersive .reader-mark--vocab.reader-mark--interactive:hover {
+  background-color: rgba(246, 214, 122, 0.12) !important;
+  color: rgb(140, 108, 18) !important;
+  border-bottom-color: rgba(246, 214, 122, 0.5) !important;
+}
+
+.reader-shell--immersive .reader-mark--phrase.reader-mark--interactive:hover {
+  background-color: rgba(208, 191, 244, 0.12) !important;
+  color: rgb(106, 78, 168) !important;
+  border-bottom-color: rgba(208, 191, 244, 0.5) !important;
+}
+
+.reader-shell--immersive .reader-mark--context.reader-mark--interactive:hover {
+  background-color: rgba(165, 208, 239, 0.12) !important;
+  color: rgb(38, 105, 153) !important;
+  border-bottom-color: rgba(165, 208, 239, 0.5) !important;
+}
+
+.reader-shell--immersive .reader-mark--term.reader-mark--interactive:hover {
+  background-color: rgba(60, 140, 104, 0.08) !important;
+  color: rgb(39, 108, 77) !important;
+  border-bottom-color: rgba(60, 140, 104, 0.4) !important;
+}
+
+.reader-shell--immersive .reader-mark--logic.reader-mark--interactive:hover {
+  background-color: rgba(37, 99, 235, 0.06) !important;
+  color: rgb(37, 99, 235) !important;
+  border-bottom-color: rgba(37, 99, 235, 0.4) !important;
+}
+
+.reader-shell--immersive .reader-mark--grammar,
+.reader-shell--immersive .reader-mark--grammar-segment {
+  background-image: none !important;
+  background-color: transparent !important;
+  border-bottom: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent) !important;
+  padding-bottom: 0 !important;
+  color: inherit !important;
+}
+
+.reader-shell--immersive .reader-mark--grammar.reader-mark--grammar-linked,
+.reader-shell--immersive .reader-mark--grammar.reader-mark--grammar-pinned {
+  background-color: rgba(95, 78, 138, 0.06) !important;
+  border-bottom: 1.5px solid rgba(95, 78, 138, 0.38) !important;
+  color: rgb(95, 78, 138) !important;
+}
+
+/* Quieter User Highlights in Immersive Mode */
+.reader-shell--immersive .reader-user-range {
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background-color: var(--immersive-user-highlight, rgba(246, 214, 122, 0.12)) !important;
+  border-bottom: 1px solid rgba(228, 176, 0, 0.22) !important;
+  padding-inline: 0.05em !important;
+  margin-inline: -0.05em !important;
+  border-radius: 2px !important;
+}
+
+.reader-shell--immersive .reader-user-range--soft-green {
+  --immersive-user-highlight: rgba(167, 243, 208, 0.12) !important;
+  border-bottom-color: rgba(52, 211, 153, 0.28) !important;
+}
+
+.reader-shell--immersive .reader-user-range--soft-blue {
+  --immersive-user-highlight: rgba(191, 219, 254, 0.12) !important;
+  border-bottom-color: rgba(96, 165, 250, 0.28) !important;
+}
+
+.reader-shell--immersive .reader-user-range--soft-purple {
+  --immersive-user-highlight: rgba(233, 213, 255, 0.12) !important;
+  border-bottom-color: rgba(192, 132, 252, 0.28) !important;
+}
+
+.reader-shell--immersive .reader-user-range--warm-yellow {
+  --immersive-user-highlight: rgba(254, 243, 199, 0.14) !important;
+  border-bottom-color: rgba(251, 191, 36, 0.28) !important;
+}
+
+/* Claread Visual Refinement - Intensive Mode Typography & Rhythm */
+.reader-shell--intensive .reader-sentence-shell {
+  margin-top: 1.68rem !important;
+}
+
+.reader-shell--intensive .reader-sentence-shell:first-of-type {
+  margin-top: 0 !important;
+}
+
+.reader-shell--intensive .reader-translation-layer {
+  margin-top: 0.96rem !important;
+}
+
+.reader-shell--intensive .reader-translation-copy {
+  font-size: 0.85rem !important;
+  font-weight: 380 !important;
+  line-height: 1.68 !important;
+  color: color-mix(in srgb, var(--ink) 48%, transparent) !important;
+}
+
+/* Balance vertical margins for grammar/analysis card blocks in Intensive Mode to prevent visual cramping */
+.reader-shell--intensive .reader-entry-note {
+  margin-top: 1.4rem !important;
+  margin-bottom: 1.5rem !important;
+}
+
+/* Claread Visual Refinement - Bolder Layout Analysis Card Chunks */
+.reader-entry-note-body {
+  border-top-color: color-mix(in srgb, var(--hairline) 68%, transparent) !important;
+  padding-top: 1.25rem !important;
+}
+
+.reader-entry-analysis-list {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+}
+
+.reader-entry-analysis-item {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 0.3rem !important;
+  border: none !important;
+  background-color: transparent !important;
+  border-radius: 0.5rem !important;
+  padding: 0.55rem 0.75rem !important;
+  margin-top: 0 !important;
+  box-shadow: none !important;
+  transition: background-color 180ms ease, opacity 180ms ease !important;
+}
+
+.reader-entry-analysis-item:hover,
+.reader-entry-analysis-item.reader-entry-analysis-item--active {
+  background-color: color-mix(in srgb, var(--analysis-accent) 4.5%, transparent) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.reader-entry-analysis-item + .reader-entry-analysis-item {
+  border-top: 1px dashed color-mix(in srgb, var(--hairline) 62%, transparent) !important;
+  padding-top: 0.7rem !important;
+  margin-top: 0.2rem !important;
+}
+
+.reader-entry-analysis-header {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.45rem !important;
+}
+
+.reader-analysis-row-index {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+  font-family: var(--font-sans) !important;
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  background-color: transparent !important;
+  color: color-mix(in srgb, var(--analysis-accent) 70%, var(--ink-soft)) !important;
+  box-shadow: none !important;
+}
+
+.reader-entry-analysis-label {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  color: color-mix(in srgb, var(--analysis-accent) 80%, var(--ink)) !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+  width: fit-content !important;
+  line-height: 1.25 !important;
+}
+
+.reader-entry-analysis-text {
+  font-size: 0.98rem !important;
+  font-weight: 600 !important;
+  color: var(--ink) !important;
+  line-height: 1.56 !important;
+  padding-left: 1.7rem !important;
+}
+
+.reader-entry-analysis-text span.block {
+  margin-bottom: 0 !important;
+}
+
+.reader-entry-analysis-text span.font-semibold {
+  font-weight: 700 !important;
+  font-size: 1.0rem !important;
+  letter-spacing: -0.01em !important;
 }

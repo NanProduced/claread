@@ -3,7 +3,6 @@
 import {
   ArrowUp,
   BookPlus,
-  Bot,
   ChevronDown,
   Copy,
   FileText,
@@ -12,6 +11,7 @@ import {
   MessageSquare,
   PencilLine,
   Plus,
+  Quote,
   RotateCcw,
   Search,
   Sparkles,
@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import type { Components } from "react-markdown";
 import { Button } from "@/components/ui/button";
 import {
   ChatContainerContent,
@@ -32,6 +32,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Loader } from "@/components/ui/loader";
 import { Markdown } from "@/components/ui/markdown";
 import { Message as ChatMessage, MessageContent } from "@/components/ui/message";
 import {
@@ -39,9 +40,15 @@ import {
   PromptInputActions,
   PromptInputTextarea,
 } from "@/components/ui/prompt-input";
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ui/reasoning";
 import { Tool, type ToolPart } from "@/components/ui/tool";
 import { IconButton } from "@/components/primitives/icon-button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
+import {
+  readerCommandControl,
+  readerPanelItem,
+  readerTransitionStandard,
+} from "@/components/reader/interaction";
 import { SentenceEntryCard } from "@/components/reader/SentenceEntryCard";
 import { cn } from "@/lib/cn";
 import {
@@ -95,6 +102,35 @@ type ErrorEnvelope = {
 const IS_DEV = process.env.NODE_ENV !== "production";
 const SHOW_ASK_DEBUG_DISCLOSURES = process.env.NEXT_PUBLIC_ASK_CLAREAD_DEBUG === "true";
 const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
+const workspaceDisclosureTriggerClassName = cn(
+  readerPanelItem,
+  "w-full justify-between rounded-[14px] px-3.5 py-3 text-left",
+);
+const workspaceRelatedRecordItemClassName = cn(
+  readerPanelItem,
+  "w-full justify-between rounded-[12px] px-2.5 py-2 text-left",
+);
+const workspaceCitationButtonClassName = cn(
+  readerPanelItem,
+  "w-full rounded-[14px] bg-surface/60 dark:bg-surface/40 px-3 py-2.5 text-left",
+);
+const workspaceMessageActionClassName = cn(
+  "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted/68 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)]",
+  "hover:text-ink active:text-ink focus-visible:text-ink",
+  "[&_svg]:stroke-[1.9] hover:[&_svg]:stroke-[2.35] focus-visible:[&_svg]:stroke-[2.35]",
+);
+const workspaceRoundPanelActionClassName = cn(readerPanelItem, "h-8 w-8 rounded-full");
+const workspaceSendButtonClassName = cn(
+  readerCommandControl,
+  "h-8 w-8 rounded-full bg-ink text-surface hover:bg-ink/92 active:bg-ink/85 disabled:opacity-30",
+);
+const workspaceLauncherClassName = cn(
+  readerCommandControl,
+  "group fixed bottom-[5.25rem] right-4 z-40 h-14 w-14 rounded-full border border-hairline/85",
+  "bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink shadow-[0_14px_34px_rgba(17,17,17,0.08)] hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:bg-[linear-gradient(180deg,rgba(246,243,236,0.98),rgba(241,237,227,1))] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)]",
+  "dark:bg-[linear-gradient(180deg,rgba(42,47,53,0.96),rgba(30,34,39,0.98))] dark:text-ink dark:shadow-[0_14px_34px_rgba(0,0,0,0.28)] dark:hover:border-muted dark:hover:bg-[#2a2f35] dark:active:bg-[linear-gradient(180deg,rgba(38,43,49,0.98),rgba(28,32,37,1))] dark:active:shadow-[0_10px_24px_rgba(0,0,0,0.22)]",
+  "md:bottom-6 md:right-6",
+);
 type StarterMode = "record" | "sentence" | "selection";
 
 const STARTER_CONTENT: Record<
@@ -178,6 +214,63 @@ type ReaderAskQuickActionRequest = {
   content: string;
   entryAction: ReaderAskEntryActionDto;
   attachments: ReaderAskAttachment[];
+};
+
+const ASK_MARKDOWN_COMPONENTS: Partial<Components> = {
+  h2: ({ children }) => (
+    <h2 className="mt-7 text-[1rem] font-semibold leading-7 tracking-[-0.02em] text-ink first:mt-0">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="mt-4 text-[0.95rem] font-semibold leading-6 text-ink-soft first:mt-0">
+      {children}
+    </h3>
+  ),
+  p: ({ children }) => <p className="my-0 text-[14.5px] leading-[1.76] text-ink-soft">{children}</p>,
+  ul: ({ children }) => (
+    <ul className="my-2.5 space-y-2 pl-4 text-[14.5px] leading-[1.72] text-ink-soft marker:text-[0.9em] marker:text-muted">
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="my-2.5 space-y-2 pl-4 text-[14.5px] leading-[1.72] text-ink-soft marker:font-medium marker:text-muted">
+      {children}
+    </ol>
+  ),
+  li: ({ children }) => (
+    <li className="[&>p]:my-0 [&>p+p]:mt-1.5 [&>ul]:mt-2 [&>ol]:mt-2">
+      {children}
+    </li>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="my-2.5 text-[13.5px] leading-[1.68] text-muted">
+      {children}
+    </blockquote>
+  ),
+  table: ({ children }) => (
+    <div className="my-4 overflow-x-auto rounded-[16px] border border-hairline/70 bg-surface/78 dark:bg-surface/30">
+      <table className="min-w-full border-collapse text-left text-[13px] leading-6 text-ink-soft">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="border-b border-hairline/70 bg-reader-paper/90 dark:bg-[#2a2f35]/90 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => <td className="border-b border-hairline/50 px-3 py-2.5 align-top text-ink-soft">{children}</td>,
+  hr: () => <hr className="my-5 border-0 border-t border-dashed border-hairline/80" />,
+  strong: ({ children }) => <strong className="font-semibold text-ink">{children}</strong>,
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target={href?.startsWith("#") ? undefined : "_blank"}
+      rel={href?.startsWith("#") ? undefined : "noreferrer"}
+      className="font-medium text-context-blue underline decoration-context-blue/35 underline-offset-[0.18em] transition-colors hover:text-ink"
+    >
+      {children}
+    </a>
+  ),
 };
 
 function submissionModeOf(message: Pick<ReaderAskMessageDto, "submission_mode"> | Pick<ReaderAskCompletedPayloadDto, "submission_mode">) {
@@ -651,7 +744,8 @@ export function createSseMessageHandler(
               run_info: payload.run_info ?? null,
               supplement_candidates: payload.supplement_candidates ?? [],
               persisted_supplements: payload.persisted_supplements ?? [],
-              reasoning_status: message.reasoning_md ? "completed" : null,
+              reasoning_md: payload.reasoning_md ?? message.reasoning_md ?? null,
+              reasoning_status: payload.reasoning_status ?? (message.reasoning_md ? "completed" : null),
               replan_status: "idle",
               regenerate_preview: false,
             };
@@ -764,7 +858,7 @@ function AttachmentChips({
   removable?: boolean;
   onRemove?: (attachmentKey: string) => void;
   onJump?: (attachment: ReaderAskAttachment) => void;
-  variant?: "history" | "composer" | "live";
+  variant?: "history" | "composer";
 }) {
   if (attachments.length === 0) {
     return null;
@@ -785,24 +879,19 @@ function AttachmentChips({
             : preferredText.length <= (variant === "composer" ? 44 : 56)
               ? preferredText
               : `${preferredText.slice(0, Math.max((variant === "composer" ? 44 : 56) - 1, 1)).trimEnd()}…`;
-        const badgeLabel =
-          variant === "live" || (variant === "composer" && attachment.kind === "text_selection")
-            ? "当前"
-            : attachment.kind === "record_ref"
-              ? "页"
-              : "AI";
+        const badgeLabel = attachment.kind === "record_ref" ? "页" : "AI";
         return (
           <span
             key={attachmentKey}
-            className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-[rgba(250,249,246,0.92)] px-2.5 py-1.5 text-xs font-medium text-ink-soft"
+            className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-reader-paper/92 dark:bg-[#2a2f35]/92 px-2.5 py-1.5 text-xs font-medium text-ink-soft"
           >
-            <span className="shrink-0 rounded-full bg-reader-paper px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.02em] text-muted">
+            <span className="shrink-0 rounded-full bg-surface dark:bg-[#1e2227] px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.02em] text-muted">
               {badgeLabel}
             </span>
             {clickable ? (
               <button
                 type="button"
-                className="max-w-[13rem] truncate text-left transition-colors hover:text-ink sm:max-w-[17rem]"
+                className={cn(readerPanelItem, "h-auto max-w-[13rem] rounded-md px-1.5 py-0.5 text-left sm:max-w-[17rem]")}
                 onClick={() => onJump?.(attachment)}
                 title={preferredText}
               >
@@ -816,7 +905,7 @@ function AttachmentChips({
             {removable ? (
               <button
                 type="button"
-                className="inline-flex size-5 items-center justify-center rounded-full text-muted transition-colors hover:bg-reader-paper hover:text-ink"
+                className={cn(readerPanelItem, "size-5 rounded-full")}
                 onClick={() => onRemove?.(attachmentKey)}
                 aria-label={`移除引用：${askAttachmentLabel(attachment)}`}
               >
@@ -830,13 +919,72 @@ function AttachmentChips({
   );
 }
 
+function LiveSelectionChip({
+  attachment,
+  onActivate,
+  onRemove,
+}: {
+  attachment: ReaderAskAttachment;
+  onActivate?: () => void;
+  onRemove?: (attachmentKey: string) => void;
+}) {
+  const attachmentKey = askAttachmentKey(attachment);
+  const preferredText = attachment.selectedText?.trim() || askAttachmentLabel(attachment);
+  const displayLabel =
+    preferredText.length <= 44
+      ? preferredText
+      : `${preferredText.slice(0, 43).trimEnd()}…`;
+
+  return (
+    <span
+      className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-hairline/80 bg-reader-paper/92 dark:bg-[#2a2f35]/92 px-2 py-1 text-xs font-medium text-ink-soft"
+      onPointerDown={(event) => {
+        event.preventDefault();
+      }}
+    >
+      <button
+        type="button"
+        className={cn(
+          readerPanelItem,
+          "inline-flex h-6 max-w-[15rem] items-center gap-1.5 rounded-full px-1.5 py-0.5 text-left sm:max-w-[19rem]",
+        )}
+        data-live-context-activator="true"
+        onPointerDown={(event) => {
+          event.preventDefault();
+        }}
+        onClick={() => onActivate?.()}
+        title={preferredText}
+      >
+        <span
+          aria-hidden="true"
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface dark:bg-[#1e2227] text-muted"
+        >
+          <Quote className="h-3 w-3" />
+        </span>
+        <span className="truncate">{displayLabel}</span>
+      </button>
+      <button
+        type="button"
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted/72 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] hover:text-ink focus-visible:text-ink"
+        onPointerDown={(event) => {
+          event.preventDefault();
+        }}
+        onClick={() => onRemove?.(attachmentKey)}
+        aria-label={`移除当前选区：${askAttachmentLabel(attachment)}`}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
 function CurrentRecordChip({ recordTitle }: { recordTitle?: string | null }) {
   if (!recordTitle?.trim()) {
     return null;
   }
 
   return (
-    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-[rgba(250,249,246,0.9)] px-2.5 py-1.5 text-xs font-medium text-ink-soft">
+    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/80 bg-reader-paper/90 dark:bg-[#2a2f35]/90 px-2.5 py-1.5 text-xs font-medium text-ink-soft">
       <FileText className="h-3.5 w-3.5 shrink-0 text-subtle" />
       <span className="truncate" title={recordTitle}>
         {recordTitle}
@@ -859,8 +1007,8 @@ function RelatedRecordPicker({
   const showingRecent = search.query.trim().length === 0;
 
   return (
-    <div className="w-[17rem] rounded-[16px] border border-hairline/65 bg-[rgba(255,255,255,0.98)] p-2 shadow-[0_12px_24px_rgba(17,17,17,0.07)]">
-      <div className="flex items-center gap-2 rounded-[12px] border border-hairline/75 bg-[rgba(250,249,246,0.84)] px-2.5 py-1.5">
+    <div className="w-[17rem] rounded-[16px] border border-hairline/65 bg-surface dark:bg-[#1e2227] p-2 shadow-[0_12px_24px_rgba(17,17,17,0.07)] dark:shadow-[0_12px_24px_rgba(0,0,0,0.28)]">
+      <div className="flex items-center gap-2 rounded-[12px] border border-hairline/75 bg-reader-paper/84 dark:bg-[#2a2f35]/84 px-2.5 py-1.5">
         <Search className="h-3.5 w-3.5 text-muted" />
         <input
           autoFocus
@@ -886,7 +1034,7 @@ function RelatedRecordPicker({
               <button
                 key={item.record_id}
                 type="button"
-                className="focus-ring flex w-full items-center justify-between rounded-[12px] px-2.5 py-2 text-left transition-colors hover:bg-reader-paper/90"
+                className={workspaceRelatedRecordItemClassName}
                 onClick={() => onAttachRelatedRecord(item)}
                 disabled={disabled}
               >
@@ -1105,7 +1253,7 @@ function SupplementCandidateTray({
   }
 
   return (
-    <div className="space-y-3 rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
+    <div className="space-y-3 rounded-[20px] border border-hairline/80 bg-reader-paper/72 dark:bg-[#1e2227]/72 px-3.5 py-3.5">
       {notice ? (
         <div className="rounded-[16px] border border-lens-blue/20 bg-lens-blue/10 px-3 py-2.5 text-[11px] text-lens-blue">
           {notice}
@@ -1121,11 +1269,11 @@ function SupplementCandidateTray({
             {candidates.map((candidate) => (
               <div
                 key={candidate.candidate_id}
-                className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
+                className="rounded-[16px] border border-hairline/80 bg-surface dark:bg-[#252a30] px-3 py-3"
               >
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold text-ink">{candidate.title}</p>
-                  <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                  <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#1e2227] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
                     待确认
                   </span>
                 </div>
@@ -1144,7 +1292,7 @@ function SupplementCandidateTray({
           {persistedSupplements.map((item) => (
             <div
               key={item.supplement_id}
-              className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
+              className="rounded-[16px] border border-hairline/80 bg-surface dark:bg-[#252a30] px-3 py-3"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -1199,11 +1347,11 @@ function DisclosureSection({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="rounded-[18px] border border-hairline/70 bg-reader-paper/56">
+      <div className="rounded-[18px] border border-hairline/70 bg-reader-paper/56 dark:bg-[#1e2227]/56">
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="focus-ring flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left"
+            className={workspaceDisclosureTriggerClassName}
           >
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</p>
@@ -1252,30 +1400,30 @@ function ContextSummaryDisclosure({
               .map((chip) => (
                 <span
                   key={chip}
-                  className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted"
+                  className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2.5 py-1 text-[11px] font-medium text-muted"
                 >
                   {chip}
                 </span>
               ))}
             {currentRecordContext?.record_title ? (
-              <span className="rounded-pill border border-hairline bg-reader-paper px-2.5 py-1 text-[11px] font-medium text-ink-soft">
+              <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2.5 py-1 text-[11px] font-medium text-ink-soft">
                 {currentRecordContext.record_title}
               </span>
             ) : null}
           </div>
           {currentRecordContext?.article_overview || currentRecordContext?.article_overview_status ? (
-            <div className="mt-2 rounded-note border border-hairline bg-surface px-3 py-2.5">
+            <div className="mt-2 rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2.5">
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium text-muted">
                   {overviewStatusLabel(currentRecordContext.article_overview_status) || "概览状态未知"}
                 </span>
                 {currentRecordContext.article_overview_source ? (
-                  <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                  <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium text-muted">
                     {overviewSourceLabel(currentRecordContext.article_overview_source)}
                   </span>
                 ) : null}
                 {currentRecordContext.article_overview_confidence ? (
-                  <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                  <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium text-muted">
                     置信度 {currentRecordContext.article_overview_confidence}
                   </span>
                 ) : null}
@@ -1298,13 +1446,13 @@ function ContextSummaryDisclosure({
               {externalRecordContexts.map((item) => (
                 <div
                   key={item.record_id}
-                  className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+                  className="rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2.5"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="truncate text-xs font-semibold text-ink">
                       {item.record_title || item.record_id}
                     </p>
-                    <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                    <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
                       {item.reason === "known_reference_resolved" ? "自动命中" : "显式加入"}
                     </span>
                   </div>
@@ -1318,17 +1466,17 @@ function ContextSummaryDisclosure({
                   {(item.article_overview_status || item.article_overview_source || item.article_overview_confidence) ? (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {item.article_overview_status ? (
-                        <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                        <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium text-muted">
                           {overviewStatusLabel(item.article_overview_status) || item.article_overview_status}
                         </span>
                       ) : null}
                       {item.article_overview_source ? (
-                        <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                        <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium text-muted">
                           {overviewSourceLabel(item.article_overview_source)}
                         </span>
                       ) : null}
                       {item.article_overview_confidence ? (
-                        <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted">
+                        <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium text-muted">
                           置信度 {item.article_overview_confidence}
                         </span>
                       ) : null}
@@ -1342,7 +1490,7 @@ function ContextSummaryDisclosure({
                       {item.record_insights.slice(0, 2).map((insight) => (
                         <span
                           key={insight}
-                          className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium text-muted"
+                          className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium text-muted"
                         >
                           {insight}
                         </span>
@@ -1361,7 +1509,7 @@ function ContextSummaryDisclosure({
               {externalAssetContexts.map((item) => (
                 <div
                   key={`${item.record_id}:${item.asset_type}:${item.asset_id}`}
-                  className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+                  className="rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2.5"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
@@ -1372,7 +1520,7 @@ function ContextSummaryDisclosure({
                         {(item.record_title || item.record_id)} · {item.asset_type === "supplement" ? "AI 补充" : "稳定分析"}
                       </p>
                     </div>
-                    <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                    <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
                       {item.reason === "explicit_attachment" ? "显式加入" : "自动命中"}
                     </span>
                   </div>
@@ -1407,15 +1555,15 @@ function EvidenceDisclosure({
         {evidence.map((item, index) => (
           <div
             key={`${item.kind}-${item.record_id ?? "local"}-${item.target_key ?? index}`}
-            className="rounded-note border border-hairline bg-surface px-3 py-2.5"
+            className="rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2.5"
           >
             <div className="flex items-center justify-between gap-3">
               <p className="truncate text-xs font-semibold text-ink">{item.label}</p>
               <div className="flex shrink-0 items-center gap-1.5">
-                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
                   {item.scope === "external_record" ? "外部" : "当前"}
                 </span>
-                <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
                   {item.kind}
                 </span>
               </div>
@@ -1476,7 +1624,7 @@ function DisambiguationCards({
   }
 
   return (
-    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
+    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 dark:bg-[#1e2227]/72 px-3.5 py-3.5">
       <div className="mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">候选文章</p>
         <p className="mt-1 text-[11px] leading-5 text-muted">
@@ -1487,7 +1635,7 @@ function DisambiguationCards({
         {disambiguation.candidates.map((candidate) => (
           <div
             key={candidate.record_id}
-            className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
+            className="rounded-[16px] border border-hairline/80 bg-surface dark:bg-[#252a30] px-3 py-3"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1528,7 +1676,7 @@ function AssetDisambiguationCards({
   }
 
   return (
-    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 px-3.5 py-3.5">
+    <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 dark:bg-[#1e2227]/72 px-3.5 py-3.5">
       <div className="mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">候选资产</p>
         <p className="mt-1 text-[11px] leading-5 text-muted">
@@ -1539,7 +1687,7 @@ function AssetDisambiguationCards({
         {assetDisambiguation.candidates.map((candidate) => (
           <div
             key={`${candidate.asset_type}:${candidate.asset_id}`}
-            className="rounded-[16px] border border-hairline/80 bg-surface px-3 py-3"
+            className="rounded-[16px] border border-hairline/80 bg-surface dark:bg-[#252a30] px-3 py-3"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1591,14 +1739,14 @@ function TraceSummaryDisclosure({
     <DisclosureSection label="运行轨迹" summary={summary}>
       <div className="space-y-3 text-xs text-muted">
         <div className="flex flex-wrap gap-2">
-          <span className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted">
+          <span className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2.5 py-1 text-[11px] font-medium text-muted">
             {plannerModeLabel(traceSummary.planner_mode)}
           </span>
-          <span className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted">
+          <span className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2.5 py-1 text-[11px] font-medium text-muted">
             {workingSetModeLabel(traceSummary.working_set_mode)}
           </span>
           {traceSummary.reference_resolution_status !== "not_needed" ? (
-            <span className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted">
+            <span className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2.5 py-1 text-[11px] font-medium text-muted">
               引用解析 · {traceSummary.reference_resolution_status}
             </span>
           ) : null}
@@ -1617,7 +1765,7 @@ function TraceSummaryDisclosure({
             {traceSummary.tool_steps.map((step) => (
               <span
                 key={step}
-                className="rounded-pill border border-hairline bg-surface px-2.5 py-1 text-[11px] font-medium text-muted"
+                className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2.5 py-1 text-[11px] font-medium text-muted"
               >
                 {toolLabel(step)}
               </span>
@@ -1660,13 +1808,13 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
                 footerSourceLabel="来源: Ask Claread"
               />
               {card.spans.length > 0 ? (
-                <div className="rounded-note border border-hairline bg-surface px-3 py-2.5 text-xs text-muted">
+                <div className="rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2.5 text-xs text-muted">
                   <p className="font-semibold text-ink-soft">关键锚点</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {card.spans.map((span, spanIndex) => (
                       <span
                         key={`${span.text}-${spanIndex}`}
-                        className="rounded-pill border border-hairline bg-reader-paper px-2.5 py-1"
+                        className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2.5 py-1"
                       >
                         {span.role ? `${span.role} · ` : ""}
                         {span.text}
@@ -1681,10 +1829,10 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
 
         if (card.card_type === "sentence_breakdown_card") {
           return (
-            <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper px-4 py-3">
+            <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">拆句卡</p>
-                <span className="rounded-pill border border-hairline bg-surface px-2 py-0.5 text-[10px] font-medium text-muted">
+                <span className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2 py-0.5 text-[10px] font-medium text-muted">
                   AI 助手生成
                 </span>
               </div>
@@ -1699,7 +1847,7 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
               {card.parts.length > 0 ? (
                 <div className="mt-3 space-y-2">
                   {card.parts.map((part, partIndex) => (
-                    <div key={`${part.label}-${partIndex}`} className="rounded-note border border-hairline bg-surface px-3 py-2">
+                    <div key={`${part.label}-${partIndex}`} className="rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2">
                       <p className="text-xs font-semibold text-ink">{part.label}</p>
                       <p className="mt-1 text-sm text-ink-soft">{part.text}</p>
                       {part.note ? <p className="mt-1 text-xs text-muted">{part.note}</p> : null}
@@ -1714,14 +1862,14 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
 
         if (card.card_type === "vocabulary_in_context_card") {
           return (
-            <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper px-4 py-3">
+            <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">词义卡</p>
               <div className="mt-2 flex items-end justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-ink">{card.display_word || card.query}</p>
                   {card.phonetic ? <p className="mt-1 text-xs text-muted">/{card.phonetic}/</p> : null}
                 </div>
-                <span className="rounded-pill border border-hairline bg-surface px-2 py-0.5 text-[11px] font-medium text-muted">
+                <span className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2 py-0.5 text-[11px] font-medium text-muted">
                   当前语境
                 </span>
               </div>
@@ -1735,11 +1883,11 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
         }
 
         return (
-          <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper px-4 py-3">
+          <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">练习卡</p>
             <p className="mt-2 text-sm font-semibold text-ink">{card.title}</p>
-            <div className="mt-3 rounded-note border border-hairline bg-surface px-3 py-3 text-sm leading-6 text-ink-soft">
-              <Markdown className="prose prose-sm max-w-none text-ink-soft prose-p:mb-3 prose-p:last:mb-0">
+            <div className="mt-3 rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-3 text-sm leading-6 text-ink-soft">
+              <Markdown components={ASK_MARKDOWN_COMPONENTS} className="space-y-3 text-ink-soft">
                 {card.prompt}
               </Markdown>
             </div>
@@ -1796,15 +1944,15 @@ function CitationList({
                 }
               }}
               className={cn(
-                "w-full rounded-[14px] border border-hairline/70 bg-[rgba(255,255,255,0.6)] px-3 py-2.5 text-left transition-colors",
-                canJump ? "hover:border-muted hover:bg-reader-paper" : "cursor-default",
+                workspaceCitationButtonClassName,
+                !canJump && "cursor-default opacity-60 hover:border-hairline hover:bg-surface/60 dark:hover:bg-surface/40 hover:text-muted",
               )}
             >
               <div className="flex items-start justify-between gap-3">
                 <p className="line-clamp-2 min-w-0 flex-1 text-xs leading-5 text-ink-soft">
                   {displayText}
                 </p>
-                <span className="shrink-0 rounded-full bg-reader-paper px-2 py-0.5 text-[11px] text-muted">
+                <span className="shrink-0 rounded-full bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[11px] text-muted">
                   {sourceLabel}
                 </span>
               </div>
@@ -1851,7 +1999,7 @@ function ConfirmActionCard({
   onReject: (confirmed: boolean) => void;
 }) {
   return (
-    <div className="rounded-[18px] border border-hairline/80 bg-[rgba(250,249,246,0.82)] px-3.5 py-3">
+    <div className="rounded-[18px] border border-hairline/80 bg-reader-paper/82 dark:bg-[#1e2227]/82 px-3.5 py-3">
       <div className="flex items-start gap-3">
         <div className="mt-0.5 rounded-full bg-lens-blue-soft p-1.5 text-lens-blue">
           <Sparkles className="h-3.5 w-3.5" />
@@ -1873,6 +2021,58 @@ function ConfirmActionCard({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function AssistantStreamingIndicator() {
+  return (
+    <div className="mb-2 px-0.5 text-[11px] leading-5 text-muted">
+      <Loader variant="loading-dots" size="sm" text="正在生成解释" />
+    </div>
+  );
+}
+
+function AssistantReasoningBlock({
+  reasoningMd,
+  reasoningStatus,
+}: {
+  reasoningMd: string | null | undefined;
+  reasoningStatus: ReaderAskMessageDto["reasoning_status"];
+}) {
+  const hasReasoningContent = Boolean(reasoningMd?.trim());
+  const isStreaming = reasoningStatus === "streaming";
+  const [open, setOpen] = useState(isStreaming);
+  const previousStreamingRef = useRef(isStreaming);
+
+  useEffect(() => {
+    if (isStreaming && !previousStreamingRef.current) {
+      setOpen(true);
+    }
+    if (!isStreaming && previousStreamingRef.current) {
+      setOpen(false);
+    }
+    previousStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  if (!isStreaming && !hasReasoningContent) {
+    return null;
+  }
+
+  return (
+    <Reasoning open={open} onOpenChange={setOpen} className="mb-3">
+      <ReasoningTrigger className="w-full justify-between py-0.5 text-left text-[11px] font-medium text-muted transition-colors hover:text-ink-soft">
+        <span>{isStreaming ? "解释思路" : "解释思路"}</span>
+      </ReasoningTrigger>
+      <ReasoningContent className="pt-1.5" contentClassName="border-l border-hairline/90 pl-3 text-[12px] leading-6 text-muted">
+        {hasReasoningContent ? (
+          <Markdown components={ASK_MARKDOWN_COMPONENTS}>{reasoningMd ?? ""}</Markdown>
+        ) : (
+          <div className="py-0.5 text-[12px] leading-6 text-muted">
+            <Loader variant="loading-dots" size="sm" text="正在梳理解释思路" />
+          </div>
+        )}
+      </ReasoningContent>
+    </Reasoning>
   );
 }
 
@@ -1915,7 +2115,7 @@ function MessageBubble({
   const clarificationText = clarificationHint(message.trace_summary, message.evidence);
   const candidateSupplements = pendingSupplementCandidates(message);
   const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
-  const hasReasoning = Boolean(message.reasoning_md?.trim());
+  const hasAnswerContent = Boolean(message.content_md?.trim());
 
   return (
     <div className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}>
@@ -1927,12 +2127,7 @@ function MessageBubble({
       <ChatMessage className={cn("w-full", isAssistant ? "items-start" : "justify-end")}>
         {isAssistant ? (
           <>
-            <div className="group min-w-0 flex-1 relative">
-              {message.status === "streaming" ? (
-                <div className="absolute -left-6 top-1.5 text-muted">
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                </div>
-              ) : null}
+            <div className="group min-w-0 flex-1">
               <div className="space-y-4">
                 {blocks.map((block, index) => {
                   switch (block.kind) {
@@ -1943,34 +2138,27 @@ function MessageBubble({
                           className="px-1 py-1"
                         >
                           {clarificationText ? (
-                            <div className="mb-3 rounded-[14px] bg-reader-paper px-3 py-2 text-[11px] leading-5 text-muted">
+                            <div className="mb-2 text-[12px] leading-6 text-muted">
                               {clarificationText}
                             </div>
                           ) : null}
                           {message.replan_status === "replanning" ? (
-                            <div className="mb-3 rounded-[14px] bg-reader-paper px-3 py-2 text-[11px] leading-5 text-muted">
+                            <div className="mb-2 text-[12px] leading-6 text-muted">
                               正在补充上下文后重试...
                             </div>
                           ) : null}
-                          {hasReasoning ? (
-                            <Collapsible defaultOpen={false} className="mb-3 rounded-[14px] border border-hairline/70 bg-[rgba(250,249,246,0.82)] px-3 py-2">
-                              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left text-[11px] font-medium text-muted">
-                                <span>{message.reasoning_status === "streaming" ? "思考中" : "模型思考过程"}</span>
-                                <ChevronDown className="h-3.5 w-3.5" />
-                              </CollapsibleTrigger>
-                              <CollapsibleContent className="pt-2 text-[12px] leading-6 text-muted">
-                                <Markdown>{message.reasoning_md ?? ""}</Markdown>
-                              </CollapsibleContent>
-                            </Collapsible>
+                          <AssistantReasoningBlock reasoningMd={message.reasoning_md} reasoningStatus={message.reasoning_status} />
+                          {message.status === "streaming" ? <AssistantStreamingIndicator /> : null}
+                          {hasAnswerContent ? (
+                            <Markdown
+                              components={ASK_MARKDOWN_COMPONENTS}
+                              className="border-0 bg-transparent p-0 text-[14.5px] leading-[1.8] text-ink-soft shadow-none"
+                            >
+                              {message.content_md}
+                            </Markdown>
                           ) : null}
-                          <MessageContent
-                            markdown
-                            className="border-0 bg-transparent p-0 text-[14.5px] leading-[1.8] text-ink-soft shadow-none prose prose-sm max-w-none prose-p:mb-4 prose-p:mt-2 prose-p:last:mb-0 prose-strong:font-semibold prose-strong:text-ink prose-code:rounded prose-code:bg-reader-paper prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:text-ink-soft"
-                          >
-                            {message.content_md || "…"}
-                          </MessageContent>
                           {message.status === "interrupted" ? (
-                            <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
+                            <div className="mt-3 rounded-[14px] border border-amber-200 dark:border-amber-900/40 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12px] leading-5 text-amber-900 dark:text-amber-200">
                               输出中断，可重新生成。
                             </div>
                           ) : null}
@@ -2040,7 +2228,7 @@ function MessageBubble({
                           />
                           {message.context_plan ? (
                             <DisclosureSection label="上下文策略" summary={contextPlanSummary(message.context_plan)}>
-                              <div className="rounded-note border border-hairline bg-surface px-3 py-2.5 text-[11px] leading-5 text-muted">
+                              <div className="rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2.5 text-[11px] leading-5 text-muted">
                                 <p className="font-semibold text-ink-soft">本轮决策</p>
                                 <p className="mt-1">
                                   {message.context_plan.entry_action} · {message.context_plan.source_labels.join(" · ") || "当前文章"}
@@ -2076,24 +2264,24 @@ function MessageBubble({
                 ) : null}
               </div>
               {(message.status === "completed" || message.status === "interrupted") && (
-                <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                  <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="复制内容">
+                <div className="mt-2 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                  <button type="button" className={workspaceMessageActionClassName} title="复制内容" aria-label="复制内容">
                     <Copy className="h-3.5 w-3.5" />
-                    <span>复制</span>
                   </button>
-                  <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="有帮助">
+                  <button type="button" className={workspaceMessageActionClassName} title="有帮助" aria-label="有帮助">
                     <ThumbsUp className="h-3.5 w-3.5" />
                   </button>
-                  <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors" title="无帮助">
+                  <button type="button" className={workspaceMessageActionClassName} title="无帮助" aria-label="无帮助">
                     <ThumbsDown className="h-3.5 w-3.5" />
                   </button>
                   <button
-                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted hover:bg-reader-paper hover:text-ink transition-colors"
+                    type="button"
+                    className={workspaceMessageActionClassName}
                     title="重新生成"
+                    aria-label="重新生成"
                     onClick={() => onRetry(message.id)}
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
-                    <span>重新生成</span>
                   </button>
                 </div>
               )}
@@ -2102,11 +2290,11 @@ function MessageBubble({
         ) : (
           <div className="group relative flex max-w-[92%] flex-col items-end">
             {submissionModeOf(message) === "quick_action" ? (
-              <div className="rounded-full border border-hairline/70 bg-reader-paper px-3.5 py-2 text-[12px] font-medium text-ink-soft">
+              <div className="rounded-full border border-hairline/70 bg-reader-paper dark:bg-[#2a2f35] px-3.5 py-2 text-[12px] font-medium text-ink-soft">
                 {messageOperationSummary(message)}
               </div>
             ) : (
-              <MessageContent className="whitespace-pre-wrap rounded-[14px] bg-muted/10 border border-hairline/60 px-3.5 py-1.5 text-[14px] leading-[1.6] text-ink-soft shadow-none">
+              <MessageContent className="whitespace-pre-wrap rounded-[14px] bg-muted/10 dark:bg-[#2a2f35]/60 border border-hairline/60 px-3.5 py-1.5 text-[14px] leading-[1.6] text-ink-soft shadow-none">
                 {message.content_md}
               </MessageContent>
             )}
@@ -2114,7 +2302,7 @@ function MessageBubble({
               <span className="text-[10px] text-muted">
                 {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
               </span>
-              <button className="text-muted hover:text-ink transition-colors" title="复制">
+              <button className={cn(readerPanelItem, "h-6 w-6 rounded-full")} title="复制">
                 <Copy className="h-3 w-3" />
               </button>
             </div>
@@ -2183,7 +2371,7 @@ function StarterState({
         <div className="max-w-[24.5rem] space-y-4">
           <div className="relative w-fit">
             <div className="absolute inset-x-5 bottom-2 h-6 rounded-full bg-lens-blue/8 blur-2xl" />
-            <div className="relative h-[124px] w-[172px] overflow-hidden rounded-[28px] border border-hairline/70 bg-[radial-gradient(circle_at_30%_18%,rgba(255,255,255,0.98),rgba(248,246,240,0.9))] shadow-[0_18px_40px_rgba(17,17,17,0.06)]">
+            <div className="relative h-[124px] w-[172px] overflow-hidden rounded-[28px] border border-hairline/70 bg-[radial-gradient(circle_at_30%_18%,rgba(255,255,255,0.98),rgba(248,246,240,0.9))] dark:bg-[radial-gradient(circle_at_30%_18%,rgba(50,55,62,0.98),rgba(38,43,50,0.9))] shadow-[0_18px_40px_rgba(17,17,17,0.06)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
               <img
                 src="/brand/ask-claread/empty-state-illustration.png"
                 alt=""
@@ -2202,12 +2390,15 @@ function StarterState({
             <button
               key={suggestion.prompt}
               type="button"
-              className="focus-ring group flex w-full items-center gap-3 rounded-[18px] px-2.5 py-2.5 text-left transition-[background-color,transform] duration-200 hover:bg-reader-paper/75 hover:translate-x-0.5"
+              className={cn(
+                readerCommandControl,
+                "group w-full justify-start gap-3 rounded-[18px] px-2.5 py-2.5 text-left hover:bg-reader-paper/75",
+              )}
               onClick={() => onPickPrompt(suggestion.prompt, suggestion.entryAction)}
             >
               <span
                 className={cn(
-                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-transform duration-200 group-hover:scale-105",
+                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
                   suggestion.badgeClassName,
                 )}
               >
@@ -2231,7 +2422,7 @@ export interface AiWorkspacePanelProps {
   recordId: string;
   recordTitle?: string | null;
   attachments: ReaderAskAttachment[];
-  liveAttachment?: ReaderAskAttachment | null;
+  liveContextAttachment?: ReaderAskAttachment | null;
   pendingQuickActionRequest?: ReaderAskQuickActionRequest | null;
   hideLauncherOnMobile?: boolean;
   hideLauncherInCompactLayout?: boolean;
@@ -2243,12 +2434,16 @@ export interface AiWorkspacePanelProps {
   onActionExecuted?: (result: ReaderAskActionConfirmResponseDto["result"]) => void;
   onSupplementDeleted?: (supplementId: string) => void | Promise<void>;
   onPendingQuickActionConsumed?: () => void;
+  onActivateLiveContextSelection?: () => void;
+  onComposerTextareaFocus?: () => void;
+  onComposerTextareaBlur?: () => void;
+  onPanelPointerDownOutsideComposer?: () => void;
   onToggle: () => void;
 }
 
 export function AiWorkspacePanel({
   attachments,
-  liveAttachment = null,
+  liveContextAttachment = null,
   pageIdentity,
   pendingQuickActionRequest,
   presentation = "intensive",
@@ -2262,6 +2457,10 @@ export function AiWorkspacePanel({
   onJumpToAttachment,
   onJumpToCitation,
   onActionExecuted,
+  onActivateLiveContextSelection,
+  onComposerTextareaBlur,
+  onComposerTextareaFocus,
+  onPanelPointerDownOutsideComposer,
   onPendingQuickActionConsumed,
   onSupplementDeleted,
   onRemoveAttachment,
@@ -2301,10 +2500,8 @@ export function AiWorkspacePanel({
   const visibleContextAttachments = attachments.filter(
     (attachment) => !(attachment.kind === "record_ref" && attachment.metadata.recordId === recordId),
   );
-  const composerContextAttachments = liveAttachment
-    ? visibleContextAttachments.some((attachment) => askAttachmentKey(attachment) === askAttachmentKey(liveAttachment))
-      ? visibleContextAttachments
-      : [...visibleContextAttachments, liveAttachment]
+  const composerContextAttachments = liveContextAttachment
+    ? visibleContextAttachments.filter((attachment) => askAttachmentKey(attachment) !== askAttachmentKey(liveContextAttachment))
     : visibleContextAttachments;
   const composerDockState: AskComposerDockState = {
     canSend: composer.trim().length > 0 && !sending,
@@ -2884,7 +3081,7 @@ export function AiWorkspacePanel({
     return (
       <button
         type="button"
-        className={`ai-workspace-launcher ai-workspace-launcher--${presentation} focus-ring group fixed bottom-[5.25rem] right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-full border border-hairline/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] shadow-[0_14px_34px_rgba(17,17,17,0.08)] transition-[transform,border-color,box-shadow,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:translate-y-0 active:scale-[0.98] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)] md:bottom-6 md:right-6 ${launcherVisibilityClass}`}
+        className={cn(`ai-workspace-launcher ai-workspace-launcher--${presentation}`, workspaceLauncherClassName, launcherVisibilityClass)}
         onClick={onToggle}
         aria-label="打开 AI 工作区"
         title="打开 Ask Claread"
@@ -2895,7 +3092,11 @@ export function AiWorkspacePanel({
             src="/brand/claread-icon-fullcolor.png"
             alt=""
             aria-hidden="true"
-            className="brand-aperture-mark h-[22px] w-[22px] object-contain transition-transform duration-200 ease-out group-hover:scale-105"
+            className={cn(
+              "brand-aperture-mark h-[22px] w-[22px] object-contain transition-opacity",
+              readerTransitionStandard,
+              "group-hover:opacity-95",
+            )}
           />
         </span>
       </button>
@@ -2903,7 +3104,22 @@ export function AiWorkspacePanel({
   }
 
   return (
-    <aside className={`ai-workspace-panel ai-workspace-panel--${presentation} fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[28px] border border-hairline/85 bg-[linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] shadow-[0_26px_76px_rgba(17,17,17,0.12)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none`}>
+    <aside
+      className={`ai-workspace-panel ai-workspace-panel--${presentation} fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-[28px] border border-hairline/85 bg-[linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] dark:bg-[linear-gradient(180deg,rgba(30,34,39,0.98),rgba(38,43,49,0.98))] shadow-[0_26px_76px_rgba(17,17,17,0.12)] dark:shadow-[0_26px_76px_rgba(0,0,0,0.32)] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none`}
+      onPointerDownCapture={(event) => {
+        const target = event.target instanceof HTMLElement ? event.target : null;
+        if (!target) {
+          return;
+        }
+        if (target.closest("[data-ask-composer-textarea='true']")) {
+          return;
+        }
+        if (target.closest("[data-live-context-activator='true']")) {
+          return;
+        }
+        onPanelPointerDownOutsideComposer?.();
+      }}
+    >
       <div className="border-b border-hairline/70 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
@@ -2980,7 +3196,7 @@ export function AiWorkspacePanel({
         )}
       </div>
 
-      <div className="bg-[rgba(250,249,245,0.98)] px-4 pb-4 pt-1">
+      <div className="bg-[rgba(250,249,245,0.98)] dark:bg-[rgba(30,34,39,0.98)] px-4 pb-4 pt-1">
         {errorMessage ? (
           <div className="mb-3 rounded-[12px] border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {errorMessage}
@@ -2993,9 +3209,10 @@ export function AiWorkspacePanel({
           onSubmit={handleSend}
           isLoading={sending}
           maxHeight={220}
+          disableContainerFocus
           className="flex flex-col gap-0 rounded-[24px] border border-hairline/80 bg-surface !px-0 !py-0 shadow-[0_12px_30px_rgba(17,17,17,0.04)] transition-all focus-within:border-muted focus-within:shadow-[0_16px_34px_rgba(17,17,17,0.06)]"
         >
-          {(recordTitle || composerContextAttachments.length > 0) && (
+          {(recordTitle || composerContextAttachments.length > 0 || liveContextAttachment) && (
             <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline/40 px-3 py-2">
               <CurrentRecordChip recordTitle={recordTitle} />
               <AttachmentChips
@@ -3005,6 +3222,13 @@ export function AiWorkspacePanel({
                 onJump={onJumpToAttachment}
                 variant="composer"
               />
+              {liveContextAttachment ? (
+                <LiveSelectionChip
+                  attachment={liveContextAttachment}
+                  onActivate={onActivateLiveContextSelection}
+                  onRemove={onRemoveAttachment}
+                />
+              ) : null}
             </div>
           )}
 
@@ -3012,6 +3236,9 @@ export function AiWorkspacePanel({
             <PromptInputTextarea
               placeholder={COMPOSER_PLACEHOLDER}
               className="min-h-[40px] text-[14px] leading-relaxed"
+              data-ask-composer-textarea="true"
+              onFocus={onComposerTextareaFocus}
+              onBlur={onComposerTextareaBlur}
             />
           </div>
 
@@ -3022,10 +3249,10 @@ export function AiWorkspacePanel({
                   <button
                     type="button"
                     className={cn(
-                      "focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border text-xs font-medium transition-colors",
+                      workspaceRoundPanelActionClassName,
                       contextPickerOpen
                         ? "border-muted bg-reader-paper text-ink"
-                        : "border-transparent text-muted hover:border-hairline hover:bg-reader-paper hover:text-ink",
+                        : null,
                     )}
                     disabled={sending}
                     onMouseDown={(event) => {
@@ -3058,7 +3285,7 @@ export function AiWorkspacePanel({
             <PromptInputActions>
               <button
                 type="button"
-                className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full bg-ink text-surface transition-transform hover:scale-105 active:scale-95 disabled:scale-100 disabled:opacity-30 disabled:hover:scale-100"
+                className={workspaceSendButtonClassName}
                 disabled={!composerDockState.canSend}
                 onClick={(event) => {
                   event.stopPropagation();

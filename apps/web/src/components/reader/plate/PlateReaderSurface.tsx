@@ -55,6 +55,7 @@ export interface PlateReaderSurfaceProps {
   sentenceActionsOpenSentenceId?: string | null;
   selectedSentenceId?: string | null;
   selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
+  contextFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpTarget?: ReaderJumpTarget | null;
   focusTarget?: ReaderJumpTarget | null;
   hoveredAnnotationTargetKey?: string | null;
@@ -127,6 +128,7 @@ export function PlateReaderSurface({
   sentenceActionsOpenSentenceId = null,
   selectedSentenceId = null,
   selectionFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
+  contextFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   activeAnalysisEntryId = null,
   columnClassName = "max-w-[72ch]",
   annotationVisibilityGroups = {
@@ -423,7 +425,7 @@ export function PlateReaderSurface({
         case "reader_paragraph":
           return (
             <ReaderParagraphElement
-              contentClassName="space-y-7"
+              contentClassName="space-y-0"
               props={props}
               paragraphCount={paragraphNodes.length}
               paragraphIndex={paragraphIndexById.get(element.paragraphId) ?? 0}
@@ -433,6 +435,18 @@ export function PlateReaderSurface({
           const sentenceNotes = readerNotesBySentence.get(element.sentenceId) ?? [];
           const activeSentenceNote =
             sentenceNotes.find((note) => note.id === activeReaderNoteId) ?? null;
+          const hasVisibleAnalysis = element.children.some(
+            (child: any) =>
+              (child.type === "reader_grammar_note" ||
+                child.type === "reader_sentence_analysis" ||
+                child.type === "reader_term_note" ||
+                child.type === "reader_logic_note" ||
+                child.type === "reader_interpretation_note") &&
+              analysisEntryVisible(child.entryType, annotationVisibilityGroups),
+          );
+          const hasTranslation = showTranslation && element.children.some(
+            (child: any) => child.type === "reader_translation",
+          );
           const hasExpandedSentenceAnalysis = element.children.some(
             (child: any) =>
               child.type === "reader_sentence_analysis" &&
@@ -442,6 +456,8 @@ export function PlateReaderSurface({
             <ReaderSentenceElement
               props={props}
               active={activeSentenceId === element.sentenceId}
+              hasTranslation={hasTranslation}
+              hasVisibleAnalysis={hasVisibleAnalysis}
               analysisActive={hasExpandedSentenceAnalysis}
               analysisExpanded={hasExpandedSentenceAnalysis}
               annotationVisibilityGroups={annotationVisibilityGroups}
@@ -460,6 +476,7 @@ export function PlateReaderSurface({
         case "reader_sentence_text":
           return (
             <ReaderSentenceTextElement
+              className="reader-intensive-sentence-text"
               props={props}
               readingClassName={readingClassName}
               sourceContext={sourceContextBySentence.get(element.sentenceId)}
@@ -553,6 +570,7 @@ export function PlateReaderSurface({
         analysisSegmentsBySentence={expandedSentenceAnalysisSegmentsBySentence}
         jumpFocusRangesBySentence={jumpFocusRangesBySentence}
         selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+        contextFocusRangesBySentence={contextFocusRangesBySentence}
         noteFocusRangesBySentence={noteFocusRangesBySentence}
         hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
@@ -575,6 +593,7 @@ export function PlateReaderSurface({
       onLookupIntent,
       jumpFocusRangesBySentence,
       selectionFocusRangesBySentence,
+      contextFocusRangesBySentence,
       hoveredAnnotationTargetKey,
       noteFocusRangesBySentence,
       onHoverAnnotationTargetKeyChange,

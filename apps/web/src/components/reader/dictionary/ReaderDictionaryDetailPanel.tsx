@@ -20,6 +20,8 @@ import {
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import type { WebDictAIRequest, DictionaryAIViewState } from "@/types/api/dict-ai";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
+import { cn } from "@/lib/cn";
+import { readerCommandControl, readerPanelItem, readerTransitionFast } from "../interaction";
 import type { SaveState, DictionaryLookupSnapshot } from "./contracts";
 import {
   type DictionaryContentTab,
@@ -84,11 +86,15 @@ function DictionaryIconAction({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className={`focus-ring inline-flex h-8 w-8 items-center justify-center rounded-[0.7rem] border transition-colors cursor-pointer ${
+          className={cn(
+            readerPanelItem,
+            "inline-flex h-8 w-8 justify-center rounded-[0.7rem] border p-0",
             active
               ? "border-hairline bg-ink/[0.03]"
-              : "border-transparent bg-transparent hover:border-hairline/80 hover:bg-ink/[0.02]"
-          } ${toneClass} disabled:cursor-not-allowed disabled:opacity-50`}
+              : "border-transparent bg-transparent hover:border-hairline/80 hover:bg-ink/[0.02]",
+            toneClass,
+            disabled && "cursor-not-allowed",
+          )}
           onClick={onClick}
           disabled={disabled}
           aria-label={label}
@@ -322,7 +328,7 @@ export function ReaderDictionaryDetailPanel({
           {canRetry ? (
             <button
               type="button"
-              className="focus-ring inline-flex shrink-0 items-center rounded border border-exam-red/30 bg-surface px-2.5 py-1 text-[0.68rem] font-semibold text-exam-red transition-colors hover:bg-exam-red/[0.04] cursor-pointer"
+              className={cn(readerCommandControl, "inline-flex min-h-8 shrink-0 rounded border border-exam-red/30 bg-surface px-2.5 py-1 text-[0.68rem] text-exam-red hover:bg-exam-red/[0.04]")}
               onClick={() => onRequestAI(mode)}
             >
               重试
@@ -343,9 +349,12 @@ export function ReaderDictionaryDetailPanel({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className={`focus-ring inline-flex min-h-8 items-center gap-1.5 rounded border border-hairline bg-surface hover:bg-ink/[0.02] transition-colors px-3 text-[0.72rem] font-semibold text-ink-soft cursor-pointer ${
-              dictionaryAINoteState.kind === "saving" ? "opacity-60 cursor-wait" : ""
-            }`}
+            className={cn(
+              readerCommandControl,
+              "inline-flex min-h-8 rounded border border-hairline bg-surface px-3 text-[0.72rem] text-ink-soft",
+              "hover:bg-ink/[0.02]",
+              dictionaryAINoteState.kind === "saving" && "cursor-wait opacity-60",
+            )}
             onClick={onCreateAINote}
             disabled={dictionaryAINoteState.kind === "saving"}
           >
@@ -371,7 +380,7 @@ export function ReaderDictionaryDetailPanel({
     return (
       <button
         type="button"
-        className="focus-ring flex w-full items-start justify-between gap-3 rounded-[10px] border border-hairline/75 bg-ink/[0.015] px-4 py-3 text-left transition-colors hover:bg-ink/[0.03] cursor-pointer"
+        className={cn(readerPanelItem, "flex w-full rounded-[10px] border border-hairline/75 bg-ink/[0.015] px-4 py-3 text-left hover:bg-ink/[0.03]")}
         onClick={onToggleAIPanel}
         aria-label={`展开${title}`}
       >
@@ -418,12 +427,12 @@ export function ReaderDictionaryDetailPanel({
               <span>AI 语境解读</span>
             </div>
           </div>
-          <button
-            type="button"
-            className="focus-ring inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-hairline bg-surface hover:bg-ink/[0.02] text-muted hover:text-ink cursor-pointer"
-            onClick={onToggleAIPanel}
-            aria-label="折叠 AI 语境解读"
-          >
+            <button
+              type="button"
+              className={cn(readerPanelItem, "inline-flex h-6 w-6 shrink-0 justify-center rounded border border-hairline bg-surface p-0 text-muted hover:bg-ink/[0.02] hover:text-ink")}
+              onClick={onToggleAIPanel}
+              aria-label="折叠 AI 语境解读"
+            >
             <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -481,7 +490,7 @@ export function ReaderDictionaryDetailPanel({
             </div>
             <button
               type="button"
-              className="focus-ring inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-hairline bg-surface hover:bg-ink/[0.02] text-muted hover:text-ink cursor-pointer"
+              className={cn(readerPanelItem, "inline-flex h-6 w-6 shrink-0 justify-center rounded border border-hairline bg-surface p-0 text-muted hover:bg-ink/[0.02] hover:text-ink")}
               onClick={onToggleAIPanel}
               aria-label="折叠未识别结果"
             >
@@ -497,7 +506,7 @@ export function ReaderDictionaryDetailPanel({
                   <button
                     key={query}
                     type="button"
-                    className="focus-ring rounded border border-hairline bg-surface px-2.5 py-1 text-[0.68rem] font-semibold text-ink hover:bg-ink/[0.02] transition-colors cursor-pointer"
+                    className={cn(readerCommandControl, "inline-flex rounded border border-hairline bg-surface px-2.5 py-1 text-[0.68rem] text-ink hover:bg-ink/[0.02]")}
                     onClick={() => onSelectAISuggestedQuery(query)}
                   >
                     {query}
@@ -544,7 +553,7 @@ export function ReaderDictionaryDetailPanel({
           </div>
           <button
             type="button"
-            className="focus-ring inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-hairline bg-surface hover:bg-ink/[0.02] text-muted hover:text-ink cursor-pointer"
+            className={cn(readerPanelItem, "inline-flex h-6 w-6 shrink-0 justify-center rounded border border-hairline bg-surface p-0 text-muted hover:bg-ink/[0.02] hover:text-ink")}
             onClick={onToggleAIPanel}
             aria-label="折叠未验证词条"
           >
@@ -574,7 +583,7 @@ export function ReaderDictionaryDetailPanel({
                 <button
                   key={query}
                   type="button"
-                  className="focus-ring rounded border border-hairline bg-surface px-2.5 py-1 text-[0.68rem] font-semibold text-ink hover:bg-ink/[0.02] transition-colors cursor-pointer"
+                  className={cn(readerCommandControl, "inline-flex rounded border border-hairline bg-surface px-2.5 py-1 text-[0.68rem] text-ink hover:bg-ink/[0.02]")}
                   onClick={() => onSelectAISuggestedQuery(query)}
                 >
                   {query}
@@ -716,7 +725,7 @@ export function ReaderDictionaryDetailPanel({
         <div className="flex items-center justify-between px-5 py-3 select-none">
           <button
             type="button"
-            className="flex items-center gap-2 text-left cursor-pointer hover:opacity-85"
+            className={cn(readerPanelItem, "inline-flex rounded-[0.6rem] px-1.5 py-1 text-left text-[0.7rem] hover:bg-muted/40")}
             onClick={() => setHistoryCollapsed((prev) => !prev)}
             aria-expanded={!historyCollapsed}
           >
@@ -744,9 +753,11 @@ export function ReaderDictionaryDetailPanel({
                   <button
                     key={dictionaryLookupHistoryKey(item)}
                     type="button"
-                    className={`group flex w-full items-start gap-3 rounded-[8px] px-2.5 py-2 text-left transition-colors cursor-pointer ${
-                      active ? "bg-ink/[0.03]" : "hover:bg-ink/[0.02]"
-                    }`}
+                    className={cn(
+                      readerPanelItem,
+                      "group flex w-full items-start rounded-[8px] px-2.5 py-2 text-left",
+                      active ? "bg-ink/[0.03]" : "hover:bg-ink/[0.02]",
+                    )}
                     onClick={() => onSelectHistory?.(item)}
                     title={`${item.query}: ${summary}`}
                   >
@@ -822,7 +833,7 @@ export function ReaderDictionaryDetailPanel({
               />
               <button
                 type="button"
-                className="absolute right-2.5 h-5 w-5 text-muted hover:text-ink transition-colors flex items-center justify-center cursor-pointer"
+                className={cn(readerPanelItem, "absolute right-2.5 inline-flex h-5 w-5 justify-center rounded-full p-0 text-muted hover:bg-muted/40 hover:text-ink")}
                 onClick={handleSearchClearOrCollapse}
                 aria-label={searchQuery.trim() ? "清空搜索" : "收起搜索"}
               >
@@ -927,7 +938,7 @@ export function ReaderDictionaryDetailPanel({
                   )}
                   <button
                     type="button"
-                    className="text-muted hover:text-ink transition-colors inline-flex items-center justify-center p-1 rounded hover:bg-ink/[0.02] cursor-pointer"
+                    className={cn(readerPanelItem, "inline-flex items-center justify-center rounded p-1 text-muted hover:bg-ink/[0.02] hover:text-ink")}
                     aria-label="发音"
                   >
                     <Volume2 className="h-3.5 w-3.5" />
@@ -967,7 +978,7 @@ export function ReaderDictionaryDetailPanel({
                     {hiddenTagCount > 0 ? (
                       <button
                         type="button"
-                        className="focus-ring inline-flex items-center rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted transition-colors hover:bg-ink/[0.05] hover:text-ink cursor-pointer"
+                        className={cn(readerPanelItem, "inline-flex rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted hover:bg-ink/[0.05] hover:text-ink")}
                         onClick={() => setShowAllTags((value) => !value)}
                         aria-expanded={showAllTags}
                         aria-label={showAllTags ? "收起考试标签" : `展开剩余 ${hiddenTagCount} 个考试标签`}
@@ -1042,9 +1053,11 @@ export function ReaderDictionaryDetailPanel({
                         <button
                           key={item.id}
                           type="button"
-                          className={`pb-2 text-[0.78rem] font-bold transition-all relative flex items-baseline gap-1 cursor-pointer ${
-                            active ? "text-ink" : "text-muted hover:text-ink"
-                          }`}
+                          className={cn(
+                            readerTransitionFast,
+                            "relative flex items-baseline gap-1 pb-2 text-[0.78rem] font-bold",
+                            active ? "text-ink" : "text-muted hover:text-ink active:text-ink",
+                          )}
                           onClick={() => setActiveTab(item.id)}
                           aria-pressed={active}
                         >
@@ -1098,7 +1111,7 @@ export function ReaderDictionaryDetailPanel({
                       <button
                         key={candidate.entryId}
                         type="button"
-                        className="focus-ring block w-full rounded border border-hairline bg-surface hover:bg-ink/[0.01] transition-all px-4 py-2.5 text-left cursor-pointer"
+                        className={cn(readerPanelItem, "block w-full rounded border border-hairline bg-surface px-4 py-2.5 text-left hover:bg-ink/[0.01]")}
                         onClick={() => onSelectCandidate(candidate.entryId)}
                       >
                         <div className="flex items-center justify-between gap-3">

@@ -3,6 +3,7 @@ import { GripVertical, Highlighter, MessageSquare } from "lucide-react";
 
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import { cn } from "@/lib/cn";
+import { readerPanelItem, readerTransitionFast } from "./interaction";
 
 export interface AnnotationGutterProps {
   sentenceId?: string;
@@ -106,6 +107,11 @@ export function AnnotationGutter({
   const hasMultipleHighlights = highlightAnnotations.length > 1;
   const primaryAnnotation = highlightAnnotations[0] ?? null;
   const railPersistent = actionsActive || hasAssets;
+  const gutterButtonClassName = cn(
+    readerPanelItem,
+    readerTransitionFast,
+    "inline-flex h-7 w-7 justify-center rounded-full p-0",
+  );
 
   return (
     <div
@@ -121,7 +127,7 @@ export function AnnotationGutter({
         <button
           type="button"
           className={cn(
-            "focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+            gutterButtonClassName,
             actionsActive ? "bg-muted/60 text-foreground" : "text-muted-foreground/60 hover:bg-muted/40 hover:text-foreground",
             !actionsActive && "hidden group-hover/sentence:inline-flex group-focus-within/sentence:inline-flex"
           )}
@@ -146,9 +152,13 @@ export function AnnotationGutter({
           {noteCount > 0 ? (
             <button
               type="button"
-              className={`focus-ring relative inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-                noteActive ? "bg-amber-500/20 text-amber-600 dark:text-amber-400" : "text-amber-500/80 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400"
-              }`}
+              className={cn(
+                gutterButtonClassName,
+                "relative",
+                noteActive
+                  ? "bg-amber-500/20 text-amber-600 dark:text-amber-400"
+                  : "text-amber-500/80 hover:bg-muted/40 hover:text-amber-600 dark:hover:text-amber-400",
+              )}
               onClick={(event) => {
                 event.stopPropagation();
                 setStripOpen(false);
@@ -170,9 +180,13 @@ export function AnnotationGutter({
           {highlightAnnotations.length > 0 ? (
             <button
               type="button"
-              className={`focus-ring relative inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-                active ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400" : "text-emerald-500/80 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400"
-              }`}
+              className={cn(
+                gutterButtonClassName,
+                "relative",
+                active
+                  ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                  : "text-emerald-500/80 hover:bg-muted/40 hover:text-emerald-600 dark:hover:text-emerald-400",
+              )}
               onMouseEnter={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
               onMouseLeave={() => onHoverTargetKeyChange?.(null)}
               onFocus={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
@@ -221,7 +235,8 @@ export function AnnotationGutter({
                 role="option"
                 aria-selected={isHovered}
                 className={cn(
-                  "flex w-full min-w-[8rem] items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors",
+                  readerPanelItem,
+                  "flex w-full min-w-[8rem] rounded-lg px-2.5 py-1.5 text-sm",
                   isHovered ? "bg-muted/50 text-foreground" : "text-muted-foreground/80 hover:bg-muted/30 hover:text-foreground"
                 )}
                 onMouseEnter={() => onHoverTargetKeyChange?.(annotation.targetKey)}

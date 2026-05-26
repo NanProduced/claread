@@ -3,6 +3,8 @@
 import { ChevronDown, MessageSquare } from "lucide-react";
 import { useState } from "react";
 import type { RenderElement } from "platejs/react";
+import { readerPanelItem } from "@/components/reader/interaction";
+import { cn } from "@/lib/cn";
 import type { ReaderContentSummaryNode } from "@/lib/reader-plate";
 import { contentSummaryCompletenessLabel } from "../shared";
 
@@ -62,7 +64,10 @@ export function ReaderContentSummaryElement({
         {onAsk ? (
           <button
             type="button"
-            className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-muted opacity-0 transition-[opacity,border-color,color,background-color] hover:border-border hover:bg-muted/50 hover:text-lens-blue focus-visible:opacity-100 group-hover/content-summary:opacity-100"
+            className={cn(
+              readerPanelItem,
+              "h-10 w-10 shrink-0 rounded-full opacity-0 group-hover/content-summary:opacity-100 focus-visible:opacity-100 hover:text-lens-blue",
+            )}
             onClick={(event) => {
               event.stopPropagation();
               onAsk();

@@ -20,6 +20,7 @@ import {
   ToolbarSplitButtonSecondary,
 } from "../../ui/toolbar";
 import { cn } from "../../../lib/cn";
+import { readerFloatingAction, readerTransitionStandard } from "../interaction";
 
 export function ReaderToolbarRoot({
   className,
@@ -55,8 +56,10 @@ export function ReaderToolbarSeparator({
   );
 }
 
-const readerToolbarButtonBaseClassName =
-  "focus-ring shrink-0 rounded-full border border-transparent text-foreground/75 transition-all duration-200 hover:bg-muted/80 hover:text-foreground active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40";
+const readerToolbarButtonBaseClassName = cn(
+  readerFloatingAction,
+  "shrink-0 rounded-full",
+);
 
 export interface ReaderToolbarButtonProps
   extends React.ComponentPropsWithoutRef<typeof ToolbarButton> {
@@ -117,11 +120,12 @@ export function ReaderToolbarSplitAction({
     <ReaderToolbarMenu>
       <ToolbarSplitButton
         aria-label={label}
-        className={cn(
-          "rounded-lg border border-transparent",
-          disabled && "pointer-events-none opacity-40",
-          active && "border-border/65 bg-background shadow-sm",
-        )}
+          className={cn(
+            "rounded-lg border border-transparent",
+            readerTransitionStandard,
+            disabled && "pointer-events-none opacity-40",
+            active && "border-border/65 bg-background shadow-sm",
+          )}
         data-pressed={active ? "true" : undefined}
       >
         <ToolbarSplitButtonPrimary

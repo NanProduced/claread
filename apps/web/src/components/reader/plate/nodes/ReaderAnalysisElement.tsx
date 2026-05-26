@@ -1,8 +1,10 @@
 "use client";
 
-import { ChevronDown, MessageSquare } from "lucide-react";
+import { ChevronDown, Sparkles } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { RenderElement } from "platejs/react";
+import { readerInlineFocusRing, readerPanelItem, readerTransitionStandard } from "@/components/reader/interaction";
+import { cn } from "@/lib/cn";
 import type { ReaderAnalysisBlockNode } from "@/lib/reader-plate";
 import { parseSentenceAnalysisContent } from "../../reader-entry-utils";
 import { entryLabel } from "../shared";
@@ -10,23 +12,6 @@ import { entryLabel } from "../shared";
 function getCircleNumber(num: number): string {
   const circles = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
   return circles[num - 1] || `(${num})`;
-}
-
-function analysisCardToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) {
-  switch (entryType) {
-    case "sentence_analysis":
-      return "border-structure-green/22";
-    case "grammar_note":
-      return "border-grammar-violet/22";
-    case "term_note":
-      return "border-vocab-amber/18";
-    case "logic_note":
-      return "border-lens-blue/18";
-    case "interpretation_note":
-      return "border-context-blue/18";
-    default:
-      return "border-hairline";
-  }
 }
 
 function entryLabelToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) {
@@ -48,32 +33,35 @@ function entryLabelToneClass(entryType: ReaderAnalysisBlockNode["entryType"]) {
 function EnhancedText({ text }: { text: string }) {
   if (!text) return null;
 
-  // Split by sentence punctuation: 。 and ； (retaining them)
-  const segments = text.split(/(?<=[。；])/g);
+  // Split by newline to respect natural paragraph bounds and prevent trailing parenthesis orphan bugs
+  const segments = text.split("\n");
 
   return (
     <>
       {segments.map((segment, sIdx) => {
-        if (!segment.trim()) return null;
+        if (!segment.trim()) {
+          // Render a spacer for empty lines to let paragraph blocks breathe
+          return <div key={sIdx} className="h-2.5" />;
+        }
 
         // Split into runs of English phrases vs Chinese/symbols
         const parts = segment.split(/([a-zA-Z]+(?:[\s'\-][a-zA-Z]+)*)/g);
 
         return (
-          <span key={sIdx} className="block mt-1 first:mt-0">
+          <span key={sIdx} className="block text-[0.93rem] leading-[1.82] text-ink-soft mb-2.5 last:mb-0">
             {parts.map((part, pIdx) => {
               if (/[a-zA-Z]/.test(part)) {
                 return (
                   <span
                     key={pIdx}
-                    className="font-sans font-medium text-ink tracking-normal mx-[0.15em]"
+                    className="font-sans font-semibold text-ink mx-[0.08em] tracking-normal"
                   >
                     {part}
                   </span>
                 );
               }
               return (
-                <span key={pIdx} className="font-sans">
+                <span key={pIdx} className="font-sans font-normal">
                   {part}
                 </span>
               );
@@ -119,7 +107,6 @@ export function ReaderAnalysisElement({
 
   const category = entryLabel(element);
   const label = element.title ?? element.label ?? "解析";
-  const cardToneClass = analysisCardToneClass(element.entryType);
   const labelToneClass = entryLabelToneClass(element.entryType);
   const activeClass = active
     ? `reader-entry-note--active reader-entry-note--active-${element.entryType.replace("_", "-")}`
@@ -134,6 +121,11 @@ export function ReaderAnalysisElement({
   const parsed = element.entryType === "sentence_analysis"
     ? parseSentenceAnalysisContent(element.content)
     : null;
+  const headerIconActionClassName = cn(
+    "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted/68 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)]",
+    "hover:text-ink active:text-ink focus-visible:text-ink",
+    "[&_svg]:stroke-[1.9] hover:[&_svg]:stroke-[2.35] focus-visible:[&_svg]:stroke-[2.35]",
+  );
 
   return (
     <section
@@ -188,13 +180,25 @@ export function ReaderAnalysisElement({
             ) : null}
           </div>
         </button>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1 pl-2">
           {expanded && onAsk ? (
-            <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover/analysis:opacity-100 focus-within:opacity-100">
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                className={cn(headerIconActionClassName, "text-lens-blue/72 hover:text-lens-blue focus-visible:text-lens-blue")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAsk();
+                }}
+                aria-label="带解析进入 Ask"
+                title="带解析进入 Ask"
+              >
+                <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+              </button>
               {onDelete && element.deletable ? (
                 <button
                   type="button"
-                  className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-destructive"
+                  className={cn(headerIconActionClassName, "text-muted/62 hover:text-destructive focus-visible:text-destructive")}
                   onClick={(event) => {
                     event.stopPropagation();
                     onDelete();
@@ -204,22 +208,15 @@ export function ReaderAnalysisElement({
                   <span className="text-sm font-semibold">-</span>
                 </button>
               ) : null}
-              <button
-                type="button"
-                className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent bg-transparent text-muted transition-[border-color,color,background-color] hover:border-hairline hover:bg-surface hover:text-lens-blue"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onAsk();
-                }}
-                aria-label="带解析进入 Ask"
-              >
-                <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
-              </button>
             </div>
           ) : null}
           <button
             type="button"
-            className="reader-entry-note-toggle focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted/55"
+            className={cn(
+              readerInlineFocusRing,
+              "reader-entry-note-toggle inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-muted/62 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] hover:bg-transparent hover:text-ink active:bg-transparent focus-visible:text-ink",
+              "[&_svg]:stroke-[1.85] hover:[&_svg]:stroke-[2.3] focus-visible:[&_svg]:stroke-[2.3]",
+            )}
             onClick={(event) => {
               event.stopPropagation();
               onToggle?.();
@@ -236,9 +233,11 @@ export function ReaderAnalysisElement({
       </div>
 
       <div
-        className={`grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          expanded ? "mt-4 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0 pointer-events-none"
-        }`}
+        className={cn(
+          "grid transition-[grid-template-rows,opacity,margin-top]",
+          readerTransitionStandard,
+          expanded ? "mt-4 grid-rows-[1fr] opacity-100" : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+        )}
         aria-hidden={!expanded}
       >
         <div className="overflow-hidden px-1 -mx-1">
@@ -273,16 +272,16 @@ export function ReaderAnalysisElement({
                           atoms?.forEach((atom) => atom.classList.remove("reader-analysis-atom--active"));
                         }}
                       >
-                        <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1}`}>
-                          {index + 1}
-                        </div>
-                        <div className="reader-entry-analysis-copy">
+                        <div className="reader-entry-analysis-header">
+                          <div className={`reader-analysis-row-index reader-analysis-row-index--${(index % 6) + 1}`}>
+                            {index + 1}
+                          </div>
                           <div className="reader-entry-analysis-label">
                             {chunk.label}
                           </div>
-                          <div className="reader-entry-analysis-text">
-                            <EnhancedText text={chunk.text} />
-                          </div>
+                        </div>
+                        <div className="reader-entry-analysis-text">
+                          <EnhancedText text={chunk.text} />
                         </div>
                       </div>
                     ))}

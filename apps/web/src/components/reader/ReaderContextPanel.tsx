@@ -6,6 +6,7 @@ import { Highlighter, Languages, MessageSquare, NotebookPen, Palette, Quote } fr
 import type { UserAnnotationColorDto } from "@/types/api/annotations";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import { cn } from "@/lib/cn";
+import { readerInlineFocusRing, readerPanelItem, readerTransitionFast } from "./interaction";
 
 export type AnnotationSaveState =
   | { kind: "idle" }
@@ -112,7 +113,10 @@ export function ReaderContextPanel({
                     key={option.value}
                     type="button"
                     className={cn(
-                      "h-4 w-4 rounded-full ring-1 ring-inset ring-border/50 transition-transform hover:scale-110",
+                      "h-4 w-4 rounded-full ring-1 ring-inset ring-border/50 hover:ring-2 hover:ring-lens-blue/20",
+                      readerInlineFocusRing,
+                      readerTransitionFast,
+                      "hover:scale-110",
                       option.className,
                       color === option.value ? "ring-2 ring-ring ring-offset-1 ring-offset-background" : ""
                     )}
@@ -152,7 +156,7 @@ function MenuItem({ icon, label, onClick, disabled }: MenuItemProps) {
   return (
     <button
       type="button"
-      className="flex w-full items-center gap-2.5 rounded-[8px] px-2.5 py-1.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-muted/80 disabled:pointer-events-none disabled:opacity-50"
+      className={cn(readerPanelItem, "flex w-full rounded-[8px] px-2.5 py-1.5 text-left text-[13px]")}
       onClick={onClick}
       disabled={disabled}
     >

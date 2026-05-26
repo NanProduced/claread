@@ -57,18 +57,32 @@ const INITIAL_COMPONENTS: Partial<Components> = {
   },
 }
 
+function mergeMarkdownComponents(
+  components?: Partial<Components>
+): Partial<Components> {
+  return {
+    ...INITIAL_COMPONENTS,
+    ...components,
+  }
+}
+
 const MemoizedMarkdownBlock = memo(
   function MarkdownBlock({
     content,
-    components = INITIAL_COMPONENTS,
+    components,
   }: {
     content: string
     components?: Partial<Components>
   }) {
+    const resolvedComponents = useMemo(
+      () => mergeMarkdownComponents(components),
+      [components]
+    )
+
     return (
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={components}
+        components={resolvedComponents}
       >
         {content}
       </ReactMarkdown>
@@ -85,7 +99,7 @@ function MarkdownComponent({
   children,
   id,
   className,
-  components = INITIAL_COMPONENTS,
+  components,
 }: MarkdownProps) {
   const generatedId = useId()
   const blockId = id ?? generatedId

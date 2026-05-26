@@ -1,6 +1,8 @@
 "use client";
 
 import type { ThemeName } from "@/lib/appearance";
+import { cn } from "@/lib/cn";
+import { readerCommandControl, readerSegmentedOption, readerTransitionStandard } from "../interaction";
 import {
   type ReaderFontFamily,
   type ReaderFontScale,
@@ -100,7 +102,7 @@ export function ReaderSettingsPanel({
         {onClose ? (
           <button
             type="button"
-            className="reader-settings-dismiss text-[1.5rem] font-light text-muted hover:text-ink transition-colors flex items-center justify-center cursor-pointer leading-none -mt-1 hover:scale-105"
+            className={cn(readerCommandControl, "h-9 w-9 rounded-full p-0 text-[1.5rem] font-light leading-none text-muted hover:text-ink")}
             onClick={onClose}
             aria-label="关闭阅读设置"
           >
@@ -132,22 +134,26 @@ export function ReaderSettingsPanel({
                   key={option.value}
                   type="button"
                   aria-pressed={active}
-                  className={`focus-ring relative flex flex-col items-stretch rounded-[0.5rem] border p-1 transition-all duration-200 cursor-pointer select-none bg-background/40 hover:bg-ink/[0.01] ${
+                  className={cn(
+                    readerSegmentedOption({ selected: active }),
+                    "relative flex flex-col items-stretch rounded-[0.5rem] border bg-background/40 p-1 text-left",
                     active
                       ? "border-vocab-amber/40 shadow-[0_2px_8px_rgba(195,155,98,0.06)]"
-                      : "border-hairline hover:border-muted"
-                  }`}
+                      : "border-hairline",
+                  )}
                   onClick={() => onThemeChange(option.value)}
                 >
                   {/* Miniature article layout mockup */}
                   <div
-                    className={`h-14 md:h-[3.8rem] rounded-[0.35rem] p-2 flex flex-col gap-1.5 justify-center relative overflow-hidden transition-colors border border-hairline/20 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)] ${
+                    className={cn(
+                      "relative flex h-14 flex-col justify-center gap-1.5 overflow-hidden rounded-[0.35rem] border border-hairline/20 p-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)] md:h-[3.8rem]",
+                      readerTransitionStandard,
                       option.value === "paper"
                         ? "bg-[#f4f0e6] text-[#4a3e3d]/80"
                         : option.value === "light"
                           ? "bg-[#fbfbfb] text-[#1f2937]/80"
                           : "bg-[#18181c] text-[#a1a1a6]"
-                    }`}
+                    )}
                   >
                     <div className="flex flex-col gap-1.5 w-full opacity-60">
                       {/* Real-looking text paragraph mockup */}
@@ -209,11 +215,13 @@ export function ReaderSettingsPanel({
                 <button
                   key={option.value}
                   type="button"
-                  className={`focus-ring flex-1 min-h-[2.1rem] flex items-center justify-center rounded-[0.45rem] border transition-all duration-200 cursor-pointer select-none leading-none ${
+                  className={cn(
+                    readerSegmentedOption({ selected: active }),
+                    "flex-1 min-h-[2.1rem] rounded-[0.45rem] border leading-none",
                     active
-                      ? "bg-vocab-amber/8 border-vocab-amber/30 text-vocab-amber font-bold shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
-                      : "border-transparent bg-transparent text-muted hover:text-ink font-semibold text-[0.8rem]"
-                  }`}
+                      ? "border-vocab-amber/30 bg-vocab-amber/8 text-vocab-amber font-bold shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
+                      : "text-muted text-[0.8rem]",
+                  )}
                   onClick={() => onChange(updateField(value, "fontScale", option.value))}
                 >
                   <span className="block text-[0.8rem]">{option.label}</span>
@@ -242,11 +250,13 @@ export function ReaderSettingsPanel({
                 <button
                   key={option.value}
                   type="button"
-                  className={`focus-ring relative flex flex-col items-center justify-center min-h-[3.6rem] rounded-[0.6rem] border p-2.5 transition-all duration-200 cursor-pointer select-none bg-background/40 hover:bg-ink/[0.01] ${
+                  className={cn(
+                    readerSegmentedOption({ selected: active }),
+                    "relative min-h-[3.6rem] flex-col rounded-[0.6rem] border bg-background/40 p-2.5",
                     active
-                      ? "bg-vocab-amber/8 border-vocab-amber/30 text-vocab-amber shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
-                      : "border-hairline bg-transparent text-ink hover:text-ink-soft hover:border-muted"
-                  }`}
+                      ? "border-vocab-amber/30 bg-vocab-amber/8 text-vocab-amber shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
+                      : "border-hairline bg-transparent text-ink",
+                  )}
                   onClick={() => onChange(updateField(value, "fontFamily", option.value))}
                 >
                   <span className="block text-[0.82rem] font-bold tracking-tight">{option.label}</span>

@@ -14,6 +14,7 @@ import type { WebReaderNoteCreateRequest, WebReaderNoteVm } from "@/types/api/re
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import { cn } from "@/lib/cn";
 import { FloatingPortal } from "@floating-ui/react";
+import { readerCommandControl, readerPanelItem } from "./interaction";
 
 type ReaderNoteSaveState =
   | { kind: "idle" }
@@ -128,7 +129,7 @@ function ComposerCard({
         </span>
         <button
           type="button"
-          className="focus-ring inline-flex min-h-[2.3rem] items-center rounded-[0.5rem] bg-ink px-5 text-sm font-medium text-white transition-colors hover:bg-ink/90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
+          className={cn(readerCommandControl, "min-h-[2.3rem] rounded-[0.5rem] bg-ink px-5 text-white hover:bg-ink/90")}
           onClick={onSave}
           disabled={!canSave}
         >
@@ -200,14 +201,14 @@ function NoteListItem({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="focus-ring inline-flex min-h-[2.3rem] items-center rounded-[0.5rem] px-4 text-sm font-medium text-muted-foreground/80 transition-colors hover:bg-muted/10 hover:text-foreground"
+              className={cn(readerCommandControl, "min-h-[2.3rem] rounded-[0.5rem] px-4 text-muted-foreground/80 hover:bg-muted/10 hover:text-foreground")}
               onClick={onCancelEdit}
             >
               取消
             </button>
             <button
               type="button"
-              className="focus-ring inline-flex min-h-[2.3rem] items-center rounded-[0.5rem] bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
+              className={cn(readerCommandControl, "min-h-[2.3rem] rounded-[0.5rem] bg-primary px-5 text-primary-foreground hover:bg-primary/90")}
               onClick={onSave}
               disabled={saveState.kind === "saving" || draftText.trim().length === 0}
             >
@@ -234,7 +235,7 @@ function NoteListItem({
             {onAsk ? (
               <button
                 type="button"
-                className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted/40 hover:text-foreground"
+                className={cn(readerPanelItem, "inline-flex h-8 w-8 justify-center rounded-full p-0 text-muted-foreground/60 hover:bg-muted/40")}
                 onClick={(e) => { e.stopPropagation(); onAsk(); }}
                 aria-label="将这条笔记带入 Ask"
               >
@@ -246,7 +247,7 @@ function NoteListItem({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted/40 hover:text-foreground data-[state=open]:bg-muted/40 data-[state=open]:text-foreground"
+                  className={cn(readerPanelItem, "inline-flex h-8 w-8 justify-center rounded-full p-0 text-muted-foreground/60 hover:bg-muted/40 data-[state=open]:bg-muted/40 data-[state=open]:text-foreground")}
                   onClick={(e) => e.stopPropagation()}
                   aria-label="更多操作"
                 >
@@ -309,7 +310,7 @@ function PanelBody({
           </div>
           <button
             type="button"
-            className="focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted/10 hover:text-foreground"
+            className={cn(readerPanelItem, "inline-flex h-7 w-7 justify-center rounded-full p-0 text-muted-foreground/60 hover:bg-muted/10")}
             aria-label="关闭笔记面板"
             onClick={onClose}
           >

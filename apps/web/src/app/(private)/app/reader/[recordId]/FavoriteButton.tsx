@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Heart } from "lucide-react";
-import { Button } from "@/components/primitives/button";
+import { cn } from "@/lib/cn";
+import { readerCommandControl } from "@/components/reader/interaction";
 
 type FavoriteState = "loading" | "ready" | "saving" | "error";
 
@@ -22,6 +23,22 @@ type FavoriteApiResult =
 interface FavoriteButtonProps {
   recordId: string;
   variant?: "default" | "action-bar";
+}
+
+function favoriteButtonShellClassName(favorited: boolean, variant: FavoriteButtonProps["variant"]) {
+  return cn(
+    readerCommandControl,
+    variant === "action-bar"
+      ? "flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5"
+      : "min-h-[3.25rem] w-full justify-start rounded-[1rem] border-hairline px-3.5 py-2 text-left shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.72)]",
+    favorited
+      ? variant === "action-bar"
+        ? "text-vocab-amber"
+        : "bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(252,251,248,0.98))] text-ink shadow-surface-quiet"
+      : variant === "action-bar"
+        ? "text-ink hover:text-ink-soft"
+        : "bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink-soft hover:text-ink-soft",
+  );
 }
 
 async function readFavoriteResponse(response: Response): Promise<FavoriteApiResult> {
@@ -145,13 +162,11 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
           aria-pressed={favorited}
           disabled={disabled}
           onClick={toggleFavorite}
-          className={`focus-ring flex flex-1 items-center justify-center gap-2.5 px-3.5 md:px-5 py-2.5 sm:py-3.5 text-left transition-colors cursor-pointer hover:bg-ink/[0.02] active:bg-ink/[0.04] ${
-            favorited ? "text-vocab-amber" : "text-ink hover:text-ink-soft"
-          }`}
+          className={favoriteButtonShellClassName(favorited, variant)}
         >
           <Heart
             aria-hidden="true"
-            className={`h-[18px] w-[18px] shrink-0 transition-transform hover:scale-105 ${
+            className={`h-[18px] w-[18px] shrink-0 ${
               favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted"
             }`}
             strokeWidth={1.5}
@@ -173,18 +188,12 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
 
   return (
     <div className="flex min-w-[8.75rem] flex-col gap-1.5">
-      <Button
+      <button
         type="button"
         aria-pressed={favorited}
         disabled={disabled}
         onClick={toggleFavorite}
-        variant="quiet"
-        size="sm"
-        className={`min-h-[3.25rem] justify-start rounded-[1rem] px-3.5 py-2 text-left ${
-          favorited
-            ? "border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(252,251,248,0.98))] text-ink shadow-surface-quiet"
-            : "border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.72)]"
-        }`}
+        className={favoriteButtonShellClassName(favorited, variant)}
       >
         <Heart
           aria-hidden="true"
@@ -194,7 +203,7 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
           <span className="text-[0.92rem] font-semibold leading-none">{favorited ? "已收藏" : "收藏"}</span>
           <span className="mt-1 text-[0.68rem] font-medium leading-none text-subtle">{statusLabel}</span>
         </span>
-      </Button>
+      </button>
       <p
         aria-live="polite"
         className={`sr-only max-w-40 text-right text-[0.6875rem] leading-4 ${

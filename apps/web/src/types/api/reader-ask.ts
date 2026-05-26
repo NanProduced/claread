@@ -548,8 +548,10 @@ export interface ReaderAskCompletedPayloadDto {
   context_plan?: ReaderAskContextPlanDto | null;
   resolved_context_input?: ReaderAskResolvedContextInputDto | null;
   run_info?: ReaderAskRunInfoDto | null;
-  supplement_candidates: ReaderAskSupplementCandidateDto[];
+  supplement_candidates: ReaderAskSupplementCandidateDto[]; 
   persisted_supplements: ReaderAskPersistedSupplementDto[];
+  reasoning_md?: string | null;
+  reasoning_status?: "idle" | "streaming" | "completed" | null;
 }
 
 export interface ReaderAskThreadCreateRequestDto {

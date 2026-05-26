@@ -48,6 +48,7 @@ export type PromptInputProps = {
   children: React.ReactNode
   className?: string
   disabled?: boolean
+  disableContainerFocus?: boolean
 } & React.ComponentProps<"div">
 
 function PromptInput({
@@ -59,6 +60,7 @@ function PromptInput({
   onSubmit,
   children,
   disabled = false,
+  disableContainerFocus = false,
   onClick,
   ...props
 }: PromptInputProps) {
@@ -71,7 +73,7 @@ function PromptInput({
   }
 
   const handleClick: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    if (!disabled) textareaRef.current?.focus()
+    if (!disabled && !disableContainerFocus) textareaRef.current?.focus()
     onClick?.(e)
   }
 
@@ -90,7 +92,7 @@ function PromptInput({
       <div
         onClick={handleClick}
         className={cn(
-          "cursor-text rounded-[24px] border border-hairline/90 bg-[rgba(255,255,255,0.96)] px-4 py-3 shadow-[0_22px_54px_rgba(17,17,17,0.08)] backdrop-blur-sm",
+          "cursor-text rounded-[24px] border border-hairline/90 bg-[rgba(255,255,255,0.96)] dark:bg-[rgba(38,43,49,0.96)] px-4 py-3 shadow-[0_22px_54px_rgba(17,17,17,0.08)] dark:shadow-[0_22px_54px_rgba(0,0,0,0.22)] backdrop-blur-sm",
           disabled && "cursor-not-allowed opacity-60",
           className
         )}

@@ -315,6 +315,76 @@ function mockFetch() {
   });
 }
 
+function createAssistantMessage(overrides: Partial<ReaderAskMessageDto> = {}): ReaderAskMessageDto {
+  return {
+    id: "msg-assistant-1",
+    thread_id: "thread-1",
+    role: "assistant",
+    status: "completed",
+    content_md: "Here is the answer.",
+    submission_mode: "chat",
+    resolved_intent: "explain",
+    context_anchors: [],
+    citations: [],
+    action_proposals: [],
+    tool_trace: [],
+    evidence: [],
+    trace_summary: null,
+    disambiguation: null,
+    external_asset_disambiguation: null,
+    response_cards: [],
+    resolved_context: null,
+    context_plan: null,
+    resolved_context_input: null,
+    run_info: null,
+    supplement_candidates: [],
+    persisted_supplements: [],
+    reasoning_md: null,
+    reasoning_status: null,
+    replan_status: "idle",
+    regenerate_preview: false,
+    usage_event_id: null,
+    created_at: "2026-05-20T00:00:00Z",
+    updated_at: "2026-05-20T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function mockThreadMessages(messages: ReaderAskMessageDto[]) {
+  vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+      return jsonResponse({
+        id: "thread-1",
+        record_id: "record-1",
+        title: "Ask Claread",
+        is_default: true,
+        archived_at: null,
+        created_at: "2026-05-20T00:00:00Z",
+        updated_at: "2026-05-20T00:00:00Z",
+        last_message_at: null,
+        messages,
+      });
+    }
+    return mockFetch()(input, init);
+  });
+}
+
+function renderPanel() {
+  return render(
+    <AiWorkspacePanel
+      open
+      pageIdentity={pageIdentity}
+      recordId="record-1"
+      recordTitle="Test Reader"
+      attachments={[]}
+      onRemoveAttachment={vi.fn()}
+      onClearAttachments={vi.fn()}
+      onToggle={vi.fn()}
+    />,
+  );
+}
+
 describe("AiWorkspacePanel", () => {
   afterEach(() => {
     cleanup();
@@ -1489,6 +1559,10 @@ describe("AiWorkspacePanel", () => {
   });
 
   it("renders the current selection inside the attachment chip row", async () => {
+    const onActivateLiveContextSelection = vi.fn();
+    const onComposerTextareaFocus = vi.fn();
+    const onComposerTextareaBlur = vi.fn();
+    const onRemoveAttachment = vi.fn();
     render(
       <AiWorkspacePanel
         open
@@ -1496,20 +1570,37 @@ describe("AiWorkspacePanel", () => {
         recordId="record-1"
         recordTitle="Test Reader"
         attachments={[]}
-        liveAttachment={sentenceAttachment}
-        onRemoveAttachment={vi.fn()}
+        liveContextAttachment={sentenceAttachment}
+        onActivateLiveContextSelection={onActivateLiveContextSelection}
+        onComposerTextareaFocus={onComposerTextareaFocus}
+        onComposerTextareaBlur={onComposerTextareaBlur}
+        onRemoveAttachment={onRemoveAttachment}
         onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
       />,
     );
 
     expect(screen.queryByText("当前可带入")).toBeNull();
-    expect(screen.getByText("当前")).not.toBeNull();
+    expect(screen.queryByText("当前")).toBeNull();
 
     const selectionChip = screen.getByTitle("Climate change presents an existential challenge.");
+    fireEvent.click(selectionChip);
+    expect(onActivateLiveContextSelection).toHaveBeenCalledTimes(1);
+    expect(onRemoveAttachment).not.toHaveBeenCalled();
     expect(selectionChip.textContent).toContain("Climate change presents an existential");
     expect(selectionChip.textContent).toContain("…");
-    expect(selectionChip.className).toContain("truncate");
+    expect(selectionChip.querySelector(".truncate")).not.toBeNull();
+    expect(screen.getByLabelText(/移除当前选区/)).not.toBeNull();
+
+    const textarea = screen.getByPlaceholderText("继续问这篇文章…");
+    const composer = textarea.closest(".cursor-text");
+    composer?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(document.activeElement).not.toBe(textarea);
+
+    fireEvent.focus(textarea);
+    expect(onComposerTextareaFocus).toHaveBeenCalledTimes(1);
+    fireEvent.blur(textarea);
+    expect(onComposerTextareaBlur).toHaveBeenCalledTimes(1);
   });
 
   it("renders light footnote style citations without redundant labels", async () => {
@@ -1579,6 +1670,153 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("引用")).not.toBeNull();
       expect(screen.getByText("当前文章")).not.toBeNull();
       expect(screen.getByText("This is the source text that was cited.")).not.toBeNull();
+    });
+  });
+
+  it("shows a prompt-kit loader for streaming answers without the ellipsis fallback", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "streaming",
+        content_md: "",
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("正在生成解释")).not.toBeNull();
+    });
+
+    expect(screen.queryByText("…")).toBeNull();
+  });
+
+  it("keeps the streaming loader visible alongside partial markdown content", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "streaming",
+        content_md: "已生成第一句。",
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("正在生成解释")).not.toBeNull();
+      expect(screen.getByText("已生成第一句。")).not.toBeNull();
+    });
+  });
+
+  it("removes the streaming loader once the assistant message is completed", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "completed",
+        content_md: "解释完成。",
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("解释完成。")).not.toBeNull();
+    });
+
+    expect(screen.queryByText("正在生成解释")).toBeNull();
+  });
+
+  it("shows reasoning while streaming even before reasoning markdown arrives", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "streaming",
+        content_md: "",
+        reasoning_md: "",
+        reasoning_status: "streaming",
+      }),
+    ]);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getAllByText("正在梳理解释思路").length).toBeGreaterThan(0);
+    });
+
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    const content = container.querySelector('[data-slot="reasoning-content"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+    expect(content?.getAttribute("data-state")).toBe("open");
+  });
+
+  it("renders reasoning deltas immediately while the answer is still streaming", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "streaming",
+        content_md: "正文正在生成。",
+        reasoning_md: "先判断句子主干。",
+        reasoning_status: "streaming",
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("正文正在生成。")).not.toBeNull();
+      expect(screen.getByText("先判断句子主干。")).not.toBeNull();
+    });
+  });
+
+  it("rehydrates a persisted streaming snapshot without auto-retrying the run", async () => {
+    const fetchMock = mockFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "streaming",
+        content_md: "刷新后仍可见的正文片段。",
+        reasoning_md: "刷新后仍可见的 thinking 片段。",
+        reasoning_status: "streaming",
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("刷新后仍可见的正文片段。")).not.toBeNull();
+      expect(screen.getByText("刷新后仍可见的 thinking 片段。")).not.toBeNull();
+    });
+
+    expect(
+      fetchMock.mock.calls.some(([url]) => {
+        const value = String(url);
+        return value.includes("/retry/stream");
+      }),
+    ).toBe(false);
+  });
+
+  it("auto-collapses completed reasoning and lets the user reopen it", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        content_md: "这里是答案正文。",
+        reasoning_md: "推理细节在这里。",
+        reasoning_status: "completed",
+      }),
+    ]);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("解释思路")).not.toBeNull();
+      expect(screen.getByText("这里是答案正文。")).not.toBeNull();
+    });
+
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    const content = container.querySelector('[data-slot="reasoning-content"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(content?.getAttribute("data-state")).toBe("closed");
+
+    fireEvent.click(screen.getByText("解释思路"));
+
+    await waitFor(() => {
+      expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+      expect(content?.getAttribute("data-state")).toBe("open");
+      expect(screen.getByText("推理细节在这里。")).not.toBeNull();
     });
   });
 
