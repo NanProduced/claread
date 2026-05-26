@@ -21,6 +21,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Kbd } from "@/components/primitives";
 
 export type SelectionToolbarAction =
   | "ask"
@@ -221,7 +222,10 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
                 </ReaderToolbarIconButton>
               </TooltipTrigger>
               <TooltipContent side="top" className="text-xs">
-                {shouldToggleHighlightPalette ? "更换高亮颜色" : "高亮"}
+                <span className="inline-flex items-center gap-2">
+                  <span>{shouldToggleHighlightPalette ? "更换高亮颜色" : "高亮"}</span>
+                  <Kbd>H</Kbd>
+                </span>
               </TooltipContent>
             </Tooltip>
 
@@ -237,7 +241,10 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
               </ReaderToolbarIconButton>
             </TooltipTrigger>
             <TooltipContent side="top" className="text-xs">
-              {hasNote ? "编辑笔记" : "新建笔记"}
+              <span className="inline-flex items-center gap-2">
+                <span>{hasNote ? "编辑笔记" : "新建笔记"}</span>
+                <Kbd>E</Kbd>
+              </span>
             </TooltipContent>
           </Tooltip>
 
@@ -293,7 +300,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
                 disabled={askDisabled}
                 onClick={() => onAsk?.(selectedText)}
                 aria-label={askComingSoon ? "Ask Claread（稍后开放）" : "Ask Claread"}
-                className="text-lens-blue/80 hover:bg-lens-blue/10 hover:text-lens-blue active:scale-[0.96]"
+                className="text-lens-blue/80 hover:border-lens-blue/20 hover:bg-transparent hover:text-lens-blue active:bg-transparent active:text-lens-blue"
               >
                 <MessageSquare aria-hidden="true" className="h-4 w-4" />
               </ReaderToolbarIconButton>

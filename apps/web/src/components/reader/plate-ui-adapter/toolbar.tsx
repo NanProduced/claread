@@ -20,7 +20,7 @@ import {
   ToolbarSplitButtonSecondary,
 } from "../../ui/toolbar";
 import { cn } from "../../../lib/cn";
-import { readerFloatingAction, readerTransitionStandard } from "../interaction";
+import { readerFloatingAction, readerIconAction, readerTransitionStandard } from "../interaction";
 
 export function ReaderToolbarRoot({
   className,
@@ -29,7 +29,7 @@ export function ReaderToolbarRoot({
   return (
     <Toolbar
       className={cn(
-        "flex max-w-[min(38rem,calc(100vw-1rem))] flex-wrap items-center gap-1 rounded-full border border-border/60 bg-background/95 p-1 text-foreground shadow-sm backdrop-blur-md",
+        "flex max-w-[min(38rem,calc(100vw-1rem))] flex-wrap items-center gap-1 rounded-full border border-hairline bg-surface-warm/95 p-1 text-ink shadow-[0_10px_30px_rgba(28,24,18,0.08)] backdrop-blur-md",
         className,
       )}
       {...props}
@@ -50,16 +50,14 @@ export function ReaderToolbarSeparator({
 }: React.ComponentPropsWithoutRef<typeof ToolbarSeparator>) {
   return (
     <ToolbarSeparator
-      className={cn("mx-1 hidden h-4 w-px shrink-0 bg-border/50 sm:inline-flex", className)}
+      className={cn("mx-1 hidden h-4 w-px shrink-0 bg-hairline/70 sm:inline-flex", className)}
       {...props}
     />
   );
 }
 
-const readerToolbarButtonBaseClassName = cn(
-  readerFloatingAction,
-  "shrink-0 rounded-full",
-);
+const readerToolbarActionBaseClassName = cn(readerFloatingAction, "shrink-0 rounded-full");
+const readerToolbarIconBaseClassName = cn(readerIconAction, "shrink-0 rounded-full");
 
 export interface ReaderToolbarButtonProps
   extends React.ComponentPropsWithoutRef<typeof ToolbarButton> {
@@ -74,9 +72,9 @@ export function ReaderToolbarButton({
   return (
     <ToolbarButton
       className={cn(
-        readerToolbarButtonBaseClassName,
+        readerToolbarActionBaseClassName,
         "min-h-8 min-w-8 px-2",
-        active && "bg-muted/70 text-foreground shadow-sm",
+        active && "bg-lens-blue-soft/60 text-ink shadow-[inset_0_0_0_1px_rgba(21,92,255,0.06)] font-semibold",
         className,
       )}
       size="default"
@@ -93,10 +91,22 @@ export function ReaderToolbarActionButton({
 }
 
 export function ReaderToolbarIconButton({
+  active = false,
   className,
   ...props
 }: ReaderToolbarButtonProps) {
-  return <ReaderToolbarButton className={cn("h-8 min-w-8 p-1.5 [&>svg]:w-4 [&>svg]:h-4", className)} {...props} />;
+  return (
+    <ToolbarButton
+      className={cn(
+        readerToolbarIconBaseClassName,
+        "h-8 min-w-8 p-1.5 [&>svg]:w-4 [&>svg]:h-4",
+        active && "border-hairline/85 bg-lens-blue-soft/45 text-ink",
+        className,
+      )}
+      size="default"
+      {...props}
+    />
+  );
 }
 
 export interface ReaderToolbarSplitActionProps {
@@ -130,7 +140,7 @@ export function ReaderToolbarSplitAction({
       >
         <ToolbarSplitButtonPrimary
           className={cn(
-            readerToolbarButtonBaseClassName,
+            readerToolbarActionBaseClassName,
             "min-h-10 min-w-10 rounded-r-none border-r-0 px-2.5",
             active && "border-border/65 bg-background text-foreground",
           )}
@@ -148,7 +158,7 @@ export function ReaderToolbarSplitAction({
           <ToolbarSplitButtonSecondary
             aria-label={`${label}更多选项`}
             className={cn(
-              readerToolbarButtonBaseClassName,
+              readerToolbarActionBaseClassName,
               "h-10 w-8 rounded-l-none border-l border-border/45 px-0",
               active && "border-border/65 bg-background text-foreground",
             )}

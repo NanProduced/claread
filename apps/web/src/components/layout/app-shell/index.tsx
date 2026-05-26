@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { SidebarRail } from "../sidebar-rail";
+import { CommandPaletteProvider } from "../command-palette";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -15,6 +16,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="h-screen overflow-hidden bg-web-canvas text-ink">
+      <CommandPaletteProvider />
       <SidebarRail pathname={pathname} collapsed={collapsed} onToggle={() => setManualCollapsed((value) => !(value ?? collapsed))} />
       <ScrollArea className={`${railWidth} h-full pb-20 md:pb-0`}>
         {children}

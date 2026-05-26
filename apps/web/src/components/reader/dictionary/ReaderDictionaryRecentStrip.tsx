@@ -29,7 +29,10 @@ export function ReaderDictionaryRecentStrip({
     <section className="rounded-[18px] border border-hairline/85 bg-surface/84 px-3.5 py-3.5 shadow-[0_1px_2px_rgba(17,17,17,0.04)]">
       <button
         type="button"
-        className={cn(readerPanelItem, "flex min-h-11 w-full justify-between rounded-[0.75rem] px-1 py-1 text-left")}
+        className={cn(
+          readerPanelItem,
+          "flex min-h-11 w-full justify-between rounded-[0.75rem] px-1 py-1 text-left hover:bg-ink/[0.015] active:bg-ink/[0.03]",
+        )}
         onClick={() => setCollapsed((value) => !value)}
         aria-expanded={!collapsed}
       >
@@ -59,7 +62,7 @@ export function ReaderDictionaryRecentStrip({
                   className={cn(
                     readerPanelItem,
                     "reader-dictionary-history-row block w-full rounded-[10px] px-3 py-2 text-left",
-                    active ? "reader-dictionary-history-row--active bg-lens-blue/5" : "hover:bg-muted/10",
+                    active ? "reader-dictionary-history-row--active bg-lens-blue/5 text-ink" : "hover:bg-ink/[0.015]",
                   )}
                   onClick={() => onSelectHistory(item)}
                   title={`${item.query}: ${summary}`}

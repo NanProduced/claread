@@ -11,6 +11,14 @@ export const readerTransitionStandard =
 export const readerInlineFocusRing =
   "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
+export const readerIconAction = cn(
+  "inline-flex items-center justify-center border border-transparent bg-transparent text-muted/80",
+  primitiveFocusRing,
+  readerTransitionFast,
+  "disabled:pointer-events-none disabled:opacity-40",
+  "hover:bg-ink/[0.04] hover:text-ink active:bg-ink/[0.08]",
+);
+
 export const readerCommandControl = cn(
   "inline-flex items-center justify-center gap-2 border border-transparent text-sm font-semibold tracking-[0.01em]",
   primitiveFocusRing,
@@ -20,19 +28,19 @@ export const readerCommandControl = cn(
 );
 
 export const readerFloatingAction = cn(
-  "inline-flex items-center justify-center border border-transparent text-foreground/75",
+  "inline-flex items-center justify-center border border-transparent text-ink/80",
   primitiveFocusRing,
   readerTransitionFast,
   "disabled:pointer-events-none disabled:opacity-40",
-  "hover:bg-muted/80 hover:text-foreground active:scale-[0.96]",
+  "hover:bg-ink/[0.04] hover:text-ink active:scale-[0.96] active:bg-ink/[0.08]",
 );
 
 export const readerPanelItem = cn(
-  "items-center gap-2.5 border border-transparent text-sm font-medium text-foreground",
+  "items-center gap-2.5 border border-transparent text-sm font-medium text-ink",
   primitiveFocusRing,
   readerTransitionFast,
   "disabled:pointer-events-none disabled:opacity-50",
-  "hover:bg-muted/80 hover:text-foreground active:bg-muted/60",
+  "hover:bg-ink/[0.04] hover:text-ink active:bg-ink/[0.08]",
 );
 
 export const readerSegmentedOption = cva(

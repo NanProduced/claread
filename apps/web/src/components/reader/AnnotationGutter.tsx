@@ -3,7 +3,7 @@ import { GripVertical, Highlighter, MessageSquare } from "lucide-react";
 
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import { cn } from "@/lib/cn";
-import { readerPanelItem, readerTransitionFast } from "./interaction";
+import { readerIconAction, readerPanelItem, readerTransitionFast } from "./interaction";
 
 export interface AnnotationGutterProps {
   sentenceId?: string;
@@ -108,7 +108,7 @@ export function AnnotationGutter({
   const primaryAnnotation = highlightAnnotations[0] ?? null;
   const railPersistent = actionsActive || hasAssets;
   const gutterButtonClassName = cn(
-    readerPanelItem,
+    readerIconAction,
     readerTransitionFast,
     "inline-flex h-7 w-7 justify-center rounded-full p-0",
   );
@@ -128,7 +128,7 @@ export function AnnotationGutter({
           type="button"
           className={cn(
             gutterButtonClassName,
-            actionsActive ? "bg-muted/60 text-foreground" : "text-muted-foreground/60 hover:bg-muted/40 hover:text-foreground",
+            actionsActive ? "border-hairline/85 bg-muted/20 text-foreground" : "text-muted-foreground/60 hover:text-foreground",
             !actionsActive && "hidden group-hover/sentence:inline-flex group-focus-within/sentence:inline-flex"
           )}
           data-reader-sentence-handle="true"
@@ -156,8 +156,8 @@ export function AnnotationGutter({
                 gutterButtonClassName,
                 "relative",
                 noteActive
-                  ? "bg-amber-500/20 text-amber-600 dark:text-amber-400"
-                  : "text-amber-500/80 hover:bg-muted/40 hover:text-amber-600 dark:hover:text-amber-400",
+                  ? "border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  : "text-amber-500/80 hover:text-amber-600 dark:hover:text-amber-400",
               )}
               onClick={(event) => {
                 event.stopPropagation();
@@ -184,8 +184,8 @@ export function AnnotationGutter({
                 gutterButtonClassName,
                 "relative",
                 active
-                  ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
-                  : "text-emerald-500/80 hover:bg-muted/40 hover:text-emerald-600 dark:hover:text-emerald-400",
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : "text-emerald-500/80 hover:text-emerald-600 dark:hover:text-emerald-400",
               )}
               onMouseEnter={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
               onMouseLeave={() => onHoverTargetKeyChange?.(null)}

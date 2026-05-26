@@ -1,6 +1,6 @@
 # Web 实施计划
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-25
+> **状态**: `CURRENT` | **最后更新**: 2026-05-26
 
 本文记录 Claread Web 当前稳定实施边界，只保留已确认的产品与技术合同。
 
@@ -23,6 +23,19 @@ Claread Web 现在采用三段式路由结构：
 - 登录态投影统一为 `signed_out`、`signed_in`、`limited_debug` 三态。
 - 调试手机号会话只表现为 `limited_debug`，不再伪装成正式已登录。
 - `proxy.ts` 只拦截 `/app/*`，同时保留 BFF/server-side session 校验。
+
+## 全局入口与快捷键基线
+
+- Web 已提供统一全局入口：`Cmd/Ctrl + K` 打开 command palette。
+- command palette 只承载 `App Global` 层能力：页面跳转、最近文章、文章搜索和少量全局命令。
+- Library / Vocabulary 页内搜索、Reader 词典查词、Ask 上下文文章搜索仍然是局部搜索，不并入全局 palette。
+- 快捷键按作用域区分：`App Global / Page Global / Surface Local / Ephemeral State`。
+- 冲突优先级固定为：`Ephemeral State > Surface Local > Page Global > App Global`。
+- 当前快捷键提示 UI 规则：
+  - 菜单项右侧显示 shortcut suffix。
+  - icon 按钮在 tooltip 中显示快捷键。
+  - 输入框、浮层、面板使用 helper text 或 footer 就近提示。
+  - 只给已真实实现的键位做提示，不给规划中的键位做假提示。
 
 ## 首期能力地图
 

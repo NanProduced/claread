@@ -21,8 +21,9 @@ import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import type { WebDictAIRequest, DictionaryAIViewState } from "@/types/api/dict-ai";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
 import { cn } from "@/lib/cn";
-import { readerCommandControl, readerPanelItem, readerTransitionFast } from "../interaction";
+import { readerCommandControl, readerIconAction, readerPanelItem, readerTransitionFast } from "../interaction";
 import type { SaveState, DictionaryLookupSnapshot } from "./contracts";
+import { getSaveActionCopy, type LookupSaveState, type ReaderVocabularyLookupMatch } from "./lookupSaveState";
 import {
   type DictionaryContentTab,
   type DictionarySenseItem,
@@ -87,11 +88,11 @@ function DictionaryIconAction({
         <button
           type="button"
           className={cn(
-            readerPanelItem,
-            "inline-flex h-8 w-8 justify-center rounded-[0.7rem] border p-0",
+            readerIconAction,
+            "inline-flex h-8 w-8 justify-center rounded-[0.7rem] p-0",
             active
-              ? "border-hairline bg-ink/[0.03]"
-              : "border-transparent bg-transparent hover:border-hairline/80 hover:bg-ink/[0.02]",
+              ? "border-hairline/85 bg-ink/[0.02]"
+              : "border-transparent",
             toneClass,
             disabled && "cursor-not-allowed",
           )}
@@ -114,6 +115,8 @@ interface ReaderDictionaryDetailPanelProps {
   inspect?: ReaderStructuredInspectIntent | null;
   readingGoal: string;
   saveState: SaveState;
+  lookupSaveState?: LookupSaveState;
+  savedVocabularyMatch?: ReaderVocabularyLookupMatch | null;
   dictionaryAI: DictionaryAIViewState;
   dictionaryAIPanelOpen: boolean;
   dictionaryAINoteState: SaveState;
@@ -165,6 +168,8 @@ export function ReaderDictionaryDetailPanel({
   pinned = false,
   readingGoal,
   saveState,
+  lookupSaveState = "not_saved",
+  savedVocabularyMatch = null,
   searchExpanded,
   searchQuery,
   variant = "sheet",
@@ -215,8 +220,14 @@ export function ReaderDictionaryDetailPanel({
     canRequestMissingFallback || Boolean(entryResult && !conciseMeaning && lookup?.contextSentence.trim() && !isManualLookup);
 
   const [historyCollapsed, setHistoryCollapsed] = useState(true);
-
-  const saveDisabled = saveState.kind === "saving" || saveState.kind === "saved" || !canSaveVocabulary;
+  const savedContextCount = savedVocabularyMatch?.sourceRefs.length ?? 0;
+  const isSavedState = lookupSaveState !== "not_saved";
+  const saveDisabled =
+    saveState.kind === "saving" ||
+    lookupSaveState === "already_saved_here" ||
+    lookupSaveState === "multiple_contexts" ||
+    lookupSaveState === "mastered" ||
+    !canSaveVocabulary;
   const primaryMeaning =
     conciseMeaning ||
     (entryResult ? "当前词条暂无简短释义。" : "") ||
@@ -429,7 +440,7 @@ export function ReaderDictionaryDetailPanel({
           </div>
             <button
               type="button"
-              className={cn(readerPanelItem, "inline-flex h-6 w-6 shrink-0 justify-center rounded border border-hairline bg-surface p-0 text-muted hover:bg-ink/[0.02] hover:text-ink")}
+              className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted")}
               onClick={onToggleAIPanel}
               aria-label="折叠 AI 语境解读"
             >
@@ -490,7 +501,7 @@ export function ReaderDictionaryDetailPanel({
             </div>
             <button
               type="button"
-              className={cn(readerPanelItem, "inline-flex h-6 w-6 shrink-0 justify-center rounded border border-hairline bg-surface p-0 text-muted hover:bg-ink/[0.02] hover:text-ink")}
+              className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted")}
               onClick={onToggleAIPanel}
               aria-label="折叠未识别结果"
             >
@@ -553,7 +564,7 @@ export function ReaderDictionaryDetailPanel({
           </div>
           <button
             type="button"
-            className={cn(readerPanelItem, "inline-flex h-6 w-6 shrink-0 justify-center rounded border border-hairline bg-surface p-0 text-muted hover:bg-ink/[0.02] hover:text-ink")}
+            className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted")}
             onClick={onToggleAIPanel}
             aria-label="折叠未验证词条"
           >
@@ -725,7 +736,10 @@ export function ReaderDictionaryDetailPanel({
         <div className="flex items-center justify-between px-5 py-3 select-none">
           <button
             type="button"
-            className={cn(readerPanelItem, "inline-flex rounded-[0.6rem] px-1.5 py-1 text-left text-[0.7rem] hover:bg-muted/40")}
+            className={cn(
+              readerPanelItem,
+              "inline-flex rounded-[0.6rem] px-1.5 py-1 text-left text-[0.7rem] hover:bg-ink/[0.015] active:bg-ink/[0.03]",
+            )}
             onClick={() => setHistoryCollapsed((prev) => !prev)}
             aria-expanded={!historyCollapsed}
           >
@@ -756,7 +770,7 @@ export function ReaderDictionaryDetailPanel({
                     className={cn(
                       readerPanelItem,
                       "group flex w-full items-start rounded-[8px] px-2.5 py-2 text-left",
-                      active ? "bg-ink/[0.03]" : "hover:bg-ink/[0.02]",
+                      active ? "bg-ink/[0.02] text-ink" : "hover:bg-ink/[0.015]",
                     )}
                     onClick={() => onSelectHistory?.(item)}
                     title={`${item.query}: ${summary}`}
@@ -768,7 +782,7 @@ export function ReaderDictionaryDetailPanel({
                       }`}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className={`block truncate text-[0.8rem] font-semibold leading-none ${active ? "text-vocab-amber" : "text-ink"}`}>
+                      <span className={`block truncate text-[0.8rem] font-semibold leading-none ${active ? "text-vocab-amber" : "text-ink group-hover:text-ink-soft"}`}>
                         {item.query}
                       </span>
                       <span className="mt-1 block line-clamp-1 text-[0.7rem] leading-none text-muted">
@@ -833,7 +847,7 @@ export function ReaderDictionaryDetailPanel({
               />
               <button
                 type="button"
-                className={cn(readerPanelItem, "absolute right-2.5 inline-flex h-5 w-5 justify-center rounded-full p-0 text-muted hover:bg-muted/40 hover:text-ink")}
+                className={cn(readerIconAction, "absolute right-2.5 inline-flex h-5 w-5 justify-center rounded-[0.45rem] p-0 text-muted")}
                 onClick={handleSearchClearOrCollapse}
                 aria-label={searchQuery.trim() ? "清空搜索" : "收起搜索"}
               >
@@ -938,7 +952,7 @@ export function ReaderDictionaryDetailPanel({
                   )}
                   <button
                     type="button"
-                    className={cn(readerPanelItem, "inline-flex items-center justify-center rounded p-1 text-muted hover:bg-ink/[0.02] hover:text-ink")}
+                    className={cn(readerIconAction, "inline-flex items-center justify-center rounded-[0.5rem] p-1 text-muted")}
                     aria-label="发音"
                   >
                     <Volume2 className="h-3.5 w-3.5" />
@@ -975,15 +989,27 @@ export function ReaderDictionaryDetailPanel({
                         {item}
                       </span>
                     ))}
-                    {hiddenTagCount > 0 ? (
+                    {hiddenTagCount > 0 && !showAllTags ? (
                       <button
                         type="button"
-                        className={cn(readerPanelItem, "inline-flex rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted hover:bg-ink/[0.05] hover:text-ink")}
-                        onClick={() => setShowAllTags((value) => !value)}
-                        aria-expanded={showAllTags}
-                        aria-label={showAllTags ? "收起考试标签" : `展开剩余 ${hiddenTagCount} 个考试标签`}
+                        className="inline-flex rounded-[4px] border border-transparent bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted transition-[background-color,color,border-color] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] hover:border-hairline/70 hover:bg-ink/[0.045] hover:text-ink"
+                        onClick={() => setShowAllTags(true)}
+                        aria-expanded={false}
+                        aria-label={`展开剩余 ${hiddenTagCount} 个考试标签`}
                       >
-                        {showAllTags ? "收起" : `+${hiddenTagCount}`}
+                        +{hiddenTagCount}
+                      </button>
+                    ) : null}
+                    {hiddenTagCount > 0 && showAllTags ? (
+                      <button
+                        type="button"
+                        className={cn(readerIconAction, "inline-flex h-5 w-5 items-center justify-center rounded-[0.45rem] p-0 text-muted")}
+                        onClick={() => setShowAllTags(false)}
+                        aria-expanded
+                        aria-label="收起考试标签"
+                        title="收起考试标签"
+                      >
+                        <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
                       </button>
                     ) : null}
                   </div>
@@ -992,22 +1018,22 @@ export function ReaderDictionaryDetailPanel({
                     <DictionaryIconAction
                       label={
                         saveState.kind === "saved"
-                          ? saveState.message || "已加入生词本"
+                          ? saveState.message || getSaveActionCopy(lookupSaveState, savedContextCount, "已加入生词本")
                           : saveState.kind === "error"
                             ? saveState.message || "加入生词本失败"
-                            : "加入生词本"
+                            : getSaveActionCopy(lookupSaveState, savedContextCount)
                       }
                       onClick={onSave}
                       disabled={saveDisabled}
                       tone={
-                        saveState.kind === "saved"
+                        saveState.kind === "saved" || isSavedState
                           ? "saved"
                           : saveState.kind === "error"
                             ? "error"
                             : "default"
                       }
                     >
-                      {saveState.kind === "saved" ? (
+                      {saveState.kind === "saved" || isSavedState ? (
                         <Check className="h-3.5 w-3.5" />
                       ) : saveState.kind === "error" ? (
                         <X className="h-3.5 w-3.5" />

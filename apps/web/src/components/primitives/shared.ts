@@ -8,7 +8,7 @@ export const primitiveSurface =
   "app-panel-surface border border-hairline text-ink"
 
 export const primitiveOverlay =
-  "app-overlay fixed inset-0 backdrop-blur-[2px]"
+  "app-overlay fixed inset-0 backdrop-blur-md"
 
 export const controlVariants = cva(
   cn(

@@ -8,6 +8,7 @@ import {
   ChevronsRight,
   Library,
   Plus,
+  Search,
   Settings,
 } from "lucide-react";
 import type { Route } from "next";
@@ -20,6 +21,9 @@ import {
   appVocabularyRoute,
   homeRoute,
 } from "@/lib/routes";
+import { formatShortcut } from "@/lib/shortcuts";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCommandPalette } from "../command-palette";
 
 const navigationItems = [
   { href: appReadRoute, label: "新解读", icon: Plus },
@@ -39,6 +43,9 @@ export interface SidebarRailProps {
 }
 
 export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps) {
+  const togglePalette = useCommandPalette((s) => s.toggle);
+  const shortcutLabel = formatShortcut("Primary+K");
+
   return (
     <>
       <aside
@@ -97,6 +104,36 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
             })}
           </nav>
 
+          <div className="mt-auto flex flex-col gap-1.5">
+            {collapsed ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="focus-ring flex min-h-11 w-full items-center justify-center rounded-note text-sm font-semibold text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
+                    onClick={togglePalette}
+                    aria-label="搜索或跳转"
+                  >
+                    <Search aria-hidden="true" className="h-[18px] w-[18px]" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  搜索或跳转 ({shortcutLabel})
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <button
+                type="button"
+                className="focus-ring group flex min-h-11 w-full items-center gap-3 rounded-note px-3 text-sm font-semibold text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
+                onClick={togglePalette}
+              >
+                <Search aria-hidden="true" className="h-[18px] w-[18px]" />
+                <span>搜索或跳转</span>
+                <span className="ml-auto text-xs tracking-[0.08em] text-subtle">{shortcutLabel}</span>
+              </button>
+            )}
+          </div>
+
           <div className="space-y-3 border-t border-hairline/90 pt-4">
             {!collapsed ? (
               <div className="rounded-note bg-[var(--app-control-quiet)] px-3 py-3">
@@ -134,9 +171,17 @@ export function SidebarRail({ pathname, collapsed, onToggle }: SidebarRailProps)
       </aside>
 
       <nav
-        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
+        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
         aria-label="移动端导航"
       >
+        <button
+          type="button"
+          className="focus-ring flex min-h-12 flex-col items-center justify-center gap-1 rounded-note text-[0.6875rem] font-semibold text-muted"
+          onClick={togglePalette}
+        >
+          <Search aria-hidden="true" className="h-4 w-4" />
+          <span>搜索</span>
+        </button>
         {navigationItems.map((item) => {
           const Icon = item.icon;
           const active = isSidebarActive(pathname, item.href);

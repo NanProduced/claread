@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import type { DictionaryAIViewState, WebDictAIRequest } from "@/types/api/dict-ai";
 import type { DictionaryLookupSnapshot, SaveState } from "./contracts";
+import type { LookupSaveState, ReaderVocabularyLookupMatch } from "./lookupSaveState";
 import { ReaderDictionaryDetailPanel } from "./ReaderDictionaryDetailPanel";
 
 interface ReaderDictionaryRailProps {
@@ -12,6 +13,8 @@ interface ReaderDictionaryRailProps {
   history: DictionaryLookupSnapshot[];
   readingGoal: string;
   saveState: SaveState;
+  lookupSaveState?: LookupSaveState;
+  savedVocabularyMatch?: ReaderVocabularyLookupMatch | null;
   dictionaryAI: DictionaryAIViewState;
   dictionaryAIPanelOpen: boolean;
   dictionaryAINoteState: SaveState;
@@ -65,6 +68,8 @@ export function ReaderDictionaryRail({
   pinned = false,
   readingGoal,
   saveState,
+  lookupSaveState = "not_saved",
+  savedVocabularyMatch = null,
   searchExpanded,
   searchQuery,
   style,
@@ -80,6 +85,8 @@ export function ReaderDictionaryRail({
             inspect={inspect}
             readingGoal={readingGoal}
             saveState={saveState}
+            lookupSaveState={lookupSaveState}
+            savedVocabularyMatch={savedVocabularyMatch}
             dictionaryAI={dictionaryAI}
             dictionaryAIPanelOpen={dictionaryAIPanelOpen}
             dictionaryAINoteState={dictionaryAINoteState}

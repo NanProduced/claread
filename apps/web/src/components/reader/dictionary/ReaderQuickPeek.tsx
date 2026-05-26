@@ -3,7 +3,7 @@
 import { useId } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { BookOpen, Bot, Search, Sparkles, X } from "lucide-react";
-import { readerPanelItem } from "@/components/reader/interaction";
+import { readerIconAction } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
@@ -38,7 +38,7 @@ function PeekIconAction({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className={cn(readerPanelItem, "h-8 w-8 rounded-[0.7rem] cursor-pointer")}
+          className={cn(readerIconAction, "h-8 w-8 rounded-[0.7rem] cursor-pointer")}
           onClick={onClick}
           aria-label={label}
           title={label}
@@ -127,7 +127,7 @@ function ReaderQuickPeekShell({
           {aside}
           <button
             type="button"
-            className={cn(readerPanelItem, "h-6 w-6 rounded-md text-subtle")}
+            className={cn(readerIconAction, "h-6 w-6 rounded-[0.55rem] text-subtle")}
             onClick={onDismiss}
             aria-label="关闭预览卡片"
           >

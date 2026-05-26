@@ -1,6 +1,6 @@
 # Web Reader 信息架构
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-23
+> **状态**: `CURRENT` | **最后更新**: 2026-05-26
 
 本文设计 Claread Web Reader 的信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统和历史回看。
 
@@ -110,6 +110,29 @@ Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseli
 | 手动查词 | 画布左侧词典层搜索框 | 调用同一词典 BFF；无正文句子时只展示词条，不允许直接加入生词本 |
 
 ## 快捷键体系
+
+### 当前已实现
+
+| 作用域 | 按键 | 功能 |
+|------|------|------|
+| App Global | `Cmd/Ctrl+K` | 打开全局 command palette |
+| Surface / Ephemeral | `Esc` | 关闭当前轻释义、面板或取消当前选区 |
+| Reader Surface | `H` | 在选区工具栏或句末上下文菜单里添加高亮 |
+| Reader Surface | `E` | 在选区工具栏或句末上下文菜单里新建/编辑笔记 |
+| Ask Composer | `Enter` | 发送消息 |
+| Ask Composer | `Shift+Enter` | 换行 |
+| Analyze Submit | `Cmd/Ctrl+Enter` | 提交透读任务 |
+
+当前页面快捷键提示规则也已落地为统一约定：
+
+- 菜单项右侧显示 shortcut suffix。
+- icon 按钮在 tooltip 中显示快捷键。
+- 输入框、浮层、面板使用 helper text 或 footer 就近提示。
+- 未真实实现的键位不在 UI 中暴露。
+
+### 目标模型（后续规划）
+
+下面这组键位描述的是 Reader 目标模型，不代表当前 Web 已全部实现。
 
 ### 全局
 

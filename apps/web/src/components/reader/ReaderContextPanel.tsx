@@ -7,6 +7,7 @@ import type { UserAnnotationColorDto } from "@/types/api/annotations";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
 import { cn } from "@/lib/cn";
 import { readerInlineFocusRing, readerPanelItem, readerTransitionFast } from "./interaction";
+import { Kbd } from "@/components/primitives";
 
 export type AnnotationSaveState =
   | { kind: "idle" }
@@ -49,6 +50,7 @@ export function ReaderContextPanel({
   onNote,
   onAsk,
   onAskTranslation,
+  onClose,
 }: ReaderContextPanelProps) {
   if (!sentence) {
     return null;
@@ -59,7 +61,7 @@ export function ReaderContextPanel({
       role="dialog"
       aria-modal="false"
       className={cn(
-        "w-[14.5rem] rounded-[14px] border border-border/60 bg-background/95 p-1.5 text-foreground shadow-xl backdrop-blur-md",
+        "w-[14rem] rounded-xl border border-hairline/80 bg-surface-warm/95 p-1.5 text-ink shadow-[0_14px_44px_rgba(28,24,18,0.11)] backdrop-blur-md",
         className
       )}
     >
@@ -75,6 +77,7 @@ export function ReaderContextPanel({
         <MenuItem
           icon={<Highlighter className="h-4 w-4" />}
           label="高亮"
+          shortcut="H"
           onClick={onHighlight}
           disabled={saveState.kind === "saving"}
         />
@@ -82,6 +85,7 @@ export function ReaderContextPanel({
         <MenuItem
           icon={<NotebookPen className="h-4 w-4" />}
           label="笔记"
+          shortcut="E"
           onClick={onNote}
         />
 
@@ -101,11 +105,11 @@ export function ReaderContextPanel({
 
         {hasHighlight ? (
           <>
-            <div className="mx-2 my-1 h-px bg-border/50" />
+            <div className="mx-2 my-1.5 h-px bg-hairline/70" />
             
             <div className="flex items-center justify-between px-2.5 py-1.5">
-              <span className="flex items-center gap-2.5 text-[13px] font-medium text-muted-foreground/80">
-                <Palette className="h-4 w-4" /> 颜色
+              <span className="flex items-center gap-2.5 text-[11px] font-bold tracking-[0.02em] text-muted/80">
+                <Palette className="h-3.5 w-3.5" /> 颜色
               </span>
               <div className="flex items-center gap-1.5">
                 {colorOptions.map((option) => (
@@ -113,7 +117,7 @@ export function ReaderContextPanel({
                     key={option.value}
                     type="button"
                     className={cn(
-                      "h-4 w-4 rounded-full ring-1 ring-inset ring-border/50 hover:ring-2 hover:ring-lens-blue/20",
+                      "h-4 w-4 rounded-full ring-1 ring-inset ring-hairline hover:ring-2 hover:ring-lens-blue/20",
                       readerInlineFocusRing,
                       readerTransitionFast,
                       "hover:scale-110",
@@ -141,6 +145,15 @@ export function ReaderContextPanel({
           {saveState.message}
         </div>
       ) : null}
+
+      {onClose ? (
+        <div className="mt-2.5 border-t border-hairline/70 px-2.5 pt-2.5 text-[0.68rem] text-muted/80">
+          <span className="inline-flex items-center gap-2">
+            <Kbd className="text-[0.62rem] min-h-4 min-w-4 px-1">Esc</Kbd>
+            <span>关闭</span>
+          </span>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -148,20 +161,27 @@ export function ReaderContextPanel({
 interface MenuItemProps {
   icon: ReactNode;
   label: string;
+  shortcut?: string;
   onClick?: () => void;
   disabled?: boolean;
 }
 
-function MenuItem({ icon, label, onClick, disabled }: MenuItemProps) {
+function MenuItem({ icon, label, shortcut, onClick, disabled }: MenuItemProps) {
   return (
     <button
       type="button"
-      className={cn(readerPanelItem, "flex w-full rounded-[8px] px-2.5 py-1.5 text-left text-[13px]")}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[0.82rem] font-medium text-ink transition-colors",
+        "disabled:pointer-events-none disabled:opacity-40",
+        "hover:bg-lens-blue-soft/50 dark:hover:bg-zinc-800/80 hover:shadow-[inset_0_0_0_1px_rgba(21,92,255,0.06)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+      )}
       onClick={onClick}
       disabled={disabled}
     >
-      <span className="text-muted-foreground/80">{icon}</span>
-      {label}
+      <span className="text-muted/80 size-4 flex items-center justify-center shrink-0">{icon}</span>
+      <span>{label}</span>
+      {shortcut ? <Kbd className="ml-auto text-[0.62rem] min-h-4 min-w-4 px-1">{shortcut}</Kbd> : null}
     </button>
   );
 }

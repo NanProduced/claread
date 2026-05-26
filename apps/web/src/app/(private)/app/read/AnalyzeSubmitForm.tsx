@@ -5,10 +5,12 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/primitives/button";
+import { Kbd } from "@/components/primitives";
 import { Sparkles, Settings2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { SegmentedControl } from "@/components/composed/segmented-control";
 import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
+import { formatShortcut } from "@/lib/shortcuts";
 import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 
 const readingOptions = [
@@ -175,6 +177,7 @@ export function AnalyzeSubmitForm() {
   const errorRecordId = state.kind === "error" ? state.recordId : undefined;
   const activeVariantOptions = readingVariantOptions[readingGoal];
   const showVariantOptions = activeVariantOptions.length > 1;
+  const submitShortcutLabel = formatShortcut("Primary+Enter");
 
   return (
     <div className="flex min-h-0 flex-1 w-full flex-col">
@@ -210,38 +213,44 @@ export function AnalyzeSubmitForm() {
       </div>
 
       <div className="flex shrink-0 flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-hairline bg-transparent px-0 py-4 lg:py-6">
-        <div className="flex flex-col sm:flex-row gap-4 sm:gap-8 text-[0.8rem] text-muted font-medium uppercase tracking-widest">
-          <Popover>
-            <PopoverTrigger asChild>
-              <button type="button" className="focus-ring flex items-center gap-2 hover:text-ink transition-colors">
-                <Settings2 aria-hidden className="h-4 w-4" />
-                设置透读选项
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-[300px] p-4">
-              <SegmentedControl
-                label="透读模式"
-                value={readingGoal}
-                onValueChange={(nextGoal) => {
-                  setReadingGoal(nextGoal);
-                  setReadingVariant(defaultVariantByGoal[nextGoal]);
-                }}
-                options={readingOptions}
-              />
-              {showVariantOptions ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4 text-[0.8rem] font-medium uppercase tracking-widest text-muted sm:flex-row sm:gap-8">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button type="button" className="focus-ring flex items-center gap-2 hover:text-ink transition-colors">
+                  <Settings2 aria-hidden className="h-4 w-4" />
+                  设置透读选项
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[300px] p-4">
                 <SegmentedControl
-                  className="mt-4 border-t border-hairline pt-3"
-                  label="细分场景"
-                  value={readingVariant}
-                  onValueChange={setReadingVariant}
-                  options={activeVariantOptions}
+                  label="透读模式"
+                  value={readingGoal}
+                  onValueChange={(nextGoal) => {
+                    setReadingGoal(nextGoal);
+                    setReadingVariant(defaultVariantByGoal[nextGoal]);
+                  }}
+                  options={readingOptions}
                 />
-              ) : null}
-            </PopoverContent>
-          </Popover>
-          <div className="flex items-center gap-2">
-            <span>字符数:</span>
-            <span className="text-ink font-semibold">{text.trim().length.toLocaleString("zh-CN")}</span>
+                {showVariantOptions ? (
+                  <SegmentedControl
+                    className="mt-4 border-t border-hairline pt-3"
+                    label="细分场景"
+                    value={readingVariant}
+                    onValueChange={setReadingVariant}
+                    options={activeVariantOptions}
+                  />
+                ) : null}
+              </PopoverContent>
+            </Popover>
+            <div className="flex items-center gap-2">
+              <span>字符数:</span>
+              <span className="text-ink font-semibold">{text.trim().length.toLocaleString("zh-CN")}</span>
+            </div>
+          </div>
+          <div className="inline-flex items-center gap-2 text-[0.75rem] text-muted">
+            <span>提交</span>
+            <Kbd>{submitShortcutLabel}</Kbd>
           </div>
         </div>
 

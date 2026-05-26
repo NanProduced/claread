@@ -1,7 +1,7 @@
 "use client";
 
 import { Sparkles } from "lucide-react";
-import { readerCommandControl, readerPanelItem } from "@/components/reader/interaction";
+import { readerCommandControl, readerIconAction } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
 import { contextualGlossaryText, structuredInspectLabel } from "./shared";
@@ -60,7 +60,7 @@ export function ReaderStructuredInspectCard({
           {onAttachToAsk ? (
             <button
               type="button"
-              className={cn(readerPanelItem, "h-8 w-8 rounded-full")}
+              className={cn(readerIconAction, "h-8 w-8 rounded-[0.7rem]")}
               onClick={onAttachToAsk}
               title="带入 Ask"
               aria-label="带入 Ask"

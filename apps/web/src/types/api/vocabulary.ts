@@ -76,3 +76,24 @@ export interface VocabularyListResponseDto {
   page: number;
   limit: number;
 }
+
+export interface ReaderVocabularyLookupMatchDto {
+  id: string;
+  lemma: string;
+  display_word: string;
+  dict_entry_id: number | null;
+  mastery_status: VocabularyMasteryStatusDto;
+  source_refs: VocabularySourceRefDto[];
+  collected_forms: string[];
+}
+
+export type ReaderVocabularyLookupResponseDto =
+  | {
+      ok: true;
+      item: ReaderVocabularyLookupMatchDto | null;
+    }
+  | {
+      ok: false;
+      code: "bad_request" | "auth_required" | "upstream_unavailable" | "upstream_error";
+      message: string;
+    };

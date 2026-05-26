@@ -105,7 +105,10 @@ import type {
   WebDictAIResult,
   WebDictAIRequest,
 } from "@/types/api/dict-ai";
-import type { VocabularyCreateRequestDto } from "@/types/api/vocabulary";
+import type {
+  ReaderVocabularyLookupResponseDto,
+  VocabularyCreateRequestDto,
+} from "@/types/api/vocabulary";
 import type { SentenceEntryModel, SentenceModel } from "@/types/view/ReaderMockVm";
 import {
   ANNOTATION_CREATED_EVENT,
@@ -133,6 +136,14 @@ import {
   readStoredDictionaryAIArticleCache,
   type DictionaryAIArticleCache,
 } from "@/components/reader/dictionary";
+import {
+  buildOptimisticLookupMatch,
+  getLookupSaveState,
+  lookupSaveCacheKey,
+  lookupSaveRequestFromSnapshot,
+  type LookupSaveState,
+  type ReaderVocabularyLookupMatch,
+} from "@/components/reader/dictionary/lookupSaveState";
 import { readerCommandControl, readerSegmentedOption } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import { FavoriteButton } from "./FavoriteButton";
@@ -166,6 +177,21 @@ const annotationColorValues = [...USER_ANNOTATION_COLORS];
 
 function isUserAnnotationColor(value: string): value is UserAnnotationColorDto {
   return annotationColorValues.includes(value as UserAnnotationColorDto);
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT" ||
+    target.closest("[contenteditable='true']") !== null
+  );
 }
 
 function belongsToCurrentRecord(candidateRecordId: string | null | undefined, targetKey: string, recordId: string) {
@@ -593,6 +619,7 @@ export function ReaderWorkbench({
     readStoredDictionaryAIArticleCache(record.id),
   );
   const [dictionarySaveState, setDictionarySaveState] = useState<SaveState>({ kind: "idle" });
+  const [savedVocabularyMatches, setSavedVocabularyMatches] = useState<Record<string, ReaderVocabularyLookupMatch | null>>({});
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const [readerNotes, setReaderNotes] = useState(initialReaderNotes);
   const [jumpTarget, setJumpTarget] = useState<ReaderJumpTarget | null>(null);
@@ -998,6 +1025,21 @@ export function ReaderWorkbench({
     [annotations.length, reader.contentSummary?.overview, reader.sentenceEntries.length, readerNotes.length, record.id, record.title],
   );
   const activeLookupAIContextKey = useMemo(() => dictionaryAIContextKey(activeLookup), [activeLookup]);
+  const activeLookupSaveRequest = useMemo(() => lookupSaveRequestFromSnapshot(activeLookup), [activeLookup]);
+  const activeLookupSaveCacheKey = useMemo(() => lookupSaveCacheKey(activeLookupSaveRequest), [activeLookupSaveRequest]);
+  const activeLookupSavedVocabularyMatch =
+    activeLookupSaveCacheKey && Object.prototype.hasOwnProperty.call(savedVocabularyMatches, activeLookupSaveCacheKey)
+      ? savedVocabularyMatches[activeLookupSaveCacheKey] ?? null
+      : null;
+  const activeLookupSaveState = useMemo<LookupSaveState>(() => {
+    const savedMatch = activeLookupSavedVocabularyMatch;
+    return getLookupSaveState(
+      Boolean(savedMatch),
+      activeLookup?.sentenceId,
+      savedMatch?.sourceRefs,
+      savedMatch?.masteryStatus === "mastered",
+    );
+  }, [activeLookup?.sentenceId, activeLookupSavedVocabularyMatch]);
   const activeLookupAICacheEntry = useMemo(() => {
     const preferredMode = dictionaryPreferredAIMode(activeLookup);
     if (!activeLookup || !preferredMode) {
@@ -1265,6 +1307,72 @@ export function ReaderWorkbench({
   }, [activeLookupAICacheEntry, activeLookupAIContextKey]);
 
   useEffect(() => {
+    if (!activeLookupSaveRequest || !activeLookupSaveCacheKey) {
+      return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(savedVocabularyMatches, activeLookupSaveCacheKey)) {
+      return;
+    }
+
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (activeLookupSaveRequest.dictEntryId) {
+      params.set("dict_entry_id", String(activeLookupSaveRequest.dictEntryId));
+    }
+    if (activeLookupSaveRequest.lemma) {
+      params.set("lemma", activeLookupSaveRequest.lemma);
+    }
+    if (activeLookupSaveRequest.form) {
+      params.set("form", activeLookupSaveRequest.form);
+    }
+
+    void fetch(`/api/web/vocabulary?${params.toString()}`)
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as ReaderVocabularyLookupResponseDto | null;
+        if (cancelled) {
+          return;
+        }
+
+        if (!payload || !payload.ok) {
+          setSavedVocabularyMatches((current) => ({
+            ...current,
+            [activeLookupSaveCacheKey]: null,
+          }));
+          return;
+        }
+
+        setSavedVocabularyMatches((current) => ({
+          ...current,
+          [activeLookupSaveCacheKey]: payload.item
+            ? {
+                id: payload.item.id,
+                lemma: payload.item.lemma,
+                displayWord: payload.item.display_word,
+                dictEntryId: payload.item.dict_entry_id,
+                masteryStatus: payload.item.mastery_status,
+                sourceRefs: payload.item.source_refs,
+                collectedForms: payload.item.collected_forms,
+              }
+            : null,
+        }));
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setSavedVocabularyMatches((current) => ({
+          ...current,
+          [activeLookupSaveCacheKey]: null,
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLookupSaveCacheKey, activeLookupSaveRequest, savedVocabularyMatches]);
+
+  useEffect(() => {
     function handleCreated(event: Event) {
       const item = (event as CustomEvent<WebAnnotationVm>).detail;
       if (belongsToCurrentRecord(item.recordId, item.targetKey, record.id)) {
@@ -1459,6 +1567,10 @@ export function ReaderWorkbench({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
+      if (isEditableKeyboardTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
       if (event.key === "Escape") {
         setTextSelection(null);
         setHighlightPaletteOpen(false);
@@ -1469,12 +1581,54 @@ export function ReaderWorkbench({
         setActiveAnnotationTargetKey(null);
         setHoveredAnnotationTargetKey(null);
         window.getSelection()?.removeAllRanges();
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "h") {
+        event.preventDefault();
+        highlightTextSelection(annotationColor);
+        return;
+      }
+
+      if (key === "e") {
+        event.preventDefault();
+        openTextSelectionNote();
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [textSelection]);
+  }, [annotationColor, textSelection]);
+
+  useEffect(() => {
+    if (!(contextPanelOpen && activeSentence)) {
+      return;
+    }
+
+    const sentence = activeSentence;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isEditableKeyboardTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "h") {
+        event.preventDefault();
+        void saveHighlight();
+        return;
+      }
+
+      if (key === "e") {
+        event.preventDefault();
+        openSentenceNote(sentence);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeSentence, contextPanelOpen]);
 
   const handleLookupSnapshot = useCallback((snapshot: DictionaryLookupSnapshot) => {
     setActiveLookup(snapshot);
@@ -2373,13 +2527,30 @@ export function ReaderWorkbench({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+      const payload = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
 
       if (!response.ok) {
         setDictionarySaveState({ kind: "error", message: payload.message ?? "加入生词本失败。" });
         return;
       }
 
+      const nextLookupSaveRequest = lookupSaveRequestFromSnapshot(activeLookup);
+      const nextLookupSaveCacheKey = lookupSaveCacheKey(nextLookupSaveRequest);
+      if (nextLookupSaveCacheKey) {
+        setSavedVocabularyMatches((current) => {
+          const existing = current[nextLookupSaveCacheKey] ?? null;
+          const optimisticMatch = buildOptimisticLookupMatch(
+            activeLookup,
+            existing,
+            payload.id ?? existing?.id ?? `${result.entry.id}`,
+          );
+
+          return {
+            ...current,
+            [nextLookupSaveCacheKey]: optimisticMatch,
+          };
+        });
+      }
       setDictionarySaveState({ kind: "saved", message: payload.message ?? "已加入生词本。" });
     } catch (error) {
       setDictionarySaveState({
@@ -3807,6 +3978,8 @@ export function ReaderWorkbench({
             history={lookupHistory}
             readingGoal={record.readingGoal}
             saveState={dictionarySaveState}
+            lookupSaveState={activeLookupSaveState}
+            savedVocabularyMatch={activeLookupSavedVocabularyMatch}
             dictionaryAI={dictionaryAI}
             dictionaryAIPanelOpen={dictionaryAIPanelOpen}
             dictionaryAINoteState={dictionaryAINoteState}
@@ -3842,6 +4015,8 @@ export function ReaderWorkbench({
             history={lookupHistory}
             readingGoal={record.readingGoal}
             saveState={dictionarySaveState}
+            lookupSaveState={activeLookupSaveState}
+            savedVocabularyMatch={activeLookupSavedVocabularyMatch}
             dictionaryAI={dictionaryAI}
             dictionaryAIPanelOpen={dictionaryAIPanelOpen}
             dictionaryAINoteState={dictionaryAINoteState}

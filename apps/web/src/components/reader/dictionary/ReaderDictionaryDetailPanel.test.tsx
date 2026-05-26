@@ -51,6 +51,27 @@ function createEntryLookup(): DictionaryLookupSnapshot {
   };
 }
 
+function createTaggedEntryLookup(): DictionaryLookupSnapshot {
+  const lookup = createEntryLookup();
+  if (lookup.state.kind !== "ready" || lookup.state.result.kind !== "entry") {
+    return lookup;
+  }
+
+  return {
+    ...lookup,
+    state: {
+      ...lookup.state,
+      result: {
+        ...lookup.state.result,
+        entry: {
+          ...lookup.state.result.entry,
+          tags: ["cet4", "cet6", "gaokao", "kaoyan", "gre"],
+        },
+      },
+    },
+  };
+}
+
 describe("ReaderDictionaryDetailPanel", () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
@@ -225,5 +246,81 @@ describe("ReaderDictionaryDetailPanel", () => {
 
     fireEvent.click(screen.getByText("最近查阅"));
     expect(screen.getByText("policy")).toBeTruthy();
+  });
+
+  it("uses icon-only save feedback and collapses exam tags with a chevron action", () => {
+    render(
+      <ReaderDictionaryDetailPanel
+        lookup={createTaggedEntryLookup()}
+        readingGoal="exam"
+        saveState={{ kind: "idle" }}
+        lookupSaveState="already_saved_here"
+        savedVocabularyMatch={{
+          id: "vocab-1",
+          lemma: "memory",
+          displayWord: "memory",
+          dictEntryId: 12,
+          masteryStatus: "new",
+          sourceRefs: [{ source_sentence_id: "s1" }],
+          collectedForms: ["memory"],
+        }}
+        dictionaryAI={{ kind: "idle" }}
+        dictionaryAIPanelOpen={false}
+        dictionaryAINoteState={{ kind: "idle" }}
+        searchQuery="memory"
+        searchExpanded={false}
+        onSave={vi.fn()}
+        onRequestAI={vi.fn()}
+        onCreateAINote={vi.fn()}
+        onSelectAISuggestedQuery={vi.fn()}
+        onSearchQueryChange={vi.fn()}
+        onSearchSubmit={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onToggleAIPanel={vi.fn()}
+        onToggleSearchExpanded={vi.fn()}
+      />,
+    );
+
+    const saveButton = screen.getByLabelText("已加入");
+    expect(saveButton.className).toContain("hover:bg-transparent");
+
+    fireEvent.click(screen.getByText("+2"));
+    expect(screen.getByLabelText("收起考试标签")).toBeTruthy();
+  });
+
+  it("shows a lighter current-context save action for a new sentence on the same lemma", () => {
+    render(
+      <ReaderDictionaryDetailPanel
+        lookup={createEntryLookup()}
+        readingGoal="general"
+        saveState={{ kind: "idle" }}
+        lookupSaveState="same_lemma_new_context"
+        savedVocabularyMatch={{
+          id: "vocab-2",
+          lemma: "memory",
+          displayWord: "memory",
+          dictEntryId: 12,
+          masteryStatus: "new",
+          sourceRefs: [{ source_sentence_id: "s9" }],
+          collectedForms: ["memory"],
+        }}
+        dictionaryAI={{ kind: "idle" }}
+        dictionaryAIPanelOpen={false}
+        dictionaryAINoteState={{ kind: "idle" }}
+        searchQuery="memory"
+        searchExpanded={false}
+        onSave={vi.fn()}
+        onRequestAI={vi.fn()}
+        onCreateAINote={vi.fn()}
+        onSelectAISuggestedQuery={vi.fn()}
+        onSearchQueryChange={vi.fn()}
+        onSearchSubmit={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onToggleAIPanel={vi.fn()}
+        onToggleSearchExpanded={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("加入当前语境")).toBeTruthy();
   });
 });
