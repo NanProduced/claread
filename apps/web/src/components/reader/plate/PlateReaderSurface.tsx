@@ -22,6 +22,7 @@ import type {
   ReaderSentenceNode,
   ReaderSentenceTextNode,
 } from "@/lib/reader-plate";
+import type { RenderElement, RenderLeaf } from "platejs/react";
 import type { WebAnnotationVm } from "@/types/api/annotations";
 import type { WebReaderNoteVm } from "@/types/api/reader-notes";
 import { Editor, EditorContainer } from "../../ui/editor";
@@ -404,7 +405,7 @@ export function PlateReaderSurface({
   }, [document.children, editor]);
 
   const renderElement = useCallback(
-    (props: any) => {
+    (props: Parameters<RenderElement>[0]) => {
       const element = props.element as unknown as
         | ReaderParagraphNode
         | ReaderSentenceNode
@@ -435,22 +436,24 @@ export function PlateReaderSurface({
           const sentenceNotes = readerNotesBySentence.get(element.sentenceId) ?? [];
           const activeSentenceNote =
             sentenceNotes.find((note) => note.id === activeReaderNoteId) ?? null;
-          const hasVisibleAnalysis = element.children.some(
-            (child: any) =>
-              (child.type === "reader_grammar_note" ||
-                child.type === "reader_sentence_analysis" ||
-                child.type === "reader_term_note" ||
-                child.type === "reader_logic_note" ||
-                child.type === "reader_interpretation_note") &&
-              analysisEntryVisible(child.entryType, annotationVisibilityGroups),
-          );
+          const hasVisibleAnalysis = element.children.some((child) => {
+            const node = child as ReaderAnalysisBlockNode;
+            return (
+              (node.type === "reader_grammar_note" ||
+                node.type === "reader_sentence_analysis" ||
+                node.type === "reader_term_note" ||
+                node.type === "reader_logic_note" ||
+                node.type === "reader_interpretation_note") &&
+              analysisEntryVisible(node.entryType, annotationVisibilityGroups)
+            );
+          });
           const hasTranslation = showTranslation && element.children.some(
-            (child: any) => child.type === "reader_translation",
+            (child) => (child as { type: string }).type === "reader_translation",
           );
           const hasExpandedSentenceAnalysis = element.children.some(
-            (child: any) =>
-              child.type === "reader_sentence_analysis" &&
-              expandedIds.has(child.entryId)
+            (child) =>
+              (child as { type: string; entryId: string }).type === "reader_sentence_analysis" &&
+              expandedIds.has((child as { entryId: string }).entryId)
           );
           return (
             <ReaderSentenceElement
@@ -558,7 +561,7 @@ export function PlateReaderSurface({
   );
 
   const renderLeaf = useCallback(
-    (props: any) => (
+    (props: Parameters<RenderLeaf>[0]) => (
       <ReaderMarkLeaf
         annotationRangesBySentence={
           annotationVisibilityGroups.userAssets ? assetRangesBySentence : undefined

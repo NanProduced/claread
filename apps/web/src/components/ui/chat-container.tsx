@@ -3,11 +3,11 @@
 import * as React from "react"
 import { cn } from "@/lib/cn"
 import { useStickToBottom } from "use-stick-to-bottom"
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { ScrollBar } from "@/components/primitives/scroll-area"
 import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area"
 
 const ChatContainerContext = React.createContext<{
-  contentRef: any;
+  contentRef: React.RefObject<HTMLDivElement>;
 } | null>(null)
 
 export type ChatContainerRootProps = {
@@ -37,13 +37,13 @@ export function ChatContainerRoot({
   })
 
   return (
-    <ChatContainerContext.Provider value={{ contentRef }}>
+    <ChatContainerContext.Provider value={{ contentRef: contentRef as unknown as React.RefObject<HTMLDivElement> }}>
       <ScrollAreaPrimitive.Root
         className={cn("relative flex h-full w-full flex-col overflow-hidden", className)}
         dir={dir as "ltr" | "rtl" | undefined}
         {...props}
       >
-        <ScrollAreaPrimitive.Viewport ref={scrollRef as any} className="h-full w-full rounded-[inherit] [&>div]:!block">
+        <ScrollAreaPrimitive.Viewport ref={scrollRef as unknown as React.Ref<HTMLDivElement>} className="h-full w-full rounded-[inherit] [&>div]:!block">
           {children}
         </ScrollAreaPrimitive.Viewport>
         <ScrollBar />

@@ -369,23 +369,25 @@ function PanelBody({
 export function ReaderNotePanel(props: ReaderNotePanelProps) {
   if (!props.open) return null;
 
+  const { floatingRef, style, ...restProps } = props;
+
   return (
     <>
       <FloatingPortal>
         <div
-          ref={props.floatingRef}
-          style={props.style}
+          ref={floatingRef}
+          style={style}
           className="hidden xl:block z-50 animate-in fade-in slide-in-from-right-2 duration-200 ease-out"
           role="dialog"
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <PanelBody {...props} />
+          <PanelBody {...restProps} />
         </div>
       </FloatingPortal>
 
       <div className="fixed inset-x-0 bottom-0 z-50 xl:hidden flex justify-center pb-4">
-        <PanelBody {...props} />
+        <PanelBody {...restProps} />
       </div>
     </>
   );

@@ -81,7 +81,7 @@ export function CommandPaletteDialog() {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      setLoading(true);
+      queueMicrotask(() => setLoading(true));
       fetchRecords(undefined, controller.signal)
         .then((items) => {
           if (!controller.signal.aborted) {
@@ -98,15 +98,17 @@ export function CommandPaletteDialog() {
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
-      setQuery("");
-      setSearchedRecords([]);
+      queueMicrotask(() => {
+        setQuery("");
+        setSearchedRecords([]);
+      });
     }
   }, [open]);
 
   // Debounced search
   useEffect(() => {
     if (!query.trim()) {
-      setSearchedRecords([]);
+      queueMicrotask(() => setSearchedRecords([]));
       return;
     }
 

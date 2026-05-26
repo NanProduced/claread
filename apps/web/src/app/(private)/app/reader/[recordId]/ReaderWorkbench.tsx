@@ -672,10 +672,10 @@ export function ReaderWorkbench({
   const [settingsFloatingStyle, setSettingsFloatingStyle] = useState<CSSProperties | null>(null);
 
   useEffect(() => {
-    setReaderScene(record.reader);
+    queueMicrotask(() => setReaderScene(record.reader));
   }, [record.reader]);
   useEffect(() => {
-    setDictionaryAICache(readStoredDictionaryAIArticleCache(record.id));
+    queueMicrotask(() => setDictionaryAICache(readStoredDictionaryAIArticleCache(record.id)));
   }, [record.id]);
   useEffect(() => {
     persistDictionaryAIArticleCache(record.id, dictionaryAICache);
@@ -734,12 +734,12 @@ export function ReaderWorkbench({
   }, [readerSettings]);
 
   useEffect(() => {
-    setReaderSettings(readStoredReaderSettings());
+    queueMicrotask(() => setReaderSettings(readStoredReaderSettings()));
   }, []);
 
   useEffect(() => {
     if (readerSettings.mode !== "immersive") {
-      setImmersiveHeaderHidden(false);
+      queueMicrotask(() => setImmersiveHeaderHidden(false));
       return;
     }
 
@@ -769,7 +769,7 @@ export function ReaderWorkbench({
 
   useEffect(() => {
     if (!settingsPanelOpen) {
-      setSettingsFloatingStyle(null);
+      queueMicrotask(() => setSettingsFloatingStyle(null));
       return;
     }
 
@@ -1129,7 +1129,7 @@ export function ReaderWorkbench({
 
   useEffect(() => {
     if (selectedAnnotation?.type === "highlight") {
-      setAnnotationColor(selectedAnnotation.color);
+      queueMicrotask(() => setAnnotationColor(selectedAnnotation.color));
     }
   }, [selectedAnnotation]);
 
@@ -1164,7 +1164,7 @@ export function ReaderWorkbench({
       return;
     }
 
-    setJumpTarget(nextJumpTarget);
+    queueMicrotask(() => setJumpTarget(nextJumpTarget));
     focusedRouteTargetKeyRef.current = targetKey;
   }, [annotations, searchParams]);
 
@@ -1193,7 +1193,7 @@ export function ReaderWorkbench({
     if (targetSentenceId) {
       const targetSentence = sentenceById.get(targetSentenceId);
       if (targetSentence) {
-        setActiveSentence(targetSentence);
+        queueMicrotask(() => setActiveSentence(targetSentence));
         if (jumpTarget.scrollStrategy === "center") {
           window.requestAnimationFrame(() => {
             articleRef.current
@@ -1227,7 +1227,7 @@ export function ReaderWorkbench({
       return;
     }
 
-    setActiveSentence(targetSentence);
+    queueMicrotask(() => setActiveSentence(targetSentence));
     if (focusedReaderNoteTarget.scrollStrategy === "center") {
       window.requestAnimationFrame(() => {
         articleRef.current
@@ -1296,14 +1296,18 @@ export function ReaderWorkbench({
 
   useEffect(() => {
     dictionaryAIRequestKeyRef.current = null;
-    setDictionaryAINoteState({ kind: "idle" });
+    queueMicrotask(() => setDictionaryAINoteState({ kind: "idle" }));
     if (activeLookupAICacheEntry) {
-      setDictionaryAI(dictionaryAIViewStateFromCacheEntry(activeLookupAICacheEntry));
-      setDictionaryAIPanelOpen(activeLookupAICacheEntry.expanded);
+      queueMicrotask(() => {
+        setDictionaryAI(dictionaryAIViewStateFromCacheEntry(activeLookupAICacheEntry));
+        setDictionaryAIPanelOpen(activeLookupAICacheEntry.expanded);
+      });
       return;
     }
-    setDictionaryAI({ kind: "idle" });
-    setDictionaryAIPanelOpen(false);
+    queueMicrotask(() => {
+      setDictionaryAI({ kind: "idle" });
+      setDictionaryAIPanelOpen(false);
+    });
   }, [activeLookupAICacheEntry, activeLookupAIContextKey]);
 
   useEffect(() => {
@@ -1464,7 +1468,7 @@ export function ReaderWorkbench({
 
   useEffect(() => {
     if (!dictionaryPanelVisible || typeof window === "undefined") {
-      setDictionaryDockLayout(null);
+      queueMicrotask(() => setDictionaryDockLayout(null));
       return;
     }
 

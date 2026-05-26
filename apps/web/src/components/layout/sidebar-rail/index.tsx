@@ -22,7 +22,7 @@ import {
   homeRoute,
 } from "@/lib/routes";
 import { formatShortcut } from "@/lib/shortcuts";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/primitives/tooltip";
 import { useCommandPalette } from "../command-palette";
 
 const navigationItems = [

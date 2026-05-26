@@ -5,7 +5,7 @@ import { useState } from "react";
 import { SidebarRail } from "../sidebar-rail";
 import { CommandPaletteProvider } from "../command-palette";
 
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/primitives/scroll-area";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

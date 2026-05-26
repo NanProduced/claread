@@ -6,6 +6,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react"
 import { Markdown } from "./markdown"
@@ -44,7 +45,7 @@ function Reasoning({
   isStreaming,
 }: ReasoningProps) {
   const [internalOpen, setInternalOpen] = useState(false)
-  const [wasAutoOpened, setWasAutoOpened] = useState(false)
+  const wasAutoOpenedRef = useRef(false)
 
   const isControlled = open !== undefined
   const isOpen = isControlled ? open : internalOpen
@@ -57,16 +58,16 @@ function Reasoning({
   }
 
   useEffect(() => {
-    if (isStreaming && !wasAutoOpened) {
-      if (!isControlled) setInternalOpen(true)
-      setWasAutoOpened(true)
+    if (isStreaming && !wasAutoOpenedRef.current) {
+      if (!isControlled) queueMicrotask(() => setInternalOpen(true))
+      wasAutoOpenedRef.current = true
     }
 
-    if (!isStreaming && wasAutoOpened) {
-      if (!isControlled) setInternalOpen(false)
-      setWasAutoOpened(false)
+    if (!isStreaming && wasAutoOpenedRef.current) {
+      if (!isControlled) queueMicrotask(() => setInternalOpen(false))
+      wasAutoOpenedRef.current = false
     }
-  }, [isStreaming, wasAutoOpened, isControlled])
+  }, [isStreaming, isControlled]);
 
   return (
     <ReasoningContext.Provider

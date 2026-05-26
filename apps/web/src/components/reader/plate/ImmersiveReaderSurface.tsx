@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo } from "react";
-import type { RenderElement } from "platejs/react";
+import type { RenderElement, RenderLeaf } from "platejs/react";
 import { Plate, usePlateEditor } from "platejs/react";
 import { Highlighter, MessageSquare } from "lucide-react";
 
@@ -395,7 +395,7 @@ export function ImmersiveReaderSurface({
   }, [document.children, editor]);
 
   const renderElement = useCallback(
-    (props: any) => {
+    (props: Parameters<RenderElement>[0]) => {
       const element = props.element as unknown as
         | ReaderContentSummaryNode
         | ReaderParagraphNode
@@ -485,7 +485,7 @@ export function ImmersiveReaderSurface({
   );
 
   const renderLeaf = useCallback(
-    (props: any) => (
+    (props: Parameters<RenderLeaf>[0]) => (
       <ReaderMarkLeaf
         annotationRangesBySentence={assetRangesBySentence}
         annotationVisibilityGroups={IMMERSIVE_VISIBILITY}

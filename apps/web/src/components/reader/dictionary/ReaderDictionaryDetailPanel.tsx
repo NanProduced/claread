@@ -77,7 +77,7 @@ function DictionaryIconAction({
     tone === "accent"
       ? "text-vocab-amber hover:text-vocab-amber/90"
       : tone === "saved"
-        ? "text-structure-green hover:text-structure-green/90"
+        ? "text-structure-green hover:bg-transparent hover:text-structure-green/90"
         : tone === "error"
           ? "text-error-red hover:text-error-red/90"
           : "text-muted hover:text-ink";
@@ -249,8 +249,10 @@ export function ReaderDictionaryDetailPanel({
   ].filter((item) => item.count > 0);
 
   useEffect(() => {
-    setActiveTab("meanings");
-    setShowAllTags(false);
+    queueMicrotask(() => {
+      setActiveTab("meanings");
+      setShowAllTags(false);
+    });
   }, [lookup?.query, lookupResult?.kind]);
 
   useEffect(() => {
@@ -258,7 +260,7 @@ export function ReaderDictionaryDetailPanel({
       return;
     }
     if (!tabItems.some((item) => item.id === activeTab)) {
-      setActiveTab(tabItems[0].id);
+      queueMicrotask(() => setActiveTab(tabItems[0].id));
     }
   }, [activeTab, entryResult, tabItems]);
 
