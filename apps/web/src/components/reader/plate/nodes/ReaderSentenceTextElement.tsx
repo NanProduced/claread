@@ -11,6 +11,8 @@ interface ReaderSentenceTextElementProps {
   props: Parameters<RenderElement>[0];
   readingClassName: string;
   sourceContext?: string;
+  as?: "p" | "span";
+  className?: string;
   onLookupIntent?: (
     intent: ReaderLookupIntent,
     anchor: ReaderLookupPreviewAnchor | null,
@@ -19,6 +21,8 @@ interface ReaderSentenceTextElementProps {
 }
 
 export function ReaderSentenceTextElement({
+  as = "p",
+  className,
   onLookupIntent,
   props,
   readingClassName,
@@ -29,10 +33,12 @@ export function ReaderSentenceTextElement({
     children?: Array<{ text?: string }>;
   };
 
+  const Component = as;
+
   return (
-    <p
+    <Component
       {...props.attributes}
-      className={readingClassName}
+      className={[readingClassName, className].filter(Boolean).join(" ")}
       data-reader-node="sentence-text"
       data-reader-sentence-text="true"
       tabIndex={-1}
@@ -73,6 +79,6 @@ export function ReaderSentenceTextElement({
       }}
     >
       {props.children}
-    </p>
+    </Component>
   );
 }

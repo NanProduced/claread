@@ -39,6 +39,8 @@ const IMMERSIVE_VISIBILITY = {
 interface ImmersiveReaderSurfaceProps {
   document: ReaderPlateDocument;
   readingClassName: string;
+  columnClassName?: string;
+  paragraphDensityClassName?: string;
   themeClassName?: string;
   selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpTarget?: ReaderJumpTarget | null;
@@ -234,6 +236,8 @@ function ImmersiveReaderParagraphElement({
 export function ImmersiveReaderSurface({
   document,
   readingClassName,
+  columnClassName = "max-w-[82ch]",
+  paragraphDensityClassName = "reader-density-immersive",
   themeClassName,
   selectionFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   jumpTarget = null,
@@ -509,14 +513,16 @@ export function ImmersiveReaderSurface({
   );
 
   return (
-    <div className={`reader-immersive-stage px-5 py-7 sm:px-8 lg:px-10 lg:py-10 ${themeClassName ?? ""}`.trim()}>
-      <div className="mx-auto max-w-[82ch]">
+    <div
+      className={`reader-immersive-stage px-5 py-7 sm:px-8 lg:px-10 lg:py-10 ${themeClassName ?? ""} ${paragraphDensityClassName}`.trim()}
+    >
+      <div className={`mx-auto ${columnClassName}`.trim()}>
         <Plate editor={editor} readOnly>
           <EditorContainer className="h-auto cursor-default overflow-visible bg-transparent px-0 py-0 [&_.slate-selection-area]:hidden">
             <Editor
               readOnly
               disableDefaultStyles
-              className="space-y-10 px-0 py-0 outline-none"
+              className="space-y-9 px-0 py-0 outline-none"
               renderElement={renderElement as never}
               renderLeaf={renderLeaf as never}
             />

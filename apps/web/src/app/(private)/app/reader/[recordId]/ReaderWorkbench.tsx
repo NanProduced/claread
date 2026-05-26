@@ -38,8 +38,8 @@ import {
   modeVisibility,
   persistReaderSettings,
   readStoredReaderSettings,
+  readerModeTypography,
   readerThemeClassName,
-  readerTextClassName,
   type ReaderSettingsState,
   textRangeAnchorAttributes,
   useReaderFloatingLayer,
@@ -3230,8 +3230,11 @@ export function ReaderWorkbench({
   const isImmersiveMode = readerSettings.mode === "immersive";
   const managedSelectionVisible = Boolean(textSelection && textSelectionVisualMode === "selection");
   const canvasThemeClass = readerThemeClassName(themeName);
-  const readingClass = readerTextClassName(readerSettings);
-  const readingColumnClass = isImmersiveMode ? "max-w-[82ch]" : "max-w-[104ch]";
+  const readingTypography = readerModeTypography(readerSettings);
+  const readingClass = readingTypography.bodyClassName;
+  const translationClass = readingTypography.translationClassName;
+  const readingColumnClass = readingTypography.columnClassName;
+  const paragraphDensityClass = readingTypography.paragraphDensityClassName;
   const contentVisibility = modeVisibility(readerSettings.mode);
   const showTranslation = modeShowsTranslation(readerSettings.mode);
   const contextPanelVisible = Boolean(contextPanelOpen && activeSentence);
@@ -3617,6 +3620,8 @@ export function ReaderWorkbench({
                 <ImmersiveReaderSurface
                   document={plateDocument}
                   readingClassName={readingClass}
+                  columnClassName={readingColumnClass}
+                  paragraphDensityClassName={paragraphDensityClass}
                   themeClassName={canvasThemeClass}
                   jumpTarget={jumpTarget}
                   focusTarget={focusedReaderNoteTarget}
@@ -3639,6 +3644,9 @@ export function ReaderWorkbench({
                   document={plateDocument}
                   showTranslation={showTranslation}
                   readingClassName={readingClass}
+                  translationClassName={translationClass}
+                  columnClassName={readingColumnClass}
+                  paragraphDensityClassName={paragraphDensityClass}
                   themeClassName={canvasThemeClass}
                   annotationVisibilityGroups={contentVisibility}
                   activeSentenceId={activeSentence?.sentenceId ?? null}

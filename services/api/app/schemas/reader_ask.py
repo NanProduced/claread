@@ -28,7 +28,7 @@ ReaderAskActionType = Literal[
     "save_highlight",
     "create_supplement_grammar_note",
 ]
-ReaderAskActionStatus = Literal["pending", "confirmed", "executed", "rejected"]
+ReaderAskActionStatus = Literal["pending", "executing", "confirmed", "executed", "rejected"]
 ReaderAskToolStatus = Literal["started", "completed", "failed"]
 ReaderAskTaskMode = Literal["explain", "breakdown", "vocabulary", "grammar", "practice", "general"]
 ReaderAskResolvedIntent = ReaderAskTaskMode
@@ -230,6 +230,7 @@ class ReaderAskActionProposal(BaseModel):
     requires_confirmation: bool = True
     status: ReaderAskActionStatus = "pending"
     payload_json: dict[str, Any] = Field(default_factory=dict)
+    result_json: dict[str, Any] | None = None
 
 
 class ReaderAskToolTraceEntry(BaseModel):
@@ -347,7 +348,7 @@ class ReaderAskResolvedContextInput(BaseModel):
 class ReaderAskPlannerHistoryMessage(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "system"]
     content_md: str
     resolved_intent: ReaderAskResolvedIntent | None = None
 

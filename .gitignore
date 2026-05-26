@@ -45,8 +45,9 @@ services/api/config/model-presets.json
 *.backup
 *.sql.gz
 
-# Local temporary files
+# Local temporary files - do not commit!
 **/tmp/
+docs/tmp/*
 
 # Local design captures and UI review screenshots
 reader-*.png
@@ -74,3 +75,4 @@ project.private.config.json
 .swc/
 apps/miniprogram/.swc/
 .playwright-mcp/
+.VSCodeCounter/

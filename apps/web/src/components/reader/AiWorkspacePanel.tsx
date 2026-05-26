@@ -278,9 +278,8 @@ function serializeAttachment(attachment: ReaderAskAttachment): ReaderAskAttachme
   };
 }
 
-function defaultEntryAction(attachments: ReaderAskAttachment[]): ReaderAskEntryActionDto {
-  const fromAttachment = attachments.at(-1)?.metadata.entryAction;
-  return fromAttachment ?? "ask_about_this";
+function defaultEntryAction(): ReaderAskEntryActionDto {
+  return "ask_about_this";
 }
 
 function buildRelatedRecordAttachment(
@@ -392,6 +391,10 @@ function toThreadSummary(detail: ReaderAskThreadDetailDto): ReaderAskThreadSumma
 }
 
 function formatStreamError(event: ReaderAskStreamEnvelopeDto) {
+  const userMessage =
+    typeof (event.data as { user_message?: unknown }).user_message === "string"
+      ? String((event.data as { user_message?: string }).user_message)
+      : null;
   const code =
     typeof (event.data as { code?: unknown }).code === "string"
       ? String((event.data as { code?: string }).code)
@@ -400,6 +403,9 @@ function formatStreamError(event: ReaderAskStreamEnvelopeDto) {
     typeof (event.data as { detail?: unknown }).detail === "string"
       ? String((event.data as { detail?: string }).detail)
       : "Ask Claread 暂时不可用。";
+  if (userMessage) {
+    return userMessage;
+  }
   return IS_DEV && code ? `${code}: ${detail}` : detail;
 }
 
@@ -536,7 +542,11 @@ export function createSseMessageHandler(
       updateMessage((messages) =>
         messages.map((message) =>
           message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
-            ? { ...message, content_md: `${message.content_md}${delta}` }
+            ? {
+                ...message,
+                content_md: message.regenerate_preview ? delta : `${message.content_md}${delta}`,
+                regenerate_preview: false,
+              }
             : message,
         ),
       );
@@ -643,6 +653,7 @@ export function createSseMessageHandler(
               persisted_supplements: payload.persisted_supplements ?? [],
               reasoning_status: message.reasoning_md ? "completed" : null,
               replan_status: "idle",
+              regenerate_preview: false,
             };
           }
           const isPriorUser =
@@ -674,6 +685,7 @@ export function createSseMessageHandler(
                 status: "interrupted",
                 content_md: typeof payload.content_md === "string" ? payload.content_md : message.content_md,
                 reasoning_status: message.reasoning_md ? "completed" : message.reasoning_status,
+                regenerate_preview: false,
               }
             : message,
         ),
@@ -2118,7 +2130,7 @@ function StarterState({
   onPickPrompt,
 }: {
   attachments: ReaderAskAttachment[];
-  onPickPrompt: (prompt: string) => void;
+  onPickPrompt: (prompt: string, entryAction: ReaderAskEntryActionDto) => void;
 }) {
   const starterMode: StarterMode = (() => {
     const selectionAttachment = attachments.find((attachment) => attachment.kind === "text_selection");
@@ -2137,24 +2149,28 @@ function StarterState({
   const suggestions = [
     {
       prompt: starterContent.prompts[0],
+      entryAction: "ask_about_this" as const,
       icon: MessageSquare,
       iconClassName: "text-grammar-violet",
       badgeClassName: "bg-[rgba(116,102,148,0.12)]",
     },
     {
       prompt: starterContent.prompts[1],
+      entryAction: starterMode === "sentence" ? ("why_here" as const) : ("ask_about_this" as const),
       icon: Search,
       iconClassName: "text-context-blue",
       badgeClassName: "bg-[rgba(76,145,194,0.12)]",
     },
     {
       prompt: starterContent.prompts[2],
+      entryAction: "ask_about_this" as const,
       icon: GitBranch,
       iconClassName: "text-structure-green",
       badgeClassName: "bg-[rgba(60,140,104,0.12)]",
     },
     {
       prompt: starterContent.prompts[3],
+      entryAction: "ask_about_this" as const,
       icon: PencilLine,
       iconClassName: "text-vocab-amber",
       badgeClassName: "bg-[rgba(228,176,0,0.14)]",
@@ -2187,7 +2203,7 @@ function StarterState({
               key={suggestion.prompt}
               type="button"
               className="focus-ring group flex w-full items-center gap-3 rounded-[18px] px-2.5 py-2.5 text-left transition-[background-color,transform] duration-200 hover:bg-reader-paper/75 hover:translate-x-0.5"
-              onClick={() => onPickPrompt(suggestion.prompt)}
+              onClick={() => onPickPrompt(suggestion.prompt, suggestion.entryAction)}
             >
               <span
                 className={cn(
@@ -2603,7 +2619,7 @@ export function AiWorkspacePanel({
     await sendMessage({
       content: priorUserMessage.content_md,
       attachments: nextAttachments,
-      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(nextAttachments),
+      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(),
       clearComposer: false,
     });
   }
@@ -2636,7 +2652,7 @@ export function AiWorkspacePanel({
     await sendMessage({
       content: priorUserMessage.content_md,
       attachments: nextAttachments,
-      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(nextAttachments),
+      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(),
       clearComposer: false,
     });
   }
@@ -2662,7 +2678,7 @@ export function AiWorkspacePanel({
     }
 
     const usedAttachments = [...(options?.attachments ?? attachments)];
-    const entryAction = options?.entryAction ?? defaultEntryAction(usedAttachments);
+    const entryAction = options?.entryAction ?? defaultEntryAction();
     const submissionMode = options?.submissionMode ?? "chat";
     const now = Date.now();
     const tempUserId = `local-user-${now}`;
@@ -2692,6 +2708,7 @@ export function AiWorkspacePanel({
       persisted_supplements: [],
       reasoning_md: null,
       reasoning_status: null,
+      regenerate_preview: false,
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -2721,6 +2738,7 @@ export function AiWorkspacePanel({
       persisted_supplements: [],
       reasoning_md: "",
       reasoning_status: "idle",
+      regenerate_preview: false,
       usage_event_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -2805,6 +2823,7 @@ export function AiWorkspacePanel({
               // For interrupted messages, temporarily keep the partial content visible
               // until the regenerated answer starts streaming in. This is NOT resume/continue.
               content_md: message.status === "interrupted" ? message.content_md : "",
+              regenerate_preview: message.status === "interrupted",
               citations: [],
               action_proposals: [],
               tool_trace: [],
@@ -2925,9 +2944,10 @@ export function AiWorkspacePanel({
               {messages.length === 0 ? (
                 <StarterState
                   attachments={attachments}
-                  onPickPrompt={(prompt) => {
+                  onPickPrompt={(prompt, entryAction) => {
                     void sendMessage({
                       content: prompt,
+                      entryAction,
                     });
                   }}
                 />

@@ -479,6 +479,7 @@ export interface ReaderAskMessageDto {
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
   replan_status?: "idle" | "replanning" | null;
+  regenerate_preview?: boolean | null;
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;

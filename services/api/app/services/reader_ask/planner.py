@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -174,7 +175,7 @@ def build_planner_input(
     history: list[ReaderAskPlannerHistoryMessage] = []
     for item in history_messages:
         role = item.get("role")
-        if role not in {"user", "assistant"}:
+        if role not in {"user", "assistant", "system"}:
             continue
         content_md = _clean_reference_query(str(item.get("content_md") or "")) or ""
         if not content_md:
@@ -267,12 +268,13 @@ def _planned_context_plan(
     reference_resolution: ReaderAskReferenceResolution,
     structured_asset_resolution: ReaderAskStructuredAssetResolution,
     clarification_mode: ReaderAskClarificationMode,
+    override_clarification_reason: str | None = None,
 ) -> ReaderAskContextPlan:
     clarification_reason = None
     external_record_context_reason = None
     structured_asset_lookup_reason = None
-    if clarification_mode == "must_clarify":
-        clarification_reason = planner_decision.clarification_reason
+    if clarification_mode in {"must_clarify", "can_answer_with_followup"}:
+        clarification_reason = override_clarification_reason or planner_decision.clarification_reason
         if not clarification_reason:
             if reference_resolution.status == "ambiguous":
                 clarification_reason = "ambiguous_known_reference"
@@ -280,7 +282,7 @@ def _planned_context_plan(
                 clarification_reason = "known_reference_not_found"
             elif structured_asset_resolution.status == "ambiguous":
                 clarification_reason = "ambiguous_external_asset"
-            else:
+            elif clarification_mode == "must_clarify":
                 clarification_reason = "missing_required_context"
     if working_set.external_record_refs:
         external_record_context_reason = (
@@ -571,6 +573,47 @@ def _merge_external_asset_refs(
     return merged
 
 
+# ---------------------------------------------------------------------------
+# Deterministic rules for clarification mode
+# ---------------------------------------------------------------------------
+
+# Strong deictic words that indicate the user is pointing at something
+# specific in the text, but haven't selected it.
+_STRONG_DEICTIC_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"这句|这段|这里|这行|这一句|这一段|这一行|这个句子|这个段落"),
+    re.compile(r"this\s+(sentence|paragraph|line|part|section|phrase)"),
+    # "here" as a deictic reference (e.g. "what does here mean")
+    re.compile(r"\bhere\b"),
+    # "that" as a demonstrative pronoun pointing at text — only match when
+    # followed by a noun-like word (sentence, paragraph, part, word, phrase,
+    # line, section, one) to avoid false positives from conjunction usage
+    # (e.g. "I think that...", "Why is it that...").
+    re.compile(r"\bthat\s+(sentence|paragraph|line|part|word|phrase|section|one)\b"),
+    # Bare "this" as demonstrative pronoun — common in "what does this mean"
+    # but less ambiguous than "that" since "this" is rarely a conjunction.
+    re.compile(r"\bthis\b"),
+]
+
+# Intents that absolutely require sentence-level positioning — without an
+# anchor, the answer would be misleading or impossible.
+_SENTENCE_LEVEL_INTENTS: frozenset[str] = frozenset({"grammar", "breakdown", "practice"})
+_ARTICLE_LEVEL_FOLLOWUP_INTENTS: frozenset[str] = frozenset({"explain", "vocabulary", "general"})
+
+
+def _has_strong_deictic(content: str) -> bool:
+    """Return True if the user message contains strong deictic references
+    (e.g. 这句/这段/这里/this/that) that point at specific text without
+    having selected it."""
+    lower = content.lower()
+    return any(p.search(lower) for p in _STRONG_DEICTIC_PATTERNS)
+
+
+def _requires_sentence_level(resolved_intent: str) -> bool:
+    """Return True if the resolved intent absolutely requires sentence-level
+    positioning to produce a non-misleading answer."""
+    return resolved_intent in _SENTENCE_LEVEL_INTENTS
+
+
 def plan_request(
     *,
     content: str,
@@ -584,7 +627,6 @@ def plan_request(
     structured_asset_resolution: ReaderAskStructuredAssetResolution | None = None,
     skip_expensive_fields: bool = False,
 ) -> ReaderAskPlanningSnapshot:
-    del content
     resolved_reference = reference_resolution or ReaderAskReferenceResolution()
     resolved_asset_resolution = structured_asset_resolution or ReaderAskStructuredAssetResolution()
     reference_needs = reference_needs_from_decision(planner_decision)
@@ -606,14 +648,54 @@ def plan_request(
 
     clarification_only = planner_decision.clarification_only
     clarification_mode: ReaderAskClarificationMode = planner_decision.clarification_mode
+    clarification_reason: str | None = planner_decision.clarification_reason
+
+    # Fallback planner signals uncertainty via clarification_reason prefixed
+    # with "fallback_". Promote to can_answer_with_followup so the answer
+    # agent includes a follow-up hint instead of answering confidently.
+    if clarification_mode == "none" and clarification_reason and clarification_reason.startswith("fallback_"):
+        clarification_mode = "can_answer_with_followup"
+
     if resolved_reference.status in {"ambiguous", "not_found"}:
         if anchors or (resolved_reference.status == "ambiguous" and planner_decision.working_set.local_context_window_needed):
             clarification_mode = "can_answer_with_followup"
+        elif clarification_mode == "can_answer_with_followup" and clarification_reason and clarification_reason.startswith("fallback_"):
+            # Fallback planner already decided this is answerable at article
+            # level with a follow-up hint. Don't escalate to must_clarify
+            # just because the weak reference wasn't found — the user can
+            # still get a useful answer about the current article.
+            pass
+        elif (
+            resolved_reference.status == "ambiguous"
+            and not anchors
+            and planner_decision.resolved_intent in _ARTICLE_LEVEL_FOLLOWUP_INTENTS
+        ):
+            clarification_mode = "can_answer_with_followup"
+            clarification_reason = clarification_reason or "reference_ambiguous_article_level"
         else:
             clarification_mode = "must_clarify"
     if resolved_asset_resolution.status == "ambiguous":
         # Asset ambiguity does not block answer generation; always downgrade to followup
         clarification_mode = "can_answer_with_followup"
+
+    # Deterministic rule: strong deictic + no anchor → final convergence
+    # based on intent. This rule overrides any prior clarification_mode
+    # (none / must_clarify / can_answer_with_followup) because:
+    # - "none" + deictic without anchor → pretending to answer precisely
+    # - "must_clarify" + deictic + non-sentence intent → too aggressive
+    # - "can_answer_with_followup" + deictic + sentence-level intent → too lenient
+    if not anchors and _has_strong_deictic(content):
+        if _requires_sentence_level(planner_decision.resolved_intent):
+            # Grammar/breakdown/practice genuinely need a specific sentence.
+            clarification_mode = "must_clarify"
+            clarification_reason = "deictic_requires_sentence_anchor"
+        else:
+            # Non-sentence intent: always can_answer_with_followup.
+            # Even if prior logic set must_clarify (e.g. from ambiguous
+            # reference resolution), a deictic question with explain/
+            # vocabulary/general intent can be answered at article level.
+            clarification_mode = "can_answer_with_followup"
+            clarification_reason = "deictic_without_anchor"
 
     # Derive clarification_only from clarification_mode for backward compat
     if clarification_mode == "must_clarify":
@@ -677,6 +759,7 @@ def plan_request(
         reference_resolution=resolved_reference,
         structured_asset_resolution=resolved_asset_resolution,
         clarification_mode=clarification_mode,
+        override_clarification_reason=clarification_reason,
     )
     disambiguation_state = _planned_disambiguation_state(
         reference_resolution=resolved_reference,

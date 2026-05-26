@@ -7,9 +7,11 @@ interface ReaderParagraphElementProps {
   props: Parameters<RenderElement>[0];
   paragraphCount: number;
   paragraphIndex: number;
+  contentClassName?: string;
 }
 
 export function ReaderParagraphElement({
+  contentClassName,
   paragraphCount,
   paragraphIndex,
   props,
@@ -28,7 +30,7 @@ export function ReaderParagraphElement({
         <span aria-hidden="true">/</span>
         <span>{String(paragraphCount).padStart(2, "0")}</span>
       </div>
-      <div className="min-w-0 space-y-6">{props.children}</div>
+      <div className={["min-w-0", contentClassName ?? "space-y-6"].filter(Boolean).join(" ")}>{props.children}</div>
     </section>
   );
 }

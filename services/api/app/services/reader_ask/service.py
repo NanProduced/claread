@@ -139,7 +139,7 @@ from app.workflow.tracing import build_usage_metadata
 
 _MAX_HISTORY_MESSAGES = 8
 _MAX_CONTEXT_TEXT = 3200
-_MAX_MESSAGE_TEXT = 800
+_MAX_MESSAGE_TEXT = 1200
 _MAX_PROMPT_ASSET_ITEMS = 5
 _DEFAULT_MAX_OUTPUT_TOKENS = 1600
 _MIN_MAX_OUTPUT_TOKENS = 400
@@ -211,6 +211,20 @@ def _truncate_text(value: str | None, limit: int) -> str:
     return utils.truncate_text(value, limit)
 
 
+def _truncate_history_message(value: str | None, *, role: str, limit: int) -> str:
+    normalized = _normalize_text(value)
+    if len(normalized) <= limit:
+        return normalized
+    if role != "assistant":
+        return _truncate_text(normalized, limit)
+
+    head_limit = max(limit // 2, 240)
+    tail_limit = max(limit - head_limit - 5, 160)
+    head = normalized[:head_limit].rstrip()
+    tail = normalized[-tail_limit:].lstrip()
+    return f"{head}\n...\n{tail}"
+
+
 def _parse_uuid(value: str, detail: str) -> UUID:
     try:
         return UUID(value)
@@ -220,6 +234,20 @@ def _parse_uuid(value: str, detail: str) -> UUID:
 
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _insufficient_credits_payload(remaining_points: int) -> dict[str, Any]:
+    user_message = (
+        f"当前积分不足：剩余 {remaining_points} 点，本次 Ask Claread 至少需要 "
+        f"{READER_ASK_RESERVED_POINTS} 点。本轮请求未发送给模型。"
+    )
+    return {
+        "code": "INSUFFICIENT_CREDITS",
+        "detail": "Not enough credits for this Ask Claread request.",
+        "user_message": user_message,
+        "remaining_points": remaining_points,
+        "required_points": READER_ASK_RESERVED_POINTS,
+    }
 
 
 def _anchor_to_citation(anchor: ReaderAskAnchorRef, *, record_id: str, record_title: str | None) -> ReaderAskCitation:
@@ -698,7 +726,27 @@ def _planner_history_messages(
     *,
     max_messages: int = _PLANNER_MAX_HISTORY_MESSAGES,
 ) -> list[dict[str, object]]:
+    from app.services.reader_ask.runtime_contract import (
+        build_structured_history_summary,
+        format_structured_history_summary,
+    )
+
+    # Build structured summary from messages outside the recent window
+    structured_summary = build_structured_history_summary(
+        history_messages, recent_window=max_messages
+    )
+
     normalized: list[dict[str, object]] = []
+    # Prepend structured summary as a system-like context message
+    if structured_summary:
+        normalized.append(
+            {
+                "role": "system",
+                "content_md": format_structured_history_summary(structured_summary),
+                "resolved_intent": None,
+            }
+        )
+
     for item in history_messages[-max_messages:]:
         role = item.get("role")
         if role not in {"user", "assistant"}:
@@ -706,7 +754,11 @@ def _planner_history_messages(
         normalized.append(
             {
                 "role": role,
-                "content_md": _truncate_text(str(item.get("content_md") or ""), _MAX_MESSAGE_TEXT),
+                "content_md": _truncate_history_message(
+                    str(item.get("content_md") or ""),
+                    role=str(role),
+                    limit=_MAX_MESSAGE_TEXT,
+                ),
                 "resolved_intent": item.get("resolved_intent"),
             }
         )
@@ -717,12 +769,117 @@ def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
 
 
+async def _maybe_emit_replan_event(
+    *,
+    final_content_md: str,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+) -> bool:
+    """Check if replan should be triggered and emit the replan.started event.
+
+    Returns True if replan is triggered, False otherwise.
+    This encapsulates the replan trigger condition and event emission so it
+    can be tested independently of the full streaming pipeline.
+    """
+    if (
+        _is_degenerate_answer(final_content_md)
+        and planning_snapshot is not None
+        and planning_snapshot.clarification_mode == "none"
+        and planning_snapshot.clarification_only is False
+    ):
+        logger.warning(
+            "reader_ask_replan_triggered: Degenerate answer detected (%d chars), attempting replan",
+            len(final_content_md.strip()),
+        )
+        await event_queue.put(("replan.started", {"message_id": assistant_message_id, "reason": "degenerate_answer"}))
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Degenerate answer detection for replan trigger
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate the model refused or gave a non-answer
+_REFUSAL_PATTERNS: tuple[str, ...] = (
+    "i cannot",
+    "i can't",
+    "i'm unable",
+    "i am unable",
+    "无法回答",
+    "不能回答",
+    "无法提供",
+    "我无法",
+    "我不能",
+    "as an ai",
+    "as a language model",
+    "no information",
+    "没有相关信息",
+    "没有足够的信息",
+    "not enough information",
+    "i don't have",
+    "i do not have",
+)
+
+
+def _is_degenerate_answer(content: str) -> bool:
+    """Determine if an answer is degenerate (empty, refusal, or clearly invalid).
+
+    This replaces the previous `len(content) < 20` heuristic with pattern-based
+    detection that distinguishes between:
+    - Short but valid answers (e.g. "Yes.", "Present perfect.") → NOT degenerate
+    - Empty/near-empty answers → degenerate
+    - Refusal/non-answer patterns → degenerate
+    - Very short answers that are not recognizable words → degenerate
+    """
+    stripped = content.strip()
+    if not stripped:
+        return True
+    # Check for refusal patterns
+    lower = stripped.lower()
+    if any(pattern in lower for pattern in _REFUSAL_PATTERNS):
+        return True
+    # Very short content (< 5 chars) that doesn't look like a real answer
+    # (e.g. "..." or single punctuation or model artifacts)
+    if len(stripped) < 5:
+        # Allow short but meaningful answers like "Yes.", "No.", "OK."
+        if stripped.rstrip(".!?,;:") and len(stripped.rstrip(".!?,;:")) <= 3:
+            # Could be a valid short answer — check if it contains at least
+            # one CJK character or one alphabetic word
+            has_cjk = any("\u4e00" <= c <= "\u9fff" for c in stripped)
+            has_alpha_word = any(c.isalpha() for c in stripped)
+            if has_cjk or has_alpha_word:
+                return False
+        return True
+    return False
+
+
 def _fallback_reference_query(user_message: str) -> str | None:
     normalized = _normalize_text(user_message)
     if not normalized:
         return None
+    # Pass 1: explicit title markers (book title marks, quotes)
     for pattern in (r"《([^》]+)》", r"“([^”]+)”", r"\"([^\"]+)\"", r"'([^']+)'"):
         match = re.search(pattern, normalized)
+        if not match:
+            continue
+        query = utils.clean_reference_query(match.group(1))
+        if query:
+            return query
+    # Pass 2: weak reference patterns — "之前那篇 X", "讲 X 的文章", "关于 X 的文章",
+    # "the article about X", "that article on X", etc.
+    weak_patterns = (
+        # Chinese: 之前那篇/那篇/那篇关于/讲/关于 + topic + 的?文章/论文/研究
+        # Topic allows spaces (for mixed CN/EN) but stops at punctuation/的
+        r"(?:之前那篇|那篇|那篇关于|讲|关于)([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:的?(?:文章|论文|研究|报道|书|文本))",
+        # Chinese: topic + 那篇/这篇 + 的?文章/论文
+        r"([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:那篇|这篇)(?:的?(?:文章|论文|研究|报道))",
+        # English: that/the article about/on X — capture up to 6 words, stop at verb boundary
+        r"(?:that|the)\s+(?:article|paper|essay|text|piece)\s+(?:about|on|regarding|covering)\s+([\w\-]+(?:\s+(?!also|that|which|who|is|was|were|has|had|did|and|but|or|discussed|mentioned|talked|explained|noted|stated|pointed)[\w\-]+){0,5})",
+    )
+    for pattern in weak_patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
         if not match:
             continue
         query = utils.clean_reference_query(match.group(1))
@@ -771,14 +928,21 @@ def _fallback_semantic_planner_decision(
         resolved_intent = "breakdown"
     elif _contains_any(normalized_message, ("练习", "exercise", "practice", "quiz")):
         resolved_intent = "practice"
-    elif _contains_any(normalized_message, ("语法", "句法", "grammar", "syntax")):
+    elif _contains_any(normalized_message, ("语法", "句法", "时态", "语态", "过去式", "现在式", "将来式", "grammar", "syntax", "tense")):
         resolved_intent = "grammar"
-    elif _contains_any(normalized_message, ("词义", "词汇", "短语", "vocabulary", "phrase", "word")):
+    elif _contains_any(normalized_message, ("词义", "词汇", "短语", "单词", "这个词", "那个词", "vocabulary", "phrase", "word", "meaning")):
         resolved_intent = "vocabulary"
+    elif _contains_any(normalized_message, ("对比", "比较", "不同", "区别", "差异", "compare", "difference", "versus", "vs")):
+        resolved_intent = "general"
+    elif _contains_any(normalized_message, ("总结", "概括", "归纳", "summarize", "summary", "翻译", "translate", "复习", "review", "分析", "analyze")):
+        resolved_intent = "general"
 
+    has_weak_reference = fallback_reference_query is not None
     clarification_only = False
     clarification_reason: str | None = None
-    cross_record_context_allowed = has_external_record_attachment or has_external_asset_attachment
+    cross_record_context_allowed = (
+        has_external_record_attachment or has_external_asset_attachment or has_weak_reference
+    )
     article_overview_needed = False
     local_context_window_needed = False
     record_insights_needed = False
@@ -797,12 +961,21 @@ def _fallback_semantic_planner_decision(
         if resolved_intent in {"grammar", "breakdown", "practice"} and has_sentence_entries:
             record_insights_needed = True
     elif cross_record_context_allowed:
-        clarification_only = False
+        # External context available — no clarification needed
+        if has_article_overview:
+            article_overview_needed = True
+        local_context_window_needed = True
     elif has_article_overview:
         article_overview_needed = True
         local_context_window_needed = True
     else:
         local_context_window_needed = True
+
+    # Conservative path: weak reference without anchor → followup so user can confirm
+    if has_weak_reference and not has_local_anchor:
+        clarification_reason = "fallback_weak_reference_without_anchor"
+        # Don't set clarification_only=True (must_clarify) — we can still answer
+        # at article level, but signal that the reference is uncertain.
 
     return ReaderAskPlannerDecision(
         resolved_intent=resolved_intent,
@@ -811,7 +984,11 @@ def _fallback_semantic_planner_decision(
         reference_request={
             "requested": bool(fallback_reference_query),
             "query": fallback_reference_query,
-            "reason": "fallback_title_like_reference" if fallback_reference_query else None,
+            "reason": (
+                "fallback_weak_reference" if has_weak_reference and clarification_reason
+                else "fallback_title_like_reference" if fallback_reference_query
+                else None
+            ),
         },
         structured_asset_request={
             "requested": structured_asset_requested,
@@ -1333,13 +1510,55 @@ async def _resolve_anchor_refs(
 def _collect_sentence_windows(record: _RecordBundle, anchors: list[ReaderAskAnchorRef]) -> list[dict[str, Any]]:
     sentences = record.render_scene.get("article", {}).get("sentences")
     if not isinstance(sentences, list):
-        return []
+        first_paragraph = _truncate_text(record.source_text, 260)
+        if not first_paragraph:
+            return []
+        return [
+            {
+                "sentence_id": None,
+                "anchor_text": first_paragraph,
+                "window": [
+                    {
+                        "sentence_id": None,
+                        "paragraph_id": None,
+                        "text": first_paragraph,
+                        "translation_zh": None,
+                    }
+                ],
+                "fallback_window": True,
+            }
+        ]
     translations = _translations_map(record)
     sentence_ids: list[str] = []
     for anchor in anchors:
         sentence_ids.extend(_sentence_ids_from_anchor(anchor))
     sentence_id_set = {sentence_id for sentence_id in sentence_ids if sentence_id}
     if not sentence_id_set:
+        fallback_items = []
+        for candidate in sentences[:2]:
+            if not isinstance(candidate, dict):
+                continue
+            fallback_items.append(
+                {
+                    "sentence_id": candidate.get("sentence_id"),
+                    "paragraph_id": candidate.get("paragraph_id"),
+                    "text": _truncate_text(candidate.get("text"), 240),
+                    "translation_zh": _truncate_text(
+                        translations.get(candidate.get("sentence_id")) if isinstance(candidate.get("sentence_id"), str) else None,
+                        180,
+                    )
+                    or None,
+                }
+            )
+        if fallback_items:
+            return [
+                {
+                    "sentence_id": fallback_items[0].get("sentence_id"),
+                    "anchor_text": fallback_items[0].get("text"),
+                    "window": fallback_items,
+                    "fallback_window": True,
+                }
+            ]
         return []
 
     ordered: list[dict[str, Any]] = []
@@ -2878,15 +3097,7 @@ async def stream_thread_message(
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
         if remaining < READER_ASK_RESERVED_POINTS:
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
+            yield _sse("error", _insufficient_credits_payload(remaining))
             return
 
         reservation_metadata = {
@@ -2906,15 +3117,7 @@ async def stream_thread_message(
         )
         if reservation is None:
             remaining = await check_quota(user_id)
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
+            yield _sse("error", _insufficient_credits_payload(remaining))
             return
 
         planning_result = await _resolve_semantic_planning(
@@ -3417,18 +3620,15 @@ async def stream_thread_message(
         final_content_md = stream_outcome.content_md
         usage_summary = stream_outcome.usage_summary
 
-        # Bounded replan: if answer is empty/very short and not already clarified,
-        # attempt a single replan with expanded context
-        if (
-            len(final_content_md.strip()) < 20
-            and planning_snapshot is not None
-            and planning_snapshot.clarification_mode == "none"
-            and planning_snapshot.clarification_only is False
-        ):
-            logger.warning(
-                "reader_ask_replan_triggered: Answer too short (%d chars), attempting replan",
-                len(final_content_md.strip()),
-            )
+        # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
+        # not already clarified, attempt a single replan with expanded context
+        replan_triggered = await _maybe_emit_replan_event(
+            final_content_md=final_content_md,
+            planning_snapshot=planning_snapshot,
+            event_queue=event_queue,
+            assistant_message_id=assistant_message_id,
+        )
+        if replan_triggered:
             try:
                 replan_result = await _resolve_semantic_planning(
                     user_id=user_id,
@@ -3902,15 +4102,7 @@ async def retry_thread_message(
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
         if remaining < READER_ASK_RESERVED_POINTS:
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
+            yield _sse("error", _insufficient_credits_payload(remaining))
             return
 
         reservation_metadata = {
@@ -3931,15 +4123,7 @@ async def retry_thread_message(
         )
         if reservation is None:
             remaining = await check_quota(user_id)
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
+            yield _sse("error", _insufficient_credits_payload(remaining))
             return
 
         planning_result = await _resolve_semantic_planning(
@@ -4391,18 +4575,15 @@ async def retry_thread_message(
         final_content_md = stream_outcome.content_md
         usage_summary = stream_outcome.usage_summary
 
-        # Bounded replan: if answer is empty/very short and not already clarified,
-        # attempt a single replan with expanded context
-        if (
-            len(final_content_md.strip()) < 20
-            and planning_snapshot is not None
-            and planning_snapshot.clarification_mode == "none"
-            and planning_snapshot.clarification_only is False
-        ):
-            logger.warning(
-                "reader_ask_replan_triggered: Answer too short (%d chars), attempting replan",
-                len(final_content_md.strip()),
-            )
+        # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
+        # not already clarified, attempt a single replan with expanded context
+        replan_triggered = await _maybe_emit_replan_event(
+            final_content_md=final_content_md,
+            planning_snapshot=planning_snapshot,
+            event_queue=event_queue,
+            assistant_message_id=assistant_message_id,
+        )
+        if replan_triggered:
             try:
                 replan_result = await _resolve_semantic_planning(
                     user_id=user_id,
@@ -4908,6 +5089,21 @@ async def confirm_action(
     if message_dict is None or proposal_dict is None:
         raise HTTPException(status_code=404, detail="Reader ask action proposal not found")
 
+    # Idempotency: if the proposal is already in a terminal state, return
+    # immediately without re-executing the side effect.
+    proposal_status = proposal_dict.get("status", "pending")
+    if proposal_status == "executed":
+        # Already executed — return stable result with the persisted result_json
+        # so the client can recover local state even after a lost response.
+        result_data = proposal_dict.get("result_json")
+        result = ReaderAskActionConfirmResult.model_validate(result_data) if result_data else ReaderAskActionConfirmResult()
+        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)
+    if proposal_status == "rejected":
+        raise HTTPException(status_code=409, detail="Action proposal has already been rejected")
+    # "executing" status: a previous request started but may not have completed.
+    # The underlying business writes are idempotent (ON CONFLICT), so it is
+    # safe to retry. Fall through to the normal confirm path.
+
     message = ReaderAskMessage.model_validate(message_dict)
     proposal = ReaderAskActionProposal.model_validate(proposal_dict)
     run_history = message_dict.get("run_history") or None
@@ -4969,6 +5165,31 @@ async def confirm_action(
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
     record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
+
+    # Mark proposal as "executing" before the business write, so that a
+    # partially-completed request (business write succeeded but
+    # update_message failed) can be safely retried.
+    executing_proposals = [
+        proposal_item.model_copy(update={"status": "executing"}) if proposal_item.id == action_id else proposal_item
+        for proposal_item in message.action_proposals
+    ]
+    await repo.update_message(
+        message_id=_parse_uuid(message.id, "message id is invalid"),
+        status=message.status,
+        content_md=message.content_md,
+        context_anchors=[anchor.model_dump(mode="json") for anchor in message.context_anchors],
+        citations=[citation.model_dump(mode="json") for citation in message.citations],
+        action_proposals=[item.model_dump(mode="json") for item in executing_proposals],
+        tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
+        metadata=_assistant_message_metadata(
+            resolved_intent=message.resolved_intent,
+            run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
+            run_history=run_history,
+            resolved_context_input=message.resolved_context_input,
+        ),
+        usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+        current_turn_run_id=turn_run_id,
+    )
 
     result = ReaderAskActionConfirmResult()
     updated_trace_summary = message.trace_summary
@@ -5058,7 +5279,9 @@ async def confirm_action(
             raise HTTPException(status_code=400, detail=f"Unsupported action type: {proposal.action_type}")
 
     updated_proposals = [
-        proposal_item.model_copy(update={"status": "executed"}) if proposal_item.id == action_id else proposal_item
+        proposal_item.model_copy(update={"status": "executed", "result_json": result.model_dump(mode="json")})
+        if proposal_item.id == action_id
+        else proposal_item
         for proposal_item in message.action_proposals
     ]
     await repo.update_message(

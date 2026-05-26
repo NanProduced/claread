@@ -18,6 +18,13 @@ export interface ReaderSettingsState {
   updatedAt?: string;
 }
 
+export interface ReaderModeTypography {
+  bodyClassName: string;
+  translationClassName: string;
+  columnClassName: string;
+  paragraphDensityClassName: string;
+}
+
 export const READER_SETTINGS_STORAGE_KEY = "claread.reader.settings.v4";
 const LEGACY_READER_SETTINGS_STORAGE_KEYS = [
   "claread.reader.settings.v3",
@@ -158,6 +165,45 @@ export function readerTextClassName({
         : "text-[1.14rem] sm:text-[1.28rem]";
 
   return `${fontClass} text-ink ${sizeClass} leading-[1.88]`;
+}
+
+export function readerModeTypography({
+  mode,
+  fontFamily,
+  fontScale,
+}: Pick<ReaderSettingsState, "mode" | "fontFamily" | "fontScale">): ReaderModeTypography {
+  const fontClass =
+    fontFamily === "book"
+      ? "reader-font-book"
+      : fontFamily === "sans"
+        ? "reader-font-sans"
+        : "reader-font-editorial";
+
+  const bodySizeClass =
+    fontScale === "sm"
+      ? "text-[1.05rem] sm:text-[1.16rem]"
+      : fontScale === "lg"
+        ? "text-[1.24rem] sm:text-[1.4rem]"
+        : "text-[1.14rem] sm:text-[1.28rem]";
+
+  const translationSizeClass =
+    fontScale === "sm"
+      ? "text-[0.8rem] sm:text-[0.88rem]"
+      : fontScale === "lg"
+        ? "text-[0.96rem] sm:text-[1.05rem]"
+        : "text-[0.88rem] sm:text-[0.96rem]";
+
+  return {
+    bodyClassName: `${fontClass} text-ink ${bodySizeClass} ${
+      mode === "immersive" ? "leading-[1.84]" : "leading-[1.76]"
+    }`,
+    translationClassName: `reader-font-sans ${translationSizeClass} ${
+      mode === "immersive" ? "leading-[1.7]" : "leading-[1.62]"
+    }`,
+    columnClassName: mode === "immersive" ? "max-w-[82ch]" : "max-w-[72ch]",
+    paragraphDensityClassName:
+      mode === "immersive" ? "reader-density-immersive" : "reader-density-intensive",
+  };
 }
 
 export function modeVisibility(mode: ReaderMode): ReaderAnnotationVisibilityGroups {

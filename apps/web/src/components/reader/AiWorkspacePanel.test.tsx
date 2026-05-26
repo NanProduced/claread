@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
 import type { ReaderAskMessageDto } from "@/types/api/reader-ask";
+import { consumeReaderAskSse } from "./ask/sse";
 import { AiWorkspacePanel, createSseMessageHandler } from "./AiWorkspacePanel";
 
 const completedPayload = {
@@ -401,6 +402,40 @@ describe("AiWorkspacePanel", () => {
     expect(screen.getByText("解释这句在这里的意思。")).not.toBeNull();
   });
 
+  it("binds explicit starter entryAction for sentence mode prompts", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[sentenceAttachment]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "为什么作者这里这样写？" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    expect(body.entry_action).toBe("why_here");
+  });
+
   it("sends only the current reader ask request shape", async () => {
     const onClearAttachments = vi.fn();
     render(
@@ -524,6 +559,43 @@ describe("AiWorkspacePanel", () => {
       has_annotations: false,
       has_reader_notes: false,
     });
+  });
+
+  it("does not inherit the selection attachment entryAction for normal composer sends", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[sentenceAttachment]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "我想问这句和全文主题的关系" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    expect(body.entry_action).toBe("ask_about_this");
   });
 
   it("resets the active conversation and clears attachments", async () => {
@@ -1509,6 +1581,45 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("This is the source text that was cited.")).not.toBeNull();
     });
   });
+
+  it("shows the user-facing insufficient credits message from stream errors", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({
+        event: "error",
+        data: {
+          code: "INSUFFICIENT_CREDITS",
+          detail: "Not enough credits for this Ask Claread request.",
+          user_message: "当前积分不足：剩余 1 点，本次 Ask Claread 至少需要 10 点。本轮请求未发送给模型。",
+          remaining_points: 1,
+          required_points: 10,
+        },
+      });
+    });
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下这个问题" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("当前积分不足：剩余 1 点，本次 Ask Claread 至少需要 10 点。本轮请求未发送给模型。"),
+      ).not.toBeNull();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1621,5 +1732,48 @@ describe("createSseMessageHandler – replan.started", () => {
 
     expect(updatedMessages[0].replan_status).toBe("idle");
     expect(updatedMessages[0].content_md).toBe("This is the replanned answer.");
+  });
+
+  it("replaces interrupted preview content on the first regenerate delta", () => {
+    type Msg = ReaderAskMessageDto;
+    const targetId = "msg-1";
+    const messages: Msg[] = [
+      {
+        id: targetId,
+        thread_id: "thread-1",
+        role: "assistant",
+        status: "streaming",
+        content_md: "旧的中断内容",
+        regenerate_preview: true,
+        context_anchors: [],
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        trace_summary: null,
+        disambiguation: null,
+        external_asset_disambiguation: null,
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        created_at: "2026-05-20T00:00:00Z",
+        updated_at: "2026-05-20T00:00:00Z",
+      },
+    ];
+
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+
+    const handler = createSseMessageHandler(targetId, updateMessage, undefined, vi.fn());
+
+    handler({
+      event: "message.delta",
+      data: { delta: "新的开头" },
+    });
+
+    expect(updatedMessages[0].content_md).toBe("新的开头");
+    expect(updatedMessages[0].regenerate_preview).toBe(false);
   });
 });

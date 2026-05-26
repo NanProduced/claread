@@ -46,6 +46,9 @@ export interface PlateReaderSurfaceProps {
   document: ReaderPlateDocument;
   showTranslation: boolean;
   readingClassName: string;
+  translationClassName?: string;
+  columnClassName?: string;
+  paragraphDensityClassName?: string;
   annotationVisibilityGroups?: ReaderAnnotationVisibilityGroups;
   themeClassName?: string;
   activeSentenceId?: string | null;
@@ -125,6 +128,7 @@ export function PlateReaderSurface({
   selectedSentenceId = null,
   selectionFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   activeAnalysisEntryId = null,
+  columnClassName = "max-w-[72ch]",
   annotationVisibilityGroups = {
     lexical: true,
     analysis: true,
@@ -150,7 +154,9 @@ export function PlateReaderSurface({
   onLookupIntent,
   onOpenSentenceActions,
   onHoverAnnotationTargetKeyChange,
+  paragraphDensityClassName = "reader-density-intensive",
   readingClassName,
+  translationClassName = "reader-font-sans text-[0.88rem] leading-[1.62]",
     showTranslation,
     themeClassName,
   }: PlateReaderSurfaceProps) {
@@ -417,6 +423,7 @@ export function PlateReaderSurface({
         case "reader_paragraph":
           return (
             <ReaderParagraphElement
+              contentClassName="space-y-7"
               props={props}
               paragraphCount={paragraphNodes.length}
               paragraphIndex={paragraphIndexById.get(element.paragraphId) ?? 0}
@@ -459,13 +466,13 @@ export function PlateReaderSurface({
               onLookupIntent={onLookupIntent}
             />
           );
-          case "reader_translation":
-            if (!showTranslation) {
-              return null;
-            }
-            return (
-              <ReaderTranslationElement props={props} />
-            );
+        case "reader_translation":
+          if (!showTranslation) {
+            return null;
+          }
+          return (
+            <ReaderTranslationElement copyClassName={translationClassName} props={props} />
+          );
         case "reader_grammar_note":
         case "reader_sentence_analysis":
         case "reader_term_note":
@@ -506,6 +513,7 @@ export function PlateReaderSurface({
       expandedAnalysisEntryIds,
       expandedIds,
       activeSentenceId,
+      activeReaderNoteId,
       sentenceActionsOpenSentenceId,
       selectedSentenceId,
       annotationVisibilityGroups,
@@ -524,7 +532,7 @@ export function PlateReaderSurface({
       sourceContextBySentence,
       sentenceAssetsBySentence,
       showTranslation,
-      activeReaderNoteId,
+      translationClassName,
       onOpenSentenceNotes,
       grammarCueMetaBySentence,
       onAnalysisFocusChange,
@@ -580,14 +588,14 @@ export function PlateReaderSurface({
   );
 
   return (
-    <div className={`px-5 py-7 sm:px-8 lg:px-10 lg:py-9 ${themeClassName ?? ""}`.trim()}>
-      <div className="mx-auto max-w-[72ch]">
+    <div className={`px-5 py-7 sm:px-8 lg:px-10 lg:py-9 ${themeClassName ?? ""} ${paragraphDensityClassName}`.trim()}>
+      <div className={`mx-auto ${columnClassName}`.trim()}>
         <Plate editor={editor} readOnly>
           <EditorContainer className="h-auto cursor-default overflow-visible bg-transparent px-0 py-0 [&_.slate-selection-area]:hidden">
             <Editor
               readOnly
               disableDefaultStyles
-              className="space-y-10 px-0 py-0 outline-none"
+              className="space-y-9 px-0 py-0 outline-none"
               renderElement={renderElement as never}
               renderLeaf={renderLeaf as never}
             />

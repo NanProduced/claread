@@ -1625,12 +1625,10 @@ select {
 .reader-translation-copy {
   margin: 0;
   color: var(--color-muted);
-  font-family: var(--font-sans);
-  font-size: 0.88rem;
-  line-height: 1.6;
   letter-spacing: 0.01em;
   text-wrap: pretty;
   user-select: text;
+  transition: opacity 220ms ease, color 220ms ease;
 }
 
 .reader-translation-layer:hover .reader-translation-copy,
@@ -1646,15 +1644,12 @@ select {
 
 .reader-translation--muted .reader-translation-copy {
   color: var(--reader-translation-copy);
-  font-size: 0.88rem;
   opacity: 0.52;
-  transition: opacity 220ms ease, font-size 220ms ease, color 220ms ease;
 }
 
 .reader-translation--muted:hover .reader-translation-copy,
 .reader-translation--muted:focus-within .reader-translation-copy {
   opacity: 0.88;
-  font-size: 0.94rem;
   color: var(--reader-translation-copy-strong);
 }
 
@@ -2973,8 +2968,7 @@ select {
   }
 
   .reader-translation-copy {
-    font-size: 0.92rem;
-    line-height: 1.74;
+    letter-spacing: 0.008em;
   }
 
   .reader-annotation-slip {

@@ -104,11 +104,15 @@ async def create_supplement(
     record_id: UUID,
     candidate: ReaderAskSupplementCandidate,
 ) -> dict[str, Any]:
+    """Create a supplement. Idempotent: if a supplement with the same id already
+    exists (from a previous confirm that partially succeeded), returns the
+    existing row instead of raising a unique-constraint error."""
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
     now = _iso_now()
+    supplement_id = UUID(candidate.candidate_id)
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -122,11 +126,12 @@ async def create_supplement(
                 $8, $9, $10::jsonb, $11::jsonb, $12,
                 $13, $14, $14
             )
+            ON CONFLICT (id) DO NOTHING
             RETURNING id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
                       title, content_md, anchor_payload_json, metadata_json, schema_version,
                       created_from_turn_run_id, created_at, updated_at, deleted_at
             """,
-            UUID(candidate.candidate_id),
+            supplement_id,
             user_id,
             record_id,
             candidate.supplement_type,
@@ -141,6 +146,18 @@ async def create_supplement(
             candidate.created_from_turn_run_id,
             now,
         )
+        # ON CONFLICT DO NOTHING returns None — fetch the existing row
+        if row is None:
+            row = await conn.fetchrow(
+                """
+                SELECT id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+                       title, content_md, anchor_payload_json, metadata_json, schema_version,
+                       created_from_turn_run_id, created_at, updated_at, deleted_at
+                FROM reader_ask_supplements
+                WHERE id = $1
+                """,
+                supplement_id,
+            )
     assert row is not None
     return dict(row)
 
