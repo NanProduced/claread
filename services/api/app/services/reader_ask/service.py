@@ -199,6 +199,18 @@ class _AgentStreamRuntime:
     reasoning_started: bool = False
 
 
+@dataclass(slots=True)
+class _TurnRunStreamCheckpoint:
+    turn_run_id: UUID
+    build_output_json: Callable[[str, str | None, str | None], dict[str, Any]]
+    min_flush_interval_s: float = 0.8
+    min_content_chars: int = 48
+    min_reasoning_chars: int = 48
+    last_flushed_at: float = 0.0
+    last_flushed_content_len: int = 0
+    last_flushed_reasoning_len: int = 0
+
+
 def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -1852,6 +1864,8 @@ def _build_user_visible_output(
     run_info: dict[str, Any] | ReaderAskRunInfo | None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | list[dict[str, Any]],
     persisted_supplements: list[ReaderAskPersistedSupplement] | list[dict[str, Any]],
+    reasoning_md: str | None = None,
+    reasoning_status: str | None = None,
 ) -> ReaderAskUserVisibleOutput:
     return output_contract_svc.build_user_visible_output(
         content_md=content_md,
@@ -1873,6 +1887,8 @@ def _build_user_visible_output(
         run_info=run_info,
         supplement_candidates=supplement_candidates,
         persisted_supplements=persisted_supplements,
+        reasoning_md=reasoning_md,
+        reasoning_status=reasoning_status,
     )
 
 
@@ -1887,6 +1903,97 @@ def _build_completed_payload(
         thread_id=thread_id,
         output=output,
     )
+
+
+def _terminal_reasoning_status(reasoning_started: bool) -> Literal["completed"] | None:
+    return "completed" if reasoning_started else None
+
+
+def _build_stream_checkpoint_output_json(
+    *,
+    content_md: str,
+    reasoning_md: str | None,
+    reasoning_status: str | None,
+    submission_mode: ReaderAskSubmissionMode,
+    resolved_intent: ReaderAskResolvedIntent | None,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    attachments: list[ReaderAskAttachment],
+    runtime_state: ReaderAskRuntimeState,
+    reference_resolution: planner.ReaderAskReferenceResolution,
+    disambiguation: ReaderAskDisambiguation | None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None,
+    trace_summary: ReaderAskTraceSummary | None,
+    context_plan: ReaderAskContextPlan | None,
+    resolved_context_input: ReaderAskResolvedContextInput | None,
+    run_info: dict[str, Any] | ReaderAskRunInfo | None,
+    persisted_supplements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    response_cards = _build_response_cards(
+        task_mode=resolved_intent or "general",
+        record=record,
+        anchors=anchors,
+        runtime_state=runtime_state,
+    )
+    supplement_candidates = _build_supplement_candidates_from_runtime(
+        resolved_intent=resolved_intent or "general",
+        anchors=anchors,
+        runtime_state=runtime_state,
+        assistant_content_md=content_md,
+        created_from_turn_run_id=str(run_info["run_id"]) if isinstance(run_info, dict) and run_info.get("run_id") else str(uuid4()),
+    )
+    supplement_candidates_json = [candidate.model_dump(mode="json") for candidate in supplement_candidates]
+    runtime_proposals = _build_action_proposals_from_runtime(
+        record=record,
+        action_requests=runtime_state.action_requests,
+        assistant_content_md=content_md,
+    )
+    action_proposals = _merge_action_proposals(
+        runtime_proposals,
+        _build_supplement_action_proposals(supplement_candidates_json),
+    )
+    output = _build_user_visible_output(
+        content_md=content_md,
+        submission_mode=submission_mode,
+        resolved_intent=resolved_intent,
+        citations=runtime_state.citations,
+        action_proposals=action_proposals,
+        tool_trace=runtime_state.tool_trace,
+        evidence=_build_evidence_items(
+            attachments=attachments,
+            citations=runtime_state.citations,
+            current_record_id=str(record.record_id),
+            current_record_title=record.title,
+            external_record_contexts=runtime_state.latest_external_record_contexts,
+            external_asset_contexts=runtime_state.latest_external_asset_contexts,
+            reference_resolution=reference_resolution,
+            supplement_candidates=supplement_candidates,
+            disambiguation=disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
+        ),
+        trace_summary=trace_summary,
+        disambiguation=disambiguation,
+        external_asset_disambiguation=external_asset_disambiguation,
+        response_cards=response_cards,
+        usage_summary=None,
+        billed_points=0,
+        resolved_context=_resolved_context_summary(
+            record=record,
+            anchors=anchors,
+            explicit_attachment_count=len(attachments),
+            runtime_state=runtime_state,
+            used_cross_record_context=runtime_state.used_cross_record_context,
+            citations=runtime_state.citations,
+        ),
+        context_plan=context_plan,
+        resolved_context_input=resolved_context_input,
+        run_info=run_info,
+        supplement_candidates=supplement_candidates,
+        persisted_supplements=persisted_supplements,
+        reasoning_md=reasoning_md,
+        reasoning_status=reasoning_status,
+    )
+    return output.model_dump(mode="json")
 
 
 def _visible_output_from_message(message: ReaderAskMessage, message_dict: dict[str, Any]) -> dict[str, Any]:
@@ -2060,8 +2167,13 @@ async def _upsert_eval_trace_record(
     )
 
 
-def _reasoning_enabled_settings(route_settings: RunModelSettings) -> RunModelSettings:
+def _reasoning_enabled_settings(
+    route_settings: RunModelSettings,
+    *,
+    base_url: str = "",
+) -> RunModelSettings:
     extra_body = dict(route_settings.extra_body or {})
+    extra_headers = dict(route_settings.extra_headers or {})
     if "thinking" in extra_body and isinstance(extra_body["thinking"], dict):
         thinking = dict(cast(dict[str, Any], extra_body["thinking"]))
         if thinking.get("type") == "disabled":
@@ -2069,6 +2181,20 @@ def _reasoning_enabled_settings(route_settings: RunModelSettings) -> RunModelSet
         extra_body["thinking"] = thinking
     elif extra_body.get("enable_thinking") is False:
         extra_body["enable_thinking"] = True
+    elif "enable_thinking" not in extra_body:
+        extra_body["enable_thinking"] = True
+
+    if extra_body.get("preserve_thinking") is True:
+        # DashScope streaming suppresses current-round reasoning output when
+        # preserve_thinking=true, which breaks the visible thinking UX.
+        extra_body["preserve_thinking"] = False
+
+    if "dashscope.aliyuncs.com" in base_url.lower():
+        # DashScope compatible-mode requires this header for HTTP SSE streaming.
+        # Without it, reasoning_content may only appear at the end instead of
+        # arriving incrementally.
+        extra_headers.setdefault("X-DashScope-SSE", "enable")
+        extra_body.setdefault("incremental_output", True)
     return RunModelSettings(
         max_tokens=route_settings.max_tokens,
         temperature=route_settings.temperature,
@@ -2079,9 +2205,69 @@ def _reasoning_enabled_settings(route_settings: RunModelSettings) -> RunModelSet
         presence_penalty=route_settings.presence_penalty,
         frequency_penalty=route_settings.frequency_penalty,
         stop_sequences=route_settings.stop_sequences,
-        extra_headers=route_settings.extra_headers,
+        extra_headers=extra_headers or None,
         extra_body=extra_body or None,
     )
+
+
+async def _maybe_flush_turn_run_stream_checkpoint(
+    *,
+    checkpoint: _TurnRunStreamCheckpoint | None,
+    runtime: _AgentStreamRuntime,
+    force: bool = False,
+) -> None:
+    if checkpoint is None:
+        return
+
+    content_text = runtime.emitted_text
+    reasoning_text = runtime.emitted_reasoning
+    content_len = len(content_text)
+    reasoning_len = len(reasoning_text)
+
+    if content_len == 0 and reasoning_len == 0 and not (force and runtime.reasoning_started):
+        return
+
+    grew_content = content_len - checkpoint.last_flushed_content_len
+    grew_reasoning = reasoning_len - checkpoint.last_flushed_reasoning_len
+    now = perf_counter()
+    has_new_content = grew_content > 0 or grew_reasoning > 0
+    interval_elapsed = (
+        checkpoint.last_flushed_at > 0
+        and has_new_content
+        and (now - checkpoint.last_flushed_at) >= checkpoint.min_flush_interval_s
+    )
+    should_flush = (
+        force
+        or checkpoint.last_flushed_at == 0
+        or grew_content >= checkpoint.min_content_chars
+        or grew_reasoning >= checkpoint.min_reasoning_chars
+        or interval_elapsed
+    )
+
+    if not should_flush:
+        return
+
+    reasoning_status = "streaming" if runtime.reasoning_started else None
+    reasoning_md = reasoning_text or None
+    snapshot = checkpoint.build_output_json(content_text, reasoning_md, reasoning_status)
+
+    try:
+        await repo.update_turn_run(
+            turn_run_id=checkpoint.turn_run_id,
+            status="streaming",
+            user_visible_output_json=snapshot,
+        )
+    except Exception:
+        logger.warning(
+            "reader_ask_stream_checkpoint_flush_failed",
+            exc_info=True,
+            extra={"turn_run_id": str(checkpoint.turn_run_id)},
+        )
+        return
+
+    checkpoint.last_flushed_at = now
+    checkpoint.last_flushed_content_len = content_len
+    checkpoint.last_flushed_reasoning_len = reasoning_len
 
 
 def _start_reader_ask_agent_stream(
@@ -2091,6 +2277,8 @@ def _start_reader_ask_agent_stream(
     model: Any,
     route_settings: RunModelSettings,
     assistant_message_id: str,
+    base_url: str,
+    checkpoint: _TurnRunStreamCheckpoint | None = None,
 ) -> tuple[asyncio.Task[None], _AgentStreamRuntime]:
     event_queue = deps.event_queue
     runtime = _AgentStreamRuntime()
@@ -2101,7 +2289,10 @@ def _start_reader_ask_agent_stream(
                 build_reader_ask_prompt(deps),
                 deps=deps,
                 model=model,
-                model_settings=_reasoning_enabled_settings(route_settings).to_pydantic_ai(),
+                model_settings=_reasoning_enabled_settings(
+                    route_settings,
+                    base_url=base_url,
+                ).to_pydantic_ai(),
             ) as result:
                 async for response, _last in result.stream_responses(debounce_by=None):
                     thinking_text = response.thinking or ""
@@ -2129,10 +2320,24 @@ def _start_reader_ask_agent_stream(
                         await event_queue.put(
                             ("message.delta", {"message_id": assistant_message_id, "delta": text_delta})
                         )
+                    await _maybe_flush_turn_run_stream_checkpoint(
+                        checkpoint=checkpoint,
+                        runtime=runtime,
+                    )
+                await _maybe_flush_turn_run_stream_checkpoint(
+                    checkpoint=checkpoint,
+                    runtime=runtime,
+                    force=True,
+                )
                 if runtime.reasoning_started:
                     await event_queue.put(("reasoning.completed", {"message_id": assistant_message_id}))
                 runtime.usage_summary = build_usage_metadata(result.usage())
         except Exception as exc:
+            await _maybe_flush_turn_run_stream_checkpoint(
+                checkpoint=checkpoint,
+                runtime=runtime,
+                force=True,
+            )
             runtime.producer_error = exc
         finally:
             runtime.producer_done.set()
@@ -3073,6 +3278,7 @@ async def stream_thread_message(
     reference_resolution = planner.ReaderAskReferenceResolution()
     final_content_md = ""
     persisted_supplements_json: list[dict[str, Any]] = []
+    stream_runtime: _AgentStreamRuntime | None = None
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -3594,12 +3800,36 @@ async def stream_thread_message(
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
+        checkpoint = _TurnRunStreamCheckpoint(
+            turn_run_id=active_turn_run_id,
+            build_output_json=lambda content_md, reasoning_md, reasoning_status: _build_stream_checkpoint_output_json(
+                content_md=content_md,
+                reasoning_md=reasoning_md,
+                reasoning_status=reasoning_status,
+                submission_mode=submission_mode,
+                resolved_intent=resolved_intent,
+                record=record,
+                anchors=resolved_anchors,
+                attachments=attachments,
+                runtime_state=runtime_state,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                trace_summary=trace_summary,
+                context_plan=context_plan,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                persisted_supplements=[],
+            ),
+        )
         producer_task, stream_runtime = _start_reader_ask_agent_stream(
             agent=agent,
             deps=deps,
             model=model,
             route_settings=route_settings,
             assistant_message_id=assistant_message["id"],
+            base_url=model_config.base_url if model_config else "",
+            checkpoint=checkpoint,
         )
         try:
             async for event_name, event_payload in _stream_reader_ask_events(
@@ -3626,7 +3856,7 @@ async def stream_thread_message(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
             event_queue=event_queue,
-            assistant_message_id=assistant_message_id,
+            assistant_message_id=assistant_message["id"],
         )
         if replan_triggered:
             try:
@@ -3885,6 +4115,8 @@ async def stream_thread_message(
             run_info=run_info,
             supplement_candidates=typed_supplement_candidates,
             persisted_supplements=[],
+            reasoning_md=stream_runtime.emitted_reasoning or None,
+            reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started),
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         updated = await repo.update_message(
@@ -3966,10 +4198,36 @@ async def stream_thread_message(
                 current_turn_run_id=active_turn_run_id,
             )
             if active_turn_run_id is not None:
+                failed_output_json = (
+                    _build_stream_checkpoint_output_json(
+                        content_md=final_content_md,
+                        reasoning_md=(stream_runtime.emitted_reasoning or None) if stream_runtime is not None else None,
+                        reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started)
+                        if stream_runtime is not None
+                        else None,
+                        submission_mode=submission_mode,
+                        resolved_intent=resolved_intent,
+                        record=record,
+                        anchors=resolved_anchors,
+                        attachments=attachments,
+                        runtime_state=runtime_state,
+                        reference_resolution=reference_resolution,
+                        disambiguation=disambiguation,
+                        external_asset_disambiguation=external_asset_disambiguation,
+                        trace_summary=trace_summary,
+                        context_plan=context_plan,
+                        resolved_context_input=resolved_context_input,
+                        run_info=run_info,
+                        persisted_supplements=[],
+                    )
+                    if record is not None
+                    else None
+                )
                 await repo.update_turn_run(
                     turn_run_id=active_turn_run_id,
                     status="failed",
                     resolved_intent=resolved_intent,
+                    user_visible_output_json=failed_output_json,
                     failed_at=datetime.now(UTC),
                 )
                 await _upsert_eval_trace_record(
@@ -4041,6 +4299,8 @@ async def retry_thread_message(
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
     final_content_md = ""
+    persisted_supplements_json: list[dict[str, Any]] = []
+    stream_runtime: _AgentStreamRuntime | None = None
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -4549,12 +4809,36 @@ async def retry_thread_message(
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
+        checkpoint = _TurnRunStreamCheckpoint(
+            turn_run_id=active_turn_run_id,
+            build_output_json=lambda content_md, reasoning_md, reasoning_status: _build_stream_checkpoint_output_json(
+                content_md=content_md,
+                reasoning_md=reasoning_md,
+                reasoning_status=reasoning_status,
+                submission_mode=submission_mode,
+                resolved_intent=resolved_intent,
+                record=record,
+                anchors=resolved_anchors,
+                attachments=attachments,
+                runtime_state=runtime_state,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                trace_summary=trace_summary,
+                context_plan=context_plan,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                persisted_supplements=persisted_supplements_json,
+            ),
+        )
         producer_task, stream_runtime = _start_reader_ask_agent_stream(
             agent=agent,
             deps=deps,
             model=model,
             route_settings=route_settings,
             assistant_message_id=assistant_message["id"],
+            base_url=model_config.base_url if model_config else "",
+            checkpoint=checkpoint,
         )
         try:
             async for event_name, event_payload in _stream_reader_ask_events(
@@ -4581,7 +4865,7 @@ async def retry_thread_message(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
             event_queue=event_queue,
-            assistant_message_id=assistant_message_id,
+            assistant_message_id=assistant_message["id"],
         )
         if replan_triggered:
             try:
@@ -4841,6 +5125,8 @@ async def retry_thread_message(
             run_info=run_info,
             supplement_candidates=typed_supplement_candidates,
             persisted_supplements=persisted_supplements_json,
+            reasoning_md=stream_runtime.emitted_reasoning or None,
+            reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started),
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         await repo.update_message(
@@ -4929,10 +5215,36 @@ async def retry_thread_message(
                 current_turn_run_id=active_turn_run_id,
             )
             if active_turn_run_id is not None:
+                failed_output_json = (
+                    _build_stream_checkpoint_output_json(
+                        content_md=final_content_md,
+                        reasoning_md=(stream_runtime.emitted_reasoning or None) if stream_runtime is not None else None,
+                        reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started)
+                        if stream_runtime is not None
+                        else None,
+                        submission_mode=submission_mode,
+                        resolved_intent=resolved_intent,
+                        record=record,
+                        anchors=resolved_anchors,
+                        attachments=attachments,
+                        runtime_state=runtime_state,
+                        reference_resolution=reference_resolution,
+                        disambiguation=disambiguation,
+                        external_asset_disambiguation=external_asset_disambiguation,
+                        trace_summary=trace_summary,
+                        context_plan=context_plan,
+                        resolved_context_input=resolved_context_input,
+                        run_info=run_info,
+                        persisted_supplements=persisted_supplements_json,
+                    )
+                    if record is not None
+                    else None
+                )
                 await repo.update_turn_run(
                     turn_run_id=active_turn_run_id,
                     status="failed",
                     resolved_intent=resolved_intent,
+                    user_visible_output_json=failed_output_json,
                     failed_at=datetime.now(UTC),
                 )
                 await _upsert_eval_trace_record(

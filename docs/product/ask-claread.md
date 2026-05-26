@@ -197,7 +197,9 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 补充：
 
 - `context_plan / resolved_context_input / evidence / trace_summary` 在 Ask 面板中默认折叠展示
-- `reasoning.*` 只作为流式临时 UI 能力，不是长期持久化正式字段
+- `reasoning.*` 是 run-scoped 的正式输出字段
+- Ask 在流式阶段会按节流 checkpoint 持续回写当前 `turn_run.user_visible_output_json`
+- 刷新页面时会直接回显已持久化的正文与 thinking 快照，但不会自动恢复原 SSE 连接或继续跑同一个未完成 run
 
 ## 当前写动作边界
 

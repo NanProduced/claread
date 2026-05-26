@@ -80,6 +80,8 @@ def build_user_visible_output(
     run_info: dict[str, Any] | ReaderAskRunInfo | None,
     supplement_candidates: list[ReaderAskSupplementCandidate] | list[dict[str, Any]],
     persisted_supplements: list[ReaderAskPersistedSupplement] | list[dict[str, Any]],
+    reasoning_md: str | None = None,
+    reasoning_status: str | None = None,
 ) -> ReaderAskUserVisibleOutput:
     normalized_run_info = (
         run_info
@@ -114,6 +116,8 @@ def build_user_visible_output(
         run_info=normalized_run_info,
         supplement_candidates=normalized_candidates,
         persisted_supplements=normalized_persisted,
+        reasoning_md=reasoning_md,
+        reasoning_status=reasoning_status,
     )
 
 
@@ -155,5 +159,7 @@ def visible_output_from_message(message: ReaderAskMessage, message_dict: dict[st
         run_info=message.run_info,
         supplement_candidates=message.supplement_candidates,
         persisted_supplements=message.persisted_supplements,
+        reasoning_md=message.reasoning_md,
+        reasoning_status=message.reasoning_status,
     )
     return output.model_dump(mode="json")

@@ -679,6 +679,8 @@ class ReaderAskMessage(BaseModel):
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
+    reasoning_md: str | None = None
+    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
     usage_event_id: str | None = None
     created_at: str
     updated_at: str
@@ -770,6 +772,8 @@ class ReaderAskUserVisibleOutput(BaseModel):
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
+    reasoning_md: str | None = None
+    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
 
 
 class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):

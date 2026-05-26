@@ -161,6 +161,13 @@ Ask Claread 当前采用四层真相源：
 - `reasoning.started / reasoning.delta / reasoning.completed`
 - `message.interrupted`
 
+补充：
+
+- `reasoning.*` 在流式阶段仍按 SSE 增量驱动
+- `streaming` run 会按节流 checkpoint 持续回写 `turn_run.user_visible_output_json`，至少覆盖当前 `content_md / reasoning_md / reasoning_status`
+- 一旦本轮 run 完成或中断，最终 `reasoning_md / reasoning_status` 会并入 `turn_run.user_visible_output_json`
+- 刷新页面后的 thinking 恢复，优先读取当前 `turn_run.user_visible_output_json` 中最后一次已持久化快照；这只恢复已生成内容，不恢复原 SSE 连接或自动续跑模型
+
 当前完成态 payload 额外暴露两个与快捷分析相关的稳定字段：
 
 - `submission_mode`：`chat | quick_action`
@@ -288,6 +295,12 @@ Ask Claread 当前采用四层真相源：
 - `user_visible_output_json`
 - usage summary / usage event
 - started / completed / failed 时间
+
+补充：
+
+- `user_visible_output_json` 现在同时承载 final output 和 streaming checkpoint
+- checkpoint 由服务层按节流策略回写，不逐 token 落库
+- `message` 层仍只保留最小兼容状态与 `current_turn_run_id` 指针
 
 ### Eval Trace
 

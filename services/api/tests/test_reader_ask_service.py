@@ -39,6 +39,7 @@ from app.services.reader_ask.service import (
     _attachment_to_anchor,
     _attachments_to_anchor_refs,
     _build_run_info,
+    _build_stream_checkpoint_output_json,
     _capability_trace_json,
     _build_action_proposals,
     _build_context_plan,
@@ -56,6 +57,7 @@ from app.services.reader_ask.service import (
     _resolve_intent,
     _resolved_context_summary,
     _submission_mode,
+    _terminal_reasoning_status,
 )
 from app.services.reader_ask.supplements import build_grammar_note_candidate
 
@@ -313,6 +315,67 @@ def test_build_response_cards_creates_grammar_note_card() -> None:
     assert cards[0].analysis_scope == "focus_span"
     assert cards[0].focus_text == "compared human behaviour and brain patterns"
     assert cards[0].spans[1].role == "比较对象"
+
+
+def test_stream_checkpoint_output_preserves_known_response_cards() -> None:
+    runtime_state = ReaderAskRuntimeState(
+        latest_generated_annotations=[
+            {
+                "status": "ready",
+                "kind": "grammar_note",
+                "sentence_id": "s1",
+                "focus_text": "compared human behaviour and brain patterns",
+                "analysis_scope": "focus_span",
+                "note_zh": "这里的 compare A with B 用来引出对比对象。",
+                "label": "Compare A with B",
+                "source_sentence": "The researchers compared human behaviour and brain patterns with 41 species of monkeys and apes.",
+                "spans": [
+                    {"text": "compared", "role": "谓语"},
+                    {"text": "with 41 species of monkeys and apes", "role": "比较对象"},
+                ],
+            }
+        ]
+    )
+    record = type("Record", (), {"render_scene": {"article": {"sentences": []}, "translations": []}})()
+    record.record_id = UUID("00000000-0000-0000-0000-000000000001")
+    record.title = "Test"
+    record.source_text = ""
+    anchors = [
+        ReaderAskAnchorRef(
+            anchor_type="sentence",
+            sentence_id="s1",
+            selected_text="The researchers compared human behaviour and brain patterns with 41 species of monkeys and apes.",
+        )
+    ]
+
+    output = _build_stream_checkpoint_output_json(
+        content_md="好的，我们来拆解这个句子。",
+        reasoning_md="先判断句子主干。",
+        reasoning_status="streaming",
+        submission_mode="quick_action",
+        resolved_intent="grammar",
+        record=record,
+        anchors=anchors,
+        attachments=[],
+        runtime_state=runtime_state,
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(),
+        disambiguation=None,
+        external_asset_disambiguation=None,
+        trace_summary=None,
+        context_plan=None,
+        resolved_context_input=None,
+        run_info={"turn_id": "turn-1", "run_id": "run-1", "attempt": 1},
+        persisted_supplements=[],
+    )
+
+    assert output["reasoning_status"] == "streaming"
+    assert len(output["response_cards"]) == 1
+    assert output["response_cards"][0]["card_type"] == "grammar_note_card"
+
+
+def test_terminal_reasoning_status_normalizes_finished_runs() -> None:
+    assert _terminal_reasoning_status(True) == "completed"
+    assert _terminal_reasoning_status(False) is None
 
 
 def test_submission_mode_uses_toolbar_quick_actions_only() -> None:
@@ -2751,6 +2814,144 @@ async def test_replan_not_triggered_when_must_clarify() -> None:
 
     assert triggered is False
     assert event_queue.empty()
+
+
+def test_reasoning_enabled_settings_enables_dashscope_sse_and_incremental_output() -> None:
+    from app.llm.types import RunModelSettings
+    from app.services.reader_ask.service import _reasoning_enabled_settings
+
+    settings = RunModelSettings(
+        extra_headers={"X-Test": "1"},
+        extra_body={
+            "enable_thinking": False,
+            "preserve_thinking": True,
+        },
+    )
+
+    resolved = _reasoning_enabled_settings(
+        settings,
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+
+    assert resolved.extra_headers == {
+        "X-Test": "1",
+        "X-DashScope-SSE": "enable",
+    }
+    assert resolved.extra_body is not None
+    assert resolved.extra_body["enable_thinking"] is True
+    assert resolved.extra_body["preserve_thinking"] is False
+    assert resolved.extra_body["incremental_output"] is True
+
+
+def test_reasoning_enabled_settings_preserves_non_dashscope_headers() -> None:
+    from app.llm.types import RunModelSettings
+    from app.services.reader_ask.service import _reasoning_enabled_settings
+
+    settings = RunModelSettings(extra_body={"thinking": {"type": "disabled"}})
+    resolved = _reasoning_enabled_settings(
+        settings,
+        base_url="https://api.deepseek.com",
+    )
+
+    assert resolved.extra_headers is None
+    assert resolved.extra_body is not None
+    assert resolved.extra_body["thinking"] == {"type": "enabled"}
+    assert "incremental_output" not in resolved.extra_body
+
+
+async def test_stream_checkpoint_flush_persists_partial_reasoning_and_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    turn_run_id = uuid4()
+    updates: list[tuple[UUID, str, dict[str, object]]] = []
+
+    async def fake_update_turn_run(*, turn_run_id, status, user_visible_output_json, **kwargs):  # type: ignore[no-untyped-def]
+        del kwargs
+        updates.append((turn_run_id, status, user_visible_output_json))
+        return {"id": str(turn_run_id)}
+
+    monkeypatch.setattr(reader_ask_service.repo, "update_turn_run", fake_update_turn_run)
+
+    checkpoint = reader_ask_service._TurnRunStreamCheckpoint(  # type: ignore[attr-defined]
+        turn_run_id=turn_run_id,
+        build_output_json=lambda content_md, reasoning_md, reasoning_status: {
+            "content_md": content_md,
+            "reasoning_md": reasoning_md,
+            "reasoning_status": reasoning_status,
+        },
+    )
+    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
+        emitted_text="已生成正文。",
+        emitted_reasoning="先判断句子主干。",
+        reasoning_started=True,
+    )
+
+    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
+        checkpoint=checkpoint,
+        runtime=runtime,
+    )
+
+    assert updates == [
+        (
+            turn_run_id,
+            "streaming",
+            {
+                "content_md": "已生成正文。",
+                "reasoning_md": "先判断句子主干。",
+                "reasoning_status": "streaming",
+            },
+        )
+    ]
+    assert checkpoint.last_flushed_content_len == len("已生成正文。")
+    assert checkpoint.last_flushed_reasoning_len == len("先判断句子主干。")
+
+
+async def test_stream_checkpoint_flush_is_throttled_until_forced(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    turn_run_id = uuid4()
+    updates: list[dict[str, object]] = []
+
+    async def fake_update_turn_run(*, turn_run_id, status, user_visible_output_json, **kwargs):  # type: ignore[no-untyped-def]
+        del turn_run_id, status, kwargs
+        updates.append(user_visible_output_json)
+        return {"id": str(uuid4())}
+
+    monkeypatch.setattr(reader_ask_service.repo, "update_turn_run", fake_update_turn_run)
+
+    checkpoint = reader_ask_service._TurnRunStreamCheckpoint(  # type: ignore[attr-defined]
+        turn_run_id=turn_run_id,
+        build_output_json=lambda content_md, reasoning_md, reasoning_status: {
+            "content_md": content_md,
+            "reasoning_md": reasoning_md,
+            "reasoning_status": reasoning_status,
+        },
+        min_flush_interval_s=999.0,
+        min_content_chars=999,
+        min_reasoning_chars=999,
+    )
+    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
+        emitted_text="第一段正文",
+        emitted_reasoning="第一段思路",
+        reasoning_started=True,
+    )
+
+    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
+        checkpoint=checkpoint,
+        runtime=runtime,
+    )
+    runtime.emitted_text = "第一段正文，新增很短"
+    runtime.emitted_reasoning = "第一段思路，新增很短"
+    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
+        checkpoint=checkpoint,
+        runtime=runtime,
+    )
+    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
+        checkpoint=checkpoint,
+        runtime=runtime,
+        force=True,
+    )
+
+    assert len(updates) == 2
+    assert updates[0]["reasoning_status"] == "streaming"
+    assert updates[1]["content_md"] == "第一段正文，新增很短"
+    assert updates[1]["reasoning_md"] == "第一段思路，新增很短"
 
 
 async def test_replan_not_triggered_when_no_planning_snapshot() -> None:
