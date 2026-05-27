@@ -407,11 +407,16 @@ export async function getVocabularyLookupMatch(
     };
   }
 
+  // Hard cap: scan at most 5 pages (500 items). This prevents unbounded
+  // sequential upstream requests when a user has a large vocabulary.
+  // TODO: Replace with a direct upstream query by dict_entry_id / lemma
+  // once the FastAPI /vocabulary endpoint supports filtered lookups.
+  const MAX_PAGES = 5;
   const limit = 100;
   let page = 1;
   let total = 0;
 
-  while (page === 1 || (page - 1) * limit < total) {
+  while (page <= MAX_PAGES && (page === 1 || (page - 1) * limit < total)) {
     const upstreamResult = await listVocabulary(session.sessionToken, {
       page,
       limit,

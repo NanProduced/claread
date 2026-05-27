@@ -5,12 +5,19 @@ import { addVocabularyFromWeb, getVocabularyLookupMatch } from "@/services/bff/v
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const dictEntryIdParam = searchParams.get("dict_entry_id");
-  const dictEntryId = dictEntryIdParam ? Number(dictEntryIdParam) : null;
+  const parsedDictEntryId = dictEntryIdParam ? Number(dictEntryIdParam) : null;
+  // Use safe-integer semantics consistent with the BFF layer.
+  // Number.isFinite allows non-integer values like 123.45 which the BFF
+  // would silently treat as null.
+  const dictEntryId =
+    parsedDictEntryId !== null && Number.isSafeInteger(parsedDictEntryId) && parsedDictEntryId > 0
+      ? parsedDictEntryId
+      : null;
   const lemma = searchParams.get("lemma");
   const form = searchParams.get("form");
 
   const result = await getVocabularyLookupMatch({
-    dictEntryId: dictEntryId !== null && Number.isFinite(dictEntryId) ? dictEntryId : null,
+    dictEntryId,
     lemma,
     form,
   });

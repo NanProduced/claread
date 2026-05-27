@@ -3453,3 +3453,259 @@ def test_insufficient_credits_payload_includes_user_message() -> None:
     assert payload["remaining_points"] == 3
     assert payload["required_points"] > 0
     assert "本轮请求未发送给模型" in payload["user_message"]
+
+
+# ---------------------------------------------------------------------------
+# _finish_reader_ask_agent_stream — interrupted path
+# ---------------------------------------------------------------------------
+
+
+def test_finish_reader_ask_agent_stream_interrupted_with_partial_content() -> None:
+    """When the producer errors but partial content exists, the stream is
+    interrupted (not failed). The outcome must carry interrupted=True and
+    an SSE event with can_retry=True."""
+    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
+        content_parts=["这是部分", "生成的回答"],
+        usage_summary={"input_tokens": 10, "output_tokens": 20},
+        producer_error=RuntimeError("model connection lost"),
+    )
+    outcome, sse_event = reader_ask_service._finish_reader_ask_agent_stream(
+        runtime=runtime,
+        assistant_message_id="msg-interrupted-1",
+    )
+
+    # Outcome carries partial content + interrupted flag
+    assert outcome.interrupted is True
+    assert "这是部分生成的回答" in outcome.content_md
+    assert outcome.usage_summary is not None
+
+    # SSE event is emitted (not None), with can_retry
+    assert sse_event is not None
+    event_name, event_data = sse_event
+    assert event_name == "message.interrupted"
+    assert event_data["can_retry"] is True
+    assert event_data["message_id"] == "msg-interrupted-1"
+    assert "这是部分生成的回答" in event_data["content_md"]
+
+
+def test_finish_reader_ask_agent_stream_normal_completion() -> None:
+    """When the producer succeeds, the outcome is not interrupted and no SSE
+    event is emitted."""
+    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
+        content_parts=["完整回答"],
+        usage_summary={"input_tokens": 10, "output_tokens": 30},
+    )
+    outcome, sse_event = reader_ask_service._finish_reader_ask_agent_stream(
+        runtime=runtime,
+        assistant_message_id="msg-normal-1",
+    )
+
+    assert outcome.interrupted is False
+    assert outcome.content_md == "完整回答"
+    assert sse_event is None
+
+
+# ---------------------------------------------------------------------------
+# confirm_action — create_supplement_grammar_note
+# ---------------------------------------------------------------------------
+
+
+async def test_confirm_action_create_supplement_grammar_note() -> None:
+    """Confirming a create_supplement_grammar_note proposal must:
+    1. Call supplements_svc.create_supplement
+    2. Update the turn_run user_visible_output_json with persisted_supplements
+    3. Upsert eval trace with action_audit and supplement_audit entries
+    """
+    from app.schemas.reader_ask import (
+        ReaderAskActionConfirmRequest,
+        ReaderAskPersistedSupplement,
+        ReaderAskSupplementCandidate,
+    )
+
+    user_id = uuid4()
+    thread_id = uuid4()
+    record_id = uuid4()
+    message_id = uuid4()
+    turn_run_id = uuid4()
+    action_id = "action-supplement-1"
+    candidate_id = str(uuid4())
+
+    anchor = ReaderAskAnchorRef(
+        anchor_type="sentence",
+        target_key="record:r1:sentence:s1",
+        sentence_id="s1",
+        paragraph_id="p1",
+        selected_text="The cat sat on the mat.",
+        entry_type="grammar_note",
+    )
+
+    candidate = ReaderAskSupplementCandidate(
+        candidate_id=candidate_id,
+        supplement_type="grammar_note",
+        target_key="record:r1:sentence:s1",
+        sentence_id="s1",
+        paragraph_id="p1",
+        title="AI 补充语法旁注",
+        content="这是一个语法旁注内容，长度超过六十字以确保不会被过滤掉。",
+        anchor=anchor,
+        schema_version="reader-ask-supplement-v1",
+        created_from_turn_run_id=str(turn_run_id),
+    )
+
+    proposal_dict = {
+        "id": action_id,
+        "action_type": "create_supplement_grammar_note",
+        "label": "加入当前页补充",
+        "description": "把这条 AI 语法旁注加入当前文章",
+        "requires_confirmation": True,
+        "status": "pending",
+        "payload_json": {"candidate": candidate.model_dump(mode="json")},
+    }
+
+    message_dict = {
+        "id": str(message_id),
+        "thread_id": str(thread_id),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "语法解析完成",
+        "context_anchors": [anchor.model_dump(mode="json")],
+        "citations": [],
+        "action_proposals": [proposal_dict],
+        "tool_trace": [],
+        "evidence": [],
+        "trace_summary": None,
+        "disambiguation": None,
+        "external_asset_disambiguation": None,
+        "response_cards": [],
+        "resolved_context": None,
+        "context_plan": None,
+        "resolved_context_input": None,
+        "run_info": {"turn_id": str(uuid4()), "run_id": str(turn_run_id), "run_attempt": 1},
+        "supplement_candidates": [candidate.model_dump(mode="json")],
+        "persisted_supplements": [],
+        "reasoning_md": None,
+        "reasoning_status": None,
+        "usage_event_id": None,
+        "current_turn_run_id": str(turn_run_id),
+        "current_turn_run": {
+            "id": str(turn_run_id),
+            "message_id": str(message_id),
+            "thread_id": str(thread_id),
+            "user_id": str(user_id),
+            "record_id": str(record_id),
+            "turn_id": str(uuid4()),
+            "run_attempt": 1,
+            "supersedes_run_id": None,
+            "status": "completed",
+            "resolved_intent": "grammar",
+            "user_visible_output_json": {
+                "content_md": "语法解析完成",
+                "action_proposals": [proposal_dict],
+                "persisted_supplements": [],
+                "evidence": [],
+                "trace_summary": None,
+            },
+            "usage_summary_json": None,
+            "usage_event_id": None,
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "completed_at": "2026-01-01T00:00:01+00:00",
+            "failed_at": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:01+00:00",
+        },
+        "current_user_visible_output": {
+            "content_md": "语法解析完成",
+            "action_proposals": [proposal_dict],
+            "persisted_supplements": [],
+            "evidence": [],
+            "trace_summary": None,
+        },
+        "current_eval_trace": None,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:01+00:00",
+    }
+
+    created_supplement_row = {
+        "id": UUID(candidate_id),
+        "record_id": record_id,
+        "supplement_type": "grammar_note",
+        "target_key": "record:r1:sentence:s1",
+        "sentence_id": "s1",
+        "paragraph_id": "p1",
+        "title": "AI 补充语法旁注",
+        "content_md": "这是一个语法旁注内容，长度超过六十字以确保不会被过滤掉。",
+        "anchor_payload_json": anchor.model_dump(mode="json"),
+        "metadata_json": {},
+        "schema_version": "reader-ask-supplement-v1",
+        "created_from_turn_run_id": str(turn_run_id),
+        "created_at": "2026-01-01T00:00:02+00:00",
+        "updated_at": "2026-01-01T00:00:02+00:00",
+        "deleted_at": None,
+    }
+
+    turn_run_updates: list[dict[str, Any]] = []
+    eval_trace_upserts: list[dict[str, Any]] = []
+    message_updates: list[dict[str, Any]] = []
+
+    async def fake_update_message(**kwargs):  # type: ignore[no-untyped-def]
+        message_updates.append(kwargs)
+        return {"id": str(message_id), "thread_id": str(thread_id)}
+
+    async def fake_update_turn_run(*, turn_run_id, status, user_visible_output_json, **kwargs):  # type: ignore[no-untyped-def]
+        turn_run_updates.append({"turn_run_id": turn_run_id, "status": status, "user_visible_output_json": user_visible_output_json})
+        return {"id": str(turn_run_id)}
+
+    async def fake_upsert_eval_trace(*, turn_run_id, action_audit_json=None, supplement_audit_json=None, **kwargs):  # type: ignore[no-untyped-def]
+        eval_trace_upserts.append({
+            "turn_run_id": turn_run_id,
+            "action_audit_json": action_audit_json,
+            "supplement_audit_json": supplement_audit_json,
+        })
+        return {"turn_run_id": str(turn_run_id)}
+
+    async def fake_get_eval_trace(turn_run_id):  # type: ignore[no-untyped-def]
+        return None
+
+    with (
+        patch.object(reader_ask_service.repo, "find_action_proposal", new=AsyncMock(return_value=(message_dict, proposal_dict))),
+        patch.object(reader_ask_service.repo, "get_thread", new=AsyncMock(return_value={"id": str(thread_id), "record_id": str(record_id)})),
+        patch.object(reader_ask_service.repo, "ensure_record_access", new=AsyncMock(return_value={"id": str(record_id), "title": "Test Article"})),
+        patch.object(reader_ask_service.supplements_svc, "create_supplement", new=AsyncMock(return_value=created_supplement_row)),
+        patch.object(reader_ask_service.repo, "update_message", new=fake_update_message),
+        patch.object(reader_ask_service.repo, "update_turn_run", new=fake_update_turn_run),
+        patch.object(reader_ask_service.repo, "get_eval_trace", new=fake_get_eval_trace),
+        patch.object(reader_ask_service.repo, "upsert_eval_trace", new=fake_upsert_eval_trace),
+    ):
+        response = await reader_ask_service.confirm_action(
+            user_id=user_id,
+            thread_id=thread_id,
+            action_id=action_id,
+            body=ReaderAskActionConfirmRequest(confirmed=True),
+        )
+
+    # 1. confirm_action returns ok with executed status
+    assert response.ok is True
+    assert response.status == "executed"
+    assert response.action_id == action_id
+    assert response.result.persisted_supplement is not None
+    assert response.result.persisted_supplement.supplement_id == candidate_id
+    assert response.result.supplement_projection is not None
+
+    # 2. Turn run was updated with persisted_supplements in user_visible_output_json
+    assert len(turn_run_updates) >= 1
+    tr_update = turn_run_updates[-1]
+    persisted_supps = tr_update["user_visible_output_json"].get("persisted_supplements", [])
+    assert any(
+        str(s.get("supplement_id")) == candidate_id
+        for s in persisted_supps
+    ), "persisted_supplements must contain the newly created supplement"
+
+    # 3. Eval trace was upserted with action_audit and supplement_audit
+    assert len(eval_trace_upserts) >= 1
+    et = eval_trace_upserts[-1]
+    action_audit = et.get("action_audit_json") or []
+    supplement_audit = et.get("supplement_audit_json") or []
+    assert any(a.get("action_id") == action_id and a.get("decision") == "confirmed" for a in action_audit), \
+        "action_audit must contain confirmed decision"
+    assert any(s.get("supplement_id") == candidate_id and s.get("event") == "persisted" for s in supplement_audit), \
+        "supplement_audit must contain persisted event"

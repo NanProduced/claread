@@ -484,7 +484,7 @@ CREATE TABLE reader_ask_messages (
   thread_id UUID NOT NULL REFERENCES reader_ask_threads(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
   status TEXT NOT NULL DEFAULT 'completed'
-    CHECK (status IN ('pending', 'streaming', 'completed', 'failed')),
+    CHECK (status IN ('pending', 'streaming', 'completed', 'failed', 'interrupted')),
   content_md TEXT NOT NULL DEFAULT '',
   context_anchors_json JSONB NOT NULL DEFAULT '[]'::jsonb,
   citations_json JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -540,7 +540,7 @@ CREATE TABLE reader_ask_turn_runs (
     turn_id UUID NOT NULL REFERENCES reader_ask_messages(id) ON DELETE CASCADE,
     run_attempt INTEGER NOT NULL DEFAULT 1,
     supersedes_run_id UUID NULL REFERENCES reader_ask_turn_runs(id) ON DELETE SET NULL,
-    status TEXT NOT NULL CHECK (status IN ('streaming', 'completed', 'failed')),
+    status TEXT NOT NULL CHECK (status IN ('streaming', 'completed', 'failed', 'interrupted')),
     resolved_intent TEXT NULL,
     user_visible_output_json JSONB NULL,
     usage_summary_json JSONB NULL,

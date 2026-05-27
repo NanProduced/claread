@@ -27,20 +27,56 @@ import { useResultEffects } from './hooks/useResultEffects'
 import { useResultActions } from './hooks/useResultActions'
 import { PAGE_MODE_OPTIONS, hasRenderableScene } from './utils'
 import { getVocabEntryByLookupForm } from '../../services/storage'
-import { getLocalReaderNotes } from '../../services/storage'
+import { getLocalReaderNotes, getLocalUserAnnotations } from '../../services/storage'
 import DegradedBanner from './components/DegradedBanner'
 import SourceFallback from './components/SourceFallback'
 import StateViews from './components/StateViews'
 import appShare from '../../assets/images/share/app-share.jpg'
 import './index.scss'
 
+function isLocalId(id: string): boolean {
+  return id.startsWith('local_')
+}
+
+function mergeReaderNotesCloudWithLocal(
+  cloudNotes: ReaderNoteDto[],
+  localNotes: ReaderNoteDto[],
+): ReaderNoteDto[] {
+  const result: ReaderNoteDto[] = [...cloudNotes]
+  const cloudTargetKeys = new Set(cloudNotes.map(n => n.target_key))
+  const cloudIds = new Set(cloudNotes.map(n => n.id))
+  for (const local of localNotes) {
+    if (cloudIds.has(local.id)) continue
+    if (!isLocalId(local.id) && cloudIds.has(local.id)) continue
+    if (isLocalId(local.id) && !cloudTargetKeys.has(local.target_key)) {
+      result.push(local)
+    }
+  }
+  return result
+}
+
+function mergeAnnotationsCloudWithLocal(
+  cloudAnnotations: UserAnnotationDto[],
+  localAnnotations: UserAnnotationDto[],
+): UserAnnotationDto[] {
+  const result: UserAnnotationDto[] = [...cloudAnnotations]
+  const cloudTargetKeys = new Set(cloudAnnotations.map(a => a.target_key))
+  const cloudIds = new Set(cloudAnnotations.map(a => a.id))
+  for (const local of localAnnotations) {
+    if (cloudIds.has(local.id)) continue
+    if (isLocalId(local.id) && !cloudTargetKeys.has(local.target_key)) {
+      result.push(local)
+    }
+  }
+  return result
+}
+
 function buildTargetKey(
   recordId: string,
-  anchorType: 'sentence' | 'paragraph' | 'text_range' | 'multi_text',
-  opts: { sentenceId?: string; paragraphId?: string; startOffset?: number; endOffset?: number; textHash?: string; segments?: Array<{ paragraphId?: string; sentenceId: string; startOffset: number; endOffset: number; textHash: string }> }
+  anchorType: 'sentence' | 'text_range' | 'multi_text',
+  opts: { sentenceId?: string; startOffset?: number; endOffset?: number; textHash?: string; segments?: Array<{ paragraphId?: string; sentenceId: string; startOffset: number; endOffset: number; textHash: string }> }
 ): string {
   if (anchorType === 'sentence') return buildSentenceTargetKey(recordId, opts.sentenceId || '')
-  if (anchorType === 'paragraph') return `record:${recordId}:paragraph:${opts.paragraphId}`
   if (anchorType === 'multi_text') return buildMultiTextTargetKey(recordId, opts.segments || [])
   return buildTextRangeTargetKey(recordId, opts.sentenceId || '', opts.startOffset || 0, opts.endOffset || 0, opts.textHash || '')
 }
@@ -243,12 +279,27 @@ export default function Result() {
     if (localReaderNotes.length > 0) {
       setReaderNotes(localReaderNotes)
     }
+    const localAnnotations = getLocalUserAnnotations()
+      .filter(a => a.analysis_record_id === cloudId)
+    if (localAnnotations.length > 0) {
+      setUserAnnotations(localAnnotations)
+    }
 
-    listUserAnnotations(cloudId).then(setUserAnnotations).catch(err => {
+    listUserAnnotations(cloudId).then(cloud => {
+      setUserAnnotations(mergeAnnotationsCloudWithLocal(cloud, localAnnotations))
+    }).catch(err => {
       console.warn('Failed to load user annotations', err)
+      if (localAnnotations.length > 0) {
+        setUserAnnotations(localAnnotations)
+      }
     })
-    listReaderNotes(cloudId).then(setReaderNotes).catch(err => {
+    listReaderNotes(cloudId).then(cloud => {
+      setReaderNotes(mergeReaderNotesCloudWithLocal(cloud, localReaderNotes))
+    }).catch(err => {
       console.warn('Failed to load reader notes', err)
+      if (localReaderNotes.length > 0) {
+        setReaderNotes(localReaderNotes)
+      }
     })
   }, [cloudId, pageState, isLoggedIn])
 
@@ -360,7 +411,6 @@ export default function Result() {
     const activeRecordId = cloudId || recordId || ''
     return buildTargetKey(activeRecordId, selectionContext.anchorType, {
       sentenceId: selectionContext.sentenceId,
-      paragraphId: selectionContext.paragraphId,
       startOffset: selectionContext.startOffset,
       endOffset: selectionContext.endOffset,
       textHash: selectionContext.textHash,

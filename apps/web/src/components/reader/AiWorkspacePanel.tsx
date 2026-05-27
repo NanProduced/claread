@@ -619,15 +619,18 @@ function syncToolTrace(
 type MessageUpdater = ( updater: (messages: ReaderAskMessageDto[]) => ReaderAskMessageDto[] ) => void;
 
 export function createSseMessageHandler(
-  targetMessageId: string,
+  initialMessageId: string,
   updateMessage: MessageUpdater,
   onMessageIdAssigned: ((assignedId: string) => void) | undefined,
   onError: (message: string) => void,
 ) {
+  let currentMessageId = initialMessageId;
+
   return function handleSseEvent(event: ReaderAskStreamEnvelopeDto) {
-    if (event.event === "message.started" && onMessageIdAssigned) {
-      const messageId = String((event.data as { message_id?: unknown }).message_id ?? targetMessageId);
-      onMessageIdAssigned(messageId);
+    if (event.event === "message.started") {
+      const messageId = String((event.data as { message_id?: unknown }).message_id ?? currentMessageId);
+      currentMessageId = messageId;
+      onMessageIdAssigned?.(messageId);
       return;
     }
 
@@ -635,7 +638,7 @@ export function createSseMessageHandler(
       const delta = String((event.data as { delta?: unknown }).delta ?? "");
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? {
                 ...message,
                 content_md: message.regenerate_preview ? delta : `${message.content_md}${delta}`,
@@ -650,7 +653,7 @@ export function createSseMessageHandler(
     if (event.event === "reasoning.started") {
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? { ...message, reasoning_status: "streaming", reasoning_md: message.reasoning_md ?? "" }
             : message,
         ),
@@ -662,7 +665,7 @@ export function createSseMessageHandler(
       const delta = String((event.data as { delta?: unknown }).delta ?? "");
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? {
                 ...message,
                 reasoning_status: "streaming",
@@ -677,7 +680,7 @@ export function createSseMessageHandler(
     if (event.event === "reasoning.completed") {
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? { ...message, reasoning_status: "completed" }
             : message,
         ),
@@ -688,7 +691,7 @@ export function createSseMessageHandler(
     if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? { ...message, tool_trace: syncToolTrace(message.tool_trace, event) }
             : message,
         ),
@@ -699,7 +702,7 @@ export function createSseMessageHandler(
     if (event.event === "replan.started") {
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? { ...message, replan_status: "replanning" }
             : message,
         ),
@@ -709,9 +712,13 @@ export function createSseMessageHandler(
 
     if (event.event === "message.completed") {
       const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
+      // Update currentMessageId to the server-assigned id
+      if (payload.id) {
+        currentMessageId = payload.id;
+      }
       updateMessage((messages) => {
         const assistantIndex = messages.findIndex(
-          (candidate) => candidate.id === targetMessageId || (candidate.role === "assistant" && candidate.status === "streaming"),
+          (candidate) => candidate.id === currentMessageId,
         );
         const priorUserIndex =
           assistantIndex > 0
@@ -721,7 +728,7 @@ export function createSseMessageHandler(
           priorUserIndex >= 0 && assistantIndex > 0 ? assistantIndex - 1 - priorUserIndex : -1;
         return messages.map((message, index) => {
           const isStreamingAssistant =
-            message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming");
+            message.id === currentMessageId;
           if (isStreamingAssistant) {
             return {
               ...message,
@@ -774,7 +781,7 @@ export function createSseMessageHandler(
       const payload = event.data as { content_md?: unknown };
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? {
                 ...message,
                 status: "interrupted",
@@ -792,7 +799,7 @@ export function createSseMessageHandler(
       onError(formatStreamError(event));
       updateMessage((messages) =>
         messages.map((message) =>
-          message.id === targetMessageId || (message.role === "assistant" && message.status === "streaming")
+          message.id === currentMessageId
             ? { ...message, status: "failed" }
             : message,
         ),
@@ -2491,6 +2498,18 @@ export function AiWorkspacePanel({
     query: "",
   });
   const hydrationRef = useRef(0);
+  const initInProgressRef = useRef(false);
+  const sseAbortRef = useRef<AbortController | null>(null);
+
+  // Abort in-flight SSE and reset init guard when panel closes or component unmounts
+  useEffect(() => {
+    return () => {
+      sseAbortRef.current?.abort();
+      sseAbortRef.current = null;
+      initInProgressRef.current = false;
+    };
+  }, [open]);
+
   const conversationItems: AskPanelConversationItem[] = messages.map((message) => ({
     id: message.id,
     role: message.role,
@@ -2624,17 +2643,22 @@ export function AiWorkspacePanel({
     }
     hydrationRef.current += 1;
     const currentHydration = hydrationRef.current;
+    initInProgressRef.current = true;
     void (async () => {
-      const threadId = await ensureThreadReady();
-      if (!threadId || hydrationRef.current !== currentHydration) {
-        return;
+      try {
+        const threadId = await ensureThreadReady();
+        if (!threadId || hydrationRef.current !== currentHydration) {
+          return;
+        }
+      } finally {
+        initInProgressRef.current = false;
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, recordId]);
 
   useEffect(() => {
-    if (!open || sending || loading || !pendingQuickActionRequest) {
+    if (!open || sending || loading || !pendingQuickActionRequest || initInProgressRef.current) {
       return;
     }
     void sendMessage({
@@ -2949,6 +2973,8 @@ export function AiWorkspacePanel({
     setErrorMessage(null);
     setSupplementNotice(null);
     setSupplementNoticeMessageId(null);
+    const controller = new AbortController();
+    sseAbortRef.current = controller;
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setThreads((current) =>
       current.map((thread) =>
@@ -2969,6 +2995,7 @@ export function AiWorkspacePanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(requestBody),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -2987,6 +3014,7 @@ export function AiWorkspacePanel({
             ),
           (errorMsg) => setErrorMessage(errorMsg),
         ),
+        controller.signal,
       );
       onClearAttachments();
     } catch (error) {
@@ -2995,6 +3023,9 @@ export function AiWorkspacePanel({
         current.map((message) => (message.id === tempAssistantId ? { ...message, status: "failed" } : message)),
       );
     } finally {
+      if (sseAbortRef.current === controller) {
+        sseAbortRef.current = null;
+      }
       setSending(false);
     }
   }
@@ -3008,10 +3039,16 @@ export function AiWorkspacePanel({
     if (!activeThreadId || sending) {
       return;
     }
+    // Preserve original content so we can restore it if retry fails
+    const originalContentMd = messages.find((m) => m.id === messageId)?.content_md ?? "";
+    const originalReasoningMd = messages.find((m) => m.id === messageId)?.reasoning_md ?? "";
+    const originalReasoningStatus = messages.find((m) => m.id === messageId)?.reasoning_status ?? "idle";
     setSending(true);
     setErrorMessage(null);
     setSupplementNotice(null);
     setSupplementNoticeMessageId(null);
+    const controller = new AbortController();
+    sseAbortRef.current = controller;
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
@@ -3047,6 +3084,7 @@ export function AiWorkspacePanel({
         `/api/web/reader-ask/threads/${activeThreadId}/messages/${messageId}/retry/stream`,
         {
           method: "POST",
+          signal: controller.signal,
         },
       );
 
@@ -3063,17 +3101,28 @@ export function AiWorkspacePanel({
           undefined,
           (errorMsg) => setErrorMessage(errorMsg),
         ),
+        controller.signal,
       );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Ask Claread 暂时不可用。");
       setMessages((current) =>
         current.map((message) =>
           message.id === messageId
-            ? { ...message, status: "failed" }
+            ? {
+                ...message,
+                status: "failed",
+                // Restore original content so the user doesn't lose the previous answer
+                content_md: originalContentMd,
+                reasoning_md: originalReasoningMd,
+                reasoning_status: originalReasoningStatus,
+              }
             : message,
         ),
       );
     } finally {
+      if (sseAbortRef.current === controller) {
+        sseAbortRef.current = null;
+      }
       setSending(false);
     }
   }
