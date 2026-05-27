@@ -1,6 +1,6 @@
 # 技术栈
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-18
+> **状态**: `CURRENT` | **最后更新**: 2026-05-23
 
 本文记录 Claread Web 端当前使用的技术栈。决策过程和备选评估已归档；路由结构见 `implementation-plan.md`；后端接口契约见 `api-contract-audit.md`；验证命令见 `AGENTS.md` 和 `README.md`。
 
@@ -35,7 +35,7 @@ clsx + tailwind-merge        # 条件样式合并
 shadcn/ui 使用规则：
 
 - 选择性复制 Button、Dialog、Popover、Tooltip、Tabs、Sheet、ScrollArea 等组件源码，不引入完整模板。
-- 不直接套第三方 shadcn theme。Claread Web 使用 **Claread Paper theme**：暖纸背景、墨色文字、品牌 `lens-blue` 焦点色和语义标注色。
+- 不直接套第三方 shadcn theme。Claread Web 使用以 `纸质 Paper` 为母主题、`浅色 Light / 深色 Dark` 为浓度调节的正式主题体系：暖纸背景、墨色文字、品牌 `lens-blue` 焦点色和语义标注色都从这套体系推导。
 - 正式初始化前，先在 `globals.css` 维护 shadcn-compatible semantic token aliases。
 - 如果需要正式 shadcn 组件，先补 `components.json` 决策，再通过 CLI 添加，不手抄 registry 文件。
 
@@ -69,24 +69,30 @@ httpOnly cookie   # Web session token
 
 ## Reader 与批注
 
-Reader 使用只读渲染，不使用富文本编辑器作为主渲染引擎：
+Reader 当前稳定基线已经进入：
 
-- 后端 `AnyRenderSceneModel` 渲染只读文章结构。
-- 自建 `RenderScene -> ReaderVm -> DOM` adapter。
-- 浏览器 Selection / Range API 做选区。
-- `text_range`、`sentence_id`、`paragraph_id` 和 selected text 记录用户批注。
-- Reader Floating Layer 封装 Floating UI，定位选区工具栏、词典浮层、hover card。
-- Radix Dialog/Popover/Tooltip 处理可访问交互。
+`后端 canonical render_scene + Web 侧 Plate readOnly runtime`
+
+具体原则：
+
+- 后端 `AnyRenderSceneModel` 继续作为跨端 canonical 文章结构输出。
+- Web 不让后端直接产出 Plate AST，而是通过 `renderSceneToPlateDocument` 做 `RenderScene -> Plate document` projection。
+- Web Reader 主画布当前已运行在 `platejs/react` readOnly runtime 上，而不是 `PlateStatic`。
+- `apps/web/src/lib/reader-plate/` 已形成 projection + bridges 结构，当前至少包含 `selection / assets / dictionary / jump / ask` 五组 bridge。
+- 浏览器侧的 selection、Ask attachment、词典 hit-test 和用户资产回源，仍需尊重现有 `target_key / UTF-16 offset / text_hash / segments` 合同。
+- `text_range`、`sentence_id`、`paragraph_id` 和 selected text 继续作为用户高亮与用户笔记的共享锚点基础；文本收藏已删除，`multi_text` 继续作为高亮/笔记共享锚点能力存在。
+- Reader Floating Layer 继续封装 Floating UI，定位选区工具栏、词典浮层、hover card。
+- Radix Dialog/Popover/Tooltip 继续处理可访问交互。
 
 三层基础设施：
 
-1. **Claread Paper theme**：设计 token 是品牌事实，shadcn theme 只能承接这些 token。
+1. **Claread mother theme system**：`Paper / Light / Dark` 主题 token 是品牌事实，shadcn theme 只能承接这些 token。
 2. **Reader Floating Layer**：正文锚点浮层统一用 Floating UI，按钮菜单继续用 Radix/shadcn primitives。
 3. **Annotation Anchor Model**：句子级批注和单句内 `text_range` 已进入首期闭环；跨句/跨段 `multi_text` 已落地；Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id`、句内 offset 和 anchor text。
 
 可选增强（后续按需引入）：
 
-- Tiptap / ProseMirror：用户长笔记、富文本摘录、协作批注或可编辑文档。
+- Plate `comment` / `suggestion`：当前只作为后续笔记交互和 workbook/playground 的参考方向，不代表 Reader 已选型。
 - CSS Custom Highlight API：增强层评估，不作为唯一高亮机制。
 - TanStack Virtual：长文性能问题出现后再评估。
 

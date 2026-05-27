@@ -49,6 +49,7 @@ def build_agent_prompt(
     strategy_sections: Sequence[PromptSection],
     examples: Sequence[ExampleEntry],
     sentences: Sequence[dict[str, object]],
+    focus_guidance: dict[str, object] | None = None,
 ) -> str:
     """Assemble a runtime prompt from modular strategy, example, and input sections."""
 
@@ -65,11 +66,29 @@ def build_agent_prompt(
         f"{sentence['sentence_id']}: {sentence['text']}"
         for sentence in sentences
     ]
+    focus_lines: list[str] = []
+    if isinstance(focus_guidance, dict):
+        focus_text = str(focus_guidance.get("focus_text") or "").strip()
+        if focus_text:
+            focus_lines.append(f"focus_text: {focus_text}")
+        selection_mode = str(focus_guidance.get("selection_mode") or "").strip()
+        if selection_mode:
+            focus_lines.append(f"selection_mode: {selection_mode}")
+        sentence_id = str(focus_guidance.get("sentence_id") or "").strip()
+        if sentence_id:
+            focus_lines.append(f"focus_sentence_id: {sentence_id}")
+        if focus_guidance.get("analysis_scope_hint"):
+            focus_lines.append(f"analysis_scope_hint: {focus_guidance['analysis_scope_hint']}")
+        start_offset = focus_guidance.get("start_offset")
+        end_offset = focus_guidance.get("end_offset")
+        if isinstance(start_offset, int) and isinstance(end_offset, int):
+            focus_lines.append(f"focus_offsets: {start_offset}-{end_offset}")
 
     sections = merge_prompt_sections(
         strategy_sections,
         (
             PromptSection("examples", tuple(example_lines)),
+            PromptSection("focus", tuple(focus_lines)),
             PromptSection("input_sentences", tuple(sentence_lines)),
         ),
     )

@@ -3,6 +3,7 @@ import Taro from '@tarojs/taro'
 import { View, Text } from '@tarojs/components'
 import { AnyInlineMarkModel, AnySentenceEntryModel, VisualTone, AcademicVisualTone, SentenceModel, TranslationModel } from '../../types/view/render-scene.vm'
 import { UserAnnotationDto } from '../../services/api/user-annotations.client'
+import type { ReaderNoteDto } from '../../services/api/reader-notes.client'
 import ClickableWord from '../ClickableWord'
 import LucideIcon from '../LucideIcon'
 import GrammarInlineSpan from '../GrammarInlineSpan'
@@ -50,7 +51,7 @@ interface ParagraphBlockProps {
   vocabList?: string[]
   vocabSavedMap?: Record<string, string>
   userAnnotations?: UserAnnotationDto[]
-  favoritedSentenceIds?: ReadonlySet<string>
+  readerNotes?: ReaderNoteDto[]
   recordId?: string
   cloudId?: string
   selectionSentenceId?: string | null
@@ -59,6 +60,7 @@ interface ParagraphBlockProps {
   routeFocusRangesBySentence?: Record<string, RouteFocusRange[]>
   onWordClick?: (payload: WordClickPayload) => void
   onSentenceClick?: (sentenceId: string) => void
+  onSentenceNotePress?: (sentenceId: string) => void
   onSelectionContext?: (context: SelectionContext | null) => void
   onMarkActiveChange?: (markId: string | null) => void
 }
@@ -319,14 +321,15 @@ interface UserHighlightRange {
   start: number
   end: number
   color: string
-  hasNote: boolean
   annotationId: string
 }
 
 function normalizeUserHighlightColor(color?: string): string {
   if (color === 'soft_blue') return 'soft_blue'
   if (color === 'soft_purple') return 'soft_purple'
-  if (color === 'sage_green' || color === 'soft_green' || color === 'warm_yellow') return 'soft_green'
+  if (color === 'sage_green') return 'sage_green'
+  if (color === 'warm_yellow') return 'warm_yellow'
+  if (color === 'soft_green') return 'soft_green'
   return 'soft_green'
 }
 
@@ -352,7 +355,7 @@ function buildUserHighlightRanges(
         const start = Math.max(0, segment.start_offset)
         const end = Math.min(text.length, segment.end_offset)
         if (end > start) {
-          ranges.push({ start, end, color: normalizeUserHighlightColor(a.color), hasNote: !!a.note, annotationId: a.id })
+          ranges.push({ start, end, color: normalizeUserHighlightColor(a.color), annotationId: a.id })
         }
       })
       return
@@ -363,7 +366,7 @@ function buildUserHighlightRanges(
       const start = Math.max(0, a.start_offset)
       const end = Math.min(text.length, a.end_offset)
       if (end > start) {
-        ranges.push({ start, end, color: normalizeUserHighlightColor(a.color), hasNote: !!a.note, annotationId: a.id })
+        ranges.push({ start, end, color: normalizeUserHighlightColor(a.color), annotationId: a.id })
       }
       return
     }
@@ -376,7 +379,6 @@ function buildUserHighlightRanges(
     const last = merged[merged.length - 1]
     if (last && r.start <= last.end && r.color === last.color) {
       last.end = Math.max(last.end, r.end)
-      last.hasNote = last.hasNote || r.hasNote
     } else {
       merged.push({ ...r })
     }
@@ -647,7 +649,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
   vocabList,
   vocabSavedMap,
   userAnnotations,
-  favoritedSentenceIds,
+  readerNotes,
   recordId,
   cloudId,
   activeSentenceId,
@@ -657,15 +659,21 @@ const ParagraphBlock = memo(function ParagraphBlock({
   routeFocusRangesBySentence,
   onWordClick,
   onSentenceClick,
+  onSentenceNotePress,
   onSelectionContext,
   onMarkActiveChange,
 }: ParagraphBlockProps) {
   const vocabSet = useMemo(() => new Set(vocabList ?? []), [vocabList])
   const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null)
   const [groupActiveMarkIds, setGroupActiveMarkIds] = useState<Set<string>>(new Set())
-  const isSentenceFavorited = useCallback((sentenceId: string) => {
-    return favoritedSentenceIds?.has(sentenceId) ?? false
-  }, [favoritedSentenceIds])
+  const noteCountBySentenceId = useMemo(() => {
+    const map = new Map<string, number>()
+    ;(readerNotes || []).forEach((note) => {
+      if (!note.anchor_sentence_id) return
+      map.set(note.anchor_sentence_id, (map.get(note.anchor_sentence_id) || 0) + 1)
+    })
+    return map
+  }, [readerNotes])
   const [feedbackTarget, setFeedbackTarget] = useState<{
     targetId: string
     annotationType: string
@@ -775,7 +783,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
               const isWholeSentenceHighlight = userAnno
                 ? userAnno.anchor_type !== 'text_range' || typeof userAnno.start_offset !== 'number' || typeof userAnno.end_offset !== 'number'
                 : false
-              const isFavorited = isSentenceFavorited(sentence.sentenceId)
+              const noteCount = noteCountBySentenceId.get(sentence.sentenceId) || 0
+              const hasNote = noteCount > 0
 
               const isSentenceSelected = selectionSentenceId === sentence.sentenceId
               const currentSelectionRange = isSentenceSelected ? selectionRange : null
@@ -786,7 +795,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
                 <Text
                   id={getSentenceAnchorId(sentence.sentenceId)}
                   key={sentence.sentenceId}
-                  className={`sentence-span sentence-${sentence.sentenceId} ${activeSentenceId === sentence.sentenceId ? 'is-highlighted-source' : ''} ${isWholeSentenceHighlight && userAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(userAnno.color)}` : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
+                  className={`sentence-span sentence-${sentence.sentenceId} ${activeSentenceId === sentence.sentenceId ? 'is-highlighted-source' : ''} ${isWholeSentenceHighlight && userAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(userAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
                   onClick={() => {
                     if (selectionSentenceId) {
                       onSelectionContext?.(null)
@@ -797,7 +806,17 @@ const ParagraphBlock = memo(function ParagraphBlock({
                   onLongPress={(e: CommonEvent) => handleSentenceLongPress(sentence, e)}
                 >
                   {renderTextWithMarks(sentenceText, sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, true, activeSentenceId === sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(sentence, ev), currentSelectionRange, userAnnotations, sentence.sentenceId, currentRouteFocusRanges)}
-                  {isFavorited && <Text className='sentence-bookmark-mark'>⌑</Text>}
+                  {hasNote && (
+                    <Text
+                      className='sentence-note-trigger sentence-note-trigger--inline'
+                      onClick={(e: CommonEvent) => {
+                        e.stopPropagation()
+                        onSentenceNotePress?.(sentence.sentenceId)
+                      }}
+                    >
+                      笔记{noteCount > 1 ? ` ${noteCount}` : ''}
+                    </Text>
+                  )}
                   {idx < sentences.length - 1 ? <Text className='space-char'> </Text> : ''}
                 </Text>
               )
@@ -943,12 +962,12 @@ const ParagraphBlock = memo(function ParagraphBlock({
           const isWholeSentenceHighlight = sentenceAnno
             ? sentenceAnno.anchor_type !== 'text_range' || typeof sentenceAnno.start_offset !== 'number' || typeof sentenceAnno.end_offset !== 'number'
             : false
-          const hasNote = userAnnotations?.some(a => a.sentence_id === item.sentence.sentenceId && !!a.note) ?? false
-          const isFavorited = isSentenceFavorited(item.sentence.sentenceId)
+          const noteCount = noteCountBySentenceId.get(item.sentence.sentenceId) || 0
+          const hasNote = noteCount > 0
           return (
             <View key={`chunk-${chunk.id}-${cIdx}`} id={getSentenceAnchorId(item.sentence.sentenceId)} className='sentence-block'>
               <View
-                className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
+                className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
                 onClick={() => {
                   if (selectionSentenceId) {
                     onSelectionContext?.(null)
@@ -966,21 +985,18 @@ const ParagraphBlock = memo(function ParagraphBlock({
                     {renderTextWithMarks(item.sentence.text, item.sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, false, activeSentenceId === item.sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(item.sentence, ev), currentSelectionRange, userAnnotations, item.sentence.sentenceId, currentRouteFocusRanges)}
                   </Text>
                 )}
-                {isFavorited && (
-                  <View className='sentence-bookmark-corner'>
-                    <LucideIcon name='bookmark' size={22} color='#47745f' strokeWidth={2} />
+                {hasNote && (
+                  <View
+                    className='sentence-note-trigger'
+                    onClick={(e: CommonEvent) => {
+                      e.stopPropagation()
+                      onSentenceNotePress?.(item.sentence.sentenceId)
+                    }}
+                  >
+                    <LucideIcon name='sticky-note' size={14} color='currentColor' />
+                    <Text>笔记{noteCount > 1 ? ` ${noteCount}` : ''}</Text>
                   </View>
                 )}
-
-                {/* 渲染用户批注 */}
-                {userAnnotations?.filter(a => a.sentence_id === item.sentence.sentenceId && !!a.note).map(anno => (
-                  <View key={anno.id} className={`user-annotation-wrapper theme-${normalizeUserHighlightColor(anno.color)}`}>
-                    <View className='user-annotation-note'>
-                      <LucideIcon name='pen-line' size={14} color='var(--reader-muted)' />
-                      <Text className='note-text'>{anno.note}</Text>
-                    </View>
-                  </View>
-                ))}
               </View>
 
               {item.sentenceTranslation && (
@@ -1063,13 +1079,13 @@ const ParagraphBlock = memo(function ParagraphBlock({
                 const isWholeSentenceHighlight = sentenceAnno
                   ? sentenceAnno.anchor_type !== 'text_range' || typeof sentenceAnno.start_offset !== 'number' || typeof sentenceAnno.end_offset !== 'number'
                   : false
-                const hasNote = userAnnotations?.some(a => a.sentence_id === item.sentence.sentenceId && !!a.note) ?? false
-                const isFavorited = isSentenceFavorited(item.sentence.sentenceId)
+                const noteCount = noteCountBySentenceId.get(item.sentence.sentenceId) || 0
+                const hasNote = noteCount > 0
 
                 return (
                   <View key={`plain-${item.sentence.sentenceId}`} id={getSentenceAnchorId(item.sentence.sentenceId)} className='sentence-block sentence-block--plain'>
                     <View
-                      className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isFavorited ? 'is-favorited' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
+                      className={`sentence-main sentence-${item.sentence.sentenceId} ${isWholeSentenceHighlight && sentenceAnno ? `user-highlighted user-highlighted--${normalizeUserHighlightColor(sentenceAnno.color)}` : ''} ${hasNote ? 'has-user-note' : ''} ${isSentenceSelected ? 'user-selection-active' : ''} ${isSentenceRouteFocused ? 'route-focus-sentence' : ''}`}
                       onClick={() => {
                         if (selectionSentenceId) {
                           onSelectionContext?.(null)
@@ -1082,19 +1098,18 @@ const ParagraphBlock = memo(function ParagraphBlock({
                       <Text className='english-flow'>
                         {renderTextWithMarks(item.sentence.text, item.sentenceMarks, activeMarkId, selectedWord, vocabSet, onWordClick, false, activeSentenceId === item.sentence.sentenceId, vocabSavedMap, false, isAcademicMode, groupActiveMarkIds, (_t, _s, _e, ev) => handleSentenceLongPress(item.sentence, ev), currentSelectionRange, userAnnotations, item.sentence.sentenceId, currentRouteFocusRanges)}
                       </Text>
-                      {isFavorited && (
-                        <View className='sentence-bookmark-corner'>
-                          <LucideIcon name='bookmark' size={22} color='#47745f' strokeWidth={2} />
+                      {hasNote && (
+                        <View
+                          className='sentence-note-trigger'
+                          onClick={(e: CommonEvent) => {
+                            e.stopPropagation()
+                            onSentenceNotePress?.(item.sentence.sentenceId)
+                          }}
+                        >
+                          <LucideIcon name='sticky-note' size={14} color='currentColor' />
+                          <Text>笔记{noteCount > 1 ? ` ${noteCount}` : ''}</Text>
                         </View>
                       )}
-                      {userAnnotations?.filter(a => a.sentence_id === item.sentence.sentenceId && !!a.note).map(anno => (
-                        <View key={anno.id} className={`user-annotation-wrapper theme-${normalizeUserHighlightColor(anno.color)}`}>
-                          <View className='user-annotation-note'>
-                            <LucideIcon name='pen-line' size={14} color='var(--reader-muted)' />
-                            <Text className='note-text'>{anno.note}</Text>
-                          </View>
-                        </View>
-                      ))}
                     </View>
 
                     {item.sentenceTranslation && (

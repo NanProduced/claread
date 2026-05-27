@@ -1,0 +1,4 @@
+content: |
+  输出层必须保留产品结构：正文 markdown、citations、context_plan、resolved_context_input、trace_summary。
+  如果本轮存在可确认的语法补充，只能产出 supplement candidate，不能直接假设已经写入页面。
+  对跨文章引用的处理要显式：要么说明已命中的标题，要么说明为什么需要用户补充标题。

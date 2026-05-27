@@ -1,12 +1,13 @@
-import { MessageSquare, X } from "lucide-react";
-import type { UserAnnotationColorDto, WebAnnotationVm } from "@/types/api/annotations";
-import type { SentenceModel } from "@/types/view/ReaderMockVm";
+"use client";
 
-export type LowerPanelMode = "sentence" | "settings";
-export type ReadingDensity = "calm" | "roomy";
-export type ReaderTheme = "paper" | "white" | "green";
-export type MarkVisibility = "full" | "quiet";
-export type ReaderFontSize = "compact" | "normal" | "large";
+import type { ReactNode } from "react";
+import { Highlighter, Languages, MessageSquare, NotebookPen, Palette, Quote } from "lucide-react";
+
+import type { UserAnnotationColorDto } from "@/types/api/annotations";
+import type { SentenceModel } from "@/types/view/ReaderMockVm";
+import { cn } from "@/lib/cn";
+import { readerInlineFocusRing, readerPanelItem, readerTransitionFast } from "./interaction";
+import { Kbd } from "@/components/primitives";
 
 export type AnnotationSaveState =
   | { kind: "idle" }
@@ -15,318 +16,172 @@ export type AnnotationSaveState =
   | { kind: "error"; message: string };
 
 const colorOptions: Array<{ value: UserAnnotationColorDto; label: string; className: string }> = [
-  { value: "warm_yellow", label: "暖黄", className: "bg-vocab-amber/55" },
-  { value: "soft_green", label: "绿", className: "bg-structure-green/50" },
-  { value: "soft_blue", label: "蓝", className: "bg-context-blue/45" },
-  { value: "soft_purple", label: "紫", className: "bg-phrase-lavender/70" },
-  { value: "sage_green", label: "鼠尾草", className: "bg-structure-green/30" },
+  { value: "warm_yellow", label: "暖黄", className: "bg-vocab-amber/60" },
+  { value: "soft_blue", label: "雾青", className: "bg-context-blue/55" },
+  { value: "sage_green", label: "灰绿", className: "bg-structure-green/35" },
 ];
 
-function annotationSummaryLabel(item: WebAnnotationVm) {
-  const scopeLabel = item.anchorType === "text_range" ? "选区" : item.anchorType === "paragraph" ? "段落" : "整句";
-  if (item.note && item.type === "highlight") {
-    return `${scopeLabel}高亮 + 笔记`;
-  }
-  if (item.note) {
-    return `${scopeLabel}笔记`;
-  }
-  return `${scopeLabel}高亮`;
-}
-
-function readerPanelOptionClass(active: boolean) {
-  return `focus-ring min-h-11 rounded-[0.9rem] border px-3.5 py-2 text-left transition-[background-color,border-color,color,box-shadow] ${
-    active
-      ? "border-lens-blue/18 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(234,241,255,0.94))] text-ink shadow-[0_8px_18px_rgba(37,99,235,0.08),inset_0_1px_0_rgba(255,255,255,0.75)]"
-      : "border-transparent bg-transparent text-ink-soft hover:bg-[rgba(255,255,255,0.58)] hover:text-ink"
-  }`;
-}
-
 export interface ReaderContextPanelProps {
-  mode: LowerPanelMode;
   sentence: SentenceModel | null;
-  selectedText?: string | null;
-  annotationScope?: "sentence" | "text_range";
-  note: string;
+  translationText?: string | null;
+  className?: string;
   color: UserAnnotationColorDto;
   saveState: AnnotationSaveState;
-  sentenceAnnotations: WebAnnotationVm[];
-  showTranslation: boolean;
-  fontSize: ReaderFontSize;
-  density: ReadingDensity;
-  theme: ReaderTheme;
-  markVisibility: MarkVisibility;
-  onNoteChange: (value: string) => void;
   onColorChange: (value: UserAnnotationColorDto) => void;
-  onSaveAnnotation: (useNote: boolean) => void;
+  onSelectSentence?: () => void;
+  onHighlight: () => void;
+  onNote: () => void;
   onAsk: () => void;
-  onShowTranslationChange: (value: boolean) => void;
-  onFontSizeChange: (value: ReaderFontSize) => void;
-  onDensityChange: (value: ReadingDensity) => void;
-  onThemeChange: (value: ReaderTheme) => void;
-  onMarkVisibilityChange: (value: MarkVisibility) => void;
+  onAskTranslation?: () => void;
   onClose?: () => void;
+  hasHighlight?: boolean;
 }
 
 export function ReaderContextPanel({
-  mode,
   sentence,
-  selectedText,
-  annotationScope = "sentence",
-  note,
+  translationText,
+  className,
   color,
   saveState,
-  sentenceAnnotations,
-  showTranslation,
-  fontSize,
-  density,
-  theme,
-  markVisibility,
-  onNoteChange,
+  hasHighlight,
   onColorChange,
-  onSaveAnnotation,
+  onSelectSentence,
+  onHighlight,
+  onNote,
   onAsk,
-  onShowTranslationChange,
-  onFontSizeChange,
-  onDensityChange,
-  onThemeChange,
-  onMarkVisibilityChange,
+  onAskTranslation,
   onClose,
 }: ReaderContextPanelProps) {
-  const activeSelectedText = selectedText?.trim() ? selectedText : null;
-  const previewText = activeSelectedText ?? sentence?.text ?? "";
-  const isTextRange = annotationScope === "text_range" && Boolean(activeSelectedText);
-  const settingsSectionClass =
-    "rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.58),rgba(248,245,238,0.8))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]";
+  if (!sentence) {
+    return null;
+  }
 
   return (
-    <section className="reader-tool-panel flex max-h-[min(42vh,22rem)] flex-col overflow-hidden md:max-h-[min(54vh,22rem)]">
-      <div className="flex items-start justify-between gap-3 border-b border-hairline px-5 py-3">
-        <div>
-          <h2 className="text-base font-semibold text-ink">
-            {mode === "settings" ? "阅读显示" : isTextRange ? "当前选区" : "当前句"}
-          </h2>
-          <p className="mt-1 text-xs leading-5 text-muted">
-            {mode === "settings" ? "只影响本地阅读视图，不改动文章内容。" : "笔记和高亮会回到原文。"}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {onClose ? (
-            <button
-              type="button"
-              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-hairline bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(249,247,241,0.98))] text-muted shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.76)] transition-colors hover:border-muted hover:text-ink"
-              onClick={onClose}
-              aria-label="关闭面板"
-            >
-              <X aria-hidden="true" className="h-4 w-4" />
-            </button>
-          ) : null}
-        </div>
+    <section
+      role="dialog"
+      aria-modal="false"
+      className={cn(
+        "w-[14rem] rounded-xl border border-hairline/80 bg-surface-warm/95 p-1.5 text-ink shadow-[0_14px_44px_rgba(28,24,18,0.11)] backdrop-blur-md",
+        className
+      )}
+    >
+      <div className="flex flex-col gap-0.5">
+        {onSelectSentence ? (
+          <MenuItem
+            icon={<Quote className="h-4 w-4" />}
+            label="整句选区"
+            onClick={onSelectSentence}
+          />
+        ) : null}
+
+        <MenuItem
+          icon={<Highlighter className="h-4 w-4" />}
+          label="高亮"
+          shortcut="H"
+          onClick={onHighlight}
+          disabled={saveState.kind === "saving"}
+        />
+
+        <MenuItem
+          icon={<NotebookPen className="h-4 w-4" />}
+          label="笔记"
+          shortcut="E"
+          onClick={onNote}
+        />
+
+        <MenuItem
+          icon={<MessageSquare className="h-4 w-4 text-lens-blue" />}
+          label="原句 Ask"
+          onClick={onAsk}
+        />
+
+        {translationText?.trim() && onAskTranslation ? (
+          <MenuItem
+            icon={<Languages className="h-4 w-4" />}
+            label="译文 Ask"
+            onClick={onAskTranslation}
+          />
+        ) : null}
+
+        {hasHighlight ? (
+          <>
+            <div className="mx-2 my-1.5 h-px bg-hairline/70" />
+            
+            <div className="flex items-center justify-between px-2.5 py-1.5">
+              <span className="flex items-center gap-2.5 text-[11px] font-bold tracking-[0.02em] text-muted/80">
+                <Palette className="h-3.5 w-3.5" /> 颜色
+              </span>
+              <div className="flex items-center gap-1.5">
+                {colorOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={cn(
+                      "h-4 w-4 rounded-full ring-1 ring-inset ring-hairline hover:ring-2 hover:ring-lens-blue/20",
+                      readerInlineFocusRing,
+                      readerTransitionFast,
+                      "hover:scale-110",
+                      option.className,
+                      color === option.value ? "ring-2 ring-ring ring-offset-1 ring-offset-background" : ""
+                    )}
+                    onClick={() => onColorChange(option.value)}
+                    title={option.label}
+                  />
+                ))}
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
 
-      {mode === "settings" ? (
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
-          <fieldset className={settingsSectionClass}>
-            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">译文</legend>
-            <p className="mt-1 text-xs leading-5 text-muted">控制中文解释是否常显，适合切换纯阅读和双语对照。</p>
-            <div className="mt-3 inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
-              {[true, false].map((value) => (
-                <button
-                  key={String(value)}
-                  type="button"
-                  className={`${readerPanelOptionClass(showTranslation === value)} flex-1`}
-                  onClick={() => onShowTranslationChange(value)}
-                >
-                  <span className="block text-sm font-semibold">{value ? "显示译文" : "原文模式"}</span>
-                  <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
-                    {value ? "句后保留中文解释" : "只留下英文原文"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className={settingsSectionClass}>
-            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">字号与行距</legend>
-            <p className="mt-1 text-xs leading-5 text-muted">只调整当前本地阅读视图，不影响文章内容本身。</p>
-            <div className="mt-3 grid gap-3">
-              <div>
-                <div className="mb-2 text-[0.68rem] font-semibold tracking-[0.08em] text-subtle">字号</div>
-                <div className="inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
-                  {(["compact", "normal", "large"] as const).map((value) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`${readerPanelOptionClass(fontSize === value)} flex-1`}
-                      onClick={() => onFontSizeChange(value)}
-                    >
-                      <span className="block text-sm font-semibold">
-                        {value === "compact" ? "小" : value === "normal" ? "中" : "大"}
-                      </span>
-                      <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
-                        {value === "compact" ? "更紧凑" : value === "normal" ? "默认阅读" : "更宽松"}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-2 text-[0.68rem] font-semibold tracking-[0.08em] text-subtle">行距</div>
-                <div className="inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
-                  {(["calm", "roomy"] as const).map((value) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`${readerPanelOptionClass(density === value)} flex-1`}
-                      onClick={() => onDensityChange(value)}
-                    >
-                      <span className="block text-sm font-semibold">{value === "calm" ? "标准" : "舒展"}</span>
-                      <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
-                        {value === "calm" ? "日常阅读" : "留出更多呼吸"}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </fieldset>
-
-          <fieldset className={settingsSectionClass}>
-            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">阅读背景</legend>
-            <p className="mt-1 text-xs leading-5 text-muted">选择纸面基调，保持正文版心不变。</p>
-            <div className="mt-3 inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
-              {(["paper", "white", "green"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`${readerPanelOptionClass(theme === value)} flex-1`}
-                  onClick={() => onThemeChange(value)}
-                >
-                  <span className="block text-sm font-semibold">
-                    {value === "paper" ? "纸张" : value === "white" ? "纯白" : "护眼"}
-                  </span>
-                  <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
-                    {value === "paper" ? "暖纸质感" : value === "white" ? "更干净" : "更柔和"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className={settingsSectionClass}>
-            <legend className="text-[0.72rem] font-semibold tracking-[0.14em] text-muted">标注显示</legend>
-            <p className="mt-1 text-xs leading-5 text-muted">决定词汇、短语和语法标记在正文里的存在感。</p>
-            <div className="mt-3 inline-flex w-full flex-wrap gap-1 rounded-[1rem] border border-hairline/90 bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
-              {(["full", "quiet"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`${readerPanelOptionClass(markVisibility === value)} flex-1`}
-                  onClick={() => onMarkVisibilityChange(value)}
-                >
-                  <span className="block text-sm font-semibold">{value === "full" ? "完整" : "安静"}</span>
-                  <span className="mt-1 block text-[0.68rem] leading-none text-subtle">
-                    {value === "full" ? "保留完整提示" : "减少视觉干扰"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </fieldset>
+      {saveState.kind === "saved" || saveState.kind === "error" ? (
+        <div
+          className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+            saveState.kind === "error"
+              ? "border-destructive/20 bg-destructive/10 text-destructive"
+              : "border-border/65 bg-background/85 text-muted-foreground"
+          }`}
+        >
+          {saveState.message}
         </div>
-      ) : (
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
-          {sentence ? (
-            <>
-              <div className="rounded-[12px] bg-surface px-3.5 py-3 ring-1 ring-structure-green/18" title={isTextRange ? "当前选中的原文片段" : "当前选中的句子"}>
-                <p className="line-clamp-3 reader-serif text-[1.02rem] leading-7 text-ink">{previewText}</p>
-              </div>
-              <div className="space-y-2">
-                <div className="grid grid-cols-5 gap-2" aria-label="高亮颜色">
-                  {colorOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`focus-ring flex h-10 w-10 items-center justify-center rounded-full border bg-surface transition-colors hover:border-muted ${
-                        color === option.value ? "border-lens-blue ring-2 ring-lens-blue/18" : "border-hairline"
-                      }`}
-                      onClick={() => onColorChange(option.value)}
-                      aria-label={`选择${option.label}高亮`}
-                    >
-                      <span className={`h-5 w-5 rounded-full ${option.className}`} />
-                    </button>
-                  ))}
-                </div>
-                <span className="inline-flex w-fit shrink-0 rounded-full border border-hairline bg-reader-paper px-2.5 py-1 text-[0.65rem] font-semibold text-muted">
-                  {sentenceAnnotations.length > 0 ? `已保存 ${sentenceAnnotations.length}` : isTextRange ? "选区级" : "句子级"}
-                </span>
-              </div>
-              <label className="block">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-ink">笔记 (可选)</span>
-                  <span className="text-[0.65rem] text-muted">{note.length}/500</span>
-                </div>
-                <textarea
-                  className="min-h-16 w-full resize-y rounded-xl border border-hairline bg-surface px-4 py-3 text-[0.9375rem] leading-[1.65] text-ink outline-none transition-colors focus:border-muted shadow-surface-quiet"
-                  placeholder={isTextRange ? "写一句和这个选区绑定的笔记。" : "写一句和这句话绑定的笔记。"}
-                  value={note}
-                  maxLength={500}
-                  onChange={(event) => onNoteChange(event.target.value)}
-                />
-              </label>
-              <div className="grid grid-cols-3 gap-2 pt-1">
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] bg-ink px-3.5 text-sm font-semibold text-surface transition-colors hover:bg-ink-soft disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={saveState.kind === "saving"}
-                  onClick={() => onSaveAnnotation(false)}
-                >
-                  高亮
-                </button>
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-hairline bg-surface px-3.5 text-sm font-semibold text-ink transition-colors hover:border-muted hover:bg-reader-paper disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={saveState.kind === "saving" || note.trim().length === 0}
-                  onClick={() => onSaveAnnotation(true)}
-                >
-                  保存
-                </button>
-                <button
-                  type="button"
-                  className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft/45 px-3.5 text-sm font-semibold text-lens-blue transition-colors hover:bg-lens-blue-soft/75"
-                  onClick={onAsk}
-                >
-                  <MessageSquare aria-hidden="true" className="h-4 w-4" />
-                  追问
-                </button>
-              </div>
-              {saveState.kind === "saved" ? (
-                <p className="text-xs font-semibold text-structure-green">{saveState.message}</p>
-              ) : null}
-              {saveState.kind === "error" ? (
-                <p className="text-xs font-semibold text-error-red">{saveState.message}</p>
-              ) : null}
-              {sentenceAnnotations.length > 0 ? (
-                <div className="border-t border-hairline pt-3">
-                  <p className="text-xs font-semibold text-muted">本句已保存</p>
-                  <div className="mt-2 space-y-2">
-                    {sentenceAnnotations.slice(0, 3).map((item) => (
-                      <p key={item.id} className="text-sm leading-6 text-ink-soft">
-                        <span className="font-semibold text-ink">{annotationSummaryLabel(item)}</span>
-                        {item.anchorType === "text_range" ? (
-                          <span className="ml-2 text-muted">“{item.selectedText}”</span>
-                        ) : null}
-                        {item.note ? <span className="ml-2 text-muted">{item.note}</span> : null}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <p className="text-sm leading-6 text-muted">点击正文中的句子后，可以在这里写笔记或保存高亮。</p>
-          )}
+      ) : null}
+
+      {onClose ? (
+        <div className="mt-2.5 border-t border-hairline/70 px-2.5 pt-2.5 text-[0.68rem] text-muted/80">
+          <span className="inline-flex items-center gap-2">
+            <Kbd className="text-[0.62rem] min-h-4 min-w-4 px-1">Esc</Kbd>
+            <span>关闭</span>
+          </span>
         </div>
-      )}
+      ) : null}
     </section>
+  );
+}
+
+interface MenuItemProps {
+  icon: ReactNode;
+  label: string;
+  shortcut?: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}
+
+function MenuItem({ icon, label, shortcut, onClick, disabled }: MenuItemProps) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[0.82rem] font-medium text-ink transition-colors",
+        "disabled:pointer-events-none disabled:opacity-40",
+        "hover:bg-lens-blue-soft/50 dark:hover:bg-zinc-800/80 hover:shadow-[inset_0_0_0_1px_rgba(21,92,255,0.06)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+      )}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <span className="text-muted/80 size-4 flex items-center justify-center shrink-0">{icon}</span>
+      <span>{label}</span>
+      {shortcut ? <Kbd className="ml-auto text-[0.62rem] min-h-4 min-w-4 px-1">{shortcut}</Kbd> : null}
+    </button>
   );
 }

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import re
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any, Callable, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -19,36 +20,78 @@ from app.agents.reader_ask_agent import (
     build_reader_ask_prompt,
     get_reader_ask_agent,
 )
+from app.agents.reader_ask_planner_agent import (
+    ReaderAskPlannerAgentDeps,
+    build_reader_ask_planner_prompt,
+    get_reader_ask_planner_agent,
+)
 from app.config.settings import get_settings
-from app.contracts.annotation import build_multi_text_target_key
+from app.database import connection as db_connection
+from app.llm.agent_runner import extract_run_usage
 from app.llm.router import build_model_for_route
-from app.llm.routes import MODEL_ROUTE_READER_ASK
+from app.llm.routes import MODEL_ROUTE_READER_ASK, MODEL_ROUTE_READER_ASK_PLANNER
 from app.llm.types import RunModelSettings
+from app.agents.grammar_agent import GrammarAgentDeps
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmRequest,
     ReaderAskActionConfirmResponse,
+    ReaderAskActionConfirmResult,
     ReaderAskActionProposal,
+    ReaderAskAttachment,
+    ReaderAskAttachmentPayload,
     ReaderAskAnchorRef,
     ReaderAskCitation,
     ReaderAskCompletedPayload,
+    ReaderAskContextRecordSearchResponse,
+    ReaderAskContextPlan,
+    ReaderAskCurrentRecordAffordances,
+    ReaderAskCurrentRecordContext,
+    ReaderAskDeleteSupplementResponse,
+    ReaderAskAssetDisambiguation,
+    ReaderAskDisambiguation,
+    ReaderAskEvidenceItem,
+    ReaderAskEntryAction,
+    ReaderAskExternalAssetContext,
+    ReaderAskExternalRecordContext,
+    ReaderAskGrammarNoteCard,
+    ReaderAskGrammarNoteCardSpan,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
+    ReaderAskPageIdentity,
     ReaderAskPracticeCard,
-    ReaderAskReaderFocus,
+    ReaderAskPersistedSupplement,
+    ReaderAskReferenceResolutionStatus,
+    ReaderAskPlannerDecision,
+    ReaderAskResolvedContextInput,
+    ReaderAskResolvedIntent,
     ReaderAskResolvedContextSummary,
     ReaderAskResponseCard,
+    ReaderAskRunInfo,
     ReaderAskSentenceBreakdownCard,
     ReaderAskSentenceBreakdownPart,
+    ReaderAskSubmissionMode,
+    ReaderAskSupplementCandidate,
     ReaderAskThreadCreateRequest,
     ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
     ReaderAskTaskMode,
+    ReaderAskTraceSummary,
     ReaderAskToolTraceEntry,
+    ReaderAskUserVisibleOutput,
     ReaderAskVocabularyInContextCard,
 )
+from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
+from app.services.analysis.planning.goal_planner import build_goal_execution_plan
+from app.services.analysis.postprocess.projection import (
+    _format_grammar_note_content,
+    _format_sentence_analysis_content,
+)
+from app.services.analysis.prompting.strategy_builder import build_grammar_bundle_async
+from app.services.analysis.runtime.runners import run_grammar_agent
+from app.services.analysis.validators import validate_grammar_note, validate_sentence_analysis
+from app.schemas.reader_notes import ReaderNoteCreateRequest
 from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
-from app.services import excerpt_assets as excerpt_assets_svc
 from app.services.ai_usage import (
     AIUsageEventCreate,
     BILLING_MODE_USER_POINTS,
@@ -77,34 +120,43 @@ from app.services.dictionary.errors import ServiceUnavailableError, WordNotFound
 from app.services.dictionary.schemas import DictionaryLookupRequest
 from app.services.dictionary_ai.schemas import DictionaryAIContextExplainRequest
 from app.services.dictionary_ai.service import get_service as get_dictionary_ai_service
+from app.services.reader_ask import capabilities as capabilities_svc
+from app.services.reader_ask import output_contract as output_contract_svc
+from app.services.reader_ask import planner
+from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import repository as repo
+from app.services.reader_ask import resolver as resolver_svc
+from app.services.reader_ask import runtime_contract as runtime_contract_svc
+from app.services.reader_ask import supplements as supplements_svc
+from app.services.reader_ask import utils
+
+logger = logging.getLogger(__name__)
 from app.services.text_anchors import ensure_json_dict, sentence_map
-from app.services.user_assets import favorites as favorites_svc
 from app.services.user_assets import vocabulary as vocabulary_svc
+from app.services import reader_notes as reader_notes_svc
 from app.services import user_annotations as user_annotations_svc
 from app.workflow.tracing import build_usage_metadata
 
-_HISTORY_INTENT_RE = re.compile(r"(以前|之前|记过|收藏过|在哪见过|before|previous|earlier|history|seen this)")
-_SAVE_NOTE_RE = re.compile(r"(保存.*笔记|记成笔记|save.*note|save this explanation)", re.IGNORECASE)
-_SAVE_EXCERPT_RE = re.compile(r"(保存.*摘录|高亮一下|save.*excerpt|highlight this)", re.IGNORECASE)
-_FAVORITE_RE = re.compile(r"(收藏|favorite|bookmark)", re.IGNORECASE)
-_AMBIGUOUS_REF_RE = re.compile(r"(这里|这句|这段|刚刚那段|上一段|this|that|here|it)", re.IGNORECASE)
 _MAX_HISTORY_MESSAGES = 8
-_MAX_CONTEXT_TEXT = 1200
-_MAX_MESSAGE_TEXT = 800
+_MAX_CONTEXT_TEXT = 3200
+_MAX_MESSAGE_TEXT = 1200
 _MAX_PROMPT_ASSET_ITEMS = 5
-_DEFAULT_MAX_OUTPUT_TOKENS = 700
-_MIN_MAX_OUTPUT_TOKENS = 160
+_DEFAULT_MAX_OUTPUT_TOKENS = 1600
+_MIN_MAX_OUTPUT_TOKENS = 400
 _PROMPT_BUDGET_BUFFER_TOKENS = 800
+_PLANNER_MAX_HISTORY_MESSAGES = 8
+_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = 500
 _WORKFLOW_NAME = "reader_ask"
 _WORKFLOW_VERSION = "1.0.0"
-_SCHEMA_VERSION = "reader-ask-v1"
+_SCHEMA_VERSION = "reader-ask-v2"
+_EVAL_TRACE_SCHEMA_VERSION = "reader-ask-eval-trace-v1"
 _TASK_MODE_LABELS: dict[ReaderAskTaskMode, str] = {
     "explain": "讲解",
     "breakdown": "拆句",
     "vocabulary": "词义",
     "grammar": "语法",
     "practice": "练习",
+    "general": "通用",
 }
 
 
@@ -114,8 +166,49 @@ class _RecordBundle:
     title: str | None
     source_text: str
     render_scene: dict[str, Any]
+    page_state_json: dict[str, Any]
     workflow_version: str | None
     schema_version: str | None
+
+
+@dataclass(slots=True)
+class _SemanticPlanningResult:
+    planner_decision: ReaderAskPlannerDecision
+    planner_validation_status: str
+    planner_usage_summary: dict[str, Any] | None
+    reference_resolution: planner.ReaderAskReferenceResolution
+    planning_snapshot: planner.ReaderAskPlanningSnapshot
+
+
+@dataclass(slots=True)
+class _AgentStreamOutcome:
+    content_md: str
+    usage_summary: dict[str, Any] | None
+    interrupted: bool
+    interruption_detail: str | None = None
+
+
+@dataclass(slots=True)
+class _AgentStreamRuntime:
+    content_parts: list[str] = field(default_factory=list)
+    usage_summary: dict[str, Any] | None = None
+    producer_done: asyncio.Event = field(default_factory=asyncio.Event)
+    producer_error: Exception | None = None
+    emitted_text: str = ""
+    emitted_reasoning: str = ""
+    reasoning_started: bool = False
+
+
+@dataclass(slots=True)
+class _TurnRunStreamCheckpoint:
+    turn_run_id: UUID
+    build_output_json: Callable[[str, str | None, str | None], dict[str, Any]]
+    min_flush_interval_s: float = 0.8
+    min_content_chars: int = 48
+    min_reasoning_chars: int = 48
+    last_flushed_at: float = 0.0
+    last_flushed_content_len: int = 0
+    last_flushed_reasoning_len: int = 0
 
 
 def _iso_now() -> str:
@@ -123,16 +216,25 @@ def _iso_now() -> str:
 
 
 def _normalize_text(value: str | None) -> str:
-    if not value:
-        return ""
-    return " ".join(value.split()).strip()
+    return utils.normalize_text(value)
 
 
 def _truncate_text(value: str | None, limit: int) -> str:
+    return utils.truncate_text(value, limit)
+
+
+def _truncate_history_message(value: str | None, *, role: str, limit: int) -> str:
     normalized = _normalize_text(value)
     if len(normalized) <= limit:
         return normalized
-    return f"{normalized[:limit]}..."
+    if role != "assistant":
+        return _truncate_text(normalized, limit)
+
+    head_limit = max(limit // 2, 240)
+    tail_limit = max(limit - head_limit - 5, 160)
+    head = normalized[:head_limit].rstrip()
+    tail = normalized[-tail_limit:].lstrip()
+    return f"{head}\n...\n{tail}"
 
 
 def _parse_uuid(value: str, detail: str) -> UUID:
@@ -144,6 +246,20 @@ def _parse_uuid(value: str, detail: str) -> UUID:
 
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _insufficient_credits_payload(remaining_points: int) -> dict[str, Any]:
+    user_message = (
+        f"当前积分不足：剩余 {remaining_points} 点，本次 Ask Claread 至少需要 "
+        f"{READER_ASK_RESERVED_POINTS} 点。本轮请求未发送给模型。"
+    )
+    return {
+        "code": "INSUFFICIENT_CREDITS",
+        "detail": "Not enough credits for this Ask Claread request.",
+        "user_message": user_message,
+        "remaining_points": remaining_points,
+        "required_points": READER_ASK_RESERVED_POINTS,
+    }
 
 
 def _anchor_to_citation(anchor: ReaderAskAnchorRef, *, record_id: str, record_title: str | None) -> ReaderAskCitation:
@@ -178,16 +294,109 @@ def _first_anchor_text(anchor: ReaderAskAnchorRef) -> str:
     return anchor.label or anchor.entry_type or anchor.anchor_type
 
 
-def _matches_history_intent(content: str) -> bool:
-    return bool(_HISTORY_INTENT_RE.search(content))
+def _attachment_payload_json(attachment: ReaderAskAttachment) -> dict[str, Any]:
+    payload = attachment.anchor_payload.model_dump(mode="json") if attachment.anchor_payload is not None else None
+    return {
+        "attachment_kind": attachment.kind,
+        "attachment_subtype": attachment.subtype,
+        "entry_action": attachment.metadata.entry_action,
+        "source_surface": attachment.metadata.source_surface,
+        "attachment_metadata": attachment.metadata.model_dump(mode="json"),
+        "anchor_payload": payload,
+    }
 
 
-def _needs_clarification(content: str, anchors: list[ReaderAskAnchorRef], focus: ReaderAskReaderFocus | None) -> bool:
-    if anchors:
-        return False
-    if focus and (focus.sentence_id or focus.selected_text):
-        return False
-    return bool(_AMBIGUOUS_REF_RE.search(content))
+def _anchor_ref_from_attachment_payload(payload: ReaderAskAttachmentPayload) -> ReaderAskAnchorRef:
+    return ReaderAskAnchorRef(
+        anchor_type=payload.anchor_type,
+        target_key=payload.target_key,
+        sentence_id=payload.sentence_id,
+        paragraph_id=payload.paragraph_id,
+        selected_text=payload.selected_text,
+        start_offset=payload.start_offset,
+        end_offset=payload.end_offset,
+        text_hash=payload.text_hash,
+        segments=[segment.model_copy() for segment in payload.segments],
+        payload_json={"anchor_payload": payload.model_dump(mode="json")},
+    )
+
+
+def _attachment_to_anchor(attachment: ReaderAskAttachment) -> ReaderAskAnchorRef | None:
+    payload_json = _attachment_payload_json(attachment)
+    payload = attachment.anchor_payload
+
+    if attachment.kind == "record_ref":
+        return None
+
+    if attachment.kind == "text_selection":
+        if payload is None:
+            raise HTTPException(status_code=400, detail="text_selection attachments require anchor_payload")
+        anchor = _anchor_ref_from_attachment_payload(payload)
+        anchor.payload_json = payload_json
+        anchor.label = attachment.label
+        return anchor
+
+    if attachment.kind == "annotation_ref":
+        if payload is None:
+            raise HTTPException(status_code=400, detail="annotation_ref attachments require anchor_payload")
+        anchor = _anchor_ref_from_attachment_payload(payload)
+        anchor.anchor_type = "reader_note" if attachment.subtype == "reader_note" else "user_annotation"
+        anchor.anchor_id = attachment.metadata.asset_id
+        anchor.note = attachment.metadata.note
+        anchor.label = attachment.label
+        anchor.payload_json = payload_json
+        return anchor
+
+    if attachment.kind in {"analysis_ref", "supplement_ref"} and attachment.subtype == "sentence":
+        if payload is None:
+            raise HTTPException(status_code=400, detail="sentence analysis attachments require anchor_payload")
+        anchor = _anchor_ref_from_attachment_payload(payload)
+        anchor.label = attachment.label
+        anchor.payload_json = payload_json
+        return anchor
+
+    return ReaderAskAnchorRef(
+        anchor_type="sentence_entry",
+        target_key=attachment.target_key,
+        sentence_id=attachment.metadata.sentence_id or (payload.sentence_id if payload else None),
+        paragraph_id=attachment.metadata.paragraph_id or (payload.paragraph_id if payload else None),
+        entry_type=attachment.metadata.entry_type or attachment.subtype,
+        label=attachment.label,
+        selected_text=attachment.selected_text,
+        query=attachment.metadata.lookup_text or attachment.metadata.query,
+        payload_json=payload_json,
+    )
+
+
+def _attachments_to_anchor_refs(attachments: list[ReaderAskAttachment]) -> list[ReaderAskAnchorRef]:
+    resolved: list[ReaderAskAnchorRef] = []
+    for attachment in attachments:
+        anchor = _attachment_to_anchor(attachment)
+        if anchor is not None:
+            resolved.append(anchor)
+    return resolved
+
+
+def _resolve_intent(
+    content: str,
+    attachments: list[ReaderAskAttachment],
+    entry_action: ReaderAskEntryAction,
+) -> ReaderAskResolvedIntent:
+    # DEPRECATED: 不再被主流程调用，intent 解析由 planner agent + fallback 完成。
+    # 保留仅供现有测试兼容。
+    del content, attachments
+    if entry_action == "lookup_in_context":
+        return "vocabulary"
+    if entry_action == "why_here":
+        return "grammar"
+    return "explain"
+
+
+def _needs_clarification(content: str, anchors: list[ReaderAskAnchorRef]) -> bool:
+    # DEPRECATED: 不再被主流程调用，clarification 由 planning_snapshot.clarification_only 决定。
+    # 保留仅供现有测试兼容。
+    del content
+    return not anchors
 
 
 def _query_seed(content: str, anchors: list[ReaderAskAnchorRef]) -> str:
@@ -233,73 +442,15 @@ def _make_tool_trace(tool_name: str, status: str, *, summary: str | None = None,
     )
 
 
-def _estimate_token_count(payload: dict[str, Any]) -> int:
-    serialized = json.dumps(payload, ensure_ascii=False)
-    return max((len(serialized) + 3) // 4, 1)
-
-
-def _compact_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    compact = json.loads(json.dumps(payload, ensure_ascii=False))
-    history = compact.get("history")
-    if isinstance(history, list) and len(history) > 4:
-        compact["history"] = history[-4:]
-
-    record_assets = compact.get("record_assets")
-    if isinstance(record_assets, list) and len(record_assets) > 3:
-        compact["record_assets"] = record_assets[:3]
-
-    history_assets = compact.get("history_assets")
-    if isinstance(history_assets, list) and len(history_assets) > 2:
-        compact["history_assets"] = history_assets[:2]
-
-    vocabulary_items = compact.get("vocabulary_items")
-    if isinstance(vocabulary_items, list) and len(vocabulary_items) > 3:
-        compact["vocabulary_items"] = vocabulary_items[:3]
-
-    record_insights = compact.get("record_insights")
-    if isinstance(record_insights, list) and len(record_insights) > 3:
-        compact["record_insights"] = record_insights[:3]
-
-    record_context = compact.get("record_context")
-    if isinstance(record_context, dict):
-        sentence_windows = record_context.get("sentence_windows")
-        if isinstance(sentence_windows, list) and len(sentence_windows) > 3:
-            record_context["sentence_windows"] = sentence_windows[:3]
-        source_excerpt = record_context.get("source_excerpt")
-        if isinstance(source_excerpt, str) and len(source_excerpt) > 800:
-            record_context["source_excerpt"] = _truncate_text(source_excerpt, 800)
-    return compact
-
-
-def _prepare_prompt_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    prompt_payload = payload
-    estimated_input_tokens = _estimate_token_count(prompt_payload)
-    if estimated_input_tokens > 4500:
-        prompt_payload = _compact_prompt_payload(payload)
-        estimated_input_tokens = _estimate_token_count(prompt_payload)
-
-    weighted_budget = READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
-    weighted_remaining = max(weighted_budget - estimated_input_tokens - _PROMPT_BUDGET_BUFFER_TOKENS, 0)
-    budgeted_output_tokens = max(
-        _MIN_MAX_OUTPUT_TOKENS,
-        min(_DEFAULT_MAX_OUTPUT_TOKENS, weighted_remaining // MULTIPLIER_OUTPUT if weighted_remaining else 0),
-    )
-    return prompt_payload, budgeted_output_tokens
-
-
 async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
-    pool = repo.db_connection.DB_POOL if hasattr(repo, "db_connection") else None
-    if pool is None:
-        from app.database import connection as db_connection
-
-        pool = db_connection.DB_POOL
+    pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT r.id, r.title, r.source_text, a.render_scene_json, a.workflow_version, a.schema_version
+            SELECT r.id, r.title, r.source_text, a.render_scene_json, a.page_state_json, a.workflow_version, a.schema_version
             FROM analysis_records r
             LEFT JOIN analysis_results a ON a.record_id = r.id
             WHERE r.id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL
@@ -314,6 +465,7 @@ async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
         title=row["title"],
         source_text=row["source_text"] or "",
         render_scene=ensure_json_dict(row["render_scene_json"]),
+        page_state_json=ensure_json_dict(row["page_state_json"]),
         workflow_version=row["workflow_version"],
         schema_version=row["schema_version"],
     )
@@ -342,14 +494,879 @@ def _translations_map(record: _RecordBundle) -> dict[str, str]:
     return translations
 
 
+def _render_scene_article_overview(record: _RecordBundle) -> str | None:
+    resolved = utils.resolve_record_overview(
+        render_scene=record.render_scene,
+        page_state_json=getattr(record, "page_state_json", None),
+    )
+    overview = resolved.get("overview")
+    return str(overview).strip() or None if isinstance(overview, str) else None
+
+
+def _render_scene_has_sentence_entries(record: _RecordBundle) -> bool:
+    entries = record.render_scene.get("sentence_entries") or record.render_scene.get("sentenceEntries")
+    return isinstance(entries, list) and bool(entries)
+
+
+def _current_record_affordances(
+    *,
+    record: _RecordBundle,
+    page_identity: ReaderAskPageIdentity,
+) -> ReaderAskCurrentRecordAffordances:
+    return ReaderAskCurrentRecordAffordances(
+        title=record.title or page_identity.title,
+        available_context_capabilities=list(page_identity.available_context_capabilities),
+        has_article_overview=_render_scene_article_overview(record) is not None,
+        has_sentence_entries=_render_scene_has_sentence_entries(record),
+        has_annotations=page_identity.has_annotations,
+        has_reader_notes=page_identity.has_reader_notes,
+    )
+
+
+def _reading_goal_from_record(record: _RecordBundle) -> ReadingGoal:
+    request = record.render_scene.get("request")
+    goal = request.get("reading_goal") if isinstance(request, dict) else None
+    if goal in {"exam", "daily_reading", "academic"}:
+        return cast(ReadingGoal, goal)
+    return "daily_reading"
+
+
+def _reading_variant_from_record(record: _RecordBundle, reading_goal: ReadingGoal) -> ReadingVariant:
+    request = record.render_scene.get("request")
+    variant = request.get("reading_variant") if isinstance(request, dict) else None
+    if variant in {
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+        "beginner_reading",
+        "intermediate_reading",
+        "intensive_reading",
+        "academic_general",
+    }:
+        return cast(ReadingVariant, variant)
+    return "academic_general" if reading_goal == "academic" else "intermediate_reading"
+
+
+def _annotation_quick_action_kind(
+    task_mode: ReaderAskTaskMode,
+    entry_action: ReaderAskEntryAction,
+) -> Literal["grammar_note", "sentence_analysis"] | None:
+    if task_mode == "grammar" or entry_action == "why_here":
+        return "grammar_note"
+    if task_mode == "breakdown" or entry_action == "explain_this":
+        return "sentence_analysis"
+    return None
+
+
+def _submission_mode(
+    *,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+) -> ReaderAskSubmissionMode:
+    if entry_action not in {"why_here", "explain_this"}:
+        return "chat"
+    if any(attachment.metadata.source_surface == "selection_toolbar" for attachment in attachments):
+        return "quick_action"
+    return "chat"
+
+
+def _focus_guidance_from_anchor(
+    anchor: ReaderAskAnchorRef | None,
+    sentence_text: str,
+) -> dict[str, object] | None:
+    if anchor is None:
+        return None
+    focus_text = (anchor.selected_text or sentence_text or "").strip()
+    if not focus_text:
+        return None
+    selection_mode = anchor.anchor_type if anchor.anchor_type in {"sentence", "text_range"} else "sentence"
+    guidance: dict[str, object] = {
+        "focus_text": focus_text,
+        "selection_mode": selection_mode,
+        "sentence_id": anchor.sentence_id or "",
+        "analysis_scope_hint": "focus_span" if selection_mode == "text_range" else "full_sentence",
+    }
+    if selection_mode == "text_range" and anchor.start_offset is not None and anchor.end_offset is not None:
+        guidance["start_offset"] = anchor.start_offset
+        guidance["end_offset"] = anchor.end_offset
+    return guidance
+
+
+def _quick_action_not_applicable(
+    *,
+    kind: Literal["grammar_note", "sentence_analysis"],
+    sentence_id: str,
+    sentence_text: str,
+    focus_text: str,
+    reason: str,
+    suggestion: str,
+) -> dict[str, Any]:
+    return {
+        "status": "not_applicable",
+        "kind": kind,
+        "sentence_id": sentence_id,
+        "source_sentence": sentence_text,
+        "focus_text": focus_text,
+        "reason": reason,
+        "suggestion": suggestion,
+    }
+
+
+def _textual_overlap(left: str, right: str) -> bool:
+    left_normalized = re.sub(r"\s+", " ", left).strip().lower()
+    right_normalized = re.sub(r"\s+", " ", right).strip().lower()
+    if not left_normalized or not right_normalized:
+        return False
+    if left_normalized in right_normalized or right_normalized in left_normalized:
+        return True
+    left_tokens = {token for token in re.split(r"\W+", left_normalized) if token}
+    right_tokens = {token for token in re.split(r"\W+", right_normalized) if token}
+    return bool(left_tokens and right_tokens and left_tokens.intersection(right_tokens))
+
+
+async def _generate_sentence_annotation(
+    *,
+    record: _RecordBundle,
+    anchor: ReaderAskAnchorRef | None,
+    kind: Literal["grammar_note", "sentence_analysis"],
+) -> dict[str, Any] | None:
+    sentence_id = anchor.sentence_id if anchor is not None else None
+    sentence_text = _render_scene_sentence_text(record, sentence_id)
+    if not sentence_id or not sentence_text:
+        return None
+    focus_text = (anchor.selected_text or sentence_text).strip()
+    focus_guidance = _focus_guidance_from_anchor(anchor, sentence_text)
+    selection_mode = anchor.anchor_type if anchor is not None else "sentence"
+
+    if kind == "sentence_analysis" and selection_mode != "sentence":
+        return _quick_action_not_applicable(
+            kind=kind,
+            sentence_id=sentence_id,
+            sentence_text=sentence_text,
+            focus_text=focus_text,
+            reason="当前片段不足以稳定拆出整句结构。",
+            suggestion="建议先扩展到整句，再使用“句子拆分”。",
+        )
+
+    reading_goal = _reading_goal_from_record(record)
+    reading_variant = _reading_variant_from_record(record, reading_goal)
+    plan = build_goal_execution_plan(reading_goal, reading_variant)
+    sentences = [{"sentence_id": sentence_id, "text": sentence_text}]
+    grammar_bundle = await build_grammar_bundle_async(plan, sentences=sentences)
+    result = await run_grammar_agent(
+        GrammarAgentDeps(
+            sentences=sentences,
+            prompt_strategy=grammar_bundle.prompt_strategy,
+            examples=grammar_bundle.example_strategy.entries,
+            focus_guidance=focus_guidance,
+        )
+    )
+    usage_summary = extract_run_usage(result)
+    draft = result.output if hasattr(result, "output") else result
+    sentence_map_payload = {sentence_id: sentence_text}
+
+    if kind == "grammar_note":
+        chosen_note = None
+        for note in draft.grammar_notes:
+            validation = validate_grammar_note(note, sentence_map_payload)
+            if not validation.is_valid:
+                continue
+            if selection_mode == "text_range":
+                if not any(_textual_overlap(str(span.text), focus_text) for span in note.spans):
+                    continue
+            chosen_note = note
+            break
+        if chosen_note is None:
+            result = _quick_action_not_applicable(
+                kind=kind,
+                sentence_id=sentence_id,
+                sentence_text=sentence_text,
+                focus_text=focus_text,
+                reason="当前片段没有稳定到值得单独讲解的语法点。",
+                suggestion="可以改为选中更完整的从句或整句，再做语法解析。",
+            )
+            result["usage_summary"] = usage_summary
+            return result
+        return {
+            "status": "ready",
+            "kind": "grammar_note",
+            "sentence_id": chosen_note.sentence_id,
+            "label": chosen_note.label,
+            "content": _format_grammar_note_content(chosen_note),
+            "note_zh": chosen_note.note_zh,
+            "source_sentence": sentence_text,
+            "annotation": chosen_note.model_dump(mode="json"),
+            "focus_text": focus_text,
+            "analysis_scope": "focus_span" if selection_mode == "text_range" else "full_sentence",
+            "spans": [span.model_dump(mode="json") for span in chosen_note.spans],
+            "usage_summary": usage_summary,
+        }
+
+    for analysis in draft.sentence_analyses:
+        validation = validate_sentence_analysis(analysis, sentence_map_payload)
+        if validation.is_valid:
+            return {
+                "status": "ready",
+                "kind": "sentence_analysis",
+                "sentence_id": analysis.sentence_id,
+                "label": analysis.label,
+                "content": _format_sentence_analysis_content(analysis),
+                "source_sentence": sentence_text,
+                "focus_text": focus_text,
+                "analysis_scope": "full_sentence",
+                "chunks": [chunk.model_dump(mode="json") for chunk in analysis.chunks or []],
+                "analysis_zh": analysis.analysis_zh,
+                "annotation": analysis.model_dump(mode="json"),
+                "usage_summary": usage_summary,
+            }
+    result = _quick_action_not_applicable(
+        kind=kind,
+        sentence_id=sentence_id,
+        sentence_text=sentence_text,
+        focus_text=focus_text,
+        reason="当前句子没有稳定到值得单独拆分的结构层次。",
+        suggestion="可以改问这句话在段落中的作用，或换一条更复杂的句子再拆解。",
+    )
+    result["usage_summary"] = usage_summary
+    return result
+
+
+def _planner_history_messages(
+    history_messages: list[dict[str, Any]],
+    *,
+    max_messages: int = _PLANNER_MAX_HISTORY_MESSAGES,
+) -> list[dict[str, object]]:
+    from app.services.reader_ask.runtime_contract import (
+        build_structured_history_summary,
+        format_structured_history_summary,
+    )
+
+    # Build structured summary from messages outside the recent window
+    structured_summary = build_structured_history_summary(
+        history_messages, recent_window=max_messages
+    )
+
+    normalized: list[dict[str, object]] = []
+    # Prepend structured summary as a system-like context message
+    if structured_summary:
+        normalized.append(
+            {
+                "role": "system",
+                "content_md": format_structured_history_summary(structured_summary),
+                "resolved_intent": None,
+            }
+        )
+
+    for item in history_messages[-max_messages:]:
+        role = item.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        normalized.append(
+            {
+                "role": role,
+                "content_md": _truncate_history_message(
+                    str(item.get("content_md") or ""),
+                    role=str(role),
+                    limit=_MAX_MESSAGE_TEXT,
+                ),
+                "resolved_intent": item.get("resolved_intent"),
+            }
+        )
+    return normalized
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)
+
+
+async def _maybe_emit_replan_event(
+    *,
+    final_content_md: str,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+) -> bool:
+    """Check if replan should be triggered and emit the replan.started event.
+
+    Returns True if replan is triggered, False otherwise.
+    This encapsulates the replan trigger condition and event emission so it
+    can be tested independently of the full streaming pipeline.
+    """
+    if (
+        _is_degenerate_answer(final_content_md)
+        and planning_snapshot is not None
+        and planning_snapshot.clarification_mode == "none"
+        and planning_snapshot.clarification_only is False
+    ):
+        logger.warning(
+            "reader_ask_replan_triggered: Degenerate answer detected (%d chars), attempting replan",
+            len(final_content_md.strip()),
+        )
+        await event_queue.put(("replan.started", {"message_id": assistant_message_id, "reason": "degenerate_answer"}))
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Degenerate answer detection for replan trigger
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate the model refused or gave a non-answer
+_REFUSAL_PATTERNS: tuple[str, ...] = (
+    "i cannot",
+    "i can't",
+    "i'm unable",
+    "i am unable",
+    "无法回答",
+    "不能回答",
+    "无法提供",
+    "我无法",
+    "我不能",
+    "as an ai",
+    "as a language model",
+    "no information",
+    "没有相关信息",
+    "没有足够的信息",
+    "not enough information",
+    "i don't have",
+    "i do not have",
+)
+
+
+def _is_degenerate_answer(content: str) -> bool:
+    """Determine if an answer is degenerate (empty, refusal, or clearly invalid).
+
+    This replaces the previous `len(content) < 20` heuristic with pattern-based
+    detection that distinguishes between:
+    - Short but valid answers (e.g. "Yes.", "Present perfect.") → NOT degenerate
+    - Empty/near-empty answers → degenerate
+    - Refusal/non-answer patterns → degenerate
+    - Very short answers that are not recognizable words → degenerate
+    """
+    stripped = content.strip()
+    if not stripped:
+        return True
+    # Check for refusal patterns
+    lower = stripped.lower()
+    if any(pattern in lower for pattern in _REFUSAL_PATTERNS):
+        return True
+    # Very short content (< 5 chars) that doesn't look like a real answer
+    # (e.g. "..." or single punctuation or model artifacts)
+    if len(stripped) < 5:
+        # Allow short but meaningful answers like "Yes.", "No.", "OK."
+        if stripped.rstrip(".!?,;:") and len(stripped.rstrip(".!?,;:")) <= 3:
+            # Could be a valid short answer — check if it contains at least
+            # one CJK character or one alphabetic word
+            has_cjk = any("\u4e00" <= c <= "\u9fff" for c in stripped)
+            has_alpha_word = any(c.isalpha() for c in stripped)
+            if has_cjk or has_alpha_word:
+                return False
+        return True
+    return False
+
+
+def _fallback_reference_query(user_message: str) -> str | None:
+    normalized = _normalize_text(user_message)
+    if not normalized:
+        return None
+    # Pass 1: explicit title markers (book title marks, quotes)
+    for pattern in (r"《([^》]+)》", r"“([^”]+)”", r"\"([^\"]+)\"", r"'([^']+)'"):
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        query = utils.clean_reference_query(match.group(1))
+        if query:
+            return query
+    # Pass 2: weak reference patterns — "之前那篇 X", "讲 X 的文章", "关于 X 的文章",
+    # "the article about X", "that article on X", etc.
+    weak_patterns = (
+        # Chinese: 之前那篇/那篇/那篇关于/讲/关于 + topic + 的?文章/论文/研究
+        # Topic allows spaces (for mixed CN/EN) but stops at punctuation/的
+        r"(?:之前那篇|那篇|那篇关于|讲|关于)([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:的?(?:文章|论文|研究|报道|书|文本))",
+        # Chinese: topic + 那篇/这篇 + 的?文章/论文
+        r"([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:那篇|这篇)(?:的?(?:文章|论文|研究|报道))",
+        # English: that/the article about/on X — capture up to 6 words, stop at verb boundary
+        r"(?:that|the)\s+(?:article|paper|essay|text|piece)\s+(?:about|on|regarding|covering)\s+([\w\-]+(?:\s+(?!also|that|which|who|is|was|were|has|had|did|and|but|or|discussed|mentioned|talked|explained|noted|stated|pointed)[\w\-]+){0,5})",
+    )
+    for pattern in weak_patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if not match:
+            continue
+        query = utils.clean_reference_query(match.group(1))
+        if query:
+            return query
+    return None
+
+
+def _fallback_semantic_planner_decision(
+    *,
+    user_message: str,
+    entry_action: ReaderAskEntryAction,
+    page_identity: ReaderAskPageIdentity,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    record: _RecordBundle,
+    failure_reason: str | None,
+) -> ReaderAskPlannerDecision:
+    normalized_message = _normalize_text(user_message).lower()
+    has_external_record_attachment = any(
+        attachment.kind == "record_ref" and attachment.subtype == "related_record"
+        for attachment in attachments
+    )
+    has_external_asset_attachment = any(
+        attachment.kind in {"analysis_ref", "supplement_ref"}
+        and (
+            (attachment.metadata.record_id and attachment.metadata.record_id != page_identity.record_id)
+            or (attachment.target_key and f"record:{page_identity.record_id}:" not in attachment.target_key)
+        )
+        for attachment in attachments
+    )
+    has_dictionary_anchor = any(anchor.anchor_type == "dictionary_entry" for anchor in anchors)
+    has_local_anchor = bool(anchors)
+    fallback_reference_query = _fallback_reference_query(user_message)
+    has_article_overview = _render_scene_article_overview(record) is not None
+    has_sentence_entries = _render_scene_has_sentence_entries(record)
+
+    resolved_intent: ReaderAskResolvedIntent = "explain"
+    if entry_action == "lookup_in_context" or has_dictionary_anchor:
+        resolved_intent = "vocabulary"
+    elif entry_action == "why_here":
+        resolved_intent = "grammar"
+    elif entry_action == "compare_translation":
+        resolved_intent = "general"
+    elif _contains_any(normalized_message, ("拆句", "拆解", "主干", "break down", "breakdown")):
+        resolved_intent = "breakdown"
+    elif _contains_any(normalized_message, ("练习", "exercise", "practice", "quiz")):
+        resolved_intent = "practice"
+    elif _contains_any(normalized_message, ("语法", "句法", "时态", "语态", "过去式", "现在式", "将来式", "grammar", "syntax", "tense")):
+        resolved_intent = "grammar"
+    elif _contains_any(normalized_message, ("词义", "词汇", "短语", "单词", "这个词", "那个词", "vocabulary", "phrase", "word", "meaning")):
+        resolved_intent = "vocabulary"
+    elif _contains_any(normalized_message, ("对比", "比较", "不同", "区别", "差异", "compare", "difference", "versus", "vs")):
+        resolved_intent = "general"
+    elif _contains_any(normalized_message, ("总结", "概括", "归纳", "summarize", "summary", "翻译", "translate", "复习", "review", "分析", "analyze")):
+        resolved_intent = "general"
+
+    has_weak_reference = fallback_reference_query is not None
+    clarification_only = False
+    clarification_reason: str | None = None
+    cross_record_context_allowed = (
+        has_external_record_attachment or has_external_asset_attachment or has_weak_reference
+    )
+    article_overview_needed = False
+    local_context_window_needed = False
+    record_insights_needed = False
+    dictionary_needed = resolved_intent == "vocabulary" or entry_action == "lookup_in_context" or has_dictionary_anchor
+    structured_asset_requested = has_external_asset_attachment
+    structured_asset_type = (
+        "supplement"
+        if any(attachment.kind == "supplement_ref" for attachment in attachments)
+        else "analysis"
+        if structured_asset_requested
+        else None
+    )
+
+    if has_local_anchor:
+        local_context_window_needed = True
+        if resolved_intent in {"grammar", "breakdown", "practice"} and has_sentence_entries:
+            record_insights_needed = True
+    elif cross_record_context_allowed:
+        # External context available — no clarification needed
+        if has_article_overview:
+            article_overview_needed = True
+        local_context_window_needed = True
+    elif has_article_overview:
+        article_overview_needed = True
+        local_context_window_needed = True
+    else:
+        local_context_window_needed = True
+
+    # Conservative path: weak reference without anchor → followup so user can confirm
+    if has_weak_reference and not has_local_anchor:
+        clarification_reason = "fallback_weak_reference_without_anchor"
+        # Don't set clarification_only=True (must_clarify) — we can still answer
+        # at article level, but signal that the reference is uncertain.
+
+    return ReaderAskPlannerDecision(
+        resolved_intent=resolved_intent,
+        clarification_only=clarification_only,
+        clarification_reason=clarification_reason,
+        reference_request={
+            "requested": bool(fallback_reference_query),
+            "query": fallback_reference_query,
+            "reason": (
+                "fallback_weak_reference" if has_weak_reference and clarification_reason
+                else "fallback_title_like_reference" if fallback_reference_query
+                else None
+            ),
+        },
+        structured_asset_request={
+            "requested": structured_asset_requested,
+            "requested_asset_type": structured_asset_type,
+            "reason": "fallback_from_explicit_external_asset" if structured_asset_requested else None,
+        },
+        working_set={
+            "local_context_window_needed": local_context_window_needed,
+            "record_insights_needed": record_insights_needed,
+            "article_overview_needed": article_overview_needed,
+            "dictionary_needed": dictionary_needed,
+            "cross_record_context_allowed": cross_record_context_allowed,
+            "external_asset_lookup_needed": structured_asset_requested and has_external_record_attachment,
+        },
+        rationale=(
+            "planner validation failed; used deterministic fallback"
+            + (f": {failure_reason}" if failure_reason else "")
+        ),
+    )
+
+
+def _current_record_source_labels(runtime_state: ReaderAskRuntimeState) -> list[str]:
+    labels: list[str] = []
+    if runtime_state.latest_record_context is not None:
+        labels.append("current_paragraph")
+    if runtime_state.latest_record_insights:
+        labels.append("record_assets")
+    if runtime_state.latest_article_overview:
+        labels.append("article_overview")
+    if runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai:
+        labels.append("dictionary")
+    return labels
+
+
+def _external_context_has_structured_assets(items: list[dict[str, Any]] | None) -> bool:
+    return bool(
+        items
+        and any(item.get("article_overview") or item.get("record_insights") for item in items)
+    )
+
+
+def _external_asset_context_has_items(items: list[dict[str, Any]] | None) -> bool:
+    return bool(items and any(item.get("asset_id") for item in items))
+
+
+async def _load_external_record_contexts(
+    user_id: UUID,
+    *,
+    current_record_id: UUID,
+    planned_external_refs: list[dict[str, str]],
+) -> list[ReaderAskExternalRecordContext]:
+    unique_refs: list[tuple[str, UUID, dict[str, str]]] = []
+    seen: set[str] = set()
+    for item in planned_external_refs:
+        record_id = str(item.get("record_id") or "").strip()
+        if not record_id or record_id in seen:
+            continue
+        seen.add(record_id)
+        record_uuid = _parse_uuid(record_id, "external record id is invalid")
+        if record_uuid == current_record_id:
+            continue
+        unique_refs.append((record_id, record_uuid, item))
+
+    bundles = await asyncio.gather(*[
+        _load_record_bundle(user_id, record_uuid)
+        for _, record_uuid, _ in unique_refs
+    ])
+
+    contexts: list[ReaderAskExternalRecordContext] = []
+    for (_, record_uuid, item), bundle in zip(unique_refs, bundles):
+        structured_assets = resolver_svc.lookup_structured_record_assets(
+            record_id=str(bundle.record_id),
+            record_title=bundle.title or item.get("title"),
+            render_scene=bundle.render_scene,
+            page_state_json=bundle.page_state_json,
+            reason=str(item.get("reason") or "explicit_attachment"),
+            updated_at=item.get("updated_at"),
+        )
+        contexts.append(
+            ReaderAskExternalRecordContext(
+                record_id=str(structured_assets["record_id"]),
+                record_title=structured_assets.get("record_title"),
+                article_overview=structured_assets.get("article_overview"),
+                article_overview_status=structured_assets.get("article_overview_status"),
+                article_overview_source=structured_assets.get("article_overview_source"),
+                article_overview_confidence=structured_assets.get("article_overview_confidence"),
+                record_insights=list(structured_assets.get("record_insights") or []),
+                source_labels=list(structured_assets.get("source_labels") or []),
+                reason=str(structured_assets.get("reason") or "explicit_attachment"),
+            )
+        )
+    return contexts
+
+
+def _load_external_asset_contexts(
+    *,
+    current_record_id: UUID,
+    planned_external_assets: list[dict[str, object]],
+) -> list[ReaderAskExternalAssetContext]:
+    contexts: list[ReaderAskExternalAssetContext] = []
+    seen: set[tuple[str, str]] = set()
+    for item in planned_external_assets:
+        record_id = str(item.get("record_id") or "").strip()
+        asset_id = str(item.get("asset_id") or "").strip()
+        if not record_id or not asset_id:
+            continue
+        key = (record_id, asset_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        record_uuid = _parse_uuid(record_id, "external asset record id is invalid")
+        if record_uuid == current_record_id:
+            continue
+        contexts.append(
+            ReaderAskExternalAssetContext(
+                record_id=record_id,
+                record_title=str(item.get("record_title") or "") or None,
+                asset_type=str(item.get("asset_type") or "analysis"),  # type: ignore[arg-type]
+                asset_id=asset_id,
+                entry_type=str(item.get("entry_type") or "") or None,
+                asset_title=str(item.get("asset_title") or "") or None,
+                content_md=str(item.get("content_md") or "") or None,
+                content_summary=str(item.get("content_summary") or "") or None,
+                source_labels=[
+                    str(label).strip()
+                    for label in (item.get("source_labels") or [])
+                    if str(label).strip()
+                ],
+                reason=str(item.get("reason") or "structured_asset_resolved"),
+            )
+        )
+    return contexts
+
+
+async def _run_semantic_planner(
+    *,
+    user_message: str,
+    page_identity: ReaderAskPageIdentity,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    history_messages: list[dict[str, Any]],
+    record: _RecordBundle,
+) -> tuple[ReaderAskPlannerDecision, str, dict[str, Any] | None]:
+    planner_input = planner.build_planner_input(
+        user_message=user_message,
+        entry_action=entry_action,
+        page_identity=page_identity,
+        current_record_affordances=_current_record_affordances(record=record, page_identity=page_identity),
+        attachments=attachments,
+        anchors=anchors,
+        history_messages=_planner_history_messages(history_messages),
+    )
+    agent = get_reader_ask_planner_agent()
+    model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)
+    if model is None:
+        raise RuntimeError("model route is not configured: reader_ask_planner")
+
+    route_settings = RunModelSettings(
+        max_tokens=_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
+        temperature=0.1,
+        timeout=25.0,
+    )
+    if model_config and model_config.model_settings is not None:
+        route_settings = route_settings.merged_with(model_config.model_settings)
+    route_settings = RunModelSettings(
+        max_tokens=route_settings.max_tokens or _DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
+        temperature=route_settings.temperature,
+        timeout=route_settings.timeout,
+    )
+
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            result = await agent.run(
+                build_reader_ask_planner_prompt(
+                    ReaderAskPlannerAgentDeps(planner_input=planner_input)
+                ),
+                deps=ReaderAskPlannerAgentDeps(planner_input=planner_input),
+                model=model,
+                model_settings=route_settings.to_pydantic_ai(),
+            )
+            validation_status = "valid" if attempt == 0 else "retry_succeeded"
+            return result.output, validation_status, extract_run_usage(result)
+        except Exception as exc:
+            last_error = exc
+    logger.warning(
+        "reader_ask planner agent failed after retries, using deterministic fallback: %s",
+        last_error,
+        extra={"failure_reason": str(last_error) if last_error else None},
+    )
+    return (
+        _fallback_semantic_planner_decision(
+            user_message=user_message,
+            entry_action=entry_action,
+            page_identity=page_identity,
+            attachments=attachments,
+            anchors=anchors,
+            record=record,
+            failure_reason=str(last_error) if last_error else None,
+        ),
+        "fallback_deterministic",
+        None,
+    )
+
+
+async def _resolve_semantic_planning(
+    *,
+    user_id: UUID,
+    record: _RecordBundle,
+    history_messages: list[dict[str, Any]],
+    user_message: str,
+    page_identity: ReaderAskPageIdentity,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+) -> _SemanticPlanningResult:
+    planner_decision, planner_validation_status, planner_usage_summary = await _run_semantic_planner(
+        user_message=user_message,
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        history_messages=history_messages,
+        record=record,
+    )
+
+    reference_resolution = await resolver_svc.resolve_known_references(
+        user_id=user_id,
+        current_record_id=record.record_id,
+        reference_needs=planner.reference_needs_from_decision(planner_decision),
+    )
+    pre_planning_snapshot = planner.plan_request(
+        content=user_message,
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        planner_decision=planner_decision,
+        planner_validation_status=planner_validation_status,
+        reference_resolution=reference_resolution,
+        skip_expensive_fields=True,
+    )
+
+    async def _bundle_loader(lookup_user_id: UUID, lookup_record_id: UUID) -> dict[str, Any]:
+        bundle = await _load_record_bundle(lookup_user_id, lookup_record_id)
+        return {
+            "title": bundle.title,
+            "render_scene": bundle.render_scene,
+        }
+
+    structured_asset_resolution = await resolver_svc.resolve_structured_asset_references(
+        user_id=user_id,
+        current_record_id=record.record_id,
+        external_record_refs=pre_planning_snapshot.working_set.external_record_refs,
+        structured_asset_needs=pre_planning_snapshot.structured_asset_needs,
+        explicit_asset_refs=pre_planning_snapshot.working_set.external_asset_refs,
+        bundle_loader=_bundle_loader,
+        supplement_loader=supplements_svc.list_supplements_for_record,
+    )
+    planning_snapshot = planner.plan_request(
+        content=user_message,
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        planner_decision=planner_decision,
+        planner_validation_status=planner_validation_status,
+        reference_resolution=reference_resolution,
+        structured_asset_resolution=structured_asset_resolution,
+    )
+    return _SemanticPlanningResult(
+        planner_decision=planner_decision,
+        planner_validation_status=planner_validation_status,
+        planner_usage_summary=planner_usage_summary,
+        reference_resolution=reference_resolution,
+        planning_snapshot=planning_snapshot,
+    )
+
+
+async def _materialize_planned_context(
+    *,
+    user_id: UUID,
+    record: _RecordBundle,
+    runtime_state: ReaderAskRuntimeState,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot,
+    page_identity: ReaderAskPageIdentity,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    get_record_context_cb: Callable[[], Any],
+    get_record_insights_cb: Callable[[], Any],
+) -> ReaderAskResolvedContextInput:
+    working_set = planning_snapshot.working_set
+    resolved_overview = utils.resolve_record_overview(
+        render_scene=record.render_scene,
+        page_state_json=record.page_state_json,
+    )
+    if working_set.local_context_window_needed and runtime_state.latest_record_context is None:
+        runtime_state.latest_record_context = await get_record_context_cb()
+        if runtime_state.latest_record_context is not None:
+            runtime_state.source_labels.update({"current_record", "current_anchor", "current_paragraph"})
+    if working_set.record_insights_needed and not runtime_state.latest_record_insights:
+        runtime_state.latest_record_insights = await get_record_insights_cb()
+        if runtime_state.latest_record_insights:
+            runtime_state.source_labels.add("record_assets")
+    if working_set.article_overview_needed and not runtime_state.latest_article_overview:
+        article_overview = _render_scene_article_overview(record)
+        if article_overview:
+            runtime_state.latest_article_overview = article_overview
+            runtime_state.source_labels.add(str(resolved_overview.get("source") or "article_overview"))
+
+    external_record_contexts = await _load_external_record_contexts(
+        user_id,
+        current_record_id=record.record_id,
+        planned_external_refs=working_set.external_record_refs,
+    )
+    if external_record_contexts:
+        runtime_state.latest_external_record_contexts = [
+            item.model_dump(mode="json") for item in external_record_contexts
+        ]
+        runtime_state.used_cross_record_context = True
+        runtime_state.source_labels.add("external_record_context")
+        for item in external_record_contexts:
+            runtime_state.source_labels.update(item.source_labels)
+    external_asset_contexts = _load_external_asset_contexts(
+        current_record_id=record.record_id,
+        planned_external_assets=working_set.external_asset_refs,
+    )
+    if external_asset_contexts:
+        runtime_state.latest_external_asset_contexts = [
+            item.model_dump(mode="json") for item in external_asset_contexts
+        ]
+        runtime_state.used_cross_record_context = True
+        runtime_state.source_labels.update({"external_record_context", "external_assets"})
+
+    current_record_context = ReaderAskCurrentRecordContext(
+        record_id=str(record.record_id),
+        record_title=record.title,
+        local_context=runtime_state.latest_record_context,
+        record_insights=runtime_state.latest_record_insights,
+        article_overview=runtime_state.latest_article_overview,
+        article_overview_status=str(resolved_overview.get("status") or "") or None,
+        article_overview_source=str(resolved_overview.get("source") or "") or None,
+        article_overview_confidence=str(resolved_overview.get("confidence") or "") or None,
+        source_labels=_current_record_source_labels(runtime_state),
+    )
+    return planner.build_resolved_context_input(
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        current_record_context=current_record_context,
+        external_record_contexts=external_record_contexts,
+        external_asset_contexts=external_asset_contexts,
+    )
+
+
 async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
     if not anchor.anchor_id and not anchor.target_key:
         return anchor
 
     row = await conn.fetchrow(
         """
-        SELECT id, annotation_type, anchor_type, target_key, paragraph_id, sentence_id,
-               selected_text, start_offset, end_offset, text_hash, note, payload_json
+        SELECT id, anchor_type, target_key, paragraph_id, sentence_id,
+               selected_text, start_offset, end_offset, text_hash, color, payload_json
         FROM user_annotations
         WHERE user_id = $1
           AND deleted_at IS NULL
@@ -376,22 +1393,22 @@ async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAsk
             "start_offset": row["start_offset"],
             "end_offset": row["end_offset"],
             "text_hash": row["text_hash"],
-            "note": row["note"],
             "payload_json": payload,
             "segments": segments or [],
-            "label": row["annotation_type"],
+            "label": row["color"],
         }
     )
 
 
-async def _resolve_favorite_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
+async def _resolve_reader_note_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
     if not anchor.anchor_id and not anchor.target_key:
         return anchor
 
     row = await conn.fetchrow(
         """
-        SELECT id, target_type, target_key, payload_json, note
-        FROM favorite_records
+        SELECT id, target_key, anchor_sentence_id, quote_mode, paragraph_id, sentence_id,
+               selected_text, start_offset, end_offset, text_hash, note_text, payload_json
+        FROM reader_notes
         WHERE user_id = $1
           AND deleted_at IS NULL
           AND (($2::uuid IS NOT NULL AND id = $2) OR ($3::text IS NOT NULL AND target_key = $3))
@@ -409,18 +1426,18 @@ async def _resolve_favorite_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAn
     return anchor.model_copy(
         update={
             "anchor_id": str(row["id"]),
-            "anchor_type": "favorite",
+            "anchor_type": "reader_note",
             "target_key": row["target_key"],
-            "target_type": row["target_type"],
-            "sentence_id": payload.get("sentence_id"),
-            "paragraph_id": payload.get("paragraph_id"),
-            "selected_text": payload.get("selected_text"),
-            "start_offset": payload.get("start_offset"),
-            "end_offset": payload.get("end_offset"),
-            "text_hash": payload.get("text_hash"),
-            "note": row["note"],
+            "sentence_id": row["sentence_id"] or row["anchor_sentence_id"],
+            "paragraph_id": row["paragraph_id"],
+            "selected_text": row["selected_text"],
+            "start_offset": row["start_offset"],
+            "end_offset": row["end_offset"],
+            "text_hash": row["text_hash"],
+            "note": row["note_text"],
             "payload_json": payload,
             "segments": segments or [],
+            "label": row["quote_mode"],
         }
     )
 
@@ -461,27 +1478,6 @@ def _resolve_sentence_anchor(record: _RecordBundle, anchor: ReaderAskAnchorRef) 
     return anchor
 
 
-def _resolve_reader_focus(record: _RecordBundle, focus: ReaderAskReaderFocus) -> ReaderAskAnchorRef:
-    if focus.selected_text and focus.sentence_id and focus.text_hash:
-        return ReaderAskAnchorRef(
-            anchor_type="text_range",
-            sentence_id=focus.sentence_id,
-            paragraph_id=focus.paragraph_id,
-            selected_text=focus.selected_text,
-            start_offset=focus.start_offset,
-            end_offset=focus.end_offset,
-            text_hash=focus.text_hash,
-        )
-    if focus.sentence_id:
-        return ReaderAskAnchorRef(
-            anchor_type="sentence",
-            sentence_id=focus.sentence_id,
-            paragraph_id=focus.paragraph_id,
-            selected_text=_render_scene_sentence_text(record, focus.sentence_id),
-        )
-    raise HTTPException(status_code=400, detail="reader_focus is missing a usable sentence reference")
-
-
 def _citation_to_anchor(citation: dict[str, Any]) -> ReaderAskAnchorRef | None:
     anchor_type = citation.get("anchor_type")
     if anchor_type not in {"sentence", "text_range", "multi_text", "sentence_entry"}:
@@ -499,11 +1495,7 @@ async def _resolve_anchor_refs(
     record: _RecordBundle,
     *,
     anchors: list[ReaderAskAnchorRef],
-    reader_focus: ReaderAskReaderFocus | None,
-    fallback_citation: dict[str, Any] | None,
 ) -> list[ReaderAskAnchorRef]:
-    from app.database import connection as db_connection
-
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
@@ -514,8 +1506,8 @@ async def _resolve_anchor_refs(
             anchor = raw_anchor
             if anchor.anchor_type == "user_annotation":
                 anchor = await _resolve_annotation_anchor(conn, user_id, anchor)
-            elif anchor.anchor_type == "favorite":
-                anchor = await _resolve_favorite_anchor(conn, user_id, anchor)
+            elif anchor.anchor_type == "reader_note":
+                anchor = await _resolve_reader_note_anchor(conn, user_id, anchor)
             elif anchor.anchor_type == "sentence_entry":
                 anchor = _resolve_sentence_entry_anchor(record, anchor)
             elif anchor.anchor_type in {"sentence", "text_range"}:
@@ -524,25 +1516,61 @@ async def _resolve_anchor_refs(
 
     if resolved:
         return resolved
-    if reader_focus is not None:
-        return [_resolve_reader_focus(record, reader_focus)]
-    if fallback_citation:
-        fallback_anchor = _citation_to_anchor(fallback_citation)
-        if fallback_anchor is not None:
-            return [_resolve_sentence_anchor(record, fallback_anchor)]
     return []
 
 
 def _collect_sentence_windows(record: _RecordBundle, anchors: list[ReaderAskAnchorRef]) -> list[dict[str, Any]]:
     sentences = record.render_scene.get("article", {}).get("sentences")
     if not isinstance(sentences, list):
-        return []
+        first_paragraph = _truncate_text(record.source_text, 260)
+        if not first_paragraph:
+            return []
+        return [
+            {
+                "sentence_id": None,
+                "anchor_text": first_paragraph,
+                "window": [
+                    {
+                        "sentence_id": None,
+                        "paragraph_id": None,
+                        "text": first_paragraph,
+                        "translation_zh": None,
+                    }
+                ],
+                "fallback_window": True,
+            }
+        ]
     translations = _translations_map(record)
     sentence_ids: list[str] = []
     for anchor in anchors:
         sentence_ids.extend(_sentence_ids_from_anchor(anchor))
     sentence_id_set = {sentence_id for sentence_id in sentence_ids if sentence_id}
     if not sentence_id_set:
+        fallback_items = []
+        for candidate in sentences[:2]:
+            if not isinstance(candidate, dict):
+                continue
+            fallback_items.append(
+                {
+                    "sentence_id": candidate.get("sentence_id"),
+                    "paragraph_id": candidate.get("paragraph_id"),
+                    "text": _truncate_text(candidate.get("text"), 240),
+                    "translation_zh": _truncate_text(
+                        translations.get(candidate.get("sentence_id")) if isinstance(candidate.get("sentence_id"), str) else None,
+                        180,
+                    )
+                    or None,
+                }
+            )
+        if fallback_items:
+            return [
+                {
+                    "sentence_id": fallback_items[0].get("sentence_id"),
+                    "anchor_text": fallback_items[0].get("text"),
+                    "window": fallback_items,
+                    "fallback_window": True,
+                }
+            ]
         return []
 
     ordered: list[dict[str, Any]] = []
@@ -601,79 +1629,9 @@ def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnch
     return results[:_MAX_PROMPT_ASSET_ITEMS]
 
 
-def _flatten_excerpt_items(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for group in groups:
-        group_title = group.get("title")
-        group_record_id = group.get("record_id")
-        for item in group.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            enriched = dict(item)
-            enriched["record_id"] = group_record_id
-            enriched["source_article_title"] = group_title
-            items.append(enriched)
-    return items
-
-
-def _score_excerpt_item(item: dict[str, Any], *, sentence_ids: set[str], query: str) -> int:
-    score = 0
-    if sentence_ids and item.get("sentence_id") in sentence_ids:
-        score += 5
-    haystack = " ".join(
-        _normalize_text(part)
-        for part in (
-            item.get("selected_text"),
-            item.get("translation"),
-            item.get("note"),
-            item.get("source_article_title"),
-        )
-    ).lower()
-    for token in _normalize_text(query).lower().split():
-        if token and token in haystack:
-            score += 2
-    return score
-
-
-async def _tool_get_record_excerpt_assets(
-    user_id: UUID,
-    record: _RecordBundle,
-    anchors: list[ReaderAskAnchorRef],
-    query: str,
-) -> list[dict[str, Any]]:
-    response = await excerpt_assets_svc.list_excerpt_assets(
-        user_id=user_id,
-        page=1,
-        limit=20,
-        record_id=str(record.record_id),
-    )
-    items = _flatten_excerpt_items(response.model_dump(mode="python")["groups"])
-    sentence_ids = {sentence_id for anchor in anchors for sentence_id in _sentence_ids_from_anchor(anchor)}
-    items.sort(key=lambda item: _score_excerpt_item(item, sentence_ids=sentence_ids, query=query), reverse=True)
-    selected = [item for item in items if _score_excerpt_item(item, sentence_ids=sentence_ids, query=query) > 0]
-    return selected[:_MAX_PROMPT_ASSET_ITEMS] or items[: min(_MAX_PROMPT_ASSET_ITEMS, len(items))]
-
-
-async def _tool_search_user_excerpt_assets(
-    user_id: UUID,
-    current_record_id: UUID,
-    query: str,
-) -> list[dict[str, Any]]:
-    response = await excerpt_assets_svc.list_excerpt_assets(
-        user_id=user_id,
-        page=1,
-        limit=40,
-        record_id=None,
-    )
-    items = [
-        item for item in _flatten_excerpt_items(response.model_dump(mode="python")["groups"])
-        if item.get("record_id") != str(current_record_id)
-    ]
-    items.sort(key=lambda item: _score_excerpt_item(item, sentence_ids=set(), query=query), reverse=True)
-    return [item for item in items if _score_excerpt_item(item, sentence_ids=set(), query=query) > 0][:_MAX_PROMPT_ASSET_ITEMS]
-
-
 async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[str, Any]]:
+    # NOTE(optimization): vocabulary API 不支持搜索参数，当前仍需全量加载后内存过滤。
+    # 后续若 vocabulary service 支持搜索参数，应改为数据库侧过滤。
     items, _ = await vocabulary_svc.list_vocabulary(
         user_id=user_id,
         page=1,
@@ -777,26 +1735,6 @@ async def _tool_run_dictionary_ai_context_explain(
     )
 
 
-def _excerpt_item_to_citation(item: dict[str, Any], *, kind: str) -> ReaderAskCitation:
-    return ReaderAskCitation(
-        citation_id=str(uuid4()),
-        kind=kind,  # type: ignore[arg-type]
-        label=_truncate_text(item.get("selected_text"), 80) or _truncate_text(item.get("source_article_title"), 80) or "摘录资产",
-        anchor_type=item.get("anchor_type"),
-        sentence_id=item.get("sentence_id"),
-        target_key=item.get("target_key"),
-        selected_text=_truncate_text(item.get("selected_text"), 180) or None,
-        record_id=item.get("record_id"),
-        source_article_title=item.get("source_article_title"),
-        metadata_json={
-            "note": _truncate_text(item.get("note"), 120),
-            "is_favorited": item.get("is_favorited"),
-            "is_noted": item.get("is_noted"),
-            "is_highlighted": item.get("is_highlighted"),
-        },
-    )
-
-
 def _vocabulary_item_to_citation(item: dict[str, Any]) -> ReaderAskCitation:
     return ReaderAskCitation(
         citation_id=str(uuid4()),
@@ -841,104 +1779,699 @@ def _dictionary_ai_to_citation(item: dict[str, Any], query: str, entry_id: int) 
 
 
 def _merge_citation(citations: list[ReaderAskCitation], citation: ReaderAskCitation) -> None:
-    for existing in citations:
-        if (
-            existing.kind == citation.kind
-            and existing.label == citation.label
-            and existing.record_id == citation.record_id
-            and existing.target_key == citation.target_key
-            and existing.sentence_id == citation.sentence_id
-        ):
-            return
-    citations.append(citation)
+    utils.merge_citation(citations, citation)
 
 
-def _build_prompt_payload(
+def _current_turn_run_id(message_dict: dict[str, Any], run_info: ReaderAskRunInfo | None = None) -> UUID | None:
+    current_turn_run_id = message_dict.get("current_turn_run_id")
+    if isinstance(current_turn_run_id, str) and current_turn_run_id.strip():
+        try:
+            return UUID(current_turn_run_id)
+        except ValueError:
+            return None
+    run_id = run_info.run_id if run_info is not None else None
+    if isinstance(run_id, str) and run_id.strip():
+        try:
+            return UUID(run_id)
+        except ValueError:
+            return None
+    return None
+
+
+def _build_run_info(
     *,
-    thread: dict[str, Any],
-    record: _RecordBundle,
-    user_message: str,
-    history_messages: list[dict[str, Any]],
-    anchors: list[ReaderAskAnchorRef],
-    task_mode: ReaderAskTaskMode,
-    history_lookup_allowed: bool,
+    turn_id: str,
+    run_id: str,
+    attempt: int = 1,
+    supersedes_run_id: str | None = None,
 ) -> dict[str, Any]:
-    history = [
-        {
-            "role": item["role"],
-            "content_md": _truncate_text(item["content_md"], _MAX_MESSAGE_TEXT),
-        }
-        for item in history_messages[-_MAX_HISTORY_MESSAGES:]
-    ]
-    anchor_payload = [
-        {
-            "anchor_type": anchor.anchor_type,
-            "label": anchor.label,
-            "sentence_id": anchor.sentence_id,
-            "selected_text": _truncate_text(_first_anchor_text(anchor), 200),
-            "note": _truncate_text(anchor.note, 180) or None,
-            "entry_type": anchor.entry_type,
-        }
-        for anchor in anchors
-    ]
     return {
-        "thread": {
-            "id": thread["id"],
-            "title": thread.get("title"),
-        },
-        "record": {
-            "record_id": str(record.record_id),
-            "title": record.title,
-            "workflow_version": record.workflow_version,
-            "schema_version": record.schema_version,
-        },
-        "user_message": user_message,
-        "task_mode": task_mode,
-        "task_mode_label": _TASK_MODE_LABELS[task_mode],
-        "history": history,
-        "anchors": anchor_payload,
-        "history_lookup_allowed": history_lookup_allowed,
-        "tooling_contract": {
-            "call_tools_on_demand": True,
-            "history_lookup_requires_explicit_intent": history_lookup_allowed,
-            "writes_require_confirmation": True,
-            "dictionary_context_explain_available": True,
-        },
-        "response_contract": {
-            "format": "markdown",
-            "be_concise": True,
-            "article_bound": True,
-            "do_not_claim_unknown_history": True,
-            "structured_cards_available": [
-                "sentence_breakdown_card",
-                "vocabulary_in_context_card",
-                "practice_card",
-            ],
-        },
-        "task_instructions": {
-            "explain": "优先解释这句话或这段在当前文章里的意思，回答以简洁 Markdown 为主。",
-            "breakdown": "优先拆主干、修饰和阅读顺序；需要时调用解析相关工具。",
-            "vocabulary": "优先解释词义、短语义和为什么在这里是这个意思；需要时使用词典和词典 AI。",
-            "grammar": "优先解释当前句子里的语法作用和句法关系，不要泛化成整节语法课。",
-            "practice": "优先围绕当前句子或段落生成练习，帮助用户主动复述、辨析或判断结构。",
-        }[task_mode],
+        "turn_id": turn_id,
+        "run_id": run_id,
+        "run_attempt": max(attempt, 1),
+        "supersedes_run_id": supersedes_run_id,
     }
 
 
-def _message_metadata(
+def _user_message_metadata(
     *,
-    task_mode: ReaderAskTaskMode | None = None,
-    resolved_context: ReaderAskResolvedContextSummary | None = None,
-    response_cards: list[ReaderAskResponseCard] | None = None,
+    resolved_intent: ReaderAskResolvedIntent | None = None,
+    resolved_context_input: ReaderAskResolvedContextInput | None = None,
+    submission_mode: ReaderAskSubmissionMode = "chat",
 ) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    if task_mode is not None:
-        metadata["task_mode"] = task_mode
-    if resolved_context is not None:
-        metadata["resolved_context"] = resolved_context.model_dump(mode="json")
-    if response_cards:
-        metadata["response_cards"] = [card.model_dump(mode="json") for card in response_cards]
-    return metadata
+    return output_contract_svc.build_user_message_metadata(
+        resolved_intent=resolved_intent,
+        resolved_context_input=resolved_context_input,
+        submission_mode=submission_mode,
+    )
+
+
+def _assistant_message_metadata(
+    *,
+    resolved_intent: ReaderAskResolvedIntent | None = None,
+    run_info: dict[str, Any] | None = None,
+    run_history: list[dict[str, Any]] | None = None,
+    resolved_context_input: ReaderAskResolvedContextInput | None = None,
+    submission_mode: ReaderAskSubmissionMode = "chat",
+) -> dict[str, Any]:
+    return output_contract_svc.build_assistant_message_metadata(
+        resolved_intent=resolved_intent,
+        run_info=run_info,
+        run_history=run_history,
+        resolved_context_input=resolved_context_input,
+        submission_mode=submission_mode,
+    )
+
+
+def _build_user_visible_output(
+    *,
+    content_md: str,
+    submission_mode: ReaderAskSubmissionMode,
+    resolved_intent: ReaderAskResolvedIntent | None,
+    citations: list[ReaderAskCitation],
+    action_proposals: list[ReaderAskActionProposal],
+    tool_trace: list[ReaderAskToolTraceEntry],
+    evidence: list[ReaderAskEvidenceItem],
+    trace_summary: ReaderAskTraceSummary | None,
+    disambiguation: ReaderAskDisambiguation | None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None,
+    response_cards: list[ReaderAskResponseCard],
+    usage_summary: dict[str, Any] | None,
+    billed_points: int,
+    resolved_context: ReaderAskResolvedContextSummary,
+    context_plan: ReaderAskContextPlan | None,
+    resolved_context_input: ReaderAskResolvedContextInput | None,
+    run_info: dict[str, Any] | ReaderAskRunInfo | None,
+    supplement_candidates: list[ReaderAskSupplementCandidate] | list[dict[str, Any]],
+    persisted_supplements: list[ReaderAskPersistedSupplement] | list[dict[str, Any]],
+    reasoning_md: str | None = None,
+    reasoning_status: str | None = None,
+) -> ReaderAskUserVisibleOutput:
+    return output_contract_svc.build_user_visible_output(
+        content_md=content_md,
+        submission_mode=submission_mode,
+        resolved_intent=resolved_intent,
+        citations=citations,
+        action_proposals=action_proposals,
+        tool_trace=tool_trace,
+        evidence=evidence,
+        trace_summary=trace_summary,
+        disambiguation=disambiguation,
+        external_asset_disambiguation=external_asset_disambiguation,
+        response_cards=response_cards,
+        usage_summary=usage_summary,
+        billed_points=billed_points,
+        resolved_context=resolved_context,
+        context_plan=context_plan,
+        resolved_context_input=resolved_context_input,
+        run_info=run_info,
+        supplement_candidates=supplement_candidates,
+        persisted_supplements=persisted_supplements,
+        reasoning_md=reasoning_md,
+        reasoning_status=reasoning_status,
+    )
+
+
+def _build_completed_payload(
+    *,
+    message_id: str,
+    thread_id: str,
+    output: ReaderAskUserVisibleOutput,
+) -> ReaderAskCompletedPayload:
+    return output_contract_svc.to_completed_payload(
+        message_id=message_id,
+        thread_id=thread_id,
+        output=output,
+    )
+
+
+def _terminal_reasoning_status(reasoning_started: bool) -> Literal["completed"] | None:
+    return "completed" if reasoning_started else None
+
+
+def _build_stream_checkpoint_output_json(
+    *,
+    content_md: str,
+    reasoning_md: str | None,
+    reasoning_status: str | None,
+    submission_mode: ReaderAskSubmissionMode,
+    resolved_intent: ReaderAskResolvedIntent | None,
+    record: _RecordBundle,
+    anchors: list[ReaderAskAnchorRef],
+    attachments: list[ReaderAskAttachment],
+    runtime_state: ReaderAskRuntimeState,
+    reference_resolution: planner.ReaderAskReferenceResolution,
+    disambiguation: ReaderAskDisambiguation | None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None,
+    trace_summary: ReaderAskTraceSummary | None,
+    context_plan: ReaderAskContextPlan | None,
+    resolved_context_input: ReaderAskResolvedContextInput | None,
+    run_info: dict[str, Any] | ReaderAskRunInfo | None,
+    persisted_supplements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    response_cards = _build_response_cards(
+        task_mode=resolved_intent or "general",
+        record=record,
+        anchors=anchors,
+        runtime_state=runtime_state,
+    )
+    supplement_candidates = _build_supplement_candidates_from_runtime(
+        resolved_intent=resolved_intent or "general",
+        anchors=anchors,
+        runtime_state=runtime_state,
+        assistant_content_md=content_md,
+        created_from_turn_run_id=str(run_info["run_id"]) if isinstance(run_info, dict) and run_info.get("run_id") else str(uuid4()),
+    )
+    supplement_candidates_json = [candidate.model_dump(mode="json") for candidate in supplement_candidates]
+    runtime_proposals = _build_action_proposals_from_runtime(
+        record=record,
+        action_requests=runtime_state.action_requests,
+        assistant_content_md=content_md,
+    )
+    action_proposals = _merge_action_proposals(
+        runtime_proposals,
+        _build_supplement_action_proposals(supplement_candidates_json),
+    )
+    output = _build_user_visible_output(
+        content_md=content_md,
+        submission_mode=submission_mode,
+        resolved_intent=resolved_intent,
+        citations=runtime_state.citations,
+        action_proposals=action_proposals,
+        tool_trace=runtime_state.tool_trace,
+        evidence=_build_evidence_items(
+            attachments=attachments,
+            citations=runtime_state.citations,
+            current_record_id=str(record.record_id),
+            current_record_title=record.title,
+            external_record_contexts=runtime_state.latest_external_record_contexts,
+            external_asset_contexts=runtime_state.latest_external_asset_contexts,
+            reference_resolution=reference_resolution,
+            supplement_candidates=supplement_candidates,
+            disambiguation=disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
+        ),
+        trace_summary=trace_summary,
+        disambiguation=disambiguation,
+        external_asset_disambiguation=external_asset_disambiguation,
+        response_cards=response_cards,
+        usage_summary=None,
+        billed_points=0,
+        resolved_context=_resolved_context_summary(
+            record=record,
+            anchors=anchors,
+            explicit_attachment_count=len(attachments),
+            runtime_state=runtime_state,
+            used_cross_record_context=runtime_state.used_cross_record_context,
+            citations=runtime_state.citations,
+        ),
+        context_plan=context_plan,
+        resolved_context_input=resolved_context_input,
+        run_info=run_info,
+        supplement_candidates=supplement_candidates,
+        persisted_supplements=persisted_supplements,
+        reasoning_md=reasoning_md,
+        reasoning_status=reasoning_status,
+    )
+    return output.model_dump(mode="json")
+
+
+def _visible_output_from_message(message: ReaderAskMessage, message_dict: dict[str, Any]) -> dict[str, Any]:
+    return output_contract_svc.visible_output_from_message(message, message_dict)
+
+
+def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot | None) -> dict[str, Any]:
+    if planning_snapshot is None:
+        return {}
+    return {
+        "resolved_intent": planning_snapshot.resolved_intent,
+        "planner_decision": planning_snapshot.planner_decision.model_dump(mode="json"),
+        "planner_validation_status": planning_snapshot.planner_validation_status,
+        "reference_needs": {
+            "requested": planning_snapshot.reference_needs.requested,
+            "query": planning_snapshot.reference_needs.query,
+            "reason": planning_snapshot.reference_needs.reason,
+        },
+        "retrieval_needs": planning_snapshot.retrieval_needs,
+        "resolved_references": {
+            "attempted": planning_snapshot.resolved_references.attempted,
+            "status": planning_snapshot.resolved_references.status,
+            "query": planning_snapshot.resolved_references.query,
+            "reason": planning_snapshot.resolved_references.reason,
+            "resolved_records": planning_snapshot.resolved_references.resolved_records,
+            "ambiguous_records": planning_snapshot.resolved_references.ambiguous_records,
+        },
+        "structured_asset_needs": {
+            "requested": planning_snapshot.structured_asset_needs.requested,
+            "requested_asset_type": planning_snapshot.structured_asset_needs.requested_asset_type,
+            "reason": planning_snapshot.structured_asset_needs.reason,
+        },
+        "structured_asset_resolution": {
+            "attempted": planning_snapshot.structured_asset_resolution.attempted,
+            "status": planning_snapshot.structured_asset_resolution.status,
+            "requested_asset_type": planning_snapshot.structured_asset_resolution.requested_asset_type,
+            "reason": planning_snapshot.structured_asset_resolution.reason,
+            "record_id": planning_snapshot.structured_asset_resolution.record_id,
+            "record_title": planning_snapshot.structured_asset_resolution.record_title,
+            "resolved_assets": planning_snapshot.structured_asset_resolution.resolved_assets,
+            "ambiguous_assets": planning_snapshot.structured_asset_resolution.ambiguous_assets,
+        },
+        "working_set": {
+            "primary_anchor": planning_snapshot.working_set.primary_anchor.model_dump(mode="json")
+            if planning_snapshot.working_set.primary_anchor
+            else None,
+            "local_context_window_needed": planning_snapshot.working_set.local_context_window_needed,
+            "record_insights_needed": planning_snapshot.working_set.record_insights_needed,
+            "article_overview_needed": planning_snapshot.working_set.article_overview_needed,
+            "dictionary_needed": planning_snapshot.working_set.dictionary_needed,
+            "cross_record_context_allowed": planning_snapshot.working_set.cross_record_context_allowed,
+            "external_record_refs": planning_snapshot.working_set.external_record_refs,
+            "external_asset_refs": planning_snapshot.working_set.external_asset_refs,
+            "external_asset_lookup_needed": planning_snapshot.working_set.external_asset_lookup_needed,
+        },
+        "context_plan": planning_snapshot.context_plan.model_dump(mode="json"),
+        "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json"),
+        "disambiguation_state": planning_snapshot.disambiguation_state.model_dump(mode="json")
+        if planning_snapshot.disambiguation_state
+        else None,
+        "external_asset_disambiguation_state": planning_snapshot.external_asset_disambiguation_state.model_dump(mode="json")
+        if planning_snapshot.external_asset_disambiguation_state
+        else None,
+    }
+
+
+def _capability_trace_json(
+    *,
+    runtime_state: ReaderAskRuntimeState,
+    context_plan: ReaderAskContextPlan | None,
+) -> dict[str, Any]:
+    return {
+        "local_context_window": {
+            "used": runtime_state.latest_record_context is not None,
+            "reason": context_plan.record_context_reason if context_plan else None,
+            "source_labels": ["current_record", "current_anchor", "current_paragraph"]
+            if runtime_state.latest_record_context is not None
+            else [],
+        },
+        "record_insights": {
+            "used": bool(runtime_state.latest_record_insights),
+            "reason": context_plan.record_insights_reason if context_plan else None,
+            "source_labels": ["record_assets"] if runtime_state.latest_record_insights else [],
+        },
+        "article_overview": {
+            "used": bool(runtime_state.latest_article_overview),
+            "reason": context_plan.article_overview_reason if context_plan else None,
+            "source_labels": ["article_overview"] if runtime_state.latest_article_overview else [],
+        },
+        "dictionary": {
+            "used": bool(runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai),
+            "reason": context_plan.dictionary_reason if context_plan else None,
+            "source_labels": ["dictionary"]
+            if runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai
+            else [],
+        },
+        "external_record_context": {
+            "used": bool(runtime_state.latest_external_record_contexts),
+            "reason": context_plan.external_record_context_reason if context_plan else None,
+            "source_labels": ["external_record_context"] if runtime_state.latest_external_record_contexts else [],
+        },
+        "structured_asset_lookup": {
+            "used": _external_context_has_structured_assets(runtime_state.latest_external_record_contexts),
+            "reason": context_plan.structured_asset_lookup_reason if context_plan else None,
+            "source_labels": ["article_overview", "record_assets"]
+            if _external_context_has_structured_assets(runtime_state.latest_external_record_contexts)
+            else [],
+        },
+        "external_asset_context": {
+            "used": bool(runtime_state.latest_external_asset_contexts),
+            "reason": context_plan.external_asset_selection_reason if context_plan else None,
+            "source_labels": ["external_assets"] if runtime_state.latest_external_asset_contexts else [],
+        },
+    }
+
+
+def _metrics_json(
+    *,
+    trace_summary: ReaderAskTraceSummary | None,
+    billed_points: int,
+    usage_event_id: UUID | None,
+) -> dict[str, Any]:
+    return {
+        "planner_mode": trace_summary.planner_mode if trace_summary else None,
+        "working_set_mode": trace_summary.working_set_mode if trace_summary else None,
+        "cross_record_context_allowed": trace_summary.cross_record_context_allowed if trace_summary else False,
+        "cross_record_context_used": trace_summary.cross_record_context_used if trace_summary else False,
+        "used_known_reference_resolution": trace_summary.used_known_reference_resolution if trace_summary else False,
+        "used_external_record_context": trace_summary.used_external_record_context if trace_summary else False,
+        "used_structured_asset_lookup": trace_summary.used_structured_asset_lookup if trace_summary else False,
+        "used_hitp_disambiguation": trace_summary.used_hitp_disambiguation if trace_summary else False,
+        "used_external_asset_context": trace_summary.used_external_asset_context if trace_summary else False,
+        "used_external_asset_disambiguation": trace_summary.used_external_asset_disambiguation if trace_summary else False,
+        "billed_points": billed_points,
+        "usage_event_id": str(usage_event_id) if usage_event_id else None,
+        "prompt_version": get_prompt_version(),
+    }
+
+
+async def _upsert_eval_trace_record(
+    *,
+    turn_run_id: UUID,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
+    runtime_state: ReaderAskRuntimeState,
+    context_plan: ReaderAskContextPlan | None,
+    action_audit_json: list[dict[str, Any]] | None = None,
+    supplement_audit_json: list[dict[str, Any]] | None = None,
+    trace_summary: ReaderAskTraceSummary | None = None,
+    billed_points: int = 0,
+    usage_event_id: UUID | None = None,
+) -> dict[str, Any]:
+    existing = await repo.get_eval_trace(turn_run_id)
+    return await repo.upsert_eval_trace(
+        turn_run_id=turn_run_id,
+        trace_schema_version=_EVAL_TRACE_SCHEMA_VERSION,
+        planning_snapshot_json=_planning_snapshot_json(planning_snapshot) or (existing or {}).get("planning_snapshot_json") or {},
+        capability_trace_json=_capability_trace_json(runtime_state=runtime_state, context_plan=context_plan)
+        if context_plan is not None or runtime_state.source_labels
+        else (existing or {}).get("capability_trace_json") or {},
+        action_audit_json=action_audit_json if action_audit_json is not None else (existing or {}).get("action_audit_json") or [],
+        supplement_audit_json=supplement_audit_json
+        if supplement_audit_json is not None
+        else (existing or {}).get("supplement_audit_json") or [],
+        metrics_json=_metrics_json(
+            trace_summary=trace_summary,
+            billed_points=billed_points,
+            usage_event_id=usage_event_id,
+        )
+        if trace_summary is not None or usage_event_id is not None or billed_points
+        else (existing or {}).get("metrics_json") or {},
+    )
+
+
+def _reasoning_enabled_settings(
+    route_settings: RunModelSettings,
+    *,
+    base_url: str = "",
+) -> RunModelSettings:
+    extra_body = dict(route_settings.extra_body or {})
+    extra_headers = dict(route_settings.extra_headers or {})
+    if "thinking" in extra_body and isinstance(extra_body["thinking"], dict):
+        thinking = dict(cast(dict[str, Any], extra_body["thinking"]))
+        if thinking.get("type") == "disabled":
+            thinking["type"] = "enabled"
+        extra_body["thinking"] = thinking
+    elif extra_body.get("enable_thinking") is False:
+        extra_body["enable_thinking"] = True
+    elif "enable_thinking" not in extra_body:
+        extra_body["enable_thinking"] = True
+
+    if extra_body.get("preserve_thinking") is True:
+        # DashScope streaming suppresses current-round reasoning output when
+        # preserve_thinking=true, which breaks the visible thinking UX.
+        extra_body["preserve_thinking"] = False
+
+    if "dashscope.aliyuncs.com" in base_url.lower():
+        # DashScope compatible-mode requires this header for HTTP SSE streaming.
+        # Without it, reasoning_content may only appear at the end instead of
+        # arriving incrementally.
+        extra_headers.setdefault("X-DashScope-SSE", "enable")
+        extra_body.setdefault("incremental_output", True)
+    return RunModelSettings(
+        max_tokens=route_settings.max_tokens,
+        temperature=route_settings.temperature,
+        top_p=route_settings.top_p,
+        timeout=route_settings.timeout,
+        parallel_tool_calls=route_settings.parallel_tool_calls,
+        seed=route_settings.seed,
+        presence_penalty=route_settings.presence_penalty,
+        frequency_penalty=route_settings.frequency_penalty,
+        stop_sequences=route_settings.stop_sequences,
+        extra_headers=extra_headers or None,
+        extra_body=extra_body or None,
+    )
+
+
+async def _maybe_flush_turn_run_stream_checkpoint(
+    *,
+    checkpoint: _TurnRunStreamCheckpoint | None,
+    runtime: _AgentStreamRuntime,
+    force: bool = False,
+) -> None:
+    if checkpoint is None:
+        return
+
+    content_text = runtime.emitted_text
+    reasoning_text = runtime.emitted_reasoning
+    content_len = len(content_text)
+    reasoning_len = len(reasoning_text)
+
+    if content_len == 0 and reasoning_len == 0 and not (force and runtime.reasoning_started):
+        return
+
+    grew_content = content_len - checkpoint.last_flushed_content_len
+    grew_reasoning = reasoning_len - checkpoint.last_flushed_reasoning_len
+    now = perf_counter()
+    has_new_content = grew_content > 0 or grew_reasoning > 0
+    interval_elapsed = (
+        checkpoint.last_flushed_at > 0
+        and has_new_content
+        and (now - checkpoint.last_flushed_at) >= checkpoint.min_flush_interval_s
+    )
+    should_flush = (
+        force
+        or checkpoint.last_flushed_at == 0
+        or grew_content >= checkpoint.min_content_chars
+        or grew_reasoning >= checkpoint.min_reasoning_chars
+        or interval_elapsed
+    )
+
+    if not should_flush:
+        return
+
+    reasoning_status = "streaming" if runtime.reasoning_started else None
+    reasoning_md = reasoning_text or None
+    snapshot = checkpoint.build_output_json(content_text, reasoning_md, reasoning_status)
+
+    try:
+        await repo.update_turn_run(
+            turn_run_id=checkpoint.turn_run_id,
+            status="streaming",
+            user_visible_output_json=snapshot,
+        )
+    except Exception:
+        logger.warning(
+            "reader_ask_stream_checkpoint_flush_failed",
+            exc_info=True,
+            extra={"turn_run_id": str(checkpoint.turn_run_id)},
+        )
+        return
+
+    checkpoint.last_flushed_at = now
+    checkpoint.last_flushed_content_len = content_len
+    checkpoint.last_flushed_reasoning_len = reasoning_len
+
+
+def _start_reader_ask_agent_stream(
+    *,
+    agent: Any,
+    deps: ReaderAskAgentDeps,
+    model: Any,
+    route_settings: RunModelSettings,
+    assistant_message_id: str,
+    base_url: str,
+    checkpoint: _TurnRunStreamCheckpoint | None = None,
+) -> tuple[asyncio.Task[None], _AgentStreamRuntime]:
+    event_queue = deps.event_queue
+    runtime = _AgentStreamRuntime()
+
+    async def run_agent_stream() -> None:
+        try:
+            async with agent.run_stream(
+                build_reader_ask_prompt(deps),
+                deps=deps,
+                model=model,
+                model_settings=_reasoning_enabled_settings(
+                    route_settings,
+                    base_url=base_url,
+                ).to_pydantic_ai(),
+            ) as result:
+                async for response, _last in result.stream_responses(debounce_by=None):
+                    thinking_text = response.thinking or ""
+                    if thinking_text and not runtime.reasoning_started:
+                        runtime.reasoning_started = True
+                        await event_queue.put(("reasoning.started", {"message_id": assistant_message_id}))
+                    if thinking_text.startswith(runtime.emitted_reasoning):
+                        reasoning_delta = thinking_text[len(runtime.emitted_reasoning):]
+                    else:
+                        reasoning_delta = thinking_text
+                    if reasoning_delta:
+                        runtime.emitted_reasoning = thinking_text
+                        await event_queue.put(
+                            ("reasoning.delta", {"message_id": assistant_message_id, "delta": reasoning_delta})
+                        )
+
+                    text_value = response.text or ""
+                    if text_value.startswith(runtime.emitted_text):
+                        text_delta = text_value[len(runtime.emitted_text):]
+                    else:
+                        text_delta = text_value
+                    if text_delta:
+                        runtime.emitted_text = text_value
+                        runtime.content_parts.append(text_delta)
+                        await event_queue.put(
+                            ("message.delta", {"message_id": assistant_message_id, "delta": text_delta})
+                        )
+                    await _maybe_flush_turn_run_stream_checkpoint(
+                        checkpoint=checkpoint,
+                        runtime=runtime,
+                    )
+                await _maybe_flush_turn_run_stream_checkpoint(
+                    checkpoint=checkpoint,
+                    runtime=runtime,
+                    force=True,
+                )
+                if runtime.reasoning_started:
+                    await event_queue.put(("reasoning.completed", {"message_id": assistant_message_id}))
+                runtime.usage_summary = build_usage_metadata(result.usage())
+        except Exception as exc:
+            await _maybe_flush_turn_run_stream_checkpoint(
+                checkpoint=checkpoint,
+                runtime=runtime,
+                force=True,
+            )
+            runtime.producer_error = exc
+        finally:
+            runtime.producer_done.set()
+
+    return asyncio.create_task(run_agent_stream()), runtime
+
+
+async def _stream_reader_ask_events(
+    *,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    producer_done: asyncio.Event,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    while not producer_done.is_set() or not event_queue.empty():
+        try:
+            event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+        except TimeoutError:
+            continue
+        yield event_name, event_payload
+
+
+def _finish_reader_ask_agent_stream(
+    *,
+    runtime: _AgentStreamRuntime,
+    assistant_message_id: str,
+) -> tuple[_AgentStreamOutcome, tuple[str, dict[str, Any]] | None]:
+    final_content_md = "".join(runtime.content_parts).strip()
+    if runtime.producer_error is not None:
+        if final_content_md:
+            return (
+                _AgentStreamOutcome(
+                    content_md=final_content_md,
+                    usage_summary=runtime.usage_summary,
+                    interrupted=True,
+                    interruption_detail=str(runtime.producer_error) or "输出中断",
+                ),
+                (
+                    "message.interrupted",
+                    {
+                        "message_id": assistant_message_id,
+                        "content_md": final_content_md,
+                        "detail": str(runtime.producer_error) or "输出中断",
+                        "can_retry": True,
+                    },
+                ),
+            )
+        raise runtime.producer_error
+    return (
+        _AgentStreamOutcome(content_md=final_content_md, usage_summary=runtime.usage_summary, interrupted=False),
+        None,
+    )
+
+
+def _normalize_persisted_supplements(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items or []:
+        supplement_id = str(item.get("supplement_id") or "").strip()
+        if not supplement_id or supplement_id in seen:
+            continue
+        seen.add(supplement_id)
+        normalized.append(dict(item))
+    return normalized
+
+
+def _upsert_persisted_supplement(
+    items: list[dict[str, Any]] | None,
+    supplement: ReaderAskPersistedSupplement,
+) -> list[dict[str, Any]]:
+    supplement_json = supplement.model_dump(mode="json")
+    next_items = _normalize_persisted_supplements(items)
+    for index, item in enumerate(next_items):
+        if item.get("supplement_id") == supplement.supplement_id:
+            next_items[index] = supplement_json
+            return next_items
+    next_items.append(supplement_json)
+    return next_items
+
+
+def _mark_deleted_persisted_supplement(
+    items: list[dict[str, Any]] | None,
+    supplement: ReaderAskPersistedSupplement,
+) -> list[dict[str, Any]]:
+    supplement_json = supplement.model_dump(mode="json")
+    next_items = _normalize_persisted_supplements(items)
+    for index, item in enumerate(next_items):
+        if item.get("supplement_id") == supplement.supplement_id:
+            next_items[index] = supplement_json
+            return next_items
+    next_items.append(supplement_json)
+    return next_items
+
+
+def _new_run_info(
+    *,
+    turn_id: str | None = None,
+    run_id: str | None = None,
+    attempt: int = 1,
+    supersedes_run_id: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "turn_id": turn_id or str(uuid4()),
+        "run_id": run_id or str(uuid4()),
+        "run_attempt": max(attempt, 1),
+        "supersedes_run_id": supersedes_run_id,
+    }
+
+
+def _next_run_info(message_dict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    current = message_dict.get("run_info")
+    history = list(message_dict.get("run_history") or [])
+    current_turn_run = message_dict.get("current_turn_run")
+    if isinstance(current_turn_run, dict) and current_turn_run.get("id"):
+        if current is not None:
+            history.append(current)
+        return (
+            _new_run_info(
+                turn_id=str(current_turn_run.get("turn_id") or (current or {}).get("turn_id") or str(uuid4())),
+                attempt=int(current_turn_run.get("run_attempt") or 1) + 1,
+                supersedes_run_id=str(current_turn_run.get("id")),
+            ),
+            history,
+        )
+    if current is not None:
+        history.append(current)
+    if current is None:
+        return _new_run_info(), history
+    return (
+        _new_run_info(
+            turn_id=current.get("turn_id"),
+            attempt=int(current.get("run_attempt") or 1) + 1,
+            supersedes_run_id=current.get("run_id"),
+        ),
+        history,
+    )
 
 
 def _extract_sentence_analysis_parts(content: str) -> tuple[str | None, list[ReaderAskSentenceBreakdownPart]]:
@@ -971,16 +2504,35 @@ def _sentence_analysis_card(
     anchors: list[ReaderAskAnchorRef],
     runtime_state: ReaderAskRuntimeState,
 ) -> ReaderAskSentenceBreakdownCard | None:
-    insights = runtime_state.latest_record_insights
-    if not insights:
-        return None
-    analysis_entry = next((item for item in insights if item.get("entry_type") == "sentence_analysis"), None)
-    if not analysis_entry:
-        return None
-    analysis_text, parts = _extract_sentence_analysis_parts(str(analysis_entry.get("content") or ""))
-    if not parts:
-        return None
-    sentence_id = str(analysis_entry.get("sentence_id") or anchors[0].sentence_id or "")
+    generated = next(
+        (item for item in runtime_state.latest_generated_annotations if item.get("kind") == "sentence_analysis"),
+        None,
+    )
+    if generated is not None:
+        sentence_id = str(generated.get("sentence_id") or anchors[0].sentence_id or "")
+        parts = [
+            ReaderAskSentenceBreakdownPart(
+                label=str(chunk.get("label") or ""),
+                text=str(chunk.get("text") or ""),
+            )
+            for chunk in generated.get("chunks") or []
+            if isinstance(chunk, dict) and str(chunk.get("label") or "").strip() and str(chunk.get("text") or "").strip()
+        ]
+        if not parts:
+            return None
+        analysis_text = str(generated.get("analysis_zh") or generated.get("content") or "").strip() or None
+    else:
+        insights = runtime_state.latest_record_insights
+        if not insights:
+            return None
+        analysis_entry = next((item for item in insights if item.get("entry_type") == "sentence_analysis"), None)
+        if not analysis_entry:
+            return None
+        analysis_text, parts = _extract_sentence_analysis_parts(str(analysis_entry.get("content") or ""))
+        if not parts:
+            return None
+        sentence_id = str(analysis_entry.get("sentence_id") or anchors[0].sentence_id or "")
+
     sentence_text = _render_scene_sentence_text(record, sentence_id) or _first_anchor_text(anchors[0])
     if not sentence_text:
         return None
@@ -992,6 +2544,42 @@ def _sentence_analysis_card(
         main_clause=main_clause,
         analysis_zh=analysis_text,
         parts=parts,
+    )
+
+
+def _grammar_note_card(runtime_state: ReaderAskRuntimeState) -> ReaderAskGrammarNoteCard | None:
+    generated = next(
+        (
+            item
+            for item in runtime_state.latest_generated_annotations
+            if item.get("kind") == "grammar_note" and item.get("status") == "ready"
+        ),
+        None,
+    )
+    if generated is None:
+        return None
+    sentence_text = str(generated.get("source_sentence") or "").strip()
+    focus_text = str(generated.get("focus_text") or "").strip() or sentence_text
+    label = str(generated.get("label") or "").strip()
+    note_zh = str(generated.get("note_zh") or generated.get("content") or "").strip()
+    analysis_scope = str(generated.get("analysis_scope") or "full_sentence")
+    if not sentence_text or not focus_text or not label or not note_zh:
+        return None
+    spans = [
+        ReaderAskGrammarNoteCardSpan(
+            text=str(span.get("text") or "").strip(),
+            role=str(span.get("role") or "").strip() or None,
+        )
+        for span in generated.get("spans") or []
+        if isinstance(span, dict) and str(span.get("text") or "").strip()
+    ]
+    return ReaderAskGrammarNoteCard(
+        sentence_text=sentence_text,
+        focus_text=focus_text,
+        label=label,
+        note_zh=note_zh,
+        spans=spans,
+        analysis_scope="focus_span" if analysis_scope == "focus_span" else "full_sentence",
     )
 
 
@@ -1088,7 +2676,11 @@ def _build_response_cards(
     runtime_state: ReaderAskRuntimeState,
 ) -> list[ReaderAskResponseCard]:
     cards: list[ReaderAskResponseCard] = []
-    if task_mode == "breakdown":
+    if task_mode == "grammar":
+        card = _grammar_note_card(runtime_state)
+        if card is not None:
+            cards.append(card)
+    elif task_mode == "breakdown":
         card = _sentence_analysis_card(record=record, anchors=anchors, runtime_state=runtime_state)
         if card is not None:
             cards.append(card)
@@ -1101,6 +2693,147 @@ def _build_response_cards(
         if card is not None:
             cards.append(card)
     return cards
+
+
+def _build_supplement_candidates_from_runtime(
+    *,
+    resolved_intent: ReaderAskResolvedIntent,
+    anchors: list[ReaderAskAnchorRef],
+    runtime_state: ReaderAskRuntimeState,
+    assistant_content_md: str,
+    created_from_turn_run_id: str,
+) -> list[ReaderAskSupplementCandidate]:
+    generated_grammar_note = next(
+        (
+            item
+            for item in runtime_state.latest_generated_annotations
+            if item.get("kind") == "grammar_note" and item.get("status") == "ready"
+        ),
+        None,
+    )
+    if generated_grammar_note is not None and anchors:
+        content = str(generated_grammar_note.get("content") or "").strip()
+        if content:
+            candidate = supplements_svc.build_grammar_note_candidate(
+                anchor=anchors[0],
+                assistant_content_md=content,
+                created_from_turn_run_id=created_from_turn_run_id,
+            )
+            return [candidate] if candidate is not None else []
+    return capabilities_svc.build_supplement_candidates(
+        resolved_intent=resolved_intent,
+        anchors=anchors,
+        assistant_content_md=assistant_content_md,
+        created_from_turn_run_id=created_from_turn_run_id,
+    )
+
+
+def _quick_action_label(entry_action: ReaderAskEntryAction) -> str:
+    if entry_action == "why_here":
+        return "语法解析"
+    if entry_action == "explain_this":
+        return "句子拆分"
+    return "快捷分析"
+
+
+def _quick_action_content(
+    *,
+    entry_action: ReaderAskEntryAction,
+    generated_annotation: dict[str, Any] | None,
+) -> str:
+    if generated_annotation is None:
+        return f"{_quick_action_label(entry_action)}暂时无法完成。"
+    if generated_annotation.get("status") == "not_applicable":
+        reason = str(generated_annotation.get("reason") or "").strip()
+        suggestion = str(generated_annotation.get("suggestion") or "").strip()
+        pieces = [f"这次没有直接生成{_quick_action_label(entry_action)}卡。"]
+        if reason:
+            pieces.append(reason)
+        if suggestion:
+            pieces.append(suggestion)
+        return "\n\n".join(pieces)
+
+    label = str(generated_annotation.get("label") or "").strip()
+    focus_text = str(generated_annotation.get("focus_text") or "").strip()
+    if generated_annotation.get("kind") == "grammar_note":
+        note = str(generated_annotation.get("note_zh") or generated_annotation.get("content") or "").strip()
+        scope_hint = (
+            "我先基于整句理解，再聚焦你选中的片段。"
+            if generated_annotation.get("analysis_scope") == "focus_span"
+            else "我直接围绕这句话的关键结构来解释。"
+        )
+        pieces = [scope_hint]
+        if label:
+            pieces.append(f"关键语法点：**{label}**")
+        if focus_text and generated_annotation.get("analysis_scope") == "focus_span":
+            pieces.append(f"聚焦片段：`{focus_text}`")
+        if note:
+            pieces.append(note)
+        return "\n\n".join(pieces)
+
+    analysis = str(generated_annotation.get("analysis_zh") or generated_annotation.get("content") or "").strip()
+    pieces = ["我先给你一个结构拆解卡，再补一句阅读顺序说明。"]
+    if label:
+        pieces.append(f"句型概述：**{label}**")
+    if analysis:
+        pieces.append(analysis)
+    return "\n\n".join(pieces)
+
+
+def _tool_trace_entry(
+    *,
+    tool_name: str,
+    status: Literal["started", "completed", "failed"],
+    summary: str | None = None,
+) -> ReaderAskToolTraceEntry:
+    now = datetime.now(UTC).isoformat()
+    if status == "started":
+        return ReaderAskToolTraceEntry(tool_name=tool_name, status=status, started_at=now)
+    return ReaderAskToolTraceEntry(
+        tool_name=tool_name,
+        status=status,
+        started_at=now,
+        completed_at=now,
+        summary=summary,
+    )
+
+
+async def _run_explicit_quick_action_annotation(
+    *,
+    submission_mode: ReaderAskSubmissionMode,
+    task_mode: ReaderAskTaskMode,
+    entry_action: ReaderAskEntryAction,
+    record: _RecordBundle,
+    primary_anchor: ReaderAskAnchorRef | None,
+    runtime_state: ReaderAskRuntimeState,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] | None = None,
+) -> dict[str, Any] | None:
+    if submission_mode != "quick_action":
+        return None
+    kind = _annotation_quick_action_kind(task_mode, entry_action)
+    if kind is None or primary_anchor is None:
+        return None
+
+    runtime_state.tool_trace.append(_tool_trace_entry(tool_name="generate_sentence_annotation", status="started"))
+    if event_queue is not None:
+        await event_queue.put(("tool.started", {"tool_name": "generate_sentence_annotation"}))
+    generated = await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
+    if generated is not None:
+        runtime_state.latest_generated_annotations.append(generated)
+        if generated.get("status") == "ready":
+            runtime_state.source_labels.add("record_assets")
+    summary = (
+        "Generated structured analysis"
+        if generated and generated.get("status") == "ready"
+        else str(generated.get("reason") or "No stable structured analysis") if generated
+        else "No stable structured analysis"
+    )
+    runtime_state.tool_trace.append(
+        _tool_trace_entry(tool_name="generate_sentence_annotation", status="completed", summary=summary)
+    )
+    if event_queue is not None:
+        await event_queue.put(("tool.completed", {"tool_name": "generate_sentence_annotation", "summary": summary}))
+    return generated
 
 
 async def _ensure_task_card_data(
@@ -1178,52 +2911,10 @@ def _build_action_proposals(
     anchors: list[ReaderAskAnchorRef],
     assistant_content_md: str,
 ) -> list[ReaderAskActionProposal]:
-    proposals: list[ReaderAskActionProposal] = []
-    primary_anchor = anchors[0] if anchors else None
-    if primary_anchor is None:
-        return proposals
-
-    if _SAVE_NOTE_RE.search(user_message):
-        proposals.append(
-            ReaderAskActionProposal(
-                id=str(uuid4()),
-                action_type="save_answer_note",
-                label="保存为笔记",
-                description="把本条解释保存到当前锚点笔记",
-                payload_json={
-                    "record_id": str(record.record_id),
-                    "anchor": primary_anchor.model_dump(mode="json"),
-                    "note_text": assistant_content_md,
-                },
-            )
-        )
-    if _SAVE_EXCERPT_RE.search(user_message):
-        proposals.append(
-            ReaderAskActionProposal(
-                id=str(uuid4()),
-                action_type="save_excerpt",
-                label="保存为高亮",
-                description="把当前锚点保存成高亮/摘录",
-                payload_json={
-                    "record_id": str(record.record_id),
-                    "anchor": primary_anchor.model_dump(mode="json"),
-                },
-            )
-        )
-    if _FAVORITE_RE.search(user_message):
-        proposals.append(
-            ReaderAskActionProposal(
-                id=str(uuid4()),
-                action_type="favorite_anchor",
-                label="加入收藏",
-                description="收藏当前锚点",
-                payload_json={
-                    "record_id": str(record.record_id),
-                    "anchor": primary_anchor.model_dump(mode="json"),
-                },
-            )
-        )
-    return proposals
+    # DEPRECATED: action proposals 已迁移至 agent runtime 生成（见 _build_action_proposals_from_runtime）。
+    # 此函数保留仅为兼容性占位，后续版本应删除。
+    del user_message, record, anchors, assistant_content_md
+    return []
 
 
 def _build_action_proposals_from_runtime(
@@ -1235,8 +2926,6 @@ def _build_action_proposals_from_runtime(
     proposals: list[ReaderAskActionProposal] = []
     for request in action_requests:
         payload_json = dict(request.payload_json)
-        if request.action_type == "save_answer_note" and not str(payload_json.get("note_text") or "").strip():
-            payload_json["note_text"] = assistant_content_md
         proposals.append(
             ReaderAskActionProposal(
                 id=str(uuid4()),
@@ -1248,6 +2937,23 @@ def _build_action_proposals_from_runtime(
                     "record_id": str(record.record_id),
                     **payload_json,
                 },
+            )
+        )
+    return proposals
+
+
+def _build_supplement_action_proposals(
+    candidates: list[dict[str, Any]],
+) -> list[ReaderAskActionProposal]:
+    proposals: list[ReaderAskActionProposal] = []
+    for candidate in candidates:
+        proposals.append(
+            ReaderAskActionProposal(
+                id=str(uuid4()),
+                action_type="create_supplement_grammar_note",
+                label="加入当前页补充",
+                description="把这条 AI 语法旁注加入当前文章，并固定显示在对应句子下。",
+                payload_json={"candidate": candidate},
             )
         )
     return proposals
@@ -1309,38 +3015,109 @@ def _merge_usage_summaries(base_usage: dict[str, Any] | None, extra_usages: list
     return {"aggregate": aggregate, **details}
 
 
+def _build_context_plan(
+    *,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    runtime_state: ReaderAskRuntimeState,
+    citations: list[ReaderAskCitation],
+    reference_resolution: planner.ReaderAskReferenceResolution | None = None,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None,
+) -> ReaderAskContextPlan:
+    return planner.build_context_plan(
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        runtime_state=runtime_state,
+        citations=citations,
+        reference_resolution=reference_resolution,
+        planning_snapshot=planning_snapshot,
+    )
+
+
+def _build_resolved_context_input(
+    *,
+    page_identity: ReaderAskPageIdentity,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    current_record_context: ReaderAskCurrentRecordContext | None = None,
+    external_record_contexts: list[ReaderAskExternalRecordContext] | None = None,
+    external_asset_contexts: list[ReaderAskExternalAssetContext] | None = None,
+) -> ReaderAskResolvedContextInput:
+    return planner.build_resolved_context_input(
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        current_record_context=current_record_context,
+        external_record_contexts=external_record_contexts,
+        external_asset_contexts=external_asset_contexts,
+    )
+
+
 def _resolved_context_summary(
     *,
     record: _RecordBundle,
     anchors: list[ReaderAskAnchorRef],
+    explicit_attachment_count: int,
     runtime_state: ReaderAskRuntimeState,
-    used_history_lookup: bool,
+    used_cross_record_context: bool,
     citations: list[ReaderAskCitation],
 ) -> ReaderAskResolvedContextSummary:
-    labels = []
-    if anchors:
-        labels.append("current_anchor")
-    labels.append("current_record")
-    if runtime_state.latest_record_context:
-        labels.append("current_paragraph")
-    if runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets:
-        labels.append("record_assets")
-    if used_history_lookup:
-        labels.append("history_assets")
-    if any(citation.kind == "vocabulary" for citation in citations):
-        labels.append("vocabulary")
-    if any(citation.kind in {"dictionary_entry", "dictionary_ai"} for citation in citations):
-        labels.append("dictionary")
-    return ReaderAskResolvedContextSummary(
+    return planner.build_resolved_context_summary(
         record_id=str(record.record_id),
         record_title=record.title,
-        anchor_count=len(anchors),
-        used_history_lookup=used_history_lookup,
-        current_sentence_used=bool(anchors),
-        current_paragraph_used=runtime_state.latest_record_context is not None,
-        used_record_assets=bool(runtime_state.latest_record_insights or runtime_state.latest_record_excerpt_assets),
-        used_dictionary=any(citation.kind in {"dictionary_entry", "dictionary_ai"} for citation in citations),
-        source_labels=labels,
+        anchors=anchors,
+        explicit_attachment_count=explicit_attachment_count,
+        runtime_state=runtime_state,
+        used_cross_record_context=used_cross_record_context,
+        citations=citations,
+    )
+
+
+def _build_trace_summary(
+    *,
+    runtime_state: ReaderAskRuntimeState,
+    context_plan: ReaderAskContextPlan,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None,
+    clarification_mode: planner.ReaderAskClarificationMode = "none",
+) -> ReaderAskTraceSummary:
+    return planner.build_trace_summary(
+        runtime_state=runtime_state,
+        context_plan=context_plan,
+        planning_snapshot=planning_snapshot,
+        clarification_mode=clarification_mode,
+    )
+
+
+def _build_evidence_items(
+    *,
+    attachments: list[ReaderAskAttachment],
+    citations: list[ReaderAskCitation],
+    current_record_id: str | None = None,
+    current_record_title: str | None = None,
+    external_record_contexts: list[dict[str, Any]] | None = None,
+    external_asset_contexts: list[dict[str, Any]] | None = None,
+    reference_resolution: planner.ReaderAskReferenceResolution | None = None,
+    supplement_candidates: list[ReaderAskSupplementCandidate] | None = None,
+    disambiguation: ReaderAskDisambiguation | None = None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None,
+    include_clarification: bool = False,
+) -> list[ReaderAskEvidenceItem]:
+    return post_process_svc.build_evidence_items(
+        attachments=attachments,
+        citations=citations,
+        current_record_id=current_record_id,
+        current_record_title=current_record_title,
+        external_record_contexts=external_record_contexts,
+        external_asset_contexts=external_asset_contexts,
+        reference_resolution=reference_resolution,
+        supplement_candidates=supplement_candidates,
+        disambiguation=disambiguation,
+        external_asset_disambiguation=external_asset_disambiguation,
+        include_clarification=include_clarification,
     )
 
 
@@ -1351,21 +3128,59 @@ async def list_threads(user_id: UUID, record_id: str) -> ReaderAskThreadListResp
     return ReaderAskThreadListResponse(items=[ReaderAskThreadSummary.model_validate(item) for item in items])
 
 
+async def list_context_records(
+    user_id: UUID,
+    *,
+    query: str,
+    exclude_record_id: str | None = None,
+) -> ReaderAskContextRecordSearchResponse:
+    normalized_query = query.strip()
+    exclude_uuid = _parse_uuid(exclude_record_id, "exclude_record_id must be a UUID") if exclude_record_id else None
+    rows = (
+        await repo.search_records_by_title(
+            user_id,
+            query=normalized_query,
+            exclude_record_id=exclude_uuid,
+            limit=8,
+        )
+        if normalized_query
+        else await repo.list_recent_records(
+            user_id,
+            exclude_record_id=exclude_uuid,
+            limit=6,
+        )
+    )
+    return ReaderAskContextRecordSearchResponse(
+        items=[
+            {
+                "record_id": row["id"],
+                "title": row.get("title"),
+                "updated_at": row.get("updated_at"),
+                "overview_hint": utils.truncate_text_optional(
+                    (
+                        overview := utils.resolve_record_overview(
+                            render_scene=ensure_json_dict(row.get("render_scene_json")),
+                            page_state_json=ensure_json_dict(row.get("page_state_json")),
+                        )
+                    ).get("overview"),
+                    140,
+                ),
+                "overview_hint_status": overview.get("status"),
+                "overview_hint_source": overview.get("source"),
+            }
+            for row in rows
+        ]
+    )
+
+
 async def create_thread(user_id: UUID, body: ReaderAskThreadCreateRequest) -> ReaderAskThreadSummary:
     record_uuid = _parse_uuid(body.record_id, "record_id must be a UUID")
     record = await repo.ensure_record_access(user_id, record_uuid)
-    if body.mode == "default":
-        thread = await repo.get_or_create_default_thread(
-            user_id,
-            record_uuid,
-            title=body.title or record.get("title") or "Ask Claread",
-        )
-    else:
-        thread = await repo.create_new_chat_thread(
-            user_id,
-            record_uuid,
-            title=body.title or "New chat",
-        )
+    thread = await repo.get_or_create_default_thread(
+        user_id,
+        record_uuid,
+        title=body.title or record.get("title") or "Ask Claread",
+    )
     return ReaderAskThreadSummary.model_validate(thread)
 
 
@@ -1375,6 +3190,25 @@ async def get_thread_detail(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDe
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
     messages = await repo.list_messages(thread_id, limit=100)
     return ReaderAskThreadDetail.model_validate({**thread, "messages": messages})
+
+
+async def reset_thread(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
+    thread = await repo.get_thread(user_id, thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Reader ask thread not found")
+
+    record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
+    archived = await repo.archive_thread(user_id, thread_id)
+    if archived is None:
+        raise HTTPException(status_code=404, detail="Reader ask thread not found")
+
+    next_thread = await repo.get_or_create_default_thread(
+        user_id,
+        record_id,
+        title=thread.get("title") or "Ask Claread",
+    )
+    messages = await repo.list_messages(_parse_uuid(next_thread["id"], "thread id is invalid"), limit=100)
+    return ReaderAskThreadDetail.model_validate({**next_thread, "messages": messages})
 
 
 async def _record_failure_event(
@@ -1422,6 +3256,7 @@ async def stream_thread_message(
     thread: dict[str, Any] | None = None
     record: _RecordBundle | None = None
     history_messages: list[dict[str, Any]] = []
+    attachments: list[ReaderAskAttachment] = []
     resolved_anchors: list[ReaderAskAnchorRef] = []
     anchor_payload: list[dict[str, Any]] = []
     reservation: CreditReservation | None = None
@@ -1429,6 +3264,21 @@ async def stream_thread_message(
     assistant_message: dict[str, Any] | None = None
     runtime_state = ReaderAskRuntimeState()
     nested_tool_usages: list[dict[str, Any]] = []
+    planner_usage_summary: dict[str, Any] | None = None
+    resolved_intent: ReaderAskResolvedIntent | None = None
+    resolved_context_input: ReaderAskResolvedContextInput | None = None
+    context_plan: ReaderAskContextPlan | None = None
+    evidence: list[ReaderAskEvidenceItem] = []
+    trace_summary: ReaderAskTraceSummary | None = None
+    run_info: dict[str, Any] | None = None
+    active_turn_run_id: UUID | None = None
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
+    disambiguation: ReaderAskDisambiguation | None = None
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
+    reference_resolution = planner.ReaderAskReferenceResolution()
+    final_content_md = ""
+    persisted_supplements_json: list[dict[str, Any]] = []
+    stream_runtime: _AgentStreamRuntime | None = None
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -1438,100 +3288,22 @@ async def stream_thread_message(
         record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
         record = await _load_record_bundle(user_id, record_id)
         history_messages = await repo.list_messages(thread_id, limit=100)
-        fallback_citation = None
-        for message in reversed(history_messages):
-            if message["role"] == "assistant" and message["citations"]:
-                fallback_citation = message["citations"][0]
-                break
+        if _parse_uuid(body.page_identity.record_id, "page_identity.record_id must be a UUID") != record.record_id:
+            raise HTTPException(status_code=400, detail="page_identity.record_id does not match thread record")
 
+        attachments = body.attachments
+        incoming_anchors = _attachments_to_anchor_refs(attachments)
         resolved_anchors = await _resolve_anchor_refs(
             user_id,
             record,
-            anchors=body.anchors,
-            reader_focus=body.reader_focus,
-            fallback_citation=fallback_citation,
+            anchors=incoming_anchors,
         )
         anchor_payload = [anchor.model_dump(mode="json") for anchor in resolved_anchors]
-
-        clarification_only = _needs_clarification(body.content, resolved_anchors, body.reader_focus)
-        if clarification_only:
-            user_message = await repo.create_message(
-                thread_id=thread_id,
-                role="user",
-                status="completed",
-                content_md=body.content,
-                context_anchors=anchor_payload,
-                metadata=_message_metadata(task_mode=body.task_mode),
-            )
-            yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
-
-            assistant_md = (
-                "我还不能确定你说的“这里/这句”具体指哪一处。"
-                "请先在正文里选中一句或把相关解析卡片加入对话上下文后再问我。"
-            )
-            assistant_message = await repo.create_message(
-                thread_id=thread_id,
-                role="assistant",
-                status="completed",
-                content_md=assistant_md,
-                context_anchors=anchor_payload,
-            )
-            citations = [
-                _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
-                for anchor in resolved_anchors
-            ]
-            payload = ReaderAskCompletedPayload(
-                id=assistant_message["id"],
-                thread_id=str(thread_id),
-                content_md=assistant_md,
-                task_mode=body.task_mode,
-                citations=citations,
-                action_proposals=[],
-                tool_trace=[],
-                response_cards=[],
-                usage_summary=None,
-                billed_points=0,
-                resolved_context=_resolved_context_summary(
-                    record=record,
-                    anchors=resolved_anchors,
-                    runtime_state=ReaderAskRuntimeState(citations=list(citations)),
-                    used_history_lookup=False,
-                    citations=citations,
-                ),
-            )
-            assistant_metadata = _message_metadata(
-                task_mode=body.task_mode,
-                resolved_context=payload.resolved_context,
-                response_cards=[],
-            )
-            yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
-            yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
-            await repo.update_message(
-                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
-                status="completed",
-                content_md=assistant_md,
-                context_anchors=anchor_payload,
-                citations=[citation.model_dump(mode="json") for citation in citations],
-                action_proposals=[],
-                tool_trace=[],
-                metadata=assistant_metadata,
-                usage_event_id=None,
-            )
-            yield _sse("message.completed", payload.model_dump(mode="json"))
-            return
 
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
         if remaining < READER_ASK_RESERVED_POINTS:
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
-            )
+            yield _sse("error", _insufficient_credits_payload(remaining))
             return
 
         reservation_metadata = {
@@ -1551,15 +3323,219 @@ async def stream_thread_message(
         )
         if reservation is None:
             remaining = await check_quota(user_id)
-            yield _sse(
-                "error",
-                {
-                    "code": "INSUFFICIENT_CREDITS",
-                    "detail": "Not enough credits for this Ask Claread request.",
-                    "remaining_points": remaining,
-                    "required_points": READER_ASK_RESERVED_POINTS,
-                },
+            yield _sse("error", _insufficient_credits_payload(remaining))
+            return
+
+        planning_result = await _resolve_semantic_planning(
+            user_id=user_id,
+            record=record,
+            history_messages=history_messages,
+            user_message=body.content,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+        )
+        planner_usage_summary = planning_result.planner_usage_summary
+        reference_resolution = planning_result.reference_resolution
+        planning_snapshot = planning_result.planning_snapshot
+        resolved_intent = planning_snapshot.resolved_intent
+        resolved_context_input = planning_snapshot.resolved_context_input
+        disambiguation = planning_snapshot.disambiguation_state
+        external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+        clarification_only = planning_snapshot.clarification_only
+        clarification_mode = planning_snapshot.clarification_mode
+        submission_mode = _submission_mode(entry_action=body.entry_action, attachments=attachments)
+        if clarification_only and clarification_mode == "must_clarify":
+            user_message = await repo.create_message(
+                thread_id=thread_id,
+                role="user",
+                status="completed",
+                content_md=body.content,
+                context_anchors=anchor_payload,
+                metadata=_user_message_metadata(
+                    resolved_intent=resolved_intent,
+                    resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
+                ),
             )
+            yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
+
+            assistant_md = post_process_svc.build_clarification_message(
+                local_anchor_required=planning_snapshot.context_plan.clarification_reason == "missing_required_context",
+                reference_resolution=reference_resolution,
+                structured_asset_resolution=planning_snapshot.structured_asset_resolution,
+            )
+            assistant_message = await repo.create_message(
+                thread_id=thread_id,
+                role="assistant",
+                status="completed",
+                content_md=assistant_md,
+                context_anchors=anchor_payload,
+                metadata=_assistant_message_metadata(
+                    resolved_intent=resolved_intent,
+                    resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
+                ),
+            )
+            turn_run = await repo.create_turn_run(
+                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+                thread_id=thread_id,
+                user_id=user_id,
+                record_id=record.record_id,
+                turn_id=_parse_uuid(user_message["id"], "user message id is invalid"),
+                run_attempt=1,
+                supersedes_run_id=None,
+                status="completed",
+                resolved_intent=resolved_intent,
+            )
+            run_info = _build_run_info(turn_id=user_message["id"], run_id=turn_run["id"], attempt=1)
+            citations = [
+                _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
+                for anchor in resolved_anchors
+            ]
+            runtime_state = ReaderAskRuntimeState(
+                citations=list(citations),
+                source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+            )
+            context_plan = _build_context_plan(
+                entry_action=body.entry_action,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                runtime_state=runtime_state,
+                citations=citations,
+                reference_resolution=reference_resolution,
+                planning_snapshot=planning_snapshot,
+            )
+            evidence = _build_evidence_items(
+                attachments=attachments,
+                citations=citations,
+                current_record_id=str(record.record_id),
+                current_record_title=record.title,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                include_clarification=True,
+            )
+            trace_summary = _build_trace_summary(
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                planning_snapshot=planning_snapshot,
+                clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
+            )
+            computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
+            billed_points = min(computed_cost_points, reservation.total_points)
+            unused_reservation = _build_unused_reservation(reservation, billed_points)
+            if unused_reservation.total_points > 0:
+                await refund_reserved_points(
+                    user_id,
+                    unused_reservation,
+                    metadata={
+                        "reason": "reader_ask_unused_reservation_clarification",
+                        "thread_id": str(thread_id),
+                        "record_id": str(record.record_id),
+                    },
+                )
+            usage_event_id = await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope=USAGE_SCOPE_USER_BILLED,
+                    capability_code=CAPABILITY_READER_ASK,
+                    billing_mode=BILLING_MODE_USER_POINTS,
+                    status=STATUS_SUCCEEDED,
+                    user_id=user_id,
+                    record_id=record.record_id,
+                    workflow_name=_WORKFLOW_NAME,
+                    workflow_version=_WORKFLOW_VERSION,
+                    schema_version=_SCHEMA_VERSION,
+                    prompt_version=get_prompt_version(),
+                    usage_data=planner_usage_summary,
+                    latency_ms=int((perf_counter() - start_perf) * 1000),
+                    billed_points=billed_points,
+                    billing_policy_version=build_reader_ask_billing_metadata(planner_usage_summary).get(
+                        "billing_policy_version"
+                    ),
+                    metadata_json={
+                        "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
+                        "thread_id": str(thread_id),
+                        "message_id": assistant_message["id"],
+                        "cross_record_context_used": False,
+                        "anchor_count": len(resolved_anchors),
+                        "clarification_only": True,
+                        "reservation_points": READER_ASK_RESERVED_POINTS,
+                        "computed_cost_points": computed_cost_points,
+                    },
+                )
+            )
+            output = _build_user_visible_output(
+                content_md=assistant_md,
+                submission_mode=submission_mode,
+                resolved_intent=resolved_intent,
+                citations=citations,
+                action_proposals=[],
+                tool_trace=[],
+                evidence=evidence,
+                trace_summary=trace_summary,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                response_cards=[],
+                usage_summary=planner_usage_summary,
+                billed_points=billed_points,
+                resolved_context=_resolved_context_summary(
+                    record=record,
+                    anchors=resolved_anchors,
+                    explicit_attachment_count=len(attachments),
+                    runtime_state=runtime_state,
+                    used_cross_record_context=False,
+                    citations=citations,
+                ),
+                context_plan=context_plan,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                supplement_candidates=[],
+                persisted_supplements=[],
+            )
+            payload = _build_completed_payload(
+                message_id=assistant_message["id"],
+                thread_id=str(thread_id),
+                output=output,
+            )
+            assistant_metadata = _assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                run_info=run_info,
+                resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
+            )
+            yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
+            yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
+            await repo.update_message(
+                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+                status="completed",
+                content_md=assistant_md,
+                context_anchors=anchor_payload,
+                citations=[citation.model_dump(mode="json") for citation in citations],
+                action_proposals=[],
+                tool_trace=[],
+                metadata=assistant_metadata,
+                usage_event_id=usage_event_id,
+                current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            )
+            await repo.update_turn_run(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                status="completed",
+                resolved_intent=resolved_intent,
+                user_visible_output_json=output.model_dump(mode="json"),
+                usage_summary_json=planner_usage_summary,
+                usage_event_id=usage_event_id,
+                completed_at=datetime.now(UTC),
+            )
+            await _upsert_eval_trace_record(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                planning_snapshot=planning_snapshot,
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                trace_summary=trace_summary,
+            )
+            yield _sse("message.completed", payload.model_dump(mode="json"))
             return
 
         user_message = await repo.create_message(
@@ -1568,7 +3544,11 @@ async def stream_thread_message(
             status="completed",
             content_md=body.content,
             context_anchors=anchor_payload,
-            metadata=_message_metadata(task_mode=body.task_mode),
+            metadata=_user_message_metadata(
+                resolved_intent=resolved_intent,
+                resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
+            ),
         )
         yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
 
@@ -1578,7 +3558,41 @@ async def stream_thread_message(
             status="streaming",
             content_md="",
             context_anchors=anchor_payload,
-            metadata=_message_metadata(task_mode=body.task_mode),
+            metadata=_assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
+            ),
+        )
+        turn_run = await repo.create_turn_run(
+            message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+            thread_id=thread_id,
+            user_id=user_id,
+            record_id=record.record_id,
+            turn_id=_parse_uuid(user_message["id"], "user message id is invalid"),
+            run_attempt=1,
+            supersedes_run_id=None,
+            status="streaming",
+            resolved_intent=resolved_intent,
+        )
+        active_turn_run_id = _parse_uuid(turn_run["id"], "turn run id is invalid")
+        run_info = _build_run_info(turn_id=user_message["id"], run_id=turn_run["id"], attempt=1)
+        assistant_message = await repo.update_message(
+            message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+            status="streaming",
+            content_md="",
+            context_anchors=anchor_payload,
+            citations=[],
+            action_proposals=[],
+            tool_trace=[],
+            metadata=_assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                run_info=run_info,
+                resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
+            ),
+            usage_event_id=None,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
         yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
 
@@ -1591,31 +3605,30 @@ async def stream_thread_message(
             source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
         )
         query_seed = _query_seed(body.content, resolved_anchors)
-        history_lookup_allowed = _matches_history_intent(body.content)
-
-        prompt_payload = _build_prompt_payload(
-            thread=thread,
-            record=record,
-            user_message=body.content,
-            history_messages=history_messages,
-            anchors=resolved_anchors,
-            task_mode=body.task_mode,
-            history_lookup_allowed=history_lookup_allowed,
-        )
-        prompt_payload, max_output_tokens = _prepare_prompt_payload(prompt_payload)
+        if planning_snapshot is None:
+            raise RuntimeError("planning snapshot is required")
+        cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
         agent = get_reader_ask_agent()
         model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
         if model is None:
             raise RuntimeError("model route is not configured: reader_ask")
 
-        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=45.0)
+        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=90.0)
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
         route_settings = RunModelSettings(
-            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
+            top_p=route_settings.top_p,
+            parallel_tool_calls=route_settings.parallel_tool_calls,
+            seed=route_settings.seed,
+            presence_penalty=route_settings.presence_penalty,
+            frequency_penalty=route_settings.frequency_penalty,
+            stop_sequences=route_settings.stop_sequences,
+            extra_headers=route_settings.extra_headers,
+            extra_body=route_settings.extra_body,
         )
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -1631,12 +3644,6 @@ async def stream_thread_message(
 
         async def get_record_insights_cb() -> list[dict[str, Any]]:
             return _collect_sentence_entries(record, resolved_anchors)
-
-        async def get_record_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_get_record_excerpt_assets(user_id, record, resolved_anchors, query)
-
-        async def search_user_excerpt_assets_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_search_user_excerpt_assets(user_id, record.record_id, query)
 
         async def search_user_vocabulary_cb(query: str) -> list[dict[str, Any]]:
             return await _tool_search_user_vocabulary(user_id, query)
@@ -1679,85 +3686,289 @@ async def stream_thread_message(
                 nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
             return result
 
+        async def generate_sentence_annotation_cb(
+            kind: Literal["grammar_note", "sentence_analysis"],
+        ) -> dict[str, Any] | None:
+            # Cache check is handled at the agent tool layer (reader_ask_agent.py).
+            # If we reach here, there is no pre-generated annotation of this kind.
+            return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
+
+        quick_action_annotation: dict[str, Any] | None = None
+        resolved_context_input = await _materialize_planned_context(
+            user_id=user_id,
+            record=record,
+            runtime_state=runtime_state,
+            planning_snapshot=planning_snapshot,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            get_record_context_cb=get_record_context_cb,
+            get_record_insights_cb=get_record_insights_cb,
+        )
+        quick_action_annotation = await _run_explicit_quick_action_annotation(
+            submission_mode=submission_mode,
+            task_mode=resolved_intent,
+            entry_action=body.entry_action,
+            record=record,
+            primary_anchor=primary_anchor,
+            runtime_state=runtime_state,
+            event_queue=event_queue,
+        )
+        if quick_action_annotation and isinstance(quick_action_annotation.get("usage_summary"), dict):
+            nested_tool_usages.append(
+                {
+                    "tool_name": "generate_sentence_annotation",
+                    "usage_summary": quick_action_annotation["usage_summary"],
+                }
+            )
+        context_plan = _build_context_plan(
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+            citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
+            planning_snapshot=planning_snapshot,
+        )
+        trace_summary = _build_trace_summary(
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            planning_snapshot=planning_snapshot,
+            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "none",
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+        )
+        prompt_payload = runtime_contract_svc.build_prompt_payload(
+            runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                thread=thread,
+                record=record,
+                user_message=body.content,
+                history_messages=history_messages,
+                page_identity=body.page_identity,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                resolved_intent=resolved_intent,
+                resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                entry_action=body.entry_action,
+                submission_mode=submission_mode,
+                cross_record_context_allowed=cross_record_context_allowed,
+                resolved_context_input=resolved_context_input,
+                quick_action_annotation=quick_action_annotation,
+                reference_resolution=reference_resolution,
+                planning_snapshot=planning_snapshot,
+                max_history_messages=_MAX_HISTORY_MESSAGES,
+                max_message_text=_MAX_MESSAGE_TEXT,
+            )
+        )
+        prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
+            prompt_payload,
+            reserved_points=READER_ASK_RESERVED_POINTS,
+            tokens_per_point=TOKENS_PER_POINT,
+            multiplier_output=MULTIPLIER_OUTPUT,
+            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+            default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+        )
+        route_settings = RunModelSettings(
+            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            temperature=route_settings.temperature,
+            timeout=route_settings.timeout,
+        )
+
         deps = ReaderAskAgentDeps(
             payload=prompt_payload,
             event_queue=event_queue,
             state=runtime_state,
             query_seed=query_seed,
-            task_mode=body.task_mode,
+            task_mode=resolved_intent,
             record_id=str(record.record_id),
             record_title=record.title,
             primary_anchor=primary_anchor,
-            history_lookup_allowed=history_lookup_allowed,
             get_record_context_fn=get_record_context_cb,
             get_record_insights_fn=get_record_insights_cb,
-            get_record_excerpt_assets_fn=get_record_excerpt_assets_cb,
-            search_user_excerpt_assets_fn=search_user_excerpt_assets_cb,
             search_user_vocabulary_fn=search_user_vocabulary_cb,
             lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
             run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
-            excerpt_item_to_citation_fn=lambda item, kind: _excerpt_item_to_citation(item, kind=kind),
+            generate_sentence_annotation_fn=generate_sentence_annotation_cb,
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
-
-        content_parts: list[str] = []
-        usage_summary: dict[str, Any] | None = None
-        producer_done = asyncio.Event()
-        producer_error: Exception | None = None
-
-        async def run_agent_stream() -> None:
-            nonlocal usage_summary, producer_error
-            try:
-                async with agent.run_stream(
-                    build_reader_ask_prompt(deps),
-                    deps=deps,
-                    model=model,
-                    model_settings=route_settings.to_pydantic_ai(),
-                ) as result:
-                    async for delta in result.stream_text(delta=True, debounce_by=None):
-                        if not delta:
-                            continue
-                        content_parts.append(delta)
-                        await event_queue.put(
-                            (
-                                "message.delta",
-                                {"message_id": assistant_message["id"], "delta": delta},
-                            )
-                        )
-                    usage_summary = build_usage_metadata(result.usage())
-            except Exception as exc:
-                producer_error = exc
-            finally:
-                producer_done.set()
-
-        producer_task = asyncio.create_task(run_agent_stream())
+        checkpoint = _TurnRunStreamCheckpoint(
+            turn_run_id=active_turn_run_id,
+            build_output_json=lambda content_md, reasoning_md, reasoning_status: _build_stream_checkpoint_output_json(
+                content_md=content_md,
+                reasoning_md=reasoning_md,
+                reasoning_status=reasoning_status,
+                submission_mode=submission_mode,
+                resolved_intent=resolved_intent,
+                record=record,
+                anchors=resolved_anchors,
+                attachments=attachments,
+                runtime_state=runtime_state,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                trace_summary=trace_summary,
+                context_plan=context_plan,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                persisted_supplements=[],
+            ),
+        )
+        producer_task, stream_runtime = _start_reader_ask_agent_stream(
+            agent=agent,
+            deps=deps,
+            model=model,
+            route_settings=route_settings,
+            assistant_message_id=assistant_message["id"],
+            base_url=model_config.base_url if model_config else "",
+            checkpoint=checkpoint,
+        )
         try:
-            while not producer_done.is_set() or not event_queue.empty():
-                try:
-                    event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                except TimeoutError:
-                    continue
+            async for event_name, event_payload in _stream_reader_ask_events(
+                event_queue=event_queue,
+                producer_done=stream_runtime.producer_done,
+            ):
                 yield _sse(event_name, event_payload)
         finally:
             await producer_task
 
-        if producer_error is not None:
-            raise producer_error
-
-        final_content_md = "".join(content_parts).strip()
-        await _ensure_task_card_data(
-            task_mode=body.task_mode,
-            runtime_state=runtime_state,
-            get_record_context_cb=get_record_context_cb,
-            get_record_insights_cb=get_record_insights_cb,
-            lookup_dictionary_entry_cb=lookup_dictionary_entry_cb,
-            run_dictionary_ai_context_explain_cb=run_dictionary_ai_context_explain_cb,
-            record=record,
-            anchors=resolved_anchors,
+        stream_outcome, interrupted_event = _finish_reader_ask_agent_stream(
+            runtime=stream_runtime,
+            assistant_message_id=assistant_message["id"],
         )
-        if body.task_mode == "vocabulary":
+        if interrupted_event is not None:
+            yield _sse(interrupted_event[0], interrupted_event[1])
+
+        final_content_md = stream_outcome.content_md
+        usage_summary = stream_outcome.usage_summary
+
+        # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
+        # not already clarified, attempt a single replan with expanded context
+        replan_triggered = await _maybe_emit_replan_event(
+            final_content_md=final_content_md,
+            planning_snapshot=planning_snapshot,
+            event_queue=event_queue,
+            assistant_message_id=assistant_message["id"],
+        )
+        if replan_triggered:
+            try:
+                replan_result = await _resolve_semantic_planning(
+                    user_id=user_id,
+                    record=record,
+                    history_messages=history_messages,
+                    user_message=body.content,
+                    page_identity=body.page_identity,
+                    entry_action=body.entry_action,
+                    attachments=attachments,
+                    anchors=resolved_anchors,
+                )
+                if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
+                    planning_snapshot = replan_result.planning_snapshot
+                    resolved_intent = planning_snapshot.resolved_intent
+                    resolved_context_input = planning_snapshot.resolved_context_input
+                    reference_resolution = replan_result.reference_resolution
+                    disambiguation = planning_snapshot.disambiguation_state
+                    external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+                    resolved_context_input = await _materialize_planned_context(
+                        user_id=user_id,
+                        record=record,
+                        runtime_state=runtime_state,
+                        planning_snapshot=planning_snapshot,
+                        page_identity=body.page_identity,
+                        entry_action=body.entry_action,
+                        attachments=attachments,
+                        anchors=resolved_anchors,
+                        get_record_context_cb=get_record_context_cb,
+                        get_record_insights_cb=get_record_insights_cb,
+                    )
+                    cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+                    quick_action_annotation = await _run_explicit_quick_action_annotation(
+                        submission_mode=submission_mode,
+                        task_mode=resolved_intent,
+                        entry_action=body.entry_action,
+                        record=record,
+                        primary_anchor=primary_anchor,
+                        runtime_state=runtime_state,
+                        event_queue=event_queue,
+                    )
+                    replan_payload = runtime_contract_svc.build_prompt_payload(
+                        runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                            thread=thread,
+                            record=record,
+                            user_message=body.content,
+                            history_messages=history_messages,
+                            page_identity=body.page_identity,
+                            attachments=attachments,
+                            anchors=resolved_anchors,
+                            resolved_intent=resolved_intent,
+                            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                            entry_action=body.entry_action,
+                            submission_mode=submission_mode,
+                            cross_record_context_allowed=cross_record_context_allowed,
+                            resolved_context_input=resolved_context_input,
+                            quick_action_annotation=quick_action_annotation,
+                            reference_resolution=reference_resolution,
+                            planning_snapshot=planning_snapshot,
+                            max_history_messages=_MAX_HISTORY_MESSAGES,
+                            max_message_text=_MAX_MESSAGE_TEXT,
+                        )
+                    )
+                    replan_payload, replan_max_output = runtime_contract_svc.prepare_prompt_payload(
+                        replan_payload,
+                        reserved_points=READER_ASK_RESERVED_POINTS,
+                        tokens_per_point=TOKENS_PER_POINT,
+                        multiplier_output=MULTIPLIER_OUTPUT,
+                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+                        default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                    )
+                    replan_deps = ReaderAskAgentDeps(
+                        payload=replan_payload,
+                        event_queue=event_queue,
+                        state=runtime_state,
+                        query_seed=query_seed,
+                        task_mode=resolved_intent,
+                        record_id=str(record.record_id),
+                        record_title=record.title,
+                        primary_anchor=primary_anchor,
+                        get_record_context_fn=get_record_context_cb,
+                        get_record_insights_fn=get_record_insights_cb,
+                        search_user_vocabulary_fn=search_user_vocabulary_cb,
+                        lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
+                        run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+                        generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+                        vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
+                        dictionary_item_to_citation_fn=_dictionary_item_to_citation,
+                        dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+                    )
+                    replan_agent = get_reader_ask_agent()
+                    replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
+                    replan_route = RunModelSettings(
+                        max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
+                        temperature=route_settings.temperature,
+                        timeout=route_settings.timeout,
+                    )
+                    replan_result_text = await replan_agent.run(
+                        build_reader_ask_prompt(replan_deps),
+                        deps=replan_deps,
+                        model=replan_model,
+                        model_settings=replan_route.to_pydantic_ai(),
+                    )
+                    replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
+                    if len(replan_content) >= len(final_content_md.strip()):
+                        final_content_md = replan_content
+            except Exception:
+                logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
+
+        if resolved_intent == "vocabulary":
             if runtime_state.latest_dictionary_entry is not None:
                 runtime_state.source_labels.add("dictionary")
                 _merge_citation(
@@ -1781,16 +3992,13 @@ async def stream_thread_message(
             action_requests=runtime_state.action_requests,
             assistant_content_md=final_content_md,
         )
-        fallback_proposals = _build_action_proposals(
-            user_message=body.content,
-            record=record,
-            anchors=resolved_anchors,
-            assistant_content_md=final_content_md,
-        )
-        action_proposals = _merge_action_proposals(runtime_proposals, fallback_proposals)
-        usage_summary = _merge_usage_summaries(usage_summary, nested_tool_usages)
+        action_proposals = _merge_action_proposals(runtime_proposals, [])
+        extra_usage_summaries = list(nested_tool_usages)
+        if planner_usage_summary:
+            extra_usage_summaries.insert(0, {"tool_name": "semantic_planner", "usage_summary": planner_usage_summary})
+        usage_summary = _merge_usage_summaries(usage_summary, extra_usage_summaries)
         response_cards = _build_response_cards(
-            task_mode=body.task_mode,
+            task_mode=resolved_intent,
             record=record,
             anchors=resolved_anchors,
             runtime_state=runtime_state,
@@ -1798,9 +4006,41 @@ async def stream_thread_message(
         resolved_context = _resolved_context_summary(
             record=record,
             anchors=resolved_anchors,
+            explicit_attachment_count=len(attachments),
             runtime_state=runtime_state,
-            used_history_lookup=runtime_state.used_history_lookup,
+            used_cross_record_context=runtime_state.used_cross_record_context,
             citations=runtime_state.citations,
+        )
+        typed_supplement_candidates = _build_supplement_candidates_from_runtime(
+            resolved_intent=resolved_intent,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+            assistant_content_md=final_content_md,
+            created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
+        )
+        supplement_candidates = [candidate.model_dump(mode="json") for candidate in typed_supplement_candidates]
+        action_proposals = [
+            *action_proposals,
+            *_build_supplement_action_proposals(supplement_candidates),
+        ]
+        evidence = _build_evidence_items(
+            attachments=attachments,
+            citations=runtime_state.citations,
+            current_record_id=str(record.record_id),
+            current_record_title=record.title,
+            external_record_contexts=runtime_state.latest_external_record_contexts,
+            external_asset_contexts=runtime_state.latest_external_asset_contexts,
+            reference_resolution=reference_resolution,
+            supplement_candidates=typed_supplement_candidates,
+            disambiguation=disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
+        )
+        trace_summary = trace_summary.model_copy(
+            update={
+                "supplement_generation_used": bool(typed_supplement_candidates),
+                "supplement_persisted_count": 0,
+                "supplement_deleted_count": 0,
+            }
         )
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
@@ -1844,7 +4084,7 @@ async def stream_thread_message(
                     "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
                     "thread_id": str(thread_id),
                     "message_id": assistant_message["id"],
-                    "history_lookup_used": runtime_state.used_history_lookup,
+                    "cross_record_context_used": runtime_state.used_cross_record_context,
                     "anchor_count": len(resolved_anchors),
                     "tool_names": [entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
                     "reservation_points": READER_ASK_RESERVED_POINTS,
@@ -1855,35 +4095,79 @@ async def stream_thread_message(
             )
         )
 
+        output = _build_user_visible_output(
+            content_md=final_content_md,
+            submission_mode=submission_mode,
+            resolved_intent=resolved_intent,
+            citations=runtime_state.citations,
+            action_proposals=action_proposals,
+            tool_trace=runtime_state.tool_trace,
+            evidence=evidence,
+            trace_summary=trace_summary,
+            disambiguation=disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
+            response_cards=response_cards,
+            usage_summary=usage_summary,
+            billed_points=billed_points,
+            resolved_context=resolved_context,
+            context_plan=context_plan,
+            resolved_context_input=resolved_context_input,
+            run_info=run_info,
+            supplement_candidates=typed_supplement_candidates,
+            persisted_supplements=[],
+            reasoning_md=stream_runtime.emitted_reasoning or None,
+            reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started),
+        )
+        final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         updated = await repo.update_message(
             message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
-            status="completed",
+            status=final_message_status,
             content_md=final_content_md,
             context_anchors=anchor_payload,
             citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
             action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
             tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
-            metadata=_message_metadata(
-                task_mode=body.task_mode,
-                resolved_context=resolved_context,
-                response_cards=response_cards,
+            metadata=_assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                run_info=run_info,
+                resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
             ),
             usage_event_id=usage_event_id,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
-        payload = ReaderAskCompletedPayload(
-            id=updated["id"],
-            thread_id=str(thread_id),
-            content_md=final_content_md,
-            task_mode=body.task_mode,
-            citations=runtime_state.citations,
-            action_proposals=action_proposals,
-            tool_trace=runtime_state.tool_trace,
-            response_cards=response_cards,
-            usage_summary=usage_summary,
+        payload = _build_completed_payload(message_id=updated["id"], thread_id=str(thread_id), output=output)
+        await repo.update_turn_run(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            status="interrupted" if stream_outcome.interrupted else "completed",
+            resolved_intent=resolved_intent,
+            user_visible_output_json=output.model_dump(mode="json"),
+            usage_summary_json=usage_summary,
+            usage_event_id=usage_event_id,
+            completed_at=None if stream_outcome.interrupted else datetime.now(UTC),
+            failed_at=None if stream_outcome.interrupted else None,
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+            supplement_audit_json=[
+                {
+                    "event": "candidate_generated",
+                    "supplement_type": item.supplement_type,
+                    "candidate_id": item.candidate_id,
+                    "created_from_turn_run_id": item.created_from_turn_run_id,
+                    "timestamp": _iso_now(),
+                }
+                for item in typed_supplement_candidates
+            ],
             billed_points=billed_points,
-            resolved_context=resolved_context,
+            usage_event_id=usage_event_id,
         )
-        yield _sse("message.completed", payload.model_dump(mode="json"))
+        if not stream_outcome.interrupted:
+            yield _sse("message.completed", payload.model_dump(mode="json"))
     except Exception as exc:
         if reservation is not None and reservation.total_points > 0 and record is not None:
             await refund_reserved_points(
@@ -1899,14 +4183,60 @@ async def stream_thread_message(
             await repo.update_message(
                 message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
                 status="failed",
-                content_md="",
+                content_md=final_content_md,
                 context_anchors=anchor_payload,
                 citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
                 action_proposals=[],
                 tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
-                metadata=_message_metadata(task_mode=body.task_mode),
+                metadata=_assistant_message_metadata(
+                    resolved_intent=resolved_intent,
+                    resolved_context_input=resolved_context_input,
+                    run_info=run_info,
+                    submission_mode=submission_mode,
+                ),
                 usage_event_id=None,
+                current_turn_run_id=active_turn_run_id,
             )
+            if active_turn_run_id is not None:
+                failed_output_json = (
+                    _build_stream_checkpoint_output_json(
+                        content_md=final_content_md,
+                        reasoning_md=(stream_runtime.emitted_reasoning or None) if stream_runtime is not None else None,
+                        reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started)
+                        if stream_runtime is not None
+                        else None,
+                        submission_mode=submission_mode,
+                        resolved_intent=resolved_intent,
+                        record=record,
+                        anchors=resolved_anchors,
+                        attachments=attachments,
+                        runtime_state=runtime_state,
+                        reference_resolution=reference_resolution,
+                        disambiguation=disambiguation,
+                        external_asset_disambiguation=external_asset_disambiguation,
+                        trace_summary=trace_summary,
+                        context_plan=context_plan,
+                        resolved_context_input=resolved_context_input,
+                        run_info=run_info,
+                        persisted_supplements=[],
+                    )
+                    if record is not None
+                    else None
+                )
+                await repo.update_turn_run(
+                    turn_run_id=active_turn_run_id,
+                    status="failed",
+                    resolved_intent=resolved_intent,
+                    user_visible_output_json=failed_output_json,
+                    failed_at=datetime.now(UTC),
+                )
+                await _upsert_eval_trace_record(
+                    turn_run_id=active_turn_run_id,
+                    planning_snapshot=planning_snapshot,
+                    runtime_state=runtime_state,
+                    context_plan=context_plan,
+                    trace_summary=trace_summary,
+                )
         if record is not None and thread is not None:
             await _record_failure_event(
                 user_id=user_id,
@@ -1931,58 +4261,1038 @@ async def stream_thread_message(
         yield _sse("error", {"code": "READER_ASK_FAILED", "detail": detail})
 
 
-def _favorite_payload_from_anchor(record_id: UUID, anchor: ReaderAskAnchorRef) -> tuple[str, str, dict[str, Any]]:
-    if anchor.anchor_type == "sentence":
-        sentence_id = anchor.sentence_id
-        if not sentence_id:
-            raise HTTPException(status_code=400, detail="sentence anchor is missing sentence_id")
-        target_key = anchor.target_key or f"record:{record_id}:sentence:{sentence_id}"
-        payload = {
-            "sentence_id": sentence_id,
-            "paragraph_id": anchor.paragraph_id,
-            "selected_text": anchor.selected_text,
-        }
-        return "sentence", target_key, payload
-    if anchor.anchor_type == "text_range":
-        if not anchor.sentence_id or anchor.start_offset is None or anchor.end_offset is None or not anchor.text_hash:
-            raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
-        target_key = anchor.target_key or (
-            f"record:{record_id}:range:{anchor.sentence_id}:{anchor.start_offset}:{anchor.end_offset}:{anchor.text_hash}"
+async def retry_thread_message(
+    user_id: UUID,
+    thread_id: UUID,
+    message_id: UUID,
+) -> AsyncIterator[str]:
+    """Regenerate (not resume/continue) the assistant answer for a message.
+
+    This performs a full re-run: re-plan + re-materialize + re-generate.
+    The previous answer is replaced entirely; it is NOT a continuation.
+    """
+    start_perf = perf_counter()
+    thread: dict[str, Any] | None = None
+    record: _RecordBundle | None = None
+    history_messages: list[dict[str, Any]] = []
+    attachments: list[ReaderAskAttachment] = []
+    resolved_anchors: list[ReaderAskAnchorRef] = []
+    anchor_payload: list[dict[str, Any]] = []
+    reservation: CreditReservation | None = None
+    user_message: dict[str, Any] | None = None
+    assistant_message: dict[str, Any] | None = None
+    runtime_state = ReaderAskRuntimeState()
+    nested_tool_usages: list[dict[str, Any]] = []
+    planner_usage_summary: dict[str, Any] | None = None
+    resolved_intent: ReaderAskResolvedIntent | None = None
+    resolved_context_input: ReaderAskResolvedContextInput | None = None
+    context_plan: ReaderAskContextPlan | None = None
+    evidence: list[ReaderAskEvidenceItem] = []
+    trace_summary: ReaderAskTraceSummary | None = None
+    run_info: dict[str, Any] | None = None
+    active_turn_run_id: UUID | None = None
+    run_history: list[dict[str, Any]] = []
+    body: ReaderAskMessageStreamRequest | None = None
+    original_user_message = ""
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None
+    disambiguation: ReaderAskDisambiguation | None = None
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
+    reference_resolution = planner.ReaderAskReferenceResolution()
+    final_content_md = ""
+    persisted_supplements_json: list[dict[str, Any]] = []
+    stream_runtime: _AgentStreamRuntime | None = None
+
+    try:
+        thread = await repo.get_thread(user_id, thread_id)
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Reader ask thread not found")
+
+        assistant_message = await repo.get_message(message_id)
+        if assistant_message is None or assistant_message.get("thread_id") != str(thread_id):
+            raise HTTPException(status_code=404, detail="Reader ask message not found")
+        if assistant_message.get("role") != "assistant":
+            raise HTTPException(status_code=400, detail="Only assistant messages can be regenerated")
+        assistant_message_model = ReaderAskMessage.model_validate(assistant_message)
+        persisted_supplements_json = [
+            item.model_dump(mode="json")
+            for item in assistant_message_model.persisted_supplements
+            if item.lifecycle_status != "deleted"
+        ]
+
+        messages = await repo.list_messages(thread_id, limit=100)
+        assistant_index = next((index for index, item in enumerate(messages) if item["id"] == str(message_id)), -1)
+        if assistant_index <= 0:
+            raise HTTPException(status_code=400, detail="No user turn found for this assistant message")
+
+        for index in range(assistant_index - 1, -1, -1):
+            candidate = messages[index]
+            if candidate["role"] == "user":
+                user_message = candidate
+                history_messages = messages[:assistant_index]
+                break
+        if user_message is None:
+            raise HTTPException(status_code=400, detail="No user turn found for this assistant message")
+
+        user_message_model = ReaderAskMessage.model_validate(user_message)
+        if user_message_model.resolved_context_input is None:
+            raise HTTPException(status_code=400, detail="User turn is missing retry context")
+
+        original_user_message = user_message_model.content_md
+        body = ReaderAskMessageStreamRequest(
+            content=user_message_model.content_md,
+            page_identity=user_message_model.resolved_context_input.page_identity,
+            attachments=user_message_model.resolved_context_input.attachments,
+            entry_action=user_message_model.resolved_context_input.entry_action,
         )
-        payload = {
-            "sentence_id": anchor.sentence_id,
-            "paragraph_id": anchor.paragraph_id,
-            "selected_text": anchor.selected_text,
-            "start_offset": anchor.start_offset,
-            "end_offset": anchor.end_offset,
-            "text_hash": anchor.text_hash,
+
+        record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
+        record = await _load_record_bundle(user_id, record_id)
+        if _parse_uuid(body.page_identity.record_id, "page_identity.record_id must be a UUID") != record.record_id:
+            raise HTTPException(status_code=400, detail="page_identity.record_id does not match thread record")
+
+        attachments = body.attachments
+        incoming_anchors = _attachments_to_anchor_refs(attachments)
+        resolved_anchors = await _resolve_anchor_refs(
+            user_id,
+            record,
+            anchors=incoming_anchors,
+        )
+        anchor_payload = [anchor.model_dump(mode="json") for anchor in resolved_anchors]
+
+        await ensure_credit_account(user_id)
+        remaining = await check_quota(user_id)
+        if remaining < READER_ASK_RESERVED_POINTS:
+            yield _sse("error", _insufficient_credits_payload(remaining))
+            return
+
+        reservation_metadata = {
+            "capability_code": CAPABILITY_READER_ASK,
+            "thread_id": str(thread_id),
+            "record_id": str(record.record_id),
+            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
+            "reserved_points": READER_ASK_RESERVED_POINTS,
+            "user_message": _truncate_text(body.content, 200),
+            "retry_message_id": str(message_id),
         }
-        return "text_range", target_key, payload
-    if anchor.anchor_type == "multi_text":
-        segments = [segment.model_dump(mode="json") for segment in anchor.segments]
-        target_key = anchor.target_key or build_multi_text_target_key(str(record_id), segments)
-        return "multi_text", target_key, {"segments": segments, "selected_text": anchor.selected_text}
-    raise HTTPException(status_code=400, detail="favorite action only supports sentence/text anchors in V1")
+        reservation = await reserve_points(
+            user_id,
+            READER_ASK_RESERVED_POINTS,
+            task_id=None,
+            entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+            metadata=reservation_metadata,
+        )
+        if reservation is None:
+            remaining = await check_quota(user_id)
+            yield _sse("error", _insufficient_credits_payload(remaining))
+            return
+
+        planning_result = await _resolve_semantic_planning(
+            user_id=user_id,
+            record=record,
+            history_messages=history_messages,
+            user_message=body.content,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+        )
+        planner_usage_summary = planning_result.planner_usage_summary
+        reference_resolution = planning_result.reference_resolution
+        planning_snapshot = planning_result.planning_snapshot
+        resolved_intent = planning_snapshot.resolved_intent
+        resolved_context_input = planning_snapshot.resolved_context_input
+        disambiguation = planning_snapshot.disambiguation_state
+        external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+        submission_mode = _submission_mode(entry_action=body.entry_action, attachments=attachments)
+        run_info, run_history = _next_run_info(assistant_message)
+        turn_run = await repo.create_turn_run(
+            message_id=message_id,
+            thread_id=thread_id,
+            user_id=user_id,
+            record_id=record.record_id,
+            turn_id=_parse_uuid(user_message["id"], "user message id is invalid"),
+            run_attempt=int(run_info.get("run_attempt") or 1),
+            supersedes_run_id=_parse_uuid(str(run_info["supersedes_run_id"]), "supersedes run id is invalid")
+            if run_info.get("supersedes_run_id")
+            else None,
+            status="streaming",
+            resolved_intent=resolved_intent,
+        )
+        active_turn_run_id = _parse_uuid(turn_run["id"], "turn run id is invalid")
+        run_info = _build_run_info(
+            turn_id=user_message["id"],
+            run_id=turn_run["id"],
+            attempt=int(run_info.get("run_attempt") or 1),
+            supersedes_run_id=str(run_info.get("supersedes_run_id")) if run_info.get("supersedes_run_id") else None,
+        )
+        clarification_only = planning_snapshot.clarification_only
+        clarification_mode = planning_snapshot.clarification_mode
+        if clarification_only and clarification_mode == "must_clarify":
+            assistant_md = post_process_svc.build_clarification_message(
+                local_anchor_required=planning_snapshot.context_plan.clarification_reason == "missing_required_context",
+                reference_resolution=reference_resolution,
+                structured_asset_resolution=planning_snapshot.structured_asset_resolution,
+            )
+            citations = [
+                _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
+                for anchor in resolved_anchors
+            ]
+            runtime_state = ReaderAskRuntimeState(
+                citations=list(citations),
+                source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+            )
+            resolved_context = _resolved_context_summary(
+                record=record,
+                anchors=resolved_anchors,
+                explicit_attachment_count=len(attachments),
+                runtime_state=runtime_state,
+                used_cross_record_context=False,
+                citations=citations,
+            )
+            context_plan = _build_context_plan(
+                entry_action=body.entry_action,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                runtime_state=runtime_state,
+                citations=citations,
+                reference_resolution=reference_resolution,
+                planning_snapshot=planning_snapshot,
+            )
+            evidence = _build_evidence_items(
+                attachments=attachments,
+                citations=citations,
+                current_record_id=str(record.record_id),
+                current_record_title=record.title,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                include_clarification=True,
+            )
+            trace_summary = _build_trace_summary(
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                planning_snapshot=planning_snapshot,
+                clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
+            )
+            computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
+            billed_points = min(computed_cost_points, reservation.total_points)
+            unused_reservation = _build_unused_reservation(reservation, billed_points)
+            if unused_reservation.total_points > 0:
+                await refund_reserved_points(
+                    user_id,
+                    unused_reservation,
+                    metadata={
+                        "reason": "reader_ask_unused_reservation_clarification",
+                        "thread_id": str(thread_id),
+                        "record_id": str(record.record_id),
+                    },
+                )
+            usage_event_id = await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope=USAGE_SCOPE_USER_BILLED,
+                    capability_code=CAPABILITY_READER_ASK,
+                    billing_mode=BILLING_MODE_USER_POINTS,
+                    status=STATUS_SUCCEEDED,
+                    user_id=user_id,
+                    record_id=record.record_id,
+                    workflow_name=_WORKFLOW_NAME,
+                    workflow_version=_WORKFLOW_VERSION,
+                    schema_version=_SCHEMA_VERSION,
+                    prompt_version=get_prompt_version(),
+                    usage_data=planner_usage_summary,
+                    latency_ms=int((perf_counter() - start_perf) * 1000),
+                    billed_points=billed_points,
+                    billing_policy_version=build_reader_ask_billing_metadata(planner_usage_summary).get(
+                        "billing_policy_version"
+                    ),
+                    metadata_json={
+                        "entrypoint": "/reader-ask/threads/{thread_id}/messages/retry",
+                        "thread_id": str(thread_id),
+                        "message_id": str(message_id),
+                        "cross_record_context_used": False,
+                        "anchor_count": len(resolved_anchors),
+                        "clarification_only": True,
+                        "retry_message_id": str(message_id),
+                        "reservation_points": READER_ASK_RESERVED_POINTS,
+                        "computed_cost_points": computed_cost_points,
+                    },
+                )
+            )
+            yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
+            yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
+            yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
+            await repo.update_message(
+                message_id=message_id,
+                status="completed",
+                content_md=assistant_md,
+                context_anchors=anchor_payload,
+                citations=[citation.model_dump(mode="json") for citation in citations],
+                action_proposals=[],
+                tool_trace=[],
+                metadata=_assistant_message_metadata(
+                    resolved_intent=resolved_intent,
+                    run_info=run_info,
+                    run_history=run_history,
+                    resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
+                ),
+                usage_event_id=usage_event_id,
+                current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            )
+            output = _build_user_visible_output(
+                content_md=assistant_md,
+                submission_mode=submission_mode,
+                resolved_intent=resolved_intent,
+                citations=citations,
+                action_proposals=[],
+                tool_trace=[],
+                evidence=evidence,
+                trace_summary=trace_summary,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                response_cards=[],
+                usage_summary=planner_usage_summary,
+                billed_points=billed_points,
+                resolved_context=resolved_context,
+                context_plan=context_plan,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                supplement_candidates=[],
+                persisted_supplements=persisted_supplements_json,
+            )
+            payload = _build_completed_payload(
+                message_id=str(message_id),
+                thread_id=str(thread_id),
+                output=output,
+            )
+            await repo.update_turn_run(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                status="completed",
+                resolved_intent=resolved_intent,
+                user_visible_output_json=output.model_dump(mode="json"),
+                usage_summary_json=planner_usage_summary,
+                usage_event_id=usage_event_id,
+                completed_at=datetime.now(UTC),
+            )
+            await _upsert_eval_trace_record(
+                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+                planning_snapshot=planning_snapshot,
+                runtime_state=runtime_state,
+                context_plan=context_plan,
+                trace_summary=trace_summary,
+            )
+            yield _sse("message.completed", payload.model_dump(mode="json"))
+            return
+
+        assistant_message = await repo.update_message(
+            message_id=message_id,
+            status="streaming",
+            content_md="",
+            context_anchors=anchor_payload,
+            citations=[],
+            action_proposals=[],
+            tool_trace=[],
+            metadata=_assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                run_info=run_info,
+                run_history=run_history,
+                resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
+            ),
+            usage_event_id=None,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+        )
+        yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
+        yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
+
+        base_citations = [
+            _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
+            for anchor in resolved_anchors
+        ]
+        runtime_state = ReaderAskRuntimeState(
+            citations=list(base_citations),
+            source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+        )
+        query_seed = _query_seed(body.content, resolved_anchors)
+        if planning_snapshot is None:
+            raise RuntimeError("planning snapshot is required")
+        cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+
+        agent = get_reader_ask_agent()
+        model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
+        if model is None:
+            raise RuntimeError("model route is not configured: reader_ask")
+
+        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=90.0)
+        if model_config and model_config.model_settings is not None:
+            route_settings = route_settings.merged_with(model_config.model_settings)
+        route_settings = RunModelSettings(
+            max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
+            temperature=route_settings.temperature,
+            timeout=route_settings.timeout,
+            top_p=route_settings.top_p,
+            parallel_tool_calls=route_settings.parallel_tool_calls,
+            seed=route_settings.seed,
+            presence_penalty=route_settings.presence_penalty,
+            frequency_penalty=route_settings.frequency_penalty,
+            stop_sequences=route_settings.stop_sequences,
+            extra_headers=route_settings.extra_headers,
+            extra_body=route_settings.extra_body,
+        )
+
+        event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+        primary_anchor = resolved_anchors[0] if resolved_anchors else None
+        dictionary_anchor = next((anchor for anchor in resolved_anchors if anchor.anchor_type == "dictionary_entry"), None)
+
+        async def get_record_context_cb() -> dict[str, Any]:
+            return {
+                "title": record.title,
+                "source_excerpt": _truncate_text(record.source_text, _MAX_CONTEXT_TEXT),
+                "sentence_windows": _collect_sentence_windows(record, resolved_anchors),
+            }
+
+        async def get_record_insights_cb() -> list[dict[str, Any]]:
+            return _collect_sentence_entries(record, resolved_anchors)
+
+        async def search_user_vocabulary_cb(query: str) -> list[dict[str, Any]]:
+            return await _tool_search_user_vocabulary(user_id, query)
+
+        async def lookup_dictionary_entry_cb(
+            query: str | None,
+            entry_id: int | None,
+            query_type: str | None,
+            context_sentence: str | None,
+            occurrence: int | None,
+        ) -> dict[str, Any] | None:
+            fallback_query = query
+            fallback_entry_id = entry_id
+            if dictionary_anchor is not None:
+                fallback_query = fallback_query or dictionary_anchor.query
+                fallback_entry_id = fallback_entry_id or dictionary_anchor.dict_entry_id
+            return await _tool_lookup_dictionary_entry(
+                query=fallback_query,
+                entry_id=fallback_entry_id,
+                query_type=query_type,
+                context_sentence=context_sentence,
+                occurrence=occurrence,
+            )
+
+        async def run_dictionary_ai_context_explain_cb(
+            query: str,
+            entry_id: int,
+            context_sentence: str,
+            query_type: str,
+            occurrence: int | None,
+        ) -> dict[str, Any] | None:
+            result, usage = await _tool_run_dictionary_ai_context_explain(
+                query=query,
+                entry_id=entry_id,
+                context_sentence=context_sentence,
+                query_type=query_type,
+                occurrence=occurrence,
+            )
+            if usage:
+                nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
+            return result
+
+        async def generate_sentence_annotation_cb(
+            kind: Literal["grammar_note", "sentence_analysis"],
+        ) -> dict[str, Any] | None:
+            # Cache check is handled at the agent tool layer (reader_ask_agent.py).
+            # If we reach here, there is no pre-generated annotation of this kind.
+            return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
+
+        quick_action_annotation: dict[str, Any] | None = None
+        resolved_context_input = await _materialize_planned_context(
+            user_id=user_id,
+            record=record,
+            runtime_state=runtime_state,
+            planning_snapshot=planning_snapshot,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            get_record_context_cb=get_record_context_cb,
+            get_record_insights_cb=get_record_insights_cb,
+        )
+        quick_action_annotation = await _run_explicit_quick_action_annotation(
+            submission_mode=submission_mode,
+            task_mode=resolved_intent,
+            entry_action=body.entry_action,
+            record=record,
+            primary_anchor=primary_anchor,
+            runtime_state=runtime_state,
+            event_queue=event_queue,
+        )
+        if quick_action_annotation and isinstance(quick_action_annotation.get("usage_summary"), dict):
+            nested_tool_usages.append(
+                {
+                    "tool_name": "generate_sentence_annotation",
+                    "usage_summary": quick_action_annotation["usage_summary"],
+                }
+            )
+        context_plan = _build_context_plan(
+            entry_action=body.entry_action,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+            citations=runtime_state.citations,
+            reference_resolution=reference_resolution,
+            planning_snapshot=planning_snapshot,
+        )
+        trace_summary = _build_trace_summary(
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            planning_snapshot=planning_snapshot,
+            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "none",
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+        )
+        prompt_payload = runtime_contract_svc.build_prompt_payload(
+            runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                thread=thread,
+                record=record,
+                user_message=body.content,
+                history_messages=history_messages,
+                page_identity=body.page_identity,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                resolved_intent=resolved_intent,
+                resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                entry_action=body.entry_action,
+                submission_mode=submission_mode,
+                cross_record_context_allowed=cross_record_context_allowed,
+                resolved_context_input=resolved_context_input,
+                quick_action_annotation=quick_action_annotation,
+                reference_resolution=reference_resolution,
+                planning_snapshot=planning_snapshot,
+                max_history_messages=_MAX_HISTORY_MESSAGES,
+                max_message_text=_MAX_MESSAGE_TEXT,
+            )
+        )
+        prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
+            prompt_payload,
+            reserved_points=READER_ASK_RESERVED_POINTS,
+            tokens_per_point=TOKENS_PER_POINT,
+            multiplier_output=MULTIPLIER_OUTPUT,
+            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+            default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+        )
+        route_settings = RunModelSettings(
+            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            temperature=route_settings.temperature,
+            timeout=route_settings.timeout,
+        )
+
+        deps = ReaderAskAgentDeps(
+            payload=prompt_payload,
+            event_queue=event_queue,
+            state=runtime_state,
+            query_seed=query_seed,
+            task_mode=resolved_intent,
+            record_id=str(record.record_id),
+            record_title=record.title,
+            primary_anchor=primary_anchor,
+            get_record_context_fn=get_record_context_cb,
+            get_record_insights_fn=get_record_insights_cb,
+            search_user_vocabulary_fn=search_user_vocabulary_cb,
+            lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
+            run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+            generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+            vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
+            dictionary_item_to_citation_fn=_dictionary_item_to_citation,
+            dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+        )
+        checkpoint = _TurnRunStreamCheckpoint(
+            turn_run_id=active_turn_run_id,
+            build_output_json=lambda content_md, reasoning_md, reasoning_status: _build_stream_checkpoint_output_json(
+                content_md=content_md,
+                reasoning_md=reasoning_md,
+                reasoning_status=reasoning_status,
+                submission_mode=submission_mode,
+                resolved_intent=resolved_intent,
+                record=record,
+                anchors=resolved_anchors,
+                attachments=attachments,
+                runtime_state=runtime_state,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                trace_summary=trace_summary,
+                context_plan=context_plan,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                persisted_supplements=persisted_supplements_json,
+            ),
+        )
+        producer_task, stream_runtime = _start_reader_ask_agent_stream(
+            agent=agent,
+            deps=deps,
+            model=model,
+            route_settings=route_settings,
+            assistant_message_id=assistant_message["id"],
+            base_url=model_config.base_url if model_config else "",
+            checkpoint=checkpoint,
+        )
+        try:
+            async for event_name, event_payload in _stream_reader_ask_events(
+                event_queue=event_queue,
+                producer_done=stream_runtime.producer_done,
+            ):
+                yield _sse(event_name, event_payload)
+        finally:
+            await producer_task
+
+        stream_outcome, interrupted_event = _finish_reader_ask_agent_stream(
+            runtime=stream_runtime,
+            assistant_message_id=assistant_message["id"],
+        )
+        if interrupted_event is not None:
+            yield _sse(interrupted_event[0], interrupted_event[1])
+
+        final_content_md = stream_outcome.content_md
+        usage_summary = stream_outcome.usage_summary
+
+        # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
+        # not already clarified, attempt a single replan with expanded context
+        replan_triggered = await _maybe_emit_replan_event(
+            final_content_md=final_content_md,
+            planning_snapshot=planning_snapshot,
+            event_queue=event_queue,
+            assistant_message_id=assistant_message["id"],
+        )
+        if replan_triggered:
+            try:
+                replan_result = await _resolve_semantic_planning(
+                    user_id=user_id,
+                    record=record,
+                    history_messages=history_messages,
+                    user_message=body.content,
+                    page_identity=body.page_identity,
+                    entry_action=body.entry_action,
+                    attachments=attachments,
+                    anchors=resolved_anchors,
+                )
+                if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
+                    planning_snapshot = replan_result.planning_snapshot
+                    resolved_intent = planning_snapshot.resolved_intent
+                    resolved_context_input = planning_snapshot.resolved_context_input
+                    reference_resolution = replan_result.reference_resolution
+                    disambiguation = planning_snapshot.disambiguation_state
+                    external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+                    resolved_context_input = await _materialize_planned_context(
+                        user_id=user_id,
+                        record=record,
+                        runtime_state=runtime_state,
+                        planning_snapshot=planning_snapshot,
+                        page_identity=body.page_identity,
+                        entry_action=body.entry_action,
+                        attachments=attachments,
+                        anchors=resolved_anchors,
+                        get_record_context_cb=get_record_context_cb,
+                        get_record_insights_cb=get_record_insights_cb,
+                    )
+                    cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+                    quick_action_annotation = await _run_explicit_quick_action_annotation(
+                        submission_mode=submission_mode,
+                        task_mode=resolved_intent,
+                        entry_action=body.entry_action,
+                        record=record,
+                        primary_anchor=primary_anchor,
+                        runtime_state=runtime_state,
+                        event_queue=event_queue,
+                    )
+                    replan_payload = runtime_contract_svc.build_prompt_payload(
+                        runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+                            thread=thread,
+                            record=record,
+                            user_message=body.content,
+                            history_messages=history_messages,
+                            page_identity=body.page_identity,
+                            attachments=attachments,
+                            anchors=resolved_anchors,
+                            resolved_intent=resolved_intent,
+                            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                            entry_action=body.entry_action,
+                            submission_mode=submission_mode,
+                            cross_record_context_allowed=cross_record_context_allowed,
+                            resolved_context_input=resolved_context_input,
+                            quick_action_annotation=quick_action_annotation,
+                            reference_resolution=reference_resolution,
+                            planning_snapshot=planning_snapshot,
+                            max_history_messages=_MAX_HISTORY_MESSAGES,
+                            max_message_text=_MAX_MESSAGE_TEXT,
+                        )
+                    )
+                    replan_payload, replan_max_output = runtime_contract_svc.prepare_prompt_payload(
+                        replan_payload,
+                        reserved_points=READER_ASK_RESERVED_POINTS,
+                        tokens_per_point=TOKENS_PER_POINT,
+                        multiplier_output=MULTIPLIER_OUTPUT,
+                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+                        default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
+                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                    )
+                    replan_deps = ReaderAskAgentDeps(
+                        payload=replan_payload,
+                        event_queue=event_queue,
+                        state=runtime_state,
+                        query_seed=query_seed,
+                        task_mode=resolved_intent,
+                        record_id=str(record.record_id),
+                        record_title=record.title,
+                        primary_anchor=primary_anchor,
+                        get_record_context_fn=get_record_context_cb,
+                        get_record_insights_fn=get_record_insights_cb,
+                        search_user_vocabulary_fn=search_user_vocabulary_cb,
+                        lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
+                        run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+                        generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+                        vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
+                        dictionary_item_to_citation_fn=_dictionary_item_to_citation,
+                        dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+                    )
+                    replan_agent = get_reader_ask_agent()
+                    replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
+                    replan_route = RunModelSettings(
+                        max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
+                        temperature=route_settings.temperature,
+                        timeout=route_settings.timeout,
+                    )
+                    replan_result_text = await replan_agent.run(
+                        build_reader_ask_prompt(replan_deps),
+                        deps=replan_deps,
+                        model=replan_model,
+                        model_settings=replan_route.to_pydantic_ai(),
+                    )
+                    replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
+                    if len(replan_content) >= len(final_content_md.strip()):
+                        final_content_md = replan_content
+            except Exception:
+                logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
+
+        if resolved_intent == "vocabulary":
+            if runtime_state.latest_dictionary_entry is not None:
+                runtime_state.source_labels.add("dictionary")
+                _merge_citation(
+                    runtime_state.citations,
+                    _dictionary_item_to_citation(runtime_state.latest_dictionary_entry),
+                )
+            if runtime_state.latest_dictionary_ai is not None and runtime_state.latest_dictionary_entry is not None:
+                query = str(
+                    runtime_state.latest_dictionary_entry.get("query")
+                    or runtime_state.latest_dictionary_entry.get("word")
+                    or ""
+                )
+                entry_id = runtime_state.latest_dictionary_entry.get("id")
+                if query and isinstance(entry_id, int):
+                    _merge_citation(
+                        runtime_state.citations,
+                        _dictionary_ai_to_citation(runtime_state.latest_dictionary_ai, query, entry_id),
+                    )
+        runtime_proposals = _build_action_proposals_from_runtime(
+            record=record,
+            action_requests=runtime_state.action_requests,
+            assistant_content_md=final_content_md,
+        )
+        action_proposals = _merge_action_proposals(runtime_proposals, [])
+        extra_usage_summaries = list(nested_tool_usages)
+        if planner_usage_summary:
+            extra_usage_summaries.insert(0, {"tool_name": "semantic_planner", "usage_summary": planner_usage_summary})
+        usage_summary = _merge_usage_summaries(usage_summary, extra_usage_summaries)
+        response_cards = _build_response_cards(
+            task_mode=resolved_intent,
+            record=record,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+        )
+        resolved_context = _resolved_context_summary(
+            record=record,
+            anchors=resolved_anchors,
+            explicit_attachment_count=len(attachments),
+            runtime_state=runtime_state,
+            used_cross_record_context=runtime_state.used_cross_record_context,
+            citations=runtime_state.citations,
+        )
+        typed_supplement_candidates = _build_supplement_candidates_from_runtime(
+            resolved_intent=resolved_intent,
+            anchors=resolved_anchors,
+            runtime_state=runtime_state,
+            assistant_content_md=final_content_md,
+            created_from_turn_run_id=str(run_info["run_id"]) if run_info is not None else str(uuid4()),
+        )
+        supplement_candidates = [candidate.model_dump(mode="json") for candidate in typed_supplement_candidates]
+        action_proposals = [
+            *action_proposals,
+            *_build_supplement_action_proposals(supplement_candidates),
+        ]
+        evidence = _build_evidence_items(
+            attachments=attachments,
+            citations=runtime_state.citations,
+            current_record_id=str(record.record_id),
+            current_record_title=record.title,
+            external_record_contexts=runtime_state.latest_external_record_contexts,
+            external_asset_contexts=runtime_state.latest_external_asset_contexts,
+            reference_resolution=reference_resolution,
+            supplement_candidates=typed_supplement_candidates,
+            disambiguation=disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
+        )
+        trace_summary = trace_summary.model_copy(
+            update={
+                "supplement_generation_used": bool(typed_supplement_candidates),
+                "supplement_persisted_count": 0,
+                "supplement_deleted_count": 0,
+            }
+        )
+
+        computed_cost_points = compute_reader_ask_cost_points(usage_summary)
+        billed_points = min(computed_cost_points, reservation.total_points)
+        unused_reservation = _build_unused_reservation(reservation, billed_points)
+        if unused_reservation.total_points > 0:
+            await refund_reserved_points(
+                user_id,
+                unused_reservation,
+                metadata={
+                    "reason": "reader_ask_unused_reservation",
+                    "thread_id": str(thread_id),
+                    "record_id": str(record.record_id),
+                    "retry_message_id": str(message_id),
+                },
+            )
+            reservation = billed_points and CreditReservation(
+                total_points=billed_points,
+                deducted_from_daily=min(billed_points, reservation.deducted_from_daily),
+                deducted_from_bonus=max(billed_points - min(billed_points, reservation.deducted_from_daily), 0),
+            ) or CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+        else:
+            reservation = CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+
+        usage_event_id = await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_USER_BILLED,
+                capability_code=CAPABILITY_READER_ASK,
+                billing_mode=BILLING_MODE_USER_POINTS,
+                status=STATUS_SUCCEEDED,
+                user_id=user_id,
+                record_id=record.record_id,
+                workflow_name=_WORKFLOW_NAME,
+                workflow_version=_WORKFLOW_VERSION,
+                schema_version=_SCHEMA_VERSION,
+                prompt_version=get_prompt_version(),
+                usage_data=usage_summary,
+                latency_ms=int((perf_counter() - start_perf) * 1000),
+                billed_points=billed_points,
+                billing_policy_version=build_reader_ask_billing_metadata(usage_summary).get("billing_policy_version"),
+                metadata_json={
+                    "entrypoint": "/reader-ask/threads/{thread_id}/messages/{message_id}/retry/stream",
+                    "thread_id": str(thread_id),
+                    "message_id": str(message_id),
+                    "cross_record_context_used": runtime_state.used_cross_record_context,
+                    "anchor_count": len(resolved_anchors),
+                    "tool_names": [entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
+                    "reservation_points": READER_ASK_RESERVED_POINTS,
+                    "computed_cost_points": computed_cost_points,
+                    "clamped_to_reservation": computed_cost_points > READER_ASK_RESERVED_POINTS,
+                },
+                **build_model_metadata(model_config),
+            )
+        )
+
+        output = _build_user_visible_output(
+            content_md=final_content_md,
+            submission_mode=submission_mode,
+            resolved_intent=resolved_intent,
+            citations=runtime_state.citations,
+            action_proposals=action_proposals,
+            tool_trace=runtime_state.tool_trace,
+            evidence=evidence,
+            trace_summary=trace_summary,
+            disambiguation=disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
+            response_cards=response_cards,
+            usage_summary=usage_summary,
+            billed_points=billed_points,
+            resolved_context=resolved_context,
+            context_plan=context_plan,
+            resolved_context_input=resolved_context_input,
+            run_info=run_info,
+            supplement_candidates=typed_supplement_candidates,
+            persisted_supplements=persisted_supplements_json,
+            reasoning_md=stream_runtime.emitted_reasoning or None,
+            reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started),
+        )
+        final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
+        await repo.update_message(
+            message_id=message_id,
+            status=final_message_status,
+            content_md=final_content_md,
+            context_anchors=anchor_payload,
+            citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
+            action_proposals=[proposal.model_dump(mode="json") for proposal in action_proposals],
+            tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+            metadata=_assistant_message_metadata(
+                resolved_intent=resolved_intent,
+                run_info=run_info,
+                run_history=run_history,
+                resolved_context_input=resolved_context_input,
+                submission_mode=submission_mode,
+            ),
+            usage_event_id=usage_event_id,
+            current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+        )
+        payload = _build_completed_payload(
+            message_id=str(message_id),
+            thread_id=str(thread_id),
+            output=output,
+        )
+        await repo.update_turn_run(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            status="interrupted" if stream_outcome.interrupted else "completed",
+            resolved_intent=resolved_intent,
+            user_visible_output_json=output.model_dump(mode="json"),
+            usage_summary_json=usage_summary,
+            usage_event_id=usage_event_id,
+            completed_at=None if stream_outcome.interrupted else datetime.now(UTC),
+            failed_at=None if stream_outcome.interrupted else None,
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+            supplement_audit_json=[
+                {
+                    "event": "candidate_generated",
+                    "supplement_type": item.supplement_type,
+                    "candidate_id": item.candidate_id,
+                    "created_from_turn_run_id": item.created_from_turn_run_id,
+                    "timestamp": _iso_now(),
+                }
+                for item in typed_supplement_candidates
+            ],
+            billed_points=billed_points,
+            usage_event_id=usage_event_id,
+        )
+        if not stream_outcome.interrupted:
+            yield _sse("message.completed", payload.model_dump(mode="json"))
+    except Exception as exc:
+        if reservation is not None and reservation.total_points > 0 and record is not None:
+            await refund_reserved_points(
+                user_id,
+                reservation,
+                metadata={
+                    "reason": "reader_ask_retry_failed",
+                    "thread_id": str(thread_id),
+                    "record_id": str(record.record_id),
+                    "retry_message_id": str(message_id),
+                },
+            )
+        if assistant_message is not None:
+            await repo.update_message(
+                message_id=message_id,
+                status="failed",
+                content_md=final_content_md,
+                context_anchors=anchor_payload,
+                citations=[citation.model_dump(mode="json") for citation in runtime_state.citations],
+                action_proposals=[],
+                tool_trace=[entry.model_dump(mode="json") for entry in runtime_state.tool_trace],
+                metadata=_assistant_message_metadata(
+                    resolved_intent=resolved_intent,
+                    run_info=run_info,
+                    run_history=run_history,
+                    resolved_context_input=resolved_context_input,
+                    submission_mode=submission_mode,
+                ),
+                usage_event_id=None,
+                current_turn_run_id=active_turn_run_id,
+            )
+            if active_turn_run_id is not None:
+                failed_output_json = (
+                    _build_stream_checkpoint_output_json(
+                        content_md=final_content_md,
+                        reasoning_md=(stream_runtime.emitted_reasoning or None) if stream_runtime is not None else None,
+                        reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started)
+                        if stream_runtime is not None
+                        else None,
+                        submission_mode=submission_mode,
+                        resolved_intent=resolved_intent,
+                        record=record,
+                        anchors=resolved_anchors,
+                        attachments=attachments,
+                        runtime_state=runtime_state,
+                        reference_resolution=reference_resolution,
+                        disambiguation=disambiguation,
+                        external_asset_disambiguation=external_asset_disambiguation,
+                        trace_summary=trace_summary,
+                        context_plan=context_plan,
+                        resolved_context_input=resolved_context_input,
+                        run_info=run_info,
+                        persisted_supplements=persisted_supplements_json,
+                    )
+                    if record is not None
+                    else None
+                )
+                await repo.update_turn_run(
+                    turn_run_id=active_turn_run_id,
+                    status="failed",
+                    resolved_intent=resolved_intent,
+                    user_visible_output_json=failed_output_json,
+                    failed_at=datetime.now(UTC),
+                )
+                await _upsert_eval_trace_record(
+                    turn_run_id=active_turn_run_id,
+                    planning_snapshot=planning_snapshot,
+                    runtime_state=runtime_state,
+                    context_plan=context_plan,
+                    trace_summary=trace_summary,
+                )
+        if record is not None and thread is not None:
+            await _record_failure_event(
+                user_id=user_id,
+                record_id=record.record_id,
+                thread_id=thread_id,
+                user_message=original_user_message or (body.content if body else ""),
+                start_perf=start_perf,
+                error_code="reader_ask_retry_failed",
+                error_message=str(exc),
+                metadata_json={
+                    "anchor_count": len(resolved_anchors),
+                    "tool_names": [entry.tool_name for entry in runtime_state.tool_trace],
+                    "retry_message_id": str(message_id),
+                },
+            )
+        if isinstance(exc, HTTPException):
+            yield _sse("error", {"code": str(exc.status_code), "detail": exc.detail})
+            return
+        if "model route is not configured" in str(exc):
+            yield _sse("error", {"code": "MODEL_UNAVAILABLE", "detail": "Ask Claread is temporarily unavailable."})
+            return
+        detail = str(exc) if get_settings().app_env != "production" else "Ask Claread is temporarily unavailable."
+        yield _sse("error", {"code": "READER_ASK_FAILED", "detail": detail})
 
 
 def _annotation_request_from_anchor(
     *,
     record_id: UUID,
     anchor: ReaderAskAnchorRef,
-    annotation_type: str,
-    note: str | None,
 ) -> UserAnnotationCreateRequest:
     if anchor.anchor_type == "sentence":
         if not anchor.sentence_id or not anchor.selected_text:
             raise HTTPException(status_code=400, detail="sentence anchor is incomplete")
         return UserAnnotationCreateRequest(
             analysis_record_id=str(record_id),
-            annotation_type=annotation_type,
             anchor_type="sentence",
             sentence_id=anchor.sentence_id,
             paragraph_id=anchor.paragraph_id,
             selected_text=anchor.selected_text,
-            note=note,
             payload_json=anchor.payload_json,
         )
     if anchor.anchor_type == "text_range":
@@ -1996,7 +5306,6 @@ def _annotation_request_from_anchor(
             raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
         return UserAnnotationCreateRequest(
             analysis_record_id=str(record_id),
-            annotation_type=annotation_type,
             anchor_type="text_range",
             sentence_id=anchor.sentence_id,
             paragraph_id=anchor.paragraph_id,
@@ -2004,7 +5313,6 @@ def _annotation_request_from_anchor(
             start_offset=anchor.start_offset,
             end_offset=anchor.end_offset,
             text_hash=anchor.text_hash,
-            note=note,
             payload_json=anchor.payload_json,
         )
     if anchor.anchor_type == "multi_text":
@@ -2012,15 +5320,71 @@ def _annotation_request_from_anchor(
             raise HTTPException(status_code=400, detail="multi_text anchor is incomplete")
         return UserAnnotationCreateRequest(
             analysis_record_id=str(record_id),
-            annotation_type=annotation_type,
             anchor_type="multi_text",
             sentence_id=anchor.segments[0].sentence_id,
             selected_text=anchor.selected_text or " ... ".join(segment.selected_text for segment in anchor.segments),
             segments=[UserAnnotationSegment.model_validate(segment.model_dump(mode="json")) for segment in anchor.segments],
-            note=note,
             payload_json=anchor.payload_json,
         )
-    raise HTTPException(status_code=400, detail="annotation action only supports sentence/text anchors in V1")
+    raise HTTPException(status_code=400, detail="annotation action only supports sentence/text anchors")
+
+
+def _reader_note_request_from_anchor(
+    *,
+    record_id: UUID,
+    anchor: ReaderAskAnchorRef,
+    note_text: str,
+) -> ReaderNoteCreateRequest:
+    if anchor.anchor_type == "sentence":
+        if not anchor.sentence_id or not anchor.selected_text:
+            raise HTTPException(status_code=400, detail="sentence anchor is incomplete")
+        return ReaderNoteCreateRequest(
+            analysis_record_id=str(record_id),
+            quote_mode="sentence",
+            anchor_sentence_id=anchor.sentence_id,
+            sentence_id=anchor.sentence_id,
+            paragraph_id=anchor.paragraph_id,
+            selected_text=anchor.selected_text,
+            note_text=note_text,
+            payload_json=anchor.payload_json,
+        )
+    if anchor.anchor_type == "text_range":
+        if (
+            not anchor.sentence_id
+            or not anchor.selected_text
+            or anchor.start_offset is None
+            or anchor.end_offset is None
+            or not anchor.text_hash
+        ):
+            raise HTTPException(status_code=400, detail="text_range anchor is incomplete")
+        return ReaderNoteCreateRequest(
+            analysis_record_id=str(record_id),
+            quote_mode="text_range",
+            anchor_sentence_id=anchor.sentence_id,
+            sentence_id=anchor.sentence_id,
+            paragraph_id=anchor.paragraph_id,
+            selected_text=anchor.selected_text,
+            start_offset=anchor.start_offset,
+            end_offset=anchor.end_offset,
+            text_hash=anchor.text_hash,
+            note_text=note_text,
+            payload_json=anchor.payload_json,
+        )
+    if anchor.anchor_type == "multi_text":
+        if len(anchor.segments) < 2:
+            raise HTTPException(status_code=400, detail="multi_text anchor is incomplete")
+        return ReaderNoteCreateRequest(
+            analysis_record_id=str(record_id),
+            quote_mode="multi_text",
+            anchor_sentence_id=anchor.segments[0].sentence_id,
+            sentence_id=anchor.segments[0].sentence_id,
+            paragraph_id=anchor.segments[0].paragraph_id,
+            selected_text=anchor.selected_text or " ... ".join(segment.selected_text for segment in anchor.segments),
+            segments=[UserAnnotationSegment.model_validate(segment.model_dump(mode="json")) for segment in anchor.segments],
+            note_text=note_text,
+            payload_json=anchor.payload_json,
+        )
+    raise HTTPException(status_code=400, detail="reader note action only supports sentence/text anchors")
 
 
 async def confirm_action(
@@ -2037,8 +5401,29 @@ async def confirm_action(
     if message_dict is None or proposal_dict is None:
         raise HTTPException(status_code=404, detail="Reader ask action proposal not found")
 
+    # Idempotency: if the proposal is already in a terminal state, return
+    # immediately without re-executing the side effect.
+    proposal_status = proposal_dict.get("status", "pending")
+    if proposal_status == "executed":
+        # Already executed — return stable result with the persisted result_json
+        # so the client can recover local state even after a lost response.
+        result_data = proposal_dict.get("result_json")
+        result = ReaderAskActionConfirmResult.model_validate(result_data) if result_data else ReaderAskActionConfirmResult()
+        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)
+    if proposal_status == "rejected":
+        raise HTTPException(status_code=409, detail="Action proposal has already been rejected")
+    # "executing" status: a previous request started but may not have completed.
+    # The underlying business writes are idempotent (ON CONFLICT), so it is
+    # safe to retry. Fall through to the normal confirm path.
+
     message = ReaderAskMessage.model_validate(message_dict)
     proposal = ReaderAskActionProposal.model_validate(proposal_dict)
+    run_history = message_dict.get("run_history") or None
+    persisted_supplements = [
+        item.model_dump(mode="json") for item in message.persisted_supplements
+    ]
+    turn_run_id = _current_turn_run_id(message_dict, message.run_info)
+    visible_output = _visible_output_from_message(message, message_dict)
     if not body.confirmed:
         updated_proposals = [
             proposal_item.model_copy(update={"status": "rejected"}) if proposal_item.id == action_id else proposal_item
@@ -2052,62 +5437,163 @@ async def confirm_action(
             citations=[citation.model_dump(mode="json") for citation in message.citations],
             action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
             tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
+            metadata=_assistant_message_metadata(
+                resolved_intent=message.resolved_intent,
+                run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
+                run_history=run_history,
+                resolved_context_input=message.resolved_context_input,
+            ),
             usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+            current_turn_run_id=turn_run_id,
         )
-        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="rejected", result={})
+        if turn_run_id is not None:
+            visible_output["action_proposals"] = [item.model_dump(mode="json") for item in updated_proposals]
+            await repo.update_turn_run(
+                turn_run_id=turn_run_id,
+                status=message.status,
+                user_visible_output_json=visible_output,
+            )
+            existing_trace = await repo.get_eval_trace(turn_run_id)
+            action_audit = list((existing_trace or {}).get("action_audit_json") or [])
+            action_audit.append(
+                {
+                    "action_id": action_id,
+                    "action_type": proposal.action_type,
+                    "decision": "rejected",
+                    "timestamp": _iso_now(),
+                    "status_after_decision": "rejected",
+                }
+            )
+            await _upsert_eval_trace_record(
+                turn_run_id=turn_run_id,
+                planning_snapshot=None,
+                runtime_state=ReaderAskRuntimeState(),
+                context_plan=None,
+                action_audit_json=action_audit,
+            )
+        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="rejected")
 
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
     record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
 
-    anchor_payload = proposal.payload_json.get("anchor")
-    if not isinstance(anchor_payload, dict):
-        raise HTTPException(status_code=400, detail="Action proposal is missing anchor payload")
-    anchor = ReaderAskAnchorRef.model_validate(anchor_payload)
+    # Mark proposal as "executing" before the business write, so that a
+    # partially-completed request (business write succeeded but
+    # update_message failed) can be safely retried.
+    executing_proposals = [
+        proposal_item.model_copy(update={"status": "executing"}) if proposal_item.id == action_id else proposal_item
+        for proposal_item in message.action_proposals
+    ]
+    await repo.update_message(
+        message_id=_parse_uuid(message.id, "message id is invalid"),
+        status=message.status,
+        content_md=message.content_md,
+        context_anchors=[anchor.model_dump(mode="json") for anchor in message.context_anchors],
+        citations=[citation.model_dump(mode="json") for citation in message.citations],
+        action_proposals=[item.model_dump(mode="json") for item in executing_proposals],
+        tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
+        metadata=_assistant_message_metadata(
+            resolved_intent=message.resolved_intent,
+            run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
+            run_history=run_history,
+            resolved_context_input=message.resolved_context_input,
+        ),
+        usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+        current_turn_run_id=turn_run_id,
+    )
 
-    result: dict[str, Any]
-    if proposal.action_type == "favorite_anchor":
-        target_type, target_key, payload_json = _favorite_payload_from_anchor(record_id, anchor)
-        favorite_id = await favorites_svc.add_favorite(
+    result = ReaderAskActionConfirmResult()
+    updated_trace_summary = message.trace_summary
+    updated_evidence = list(message.evidence)
+    if proposal.action_type == "create_supplement_grammar_note":
+        candidate_payload = proposal.payload_json.get("candidate")
+        if not isinstance(candidate_payload, dict):
+            raise HTTPException(status_code=400, detail="Action proposal is missing supplement candidate")
+        candidate = ReaderAskSupplementCandidate.model_validate(candidate_payload)
+        record_summary = await repo.ensure_record_access(user_id, record_id)
+        created = await supplements_svc.create_supplement(
             user_id=user_id,
-            target_type=target_type,
-            target_key=target_key,
-            analysis_record_id=record_id,
-            payload_json=payload_json,
-            note=None,
+            record_id=record_id,
+            candidate=candidate,
         )
-        result = {"favorite_id": str(favorite_id), "target_key": target_key}
-    elif proposal.action_type == "save_excerpt":
-        annotation = await user_annotations_svc.create_user_annotation(
-            user_id,
-            _annotation_request_from_anchor(
-                record_id=record_id,
-                anchor=anchor,
-                annotation_type="highlight",
-                note=None,
-            ),
+        persisted_supplement = supplements_svc.row_to_persisted_supplement(
+            created,
+            record_title=record_summary.get("title"),
         )
-        result = {"annotation_id": str(annotation.id), "annotation_type": annotation.annotation_type}
-    elif proposal.action_type in {"save_note", "save_answer_note"}:
-        note_text = proposal.payload_json.get("note_text")
-        if not isinstance(note_text, str) or not note_text.strip():
-            raise HTTPException(status_code=400, detail="Action proposal is missing note_text")
-        annotation = await user_annotations_svc.create_user_annotation(
-            user_id,
-            _annotation_request_from_anchor(
-                record_id=record_id,
-                anchor=anchor,
-                annotation_type="note",
-                note=note_text,
-            ),
+        persisted_supplements = _upsert_persisted_supplement(persisted_supplements, persisted_supplement)
+        updated_evidence.append(
+            ReaderAskEvidenceItem(
+                kind="supplement_candidate",
+                label=persisted_supplement.title,
+                detail="已写入当前页",
+                scope="current_record",
+                record_id=persisted_supplement.record_id,
+                record_title=persisted_supplement.record_title,
+                reason="supplement_persisted",
+                target_key=persisted_supplement.target_key,
+                metadata_json={"supplement_id": persisted_supplement.supplement_id},
+            )
         )
-        result = {"annotation_id": str(annotation.id), "annotation_type": annotation.annotation_type}
+        if updated_trace_summary is not None:
+            updated_trace_summary = updated_trace_summary.model_copy(
+                update={
+                    "supplement_persisted_count": len(
+                        [
+                            item
+                            for item in persisted_supplements
+                            if item.get("lifecycle_status") == "persisted"
+                        ]
+                    ),
+                }
+            )
+        result = ReaderAskActionConfirmResult(
+            record_id=str(created["record_id"]),
+            supplement_projection=supplements_svc.supplement_projection_entry(created),
+            persisted_supplement=persisted_supplement,
+        )
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported action type: {proposal.action_type}")
+        anchor_payload = proposal.payload_json.get("anchor")
+        if not isinstance(anchor_payload, dict):
+            raise HTTPException(status_code=400, detail="Action proposal is missing anchor payload")
+        anchor = ReaderAskAnchorRef.model_validate(anchor_payload)
+
+        if proposal.action_type == "save_highlight":
+            annotation = await user_annotations_svc.create_user_annotation(
+                user_id,
+                _annotation_request_from_anchor(
+                    record_id=record_id,
+                    anchor=anchor,
+                ),
+            )
+            result = ReaderAskActionConfirmResult(
+                annotation_id=str(annotation.id),
+                annotation_type="highlight",
+                target_key=annotation.target_key,
+            )
+        elif proposal.action_type == "save_note":
+            note_text = proposal.payload_json.get("note_text")
+            if not isinstance(note_text, str) or not note_text.strip():
+                raise HTTPException(status_code=400, detail="Action proposal is missing note_text")
+            note = await reader_notes_svc.create_reader_note(
+                user_id,
+                _reader_note_request_from_anchor(
+                    record_id=record_id,
+                    anchor=anchor,
+                    note_text=note_text,
+                ),
+            )
+            result = ReaderAskActionConfirmResult(
+                target_key=note.target_key,
+                note_id=str(note.id),
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported action type: {proposal.action_type}")
 
     updated_proposals = [
-        proposal_item.model_copy(update={"status": "executed"}) if proposal_item.id == action_id else proposal_item
+        proposal_item.model_copy(update={"status": "executed", "result_json": result.model_dump(mode="json")})
+        if proposal_item.id == action_id
+        else proposal_item
         for proposal_item in message.action_proposals
     ]
     await repo.update_message(
@@ -2118,6 +5604,114 @@ async def confirm_action(
         citations=[citation.model_dump(mode="json") for citation in message.citations],
         action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
         tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
+        metadata=_assistant_message_metadata(
+            resolved_intent=message.resolved_intent,
+            run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
+            run_history=run_history,
+            resolved_context_input=message.resolved_context_input,
+        ),
         usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
+        current_turn_run_id=turn_run_id,
     )
+    if turn_run_id is not None:
+        visible_output["action_proposals"] = [item.model_dump(mode="json") for item in updated_proposals]
+        visible_output["evidence"] = [item.model_dump(mode="json") for item in updated_evidence]
+        visible_output["trace_summary"] = (
+            updated_trace_summary.model_dump(mode="json") if updated_trace_summary is not None else None
+        )
+        visible_output["persisted_supplements"] = persisted_supplements
+        await repo.update_turn_run(
+            turn_run_id=turn_run_id,
+            status=message.status,
+            user_visible_output_json=visible_output,
+        )
+        existing_trace = await repo.get_eval_trace(turn_run_id)
+        action_audit = list((existing_trace or {}).get("action_audit_json") or [])
+        action_audit.append(
+            {
+                "action_id": action_id,
+                "action_type": proposal.action_type,
+                "decision": "confirmed",
+                "timestamp": _iso_now(),
+                "status_after_decision": "executed",
+            }
+        )
+        supplement_audit = list((existing_trace or {}).get("supplement_audit_json") or [])
+        if result.persisted_supplement is not None:
+            supplement_audit.append(
+                {
+                    "event": "persisted",
+                    "supplement_id": result.persisted_supplement.supplement_id,
+                    "supplement_type": result.persisted_supplement.supplement_type,
+                    "created_from_turn_run_id": result.persisted_supplement.created_from_turn_run_id,
+                    "timestamp": _iso_now(),
+                }
+            )
+        await _upsert_eval_trace_record(
+            turn_run_id=turn_run_id,
+            planning_snapshot=None,
+            runtime_state=ReaderAskRuntimeState(),
+            context_plan=None,
+            action_audit_json=action_audit,
+            supplement_audit_json=supplement_audit,
+        )
     return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)
+
+
+async def delete_supplement(user_id: UUID, supplement_id: UUID) -> ReaderAskDeleteSupplementResponse:
+    supplement = await supplements_svc.get_supplement_projection_or_404(user_id, supplement_id)
+    record_summary = await repo.ensure_record_access(user_id, _parse_uuid(str(supplement["record_id"]), "supplement record id is invalid"))
+    deleted = await supplements_svc.delete_supplement(user_id, supplement_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Reader ask supplement not found")
+    persisted_supplement = supplements_svc.row_to_persisted_supplement(
+        deleted,
+        record_title=record_summary.get("title"),
+        lifecycle_status="deleted",
+    )
+    source_turn_run_id = _parse_uuid(
+        persisted_supplement.created_from_turn_run_id,
+        "supplement created_from_turn_run_id is invalid",
+    )
+    source_turn_run = await repo.get_turn_run(source_turn_run_id)
+    if source_turn_run is not None:
+        source_message_id = _parse_uuid(source_turn_run["message_id"], "turn run message id is invalid")
+        turn_runs = await repo.list_turn_runs_for_message(source_message_id)
+        for turn_run in turn_runs:
+            turn_run_id = _parse_uuid(turn_run["id"], "turn run id is invalid")
+            output = dict(turn_run.get("user_visible_output_json") or {})
+            output["persisted_supplements"] = _mark_deleted_persisted_supplement(
+                list(output.get("persisted_supplements") or []),
+                persisted_supplement,
+            )
+            await repo.update_turn_run(
+                turn_run_id=turn_run_id,
+                status=turn_run["status"],
+                user_visible_output_json=output,
+            )
+        existing_trace = await repo.get_eval_trace(source_turn_run_id)
+        supplement_audit = list((existing_trace or {}).get("supplement_audit_json") or [])
+        supplement_audit.append(
+            {
+                "event": "deleted",
+                "supplement_id": persisted_supplement.supplement_id,
+                "supplement_type": persisted_supplement.supplement_type,
+                "created_from_turn_run_id": persisted_supplement.created_from_turn_run_id,
+                "timestamp": _iso_now(),
+            }
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=source_turn_run_id,
+            planning_snapshot=None,
+            runtime_state=ReaderAskRuntimeState(),
+            context_plan=None,
+            supplement_audit_json=supplement_audit,
+        )
+    return ReaderAskDeleteSupplementResponse(
+        deleted=True,
+        supplement_id=str(supplement_id),
+        record_id=str(supplement["record_id"]),
+        target_key=str(supplement.get("target_key")) if supplement.get("target_key") else None,
+        lifecycle_status="deleted",
+        persisted_supplement=persisted_supplement,
+    )

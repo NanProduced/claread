@@ -3,6 +3,7 @@ import "server-only";
 import { createVocabulary, listVocabulary } from "@/services/api/vocabulary";
 import { getWebSession, projectSession, type WebSession } from "@/services/bff/session";
 import type {
+  ReaderVocabularyLookupMatchDto,
   VocabularyCreateRequestDto,
   VocabularyResponseDto,
   VocabularySourceRefDto,
@@ -13,7 +14,7 @@ import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 export type VocabularyBffStatus =
   | "ready"
   | "unauthenticated"
-  | "mock_session"
+  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -32,6 +33,12 @@ export interface GetVocabularyOptions {
   limit?: number;
 }
 
+export interface VocabularyLookupMatchQuery {
+  dictEntryId?: number | null;
+  lemma?: string | null;
+  form?: string | null;
+}
+
 export type AddVocabularyResult =
   | {
       ok: true;
@@ -47,10 +54,27 @@ export type AddVocabularyResult =
       message: string;
     };
 
+export type VocabularyLookupMatchResult =
+  | {
+      ok: true;
+      status: 200;
+      item: ReaderVocabularyLookupMatchDto | null;
+    }
+  | {
+      ok: false;
+      status: number;
+      code: "bad_request" | "auth_required" | "upstream_unavailable" | "upstream_error";
+      message: string;
+    };
+
 type IncomingVocabularyBody = Partial<VocabularyCreateRequestDto>;
 
 function upstreamStatus(status: number): VocabularyBffStatus {
   return status === 0 ? "upstream_unavailable" : "upstream_error";
+}
+
+function normalizeLookupValue(value?: string | null) {
+  return value?.trim().toLowerCase() ?? "";
 }
 
 function unauthenticatedResult(
@@ -58,7 +82,7 @@ function unauthenticatedResult(
   options: Required<GetVocabularyOptions>,
 ): VocabularyBffResult {
   return {
-    status: session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
+    status: session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
     items: [],
     total: 0,
     page: options.page,
@@ -101,6 +125,44 @@ function projectVocabularyItem(item: VocabularyResponseDto): VocabularyItemVm {
     reviewCount: item.review_count,
     tags: item.tags,
   };
+}
+
+function projectLookupMatch(item: VocabularyResponseDto): ReaderVocabularyLookupMatchDto {
+  return {
+    id: item.id,
+    lemma: item.lemma,
+    display_word: item.display_word,
+    dict_entry_id: item.dict_entry_id,
+    mastery_status: item.mastery_status,
+    source_refs: item.payload_json?.source_refs ?? [],
+    collected_forms: item.payload_json?.collected_forms ?? [],
+  };
+}
+
+function matchesVocabularyLookup(
+  item: VocabularyResponseDto,
+  query: Required<VocabularyLookupMatchQuery>,
+): boolean {
+  if (query.dictEntryId !== null && item.dict_entry_id === query.dictEntryId) {
+    return true;
+  }
+
+  const lemma = normalizeLookupValue(item.lemma);
+  if (query.lemma && lemma === query.lemma) {
+    return true;
+  }
+
+  if (!query.form) {
+    return false;
+  }
+
+  const candidateForms = [
+    item.display_word,
+    item.lemma,
+    ...(item.payload_json?.collected_forms ?? []),
+  ].map((value) => normalizeLookupValue(value));
+
+  return candidateForms.includes(query.form);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -307,5 +369,96 @@ export async function addVocabularyFromWeb(body: unknown): Promise<AddVocabulary
     code: "ready",
     data: upstreamResult.data,
     message: upstreamResult.data.created ? "已加入生词本。" : "已更新生词本来源。",
+  };
+}
+
+export async function getVocabularyLookupMatch(
+  query: VocabularyLookupMatchQuery,
+): Promise<VocabularyLookupMatchResult> {
+  const normalizedQuery = {
+    dictEntryId:
+      typeof query.dictEntryId === "number" && Number.isSafeInteger(query.dictEntryId) && query.dictEntryId > 0
+        ? query.dictEntryId
+        : null,
+    lemma: normalizeLookupValue(query.lemma),
+    form: normalizeLookupValue(query.form),
+  };
+
+  if (!normalizedQuery.dictEntryId && !normalizedQuery.lemma && !normalizedQuery.form) {
+    return {
+      ok: false,
+      status: 400,
+      code: "bad_request",
+      message: "至少提供一个词汇匹配条件。",
+    };
+  }
+
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return {
+      ok: false,
+      status: 401,
+      code: "auth_required",
+      message:
+        session.kind === "mock_phone"
+          ? "当前登录态不能访问真实生词本状态，请使用真实登录会话后重试。"
+          : "请先登录后查看生词本状态。",
+    };
+  }
+
+  // Hard cap: scan at most 5 pages (500 items). This prevents unbounded
+  // sequential upstream requests when a user has a large vocabulary.
+  // TODO: Replace with a direct upstream query by dict_entry_id / lemma
+  // once the FastAPI /vocabulary endpoint supports filtered lookups.
+  const MAX_PAGES = 5;
+  const limit = 100;
+  let page = 1;
+  let total = 0;
+
+  while (page <= MAX_PAGES && (page === 1 || (page - 1) * limit < total)) {
+    const upstreamResult = await listVocabulary(session.sessionToken, {
+      page,
+      limit,
+      lite: false,
+    });
+
+    if (!upstreamResult.ok) {
+      return {
+        ok: false,
+        status: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+        code:
+          upstreamResult.status === 0 || upstreamResult.status >= 500
+            ? "upstream_unavailable"
+            : "upstream_error",
+        message:
+          upstreamResult.status === 0 || upstreamResult.status >= 500
+            ? "生词本状态读取暂时不可用，请稍后重试。"
+            : upstreamResult.message,
+      };
+    }
+
+    total = upstreamResult.data.total;
+
+    const matched = upstreamResult.data.items.find((item) => matchesVocabularyLookup(item, normalizedQuery));
+    if (matched) {
+      return {
+        ok: true,
+        status: 200,
+        item: projectLookupMatch(matched),
+      };
+    }
+
+    if (upstreamResult.data.items.length < limit) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    item: null,
   };
 }

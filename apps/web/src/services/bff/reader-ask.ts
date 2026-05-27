@@ -4,13 +4,19 @@ import {
   confirmUpstreamReaderAskAction,
   createUpstreamReaderAskStream,
   createUpstreamReaderAskThread,
+  deleteUpstreamReaderAskSupplement,
   getUpstreamReaderAskThread,
+  listUpstreamReaderAskContextRecords,
   listUpstreamReaderAskThreads,
+  resetUpstreamReaderAskThread,
+  retryUpstreamReaderAskMessage,
 } from "@/services/api/reader-ask";
 import { getWebSession } from "@/services/bff/session";
 import type {
   ReaderAskActionConfirmRequestDto,
   ReaderAskActionConfirmResponseDto,
+  ReaderAskContextRecordSearchResponseDto,
+  ReaderAskDeleteSupplementResponseDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
@@ -100,7 +106,26 @@ export async function listReaderAskThreadsForWeb(recordId: string): Promise<Read
   }
   const upstream = await listUpstreamReaderAskThreads(recordId, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    const message = upstream.message || "请求失败";
+    return new Response(JSON.stringify({ message }), {
+      status: upstream.status || 503,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  return upstream.data;
+}
+
+export async function listReaderAskContextRecordsForWeb(
+  query: string,
+  excludeRecordId: string | null,
+): Promise<ReaderAskContextRecordSearchResponseDto | Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return authError("请先登录后再使用 Ask Claread。");
+  }
+  const upstream = await listUpstreamReaderAskContextRecords(query, excludeRecordId, session.sessionToken);
+  if (!upstream.ok) {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -117,7 +142,7 @@ export async function createReaderAskThreadForWeb(
   }
   const upstream = await createUpstreamReaderAskThread(body, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -132,7 +157,22 @@ export async function getReaderAskThreadForWeb(threadId: string): Promise<Reader
   }
   const upstream = await getUpstreamReaderAskThread(threadId, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
+      status: upstream.status || 503,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  return upstream.data;
+}
+
+export async function resetReaderAskThreadForWeb(threadId: string): Promise<ReaderAskThreadDetailDto | Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return authError("请先登录后再使用 Ask Claread。");
+  }
+  const upstream = await resetUpstreamReaderAskThread(threadId, session.sessionToken);
+  if (!upstream.ok) {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -151,7 +191,24 @@ export async function confirmReaderAskActionForWeb(
   }
   const upstream = await confirmUpstreamReaderAskAction(threadId, actionId, body, session.sessionToken);
   if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message, payload: upstream.payload }), {
+    return new Response(JSON.stringify({ message: upstream.message }), {
+      status: upstream.status || 503,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  return upstream.data;
+}
+
+export async function deleteReaderAskSupplementForWeb(
+  supplementId: string,
+): Promise<ReaderAskDeleteSupplementResponseDto | Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return authError("请先登录后再使用 Ask Claread。");
+  }
+  const upstream = await deleteUpstreamReaderAskSupplement(supplementId, session.sessionToken);
+  if (!upstream.ok) {
+    return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
       headers: { "content-type": "application/json" },
     });
@@ -179,6 +236,42 @@ export async function createReaderAskStreamForWeb(
   }
 
   const upstream = await createUpstreamReaderAskStream(threadId, body, session.sessionToken);
+  if (!upstream.ok || !upstream.body) {
+    return buildStreamErrorResponse(upstream);
+  }
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+      "content-type": "text/event-stream",
+      "x-accel-buffering": "no",
+    },
+  });
+}
+
+/** Regenerate (not resume/continue) the assistant answer for a message. */
+export async function retryReaderAskMessageForWeb(
+  threadId: string,
+  messageId: string,
+): Promise<Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return new Response(
+      'event: error\ndata: {"code":"AUTH_REQUIRED","detail":"请先登录后再使用 Ask Claread。"}\n\n',
+      {
+        status: 401,
+        headers: {
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+          "content-type": "text/event-stream",
+        },
+      },
+    );
+  }
+
+  const upstream = await retryUpstreamReaderAskMessage(threadId, messageId, session.sessionToken);
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }

@@ -4,7 +4,7 @@ export type ReviewQueueState =
   | "ready"
   | "empty"
   | "anonymous"
-  | "mock_session"
+  | "limited_debug"
   | "upstream_unavailable"
   | "error";
 

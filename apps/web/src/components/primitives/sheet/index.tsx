@@ -9,7 +9,7 @@ import { primitiveDescriptionClass, primitiveFocusRing, primitiveOverlay, primit
 
 const sheetContentVariants = cva(
   cn(
-    "fixed z-50 flex flex-col gap-4 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(251,250,246,0.98))] p-6 text-ink shadow-[var(--cl-shadow-3)] transition-transform duration-[var(--cl-duration-base)] ease-[var(--cl-ease-standard)]",
+    "app-sheet-surface fixed z-50 flex flex-col gap-4 p-6 text-ink shadow-[var(--cl-shadow-3)] transition-transform duration-[var(--cl-duration-base)] ease-[var(--cl-ease-standard)]",
     primitiveSurface,
   ),
   {
@@ -48,7 +48,7 @@ const SheetContent = React.forwardRef<
         {children}
         <DialogPrimitive.Close
           className={cn(
-            "absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] border border-hairline bg-reader-paper text-muted transition-colors hover:text-ink",
+            "absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] border border-hairline bg-secondary text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink",
             primitiveFocusRing,
           )}
           aria-label="关闭侧边面板"

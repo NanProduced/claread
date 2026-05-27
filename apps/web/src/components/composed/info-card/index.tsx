@@ -26,8 +26,8 @@ export function InfoCard({
       className={cn(
         "rounded-panel border border-hairline p-5",
         tone === "paper"
-          ? "bg-[linear-gradient(180deg,rgba(255,255,255,0.7),rgba(250,249,246,0.92))]"
-          : "bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(251,250,246,0.98))] shadow-surface-quiet",
+          ? "app-panel-surface--muted"
+          : "app-panel-surface",
         className,
       )}
     >

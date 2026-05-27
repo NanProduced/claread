@@ -20,8 +20,9 @@ async def health_check(request: Request) -> HealthCheckResponse:
     settings = get_settings()
     db_ready = await is_db_ready()
     redis_ready = await is_redis_ready()
-    worker_snapshot = _get_worker_snapshot(request)
-    worker_ready = bool(worker_snapshot["healthy"])
+    worker_snapshot = _get_worker_snapshot(request, "analysis_task_worker")
+    overview_worker_snapshot = _get_worker_snapshot(request, "overview_task_worker")
+    worker_ready = bool(worker_snapshot["healthy"]) and bool(overview_worker_snapshot["healthy"])
 
     zilliz_ready: bool | None = None
     if settings.grammar_rag_enabled:
@@ -36,6 +37,8 @@ async def health_check(request: Request) -> HealthCheckResponse:
         "redis": redis_ready,
         "worker": worker_ready,
         "worker_inflight_tasks": int(worker_snapshot["inflight_tasks"]),
+        "overview_worker": bool(overview_worker_snapshot["healthy"]),
+        "overview_worker_inflight_tasks": int(overview_worker_snapshot["inflight_tasks"]),
         "dict_cache": _get_dict_cache_stats(),
         "zilliz": zilliz_ready,
     }
@@ -55,8 +58,9 @@ async def db_health() -> DbHealthResponse:
 async def readiness_check(request: Request) -> ReadinessCheckResponse:
     """就绪探针，数据库和 Worker 都健康时返回 200，否则 503。"""
     db_ready = await is_db_ready()
-    worker_snapshot = _get_worker_snapshot(request)
-    worker_ready = bool(worker_snapshot["healthy"])
+    worker_snapshot = _get_worker_snapshot(request, "analysis_task_worker")
+    overview_worker_snapshot = _get_worker_snapshot(request, "overview_task_worker")
+    worker_ready = bool(worker_snapshot["healthy"]) and bool(overview_worker_snapshot["healthy"])
 
     if not db_ready or not worker_ready:
         raise HTTPException(
@@ -66,6 +70,8 @@ async def readiness_check(request: Request) -> ReadinessCheckResponse:
                 "postgres": db_ready,
                 "worker": worker_ready,
                 "worker_inflight_tasks": int(worker_snapshot["inflight_tasks"]),
+                "overview_worker": bool(overview_worker_snapshot["healthy"]),
+                "overview_worker_inflight_tasks": int(overview_worker_snapshot["inflight_tasks"]),
             },
         )
 
@@ -74,11 +80,13 @@ async def readiness_check(request: Request) -> ReadinessCheckResponse:
         "postgres": db_ready,
         "worker": worker_ready,
         "worker_inflight_tasks": int(worker_snapshot["inflight_tasks"]),
+        "overview_worker": bool(overview_worker_snapshot["healthy"]),
+        "overview_worker_inflight_tasks": int(overview_worker_snapshot["inflight_tasks"]),
     }
 
 
-def _get_worker_snapshot(request: Request) -> dict[str, bool | int | str]:
-    worker = getattr(request.app.state, "analysis_task_worker", None)
+def _get_worker_snapshot(request: Request, attribute_name: str) -> dict[str, bool | int | str]:
+    worker = getattr(request.app.state, attribute_name, None)
     if worker is None:
         return {
             "healthy": False,

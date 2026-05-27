@@ -1,6 +1,8 @@
 import "server-only";
 
 import { cookies } from "next/headers";
+import type { Route } from "next";
+import { appReadRoute, loginRoute } from "@/lib/routes";
 
 export const WEB_SESSION_COOKIE = "claread_web_session";
 export const WEB_PHONE_COOKIE = "claread_web_phone";
@@ -27,6 +29,15 @@ export type WebSession =
       kind: "anonymous";
       source: "none";
     };
+
+export type ProjectedWebSessionState = "signed_in" | "signed_out" | "limited_debug";
+
+export interface ProjectedWebSession {
+  state: ProjectedWebSessionState;
+  source: WebSession["source"];
+  phone?: string;
+  hasAppAccess: boolean;
+}
 
 export async function getWebSession(): Promise<WebSession> {
   const cookieStore = await cookies();
@@ -68,13 +79,42 @@ export async function getWebSession(): Promise<WebSession> {
 
 export function projectSession(session: WebSession) {
   return {
-    authenticated:
-      session.kind === "authenticated" ||
-      session.kind === "debug" ||
-      session.kind === "mock_phone",
-    mode: session.kind,
+    state:
+      session.kind === "authenticated"
+        ? "signed_in"
+        : session.kind === "anonymous"
+          ? "signed_out"
+          : "limited_debug",
     source: session.source,
     phone: "phone" in session ? session.phone : undefined,
-    upstreamReady: session.kind === "authenticated" || session.kind === "debug",
+    hasAppAccess: session.kind !== "anonymous",
+  } satisfies ProjectedWebSession;
+}
+
+export async function getProjectedWebSession(): Promise<ProjectedWebSession> {
+  return projectSession(await getWebSession());
+}
+
+export function appCtaForSession(session: ProjectedWebSession): {
+  href: Route;
+  label: string;
+} {
+  if (session.state === "signed_in") {
+    return {
+      href: appReadRoute,
+      label: "打开 Claread",
+    };
+  }
+
+  if (session.state === "limited_debug") {
+    return {
+      href: appReadRoute,
+      label: "打开调试工作区",
+    };
+  }
+
+  return {
+    href: loginRoute(appReadRoute),
+    label: "登录",
   };
 }

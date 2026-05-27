@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { AppearanceProvider } from "@/components/providers/appearance-provider";
 import { ClareadToaster } from "@/components/primitives/toast";
 import { TooltipProvider } from "@/components/primitives/tooltip";
 import { clareadFontVariables } from "./claread-fonts";
@@ -15,7 +16,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#fbfaf7",
+  themeColor: "#f7f6f2",
 };
 
 export default function RootLayout({
@@ -26,10 +27,12 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className={clareadFontVariables}>
-        <TooltipProvider>
-          {children}
-          <ClareadToaster />
-        </TooltipProvider>
+        <AppearanceProvider>
+          <TooltipProvider>
+            {children}
+            <ClareadToaster />
+          </TooltipProvider>
+        </AppearanceProvider>
       </body>
     </html>
   );

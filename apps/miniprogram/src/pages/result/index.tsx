@@ -3,11 +3,8 @@ import { View, Text, ScrollView } from '@tarojs/components'
 import Taro, { useShareAppMessage } from '@tarojs/taro'
 import { buildMultiTextTargetKey, buildSentenceTargetKey, buildTextRangeTargetKey } from '@claread/contracts'
 import { ROUTES } from '../../config/routes'
-import { PageMode, AnyRenderSceneVm, AcademicRenderSceneVm, AnySentenceEntryModel } from '../../types/view/render-scene.vm'
-import { getSafeDisplayLabel } from '../../config/purpose'
-import { submitFeedback } from '../../services/api/feedback.client'
+import { AnyRenderSceneVm, AcademicRenderSceneVm } from '../../types/view/render-scene.vm'
 import { useAuthStore } from '../../stores/auth'
-import { ensureLoggedIn } from '../../services/auth'
 import NavBar from '../../components/NavBar'
 import ParagraphBlock, { getSentenceAnchorId } from '../../components/ParagraphBlock'
 import WordPopup from '../../components/WordPopup'
@@ -16,64 +13,72 @@ import LucideIcon from '../../components/LucideIcon'
 import AnnotationGlyph from '../../components/AnnotationGlyph'
 import BottomSheetSelect from '../../components/BottomSheetSelect'
 import FeedbackWidget from '../../components/FeedbackWidget'
+import ReaderNoteSheet from '../../components/ReaderNoteSheet'
 import ReaderContextBar from '../../components/ReaderContextBar'
 import ReadingSettingsSheet from '../../components/ReadingSettingsSheet'
 import ReadingSelectionToolbar, { SelectionContext } from '../../components/ReadingSelectionToolbar'
-import UserNoteSheet from '../../components/UserNoteSheet'
 import { useReadingPreferencesStore } from '../../stores/reading-preferences'
-import { UserAnnotationDto, listUserAnnotations, createUserAnnotation, updateUserAnnotation, deleteUserAnnotation } from '../../services/api/user-annotations.client'
-import type { UserAnnotationColor } from '@claread/contracts'
-import { addFavoriteToCloud, removeFavoriteFromCloud, fetchCloudFavoriteItems, FavoriteItemDto } from '../../services/api/favorites.client'
+import { UserAnnotationDto, listUserAnnotations } from '../../services/api/user-annotations.client'
+import { ReaderNoteDto, listReaderNotes } from '../../services/api/reader-notes.client'
+import { CloudSyncService } from '../../services/cloudSync.service'
 import FeedbackSheet from '../../components/FeedbackSystem/FeedbackSheet'
 import { useResultState } from './hooks/useResultState'
 import { useResultEffects } from './hooks/useResultEffects'
 import { useResultActions } from './hooks/useResultActions'
 import { PAGE_MODE_OPTIONS, hasRenderableScene } from './utils'
 import { getVocabEntryByLookupForm } from '../../services/storage'
+import { getLocalReaderNotes, getLocalUserAnnotations } from '../../services/storage'
 import DegradedBanner from './components/DegradedBanner'
 import SourceFallback from './components/SourceFallback'
 import StateViews from './components/StateViews'
 import appShare from '../../assets/images/share/app-share.jpg'
 import './index.scss'
 
+function isLocalId(id: string): boolean {
+  return id.startsWith('local_')
+}
+
+function mergeReaderNotesCloudWithLocal(
+  cloudNotes: ReaderNoteDto[],
+  localNotes: ReaderNoteDto[],
+): ReaderNoteDto[] {
+  const result: ReaderNoteDto[] = [...cloudNotes]
+  const cloudTargetKeys = new Set(cloudNotes.map(n => n.target_key))
+  const cloudIds = new Set(cloudNotes.map(n => n.id))
+  for (const local of localNotes) {
+    if (cloudIds.has(local.id)) continue
+    if (!isLocalId(local.id) && cloudIds.has(local.id)) continue
+    if (isLocalId(local.id) && !cloudTargetKeys.has(local.target_key)) {
+      result.push(local)
+    }
+  }
+  return result
+}
+
+function mergeAnnotationsCloudWithLocal(
+  cloudAnnotations: UserAnnotationDto[],
+  localAnnotations: UserAnnotationDto[],
+): UserAnnotationDto[] {
+  const result: UserAnnotationDto[] = [...cloudAnnotations]
+  const cloudTargetKeys = new Set(cloudAnnotations.map(a => a.target_key))
+  const cloudIds = new Set(cloudAnnotations.map(a => a.id))
+  for (const local of localAnnotations) {
+    if (cloudIds.has(local.id)) continue
+    if (isLocalId(local.id) && !cloudTargetKeys.has(local.target_key)) {
+      result.push(local)
+    }
+  }
+  return result
+}
+
 function buildTargetKey(
   recordId: string,
-  anchorType: 'sentence' | 'paragraph' | 'text_range' | 'multi_text',
-  opts: { sentenceId?: string; paragraphId?: string; startOffset?: number; endOffset?: number; textHash?: string; segments?: Array<{ paragraphId?: string; sentenceId: string; startOffset: number; endOffset: number; textHash: string }> }
+  anchorType: 'sentence' | 'text_range' | 'multi_text',
+  opts: { sentenceId?: string; startOffset?: number; endOffset?: number; textHash?: string; segments?: Array<{ paragraphId?: string; sentenceId: string; startOffset: number; endOffset: number; textHash: string }> }
 ): string {
   if (anchorType === 'sentence') return buildSentenceTargetKey(recordId, opts.sentenceId || '')
-  if (anchorType === 'paragraph') return `record:${recordId}:paragraph:${opts.paragraphId}`
   if (anchorType === 'multi_text') return buildMultiTextTargetKey(recordId, opts.segments || [])
   return buildTextRangeTargetKey(recordId, opts.sentenceId || '', opts.startOffset || 0, opts.endOffset || 0, opts.textHash || '')
-}
-
-function trimReviewText(text: string | undefined, max = 54): string | undefined {
-  if (!text) return undefined
-  const normalized = text.replace(/[#>*_`-]/g, '').replace(/\s+/g, ' ').trim()
-  if (!normalized) return undefined
-  return normalized.length > max ? `${normalized.slice(0, max)}...` : normalized
-}
-
-function getPayloadSegments(payload: Record<string, unknown> | undefined) {
-  const raw = payload?.segments
-  if (!Array.isArray(raw)) return []
-  return raw
-    .map(item => {
-      if (!item || typeof item !== 'object') return null
-      const segment = item as Record<string, unknown>
-      const sentenceId = typeof segment.sentence_id === 'string' ? segment.sentence_id : ''
-      const startOffset = typeof segment.start_offset === 'number' ? segment.start_offset : NaN
-      const endOffset = typeof segment.end_offset === 'number' ? segment.end_offset : NaN
-      const textHash = typeof segment.text_hash === 'string' ? segment.text_hash : ''
-      if (!sentenceId || !Number.isFinite(startOffset) || !Number.isFinite(endOffset) || !textHash) return null
-      return {
-        sentenceId,
-        startOffset,
-        endOffset,
-        textHash,
-      }
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item))
 }
 
 interface RouteFocusRange {
@@ -124,12 +129,7 @@ function buildRouteFocusState(
   }
 }
 
-function buildRouteFocusFromFavorite(
-  targetKey: string,
-  favorite: FavoriteItemDto | null,
-  fallbackSentenceId: string | null,
-  fallbackRange: { start: number; end: number } | null
-): RouteFocusState | null {
+function buildRouteFocusFromAnnotation(annotation: UserAnnotationDto): RouteFocusState | null {
   const sentenceIds: string[] = []
   const rangesBySentence: Record<string, RouteFocusRange[]> = {}
 
@@ -138,96 +138,57 @@ function buildRouteFocusFromFavorite(
     rangesBySentence[sentenceId] = [...(rangesBySentence[sentenceId] || []), range]
   }
 
-  if (!favorite) {
-    if (fallbackSentenceId && fallbackRange) {
-      appendRange(fallbackSentenceId, fallbackRange)
-      return buildRouteFocusState(targetKey, 'text_range', sentenceIds, rangesBySentence)
-    }
-    if (fallbackSentenceId) {
-      return buildRouteFocusState(targetKey, 'sentence', [fallbackSentenceId], {})
-    }
-    return null
+  if (annotation.anchor_type === 'multi_text') {
+    ;(annotation.segments || []).forEach(segment => {
+      appendRange(segment.sentence_id, { start: segment.start_offset, end: segment.end_offset })
+    })
+    return buildRouteFocusState(annotation.target_key, 'multi_text', sentenceIds, rangesBySentence)
   }
 
-  if (favorite.target_type === 'multi_text') {
-    const segments = getPayloadSegments(favorite.payload_json)
-    segments.forEach(segment => appendRange(segment.sentenceId, { start: segment.startOffset, end: segment.endOffset }))
-    return buildRouteFocusState(targetKey, 'multi_text', sentenceIds, rangesBySentence)
+  if (
+    annotation.anchor_type === 'text_range'
+    && annotation.sentence_id
+    && typeof annotation.start_offset === 'number'
+    && typeof annotation.end_offset === 'number'
+    && annotation.end_offset > annotation.start_offset
+  ) {
+    appendRange(annotation.sentence_id, { start: annotation.start_offset, end: annotation.end_offset })
+    return buildRouteFocusState(annotation.target_key, 'text_range', sentenceIds, rangesBySentence)
   }
 
-  if (favorite.target_type === 'text_range') {
-    const sentenceId = typeof favorite.payload_json?.sentence_id === 'string'
-      ? favorite.payload_json.sentence_id as string
-      : fallbackSentenceId
-    const startOffset = typeof favorite.payload_json?.start_offset === 'number'
-      ? favorite.payload_json.start_offset as number
-      : fallbackRange?.start
-    const endOffset = typeof favorite.payload_json?.end_offset === 'number'
-      ? favorite.payload_json.end_offset as number
-      : fallbackRange?.end
-    const resolvedStart = typeof startOffset === 'number' ? startOffset : NaN
-    const resolvedEnd = typeof endOffset === 'number' ? endOffset : NaN
-    if (sentenceId && Number.isFinite(resolvedStart) && Number.isFinite(resolvedEnd) && resolvedEnd > resolvedStart) {
-      appendRange(sentenceId, { start: resolvedStart, end: resolvedEnd })
-    }
-    return buildRouteFocusState(targetKey, 'text_range', sentenceIds, rangesBySentence)
-  }
-
-  const sentenceId = typeof favorite.payload_json?.sentence_id === 'string'
-    ? favorite.payload_json.sentence_id as string
-    : fallbackSentenceId
-  return sentenceId
-    ? buildRouteFocusState(targetKey, 'sentence', [sentenceId], {})
+  return annotation.sentence_id
+    ? buildRouteFocusState(annotation.target_key, 'sentence', [annotation.sentence_id], {})
     : null
 }
 
-function getReviewAssetLabel(entryType: string): string | null {
-  switch (entryType) {
-    case 'grammar_note':
-      return '语法'
-    case 'sentence_analysis':
-      return '句析'
-    case 'term_note':
-      return '术语'
-    case 'logic_note':
-      return '逻辑'
-    case 'interpretation_note':
-      return '解读'
-    case 'content_summary':
-      return '概要'
-    default:
-      return null
+function buildRouteFocusFromReaderNote(note: ReaderNoteDto): RouteFocusState | null {
+  const sentenceIds: string[] = []
+  const rangesBySentence: Record<string, RouteFocusRange[]> = {}
+
+  const appendRange = (sentenceId: string, range: RouteFocusRange) => {
+    sentenceIds.push(sentenceId)
+    rangesBySentence[sentenceId] = [...(rangesBySentence[sentenceId] || []), range]
   }
-}
 
-function buildReviewAssets(sceneData: AnyRenderSceneVm | null, sentenceId?: string) {
-  if (!sceneData || !sentenceId) return []
-  const seen = new Set<string>()
-  return ((sceneData.sentenceEntries || []) as AnySentenceEntryModel[])
-    .filter(entry => entry.sentenceId === sentenceId)
-    .map(entry => {
-      const label = getReviewAssetLabel(entry.entryType)
-      if (!label) return null
-      const title = trimReviewText(entry.title || entry.label || label, 30) || label
-      const key = `${entry.entryType}:${title}`
-      if (seen.has(key)) return null
-      seen.add(key)
-      return {
-        id: entry.id,
-        type: entry.entryType,
-        label,
-        title,
-        summary: trimReviewText(entry.content, 260),
-      }
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item))
-    .slice(0, 4)
-}
+  if (note.quote_mode === 'multi_text') {
+    note.segments.forEach(segment => appendRange(segment.sentence_id, { start: segment.start_offset, end: segment.end_offset }))
+    return buildRouteFocusState(note.target_key, 'multi_text', sentenceIds, rangesBySentence)
+  }
 
-async function requireAuth(): Promise<boolean> {
-  if (useAuthStore.getState().isLoggedIn) return true
-  const result = await ensureLoggedIn()
-  return result.success
+  if (
+    note.quote_mode === 'text_range'
+    && note.sentence_id
+    && typeof note.start_offset === 'number'
+    && typeof note.end_offset === 'number'
+    && note.end_offset > note.start_offset
+  ) {
+    appendRange(note.sentence_id, { start: note.start_offset, end: note.end_offset })
+    return buildRouteFocusState(note.target_key, 'text_range', sentenceIds, rangesBySentence)
+  }
+
+  return note.anchor_sentence_id
+    ? buildRouteFocusState(note.target_key, 'sentence', [note.anchor_sentence_id], {})
+    : null
 }
 
 export default function Result() {
@@ -248,8 +209,12 @@ export default function Result() {
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null)
   const [routeFocus, setRouteFocus] = useState<RouteFocusState | null>(null)
   const [userAnnotations, setUserAnnotations] = useState<UserAnnotationDto[]>([])
-  const [favoriteItems, setFavoriteItems] = useState<FavoriteItemDto[]>([])
-  const [showNoteSheet, setShowNoteSheet] = useState(false)
+  const [readerNotes, setReaderNotes] = useState<ReaderNoteDto[]>([])
+  const [noteSheetSentenceId, setNoteSheetSentenceId] = useState<string | null>(null)
+  const [noteSheetMode, setNoteSheetMode] = useState<'preview' | 'compose'>('preview')
+  const [activeReaderNoteId, setActiveReaderNoteId] = useState<string | null>(null)
+  const [editingReaderNoteId, setEditingReaderNoteId] = useState<string | null>(null)
+  const [noteDraftText, setNoteDraftText] = useState('')
   const [showFeedbackSheet, setShowFeedbackSheet] = useState(false)
   const [scrollIntoViewId, setScrollIntoViewId] = useState('')
   const [articleScrollTop, setArticleScrollTop] = useState(0)
@@ -276,17 +241,6 @@ export default function Result() {
         }
       : null
   }
-
-  const articleTitleForAssets = useMemo(() => {
-    if (!sceneData) return undefined
-    const academic = sceneData.schemaVersion === '3.0.0-academic' ? sceneData as AcademicRenderSceneVm : null
-    const explicitTitle = academic?.title?.trim()
-    if (explicitTitle) return explicitTitle
-    const firstSentence = sceneData.article.sentences[0]?.text?.trim()
-    if (firstSentence) return firstSentence.length > 42 ? `${firstSentence.slice(0, 42)}...` : firstSentence
-    const requestText = requestParams?.text?.trim()
-    return requestText ? (requestText.length > 42 ? `${requestText.slice(0, 42)}...` : requestText) : undefined
-  }, [sceneData, requestParams])
 
   const readerStyles = useMemo(() => {
     const fsRatios = { small: 0.85, standard: 1, large: 1.15, xlarge: 1.3 }
@@ -316,34 +270,53 @@ export default function Result() {
   useEffect(() => {
     if (pageState !== 'normal' || !isLoggedIn || !cloudId) {
       setUserAnnotations([])
+      setReaderNotes([])
       return
     }
-    listUserAnnotations(cloudId).then(setUserAnnotations).catch(err => {
+
+    const localReaderNotes = getLocalReaderNotes()
+      .filter(note => note.analysis_record_id === cloudId)
+    if (localReaderNotes.length > 0) {
+      setReaderNotes(localReaderNotes)
+    }
+    const localAnnotations = getLocalUserAnnotations()
+      .filter(a => a.analysis_record_id === cloudId)
+    if (localAnnotations.length > 0) {
+      setUserAnnotations(localAnnotations)
+    }
+
+    listUserAnnotations(cloudId).then(cloud => {
+      setUserAnnotations(mergeAnnotationsCloudWithLocal(cloud, localAnnotations))
+    }).catch(err => {
       console.warn('Failed to load user annotations', err)
+      if (localAnnotations.length > 0) {
+        setUserAnnotations(localAnnotations)
+      }
+    })
+    listReaderNotes(cloudId).then(cloud => {
+      setReaderNotes(mergeReaderNotesCloudWithLocal(cloud, localReaderNotes))
+    }).catch(err => {
+      console.warn('Failed to load reader notes', err)
+      if (localReaderNotes.length > 0) {
+        setReaderNotes(localReaderNotes)
+      }
     })
   }, [cloudId, pageState, isLoggedIn])
-
-  useEffect(() => {
-    if (pageState !== 'normal' || !isLoggedIn) return
-    fetchCloudFavoriteItems().then(res => setFavoriteItems(res.items)).catch(err => {
-      console.warn('Failed to load favorites', err)
-    })
-  }, [pageState, isLoggedIn])
 
   useEffect(() => {
     const targetKey = routeTargetKeyRef.current
     if (!targetKey) return
 
     const matchedAnnotation = userAnnotations.find(item => item.target_key === targetKey)
-    const matchedFavorite = favoriteItems.find(item => item.target_key === targetKey)
+    const matchedReaderNote = readerNotes.find(item => item.target_key === targetKey)
     const matchedSegments = matchedAnnotation?.segments?.map(segment => ({
       sentenceId: segment.sentence_id,
       start: segment.start_offset,
       end: segment.end_offset,
-    })) || getPayloadSegments(matchedFavorite?.payload_json)?.map(segment => ({
-      sentenceId: segment.sentenceId,
-      start: segment.startOffset,
-      end: segment.endOffset,
+    })) || matchedReaderNote?.segments?.map(segment => ({
+      sentenceId: segment.sentence_id,
+      start: segment.start_offset,
+      end: segment.end_offset,
     })) || []
 
     if (!routeSentenceIdRef.current && matchedSegments[0]?.sentenceId) {
@@ -355,15 +328,19 @@ export default function Result() {
 
     setRouteFocus(
       matchedAnnotation
-        ? null
-        : buildRouteFocusFromFavorite(
-            targetKey,
-            matchedFavorite || null,
-            routeSentenceIdRef.current || null,
-            routeRangeRef.current ? { start: routeRangeRef.current.start, end: routeRangeRef.current.end } : null,
-          ),
+        ? buildRouteFocusFromAnnotation(matchedAnnotation)
+        : matchedReaderNote
+          ? buildRouteFocusFromReaderNote(matchedReaderNote)
+          : null,
     )
-  }, [favoriteItems, userAnnotations])
+    if (matchedReaderNote) {
+      setNoteSheetSentenceId(matchedReaderNote.anchor_sentence_id)
+      setNoteSheetMode('preview')
+      setActiveReaderNoteId(matchedReaderNote.id)
+      setEditingReaderNoteId(null)
+      setNoteDraftText('')
+    }
+  }, [readerNotes, userAnnotations])
 
   useEffect(() => {
     const targetSentenceId = routeSentenceIdRef.current
@@ -434,7 +411,6 @@ export default function Result() {
     const activeRecordId = cloudId || recordId || ''
     return buildTargetKey(activeRecordId, selectionContext.anchorType, {
       sentenceId: selectionContext.sentenceId,
-      paragraphId: selectionContext.paragraphId,
       startOffset: selectionContext.startOffset,
       endOffset: selectionContext.endOffset,
       textHash: selectionContext.textHash,
@@ -442,45 +418,121 @@ export default function Result() {
   }, [selectionContext, cloudId, recordId])
   const routeFocusSentenceIds = useMemo(() => new Set(routeFocus?.sentenceIds || []), [routeFocus])
   const routeFocusRangesBySentence = useMemo(() => routeFocus?.rangesBySentence || {}, [routeFocus])
+  const sentenceById = useMemo(
+    () => new Map((sceneData?.article?.sentences || []).map(sentence => [sentence.sentenceId, sentence])),
+    [sceneData],
+  )
 
-  const annotationsByTargetKey = useMemo(() => {
-    const map = new Map<string, UserAnnotationDto>()
-    userAnnotations.forEach(annotation => {
-      map.set(annotation.target_key, annotation)
+  const noteSheetNotes = useMemo(() => {
+    if (!noteSheetSentenceId) return []
+    return readerNotes
+      .filter(note => note.anchor_sentence_id === noteSheetSentenceId)
+      .sort((a, b) => {
+        const aStart = a.quote_mode === 'sentence' ? 0 : (a.start_offset ?? a.segments[0]?.start_offset ?? 0)
+        const bStart = b.quote_mode === 'sentence' ? 0 : (b.start_offset ?? b.segments[0]?.start_offset ?? 0)
+        if (aStart !== bStart) return aStart - bStart
+        const aLen = a.selected_text.length
+        const bLen = b.selected_text.length
+        if (aLen !== bLen) return aLen - bLen
+        return a.created_at.localeCompare(b.created_at)
+      })
+  }, [noteSheetSentenceId, readerNotes])
+
+  const noteSheetSentenceText = useMemo(() => {
+    if (!noteSheetSentenceId || !sceneData?.article?.sentences) return ''
+    return sceneData.article.sentences.find(sentence => sentence.sentenceId === noteSheetSentenceId)?.text || ''
+  }, [noteSheetSentenceId, sceneData])
+
+  const editingReaderNote = useMemo(() => {
+    if (!editingReaderNoteId) return null
+    return readerNotes.find(note => note.id === editingReaderNoteId) || null
+  }, [editingReaderNoteId, readerNotes])
+
+  const activeReaderNote = useMemo(() => {
+    if (!activeReaderNoteId) return null
+    return readerNotes.find(note => note.id === activeReaderNoteId) || null
+  }, [activeReaderNoteId, readerNotes])
+
+  const openNoteSheetForSentence = useCallback((sentenceId: string, preferSentenceComposer = false) => {
+    const sentenceTargetKey = cloudId ? buildSentenceTargetKey(cloudId, sentenceId) : null
+    const sentenceNote = sentenceTargetKey
+      ? readerNotes.find(note => note.target_key === sentenceTargetKey) || null
+      : null
+    const fallbackNote = readerNotes.find(note => note.anchor_sentence_id === sentenceId) || null
+    const nextActiveNote = sentenceNote || fallbackNote
+    const nextEditingNote = preferSentenceComposer ? sentenceNote : null
+
+    setNoteSheetSentenceId(sentenceId)
+    setNoteSheetMode(preferSentenceComposer || !nextActiveNote ? 'compose' : 'preview')
+    setActiveReaderNoteId(nextActiveNote?.id || null)
+    setEditingReaderNoteId(nextEditingNote?.id || null)
+    setNoteDraftText(nextEditingNote?.note_text || '')
+    clearSelection()
+  }, [clearSelection, cloudId, readerNotes])
+
+  const closeNoteSheet = useCallback(() => {
+    setNoteSheetSentenceId(null)
+    setNoteSheetMode('preview')
+    setActiveReaderNoteId(null)
+    setEditingReaderNoteId(null)
+    setNoteDraftText('')
+  }, [])
+
+  const handleOpenSentenceNotes = useCallback((sentenceId: string) => {
+    openNoteSheetForSentence(sentenceId)
+  }, [openNoteSheetForSentence])
+
+  const focusReaderNote = useCallback((note: ReaderNoteDto) => {
+    const focus = buildRouteFocusFromReaderNote(note)
+    routeSentenceIdRef.current = note.anchor_sentence_id
+    scrolledSentenceIdRef.current = null
+    setNoteSheetSentenceId(note.anchor_sentence_id)
+    setNoteSheetMode('preview')
+    setActiveReaderNoteId(note.id)
+    setEditingReaderNoteId(null)
+    setNoteDraftText('')
+    setActiveSentenceId(note.anchor_sentence_id)
+    setScrollIntoViewId(getSentenceAnchorId(note.anchor_sentence_id))
+    setRouteFocus(focus)
+  }, [setActiveSentenceId])
+
+  const handleOpenActiveNoteActions = useCallback(() => {
+    if (!activeReaderNote) return
+
+    Taro.showActionSheet({
+      itemList: ['编辑笔记', '删除笔记'],
+      success: (result) => {
+        if (result.tapIndex === 0) {
+          setNoteSheetMode('compose')
+          setEditingReaderNoteId(activeReaderNote.id)
+          setNoteDraftText(activeReaderNote.note_text)
+          return
+        }
+
+        if (result.tapIndex === 1) {
+          Taro.showModal({
+            title: '删除笔记',
+            content: '删除后将无法恢复，是否继续？',
+            confirmColor: '#C2410C',
+            success: (modal) => {
+              if (!modal.confirm) return
+
+              const nextNotes = readerNotes.filter(note => note.id !== activeReaderNote.id)
+              const nextActive = nextNotes.find(note => note.anchor_sentence_id === activeReaderNote.anchor_sentence_id) || null
+
+              setReaderNotes(nextNotes)
+              setActiveReaderNoteId(nextActive?.id || null)
+              setEditingReaderNoteId(null)
+              setNoteDraftText('')
+              setNoteSheetMode(nextActive ? 'preview' : 'compose')
+              CloudSyncService.syncDeleteNote(activeReaderNote.id)
+              Taro.showToast({ title: '已删除笔记', icon: 'success' })
+            },
+          })
+        }
+      },
     })
-    return map
-  }, [userAnnotations])
-
-  const favoriteTargetKeys = useMemo(() => new Set(
-    favoriteItems
-      .filter(item => item.target_type === 'sentence' || item.target_type === 'paragraph' || item.target_type === 'text_range')
-      .map(item => item.target_key)
-  ), [favoriteItems])
-  const favoritedSentenceIds = useMemo(() => {
-    const ids = new Set<string>()
-    favoriteItems.forEach(item => {
-      if (item.target_type === 'multi_text') {
-        getPayloadSegments(item.payload_json).forEach(segment => {
-          ids.add(segment.sentenceId)
-        })
-        return
-      }
-      const sentenceId = typeof item.payload_json?.sentence_id === 'string'
-        ? item.payload_json.sentence_id as string
-        : ''
-      if (sentenceId) {
-        ids.add(sentenceId)
-      }
-    })
-    return ids
-  }, [favoriteItems])
-
-  const currentSelectionAnnotation = activeSelectionTargetKey
-    ? annotationsByTargetKey.get(activeSelectionTargetKey)
-    : undefined
-  const isSelectionFavorited = activeSelectionTargetKey
-    ? favoriteTargetKeys.has(activeSelectionTargetKey)
-    : false
+  }, [activeReaderNote, readerNotes])
 
   const handleCopy = (mode: 'original' | 'translation' | 'bilingual') => {
     if (!selectionContext) return
@@ -503,192 +555,192 @@ export default function Result() {
     })
   }
 
-  const handleFavoriteSelection = async () => {
-    if (!selectionContext || !activeSelectionTargetKey) return
-    const authed = await requireAuth()
-    if (!authed) return
-
+  const handleHighlight = async (color: 'soft_green' | 'soft_blue' | 'soft_purple' | 'warm_yellow' | 'sage_green', selectedText: string) => {
+    if (!selectionContext || !cloudId) return
     try {
-      const reviewAssets = buildReviewAssets(sceneData, selectionContext.sentenceId)
-      if (isSelectionFavorited) {
-        await removeFavoriteFromCloud(activeSelectionTargetKey, selectionContext.anchorType)
-        setFavoriteItems(prev => prev.filter(item => item.target_key !== activeSelectionTargetKey))
-        Taro.showToast({ title: '已取消收藏', icon: 'success' })
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const now = new Date().toISOString()
+      const newAnnotation: UserAnnotationDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_type: 'sentence',
+        target_key: buildSentenceTargetKey(cloudId, selectionContext.sentenceId),
+        sentence_id: selectionContext.sentenceId,
+        selected_text: selectedText,
+        text_hash: selectionContext.textHash,
+        color: color,
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setUserAnnotations(prev => [...prev, newAnnotation])
+      CloudSyncService.syncAnnotation(newAnnotation, true)
+      Taro.showToast({ title: '已添加高亮', icon: 'success' })
+      clearSelection()
+    } catch (err) {
+      console.warn('Failed to create highlight', err)
+      Taro.showToast({ title: '添加高亮失败', icon: 'none' })
+    }
+  }
+
+  const handleNote = async (selectedText: string) => {
+    if (!selectionContext || !cloudId) return
+    try {
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const now = new Date().toISOString()
+      const newNote: ReaderNoteDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_sentence_id: selectionContext.sentenceId,
+        quote_mode: 'sentence',
+        target_key: buildSentenceTargetKey(cloudId, selectionContext.sentenceId),
+        sentence_id: selectionContext.sentenceId,
+        selected_text: selectedText,
+        start_offset: selectionContext.startOffset,
+        end_offset: selectionContext.endOffset,
+        text_hash: selectionContext.textHash,
+        segments: [{
+          sentence_id: selectionContext.sentenceId,
+          selected_text: selectedText,
+          start_offset: selectionContext.startOffset,
+          end_offset: selectionContext.endOffset,
+          text_hash: selectionContext.textHash || '',
+        }],
+        note_text: '',
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setReaderNotes(prev => [...prev, newNote])
+      setNoteSheetSentenceId(selectionContext.sentenceId)
+      setActiveReaderNoteId(newNote.id)
+      CloudSyncService.syncNote(newNote, true)
+      clearSelection()
+    } catch (err) {
+      console.warn('Failed to create note', err)
+      Taro.showToast({ title: '添加笔记失败', icon: 'none' })
+    }
+  }
+
+  const handleSentenceHighlight = useCallback(async (
+    color: 'soft_green' | 'soft_blue' | 'soft_purple' | 'warm_yellow' | 'sage_green',
+    selectedText: string,
+  ) => {
+    if (!selectionContext || !cloudId) return
+    try {
+      const now = new Date().toISOString()
+      const targetKey = buildSentenceTargetKey(cloudId, selectionContext.sentenceId)
+      const existingAnnotation = userAnnotations.find(item => item.target_key === targetKey) || null
+
+      if (existingAnnotation) {
+        const updatedAnnotation: UserAnnotationDto = {
+          ...existingAnnotation,
+          sentence_id: selectionContext.sentenceId,
+          selected_text: selectedText,
+          text_hash: selectionContext.textHash,
+          color,
+          updated_at: now,
+        }
+        setUserAnnotations(prev => prev.map(item => item.id === updatedAnnotation.id ? updatedAnnotation : item))
+        CloudSyncService.syncAnnotation(updatedAnnotation, false)
+        Taro.showToast({ title: '已更新高亮', icon: 'success' })
         clearSelection()
         return
       }
-      await addFavoriteToCloud(
-        cloudId || null,
-        activeSelectionTargetKey,
-        selectionContext.anchorType,
-        {
-          paragraph_id: selectionContext.paragraphId,
-          sentence_id: selectionContext.sentenceId,
-          client_record_id: recordId,
-          text: selectionContext.selectedText,
-          translation: selectionContext.translation,
-          article_title: articleTitleForAssets,
-          start_offset: selectionContext.startOffset,
-          end_offset: selectionContext.endOffset,
-          selected_text: selectionContext.selectedText,
-          text_hash: selectionContext.textHash,
-          anchor_type: selectionContext.anchorType,
-          review_assets: reviewAssets,
-        }
-      )
-      setFavoriteItems(prev => [
-        {
-          id: activeSelectionTargetKey,
-          target_type: selectionContext.anchorType,
-          target_key: activeSelectionTargetKey,
-          analysis_record_id: cloudId || null,
-          payload_json: {
-            paragraph_id: selectionContext.paragraphId,
-            sentence_id: selectionContext.sentenceId,
-            client_record_id: recordId,
-            text: selectionContext.selectedText,
-            translation: selectionContext.translation,
-            article_title: articleTitleForAssets,
-            anchor_type: selectionContext.anchorType,
-            start_offset: selectionContext.startOffset,
-            end_offset: selectionContext.endOffset,
-            selected_text: selectionContext.selectedText,
-            text_hash: selectionContext.textHash,
-            review_assets: reviewAssets,
-          },
-          note: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        ...prev.filter(item => item.target_key !== activeSelectionTargetKey),
-      ])
-      Taro.showToast({ title: '已收藏', icon: 'success' })
-      clearSelection()
-    } catch (err: any) {
-      Taro.showToast({ title: err.message || '收藏失败', icon: 'none' })
-    }
-  }
 
-  const handleOpenNote = async () => {
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const newAnnotation: UserAnnotationDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_type: 'sentence',
+        target_key: targetKey,
+        sentence_id: selectionContext.sentenceId,
+        selected_text: selectedText,
+        text_hash: selectionContext.textHash,
+        color,
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setUserAnnotations(prev => [...prev, newAnnotation])
+      CloudSyncService.syncAnnotation(newAnnotation, true)
+      Taro.showToast({ title: '已添加高亮', icon: 'success' })
+      clearSelection()
+    } catch (err) {
+      console.warn('Failed to create highlight', err)
+      Taro.showToast({ title: '添加高亮失败', icon: 'none' })
+    }
+  }, [clearSelection, cloudId, selectionContext, userAnnotations])
+
+  const handleSentenceNoteAction = useCallback(() => {
     if (!selectionContext) return
-    const authed = await requireAuth()
-    if (!authed) return
-    setShowNoteSheet(true)
-  }
+    openNoteSheetForSentence(selectionContext.sentenceId, true)
+  }, [openNoteSheetForSentence, selectionContext])
 
-  const handleNoteSave = async (color: string, note: string) => {
-    if (!selectionContext || !activeSelectionTargetKey) return
-    const authed = await requireAuth()
-    if (!authed) return
+  const handleSubmitNoteDraft = useCallback(async () => {
+    if (!noteSheetSentenceId || !cloudId) return
+    const nextText = noteDraftText.trim()
+    if (!nextText) {
+      Taro.showToast({ title: '笔记内容不能为空', icon: 'none' })
+      return
+    }
 
     try {
-      const reviewAssets = buildReviewAssets(sceneData, selectionContext.sentenceId)
-      const annotationColor = color as UserAnnotationColor
-      Taro.showLoading({ title: '保存中...' })
-      const res = currentSelectionAnnotation
-        ? await updateUserAnnotation(currentSelectionAnnotation.id, { color, note })
-        : await createUserAnnotation({
-          analysis_record_id: cloudId || undefined,
-          annotation_type: note ? 'note' : 'highlight',
-          anchor_type: selectionContext.anchorType,
-          target_key: activeSelectionTargetKey,
-          paragraph_id: selectionContext.paragraphId,
-          sentence_id: selectionContext.sentenceId,
-          selected_text: selectionContext.selectedText,
-          start_offset: selectionContext.anchorType === 'text_range' ? selectionContext.startOffset : undefined,
-          end_offset: selectionContext.anchorType === 'text_range' ? selectionContext.endOffset : undefined,
-          text_hash: selectionContext.anchorType === 'text_range' ? selectionContext.textHash : undefined,
-          color: annotationColor,
-          note,
-          payload_json: {
-            source: 'result_page',
-            client_record_id: recordId,
-            translation: selectionContext.translation,
-            article_title: articleTitleForAssets,
-            offset_unit: selectionContext.anchorType === 'text_range' ? 'utf16' : undefined,
-            text_hash_algorithm: selectionContext.anchorType === 'text_range' ? 'fnv1a32-utf16' : undefined,
-            review_assets: reviewAssets,
-          },
-        })
-      setUserAnnotations(prev => {
-        const filtered = prev.filter(a => a.target_key !== res.target_key)
-        return [res, ...filtered]
-      })
-      Taro.hideLoading()
-      Taro.showToast({ title: note ? '笔记已保存' : '高亮已添加', icon: 'success' })
-      clearSelection()
-      setShowNoteSheet(false)
-    } catch (e: any) {
-      Taro.hideLoading()
-      Taro.showToast({ title: '保存失败', icon: 'none' })
+      const now = new Date().toISOString()
+
+      if (editingReaderNote) {
+        const updatedNote: ReaderNoteDto = {
+          ...editingReaderNote,
+          note_text: nextText,
+          updated_at: now,
+        }
+        setReaderNotes(prev => prev.map(note => note.id === updatedNote.id ? updatedNote : note))
+        setActiveReaderNoteId(updatedNote.id)
+        setEditingReaderNoteId(updatedNote.id)
+        setNoteDraftText(updatedNote.note_text)
+        setNoteSheetMode('preview')
+        CloudSyncService.syncNote(updatedNote, false)
+        Taro.showToast({ title: '已保存笔记', icon: 'success' })
+        return
+      }
+
+      const sentence = sentenceById.get(noteSheetSentenceId)
+      const selectedText = sentence?.text || noteSheetSentenceText
+      if (!selectedText) {
+        Taro.showToast({ title: '未找到句子内容', icon: 'none' })
+        return
+      }
+
+      const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const newNote: ReaderNoteDto = {
+        id: tempId,
+        analysis_record_id: cloudId,
+        anchor_sentence_id: noteSheetSentenceId,
+        quote_mode: 'sentence',
+        target_key: buildSentenceTargetKey(cloudId, noteSheetSentenceId),
+        paragraph_id: sentence?.paragraphId,
+        sentence_id: noteSheetSentenceId,
+        selected_text: selectedText,
+        start_offset: 0,
+        end_offset: selectedText.length,
+        segments: [],
+        note_text: nextText,
+        payload_json: {},
+        created_at: now,
+        updated_at: now,
+      }
+      setReaderNotes(prev => [...prev, newNote])
+      setActiveReaderNoteId(newNote.id)
+      setEditingReaderNoteId(newNote.id)
+      setNoteDraftText(newNote.note_text)
+      setNoteSheetMode('preview')
+      CloudSyncService.syncNote(newNote, true)
+      Taro.showToast({ title: '已创建笔记', icon: 'success' })
+    } catch (err) {
+      console.warn('Failed to save note', err)
+      Taro.showToast({ title: '保存笔记失败', icon: 'none' })
     }
-  }
-
-  const handleHighlightOnly = async (color: string) => {
-    if (!selectionContext || !activeSelectionTargetKey) return
-    const authed = await requireAuth()
-    if (!authed) return
-
-    try {
-      const reviewAssets = buildReviewAssets(sceneData, selectionContext.sentenceId)
-      const annotationColor = color as UserAnnotationColor
-      Taro.showLoading({ title: '保存中...' })
-      const res = currentSelectionAnnotation
-        ? await updateUserAnnotation(currentSelectionAnnotation.id, { color, note: '' })
-        : await createUserAnnotation({
-          analysis_record_id: cloudId || undefined,
-          annotation_type: 'highlight',
-          anchor_type: selectionContext.anchorType,
-          target_key: activeSelectionTargetKey,
-          paragraph_id: selectionContext.paragraphId,
-          sentence_id: selectionContext.sentenceId,
-          selected_text: selectionContext.selectedText,
-          start_offset: selectionContext.anchorType === 'text_range' ? selectionContext.startOffset : undefined,
-          end_offset: selectionContext.anchorType === 'text_range' ? selectionContext.endOffset : undefined,
-          text_hash: selectionContext.anchorType === 'text_range' ? selectionContext.textHash : undefined,
-          color: annotationColor,
-          payload_json: {
-            source: 'result_page',
-            client_record_id: recordId,
-            translation: selectionContext.translation,
-            article_title: articleTitleForAssets,
-            offset_unit: selectionContext.anchorType === 'text_range' ? 'utf16' : undefined,
-            text_hash_algorithm: selectionContext.anchorType === 'text_range' ? 'fnv1a32-utf16' : undefined,
-            review_assets: reviewAssets,
-          },
-        })
-      setUserAnnotations(prev => {
-        const filtered = prev.filter(a => a.target_key !== res.target_key)
-        return [res, ...filtered]
-      })
-      Taro.hideLoading()
-      Taro.showToast({ title: '高亮已添加', icon: 'success' })
-      clearSelection()
-      setShowNoteSheet(false)
-    } catch (e: any) {
-      Taro.hideLoading()
-      Taro.showToast({ title: '保存失败', icon: 'none' })
-    }
-  }
-
-  const handleDeleteAnnotation = async () => {
-    if (!currentSelectionAnnotation) return
-    const authed = await requireAuth()
-    if (!authed) return
-
-    try {
-      Taro.showLoading({ title: '删除中...' })
-      await deleteUserAnnotation(currentSelectionAnnotation.id)
-      setUserAnnotations(prev => prev.filter(item => item.id !== currentSelectionAnnotation.id))
-      Taro.hideLoading()
-      Taro.showToast({ title: '批注已删除', icon: 'success' })
-      setShowNoteSheet(false)
-      clearSelection()
-    } catch {
-      Taro.hideLoading()
-      Taro.showToast({ title: '删除失败', icon: 'none' })
-    }
-  }
+  }, [cloudId, editingReaderNote, noteDraftText, noteSheetSentenceId, noteSheetSentenceText, sentenceById])
 
   useResultEffects({
     recordId, cloudId, sceneData, pageState,
@@ -787,15 +839,16 @@ export default function Result() {
           routeFocusSentenceIds={routeFocusSentenceIds}
           routeFocusRangesBySentence={routeFocusRangesBySentence}
           userAnnotations={userAnnotations}
-          favoritedSentenceIds={favoritedSentenceIds}
+          readerNotes={readerNotes}
           onWordClick={actions.handleWordClick}
           onSentenceClick={actions.handleSentenceClick}
+          onSentenceNotePress={handleOpenSentenceNotes}
           onSelectionContext={handleSelectionContext}
           onMarkActiveChange={state.setActiveMarkId}
         />
       )
     })
-  }, [sceneData, activeMarkId, selectedWord, vocabList, vocabSavedMap, pageMode, isAcademicMode, recordId, cloudId, activeSentenceId, selectionSentenceId, selectionRange, handleSelectionContext, userAnnotations, favoriteTargetKeys, favoritedSentenceIds, routeFocusSentenceIds, routeFocusRangesBySentence])
+  }, [sceneData, activeMarkId, selectedWord, vocabList, vocabSavedMap, pageMode, isAcademicMode, recordId, cloudId, activeSentenceId, selectionSentenceId, selectionRange, handleSelectionContext, handleOpenSentenceNotes, userAnnotations, readerNotes, routeFocusSentenceIds, routeFocusRangesBySentence])
 
   if (!sceneData) {
     if (pageState === 'loading') {
@@ -931,28 +984,28 @@ export default function Result() {
       />
 
       <ReadingSelectionToolbar
-        visible={!!selectionContext && !showNoteSheet && !showFeedbackSheet}
+        visible={!!selectionContext && !showFeedbackSheet}
         context={selectionContext}
-        isFavorited={isSelectionFavorited}
-        hasAnnotation={!!currentSelectionAnnotation}
-        hasNote={!!currentSelectionAnnotation?.note}
         onClose={clearSelection}
         onCopy={handleCopy}
-        onFavorite={handleFavoriteSelection}
-        onNote={handleOpenNote}
         onFeedback={() => { setShowFeedbackSheet(true) }}
+        onHighlight={handleSentenceHighlight}
+        onNote={handleSentenceNoteAction}
       />
 
-      <UserNoteSheet
-        visible={showNoteSheet}
-        selectionText={selectionContext?.selectedText}
-        initialColor={currentSelectionAnnotation?.color || 'soft_green'}
-        initialNote={currentSelectionAnnotation?.note || ''}
-        hasExistingAnnotation={!!currentSelectionAnnotation}
-        onClose={() => setShowNoteSheet(false)}
-        onSave={handleNoteSave}
-        onHighlightOnly={handleHighlightOnly}
-        onDelete={currentSelectionAnnotation ? handleDeleteAnnotation : undefined}
+      <ReaderNoteSheet
+        visible={!!noteSheetSentenceId}
+        notes={noteSheetNotes}
+        mode={noteSheetMode}
+        activeNote={activeReaderNote}
+        activeNoteId={activeReaderNoteId}
+        draftText={noteDraftText}
+        submitLabel={editingReaderNote ? '保存笔记' : '创建笔记'}
+        onClose={closeNoteSheet}
+        onSelectNote={focusReaderNote}
+        onDraftChange={setNoteDraftText}
+        onSubmitDraft={handleSubmitNoteDraft}
+        onOpenActions={handleOpenActiveNoteActions}
       />
 
       {showFeedbackSheet && selectionContext && (

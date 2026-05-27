@@ -1,4 +1,4 @@
-import { Inter, Newsreader } from "next/font/google";
+import { Inter, Source_Serif_4 } from "next/font/google";
 
 const clareadUiSans = Inter({
   subsets: ["latin"],
@@ -6,7 +6,7 @@ const clareadUiSans = Inter({
   display: "swap",
 });
 
-const clareadReadingSerif = Newsreader({
+const clareadReadingSerif = Source_Serif_4({
   subsets: ["latin"],
   variable: "--font-reading-en",
   display: "swap",

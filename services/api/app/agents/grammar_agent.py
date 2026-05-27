@@ -21,6 +21,7 @@ class GrammarAgentDeps:
     sentences: list[dict[str, object]]
     prompt_strategy: PromptStrategy
     examples: list[ExampleEntry] = field(default_factory=list)
+    focus_guidance: dict[str, object] | None = None
 
 
 def build_grammar_prompt(deps: GrammarAgentDeps) -> str:
@@ -28,6 +29,7 @@ def build_grammar_prompt(deps: GrammarAgentDeps) -> str:
         strategy_sections=build_prompt_sections(deps.prompt_strategy),
         examples=deps.examples,
         sentences=deps.sentences,
+        focus_guidance=deps.focus_guidance,
     )
 
 

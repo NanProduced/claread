@@ -41,11 +41,12 @@
 | Vocabulary | `POST /vocabulary/highlights` | 结果页高亮和已收藏生词匹配 |
 | Vocabulary | `GET /vocabulary/review/due` | 生词复习 |
 | Feedback | `POST /feedback` | 用户反馈 |
-| User Annotations | `POST /user-annotations` | 用户高亮/笔记，支持句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
+| User Annotations | `POST /user-annotations` | 用户高亮，支持句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
 | User Annotations | `GET /user-annotations` | 用户批注列表 |
-| Favorites | `POST /favorites` | 收藏文章、句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
+| Reader Notes | `POST /reader-notes` | 用户笔记，支持句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
+| Reader Notes | `GET /reader-notes` | 用户笔记列表 |
+| Favorites | `POST /favorites` | 收藏文章 |
 | Favorites | `GET /favorites` | 收藏列表 |
-| Excerpts | `GET /excerpt-assets` | 摘录与批注聚合列表；按文章分组返回 merged anchor asset，并保留 insight sidecar |
 | Daily Reader | `GET /daily-reader/today` | 今日精读 |
 | Daily Reader | `GET /daily-reader` | 往期精读列表 |
 | Daily Reader | `GET /daily-reader/{article_id}` | 精读详情 |
@@ -67,20 +68,24 @@
 - `POST /dict/ai` 是首个正式用户侧词典 AI 能力入口；要求登录态、参与积分结算、写入统一 AI usage 审计，并在 `missing_fallback` 成功后把 AI 输出写入候选池 `dict_ai_candidate_entries`。
 - `POST /dict/ai` 当前按固定价格结算：`context_explain` 与 `missing_fallback` 都是每次 `5` 点；真实 token usage 只用于审计，不直接映射用户侧扣点。
 - `POST /reader-ask/threads/{thread_id}/messages/stream` 是 Reader 内 Ask Claread 的正式用户侧 AI 能力入口；要求登录态、默认绑定当前文章线程、支持 SSE 流式 markdown 输出，并接入统一 AI usage 审计与积分预留/退回闭环。
-- `POST /reader-ask/threads/{thread_id}/messages/stream` 请求体当前支持 `content`、`task_mode`、`anchors[]`、`reader_focus`；`task_mode` 用于区分 `讲解 / 拆句 / 词义 / 语法 / 练习`。
-- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前事件合同包括：`thread.ready`、`message.started`、`message.delta`、`tool.started`、`tool.completed`、`tool.failed`、`message.completed`、`error`。Web 通过 Next.js BFF 代理消费 SSE，不直接让浏览器拼装 FastAPI 原始实现细节。
-- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前已经切到模型侧 tool-call runtime；`message.completed` canonical payload 固定返回 `content_md`、`task_mode`、`citations`、`action_proposals`、`tool_trace`、`response_cards`、`usage_summary`、`billed_points` 和 `resolved_context`。
-- `resolved_context` 当前至少会暴露 `当前句 / 当前段 / 本文资产 / 历史资产 / 词典` 的使用摘要，供 Web 做被动上下文展示。
+- `POST /reader-ask/threads/{thread_id}/messages/stream` 请求体当前公开 shape 固定为 `content`、`page_identity`、`attachments`、`entry_action` 和可选 `model`；`task_mode`、`reader_focus`、`anchors` 不再作为公开主字段。
+- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前事件合同包括：`thread.ready`、`message.started`、`message.delta`、`reasoning.started`、`reasoning.delta`、`reasoning.completed`、`tool.started`、`tool.completed`、`tool.failed`、`message.interrupted`、`message.completed`、`error`。Web 通过 Next.js BFF 代理消费 SSE，不直接让浏览器拼装 FastAPI 原始实现细节。
+- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前已经切到模型侧 tool-call runtime；`message.completed` canonical payload 的正式来源是 `ReaderAskUserVisibleOutput`，当前稳定字段包括 `content_md`、`submission_mode`、`resolved_intent`、`citations`、`evidence`、`context_plan`、`resolved_context_input`、`trace_summary`、`disambiguation`、`external_asset_disambiguation`、`response_cards`、`action_proposals`、`supplement_candidates`、`persisted_supplements`、`run_info`、`usage_summary` 和 `billed_points`。
+- Ask runtime 中的 `article_overview` 当前采用“弱增强”语义：academic record 继续复用 `render_scene.content_summary.overview`；learning record 则可能通过异步生成的 `analysis_results.page_state_json.derived.overview_hint` 提供 `ready | pending | unavailable | failed | stale` 状态，不作为 Ask 成功运行的必要条件。
+- `message.completed` 相关 record context 当前允许附带 `article_overview_status`、`article_overview_source`、`article_overview_confidence` 作为非强依赖辅助字段，供前端和调试面板展示。
+- `POST /reader-ask/threads/{thread_id}/messages/{message_id}/retry/stream` 只接受 assistant message id；若上一次 run 处于 `interrupted`，Web 应展示“继续生成”，但底层仍复用同一 retry endpoint 产生同一 user turn 的新 run。
+- `resolved_context` 当前用于兼容摘要展示；planner 输入侧的正式上下文说明以 `context_plan` 和 `resolved_context_input` 为准。
 - `source_type` 统一为 `user_input / daily_article / imported / ocr`。
 - `RecordCreateRequest.source_type` 使用统一枚举。
 - `TaskSubmitResponse` / `TaskStatusResponse` 兼容只传 `record_id` 时自动补 `cloud_record_id`。
 - `user_annotations.anchor_type='text_range'` 使用 UTF-16 code unit offset，要求 `analysis_record_id`、`sentence_id`、`selected_text`、`start_offset`、`end_offset`、`text_hash`，并校验 render scene sentence 切片。
 - `user_annotations.anchor_type='multi_text'` 使用 `payload_json.segments[]` 保存多段 anchor；每段都按同一套 UTF-16 offset 和 `fnv1a32-utf16` hash 校验，并要求顺序与 render scene article sentence 顺序一致。
-- `favorite_records.target_type='text_range'` 使用同一套 `selected_text`、offset 和 hash payload。
-- `favorite_records.target_type='multi_text'` 复用 `payload_json.segments[]`，并执行与 annotations 相同的 render scene 校验。
-- `GET /excerpt-assets` 按 canonical `target_key` 合并 favorites 与 user annotations，返回 `sentence / text_range / multi_text` 三类摘录资产；`record_id` / `client_record_id`、`target_key`、UTF-16 offset/hash 和 `segments[]` 必须保持稳定，供 Web `/library/assets` 与小程序 `packageA/excerpts` 共用。
-- `/excerpt-assets` 的 `insights[]` 优先来自 record render scene 的句子级解析内容；缺失时回退到收藏/批注 payload 中已有的 `review_assets` 等价信息。
-- 删除 record 时，后端会同步 soft-delete 同一 `analysis_record_id` 下的 favorites 和 user annotations，避免摘录页出现孤儿资产。
+- `user_annotations` 当前只承载用户高亮。高亮冲突统一走后端 resolver：exact hit 复用原对象，subset / superset / partial overlap 合并到单一高亮，多条重叠时保留最早记录并 soft-delete 其余记录；若并集恰好覆盖整句，anchor 会自动升级为 `sentence`。
+- `favorite_records.target_type` 当前仅允许 `analysis_record` 和 `daily_reader_article`。
+- `reader_notes.quote_mode='sentence' | 'text_range' | 'multi_text'` 与 `user_annotations` 共用同一套 UTF-16 text anchor 校验；`GET /reader-notes` 使用 `analysis_record_id` 作为查询参数。
+- `reader_notes` 只做 exact-hit reopen，不参与高亮冲突合并：`target_key` 完全一致时 reopen/编辑已有笔记，不新增重复 note；重叠但不完全相同的 quote 可以并存为不同 note。
+- `PATCH /reader-notes/{id}` 只允许修改 `note_text`。修改 quote identity 不走 patch，必须删除旧 note 后重建。
+- 删除 record 时，后端会同步 soft-delete 同一 `analysis_record_id` 下的文章收藏、高亮和笔记，避免留下孤儿数据。
 - `vocabulary_book.dict_entry_id` 指向 `dict_entries.id`；词典重导前必须处理 ID 稳定性。
 - `VocabHighlight` 拒绝未知字段，避免 LLM 草稿把旧字段静默带入 canonical annotation。
 

@@ -12,7 +12,6 @@ import type { InputEvent, StopPropagationEvent } from '../../types/taro-events'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useAuthStore } from '../../stores/auth'
 import { getVocabulary, removeVocabEntry, saveVocabInspectEntry } from '../../services/storage'
-import { CloudSyncService } from '../../services/cloudSync.service'
 import { fetchCloudVocabulary } from '../../services/api/vocabulary.client'
 import type { VocabEntry } from '../../types/view/vocabulary.vm'
 import { track } from '../../services/analytics'
@@ -242,7 +241,6 @@ export default function VocabPage({ isSubView = false }: VocabPageProps) {
       success: (res) => {
         if (res.confirm) {
           removeVocabEntry(entry.id)
-          CloudSyncService.syncDeleteVocab(entry.id, entry.lemma || entry.word)
           setVocabList((prev) => prev.filter((v) => v.id !== entry.id))
         }
       },

@@ -19,8 +19,10 @@ def test_health_check(monkeypatch) -> None:
             return {"healthy": True, "inflight_tasks": 0}
 
     app.state.analysis_task_worker = MockWorker()
+    app.state.overview_task_worker = MockWorker()
 
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["overview_worker"] is True

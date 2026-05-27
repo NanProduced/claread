@@ -4,6 +4,8 @@ import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
 import type {
   ReaderAskActionConfirmRequestDto,
   ReaderAskActionConfirmResponseDto,
+  ReaderAskContextRecordSearchResponseDto,
+  ReaderAskDeleteSupplementResponseDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
@@ -32,6 +34,23 @@ export function listUpstreamReaderAskThreads(
   });
 }
 
+export function listUpstreamReaderAskContextRecords(
+  query: string,
+  excludeRecordId: string | null,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderAskContextRecordSearchResponseDto>> {
+  const searchParams = new URLSearchParams({ query });
+  if (excludeRecordId) {
+    searchParams.set("exclude_record_id", excludeRecordId);
+  }
+  return fastApiFetch<ReaderAskContextRecordSearchResponseDto>(
+    `/reader-ask/context-records?${searchParams.toString()}`,
+    {
+      sessionToken,
+    },
+  );
+}
+
 export function createUpstreamReaderAskThread(
   body: ReaderAskThreadCreateRequestDto,
   sessionToken: string,
@@ -50,6 +69,29 @@ export function getUpstreamReaderAskThread(
   return fastApiFetch<ReaderAskThreadDetailDto>(`/reader-ask/threads/${threadId}`, {
     sessionToken,
   });
+}
+
+export function resetUpstreamReaderAskThread(
+  threadId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderAskThreadDetailDto>> {
+  return fastApiFetch<ReaderAskThreadDetailDto>(`/reader-ask/threads/${threadId}/reset`, {
+    method: "POST",
+    sessionToken,
+  });
+}
+
+export function deleteUpstreamReaderAskSupplement(
+  supplementId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderAskDeleteSupplementResponseDto>> {
+  return fastApiFetch<ReaderAskDeleteSupplementResponseDto>(
+    `/reader-ask/supplements/${supplementId}`,
+    {
+      method: "DELETE",
+      sessionToken,
+    },
+  );
 }
 
 export function confirmUpstreamReaderAskAction(
@@ -81,6 +123,22 @@ export async function createUpstreamReaderAskStream(
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
+    cache: "no-store",
+  });
+}
+
+/** Regenerate (not resume/continue) the assistant answer. Calls the upstream retry endpoint. */
+export async function retryUpstreamReaderAskMessage(
+  threadId: string,
+  messageId: string,
+  sessionToken: string,
+): Promise<Response> {
+  return fetch(`${getBaseUrl()}/reader-ask/threads/${threadId}/messages/${messageId}/retry/stream`, {
+    method: "POST",
+    headers: {
+      accept: "text/event-stream",
+      authorization: `Bearer ${sessionToken}`,
+    },
     cache: "no-store",
   });
 }

@@ -31,7 +31,7 @@ export function SegmentedControl<T extends string>({
           {label}
         </legend>
       ) : null}
-      <div className="inline-flex max-w-full flex-wrap gap-1 rounded-[1.1rem] border border-hairline bg-[linear-gradient(180deg,rgba(244,241,233,0.72),rgba(251,249,244,0.9))] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+      <div className="app-segmented-surface inline-flex max-w-full flex-wrap gap-1 rounded-[1.1rem] border border-hairline p-1">
         {options.map((option) => {
           const active = option.value === value;
           return (
@@ -39,10 +39,10 @@ export function SegmentedControl<T extends string>({
               key={option.value}
               type="button"
               className={cn(
-                "focus-ring min-h-10 rounded-[0.82rem] border px-4 text-sm font-semibold tracking-[0.01em] transition-[background-color,border-color,color,box-shadow]",
+                "app-segmented-item focus-ring min-h-10 rounded-[0.82rem] border px-4 text-sm font-semibold tracking-[0.01em]",
                 active
-                  ? "border-[rgba(214,209,197,0.88)] bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(250,248,243,1))] text-ink shadow-[0_8px_18px_rgba(17,17,17,0.05),inset_0_1px_0_rgba(255,255,255,0.82)]"
-                  : "border-transparent bg-transparent text-ink-soft hover:bg-[rgba(255,255,255,0.58)] hover:text-ink",
+                  ? "app-segmented-item--active border-hairline/90 text-ink"
+                  : "app-segmented-item--inactive border-transparent bg-transparent text-ink-soft hover:text-ink",
                 option.disabled && "cursor-not-allowed opacity-45",
               )}
               disabled={option.disabled}

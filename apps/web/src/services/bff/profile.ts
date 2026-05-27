@@ -10,7 +10,7 @@ import type { QuotaVm } from "@/types/view/QuotaVm";
 export type ProfileBffStatus =
   | "ready"
   | "unauthenticated"
-  | "mock_session"
+  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -62,7 +62,7 @@ function projectQuota(dto: QuotaResponseDto, userId: string): QuotaVm {
 
 function unauthenticatedResult(session: WebSession): ProfileSettingsVm {
   return {
-    status: session.kind === "mock_phone" ? "mock_session" : "unauthenticated",
+    status: session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
     session: projectSession(session),
     profile: null,
     quota: null,

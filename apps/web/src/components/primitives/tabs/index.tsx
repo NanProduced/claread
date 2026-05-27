@@ -17,7 +17,7 @@ const TabsList = React.forwardRef<
     <TabsPrimitive.List
       ref={ref}
       className={cn(
-        "inline-flex min-h-11 items-center gap-1 rounded-[var(--cl-radius-surface-sm)] border border-hairline bg-reader-paper p-1 shadow-[var(--cl-shadow-1)]",
+        "app-segmented-surface inline-flex min-h-11 items-center gap-1 rounded-[var(--cl-radius-surface-sm)] border border-hairline p-1",
         className,
       )}
       {...props}
@@ -33,7 +33,7 @@ const TabsTrigger = React.forwardRef<
     <TabsPrimitive.Trigger
       ref={ref}
       className={cn(
-        "inline-flex min-h-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] px-3 text-sm font-medium text-muted transition-colors data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-[var(--cl-shadow-1)]",
+        "inline-flex min-h-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] px-3 text-sm font-medium text-muted transition-colors data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-[var(--app-control-shadow-strong)]",
         primitiveFocusRing,
         className,
       )}

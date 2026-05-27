@@ -1,15 +1,10 @@
-export const USER_ANNOTATION_TYPES = ["highlight", "note"];
+export const USER_ANNOTATION_TYPES = ["highlight"];
 
-export const USER_ANNOTATION_ANCHOR_TYPES = ["sentence", "paragraph", "text_range", "multi_text"];
+export const USER_ANNOTATION_ANCHOR_TYPES = ["sentence", "text_range", "multi_text"];
 
 export const FAVORITE_TARGET_TYPES = [
   "analysis_record",
-  "sentence",
-  "paragraph",
-  "phrase",
-  "vocab",
-  "text_range",
-  "multi_text",
+  "daily_reader_article",
 ];
 
 export const USER_ANNOTATION_COLORS = [

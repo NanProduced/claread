@@ -48,7 +48,7 @@
   },
   "compileType": "miniprogram",
   "miniprogramRoot": "dist/",
-  "libVersion": "2.19.4",
+  "libVersion": "3.16.0",
   "appid": "wxe97f3b0071e280d4",
   "projectname": "Claread透读",
   "condition": {},

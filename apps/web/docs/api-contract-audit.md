@@ -86,16 +86,10 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /favorites` | ✅ `FavoriteCreateResponse` | 🟢 稳定 | 支持 `target_type='text_range' / 'multi_text'`，并校验 selected text、UTF-16 offset、hash 与 multi_text segments |
-| `GET /favorites` | ✅ `FavoriteListResponse` | 🟡 需增强 | Web Reader 已接入；摘录页已不再依赖它做前端 fan-out 聚合 |
+| `POST /favorites` | ✅ `FavoriteCreateResponse` | 🟢 稳定 | 仅支持 `target_type='analysis_record'`，即文章收藏 |
+| `GET /favorites` | ✅ `FavoriteListResponse` | 🟢 稳定 | Web Reader 已接入 |
 | `DELETE /favorites/target` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | Web Reader 取消收藏使用此接口 |
 | `DELETE /favorites/{analysis_record_id}` | ✅ `FavoriteDeleteResponse` | 🟢 稳定 | 兼容按分析记录取消收藏 |
-
-### 摘录资产
-
-| 接口 | response_model | 当前状态 | Web 注意事项 |
-|------|---------------|---------|-------------|
-| `GET /excerpt-assets` | ✅ `ExcerptAssetsResponse` | 🟢 已落地 | 正式摘录聚合接口；按文章分组返回 merged anchor asset，保留 `target_key` / `sentence_id` / `start_offset` / `end_offset` / `segments[]` 和 `insights[]` sidecar，供 Web `/library/assets` 与小程序 `packageA/excerpts` 共用 |
 
 ### 反馈
 
@@ -121,6 +115,15 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 | `PATCH /user-annotations/{id}` | ✅ `UserAnnotationResponse` | 🟢 稳定 | Web 复用 |
 | `DELETE /user-annotations/{id}` | ✅ `{"ok": True}` | 🟢 稳定 | Web 复用 |
 
+### 用户笔记
+
+| 接口 | response_model | 当前状态 | Web 注意事项 |
+|------|---------------|---------|-------------|
+| `POST /reader-notes` | ✅ `ReaderNoteResponse` | 🟢 稳定 | 用户笔记写入，锚点支持 sentence / text_range / multi_text |
+| `GET /reader-notes` | ✅ `ReaderNoteListResponse` | 🟢 稳定 | 按 `analysis_record_id` 查询当前文章笔记 |
+| `PATCH /reader-notes/{id}` | ✅ `ReaderNoteResponse` | 🟢 稳定 | 更新笔记文本 |
+| `DELETE /reader-notes/{id}` | ✅ `{"ok": True}` | 🟢 稳定 | 删除笔记 |
+
 ### 健康
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
@@ -139,10 +142,10 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 | `TaskStatus` | `queued / running / finalizing / succeeded / failed / cancelled / expired` | `schemas/tasks.py` |
 | `UserFacingState` | `normal / degraded_light / degraded_heavy` | `schemas/analysis.py` |
 | `MasteryStatus` | `new / learning / review / mastered / archived` | DB CHECK |
-| `AnnotationType` | `highlight / note` | DB CHECK + `@claread/contracts` |
+| `AnnotationType` | `highlight` | `@claread/contracts` |
 | `AnchorType` | `sentence / paragraph / text_range / multi_text` | DB CHECK + `@claread/contracts` |
 | `AnnotationColor` | `soft_green / soft_blue / soft_purple / warm_yellow / sage_green` | DB CHECK + `@claread/contracts` |
-| `FavoriteTargetType` | `analysis_record / sentence / paragraph / phrase / vocab / text_range / multi_text` | DB CHECK + `@claread/contracts` |
+| `FavoriteTargetType` | `analysis_record / daily_reader_article` | `@claread/contracts` |
 | `FeedbackScope` | `analysis_result / annotation / sentence / dictionary / app` | `schemas/feedback.py` |
 | `Sentiment` | `positive / negative / neutral` | `schemas/feedback.py` |
 | `InlineMarkRenderType` | `background / underline` | `schemas/analysis.py` |
@@ -204,9 +207,9 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
    - 当前只有 `page`/`limit`/`include_render_scene` 参数
    - 建议新增：`reading_goal`/`source_type`/`date_from`/`date_to`/`search` 参数
 
-3. **Favorites 列表增强** — Web Reader 仍需要按 `target_type` / `target_key` 查询收藏状态；摘录页已改走 `/excerpt-assets`
+3. **Favorites 列表增强** — Web Reader 按 `target_type` / `target_key` 查询文章收藏状态
 
-4. **Contracts 生成策略** — `@claread/contracts` 已先承载批注/收藏/text range 常量，后续应评估 OpenAPI -> `packages/contracts` 生成完整 DTO 的方式
+4. **Contracts 生成策略** — `@claread/contracts` 已先承载批注/收藏/anchor 常量（AnnotationType、FavoriteTargetType、AnchorType 等），后续应评估 OpenAPI -> `packages/contracts` 生成完整 DTO 的方式
 
 5. **Delete / create response model 代码风格清理** — records 等少数路由已声明 response_model 但返回裸 dict，可改为 Pydantic model 实例
 
@@ -265,4 +268,4 @@ adapter 层职责：
 - `services/bff/session.ts` 支持 httpOnly cookie 预留和开发期 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`；用户可见页面不再依赖 mock 数据回退。
 - `app/api/web/session` 和 `app/api/web/reader/[recordId]` 提供 Web BFF 投影接口。
 - `app/api/web/analysis/submit` 和 `app/api/web/analysis/tasks/[taskId]` 提供真实解析任务提交与状态轮询投影。
-- `/reader/[recordId]` Server Component 直接复用同一 BFF reader 服务，不让浏览器直连 FastAPI。
+- `/app/reader/[recordId]` Server Component 直接复用同一 BFF reader 服务，不让浏览器直连 FastAPI。

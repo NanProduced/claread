@@ -35,8 +35,8 @@ PNG 方向图和截图只作为本地评审参考，不作为长期事实来源�
 
 - 设计图只用于结构、气质、层级和组件角色讨论。
 - 具体实现以 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md`、`apps/web/docs/reader-ia.md` 和真实页面验证为准。
-- 不新增 `/reader/demo`、mock fixture 或用户可见示例数据回退。
-- 公开示例只走 `/daily/:date` 与 `/examples/:slug`，不回到受保护功能页的匿名空态。
+- 不新增 `/app/reader/demo`、mock fixture 或用户可见示例数据回退。
+- 公开示例只走 `/daily/:articleId` 与 `/examples/:slug`，不回到受保护功能页的匿名空态。
 - 如果设计图与真实后端能力冲突，记录为后端/架构待评审项，不在 UI 阶段擅自拍板。
 - 关键 UI 开发后必须用浏览器截图验证，不只依赖静态代码审查。
 

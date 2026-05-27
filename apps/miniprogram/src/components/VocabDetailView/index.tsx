@@ -6,7 +6,6 @@ import type { DictionaryEntryPayload, DictionaryMeaning } from '../../types/view
 import { fetchDictEntry } from '../../services/api/client'
 import { dictResponseDtoToVm } from '../../services/api/adapters/dict.adapter'
 import { getRecord, updateVocabEntry } from '../../services/storage'
-import { CloudSyncService } from '../../services/cloudSync.service'
 import LucideIcon from '../LucideIcon'
 import './index.scss'
 
@@ -86,7 +85,6 @@ export default function VocabDetailView({
         if (url.startsWith('//')) url = 'https:' + url
         setAudioUrl(url)
         updateVocabEntry(entry.id, { audioUrl: url })
-        CloudSyncService.syncVocab({ ...entry, audioUrl: url })
       }
     } catch (e) {
       console.error('VocabDetailView: audio fetch failed', e)

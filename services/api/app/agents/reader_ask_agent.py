@@ -19,22 +19,38 @@ def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _tool_trace(tool_name: str, status: Literal["started", "completed", "failed"], *, summary: str | None = None) -> ReaderAskToolTraceEntry:
+def _tool_trace(
+    tool_name: str,
+    status: Literal["started", "completed", "failed"],
+    *,
+    input_summary: str | None = None,
+    summary: str | None = None,
+    next_actions: list[str] | None = None,
+    artifacts: list[str] | None = None,
+) -> ReaderAskToolTraceEntry:
     now = _iso_now()
     if status == "started":
-        return ReaderAskToolTraceEntry(tool_name=tool_name, status=status, started_at=now)
+        return ReaderAskToolTraceEntry(
+            tool_name=tool_name,
+            status=status,
+            started_at=now,
+            input_summary=input_summary,
+        )
     return ReaderAskToolTraceEntry(
         tool_name=tool_name,
         status=status,
         started_at=now,
         completed_at=now,
+        input_summary=input_summary,
         summary=summary,
+        next_actions=next_actions or [],
+        artifacts=artifacts or [],
     )
 
 
 @dataclass(slots=True)
 class ReaderAskRuntimeActionRequest:
-    action_type: Literal["save_note", "save_excerpt", "favorite_anchor", "save_answer_note"]
+    action_type: Literal["save_note", "save_highlight"]
     label: str
     description: str
     payload_json: dict[str, Any] = field(default_factory=dict)
@@ -47,16 +63,18 @@ class ReaderAskRuntimeState:
     tool_trace: list[ReaderAskToolTraceEntry] = field(default_factory=list)
     action_requests: list[ReaderAskRuntimeActionRequest] = field(default_factory=list)
     source_labels: set[str] = field(default_factory=set)
-    used_history_lookup: bool = False
+    used_cross_record_context: bool = False
     tool_call_count: int = 0
     max_tool_calls: int = 5
     latest_record_context: dict[str, Any] | None = None
     latest_record_insights: list[dict[str, Any]] = field(default_factory=list)
-    latest_record_excerpt_assets: list[dict[str, Any]] = field(default_factory=list)
-    latest_user_excerpt_assets: list[dict[str, Any]] = field(default_factory=list)
+    latest_article_overview: str | None = None
+    latest_external_record_contexts: list[dict[str, Any]] = field(default_factory=list)
+    latest_external_asset_contexts: list[dict[str, Any]] = field(default_factory=list)
     latest_user_vocabulary: list[dict[str, Any]] = field(default_factory=list)
     latest_dictionary_entry: dict[str, Any] | None = None
     latest_dictionary_ai: dict[str, Any] | None = None
+    latest_generated_annotations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -65,19 +83,16 @@ class ReaderAskAgentDeps:
     event_queue: asyncio.Queue[tuple[_ToolEventName, dict[str, Any]]]
     state: ReaderAskRuntimeState
     query_seed: str
-    task_mode: Literal["explain", "breakdown", "vocabulary", "grammar", "practice"]
+    task_mode: Literal["explain", "breakdown", "vocabulary", "grammar", "practice", "general"]
     record_id: str
     record_title: str | None
     primary_anchor: ReaderAskAnchorRef | None
-    history_lookup_allowed: bool
     get_record_context_fn: Callable[[], Awaitable[dict[str, Any]]]
     get_record_insights_fn: Callable[[], Awaitable[list[dict[str, Any]]]]
-    get_record_excerpt_assets_fn: Callable[[str], Awaitable[list[dict[str, Any]]]]
-    search_user_excerpt_assets_fn: Callable[[str], Awaitable[list[dict[str, Any]]]]
     search_user_vocabulary_fn: Callable[[str], Awaitable[list[dict[str, Any]]]]
     lookup_dictionary_entry_fn: Callable[[str | None, int | None, str | None, str | None, int | None], Awaitable[dict[str, Any] | None]]
     run_dictionary_ai_context_explain_fn: Callable[[str, int, str, Literal["word", "phrase"], int | None], Awaitable[dict[str, Any] | None]]
-    excerpt_item_to_citation_fn: Callable[[dict[str, Any], str], ReaderAskCitation]
+    generate_sentence_annotation_fn: Callable[[Literal["grammar_note", "sentence_analysis"]], Awaitable[dict[str, Any] | None]]
     vocabulary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation]
     dictionary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation]
     dictionary_ai_to_citation_fn: Callable[[dict[str, Any], str, int], ReaderAskCitation]
@@ -116,35 +131,204 @@ async def _emit_tool_event(
     await deps.event_queue.put((event, payload))
 
 
+def _tool_observation(result: Any) -> tuple[str, list[str], list[str]]:
+    if isinstance(result, dict):
+        summary = str(result.get("summary") or result.get("reason") or "Loaded")
+        next_actions = [
+            str(item).strip()
+            for item in result.get("next_actions") or []
+            if isinstance(item, str) and item.strip()
+        ]
+        artifacts = [
+            str(item).strip()
+            for item in result.get("artifacts") or []
+            if isinstance(item, str) and item.strip()
+        ]
+        return summary, next_actions, artifacts
+    if isinstance(result, list):
+        return f"{len(result)} item(s)", [], []
+    return "Loaded", [], []
+
+
 async def _run_tool(
     ctx: RunContext[ReaderAskAgentDeps],
     tool_name: str,
     runner: Callable[[], Awaitable[Any]],
+    *,
+    input_summary: str | None = None,
 ) -> Any:
     deps = ctx.deps
     deps.state.tool_call_count += 1
     if deps.state.tool_call_count > deps.state.max_tool_calls:
-        detail = f"Tool call limit exceeded ({deps.state.max_tool_calls})"
-        deps.state.tool_trace.append(_tool_trace(tool_name, "failed", summary=detail))
+        detail = (
+            f"Tool call limit exceeded ({deps.state.max_tool_calls}). "
+            "Please provide a direct answer without additional tool calls."
+        )
+        deps.state.tool_trace.append(
+            _tool_trace(
+                tool_name,
+                "failed",
+                input_summary=input_summary,
+                summary=detail,
+                next_actions=["Answer directly without more tool calls."],
+            )
+        )
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
         raise RuntimeError(detail)
-    deps.state.tool_trace.append(_tool_trace(tool_name, "started"))
+    deps.state.tool_trace.append(_tool_trace(tool_name, "started", input_summary=input_summary))
     await _emit_tool_event(deps, "tool.started", tool_name=tool_name)
     try:
         result = await runner()
     except Exception as exc:
         detail = str(exc) or "Tool failed"
-        deps.state.tool_trace.append(_tool_trace(tool_name, "failed", summary=detail))
+        deps.state.tool_trace.append(
+            _tool_trace(
+                tool_name,
+                "failed",
+                input_summary=input_summary,
+                summary=detail,
+                next_actions=["Retry only after clarifying the missing input or context."],
+            )
+        )
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
         raise
-    summary = (
-        f"{len(result)} item(s)"
-        if isinstance(result, list)
-        else "Loaded"
+    summary, next_actions, artifacts = _tool_observation(result)
+    deps.state.tool_trace.append(
+        _tool_trace(
+            tool_name,
+            "completed",
+            input_summary=input_summary,
+            summary=summary,
+            next_actions=next_actions,
+            artifacts=artifacts,
+        )
     )
-    deps.state.tool_trace.append(_tool_trace(tool_name, "completed", summary=summary))
     await _emit_tool_event(deps, "tool.completed", tool_name=tool_name, summary=summary)
     return result
+
+
+async def _generate_sentence_annotation_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    kind: Literal["grammar_note", "sentence_analysis"],
+) -> dict[str, Any] | None:
+    """Agent tool: generate sentence annotation with cache short-circuit.
+
+    If a pre-generated annotation of the same kind already exists (from the
+    quick-action path), return it directly without consuming tool budget.
+    This is the backend protection layer — even if the prompt fails to
+    prevent the agent from calling this tool, the budget is preserved.
+    """
+    existing = next(
+        (
+            item
+            for item in reversed(ctx.deps.state.latest_generated_annotations)
+            if item.get("kind") == kind
+        ),
+        None,
+    )
+    if existing is not None:
+        return existing
+
+    async def runner() -> dict[str, Any] | None:
+        item = await ctx.deps.generate_sentence_annotation_fn(kind)
+        if item is not None:
+            ctx.deps.state.source_labels.add("record_assets")
+            ctx.deps.state.latest_generated_annotations.append(item)
+        return item
+
+    return await _run_tool(
+        ctx,
+        "generate_sentence_annotation",
+        runner,
+        input_summary=f"kind={kind}",
+    )
+
+
+_NO_ANCHOR_ERROR: dict[str, Any] = {
+    "status": "error",
+    "summary": "No anchor available",
+    "next_actions": ["Ask the user to select a sentence or text span first."],
+    "artifacts": [],
+}
+
+
+async def _propose_save_note_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    note_text: str | None = None,
+) -> dict[str, Any]:
+    """Agent tool: propose saving a note with anchor precondition check.
+
+    If no primary_anchor exists, returns error directly without consuming
+    tool budget. This is the backend protection layer.
+    """
+    if ctx.deps.primary_anchor is None:
+        return _NO_ANCHOR_ERROR
+
+    async def runner() -> dict[str, Any]:
+        if not isinstance(note_text, str) or not note_text.strip():
+            return {
+                "status": "error",
+                "summary": "Missing note_text",
+                "next_actions": ["Provide the note content before proposing save_note."],
+                "artifacts": [],
+            }
+        ctx.deps.state.action_requests.append(
+            ReaderAskRuntimeActionRequest(
+                action_type="save_note",
+                label="保存为笔记",
+                description="把当前解释或补充内容保存到当前锚点笔记",
+                payload_json={
+                    "record_id": ctx.deps.record_id,
+                    "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
+                    "note_text": note_text,
+                },
+            )
+        )
+        return {
+            "status": "success",
+            "summary": "Prepared save_note confirmation",
+            "next_actions": ["Wait for user confirmation before writing the note."],
+            "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
+            "ok": True,
+            "action_type": "save_note",
+        }
+
+    return await _run_tool(ctx, "propose_save_note", runner, input_summary=_truncate_tool_arg(note_text))
+
+
+async def _propose_save_highlight_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+) -> dict[str, Any]:
+    """Agent tool: propose saving a highlight with anchor precondition check.
+
+    If no primary_anchor exists, returns error directly without consuming
+    tool budget. This is the backend protection layer.
+    """
+    if ctx.deps.primary_anchor is None:
+        return _NO_ANCHOR_ERROR
+
+    async def runner() -> dict[str, Any]:
+        ctx.deps.state.action_requests.append(
+            ReaderAskRuntimeActionRequest(
+                action_type="save_highlight",
+                label="保存为高亮",
+                description="把当前锚点保存成高亮/摘录",
+                payload_json={
+                    "record_id": ctx.deps.record_id,
+                    "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
+                },
+            )
+        )
+        return {
+            "status": "success",
+            "summary": "Prepared save_highlight confirmation",
+            "next_actions": ["Wait for user confirmation before saving the highlight."],
+            "artifacts": [f"record:{ctx.deps.record_id}", f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}"],
+            "ok": True,
+            "action_type": "save_highlight",
+        }
+
+    return await _run_tool(ctx, "propose_save_highlight", runner)
 
 
 @lru_cache(maxsize=1)
@@ -182,48 +366,12 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
 
         return await _run_tool(ctx, "get_record_insights", runner)
 
-    @agent.tool(name="get_record_excerpt_assets")
-    async def get_record_excerpt_assets(
-        ctx: RunContext[ReaderAskAgentDeps],
-        query: str | None = None,
-    ) -> list[dict[str, Any]]:
-        async def runner() -> list[dict[str, Any]]:
-            items = await ctx.deps.get_record_excerpt_assets_fn(query or ctx.deps.query_seed)
-            if items:
-                ctx.deps.state.source_labels.add("record_assets")
-            ctx.deps.state.latest_record_excerpt_assets = items
-            for item in items:
-                _append_citation(ctx.deps.state, ctx.deps.excerpt_item_to_citation_fn(item, "record_excerpt_asset"))
-            return items
-
-        return await _run_tool(ctx, "get_record_excerpt_assets", runner)
-
-    @agent.tool(name="search_user_excerpt_assets")
-    async def search_user_excerpt_assets(
-        ctx: RunContext[ReaderAskAgentDeps],
-        query: str,
-    ) -> list[dict[str, Any]]:
-        async def runner() -> list[dict[str, Any]]:
-            if not ctx.deps.history_lookup_allowed:
-                return []
-            items = await ctx.deps.search_user_excerpt_assets_fn(query)
-            ctx.deps.state.used_history_lookup = True
-            ctx.deps.state.source_labels.add("history_assets")
-            ctx.deps.state.latest_user_excerpt_assets = items
-            for item in items:
-                _append_citation(ctx.deps.state, ctx.deps.excerpt_item_to_citation_fn(item, "user_excerpt_asset"))
-            return items
-
-        return await _run_tool(ctx, "search_user_excerpt_assets", runner)
-
     @agent.tool(name="search_user_vocabulary")
     async def search_user_vocabulary(
         ctx: RunContext[ReaderAskAgentDeps],
         query: str,
     ) -> list[dict[str, Any]]:
         async def runner() -> list[dict[str, Any]]:
-            if not ctx.deps.history_lookup_allowed:
-                return []
             items = await ctx.deps.search_user_vocabulary_fn(query)
             if items:
                 ctx.deps.state.source_labels.add("vocabulary")
@@ -232,7 +380,7 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                 _append_citation(ctx.deps.state, ctx.deps.vocabulary_item_to_citation_fn(item))
             return items
 
-        return await _run_tool(ctx, "search_user_vocabulary", runner)
+        return await _run_tool(ctx, "search_user_vocabulary", runner, input_summary=_truncate_tool_arg(query))
 
     @agent.tool(name="lookup_dictionary_entry")
     async def lookup_dictionary_entry(
@@ -251,7 +399,13 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                 _append_citation(ctx.deps.state, ctx.deps.dictionary_item_to_citation_fn(item))
             return item
 
-        return await _run_tool(ctx, "lookup_dictionary_entry", runner)
+        summary_bits = [query, str(entry_id) if entry_id is not None else None, query_type, context_sentence]
+        return await _run_tool(
+            ctx,
+            "lookup_dictionary_entry",
+            runner,
+            input_summary=_truncate_tool_arg(" | ".join(bit for bit in summary_bits if bit)),
+        )
 
     @agent.tool(name="run_dictionary_ai_context_explain")
     async def run_dictionary_ai_context_explain(
@@ -279,73 +433,38 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
                 )
             return item
 
-        return await _run_tool(ctx, "run_dictionary_ai_context_explain", runner)
+        return await _run_tool(
+            ctx,
+            "run_dictionary_ai_context_explain",
+            runner,
+            input_summary=_truncate_tool_arg(query),
+        )
+
+    @agent.tool(name="generate_sentence_annotation")
+    async def generate_sentence_annotation(
+        ctx: RunContext[ReaderAskAgentDeps],
+        kind: Literal["grammar_note", "sentence_analysis"],
+    ) -> dict[str, Any] | None:
+        return await _generate_sentence_annotation_tool(ctx, kind)
 
     @agent.tool(name="propose_save_note")
     async def propose_save_note(
         ctx: RunContext[ReaderAskAgentDeps],
         note_text: str | None = None,
-        use_assistant_answer: bool = False,
     ) -> dict[str, Any]:
-        async def runner() -> dict[str, Any]:
-            if ctx.deps.primary_anchor is None:
-                return {"ok": False, "reason": "No anchor available"}
-            action_type = "save_answer_note" if use_assistant_answer else "save_note"
-            ctx.deps.state.action_requests.append(
-                ReaderAskRuntimeActionRequest(
-                    action_type=action_type,
-                    label="保存为笔记",
-                    description="把当前解释或补充内容保存到当前锚点笔记",
-                    payload_json={
-                        "record_id": ctx.deps.record_id,
-                        "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
-                        "note_text": note_text,
-                        "use_assistant_answer": use_assistant_answer,
-                    },
-                )
-            )
-            return {"ok": True, "action_type": action_type}
+        return await _propose_save_note_tool(ctx, note_text)
 
-        return await _run_tool(ctx, "propose_save_note", runner)
-
-    @agent.tool(name="propose_save_excerpt")
-    async def propose_save_excerpt(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
-        async def runner() -> dict[str, Any]:
-            if ctx.deps.primary_anchor is None:
-                return {"ok": False, "reason": "No anchor available"}
-            ctx.deps.state.action_requests.append(
-                ReaderAskRuntimeActionRequest(
-                    action_type="save_excerpt",
-                    label="保存为高亮",
-                    description="把当前锚点保存成高亮/摘录",
-                    payload_json={
-                        "record_id": ctx.deps.record_id,
-                        "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
-                    },
-                )
-            )
-            return {"ok": True, "action_type": "save_excerpt"}
-
-        return await _run_tool(ctx, "propose_save_excerpt", runner)
-
-    @agent.tool(name="propose_favorite_anchor")
-    async def propose_favorite_anchor(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
-        async def runner() -> dict[str, Any]:
-            if ctx.deps.primary_anchor is None:
-                return {"ok": False, "reason": "No anchor available"}
-            ctx.deps.state.action_requests.append(
-                ReaderAskRuntimeActionRequest(
-                    action_type="favorite_anchor",
-                    label="加入收藏",
-                    description="收藏当前锚点",
-                    payload_json={
-                        "record_id": ctx.deps.record_id,
-                        "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
-                    },
-                )
-            )
-            return {"ok": True, "action_type": "favorite_anchor"}
-
-        return await _run_tool(ctx, "propose_favorite_anchor", runner)
+    @agent.tool(name="propose_save_highlight")
+    async def propose_save_highlight(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
+        return await _propose_save_highlight_tool(ctx)
 
     return agent
+
+
+def _truncate_tool_arg(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split()).strip()
+    if not text:
+        return None
+    return text[:120]

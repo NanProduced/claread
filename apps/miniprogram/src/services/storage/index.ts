@@ -15,6 +15,8 @@ import Taro from '@tarojs/taro'
 import type { AnalysisRecord } from '../../types/view/analysis-record.vm'
 import type { FavoriteRecord } from '../../types/view/favorites.vm'
 import type { VocabEntry, SourceRef, SaveVocabResult } from '../../types/view/vocabulary.vm'
+import type { UserAnnotationDto } from '../api/user-annotations.client'
+import type { ReaderNoteDto } from '../api/reader-notes.client'
 import type { AnalyzeRequest } from '../api'
 import type { AnyRenderSceneVm, ResultPageState } from '../../types/view/render-scene.vm'
 
@@ -32,6 +34,8 @@ const KEYS = {
   USER_PREF: 'user_preferences',
   RECORD_IDENTITY_MAP: 'record_identity_map',
   SYNC_QUEUE: 'sync_queue',
+  USER_ANNOTATIONS: 'user_annotations',
+  READER_NOTES: 'reader_notes',
 } as const
 
 // ============ Article Draft ============
@@ -545,7 +549,7 @@ export function resolveClientIdFromMap(cloudRecordId: string): string | null {
 
 export interface SyncQueueItem {
   opId: string
-  entityType: 'record' | 'favorite' | 'vocab'
+  entityType: 'record' | 'favorite' | 'vocab' | 'annotation' | 'note'
   entityId: string
   action: string
   payload: Record<string, unknown>
@@ -598,6 +602,89 @@ export function removeSyncQueueItem(opId: string): void {
 
 export function getPendingSyncItems(): SyncQueueItem[] {
   return getSyncQueue().filter(item => item.status === 'pending')
+}
+
+// ============ User Annotations (Local Cache) ============
+
+export function getLocalUserAnnotations(): UserAnnotationDto[] {
+  try {
+    const raw = Taro.getStorageSync<UserAnnotationDto[]>(KEYS.USER_ANNOTATIONS)
+    return raw || []
+  } catch (e) {
+    console.error('[storage] getLocalUserAnnotations failed', e)
+    return []
+  }
+}
+
+export function saveLocalUserAnnotations(annotations: UserAnnotationDto[]): void {
+  try {
+    Taro.setStorageSync(KEYS.USER_ANNOTATIONS, annotations)
+  } catch (e) {
+    console.error('[storage] saveLocalUserAnnotations failed', e)
+  }
+}
+
+export function addLocalUserAnnotation(annotation: UserAnnotationDto): void {
+  const existing = getLocalUserAnnotations()
+  const updated = [annotation, ...existing.filter(a => a.id !== annotation.id)]
+  saveLocalUserAnnotations(updated)
+}
+
+export function removeLocalUserAnnotation(annotationId: string): void {
+  const existing = getLocalUserAnnotations()
+  saveLocalUserAnnotations(existing.filter(a => a.id !== annotationId))
+}
+
+export function updateLocalUserAnnotation(annotationId: string, updates: Partial<UserAnnotationDto>): void {
+  const existing = getLocalUserAnnotations()
+  const updated = existing.map(a => a.id === annotationId ? { ...a, ...updates } : a)
+  saveLocalUserAnnotations(updated)
+}
+
+// ============ Reader Notes (Local Cache) ============
+
+export function getLocalReaderNotes(): ReaderNoteDto[] {
+  try {
+    const raw = Taro.getStorageSync<ReaderNoteDto[]>(KEYS.READER_NOTES)
+    return raw || []
+  } catch (e) {
+    console.error('[storage] getLocalReaderNotes failed', e)
+    return []
+  }
+}
+
+export function saveLocalReaderNotes(notes: ReaderNoteDto[]): void {
+  try {
+    Taro.setStorageSync(KEYS.READER_NOTES, notes)
+  } catch (e) {
+    console.error('[storage] saveLocalReaderNotes failed', e)
+  }
+}
+
+export function addLocalReaderNote(note: ReaderNoteDto): void {
+  const existing = getLocalReaderNotes()
+  const updated = [
+    note,
+    ...existing.filter(n => !(
+      n.id === note.id
+      || (
+        n.analysis_record_id === note.analysis_record_id
+        && n.target_key === note.target_key
+      )
+    )),
+  ]
+  saveLocalReaderNotes(updated)
+}
+
+export function removeLocalReaderNote(noteId: string): void {
+  const existing = getLocalReaderNotes()
+  saveLocalReaderNotes(existing.filter(n => n.id !== noteId))
+}
+
+export function updateLocalReaderNote(noteId: string, updates: Partial<ReaderNoteDto>): void {
+  const existing = getLocalReaderNotes()
+  const updated = existing.map(n => n.id === noteId ? { ...n, ...updates } : n)
+  saveLocalReaderNotes(updated)
 }
 
 // ============ Storage Capacity ============

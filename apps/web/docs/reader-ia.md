@@ -1,6 +1,6 @@
 # Web Reader 信息架构
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-18
+> **状态**: `CURRENT` | **最后更新**: 2026-05-26
 
 本文设计 Claread Web Reader 的信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统和历史回看。
 
@@ -13,7 +13,17 @@
 - **不被小程序限制反向约束**：小程序 ScrollView 降级不是 Web 上限。
 - **阅读主线优先**：复杂能力渐进披露，不在第一屏暴露所有操作。
 - **反馈、收藏、生词、批注围绕阅读上下文出现**。
-- **三层基础设施先行**：Reader 继续围绕 Claread Paper theme、Reader Floating Layer、Annotation Anchor Model 演进。新组件必须先归入主题 token、浮层 slot 或锚点模型之一，避免为单个交互临时造一套定位和样式规则。
+- **三层基础设施先行**：Reader 继续围绕 Claread `Paper / Light / Dark` 主题体系、Reader Floating Layer、Annotation Anchor Model 演进。新组件必须先归入主题 token、浮层 slot 或锚点模型之一，避免为单个交互临时造一套定位和样式规则。
+
+## 当前实现状态
+
+当前 Web Reader 已经不是纯方向草图，而是运行在 `render_scene -> Plate document -> Plate readOnly runtime` 的真实实现上。需要以当前代码为准理解 IA：
+
+- 原文与译文已经收口为稳定双层阅读面：英文正文是主层，译文是第二阅读层，不再只是普通 muted 段落。
+- `vocab / phrase / context` 三类 lexical marks 已改成完整覆盖的色块高亮家族；`grammar_note / sentence_analysis` 则回到句下解释层，不再沿用旧的右侧集中说明心智。
+- `sentence_analysis` 已支持 chunk 映射回原文，Reader 主画布已经具备“原文内结构锚点 + 句下说明卡”的组合，而不只是展开一张 analysis card。
+- 用户高亮与用户笔记已经拆到 `user_annotations` 和 `reader_notes` 两套链路；文本收藏已删除。当前未闭环的重点不再是数据模型，而是 Web 端笔记 UI/UX 仍在向 Plate-style comment 交互继续收口。
+- Library 页面已重新定位为”阅读记录”，承载阅读历史、收藏和批注的入口，不再是”学习资产中心”；`/library/assets` 路由不存在。
 
 ## 页面结构
 
@@ -54,11 +64,10 @@ Reader 桌面端采用“原文画布 + 边缘工具层”的 Canvas Workspace�
 
 | 模式 | 中心原文画布 | 左侧工具层 | 右侧工具层 |
 |------|---------|-----------|---------|
-| 沉浸 (Immersive) | 纯正文或仅保留最低限度词汇高亮 | 默认收起，查词时轻量展开 | 收起 |
-| 标准 (Standard) | 正文 + 译文 + 词汇/短语/语境标注 + 语法下划线 | 查词后展开词典详情，可钉住 | 收起，仅保留 Ask 入口 |
-| 精读 (Intensive) | 正文 + inline marks + grammar_note / sentence_analysis 句后卡 | 词典详情可钉住 | 可展开上下文问答 |
+| 沉浸 (Immersive) | 段落优先的原文阅读投影；保留 vocab 高亮、用户高亮与用户笔记；不显示译文、语法旁注与句子拆解；正文按 paragraph 分段，不做句子切分，首段允许首字母下沉 | 默认收起，查词时轻量展开 | 收起 |
+| 精读 (Intensive) | 结构化原文画布；显示译文段级辅层、词汇/短语/语境标注、语法旁注、句子拆解、用户高亮与用户笔记 | 查词后展开词典详情，可钉住 | 收起，仅保留 Ask 入口，可按需展开 |
 
-默认使用标准模式。语法下划线默认显示但不展开脚注；结构链默认不显示。用户可切换到原文 / 沉浸模式。
+默认使用精读模式。模式切换表达阅读意图，不是显示 preset；沉浸模式是独立的 paragraph-first projection，不是精读模式隐藏几层信息后的减配态。
 
 ## 核心交互模型
 
@@ -69,21 +78,21 @@ Reader 桌面端采用“原文画布 + 边缘工具层”的 Canvas Workspace�
 | 点击 inline_mark | 点击高亮词/短语 | 原文附近出现轻释义浮层，画布左侧词典层实时显示详细释义 |
 | 点击任意词 | 点击非标注英文词 | 原文附近出现轻释义浮层，画布左侧词典层同步显示完整词条 |
 | 关闭轻释义 | 再次点击同词、关闭按钮、点击正文或 `Esc` | 只收起原文附近小卡片；画布左侧词典层保留当前词条 |
-| 选区操作 | 选中单句内文本 | SelectionToolbar 显示高亮 / 笔记 / 收藏 / 查词 / 选择当前句 / Ask Claread 占位 |
-| 选句操作 | toolbar 中选择当前句，或明确点击句子解析入口 | 进入句子级操作和解析上下文；不再点击空白处隐式弹笔记面板 |
+| 选区操作 | 选中单句内文本 | SelectionToolbar 当前主动作是高亮 / 笔记 / 查词 / 选择当前句 / AI；高亮为一级按钮，首次点击直接用默认色写入并展开颜色条；“文本收藏”已删除，用户态文案不再暴露内部锚点模式 |
+| 选句操作 | toolbar 中选择当前句，或点击句尾句柄 | 直接整句选中并弹出同一套 SelectionToolbar，不再打开独立句子操作卡片 |
 | 语法说明 | 点击 grammar_note 锚点 | 在当前句子下方展开 label + note_zh 卡 |
 | 句子拆解 | 点击 sentence_analysis 入口 | 在当前句子下方展开 analysis_zh 和 chunks 列表 |
-| 阅读设置 | 点击 `Aa` | 浮动上下文面板切换为字号、行距、背景、译文、标注显示控制 |
+| 阅读设置 | 点击 `Aa` | 浮动上下文面板切换为字号、字体、主题三项阅读校准，不承担模式切换职责 |
 
 ### 工作区联动
 
 | 交互 | 触发 | 行为 |
 |------|------|------|
-| 翻译切换 | 快捷键 `T` 或阅读设置 | 逐句翻译显示/隐藏，正文版心不跳动 |
-| 句子聚焦 | 点击主区句子 | 句子轻高亮，浮动上下文面板显示句子操作 |
+| 模式切换 | 顶部 segmented control，或快捷键 `I` / `X` | 在精读与沉浸两种阅读意图之间切换；不通过阅读设置反向拼装 |
+| 句子聚焦 | 点击句尾句柄或通过 toolbar 扩展到整句 | 句子轻高亮，SelectionToolbar 以句子级选区重新定位；后续高亮、笔记、查词、AI 共用同一入口 |
 | 查词历史 | 当前会话内多次查词 | 画布左侧词典层下方显示本次查词 chips，不进入长期资产 |
-| 写笔记 | SelectionToolbar 内轻量输入保存 | 正文选区或句子处显示高亮和笔记痕迹 |
-| Ask Claread | 句子操作或右侧入口 | 右侧 AI 展开，并带入当前句子/选区上下文 |
+| 写笔记 | SelectionToolbar 或句侧 note marker | 新建时走选区 draft popover；已有笔记通过句侧常显 marker 打开浮出式 note panel |
+| Ask Claread | SelectionToolbar 的 AI icon 或右侧入口 | 右侧 AI 展开，并带入当前句子/选区上下文 |
 
 Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseline。当前 `grammar_note` 和 `sentence_analysis` 不应在 UI 中命名为 X-Ray，也不应被渲染成完整句法图。
 
@@ -101,6 +110,29 @@ Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseli
 | 手动查词 | 画布左侧词典层搜索框 | 调用同一词典 BFF；无正文句子时只展示词条，不允许直接加入生词本 |
 
 ## 快捷键体系
+
+### 当前已实现
+
+| 作用域 | 按键 | 功能 |
+|------|------|------|
+| App Global | `Cmd/Ctrl+K` | 打开全局 command palette |
+| Surface / Ephemeral | `Esc` | 关闭当前轻释义、面板或取消当前选区 |
+| Reader Surface | `H` | 在选区工具栏或句末上下文菜单里添加高亮 |
+| Reader Surface | `E` | 在选区工具栏或句末上下文菜单里新建/编辑笔记 |
+| Ask Composer | `Enter` | 发送消息 |
+| Ask Composer | `Shift+Enter` | 换行 |
+| Analyze Submit | `Cmd/Ctrl+Enter` | 提交透读任务 |
+
+当前页面快捷键提示规则也已落地为统一约定：
+
+- 菜单项右侧显示 shortcut suffix。
+- icon 按钮在 tooltip 中显示快捷键。
+- 输入框、浮层、面板使用 helper text 或 footer 就近提示。
+- 未真实实现的键位不在 UI 中暴露。
+
+### 目标模型（后续规划）
+
+下面这组键位描述的是 Reader 目标模型，不代表当前 Web 已全部实现。
 
 ### 全局
 
@@ -123,9 +155,8 @@ Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseli
 
 | 按键 | 功能 |
 |------|------|
-| `T` | 翻译显示切换 |
-| `I` | 沉浸模式（隐藏所有标注） |
-| `X` | 精读模式（显示全部标注+翻译） |
+| `I` | 沉浸模式 |
+| `X` | 精读模式 |
 | `[` | 缩小字体 |
 | `]` | 增大字体 |
 
@@ -137,6 +168,8 @@ Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseli
 | `E` | 对选中文本添加笔记 |
 | `S` | 分享/导出当前结果 |
 | `Cmd/Ctrl+F` | 文内搜索（浏览器原生） |
+
+`T` 不再承担译文显隐快捷键。译文属于精读模式的段级辅层，而不是用户在同一模式内随时开关的一层“显示选项”。
 
 ## 词典浮层设计
 
@@ -218,7 +251,7 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 - `multi_text` 结构线索不要伪装成连续高亮，应按 parts 分段标记并用编号、颜色或 hover 联动表达同一条解释。
 - PDF / 外部网页批注如果后续进入 Web，需要单独设计 anchor resolver；不要直接复用文本 Reader 的 DOM offset 实现。
 
-当前代码层已落地句子、句内 `text_range` 和跨句/跨段 `multi_text` 的 DOM 锚点属性。`SelectionToolbar` 已开放 `anchor_type="text_range"` / `anchor_type="multi_text"` 的创建、反显和取消；局部选区通过 `start_offset`、`end_offset` 和 `text_hash` 锚定，多段选区通过 `segments[]` 锚定。
+当前代码层已落地句子、句内 `text_range` 和跨句/跨段 `multi_text` 的 DOM 锚点属性。`SelectionToolbar` 已开放 `anchor_type="text_range"` / `anchor_type="multi_text"` 的创建、反显和取消；局部选区通过 `start_offset`、`end_offset` 和 `text_hash` 锚定，多段选区通过 `segments[]` 锚定。`multi_text` 当前保留为高亮和笔记的共享锚点能力，但产品层仍以“正文主场、轻量 comment 交互”为先，不再围绕独立资产页组织。
 
 ### 数据模型
 
@@ -226,12 +259,12 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 
 | 字段 | 说明 | Web 增强 |
 |------|------|---------|
-| `annotation_type` | `highlight / note` | Web 完整支持 |
-| `anchor_type` | `sentence / paragraph / text_range / multi_text` | Web v1 支持句子级、单句内 `text_range` 和跨句/跨段 `multi_text` |
+| `annotation_type` | `highlight` | Web 完整支持；笔记功能已移至独立 `reader_notes` API |
+| `anchor_type` | `sentence / text_range / multi_text` | 当前实现支持句子级、单句内 `text_range` 和跨句/跨段 `multi_text`；长期产品方向以句子级与单句内 `text_range` 为主，`multi_text` 待重审 |
 | `selected_text` | 选中文本 | Web 用浏览器 Selection API 获取 |
 | `start_offset / end_offset` | 字符偏移 | Web v1 使用句子内 JavaScript UTF-16 offset |
 | `color` | 5 色高亮 | Web 完整支持 |
-| `note` | 笔记文本 | Web 支持富文本（后续） |
+| `note_text` | 笔记文本 | 由独立 `reader_notes` API 提供；当前是纯文本编辑，不支持原地修改 quote identity |
 
 ### 选区操作工具栏
 
@@ -246,9 +279,9 @@ Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMi
 
 v1 操作流程：
 1. 用户选中单句内文本。
-2. SelectionToolbar 显示 `Ask Claread` 占位、3 色用户高亮、笔记、收藏、查词、反馈和更多。
-3. 用户可保存局部高亮/笔记/收藏，也可以选择“当前句子”切换为句子级操作。
-4. 正文画布中的对应选区或句子显示高亮、书签或笔记痕迹，toolbar 负责短时编辑和状态反馈。
+2. SelectionToolbar 当前实现显示 `Ask Claread`、3 色用户高亮、笔记、查词、扩展到整句和更多；“文本收藏”已删除。
+3. 用户可保存局部高亮/笔记，也可以选择“当前句子”切换为句子级操作。
+4. 正文画布中的对应选区或句子显示高亮与笔记痕迹；新建笔记通过 draft popover，已有笔记通过句侧 marker 打开浮出式 note panel。
 5. 跨句选区、富文本笔记和跨文章批注索引后置。
 
 ### 批注展示
@@ -257,9 +290,7 @@ v1 操作流程：
 
 1. 局部 text range 高亮：直接覆盖在原文选区上，使用用户 marker 视觉。
 2. 句子高亮：直接覆盖在原文句子上。
-3. 用户笔记：以句后 note slip 或句子边缘标记呈现。
-4. 收藏：句子角标或边缘书签。
-5. Library / Excerpts 后续可提供跨文章批注索引，但不进入 Reader 默认右栏。
+3. 用户笔记：以句子边缘常显 marker + 浮出式 note panel 呈现。
 
 筛选维度：
 - 按颜色
@@ -271,16 +302,16 @@ v1 操作流程：
 ### 与 render_scene inline_marks 的关系
 
 - `inline_marks` 是后端分析产出的标注（vocab_highlight / phrase_gloss / context_gloss / grammar_note）
-- `user_annotations` 是用户手动创建的批注（highlight / note）
+- `user_annotations` 是用户手动创建的高亮批注（highlight）；笔记功能已移至独立 `reader_notes` API
 - 两者独立存在，UI 上可叠加显示
 - inline_marks 不可编辑，user_annotations 可编辑/删除
-- 从 `/library/assets` 或小程序摘录页带 `targetKey` 回到 Reader 时，favorites、annotations 和 mixed asset 共用同一套 route focus 语义：先滚到对应句子，再根据 sentence / `text_range` / `multi_text` 对目标资产做短时强调。
+- Reader 支持通过 `focusTargetKey` 做正文内 deep-link / focus：先滚到对应句子，再根据 sentence / `text_range` / `multi_text` 对目标高亮或笔记做短时强调。
 
 ## 历史回看设计
 
 ### 列表页
 
-Library 第一版保持安静的摘录资产索引，不做卡片墙或后台 dashboard。`/library/assets` 当前定位为“摘录与批注”：左侧是文章索引，右侧是当前文章下的摘录列表；它不承担整个“学习资产中心”的语义，`/vocabulary` 继续是独立词汇资产入口。
+Library 承载阅读历史列表，提供文章索引和阅读记录管理（继续阅读、删除）；`/app/vocabulary` 继续是独立词汇资产入口。
 
 ### 筛选维度
 
@@ -292,7 +323,7 @@ Library 第一版保持安静的摘录资产索引，不做卡片墙或后台 da
 ### 详情进入
 
 - 点击记录 → `GET /records/{id}?include_render_scene=true` → 进入 Reader 页
-- Reader 页 URL：`/reader/{record_id}`
+- Reader 页 URL：`/app/reader/{record_id}`
 
 ### 与小程序差异
 
@@ -335,7 +366,7 @@ Academic `RenderSceneModel` 包含 Web 可结构化渲染的额外字段：
 | Store | 数据 |
 |-------|------|
 | `useAuthStore` | 登录态、session_token、用户信息 |
-| `useReaderStore` | 阅读模式、字体大小、翻译显示、面板开关 |
+| `useReaderStore` | 阅读模式、主题、字号、字体、面板开关 |
 | `useLayoutStore` | 侧栏宽度、面板折叠状态 |
 | `useAnnotationStore` | 当前选区、批注工具栏状态 |
 
@@ -344,6 +375,6 @@ Academic `RenderSceneModel` 包含 Web 可结构化渲染的额外字段：
 | 数据 | 存储位置 | 说明 |
 |------|---------|------|
 | session_token | httpOnly cookie | 安全 |
-| 阅读偏好（字体/模式） | localStorage | 跨 session 保持 |
+| 阅读偏好（模式/主题/字体/字号） | localStorage | 跨 session 保持 |
 | 面板布局状态 | localStorage | 跨 session 保持 |
 | 滚动位置 | sessionStorage | 同 session 内恢复 |

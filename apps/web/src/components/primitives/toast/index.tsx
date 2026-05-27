@@ -10,7 +10,7 @@ function ClareadToaster() {
       closeButton
       toastOptions={{
         className:
-          "!rounded-[var(--cl-radius-surface-sm)] !border !border-hairline !bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(251,250,246,0.98))] !text-ink !shadow-[var(--cl-shadow-2)]",
+          "app-toast-surface !rounded-[var(--cl-radius-surface-sm)] !border !border-hairline !text-ink !shadow-[var(--cl-shadow-2)]",
         descriptionClassName: "!text-muted",
         actionButtonStyle: {
           background: "var(--ink)",

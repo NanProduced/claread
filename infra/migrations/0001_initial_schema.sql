@@ -153,20 +153,101 @@ CREATE TABLE analysis_task_events (
 
 CREATE INDEX idx_task_events_task_created ON analysis_task_events(task_id, created_at);
 
-CREATE TABLE analysis_audit_logs (
+CREATE TABLE analysis_overview_tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
-  task_id UUID REFERENCES analysis_tasks(id) ON DELETE SET NULL,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  request_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  analysis_record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'finalizing', 'succeeded', 'failed', 'cancelled', 'expired')),
+  worker_token TEXT,
+  attempt_no INTEGER NOT NULL DEFAULT 1,
+  failure_code TEXT,
+  failure_message TEXT,
   usage_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  cost_points INTEGER NOT NULL DEFAULT 0,
-  processing_ms INTEGER,
+  queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_analysis_overview_tasks_record_active
+  ON analysis_overview_tasks(analysis_record_id)
+  WHERE status IN ('queued', 'running', 'finalizing');
+CREATE INDEX idx_analysis_overview_tasks_status_queued_at
+  ON analysis_overview_tasks(status, queued_at);
+
+CREATE TABLE analysis_overview_task_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id UUID NOT NULL REFERENCES analysis_overview_tasks(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  event_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_analysis_audit_logs_record ON analysis_audit_logs(record_id);
-CREATE INDEX idx_analysis_audit_logs_user ON analysis_audit_logs(user_id, created_at DESC);
+CREATE INDEX idx_overview_task_events_task_created
+  ON analysis_overview_task_events(task_id, created_at);
+
+CREATE TABLE ai_usage_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  usage_scope TEXT NOT NULL CHECK (usage_scope IN (
+    'user_billed',
+    'system_internal',
+    'anonymous_trial',
+    'eval_debug'
+  )),
+  capability_code TEXT NOT NULL,
+  billing_mode TEXT NOT NULL CHECK (billing_mode IN (
+    'user_points',
+    'internal_only',
+    'trial',
+    'no_charge'
+  )),
+  status TEXT NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  task_id UUID REFERENCES analysis_tasks(id) ON DELETE SET NULL,
+  record_id UUID REFERENCES analysis_records(id) ON DELETE SET NULL,
+  daily_reader_article_id TEXT,
+  client_platform TEXT,
+  request_id TEXT,
+  workflow_name TEXT,
+  workflow_version TEXT,
+  schema_version TEXT,
+  prompt_version TEXT,
+  model_route TEXT,
+  model_profile TEXT,
+  model_provider TEXT,
+  model_name TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  billed_points INTEGER,
+  billing_policy_version TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_ai_usage_events_scope_created
+  ON ai_usage_events(usage_scope, created_at DESC);
+CREATE INDEX idx_ai_usage_events_capability_created
+  ON ai_usage_events(capability_code, created_at DESC);
+CREATE INDEX idx_ai_usage_events_user_created
+  ON ai_usage_events(user_id, created_at DESC)
+  WHERE user_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_task
+  ON ai_usage_events(task_id)
+  WHERE task_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_record
+  ON ai_usage_events(record_id)
+  WHERE record_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_daily_reader
+  ON ai_usage_events(daily_reader_article_id, created_at DESC)
+  WHERE daily_reader_article_id IS NOT NULL;
 
 -- ============================================================
 -- 积分系统
@@ -189,7 +270,7 @@ CREATE TABLE user_credit_ledger (
   task_id UUID REFERENCES analysis_tasks(id) ON DELETE SET NULL,
   entry_type TEXT NOT NULL
     CHECK (entry_type IN (
-      'daily_grant', 'bonus_grant', 'analysis_deduct',
+      'daily_grant', 'bonus_grant', 'analysis_deduct', 'ai_capability_deduct',
       'manual_adjust', 'refund', 'feedback_reward'
     )),
   points INTEGER NOT NULL,
@@ -218,11 +299,10 @@ CREATE TABLE anonymous_quotas (
 CREATE TABLE favorite_records (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  target_type TEXT NOT NULL CHECK (target_type IN ('analysis_record', 'sentence', 'paragraph', 'phrase', 'vocab')),
+  target_type TEXT NOT NULL CHECK (target_type IN ('analysis_record', 'daily_reader_article')),
   target_key TEXT NOT NULL,
   analysis_record_id UUID REFERENCES analysis_records(id) ON DELETE CASCADE,
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  note TEXT,
   deleted_at TIMESTAMPTZ,
   deleted_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -269,10 +349,8 @@ CREATE TABLE user_annotations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     analysis_record_id UUID REFERENCES analysis_records(id) ON DELETE CASCADE,
-    annotation_type TEXT NOT NULL DEFAULT 'highlight'
-        CHECK (annotation_type IN ('highlight', 'note')),
     anchor_type TEXT NOT NULL DEFAULT 'sentence'
-        CHECK (anchor_type IN ('sentence', 'paragraph', 'text_range')),
+        CHECK (anchor_type IN ('sentence', 'text_range', 'multi_text')),
     target_key TEXT NOT NULL,
     paragraph_id TEXT,
     sentence_id TEXT,
@@ -282,7 +360,6 @@ CREATE TABLE user_annotations (
     text_hash TEXT,
     color TEXT NOT NULL DEFAULT 'soft_green'
         CHECK (color IN ('soft_green', 'soft_blue', 'soft_purple', 'warm_yellow', 'sage_green')),
-    note TEXT,
     payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     deleted_at TIMESTAMPTZ,
     deleted_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -298,6 +375,212 @@ CREATE INDEX idx_user_annotations_record_created
 CREATE INDEX idx_user_annotations_sentence
     ON user_annotations(user_id, analysis_record_id, sentence_id)
     WHERE sentence_id IS NOT NULL AND deleted_at IS NULL;
+
+ALTER TABLE user_annotations
+    ADD CONSTRAINT user_annotations_text_anchor_payload_check
+        CHECK (
+            (
+                anchor_type <> 'text_range'
+                OR (
+                    analysis_record_id IS NOT NULL
+                    AND sentence_id IS NOT NULL
+                    AND start_offset IS NOT NULL
+                    AND end_offset IS NOT NULL
+                    AND start_offset >= 0
+                    AND end_offset > start_offset
+                    AND text_hash IS NOT NULL
+                )
+            )
+            AND (
+                anchor_type <> 'multi_text'
+                OR (
+                    analysis_record_id IS NOT NULL
+                    AND start_offset IS NULL
+                    AND end_offset IS NULL
+                    AND text_hash IS NULL
+                    AND payload_json ? 'segments'
+                    AND jsonb_typeof(payload_json->'segments') = 'array'
+                    AND jsonb_array_length(payload_json->'segments') >= 2
+                )
+            )
+        );
+
+CREATE INDEX idx_favorite_records_user_record_updated
+    ON favorite_records(user_id, analysis_record_id, updated_at DESC)
+    WHERE analysis_record_id IS NOT NULL AND deleted_at IS NULL;
+
+CREATE INDEX idx_user_annotations_user_record_updated
+    ON user_annotations(user_id, analysis_record_id, updated_at DESC)
+    WHERE analysis_record_id IS NOT NULL AND deleted_at IS NULL;
+
+CREATE INDEX idx_favorite_records_user_target_updated
+    ON favorite_records(user_id, target_type, updated_at DESC)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_user_annotations_user_anchor_updated
+    ON user_annotations(user_id, anchor_type, updated_at DESC)
+    WHERE deleted_at IS NULL;
+
+CREATE TABLE reader_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    analysis_record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
+    anchor_sentence_id TEXT NOT NULL,
+    quote_mode TEXT NOT NULL CHECK (quote_mode IN ('sentence', 'text_range', 'multi_text')),
+    target_key TEXT NOT NULL,
+    paragraph_id TEXT,
+    sentence_id TEXT,
+    selected_text TEXT NOT NULL,
+    start_offset INTEGER,
+    end_offset INTEGER,
+    text_hash TEXT,
+    note_text TEXT NOT NULL,
+    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    deleted_at TIMESTAMPTZ,
+    deleted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_reader_notes_target UNIQUE (user_id, analysis_record_id, target_key)
+);
+
+CREATE INDEX idx_reader_notes_record_created
+    ON reader_notes(user_id, analysis_record_id, created_at DESC)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_reader_notes_anchor_sentence
+    ON reader_notes(user_id, analysis_record_id, anchor_sentence_id)
+    WHERE deleted_at IS NULL;
+
+-- ============================================================
+-- Reader Ask
+-- ============================================================
+
+CREATE TABLE reader_ask_threads (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
+  title TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  archived_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_message_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX uq_reader_ask_default_thread
+  ON reader_ask_threads(user_id, record_id)
+  WHERE is_default = TRUE AND archived_at IS NULL;
+
+CREATE INDEX idx_reader_ask_threads_user_record_updated
+  ON reader_ask_threads(user_id, record_id, updated_at DESC)
+  WHERE archived_at IS NULL;
+
+CREATE INDEX idx_reader_ask_threads_user_record_last_message
+  ON reader_ask_threads(user_id, record_id, last_message_at DESC NULLS LAST)
+  WHERE archived_at IS NULL;
+
+CREATE TABLE reader_ask_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id UUID NOT NULL REFERENCES reader_ask_threads(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+  status TEXT NOT NULL DEFAULT 'completed'
+    CHECK (status IN ('pending', 'streaming', 'completed', 'failed', 'interrupted')),
+  content_md TEXT NOT NULL DEFAULT '',
+  context_anchors_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  citations_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  action_proposals_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  tool_trace_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  usage_event_id UUID REFERENCES ai_usage_events(id) ON DELETE SET NULL,
+  current_turn_run_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_reader_ask_messages_thread_created
+  ON reader_ask_messages(thread_id, created_at ASC);
+
+CREATE INDEX idx_reader_ask_messages_usage_event
+  ON reader_ask_messages(usage_event_id)
+  WHERE usage_event_id IS NOT NULL;
+
+CREATE TABLE reader_ask_supplements (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
+    supplement_type TEXT NOT NULL,
+    target_key TEXT NOT NULL,
+    sentence_id TEXT NOT NULL,
+    paragraph_id TEXT NULL,
+    title TEXT NOT NULL,
+    content_md TEXT NOT NULL,
+    anchor_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    schema_version TEXT NOT NULL,
+    created_from_turn_run_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ NULL
+);
+
+CREATE INDEX idx_reader_ask_supplements_user_record
+    ON reader_ask_supplements (user_id, record_id, created_at)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_reader_ask_supplements_target_key
+    ON reader_ask_supplements (user_id, target_key)
+    WHERE deleted_at IS NULL;
+
+CREATE TABLE reader_ask_turn_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id UUID NOT NULL REFERENCES reader_ask_messages(id) ON DELETE CASCADE,
+    thread_id UUID NOT NULL REFERENCES reader_ask_threads(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
+    turn_id UUID NOT NULL REFERENCES reader_ask_messages(id) ON DELETE CASCADE,
+    run_attempt INTEGER NOT NULL DEFAULT 1,
+    supersedes_run_id UUID NULL REFERENCES reader_ask_turn_runs(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK (status IN ('streaming', 'completed', 'failed', 'interrupted')),
+    resolved_intent TEXT NULL,
+    user_visible_output_json JSONB NULL,
+    usage_summary_json JSONB NULL,
+    usage_event_id UUID NULL REFERENCES ai_usage_events(id) ON DELETE SET NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ NULL,
+    failed_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_reader_ask_turn_runs_message_created
+    ON reader_ask_turn_runs (message_id, created_at DESC);
+
+CREATE INDEX idx_reader_ask_turn_runs_thread_started
+    ON reader_ask_turn_runs (thread_id, started_at DESC);
+
+CREATE INDEX idx_reader_ask_turn_runs_usage_event
+    ON reader_ask_turn_runs (usage_event_id)
+    WHERE usage_event_id IS NOT NULL;
+
+CREATE TABLE reader_ask_eval_traces (
+    turn_run_id UUID PRIMARY KEY REFERENCES reader_ask_turn_runs(id) ON DELETE CASCADE,
+    trace_schema_version TEXT NOT NULL,
+    planning_snapshot_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    capability_trace_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    action_audit_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    supplement_audit_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE reader_ask_messages
+    ADD CONSTRAINT fk_reader_ask_messages_current_turn_run
+    FOREIGN KEY (current_turn_run_id) REFERENCES reader_ask_turn_runs(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_reader_ask_messages_current_turn_run
+    ON reader_ask_messages (current_turn_run_id)
+    WHERE current_turn_run_id IS NOT NULL;
 
 -- ============================================================
 -- 反馈系统
@@ -385,6 +668,10 @@ CREATE INDEX idx_daily_readers_published ON daily_readers(publish_date DESC)
 CREATE INDEX idx_daily_readers_original_text_hash ON daily_readers(original_text_hash)
   WHERE original_text_hash IS NOT NULL;
 
+ALTER TABLE ai_usage_events
+  ADD CONSTRAINT fk_ai_usage_events_daily_reader
+  FOREIGN KEY (daily_reader_article_id) REFERENCES daily_readers(id) ON DELETE SET NULL;
+
 -- ============================================================
 -- Pipeline 执行记录
 -- ============================================================
@@ -471,6 +758,37 @@ CREATE TABLE IF NOT EXISTS dict_redirects (
 
 CREATE INDEX IF NOT EXISTS idx_dict_redirects_key ON dict_redirects(source, redirect_key);
 CREATE INDEX IF NOT EXISTS idx_dict_redirects_target ON dict_redirects(source, target_entry_key);
+
+CREATE TABLE dict_ai_candidate_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  query TEXT NOT NULL,
+  normalized_query TEXT NOT NULL,
+  query_type TEXT NOT NULL CHECK (query_type IN ('word', 'phrase')),
+  classification TEXT NOT NULL,
+  result_kind TEXT NOT NULL CHECK (result_kind IN ('ai_entry', 'ai_unresolved')),
+  confidence TEXT,
+  generated_payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  context_sentence TEXT NOT NULL,
+  record_id UUID REFERENCES analysis_records(id) ON DELETE SET NULL,
+  sentence_id TEXT,
+  usage_event_id UUID REFERENCES ai_usage_events(id) ON DELETE SET NULL,
+  review_status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (review_status IN ('pending', 'accepted', 'rejected', 'ignored')),
+  review_note TEXT,
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_dict_ai_candidates_query
+  ON dict_ai_candidate_entries(query);
+
+CREATE INDEX idx_dict_ai_candidates_review_status_created
+  ON dict_ai_candidate_entries(review_status, created_at DESC);
+
+CREATE INDEX idx_dict_ai_candidates_usage_event
+  ON dict_ai_candidate_entries(usage_event_id)
+  WHERE usage_event_id IS NOT NULL;
 
 DO $$
 BEGIN
@@ -577,14 +895,26 @@ COMMENT ON COLUMN analysis_task_events.task_id IS '关联的任务 ID。';
 COMMENT ON COLUMN analysis_task_events.event_type IS '事件类型，如 task_submitted, task_started, task_succeeded 等。';
 COMMENT ON COLUMN analysis_task_events.event_payload_json IS '事件载荷 JSON。';
 
-COMMENT ON TABLE analysis_audit_logs IS '分析任务审计日志表，保存 Token 消耗、原始请求载荷与性能指标。';
-COMMENT ON COLUMN analysis_audit_logs.record_id IS '关联的分析记录 ID。';
-COMMENT ON COLUMN analysis_audit_logs.task_id IS '关联的任务 ID。';
-COMMENT ON COLUMN analysis_audit_logs.user_id IS '所属用户 ID。';
-COMMENT ON COLUMN analysis_audit_logs.request_payload_json IS '原始分析请求参数 JSON。';
-COMMENT ON COLUMN analysis_audit_logs.usage_summary_json IS 'Token 使用详情快照。';
-COMMENT ON COLUMN analysis_audit_logs.cost_points IS '消耗积分。';
-COMMENT ON COLUMN analysis_audit_logs.processing_ms IS '后端处理耗时（毫秒）。';
+COMMENT ON TABLE analysis_overview_tasks IS 'learning overview hint 派生任务表，负责异步生成供 Ask 使用的轻量文章概览提示。';
+COMMENT ON COLUMN analysis_overview_tasks.analysis_record_id IS '关联的分析记录 ID。';
+COMMENT ON COLUMN analysis_overview_tasks.status IS '任务状态：queued, running, finalizing, succeeded, failed, cancelled, expired。';
+COMMENT ON COLUMN analysis_overview_tasks.worker_token IS '执行器标识，用于多实例场景下的任务认领。';
+COMMENT ON COLUMN analysis_overview_tasks.failure_code IS '失败错误码。';
+COMMENT ON COLUMN analysis_overview_tasks.failure_message IS '失败错误信息。';
+COMMENT ON COLUMN analysis_overview_tasks.usage_summary_json IS 'overview hint 生成的 token 使用摘要 JSON。';
+
+COMMENT ON TABLE analysis_overview_task_events IS 'overview hint 任务过程审计日志，append-only。';
+COMMENT ON COLUMN analysis_overview_task_events.task_id IS '关联的 overview hint 任务 ID。';
+COMMENT ON COLUMN analysis_overview_task_events.event_type IS '事件类型，如 task_submitted, task_started, task_succeeded 等。';
+COMMENT ON COLUMN analysis_overview_task_events.event_payload_json IS '事件载荷 JSON。';
+
+COMMENT ON TABLE ai_usage_events IS '统一 AI 使用审计事件表，记录用户计费、系统内部、匿名试用和调试评测等 AI 调用。';
+COMMENT ON COLUMN ai_usage_events.usage_scope IS '调用作用域：user_billed、system_internal、anonymous_trial、eval_debug。';
+COMMENT ON COLUMN ai_usage_events.capability_code IS '能力代码，如 analysis_full、dict_ai_lookup、reader_ask。';
+COMMENT ON COLUMN ai_usage_events.billing_mode IS '结算模式：user_points、internal_only、trial、no_charge。';
+COMMENT ON COLUMN ai_usage_events.status IS '事件状态，建议使用 succeeded、failed、fallback、skipped，并允许后续扩展。';
+COMMENT ON COLUMN ai_usage_events.model_route IS '主要模型路由；多路由工作流的完整映射放入 metadata_json。';
+COMMENT ON COLUMN ai_usage_events.metadata_json IS '扩展审计上下文 JSON，包括 usage 快照、entrypoint、对象标识和多模型映射。';
 
 COMMENT ON TABLE user_credit_accounts IS '用户积分账户快照，每用户一行。';
 COMMENT ON COLUMN user_credit_accounts.daily_free_points IS '每日免费额度（默认 1000 积分，1 积分 = 1000 加权 token）。';
@@ -594,7 +924,7 @@ COMMENT ON COLUMN user_credit_accounts.last_reset_on IS '最近一次每日积�
 COMMENT ON COLUMN user_credit_accounts.policy_version IS '积分策略版本号。';
 
 COMMENT ON TABLE user_credit_ledger IS '积分流水账本，append-only，所有积分变动均记录。';
-COMMENT ON COLUMN user_credit_ledger.entry_type IS '流水类型：daily_grant, bonus_grant, analysis_deduct, manual_adjust, refund, feedback_reward。';
+COMMENT ON COLUMN user_credit_ledger.entry_type IS '流水类型：daily_grant, bonus_grant, analysis_deduct, ai_capability_deduct, manual_adjust, refund, feedback_reward。';
 COMMENT ON COLUMN user_credit_ledger.points IS '变动积分数（正为增加，负为扣减）。';
 COMMENT ON COLUMN user_credit_ledger.bucket_type IS '积分桶类型：daily_free 或 bonus。';
 COMMENT ON COLUMN user_credit_ledger.balance_after IS '变动后余额。';
@@ -607,14 +937,13 @@ COMMENT ON COLUMN anonymous_quotas.last_trial_at IS '最近一次试用日期。
 COMMENT ON COLUMN anonymous_quotas.created_at IS '记录创建时间。';
 COMMENT ON COLUMN anonymous_quotas.updated_at IS '记录最后更新时间。';
 
-COMMENT ON TABLE favorite_records IS '收藏记录表，保存用户对文章、句子、短语或词汇的收藏。';
+COMMENT ON TABLE favorite_records IS '收藏记录表，仅保存文章级收藏。';
 COMMENT ON COLUMN favorite_records.id IS '收藏记录主键，使用 UUID。';
 COMMENT ON COLUMN favorite_records.user_id IS '所属用户 ID。';
-COMMENT ON COLUMN favorite_records.target_type IS '收藏目标类型，例如 analysis_record、sentence、phrase、vocab。';
+COMMENT ON COLUMN favorite_records.target_type IS '收藏目标类型，仅允许 analysis_record 或 daily_reader_article。';
 COMMENT ON COLUMN favorite_records.target_key IS '收藏目标的逻辑键，用于唯一定位收藏对象。';
 COMMENT ON COLUMN favorite_records.analysis_record_id IS '关联的分析记录 ID，可为空。';
 COMMENT ON COLUMN favorite_records.payload_json IS '收藏附加信息 JSON。';
-COMMENT ON COLUMN favorite_records.note IS '用户自定义备注。';
 COMMENT ON COLUMN favorite_records.created_at IS '记录创建时间。';
 COMMENT ON COLUMN favorite_records.updated_at IS '记录最后更新时间。';
 
@@ -640,12 +969,11 @@ COMMENT ON COLUMN vocabulary_book.payload_json IS '生词附加元数据 JSON，
 COMMENT ON COLUMN vocabulary_book.created_at IS '记录创建时间。';
 COMMENT ON COLUMN vocabulary_book.updated_at IS '记录最后更新时间。';
 
-COMMENT ON TABLE user_annotations IS '用户批注表，保存高亮标注与笔记。';
+COMMENT ON TABLE user_annotations IS '用户高亮表，保存用户高亮标注。';
 COMMENT ON COLUMN user_annotations.id IS '批注主键，使用 UUID。';
 COMMENT ON COLUMN user_annotations.user_id IS '所属用户 ID。';
 COMMENT ON COLUMN user_annotations.analysis_record_id IS '关联的分析记录 ID。';
-COMMENT ON COLUMN user_annotations.annotation_type IS '批注类型：highlight（高亮标注）或 note（笔记）。';
-COMMENT ON COLUMN user_annotations.anchor_type IS '锚点类型：sentence（句子）、paragraph（段落）、text_range（文本范围）。';
+COMMENT ON COLUMN user_annotations.anchor_type IS '锚点类型：sentence（句子）、text_range（文本范围）、multi_text（跨句范围）。';
 COMMENT ON COLUMN user_annotations.target_key IS '批注目标的逻辑键，用于唯一定位批注对象。';
 COMMENT ON COLUMN user_annotations.paragraph_id IS '段落 ID。';
 COMMENT ON COLUMN user_annotations.sentence_id IS '句子 ID。';
@@ -654,10 +982,33 @@ COMMENT ON COLUMN user_annotations.start_offset IS '选区起始偏移量。';
 COMMENT ON COLUMN user_annotations.end_offset IS '选区结束偏移量。';
 COMMENT ON COLUMN user_annotations.text_hash IS '选中文本的哈希值。';
 COMMENT ON COLUMN user_annotations.color IS '标注颜色，支持 soft_green、soft_blue、soft_purple、warm_yellow、sage_green。';
-COMMENT ON COLUMN user_annotations.note IS '用户笔记内容。';
 COMMENT ON COLUMN user_annotations.payload_json IS '批注附加元数据 JSON。';
 COMMENT ON COLUMN user_annotations.created_at IS '记录创建时间。';
 COMMENT ON COLUMN user_annotations.updated_at IS '记录最后更新时间。';
+
+COMMENT ON TABLE reader_notes IS 'Reader 笔记表，保存用户对句子或文本选区的引用式笔记。';
+COMMENT ON COLUMN reader_notes.anchor_sentence_id IS '句侧挂载句 ID；跨句笔记挂在第一段所在句。';
+COMMENT ON COLUMN reader_notes.quote_mode IS '引用模式：sentence、text_range、multi_text。';
+COMMENT ON COLUMN reader_notes.target_key IS '引用 identity 的逻辑键，用于 exact-hit 命中已有笔记。';
+COMMENT ON COLUMN reader_notes.note_text IS '用户笔记正文。';
+COMMENT ON COLUMN reader_notes.payload_json IS '笔记引用附加信息 JSON，至少包含 quoted_text 与 segments。';
+
+COMMENT ON TABLE reader_ask_threads IS 'Reader 内 Ask Claread 会话线程。按用户和文章绑定，支持默认线程与 New chat。';
+COMMENT ON COLUMN reader_ask_threads.is_default IS '是否为当前文章的默认线程。一个用户在同一篇文章下仅允许一个未归档默认线程。';
+COMMENT ON COLUMN reader_ask_threads.last_message_at IS '最近一条消息时间，用于线程排序与续聊。';
+
+COMMENT ON TABLE reader_ask_messages IS 'Reader Ask 会话消息表。保存 Markdown 输出、上下文锚点、引用来源、动作提议和工具轨迹。';
+COMMENT ON COLUMN reader_ask_messages.context_anchors_json IS '本条消息显式挂载或解析出的上下文锚点列表。';
+COMMENT ON COLUMN reader_ask_messages.citations_json IS '本条消息的引用来源列表，包括正文锚点、用户高亮、Reader 笔记和稳定补充资产。';
+COMMENT ON COLUMN reader_ask_messages.action_proposals_json IS 'AI 提议的待确认动作列表。修改性动作需通过 HITL confirm endpoint 执行。';
+COMMENT ON COLUMN reader_ask_messages.tool_trace_json IS 'Reader Ask 内部工具调用轨迹，用于前端调试与审计。';
+COMMENT ON COLUMN reader_ask_messages.metadata_json IS 'Reader Ask 消息扩展元数据，包含 task_mode、resolved_context 和结构化卡片等。';
+COMMENT ON COLUMN reader_ask_messages.current_turn_run_id IS '当前 assistant message 对应的最新用户可见 turn run。';
+
+COMMENT ON TABLE reader_ask_supplements IS 'Reader Ask 生成并持久化到文章视图中的补充内容，如语法旁注。';
+
+COMMENT ON TABLE reader_ask_turn_runs IS 'Reader Ask assistant 单轮运行记录。作为当前用户可见输出与 regenerate 历史的正式真相源。';
+COMMENT ON TABLE reader_ask_eval_traces IS 'Reader Ask 单轮运行的结构化评测与审计 trace。用于 planner、capability、action、supplement 回放。';
 
 COMMENT ON TABLE feedback IS '用户反馈表，统一存储结果页整体反馈、批注级反馈、句子级反馈、词典反馈和应用功能反馈。';
 COMMENT ON COLUMN feedback.feedback_scope IS '反馈作用域：analysis_result（结果页整体）、annotation（批注级）、sentence（句子级）、dictionary（词典）、app（应用功能）。';
@@ -741,6 +1092,10 @@ COMMENT ON COLUMN dict_redirects.target_entry_key IS '重定向目标词条键�
 COMMENT ON COLUMN dict_redirects.redirect_kind IS '重定向类型，例如 mdx_link、normalized_alias。';
 COMMENT ON COLUMN dict_redirects.created_at IS '记录创建时间。';
 
+COMMENT ON TABLE dict_ai_candidate_entries IS '词典 AI 未收录兜底候选池。保存 AI 临时词条和放弃解释结果，供后续人工审核与词库补录参考。';
+COMMENT ON COLUMN dict_ai_candidate_entries.generated_payload_json IS 'missing_fallback 结构化 AI 输出快照。';
+COMMENT ON COLUMN dict_ai_candidate_entries.review_status IS '审核状态：pending、accepted、rejected、ignored。';
+
 -- ============================================================
 -- TRIGGER
 -- ============================================================
@@ -785,8 +1140,34 @@ CREATE TRIGGER trg_user_annotations_set_updated_at
 BEFORE UPDATE ON user_annotations
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER trg_reader_notes_set_updated_at
+BEFORE UPDATE ON reader_notes
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_reader_ask_threads_set_updated_at
+BEFORE UPDATE ON reader_ask_threads
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_reader_ask_messages_set_updated_at
+BEFORE UPDATE ON reader_ask_messages
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_reader_ask_turn_runs_set_updated_at
+BEFORE UPDATE ON reader_ask_turn_runs
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_reader_ask_eval_traces_set_updated_at
+BEFORE UPDATE ON reader_ask_eval_traces
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_dict_entries_set_updated_at ON dict_entries;
+
 CREATE TRIGGER trg_dict_entries_set_updated_at
 BEFORE UPDATE ON dict_entries
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_dict_ai_candidate_entries_set_updated_at
+BEFORE UPDATE ON dict_ai_candidate_entries
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER trg_feedback_set_updated_at

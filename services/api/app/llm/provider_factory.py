@@ -36,6 +36,24 @@ def _deepseek_v4_profile() -> OpenAIModelProfile:
     )
 
 
+def _reasoning_content_profile() -> OpenAIModelProfile:
+    """Generic OpenAI-compatible profile for providers that emit reasoning_content."""
+    return OpenAIModelProfile(
+        openai_chat_thinking_field="reasoning_content",
+        openai_chat_send_back_thinking_parts="field",
+    )
+
+
+def _is_reasoning_content_model(model_config: ResolvedModelConfig) -> bool:
+    model_name = model_config.model_name.lower()
+    base_url = model_config.base_url.lower()
+    return (
+        model_name.startswith("qwen")
+        or model_name.startswith("glm")
+        or "dashscope.aliyuncs.com" in base_url
+    )
+
+
 def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIChatModel | None:
     if not model_config.model_name or not model_config.base_url:
         return None
@@ -48,6 +66,8 @@ def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIC
     profile = None
     if _is_deepseek_model(model_config):
         profile = _deepseek_v4_profile()
+    elif _is_reasoning_content_model(model_config):
+        profile = _reasoning_content_profile()
     elif "moonshot" in model_config.base_url or "moonshot" in model_config.model_name:
         # Moonshot is OpenAI-compatible at the transport layer, but its model profile
         # differs in important ways, especially around structured output and tool_choice.

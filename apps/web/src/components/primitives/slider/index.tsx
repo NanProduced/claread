@@ -56,11 +56,11 @@ function Slider({
       )}
       {description ? <p className={primitiveDescriptionClass}>{description}</p> : null}
       <BaseSlider.Control className="flex h-8 items-center">
-        <BaseSlider.Track className="relative h-2 w-full rounded-full bg-[rgba(232,228,218,0.92)]">
+        <BaseSlider.Track className="relative h-2 w-full rounded-full bg-[var(--app-switch-track)]">
           <BaseSlider.Indicator className="absolute h-full rounded-full bg-lens-blue" />
           <BaseSlider.Thumb
             aria-label={ariaLabel ?? label ?? "滑块"}
-            className="block size-5 rounded-full border border-hairline bg-surface shadow-[var(--cl-shadow-2)] outline-none ring-offset-reader-paper transition-shadow focus-visible:ring-2 focus-visible:ring-lens-blue/20 focus-visible:ring-offset-2"
+            className="block size-5 rounded-full border border-hairline bg-surface shadow-[var(--cl-shadow-2)] outline-none ring-offset-background transition-shadow focus-visible:ring-2 focus-visible:ring-lens-blue/20 focus-visible:ring-offset-2"
           />
         </BaseSlider.Track>
       </BaseSlider.Control>

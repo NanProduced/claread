@@ -10,16 +10,16 @@ const Switch = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SwitchPrimitive.Root>
 >(function Switch({ className, ...props }, ref) {
   return (
-    <SwitchPrimitive.Root
-      ref={ref}
-      className={cn(
-        "peer inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-hairline bg-[rgba(232,228,218,0.9)] p-0.5 shadow-[var(--cl-shadow-1)] transition-colors data-[state=checked]:border-lens-blue/20 data-[state=checked]:bg-lens-blue-soft data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
+      <SwitchPrimitive.Root
+        ref={ref}
+        className={cn(
+        "app-switch-track peer inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-hairline p-0.5 shadow-[var(--cl-shadow-1)] transition-colors data-[state=checked]:border-lens-blue/20 data-[state=checked]:bg-lens-blue-soft data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
         primitiveFocusRing,
         className,
       )}
       {...props}
     >
-      <SwitchPrimitive.Thumb className="pointer-events-none block size-5 rounded-full bg-surface shadow-[0_2px_10px_rgba(17,17,17,0.15)] transition-transform data-[state=checked]:translate-x-5" />
+      <SwitchPrimitive.Thumb className="app-switch-thumb pointer-events-none block size-5 rounded-full bg-surface transition-transform data-[state=checked]:translate-x-5" />
     </SwitchPrimitive.Root>
   )
 })

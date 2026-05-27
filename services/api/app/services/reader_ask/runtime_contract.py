@@ -1,0 +1,630 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+from app.schemas.reader_ask import (
+    ReaderAskAnchorRef,
+    ReaderAskAttachment,
+    ReaderAskEntryAction,
+    ReaderAskPageIdentity,
+    ReaderAskResolvedContextInput,
+    ReaderAskResolvedIntent,
+)
+from app.services.reader_ask import planner
+from app.services.reader_ask import prompting as prompt_layers_svc
+from app.services.reader_ask import utils
+
+
+def build_structured_history_summary(
+    history_messages: list[dict[str, Any]],
+    *,
+    recent_window: int,
+    max_intents: int = 5,
+    max_refs: int = 5,
+    max_anchors: int = 3,
+) -> dict[str, Any] | None:
+    """Extract structured state from messages outside the recent window.
+
+    This preserves key context (resolved intents, reference resolutions, anchors)
+    that would otherwise be lost when older messages are truncated. The summary
+    is compact and deterministic — no LLM calls.
+
+    Returns None if there are no messages outside the recent window or no
+    extractable structured state.
+    """
+    if len(history_messages) <= recent_window:
+        return None
+
+    older_messages = history_messages[:-recent_window]
+    intents: list[str] = []
+    resolved_refs: list[dict[str, str]] = []
+    ambiguous_refs: list[dict[str, str]] = []
+    anchor_summaries: list[dict[str, str]] = []
+
+    for msg in older_messages:
+        if msg.get("role") != "user":
+            continue
+        # Collect resolved intents (capped)
+        intent = msg.get("resolved_intent")
+        if intent and intent not in intents and len(intents) < max_intents:
+            intents.append(intent)
+        # Collect resolved reference records with semantic info
+        context_plan = msg.get("context_plan")
+        if isinstance(context_plan, dict) and len(resolved_refs) < max_refs:
+            ref_query = context_plan.get("reference_query")
+            ref_status = context_plan.get("reference_resolution_status")
+            if ref_status == "resolved":
+                expanded = context_plan.get("expanded_record_ids", [])
+                for rid in expanded:
+                    if len(resolved_refs) >= max_refs:
+                        break
+                    if not any(r.get("record_id") == rid for r in resolved_refs):
+                        resolved_refs.append({
+                            "record_id": rid,
+                            "alias": ref_query or rid,
+                        })
+        # Collect ambiguous/disambiguation candidates separately
+        # These are NOT resolved — the user saw candidates but may not have
+        # confirmed which one. Keeping them separate avoids misleading the
+        # model into thinking these references were already resolved.
+        disambiguation = msg.get("disambiguation")
+        if isinstance(disambiguation, dict) and len(ambiguous_refs) < max_refs:
+            dis_query = disambiguation.get("query")
+            candidates = disambiguation.get("candidates", [])
+            for cand in candidates:
+                if len(ambiguous_refs) >= max_refs:
+                    break
+                if not isinstance(cand, dict):
+                    continue
+                rid = str(cand.get("record_id") or "")
+                title = str(cand.get("title") or "")
+                if rid and not any(r.get("record_id") == rid for r in ambiguous_refs):
+                    ambiguous_refs.append({
+                        "record_id": rid,
+                        "alias": title or dis_query or rid,
+                    })
+        # Collect anchor summaries (capped)
+        anchors = msg.get("context_anchors")
+        if isinstance(anchors, list):
+            for anchor in anchors:
+                if len(anchor_summaries) >= max_anchors:
+                    break
+                if isinstance(anchor, dict):
+                    sel = str(anchor.get("selected_text") or "")[:60]
+                    atype = str(anchor.get("anchor_type") or "")
+                    if sel and not any(a.get("selected_text") == sel for a in anchor_summaries):
+                        anchor_summaries.append({"selected_text": sel, "anchor_type": atype})
+
+    if not intents and not resolved_refs and not ambiguous_refs and not anchor_summaries:
+        return None
+
+    summary: dict[str, Any] = {}
+    if intents:
+        summary["prior_intents"] = intents
+    if resolved_refs:
+        summary["prior_resolved_references"] = resolved_refs
+    if ambiguous_refs:
+        summary["prior_disambiguation_candidates"] = ambiguous_refs
+    if anchor_summaries:
+        summary["prior_anchors"] = anchor_summaries
+    return summary
+
+
+def format_structured_history_summary(summary: dict[str, Any], *, max_chars: int = 500) -> str:
+    """Format a structured history summary into a human-readable string.
+
+    The output is capped at max_chars to prevent unbounded growth in the
+    system message, which preserved during compaction.
+    """
+    summary_parts: list[str] = []
+    if "prior_intents" in summary:
+        intents_str = ", ".join(summary["prior_intents"])
+        summary_parts.append(f"Previous intents: {intents_str}")
+    if "prior_resolved_references" in summary:
+        refs = summary["prior_resolved_references"]
+        refs_str = "; ".join(r.get("alias", r["record_id"]) for r in refs)
+        summary_parts.append(f"Previously resolved references: {refs_str}")
+    if "prior_disambiguation_candidates" in summary:
+        candidates = summary["prior_disambiguation_candidates"]
+        cands_str = "; ".join(c.get("alias", c["record_id"]) for c in candidates)
+        summary_parts.append(f"Previously suggested candidates (not confirmed): {cands_str}")
+    if "prior_anchors" in summary:
+        anchors = summary["prior_anchors"]
+        anchors_str = "; ".join(
+            f'"{a["selected_text"]}" ({a["anchor_type"]})' for a in anchors
+        )
+        summary_parts.append(f"Previously discussed text: {anchors_str}")
+    result = "[History summary] " + " | ".join(summary_parts)
+    if len(result) > max_chars:
+        result = result[:max_chars - 3] + "..."
+    return result
+
+
+@dataclass(slots=True)
+class ReaderAskAnswerRuntimeInput:
+    thread: dict[str, Any]
+    record: Any
+    user_message: str
+    history_messages: list[dict[str, Any]]
+    page_identity: ReaderAskPageIdentity
+    attachments: list[ReaderAskAttachment]
+    anchors: list[ReaderAskAnchorRef]
+    resolved_intent: ReaderAskResolvedIntent
+    resolved_intent_label: str
+    entry_action: ReaderAskEntryAction
+    submission_mode: str
+    cross_record_context_allowed: bool
+    resolved_context_input: ReaderAskResolvedContextInput | None
+    quick_action_annotation: dict[str, Any] | None
+    reference_resolution: planner.ReaderAskReferenceResolution | None
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None
+    max_history_messages: int
+    max_message_text: int
+
+
+def _normalize_text(value: str | None) -> str:
+    return utils.normalize_text(value)
+
+
+def _truncate_text(value: str | None, limit: int) -> str:
+    return utils.truncate_text(value, limit)
+
+
+def _truncate_history_message(content: str | None, *, role: str, limit: int) -> str:
+    normalized = utils.normalize_text(content)
+    if len(normalized) <= limit:
+        return normalized
+    if role != "assistant":
+        return _truncate_text(normalized, limit)
+
+    head_limit = max(limit // 2, 200)
+    tail_limit = max(limit - head_limit - 5, 120)
+    head = normalized[:head_limit].rstrip()
+    tail = normalized[-tail_limit:].lstrip()
+    return f"{head}\n...\n{tail}"
+
+
+def _entry_action_guidance(entry_action: ReaderAskEntryAction) -> str | None:
+    if entry_action == "compare_translation":
+        return (
+            "This request came from compare_translation. Prioritize side-by-side comparison "
+            "of wording, meaning shifts, omissions, additions, and tone changes before giving "
+            "any broader summary."
+        )
+    if entry_action == "why_here":
+        return (
+            "This request came from why_here. Prioritize explaining the local grammar or writing "
+            "choice in the current sentence before expanding outward."
+        )
+    return None
+
+
+def _estimate_token_count(payload: dict[str, Any]) -> int:
+    serialized = json.dumps(payload, ensure_ascii=False)
+    cjk_count = sum(1 for c in serialized if '\u4e00' <= c <= '\u9fff' or '\u3400' <= c <= '\u4dbf')
+    non_cjk_len = len(serialized) - cjk_count
+    return max(int(non_cjk_len / 4 + cjk_count / 1.5), 1)
+
+
+def _compact_prompt_payload(
+    payload: dict[str, Any],
+    *,
+    max_history: int = 6,
+    max_record_assets: int = 3,
+    max_external_assets: int = 3,
+    max_vocabulary: int = 3,
+    max_insights: int = 3,
+    max_sentence_windows: int = 5,
+    max_source_excerpt: int = 2400,
+    max_article_overview: int = 1200,
+) -> dict[str, Any]:
+    compact = json.loads(json.dumps(payload, ensure_ascii=False))
+    history = compact.get("history")
+    if isinstance(history, list) and len(history) > max_history:
+        # Preserve system (summary) messages; only truncate user/assistant messages
+        system_msgs = [m for m in history if isinstance(m, dict) and m.get("role") == "system"]
+        conversation_msgs = [m for m in history if isinstance(m, dict) and m.get("role") != "system"]
+        compact["history"] = system_msgs + conversation_msgs[-max_history:]
+
+    record_assets = compact.get("record_assets")
+    if isinstance(record_assets, list) and len(record_assets) > max_record_assets:
+        compact["record_assets"] = record_assets[:max_record_assets]
+
+    external_asset_contexts = compact.get("external_asset_contexts")
+    if isinstance(external_asset_contexts, list) and len(external_asset_contexts) > max_external_assets:
+        compact["external_asset_contexts"] = external_asset_contexts[:max_external_assets]
+    if isinstance(external_asset_contexts, list):
+        for item in external_asset_contexts:
+            if not isinstance(item, dict):
+                continue
+            content_md = item.get("content_md")
+            if isinstance(content_md, str) and len(content_md) > 900:
+                item["content_md"] = _truncate_text(content_md, 900)
+
+    vocabulary_items = compact.get("vocabulary_items")
+    if isinstance(vocabulary_items, list) and len(vocabulary_items) > max_vocabulary:
+        compact["vocabulary_items"] = vocabulary_items[:max_vocabulary]
+
+    record_insights = compact.get("record_insights")
+    if isinstance(record_insights, list) and len(record_insights) > max_insights:
+        compact["record_insights"] = record_insights[:max_insights]
+
+    record_context = compact.get("record_context")
+    if isinstance(record_context, dict):
+        sentence_windows = record_context.get("sentence_windows")
+        if isinstance(sentence_windows, list) and len(sentence_windows) > max_sentence_windows:
+            record_context["sentence_windows"] = sentence_windows[:max_sentence_windows]
+        source_excerpt = record_context.get("source_excerpt")
+        if isinstance(source_excerpt, str) and len(source_excerpt) > max_source_excerpt:
+            record_context["source_excerpt"] = _truncate_text(source_excerpt, max_source_excerpt)
+    article_overview = compact.get("article_overview")
+    if isinstance(article_overview, str) and len(article_overview) > max_article_overview:
+        compact["article_overview"] = _truncate_text(article_overview, max_article_overview)
+    planning = compact.get("planning")
+    if isinstance(planning, dict):
+        trace_summary = planning.get("trace_summary")
+        if isinstance(trace_summary, dict):
+            notes = trace_summary.get("notes")
+            if isinstance(notes, list) and len(notes) > 4:
+                trace_summary["notes"] = notes[:4]
+            tool_steps = trace_summary.get("tool_steps")
+            if isinstance(tool_steps, list) and len(tool_steps) > 6:
+                trace_summary["tool_steps"] = tool_steps[:6]
+    return compact
+
+
+# ---------------------------------------------------------------------------
+# Progressive compaction: apply compression layers in priority order,
+# re-estimate tokens after each layer, stop as soon as budget is met.
+# ---------------------------------------------------------------------------
+
+# Each layer is a (name, function) pair. Layers are applied in order from
+# lowest priority (compressed first) to highest priority (compressed last).
+# Each function mutates the payload dict in place and returns True if it
+# actually changed anything (so we know to re-estimate tokens).
+
+def _layer_trim_external_assets(payload: dict[str, Any], limit: int = 2) -> bool:
+    """Trim external asset contexts — lowest priority, compressed first."""
+    items = payload.get("external_asset_contexts")
+    if not isinstance(items, list) or len(items) <= limit:
+        return False
+    payload["external_asset_contexts"] = items[:limit]
+    return True
+
+
+def _layer_trim_record_assets(payload: dict[str, Any], limit: int = 2) -> bool:
+    """Trim record assets (annotations, notes)."""
+    items = payload.get("record_assets")
+    if not isinstance(items, list) or len(items) <= limit:
+        return False
+    payload["record_assets"] = items[:limit]
+    return True
+
+
+def _layer_trim_vocabulary(payload: dict[str, Any], limit: int = 2) -> bool:
+    """Trim vocabulary items."""
+    items = payload.get("vocabulary_items")
+    if not isinstance(items, list) or len(items) <= limit:
+        return False
+    payload["vocabulary_items"] = items[:limit]
+    return True
+
+
+def _layer_trim_insights(payload: dict[str, Any], limit: int = 2) -> bool:
+    """Trim record insights."""
+    items = payload.get("record_insights")
+    if not isinstance(items, list) or len(items) <= limit:
+        return False
+    payload["record_insights"] = items[:limit]
+    return True
+
+
+def _layer_trim_history(payload: dict[str, Any], limit: int = 4) -> bool:
+    """Trim conversation history, preserving system summary messages."""
+    history = payload.get("history")
+    if not isinstance(history, list):
+        return False
+    system_msgs = [m for m in history if isinstance(m, dict) and m.get("role") == "system"]
+    conv_msgs = [m for m in history if isinstance(m, dict) and m.get("role") != "system"]
+    if len(conv_msgs) <= limit:
+        return False
+    payload["history"] = system_msgs + conv_msgs[-limit:]
+    return True
+
+
+def _layer_trim_sentence_windows(payload: dict[str, Any], limit: int = 3) -> bool:
+    """Trim sentence windows — higher priority than history."""
+    record_context = payload.get("record_context")
+    if not isinstance(record_context, dict):
+        return False
+    windows = record_context.get("sentence_windows")
+    if not isinstance(windows, list) or len(windows) <= limit:
+        return False
+    record_context["sentence_windows"] = windows[:limit]
+    return True
+
+
+def _layer_trim_source_excerpt(payload: dict[str, Any], limit: int = 1600) -> bool:
+    """Trim source excerpt — second highest priority."""
+    record_context = payload.get("record_context")
+    if not isinstance(record_context, dict):
+        return False
+    excerpt = record_context.get("source_excerpt")
+    if not isinstance(excerpt, str) or len(excerpt) <= limit:
+        return False
+    record_context["source_excerpt"] = _truncate_text(excerpt, limit)
+    return True
+
+
+def _layer_trim_article_overview(payload: dict[str, Any], limit: int = 800) -> bool:
+    """Trim article overview — highest priority, compressed last."""
+    overview = payload.get("article_overview")
+    if not isinstance(overview, str) or len(overview) <= limit:
+        return False
+    payload["article_overview"] = _truncate_text(overview, limit)
+    return True
+
+
+# Compression layers ordered from lowest to highest priority.
+# Lower priority = compressed first; higher priority = compressed last.
+_COMPRESSION_LAYERS: list[tuple[str, object]] = [
+    ("external_assets", _layer_trim_external_assets),
+    ("record_assets", _layer_trim_record_assets),
+    ("vocabulary", _layer_trim_vocabulary),
+    ("insights", _layer_trim_insights),
+    ("history", _layer_trim_history),
+    ("sentence_windows", _layer_trim_sentence_windows),
+    ("source_excerpt", _layer_trim_source_excerpt),
+    ("article_overview", _layer_trim_article_overview),
+]
+
+# Aggressive follow-up layers that apply even tighter limits if the first
+# pass wasn't enough. These are tried in order after the initial layers.
+_AGGRESSIVE_LAYERS: list[tuple[str, object]] = [
+    ("external_assets_drop", lambda p: _layer_trim_external_assets(p, limit=0)),
+    ("record_assets_drop", lambda p: _layer_trim_record_assets(p, limit=0)),
+    ("vocabulary_drop", lambda p: _layer_trim_vocabulary(p, limit=0)),
+    ("insights_drop", lambda p: _layer_trim_insights(p, limit=0)),
+    ("history_aggressive", lambda p: _layer_trim_history(p, limit=2)),
+    ("sentence_windows_drop", lambda p: _layer_trim_sentence_windows(p, limit=0)),
+    ("source_excerpt_aggressive", lambda p: _layer_trim_source_excerpt(p, limit=800)),
+    ("article_overview_aggressive", lambda p: _layer_trim_article_overview(p, limit=400)),
+]
+
+
+def _progressive_compact(payload: dict[str, Any], *, budget_tokens: int) -> dict[str, Any]:
+    """Apply compression layers progressively until the payload fits the budget.
+
+    Each layer is applied in priority order (lowest first). After each layer,
+    we re-estimate token count. If the payload fits, we stop. If not, we
+    apply the next layer. This ensures high-priority fields are preserved
+    as long as possible.
+    """
+    compact = json.loads(json.dumps(payload, ensure_ascii=False))
+    current_tokens = _estimate_token_count(compact)
+
+    if current_tokens <= budget_tokens:
+        return compact
+
+    # Pass 1: apply each compression layer in priority order
+    for _layer_name, layer_fn in _COMPRESSION_LAYERS:
+        changed = layer_fn(compact)
+        if changed:
+            current_tokens = _estimate_token_count(compact)
+            if current_tokens <= budget_tokens:
+                return compact
+
+    # Pass 2: aggressive layers — drop low-priority fields entirely
+    for _layer_name, layer_fn in _AGGRESSIVE_LAYERS:
+        changed = layer_fn(compact)
+        if changed:
+            current_tokens = _estimate_token_count(compact)
+            if current_tokens <= budget_tokens:
+                return compact
+
+    return compact
+
+
+def prepare_prompt_payload(
+    payload: dict[str, Any],
+    *,
+    reserved_points: int,
+    tokens_per_point: int,
+    multiplier_output: int,
+    budget_buffer_tokens: int,
+    default_max_output_tokens: int,
+    min_max_output_tokens: int,
+) -> tuple[dict[str, Any], int]:
+    prompt_payload = payload
+    estimated_input_tokens = _estimate_token_count(prompt_payload)
+
+    # Calculate the real available input budget based on weighted points.
+    # The total budget is reserved_points * tokens_per_point. We need to
+    # reserve budget_buffer_tokens + at least min_max_output_tokens for output.
+    # So the maximum input tokens = total - buffer - min_output * multiplier.
+    # No artificial floor — if the real budget is small, we compact harder.
+    weighted_budget = reserved_points * tokens_per_point
+    max_input_budget = (
+        weighted_budget - budget_buffer_tokens - min_max_output_tokens * multiplier_output
+    )
+
+    if estimated_input_tokens > max_input_budget:
+        # Use progressive compaction to fit within the real input budget
+        prompt_payload = _progressive_compact(payload, budget_tokens=max_input_budget)
+        estimated_input_tokens = _estimate_token_count(prompt_payload)
+
+    weighted_remaining = max(weighted_budget - estimated_input_tokens - budget_buffer_tokens, 0)
+    budgeted_output_tokens = max(
+        min_max_output_tokens,
+        min(default_max_output_tokens, weighted_remaining // multiplier_output if weighted_remaining else 0),
+    )
+    return prompt_payload, budgeted_output_tokens
+
+
+def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any]:
+    prompt_layers = prompt_layers_svc.load_prompt_layers()
+
+    # Build structured summary from messages outside the recent window
+    structured_summary = build_structured_history_summary(
+        contract.history_messages, recent_window=contract.max_history_messages
+    )
+    summary_message: dict[str, Any] | None = None
+    if structured_summary:
+        summary_message = {
+            "role": "system",
+            "content_md": format_structured_history_summary(structured_summary),
+        }
+
+    history = []
+    if summary_message:
+        history.append(summary_message)
+    recent_history = contract.history_messages[-contract.max_history_messages:]
+    last_recent_user_index = max(
+        (index for index, item in enumerate(recent_history) if item.get("role") == "user"),
+        default=-1,
+    )
+    for index, item in enumerate(recent_history):
+        history_item = {
+            "role": item["role"],
+            "content_md": _truncate_history_message(
+                str(item.get("content_md") or ""),
+                role=str(item.get("role") or ""),
+                limit=contract.max_message_text,
+            ),
+        }
+        if index == last_recent_user_index and item.get("resolved_intent"):
+            history_item["resolved_intent"] = item["resolved_intent"]
+        history.append(history_item)
+    anchor_payload = [
+        {
+            "anchor_type": anchor.anchor_type,
+            "label": anchor.label,
+            "sentence_id": anchor.sentence_id,
+            "selected_text": _truncate_text(anchor.selected_text, 200),
+            "note": _truncate_text(anchor.note, 180) or None,
+            "entry_type": anchor.entry_type,
+        }
+        for anchor in contract.anchors
+    ]
+    attachment_payload = [
+        {
+            "kind": attachment.kind,
+            "subtype": attachment.subtype,
+            "label": attachment.label,
+            "selected_text": _truncate_text(attachment.selected_text, 200) or None,
+            "target_key": attachment.target_key,
+            "metadata": attachment.metadata.model_dump(mode="json"),
+        }
+        for attachment in contract.attachments
+    ]
+    return {
+        "thread": {
+            "id": contract.thread["id"],
+            "title": contract.thread.get("title"),
+        },
+        "record": {
+            "record_id": str(contract.record.record_id),
+            "title": contract.record.title,
+            "workflow_version": contract.record.workflow_version,
+            "schema_version": contract.record.schema_version,
+        },
+        "page_identity": contract.page_identity.model_dump(mode="json"),
+        "entry_action": contract.entry_action,
+        "submission_mode": contract.submission_mode,
+        "user_message": contract.user_message,
+        "resolved_intent": contract.resolved_intent,
+        "resolved_intent_label": contract.resolved_intent_label,
+        "prompt_layers": prompt_layers,
+        "history": history,
+        "canonical_context": {
+            "attachments": attachment_payload,
+            "anchors": anchor_payload,
+            "resolved_context_input": contract.resolved_context_input.model_dump(mode="json")
+            if contract.resolved_context_input
+            else None,
+        },
+        "reference_resolution": {
+            "status": contract.reference_resolution.status if contract.reference_resolution else "not_needed",
+            "query": contract.reference_resolution.query if contract.reference_resolution else None,
+            "reason": contract.reference_resolution.reason if contract.reference_resolution else None,
+            "resolved_records": contract.reference_resolution.resolved_records if contract.reference_resolution else [],
+            "ambiguous_records": contract.reference_resolution.ambiguous_records if contract.reference_resolution else [],
+        },
+        "quick_action_annotation": contract.quick_action_annotation,
+        "entry_action_guidance": _entry_action_guidance(contract.entry_action),
+        "planning": {
+            "retrieval_needs": contract.planning_snapshot.retrieval_needs if contract.planning_snapshot else "none",
+            "working_set": {
+                "primary_anchor_type": contract.planning_snapshot.working_set.primary_anchor.anchor_type
+                if contract.planning_snapshot and contract.planning_snapshot.working_set.primary_anchor
+                else None,
+                "local_context_window_needed": contract.planning_snapshot.working_set.local_context_window_needed
+                if contract.planning_snapshot
+                else bool(contract.anchors),
+                "record_insights_needed": contract.planning_snapshot.working_set.record_insights_needed
+                if contract.planning_snapshot
+                else False,
+                "article_overview_needed": contract.planning_snapshot.working_set.article_overview_needed
+                if contract.planning_snapshot
+                else False,
+                "dictionary_needed": contract.planning_snapshot.working_set.dictionary_needed
+                if contract.planning_snapshot
+                else False,
+                "cross_record_context_allowed": contract.planning_snapshot.working_set.cross_record_context_allowed
+                if contract.planning_snapshot
+                else contract.cross_record_context_allowed,
+                "external_record_refs": contract.planning_snapshot.working_set.external_record_refs
+                if contract.planning_snapshot
+                else [],
+                "external_asset_refs": contract.planning_snapshot.working_set.external_asset_refs
+                if contract.planning_snapshot
+                else [],
+                "external_asset_lookup_needed": contract.planning_snapshot.working_set.external_asset_lookup_needed
+                if contract.planning_snapshot
+                else False,
+            },
+            "context_plan": contract.planning_snapshot.context_plan.model_dump(mode="json")
+            if contract.planning_snapshot
+            else None,
+            "trace_summary": contract.planning_snapshot.trace_summary.model_dump(mode="json")
+            if contract.planning_snapshot
+            else None,
+        },
+        "cross_record_context_allowed": contract.cross_record_context_allowed,
+        "followup_hint": (
+            contract.planning_snapshot.clarification_reason
+            if contract.planning_snapshot and contract.planning_snapshot.clarification_mode == "can_answer_with_followup"
+            else None
+        ),
+        "tooling_contract": {
+            "call_tools_on_demand": True,
+            "cross_record_context_requires_explicit_intent": contract.cross_record_context_allowed,
+            "writes_require_confirmation": True,
+            "dictionary_context_explain_available": True,
+        },
+        "response_contract": {
+            "format": "markdown",
+            "be_concise": True,
+            "article_bound": True,
+            "do_not_claim_unknown_history": True,
+            "structured_cards_available": [
+                "grammar_note_card",
+                "sentence_breakdown_card",
+                "vocabulary_in_context_card",
+                "practice_card",
+            ],
+        },
+        "intent_instructions": {
+            "explain": "优先解释这句话或这段在当前文章里的意思，回答以简洁 Markdown 为主。",
+            "breakdown": "优先拆主干、修饰和阅读顺序；需要时调用解析相关工具。",
+            "vocabulary": "优先解释词义、短语义和为什么在这里是这个意思；需要时使用词典和词典 AI。",
+            "grammar": "优先解释当前句子里的语法作用和句法关系，不要泛化成整节语法课。",
+            "practice": "优先围绕当前句子或段落生成练习，帮助用户主动复述、辨析或判断结构。",
+            "general": (
+                "若 entry_action_guidance 提示这是 compare_translation，则优先并列比较原文与译文/两段内容的"
+                "对应关系、信息增删和语气变化；否则根据用户具体问题灵活回答，保持简洁，围绕当前文章和已提供的上下文。"
+            ),
+        }[contract.resolved_intent],
+    }

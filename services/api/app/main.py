@@ -121,10 +121,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         AnalysisTaskWorker,
         recover_stuck_tasks,
     )
+    from app.services.analysis.overview_task_executor import (
+        OverviewTaskWorker,
+        recover_stuck_tasks as recover_stuck_overview_tasks,
+    )
 
     recovered = await recover_stuck_tasks()
     if recovered:
         logger.info("Requeued %d stale tasks on startup", recovered)
+    recovered_overview = await recover_stuck_overview_tasks()
+    if recovered_overview:
+        logger.info("Requeued %d stale overview tasks on startup", recovered_overview)
 
     worker = AnalysisTaskWorker()
     worker.start()
@@ -134,12 +141,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.analysis_task_worker = worker
     logger.info("Analysis task worker started")
 
+    overview_worker = OverviewTaskWorker()
+    overview_worker.start()
+    await asyncio.sleep(0)
+    if not overview_worker.health_snapshot()["healthy"]:
+        raise RuntimeError("Overview task worker failed to start")
+    app.state.overview_task_worker = overview_worker
+    logger.info("Overview task worker started")
+
     yield
 
     # 关闭时清理
     if hasattr(app.state, 'analysis_task_worker'):
         worker = app.state.analysis_task_worker
         await worker.stop()
+    if hasattr(app.state, 'overview_task_worker'):
+        overview_worker = app.state.overview_task_worker
+        await overview_worker.stop()
     from app.infra.zilliz_client import close_zilliz
     await close_zilliz()
     await close_redis()

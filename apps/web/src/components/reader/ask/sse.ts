@@ -33,6 +33,7 @@ function parseSseChunk(chunk: string): ReaderAskStreamEnvelopeDto[] {
 export async function consumeReaderAskSse(
   response: Response,
   onEvent: (event: ReaderAskStreamEnvelopeDto) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!response.body) {
     throw new Error("Reader Ask stream body is missing.");
@@ -42,28 +43,35 @@ export async function consumeReaderAskSse(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        break;
+      }
+      const { value, done } = await reader.read();
+      if (done || signal?.aborted) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
 
-    const boundary = buffer.lastIndexOf("\n\n");
-    if (boundary === -1) {
-      continue;
+      const boundary = buffer.lastIndexOf("\n\n");
+      if (boundary === -1) {
+        continue;
+      }
+
+      const ready = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      for (const event of parseSseChunk(ready)) {
+        onEvent(event);
+      }
     }
 
-    const ready = buffer.slice(0, boundary);
-    buffer = buffer.slice(boundary + 2);
-    for (const event of parseSseChunk(ready)) {
-      onEvent(event);
+    if (buffer.trim()) {
+      for (const event of parseSseChunk(buffer)) {
+        onEvent(event);
+      }
     }
-  }
-
-  if (buffer.trim()) {
-    for (const event of parseSseChunk(buffer)) {
-      onEvent(event);
-    }
+  } finally {
+    reader.releaseLock?.();
   }
 }

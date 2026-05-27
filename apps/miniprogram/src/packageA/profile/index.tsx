@@ -163,13 +163,6 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
           color: 'blue',
         },
         {
-          label: "我的摘录",
-          value: "句子与笔记",
-          icon: 'penLine',
-          url: ROUTES.EXCERPTS,
-          color: 'green',
-        },
-        {
           label: "我的生词本",
           value: wordCount > 0 ? `${wordCount}词` : "暂无生词",
           icon: 'bookmark',

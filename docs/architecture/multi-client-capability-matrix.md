@@ -48,11 +48,11 @@
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
 | 收藏整篇文章 | 已接入 | 已接入 | `favorite_records.target_type=analysis_record` | 双端共享记录收藏 |
-| 整句选择后高亮/笔记/收藏 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、收藏、反显和取消 | 已接入：长按/句子级操作为主 | `anchor_type=sentence`；`target_type=sentence` | baseline 共享能力，双端都可操作和展示 |
-| 句内局部文本高亮/笔记/收藏 | 已接入：Web 支持单句内精确选区创建、渲染、反显、取消和资产聚合 | 仅展示：不主动创建局部选区，但结果页和摘录跳转可复现 Web 局部资产 | `anchor_type=text_range`、`target_type=text_range`、`start_offset`、`end_offset`、`text_hash` | 坐标系为 UTF-16 code unit；后端校验 render scene sentence 切片和 `fnv1a32-utf16` hash |
+| 整句选择后高亮/笔记 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、反显和取消 | 部分接入：小程序保留句子级高亮/笔记写入，并继续收口到句子级专用交互；笔记默认先进入预览态，再通过二级菜单编辑/删除 | `anchor_type=sentence`、`reader_notes` | 双端共享句子级锚点；小程序只在句子级提供写入口 |
+| 句内局部文本高亮/笔记 | 已接入：Web 支持单句内精确选区创建、渲染、反显和取消 | 部分接入：结果页可读取、回显并 focus Web 创建的局部资产，但不在小程序端新建新的局部锚点 | `anchor_type=text_range`、`reader_notes`、`start_offset`、`end_offset`、`text_hash` | 坐标系为 UTF-16 code unit；后端校验 render scene sentence 切片和 `fnv1a32-utf16` hash |
 | 选中文本查词/查短语 | 已接入：selection toolbar 触发 | 未接入选区操作；保留点词查词路径 | `/dict` | Web 选区能力增强，不要求小程序复刻交互 |
-| 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 部分接入：按已有句子级操作为主；局部资产先只展示 | `/user-annotations/{id}` | 小程序可先展示局部资产，不必提供同等编辑入口 |
-| 跨句/跨段选择后批注 | 已接入：Web 可创建、渲染、回跳 `multi_text` 选区 | 仅展示：结果页和摘录页可兼容显示并回跳 Web 创建的跨句资产 | `anchor_type=multi_text`、`target_type=multi_text`、`payload_json.segments[]` | 每段使用 UTF-16 offset + hash；后端按 render scene 顺序和切片校验 |
+| 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 部分接入：按已有句子级操作为主；句子级笔记可在预览态通过二级菜单删除，局部资产先只展示 | `/user-annotations/{id}`、`/reader-notes/{id}` | 小程序可先展示局部资产，不必提供同等编辑入口 |
+| 跨句/跨段选择后批注 | 已接入：Web 可创建、渲染、回跳 `multi_text` 选区 | 仅展示：结果页可兼容显示并回显 Web 创建的跨句资产 | `anchor_type=multi_text`、`payload_json.segments[]` | 每段使用 UTF-16 offset + hash；后端按 render scene 顺序和切片校验 |
 | 段落级选择后批注 | 未接入 UI | 未接入 | `anchor_type=paragraph` 字段预留 | 当前没有产品化操作入口，不能视作已完成能力 |
 
 ## 查词、生词与词典
@@ -66,16 +66,16 @@
 | 保存到生词本 | 已接入 | 已接入 | `/vocabulary` | 双端共享生词资产 |
 | 生词复习 | 已接入 Web review baseline | 已接入小程序复习路径 | `/vocabulary/review/due`、`/vocabulary/{id}/review` | Web 可做更密集管理，小程序保留轻学习 |
 
-## 学习资产与摘录
+## Reader 标注与查看
 
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
-| 按文章查看摘录与批注 | 已接入：`/library/assets` 作为摘录资产索引页 | 已接入：`packageA/excerpts` 以文章为父级聚合 | `GET /excerpt-assets` + favorites + annotations | 本轮边界明确为摘录资产，不把 `vocabulary` 混入该聚合页 |
-| 展示句子级高亮/收藏/笔记 | 已接入 | 已接入 | sentence anchor | 句子级资产是双端 baseline |
-| 展示句内局部文本高亮/笔记/收藏 | 已接入：Reader 和 `/library/assets` 都能展示 | 仅展示：结果页/摘录页可复现 Web 局部资产 | `text_range` anchor + favorite target | 这是多端能力分叉的核心追踪点 |
-| 展示跨句/跨段高亮/笔记/收藏 | 已接入：Reader、`/library/assets` 和 targetKey 回跳可识别 `multi_text` | 已接入展示：结果页/摘录页可渲染多段高亮并按 targetKey 回跳首段 | `multi_text` anchor + favorite target + segment payload | 小程序当前不创建 `multi_text`，但需要接得住 Web 资产 |
-| 查看解析 sidecar / insight | 低调展示：摘录页只作为补充标签显示 | 已接入筛选：`解析` 过滤保留 | `/excerpt-assets.insights[]` | insight 是 excerpt sidecar，不等同于用户资产本体 |
-| 跨端编辑同一资产 | 部分接入：Web 支持编辑/删除批注和局部收藏，跨端管理页待做 | 部分接入：句子级路径为主 | 共享 id、target_key、anchor metadata | 小程序可先只显示局部资产，不必提供编辑入口 |
+| 查看文章收藏 | 已接入 | 已接入 | `favorite_records`（文章级） | 文本收藏已移除 |
+| 展示句子级高亮/笔记 | 已接入 | 已接入 | `sentence` anchor + `reader_notes` | 句子级是双端 baseline |
+| 展示句内局部文本高亮/笔记 | 已接入：Reader 内直接展示 | 已接入 | `text_range` anchor + `reader_notes` | 小程序可回显并 focus Web 创建的 quote，但不创建新的局部锚点 |
+| 展示跨句/跨段高亮/笔记 | 已接入：Reader 内可识别 `multi_text` | 已接入 | `multi_text` anchor + segment payload | 小程序当前不创建 `multi_text`，但可读取 Web 资产 |
+| 查看解析 sidecar / insight | 已接入 | 已接入 | render scene / sentence entries | 不再通过摘录资产页聚合展示 |
+| 跨端编辑同一笔记 | 已接入：Web 可编辑 note 文本 | 部分接入：小程序可编辑句子级笔记，且可修改其他 quote 的 note 文本但不改锚点；结果页先用本地 cache 预填，再以云端 `analysis_record_id` 查询结果覆盖 | 共享 id、target_key、anchor metadata | 改 quote 需删除后重建 |
 
 ## 历史、资料库与记录管理
 
@@ -123,5 +123,4 @@
 - `docs/architecture/multi-client.md`：多端架构原则。
 - `docs/architecture/backend-multiclient-review.md`：后端多端化评审问题域。
 - `apps/web/docs/api-contract-audit.md`：Web 接口审计。
-- `apps/web/docs/annotation-toolbar-text-range-plan.md`：Web selection toolbar 和 `text_range` 细节。
 - `apps/web/docs/reader-ia.md`：Web Reader 信息架构。

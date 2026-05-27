@@ -1,4 +1,4 @@
-export declare const USER_ANNOTATION_TYPES: readonly ["highlight", "note"];
+export declare const USER_ANNOTATION_TYPES: readonly ["highlight"];
 export type UserAnnotationType = (typeof USER_ANNOTATION_TYPES)[number];
 
 export interface AnchorSegmentLike {
@@ -9,17 +9,12 @@ export interface AnchorSegmentLike {
   textHash: string;
 }
 
-export declare const USER_ANNOTATION_ANCHOR_TYPES: readonly ["sentence", "paragraph", "text_range", "multi_text"];
+export declare const USER_ANNOTATION_ANCHOR_TYPES: readonly ["sentence", "text_range", "multi_text"];
 export type UserAnnotationAnchorType = (typeof USER_ANNOTATION_ANCHOR_TYPES)[number];
 
 export declare const FAVORITE_TARGET_TYPES: readonly [
   "analysis_record",
-  "sentence",
-  "paragraph",
-  "phrase",
-  "vocab",
-  "text_range",
-  "multi_text",
+  "daily_reader_article",
 ];
 export type FavoriteTargetType = (typeof FAVORITE_TARGET_TYPES)[number];
 

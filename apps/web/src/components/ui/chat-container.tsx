@@ -1,7 +1,14 @@
 "use client"
 
+import * as React from "react"
 import { cn } from "@/lib/cn"
-import { StickToBottom } from "use-stick-to-bottom"
+import { useStickToBottom } from "use-stick-to-bottom"
+import { ScrollBar } from "@/components/primitives/scroll-area"
+import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area"
+
+const ChatContainerContext = React.createContext<{
+  contentRef: React.RefObject<HTMLDivElement>;
+} | null>(null)
 
 export type ChatContainerRootProps = {
   children: React.ReactNode
@@ -18,50 +25,61 @@ export type ChatContainerScrollAnchorProps = {
   ref?: React.RefObject<HTMLDivElement>
 } & React.HTMLAttributes<HTMLDivElement>
 
-function ChatContainerRoot({
+export function ChatContainerRoot({
   children,
   className,
+  dir,
   ...props
 }: ChatContainerRootProps) {
+  const { scrollRef, contentRef } = useStickToBottom({
+    resize: "smooth",
+    initial: "instant",
+  })
+
   return (
-    <StickToBottom
-      className={cn("flex overflow-y-auto", className)}
-      resize="smooth"
-      initial="instant"
-      role="log"
-      {...props}
-    >
-      {children}
-    </StickToBottom>
+    <ChatContainerContext.Provider value={{ contentRef: contentRef as unknown as React.RefObject<HTMLDivElement> }}>
+      <ScrollAreaPrimitive.Root
+        className={cn("relative flex h-full w-full flex-col overflow-hidden", className)}
+        dir={dir as "ltr" | "rtl" | undefined}
+        {...props}
+      >
+        <ScrollAreaPrimitive.Viewport ref={scrollRef as unknown as React.Ref<HTMLDivElement>} className="h-full w-full rounded-[inherit] [&>div]:!block">
+          {children}
+        </ScrollAreaPrimitive.Viewport>
+        <ScrollBar />
+        <ScrollAreaPrimitive.Corner />
+      </ScrollAreaPrimitive.Root>
+    </ChatContainerContext.Provider>
   )
 }
 
-function ChatContainerContent({
+export function ChatContainerContent({
   children,
   className,
   ...props
 }: ChatContainerContentProps) {
+  const context = React.useContext(ChatContainerContext)
   return (
-    <StickToBottom.Content
+    <div
+      ref={context?.contentRef}
       className={cn("flex w-full flex-col", className)}
       {...props}
     >
       {children}
-    </StickToBottom.Content>
+    </div>
   )
 }
 
-function ChatContainerScrollAnchor({
+export function ChatContainerScrollAnchor({
   className,
   ...props
 }: ChatContainerScrollAnchorProps) {
   return (
     <div
       className={cn("h-px w-full shrink-0 scroll-mt-4", className)}
-      aria-hidden="true"
       {...props}
     />
   )
 }
 
-export { ChatContainerRoot, ChatContainerContent, ChatContainerScrollAnchor }
+export default ChatContainerRoot

@@ -1,0 +1,121 @@
+import { MessageSquare, Palette, UserRound } from "lucide-react";
+import Link from "next/link";
+import { Button } from "@/components/primitives/button";
+import { InfoCard, PageHeader, SectionCard } from "@/components/composed";
+import { appSettingsRoute, loginRoute } from "@/lib/routes";
+import { getProfileSettings, type ProfileBffStatus } from "@/services/bff/profile";
+import { FeedbackForm } from "./FeedbackForm";
+import { LogoutButton } from "./LogoutButton";
+import { ThemePreferencesSection } from "./ThemePreferencesSection";
+
+const statusLabel: Record<ProfileBffStatus, string> = {
+  ready: "已连接账户",
+  unauthenticated: "会话已过期",
+  limited_debug: "调试态受限",
+  upstream_unavailable: "账户服务暂不可用",
+  upstream_error: "账户读取失败",
+};
+
+export default async function SettingsPage() {
+  const settings = await getProfileSettings();
+  const quota = settings.quota;
+  const quotaPercent = quota
+    ? Math.min(100, Math.round((quota.quotaUsed / Math.max(quota.quotaLimit, 1)) * 100))
+    : 0;
+  const displayName = settings.profile?.nickname || settings.session.phone || "Web User";
+  const avatarText = displayName.trim().slice(0, 1).toUpperCase() || "U";
+
+  return (
+    <main className="paper-grain min-h-screen px-5 py-7 text-ink sm:px-8 lg:px-10">
+      <div className="mx-auto grid max-w-7xl gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <section className="min-w-0">
+          <PageHeader
+            eyebrow="账户与偏好"
+            title="设置"
+            description="查看账户状态、解析额度以及 Claread Web 的界面外观。Reader 的即时阅读显示仍放在正文里调整。"
+            message={settings.message}
+            className="max-w-3xl"
+          />
+
+          <div className="space-y-8">
+            <SectionCard>
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-lens-blue-soft font-headline text-xl font-semibold text-lens-blue">
+                  {avatarText}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-base font-semibold text-ink">
+                    {settings.session.phone ? `手机号用户 ${settings.session.phone}` : displayName}
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-muted">{statusLabel[settings.status]}</p>
+                </div>
+              </div>
+
+              <div className="mt-6 border-t border-hairline pt-5">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-ink">今日解析点数</h3>
+                    <p className="mt-1 text-xs text-muted">
+                      {quota
+                        ? `${quota.dailyUsedPoints ?? quota.quotaUsed} / ${
+                            quota.dailyFreePoints ?? quota.quotaLimit
+                          } 点`
+                        : "不可用"}
+                    </p>
+                  </div>
+                  {quota ? (
+                    <p className="text-xs text-muted">
+                      剩余 {quota.remainingPoints ?? 0} 点 · 奖励 {quota.bonusPoints ?? 0} 点
+                    </p>
+                  ) : null}
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-reader-paper">
+                  <div className="h-full rounded-full bg-lens-blue" style={{ width: `${quotaPercent}%` }} />
+                </div>
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              title="主题"
+              icon={Palette}
+              footer={
+                <p className="text-xs leading-5 text-muted">
+                  当前主题会同时影响全站壳层、功能页和 Reader，不再区分单独的 Reader 默认纸面。
+                </p>
+              }
+            >
+              <ThemePreferencesSection />
+            </SectionCard>
+
+            <SectionCard title="反馈" icon={MessageSquare}>
+              <FeedbackForm />
+            </SectionCard>
+          </div>
+        </section>
+
+        <aside className="space-y-5 xl:pt-[7.4rem]">
+          <InfoCard
+            title="当前会话"
+            icon={UserRound}
+            description={settings.session.phone ? `已登录手机号 ${settings.session.phone}` : "当前会话不可用。"}
+            footer={
+              settings.status === "unauthenticated" || settings.status === "limited_debug" ? (
+                <Button asChild variant="outline">
+                  <Link href={loginRoute(appSettingsRoute)}>重新登录</Link>
+                </Button>
+              ) : (
+                <LogoutButton />
+              )
+            }
+          />
+
+          <InfoCard
+            title="订阅升级"
+            tone="paper"
+            description="暂未开放。第一版只展示可用额度，不引入付费配置流程。"
+          />
+        </aside>
+      </div>
+    </main>
+  );
+}

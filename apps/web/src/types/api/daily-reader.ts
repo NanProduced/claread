@@ -14,7 +14,6 @@ export interface DailyReaderArticleDto {
   highlights: DailyReaderHighlightDto[];
   paragraph_notes?: DailyReaderParagraphNotesDto | null;
   takeaways?: DailyReaderTakeawaysDto | null;
-  footer_analysis?: DailyReaderFooterAnalysisDto | null;
 }
 
 export interface DailyReaderBodyDto {
@@ -86,36 +85,6 @@ export interface DailyReaderWritingMoveDto {
   move_type: string;
   explanation: string;
   reusable_pattern?: string | null;
-}
-
-export interface DailyReaderFooterAnalysisDto {
-  summary?: string;
-  thesis_and_intent?: {
-    thesis?: string;
-    author_intent?: string;
-  };
-  structure?: DailyReaderStructurePartDto[];
-  key_expressions?: DailyReaderKeyExpressionDto[];
-  misreading_points?: DailyReaderMisreadingPointDto[];
-  full_article_analysis?: string;
-  discussion_questions?: string[];
-}
-
-export interface DailyReaderStructurePartDto {
-  label: string;
-  title: string;
-  summary: string;
-}
-
-export interface DailyReaderKeyExpressionDto {
-  expression: string;
-  gloss: string;
-  context_sentence: string;
-}
-
-export interface DailyReaderMisreadingPointDto {
-  point: string;
-  clarification: string;
 }
 
 export interface DailyReaderTodayResponseDto {

@@ -53,14 +53,7 @@ export interface DailyReaderHighlight {
 
 export interface DailyReaderFooterAnalysis {
   summary: string;
-  thesisAndIntent: {
-    thesis: string;
-    authorIntent: string;
-  };
-  structure: DailyReaderStructurePart[];
   keyExpressions: DailyReaderKeyExpression[];
-  misreadingPoints: DailyReaderMisreadingPoint[];
-  fullArticleAnalysis: string;
   discussionQuestions: string[];
   articleTakeaway?: string;
   sentenceNotes?: DailyReaderSentenceNote[];
@@ -83,23 +76,12 @@ export interface DailyReaderWritingMove {
   reusablePattern?: string | null;
 }
 
-export interface DailyReaderStructurePart {
-  label: string;
-  title: string;
-  summary: string;
-}
-
 export interface DailyReaderKeyExpression {
   expression: string;
   gloss: string;
   contextSentence: string;
   paragraphId?: string;
   usageNote?: string;
-}
-
-export interface DailyReaderMisreadingPoint {
-  point: string;
-  clarification: string;
 }
 
 export interface DailyReaderListItem {

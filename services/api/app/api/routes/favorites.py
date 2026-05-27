@@ -37,7 +37,6 @@ async def add_favorite(
             target_key=body.target_key,
             analysis_record_id=body.analysis_record_id,
             payload_json=body.payload_json,
-            note=body.note,
         )
         return {"id": str(fav_id), "ok": True}
     except HTTPException:

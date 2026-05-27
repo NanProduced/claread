@@ -196,7 +196,6 @@ export default function DailyReaderPage() {
     }
 
     track('add_vocab', { word, merged: result.merged })
-    CloudSyncService.syncVocab(result.entry, 'daily_reader_article')
   }, [article, contextSentence, activeMark])
 
   const handleFavorite = useCallback(() => {
@@ -208,13 +207,11 @@ export default function DailyReaderPage() {
       setFavorited(true)
       track('favorite', { isFavorited: true })
       Taro.showToast({ title: '已收藏全文', icon: 'success', duration: 1500 })
-      CloudSyncService.syncFavorite(undefined, article.id, 'add', 'daily_reader_article')
     } else {
       removeFavorite(article.id)
       setFavorited(false)
       track('favorite', { isFavorited: false })
       Taro.showToast({ title: '已取消收藏', icon: 'none', duration: 1500 })
-      CloudSyncService.syncFavorite(undefined, article.id, 'remove', 'daily_reader_article')
     }
   }, [article, favorited])
 

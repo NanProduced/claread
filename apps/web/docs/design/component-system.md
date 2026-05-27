@@ -2,7 +2,7 @@
 
 > Reader 专项规范。全站功能页组件库、token、theme、目录结构和第三方准入流程请先参考 `component-library-v0.md`。本文只保留 Reader 画布、工具层、锚点和交互特例。
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-18
+> **状态**: `CURRENT` | **最后更新**: 2026-05-23
 > 本文把 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md` 和 `reader-ia.md` 中已经确认的方向落成 Reader 组件使用规范。方向探索和过程判断已吸收到正式文档，不再在这里重复保留。
 
 ## 1. Scope
@@ -11,15 +11,16 @@
 
 - 原文画布、句子、段落、译文。
 - 机器标注：`vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`term_note`、`logic_note`。
-- 用户批注：句子级 highlight / note、单句内 `text_range`，以及跨句/跨段 `multi_text` highlight / note / favorite。
+- 用户批注：高亮（`user_annotations`，`anchor_type` 支持 `sentence / text_range / multi_text`）；笔记已移至独立 `reader_notes` API（`quote_mode` 支持 `sentence / text_range / multi_text`）；收藏只有文章级（`target_type='analysis_record'`），句子级和局部 text_range/multi_text 收藏已删除。
 - 画布左侧词典详情层、浮动上下文/阅读设置面板、右侧 AI 工作区 shell。
 - `grammar_note` / `sentence_analysis` 句后卡。
 
 暂不覆盖：
 
 - 完整 landing、公开每日精读、Library/Vocabulary 全量组件。
-- Plate.js / Recogito / ProseMirror / Tiptap 等编辑器型批注系统。
 - Grammar X-Ray。当前 `grammar_note` 和 `sentence_analysis` 不得被命名或渲染为 X-Ray。
+
+当前 Reader 2.0 已经采用 `Plate + readOnly` 作为 Web 文档 runtime。本文不展开所有桥接细节，但默认事实是：Reader 当前运行在 `render_scene -> Plate document -> Plate readOnly runtime` 链路上，`reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已经存在。
 
 ## 2. Product Rules
 
@@ -49,9 +50,10 @@
 
 当前 Web Reader 先固定三层基础设施，再继续做组件扩展：
 
-1. **Claread Paper theme.** 现有暖纸、墨色、`lens-blue` 和语义标注色是 Claread 的主视觉基础。Vintage Paper 等 shadcn theme 只作为 moodboard，不直接套用。后续正式初始化 shadcn/ui 时，应把现有 token 映射到 shadcn semantic tokens，而不是用第三方主题覆盖 Claread 视觉。
+1. **Claread mother theme system.** `纸质 Paper` 是 Claread Web 的母主题，`浅色 Light` 与 `深色 Dark` 是同一语法下的浓度调节。现有暖纸、墨色、`lens-blue` 和语义标注色需要继续演进成这三套正式主题。Vintage Paper 等 shadcn theme 只作为 moodboard，不直接套用。后续正式初始化 shadcn/ui 时，应把 Claread token 映射到 shadcn semantic tokens，而不是用第三方主题覆盖 Claread 视觉。
 2. **Reader Floating Layer.** 所有锚定原文 token、句子或 DOM selection 的短时浮层统一走 Floating UI。Radix / shadcn Popover 继续用于按钮触发的常规菜单；原文画布上的轻释义、选区工具栏、语法 hover、二级操作菜单归入 Reader floating layer。
 3. **Annotation Anchor Model.** 当前已支持句子级批注、单句内 `text_range` 和跨句/跨段 `multi_text`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id` 和原文 selection 锚点；后端已按 UTF-16 offset、hash、render scene 切片和 sentence 顺序做严格校验。后续重点是资产跳转强调和跨文章资产索引。
+4. **Plate Runtime as Web Projection.** Reader 2.0 将逐步迁移到 `canonical render_scene -> Plate document` 的投影模式；后端 canonical render scene 与小程序消费链路保持不变，Plate 只作为 Web projection/document runtime。
 
 ## 3. Stack Rules
 
@@ -68,10 +70,11 @@
 当前 Reader 组件组织方式：
 
 - Reader 专属组件放在 `apps/web/src/components/reader/`。
-- 暂不新增第三方批注/富文本编辑器依赖。
+- Reader 2.0 允许引入 Plate 作为 Web 文档 runtime，不再以“禁止编辑器底座”作为规则。
 - Ask Claread 的 compatibility layer 仍在 `apps/web/src/components/ui/`，但它不是 Reader 或功能页新的通用入口。
 - 通用能力优先从 `primitives/`、`composed/`、`layout/` 取，Reader 只保留画布和锚点特例。
 - 新增通用 Reader 基础设施先放在 `apps/web/src/components/reader/`，等交互稳定后再决定是否上移到 `packages/`。
+- 与 Plate 相关的 projection、node types、selection bridge、jump bridge、lookup bridge、asset bridge、Ask bridge 应作为 Reader 2.0 专属模块独立组织，不继续堆进 `ReaderWorkbench.tsx`。
 
 后续推荐正式化的 shadcn 基础组件：
 
@@ -81,8 +84,8 @@
 | 词典轻浮层、标注详情 | `Popover` / Floating UI |
 | 工具提示 | `Tooltip` |
 | 移动端 Reader 面板 | `Sheet` / `Drawer` |
-| 阅读模式、标注密度 | `ToggleGroup` |
-| 字号、行距 | `Slider` 或 segmented controls |
+| 阅读模式 | `ToggleGroup` |
+| 字号、字体、主题 | segmented controls |
 | 长面板滚动 | `ScrollArea` |
 | 空态 | `Empty` |
 | 保存/失败反馈 | `sonner` 或局部 inline status |
@@ -122,8 +125,9 @@
 
 | Component | Role |
 | --- | --- |
-| `ReaderShell` | 中心原文画布优先的 Canvas Workspace；正文核心区稳定，左右画布空白区按需承载工具层，三栏不是默认形态 |
-| `ReaderCanvas` | 文章面板、标题、状态提示、段落列表 |
+| `ReaderWorkbench` | 页面级 orchestration hub：标题区、模式控制、面板状态、字典/AI/selection 交互 |
+| `PlateReaderSurface` | 精读模式正文主画布 runtime；负责段落、句子、inline marks、用户资产和句后卡的组合渲染 |
+| `ImmersiveReaderSurface` | 沉浸模式 paragraph-first projection；负责段落编排、杂志式开篇和更安静的工具退场 |
 | `ReaderParagraph` | 段落编号、段落内句子栈、段落结构线 |
 | `ReaderControls` | 顶部显示模式、收藏、Aa、更多操作 |
 
@@ -132,18 +136,18 @@
 | Component | Role |
 | --- | --- |
 | `ReaderSentence` | 单句焦点、译文、机器标注、用户批注、句后卡挂载 |
-| `InlineMarkToken` | 机器标注 token，处理语义样式、点击查词和 active state |
-| `PlainLookupToken` | 已弱化为句子级点击定位逻辑，避免逐词 DOM 节点破坏浏览器选区 |
+| `ReaderMarkLeaf` | 当前 inline marks 与用户范围渲染入口，负责 lexical / structural / user range 的切片与叠加 |
+| `ReaderSentenceTextElement` | 原文 DOM 和点词 hit-test 入口，保留连续文本以兼容浏览器原生选区 |
+| `ReaderTranslationElement` | 第二阅读层译文；段级句下辅层，作为原文的低声脚注 |
 | `ReaderLookupPreview` | 原文附近轻释义，只做即时反馈 |
-| `MarkLegend` | 标注类型/密度说明和开关 |
-| `ReaderFloatingLayer` | Floating UI 统一封装，用于原文锚点浮层和后续 selection toolbar |
+| `ReaderFloatingLayer` | Floating UI 统一封装，用于原文锚点浮层和 selection toolbar |
 
 ### Layer C: User Annotations
 
 | Component | Role |
 | --- | --- |
 | `AnnotationGutter` | 句子边缘 marker，显示本句有高亮/笔记 |
-| `AnnotationSlip` | 句后用户笔记纸条 |
+| `ReaderNotePanel` | 用户笔记面板与 quote 编辑区 |
 | `AnnotationColorSwatch` | 高亮颜色选择 |
 | `SelectionToolbar` | sentence / `text_range` / `multi_text` 选区工具栏，使用 Floating UI virtual element 和 live DOM Range |
 | `reader-anchors` | Reader DOM 锚点属性生成器；先输出句子和句内 text range 属性 |
@@ -163,7 +167,7 @@
 | --- | --- |
 | `DictionaryPanel` | 画布左侧词典详情层，完整词条、歧义选择、未收录、加入生词本、本次查词；默认按需展开，宽屏可钉住 |
 | `ReaderContextPanel` | 核心区短时浮层：句子操作或阅读设置，不作为常驻侧栏 |
-| `ReaderSettingsPanel` | 字号、行距、背景、译文、标注密度 |
+| `ReaderSettingsPanel` | 字号、字体、主题三项阅读校准；不承担模式切换，也不暴露标注显隐 |
 | `AiWorkspacePanel` | 画布右侧 AI 工作区 shell，默认收起，可展开为 chatbox |
 
 ## 6. Annotation Visual Rules
@@ -172,32 +176,43 @@
 
 | Type | Default Visual | Active Visual |
 | --- | --- | --- |
-| `vocab_highlight` | amber inline highlight on original English text only | stronger amber highlight + lightweight lookup preview |
-| `phrase_gloss` | purple/lavender inline highlight, visually distinct from grammar underline | stronger purple highlight + phrase label in lightweight preview |
-| `context_gloss` | context-blue inline highlight on original English text only | stronger context-blue highlight + current-context meaning preview |
-| `grammar_note` | grammar-violet low highlight / subtle underline, no heavy fill | opens `GrammarNoteCard` |
-| `term_note` | structure-green low underline | opens term card |
-| `logic_note` | lens-blue / structure-green low underline | opens logic card |
+| `vocab_highlight` | amber full-fill lexical wash on original English text only | deeper amber wash + lightweight lookup preview |
+| `phrase_gloss` | lavender full-fill lexical wash for phrase unit | deeper lavender wash + phrase label in lightweight preview |
+| `context_gloss` | cool-blue full-fill lexical wash for contextual clue | deeper blue wash + current-context meaning preview |
+| `grammar_note` | editorial structural cue: light connector / underline that points back to the sentence | opens `GrammarNoteCard` and strengthens the linked source span |
+| `term_note` | dotted or segmented structural underline, lighter than lexical wash | opens term card and strengthens the linked source span |
+| `logic_note` | quiet structural underline / connector, distinct from lexical fills | opens logic card and strengthens the linked source span |
 
 ### User Annotations
 
 | Type | Default Visual | Active Visual |
 | --- | --- | --- |
-| sentence highlight | wide translucent highlighter behind the sentence text | stronger edge marker + subtle sentence background |
+| sentence highlight | soft sentence frame / wash behind the sentence text | stronger edge marker + subtle sentence background |
 | text range highlight | inline paper marker on selected text | toolbar反显颜色，可取消或更新 |
 | note | gutter marker + sentence-side paper slip with scope label (`整句` / `局部选区` / `跨句选区`) | slip lift + current sentence dot |
 | favorite | small bookmark marker near sentence or header | warm amber icon fill |
 
 Rules:
 
-- User note text appears as `AnnotationSlip`, not as a right-side list by default.
+- User note editing and recall live in `ReaderNotePanel`; sentence-level presence is surfaced by gutter note markers.
 - Gutter markers should sit outside the reading text flow and must not shrink the 65-75ch line length.
 - Vocabulary marks are rendered only on the original English text. The current backend does not provide original-to-translation word alignment, so translated Chinese text must not mirror the same per-word colors.
 - The lightweight follow-card near the original text should contain only fast context: surface form, type label, one short Chinese meaning, and optional reason. Full meanings, examples, phrases, disambiguation, and vocabulary-save controls belong in `DictionaryPanel`.
 - When a sentence has both machine marks and user highlight, machine highlights remain distinguishable above the softer sentence-level user highlighter.
+- 当前 personal family 的对象语法和冲突规则尚未收口；`reader-user-range--stacked` 仍是实现兜底，而不是稳定设计语言。
+- Library 阅读记录页的定位已进入重审，不应再作为 Reader 组件规范的默认延伸面。
 - Do not use color alone: include marker shape, icon, label, or placement.
 
 ## 7. Interaction Rules
+
+### Interaction State Contract
+
+- Reader 内交互统一收敛到 5 个家族：`Command Control`、`Floating Action`、`Inline Mark`、`Sentence Anchor`、`Panel Item`。
+- 盒子型控件统一使用同一套 focus ring；不得再为按钮、菜单项、切换项各自定义不同的 focus shadow。
+- 页面级和面板级控件的 pressed 反馈以背景加深为主；只有短时浮层工具按钮允许轻微 `scale`。
+- 并列句侧入口使用中性 hover 基底；语义色只用于 active / current / open，不用于制造三种不同 hover 背景。
+- inline mark 的 `hover` 与 `focus-visible` 必须可区分：hover 强调语义填充，focus-visible 在此基础上再叠加细 outline/ring。
+- 所有可点击 Reader 控件至少具备 `hover / focus-visible / disabled`；大多数按钮和切换项还必须具备 `active`。
 
 ### Inline Lookup
 
@@ -213,14 +228,15 @@ Rules:
 1. Click or keyboard-focus sentence.
 2. Sentence gets subtle active background and side marker.
 3. `ReaderContextPanel` switches to sentence action.
-4. Saving highlight/note writes sentence-level `user_annotations`.
-5. Saved note appears back in `AnnotationSlip`.
+4. Saving highlight writes sentence-level `user_annotations`.
+5. Saved note appears back in `ReaderNotePanel`, and the sentence gutter keeps the note marker active.
 
 ### Reading Settings
 
 1. Click `Aa`.
 2. `ReaderContextPanel` switches to settings.
-3. Settings are local UI state first; persistence can be added later.
+3. Settings only calibrate `字号 / 字体 / 主题` and must not recreate mode effects.
+4. Settings are local UI state first; persistence can be added later.
 
 ### Text Range Selection
 
@@ -235,7 +251,7 @@ Rules:
 It must not force ordinary words into separate interactive DOM nodes. Plain text should remain selectable as continuous text; click-to-lookup can be implemented from sentence-level hit testing.
 If a manual DOM selection exactly covers the full sentence text, the client should normalize it to a sentence anchor instead of persisting a fake full-length `text_range`.
 If a manual DOM selection crosses sentence or paragraph boundaries, the client should preserve it as `multi_text` and expose the mode explicitly in the toolbar instead of silently collapsing it into a sentence or partial `text_range`.
-When `/library/assets` or miniprogram excerpts jump into a saved asset, Reader should use a short-lived route focus layer for favorites, annotations, and mixed assets across sentence / `text_range` / `multi_text` anchors instead of reusing the live selection state.
+When Library history or the miniprogram result page deep-links into a saved favorite, highlight, or note, Reader should use a short-lived route focus layer across sentence / `text_range` / `multi_text` anchors instead of reusing the live selection state.
 
 ## 8. File Ownership
 
@@ -244,19 +260,30 @@ Current extraction:
 ```text
 apps/web/src/components/reader/
   AnnotationGutter.tsx
-  AnnotationSlip.tsx
+  ReaderNotePanel.tsx
   ReaderFloatingLayer.tsx
   ReaderContextPanel.tsx
-  ReaderCanvas.tsx
-  ReaderSentenceRow.tsx
   ReaderAnnotationOverlay.tsx
   SelectionToolbar.tsx
   SentenceEntryCard.tsx
   AiWorkspacePanel.tsx
+  dictionary/
+  settings/
+  plate/
   reader-anchors.ts
   reader-entry-utils.ts
-  reader-selection.ts
   index.ts
+
+apps/web/src/lib/reader-plate/
+  projection/
+  bridges/
+    ask/
+    assets/
+    dictionary/
+    jump/
+    selection/
+  primitives/
+  model/
 ```
 
 Keep in `ReaderWorkbench.tsx` during first pass:
@@ -270,7 +297,8 @@ Move later:
 
 - Zustand store for Reader UI state
 - persisted Reader preferences
-- `DictionaryPanel`, `ReaderLookupPreview`, `InlineMarkToken`, entry card rendering, and toolbar mutation wiring once behavior stabilizes
+- `DictionaryPanel`, `ReaderLookupPreview`, entry card rendering, and toolbar mutation wiring once behavior stabilizes
+- Reader 2.0 的 Web 笔记交互与 Plate-style comment UI 仍在收口；当前代码实现仍不等同于最终产品规则
 
 ## 9. Component Preview Policy
 
@@ -288,7 +316,7 @@ pnpm --filter=@claread/web build
 
 For visual changes, also verify in browser:
 
-- `/reader/[recordId]` desktop at a wide viewport.
+- `/app/reader/[recordId]` desktop at a wide viewport.
 - Reader with dictionary open.
 - Reader with sentence note/highlight.
 - Reader with `grammar_note` and `sentence_analysis` visible.
