@@ -606,6 +606,10 @@ export function ReaderWorkbench({
   initialAnnotations,
   initialReaderNotes = [],
 }: ReaderWorkbenchProps) {
+  type LookupMatchCacheEntry = {
+    match: ReaderVocabularyLookupMatch | null;
+    truncated: boolean;
+  };
   const [readerScene, setReaderScene] = useState(record.reader);
   const reader = readerScene;
   const searchParams = useSearchParams();
@@ -619,7 +623,7 @@ export function ReaderWorkbench({
     readStoredDictionaryAIArticleCache(record.id),
   );
   const [dictionarySaveState, setDictionarySaveState] = useState<SaveState>({ kind: "idle" });
-  const [savedVocabularyMatches, setSavedVocabularyMatches] = useState<Record<string, ReaderVocabularyLookupMatch | null>>({});
+  const [savedVocabularyMatches, setSavedVocabularyMatches] = useState<Record<string, LookupMatchCacheEntry>>({});
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const [readerNotes, setReaderNotes] = useState(initialReaderNotes);
   const [jumpTarget, setJumpTarget] = useState<ReaderJumpTarget | null>(null);
@@ -1027,11 +1031,15 @@ export function ReaderWorkbench({
   const activeLookupAIContextKey = useMemo(() => dictionaryAIContextKey(activeLookup), [activeLookup]);
   const activeLookupSaveRequest = useMemo(() => lookupSaveRequestFromSnapshot(activeLookup), [activeLookup]);
   const activeLookupSaveCacheKey = useMemo(() => lookupSaveCacheKey(activeLookupSaveRequest), [activeLookupSaveRequest]);
-  const activeLookupSavedVocabularyMatch =
+  const activeLookupSavedVocabularyResult =
     activeLookupSaveCacheKey && Object.prototype.hasOwnProperty.call(savedVocabularyMatches, activeLookupSaveCacheKey)
-      ? savedVocabularyMatches[activeLookupSaveCacheKey] ?? null
+      ? savedVocabularyMatches[activeLookupSaveCacheKey]
       : null;
+  const activeLookupSavedVocabularyMatch = activeLookupSavedVocabularyResult?.match ?? null;
   const activeLookupSaveState = useMemo<LookupSaveState>(() => {
+    if (activeLookupSavedVocabularyResult?.truncated && !activeLookupSavedVocabularyMatch) {
+      return "unknown";
+    }
     const savedMatch = activeLookupSavedVocabularyMatch;
     return getLookupSaveState(
       Boolean(savedMatch),
@@ -1039,7 +1047,7 @@ export function ReaderWorkbench({
       savedMatch?.sourceRefs,
       savedMatch?.masteryStatus === "mastered",
     );
-  }, [activeLookup?.sentenceId, activeLookupSavedVocabularyMatch]);
+  }, [activeLookup?.sentenceId, activeLookupSavedVocabularyMatch, activeLookupSavedVocabularyResult]);
   const activeLookupAICacheEntry = useMemo(() => {
     const preferredMode = dictionaryPreferredAIMode(activeLookup);
     if (!activeLookup || !preferredMode) {
@@ -1341,24 +1349,30 @@ export function ReaderWorkbench({
         if (!payload || !payload.ok) {
           setSavedVocabularyMatches((current) => ({
             ...current,
-            [activeLookupSaveCacheKey]: null,
+            [activeLookupSaveCacheKey]: {
+              match: null,
+              truncated: false,
+            },
           }));
           return;
         }
 
         setSavedVocabularyMatches((current) => ({
           ...current,
-          [activeLookupSaveCacheKey]: payload.item
-            ? {
-                id: payload.item.id,
-                lemma: payload.item.lemma,
-                displayWord: payload.item.display_word,
-                dictEntryId: payload.item.dict_entry_id,
-                masteryStatus: payload.item.mastery_status,
-                sourceRefs: payload.item.source_refs,
-                collectedForms: payload.item.collected_forms,
-              }
-            : null,
+          [activeLookupSaveCacheKey]: {
+            match: payload.item
+              ? {
+                  id: payload.item.id,
+                  lemma: payload.item.lemma,
+                  displayWord: payload.item.display_word,
+                  dictEntryId: payload.item.dict_entry_id,
+                  masteryStatus: payload.item.mastery_status,
+                  sourceRefs: payload.item.source_refs,
+                  collectedForms: payload.item.collected_forms,
+                }
+              : null,
+            truncated: Boolean(payload.truncated),
+          },
         }));
       })
       .catch(() => {
@@ -1367,7 +1381,10 @@ export function ReaderWorkbench({
         }
         setSavedVocabularyMatches((current) => ({
           ...current,
-          [activeLookupSaveCacheKey]: null,
+          [activeLookupSaveCacheKey]: {
+            match: null,
+            truncated: false,
+          },
         }));
       });
 
@@ -2542,16 +2559,19 @@ export function ReaderWorkbench({
       const nextLookupSaveCacheKey = lookupSaveCacheKey(nextLookupSaveRequest);
       if (nextLookupSaveCacheKey) {
         setSavedVocabularyMatches((current) => {
-          const existing = current[nextLookupSaveCacheKey] ?? null;
+          const existingEntry = current[nextLookupSaveCacheKey] ?? null;
           const optimisticMatch = buildOptimisticLookupMatch(
             activeLookup,
-            existing,
-            payload.id ?? existing?.id ?? `${result.entry.id}`,
+            existingEntry?.match ?? null,
+            payload.id ?? existingEntry?.match?.id ?? `${result.entry.id}`,
           );
 
           return {
             ...current,
-            [nextLookupSaveCacheKey]: optimisticMatch,
+            [nextLookupSaveCacheKey]: {
+              match: optimisticMatch,
+              truncated: false,
+            },
           };
         });
       }

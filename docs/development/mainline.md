@@ -1,6 +1,6 @@
 # 开发主线
 
-> **状态**: `CURRENT` | **最后验证**: 2026-05-20
+> **状态**: `CURRENT` | **最后验证**: 2026-05-27
 
 本文说明 Claread 当前主线方向。它不是任务流水账；已完成的阶段只保留结论，具体实现细节回到代码、测试和对应目录文档。
 
@@ -11,6 +11,7 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 - 微信小程序仍是稳定客户端，继续作为回归约束。
 - Web baseline 已接入真实 FastAPI BFF/API 链路，不再依赖产品路径 mock/demo fixture。
 - Web 已进入 Reader 标注体系收口阶段：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 高亮/笔记和 Ask Claread 显式引用已接入；高亮冲突现已统一走后端 resolver 合并，SelectionToolbar 已收口为“一级高亮 + inline 颜色条”的单层工具条，句尾句柄改为整句选中，句前 gutter marker 改为高亮回显入口；文本收藏与按文章聚合的“摘录与批注”页已删除，Reader 自动化回归仍待补齐。
+- Web app shell 已补齐 cmdk / shortcuts 基线，命令面板、路由守卫、Reader 详情页和 Ask Claread 主链路可作为当前 `main` 候选基线。
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力：`AI 语境解读` 与 `未验证词条` 结果保留在当前浏览器会话和 `localStorage`，支持按原锚点回显与折叠保留，并可在存在精确 anchor 时直接生成词级 `reader_note`；这不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
@@ -21,7 +22,7 @@ Claread 已完成从单一小程序基线到多端产品基线的第一步：
 
 ## 当前主线
 
-当前主线已经从 `Web Reader 2.0（Plate 底座接入）` 进入到其后续阶段：`Ask Claread 冻结收尾与后续产品调整评估`。
+当前主线已经从 `Web Reader 2.0（Plate 底座接入）` 进入到其后续阶段：`Ask Claread 冻结收尾、主线合流与后续产品调整评估`。
 
 Web Reader 2.0（Plate 底座接入）这一前置任务已经完成。当前工作不再是决定 Reader 是否切到 Plate，而是在该底座上把 Ask Claread 冻结到一个可用、正确、便于后续需求调整评估的状态。
 
@@ -36,7 +37,7 @@ Web Reader 2.0（Plate 底座接入）这一前置任务已经完成。当前工
 
 ## 近期工作顺序
 
-1. 修正 Ask Claread 冻结前的 correctness 问题，确保 regenerate、supplement lifecycle、known reference resolution 和写动作边界符合当前规范。
+1. 以 `refactor-reader-2.0` 的当前验证结果为基础，优先合回 `main`，结束长寿分支状态，后续改回短分支推进。
 2. 统一 Ask Claread 正式文档口径，以 `docs/product/ask-claread.md` 和 `docs/architecture/ask-claread.md` 作为当前真相源。
 3. 保持 Reader 2.0 底座稳定，继续补真实数据自动化和小程序 DevTools 人工回归，避免 Ask 收尾影响阅读主链路。
 4. 在冻结完成后，继续稳定新的 Reader 标注模型，重点验证高亮、笔记和 Ask Claread 的单一新逻辑闭环。

@@ -7,25 +7,47 @@ export async function getCommandPaletteRecords(
   query?: string,
   limit?: number,
 ): Promise<CommandPaletteRecordItem[]> {
-  const fetchLimit = query ? 50 : (limit ?? 8);
+  const requestedLimit = limit ?? 8;
+  const fetchLimit = query ? 50 : requestedLimit;
   const result = await getRecordList({ limit: fetchLimit });
 
   if (result.status !== "ready") {
     return [];
   }
 
-  let records = result.records;
-
   if (query?.trim()) {
     const q = query.toLowerCase();
-    records = records.filter(
-      (r) =>
-        r.title.toLowerCase().includes(q) ||
-        r.sourceText.toLowerCase().includes(q),
+    const matches = result.records.filter(
+      (record) =>
+        record.title.toLowerCase().includes(q) ||
+        record.sourceText.toLowerCase().includes(q),
     );
+
+    let page = result.page + 1;
+    while (matches.length < requestedLimit && (page - 1) * fetchLimit < result.total) {
+      const nextPage = await getRecordList({ page, limit: fetchLimit });
+      if (nextPage.status !== "ready" || nextPage.records.length === 0) {
+        break;
+      }
+      matches.push(
+        ...nextPage.records.filter(
+          (record) =>
+            record.title.toLowerCase().includes(q) ||
+            record.sourceText.toLowerCase().includes(q),
+        ),
+      );
+      page += 1;
+    }
+
+    return matches.slice(0, requestedLimit).map((record) => ({
+      id: record.id,
+      title: record.title,
+      excerpt: record.sourceText.slice(0, 120),
+      createdAt: record.createdAt,
+    }));
   }
 
-  return records.slice(0, limit ?? 8).map((r) => ({
+  return result.records.slice(0, requestedLimit).map((r) => ({
     id: r.id,
     title: r.title,
     excerpt: r.sourceText.slice(0, 120),

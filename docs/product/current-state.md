@@ -14,13 +14,15 @@
 
 ## 已验证事实
 
+- 2026-05-27 验证：后端 `715 passed`；Web `typecheck` / `lint` / `test` / `test:e2e` / `build` 通过；小程序 `typecheck` / `build` 通过。当前 `refactor-reader-2.0` 已具备合回 `main` 的验证条件。
 - 2026-05-21 验证：Reader 标注体系的数据层已收口为“文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用”；数据库基线已压回单一 `0001_initial_schema.sql`，Web 与小程序构建通过。
 - 2026-05-16 验证：Web typecheck / build 通过；本轮通过本地浏览器回归核对 Reader 的 selection toolbar、lookup preview 和 `multi_text` 交互表现；`services/api/tests/test_user_assets.py` 和 `services/api/tests/test_user_annotations.py` 通过。
 - Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额。
+- Web cmdk、全局快捷键、Reader 词典保存态和 Ask panel cleanup 已收口到当前基线；命令面板不再只搜首屏结果，词典生词本状态在大词库截断场景下会回退到显式“待检查”而不是误判未保存。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
 - `Ask Claread` 已完成 Reader 2.0 底座上的重构主线，当前进入冻结校验阶段。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 planner-first runtime、turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期和 current-run hydration。
-- ReaderWorkbench 已拆出 Reader canvas、sentence row、annotation overlay 和 selection helper，后续 Reader UI 迭代应优先沿这些边界推进。
+- ReaderWorkbench 已拆出 Reader canvas、annotation overlay、selection helper 和多组 reader-plate bridge；后续 Reader UI 迭代应优先沿这些边界继续拆分，而不是回退到旧 selection / excerpt 方案。
 - Docker Compose project 使用 `claread`。
 - 本地 PostgreSQL volume 使用 `claread_postgres_data`。
 - 本地 Redis volume 使用 `claread_redis_data`。
@@ -56,7 +58,7 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 1. 当前产品主线是稳定 `analysis record Reader` 的新标注模型：文章收藏、用户高亮、用户笔记和 Ask Claread 显式引用。
 2. Web Reader 仍在进行最后一轮 UI/UX 收口：当前主路径已经是句侧 note marker、selection draft popover 和浮出式 note panel，但评论交互与视觉层级仍在继续打磨。
 3. 小程序已切到“句子级可写、局部/跨句只读回显”的收口目标：结果页读取 `reader_notes` / `user_annotations`，句子级高亮可直接创建或更新；句子级笔记默认先展示预览，再通过二级菜单进入编辑或删除；Web 创建的 `text_range` / `multi_text` 资产只负责回显与 focus，不在小程序端改写锚点；`/vocabulary` 继续保持独立词汇资产入口。
-4. 小程序 Reader 结果页对 `reader_notes` 已补齐本地优先回读：页面进入时先读取本地 `reader_notes` cache，再用云端 `GET /reader-notes?analysis_record_id=...` 结果覆盖，避免 sync queue flush 稍慢时表现成“刚写完就丢失”。
+4. 小程序 Reader 结果页对 `reader_notes` / `user_annotations` 已补齐本地优先回读与 pending merge：页面进入时先读取本地 cache，再与云端结果合并；未同步的新建项和本地编辑中的已有项不会再被旧云端数据覆盖。
 5. 收紧数据层长期约束：`text_range` / `multi_text` 校验、局部索引、annotations/notes 分页和完整 OpenAPI contracts 生成。
 6. Directus 当前只适合进入边界设计和 schema 准备；等首个 AI 能力纵切跑通并出现真实运营需求后，再进入正式开发。
 

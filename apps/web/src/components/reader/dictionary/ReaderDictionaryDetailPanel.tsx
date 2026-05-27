@@ -221,7 +221,7 @@ export function ReaderDictionaryDetailPanel({
 
   const [historyCollapsed, setHistoryCollapsed] = useState(true);
   const savedContextCount = savedVocabularyMatch?.sourceRefs.length ?? 0;
-  const isSavedState = lookupSaveState !== "not_saved";
+  const isSavedState = lookupSaveState !== "not_saved" && lookupSaveState !== "unknown";
   const saveDisabled =
     saveState.kind === "saving" ||
     lookupSaveState === "already_saved_here" ||

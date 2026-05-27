@@ -9,7 +9,7 @@
     "ladle": "ladle serve --host 127.0.0.1 --port 61000",
     "ladle:build": "ladle build",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint src tests eslint.config.mjs next.config.ts playwright.config.ts vitest.config.ts",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },

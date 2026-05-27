@@ -5,6 +5,7 @@ import type { DictionaryLookupSnapshot } from "./contracts";
 
 export type LookupSaveState =
   | "not_saved"
+  | "unknown"
   | "same_lemma_new_context"
   | "already_saved_here"
   | "multiple_contexts"
@@ -81,6 +82,8 @@ export function getSaveActionCopy(state: LookupSaveState, contextCount?: number,
   switch (state) {
     case "not_saved":
       return defaultCopy;
+    case "unknown":
+      return "检查生词本";
     case "same_lemma_new_context":
       return "加入当前语境";
     case "already_saved_here":

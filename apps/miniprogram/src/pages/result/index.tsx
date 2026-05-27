@@ -27,28 +27,50 @@ import { useResultEffects } from './hooks/useResultEffects'
 import { useResultActions } from './hooks/useResultActions'
 import { PAGE_MODE_OPTIONS, hasRenderableScene } from './utils'
 import { getVocabEntryByLookupForm } from '../../services/storage'
-import { getLocalReaderNotes, getLocalUserAnnotations } from '../../services/storage'
+import { getLocalReaderNotes, getLocalUserAnnotations, getSyncQueue } from '../../services/storage'
 import DegradedBanner from './components/DegradedBanner'
 import SourceFallback from './components/SourceFallback'
 import StateViews from './components/StateViews'
 import appShare from '../../assets/images/share/app-share.jpg'
 import './index.scss'
 
-function isLocalId(id: string): boolean {
-  return id.startsWith('local_')
+function buildPendingEntityIdSet(action: 'UPSERT_NOTE' | 'UPSERT_ANNOTATION'): Set<string> {
+  return new Set(
+    getSyncQueue()
+      .filter(item => (item.status === 'pending' || item.status === 'running') && item.action === action)
+      .map(item => item.entityId)
+      .filter(Boolean)
+  )
 }
 
 function mergeReaderNotesCloudWithLocal(
   cloudNotes: ReaderNoteDto[],
   localNotes: ReaderNoteDto[],
 ): ReaderNoteDto[] {
-  const result: ReaderNoteDto[] = [...cloudNotes]
+  const pendingNoteIds = buildPendingEntityIdSet('UPSERT_NOTE')
+  const result: ReaderNoteDto[] = []
   const cloudTargetKeys = new Set(cloudNotes.map(n => n.target_key))
   const cloudIds = new Set(cloudNotes.map(n => n.id))
+  const localById = new Map(localNotes.map(note => [note.id, note]))
+
+  for (const cloud of cloudNotes) {
+    const local = localById.get(cloud.id)
+    if (
+      local
+      && pendingNoteIds.has(local.id)
+      && typeof local.updated_at === 'string'
+      && typeof cloud.updated_at === 'string'
+      && new Date(local.updated_at).getTime() > new Date(cloud.updated_at).getTime()
+    ) {
+      result.push(local)
+      continue
+    }
+    result.push(cloud)
+  }
+
   for (const local of localNotes) {
     if (cloudIds.has(local.id)) continue
-    if (!isLocalId(local.id) && cloudIds.has(local.id)) continue
-    if (isLocalId(local.id) && !cloudTargetKeys.has(local.target_key)) {
+    if (pendingNoteIds.has(local.id) && !cloudTargetKeys.has(local.target_key)) {
       result.push(local)
     }
   }
@@ -59,12 +81,30 @@ function mergeAnnotationsCloudWithLocal(
   cloudAnnotations: UserAnnotationDto[],
   localAnnotations: UserAnnotationDto[],
 ): UserAnnotationDto[] {
-  const result: UserAnnotationDto[] = [...cloudAnnotations]
+  const pendingAnnotationIds = buildPendingEntityIdSet('UPSERT_ANNOTATION')
+  const result: UserAnnotationDto[] = []
   const cloudTargetKeys = new Set(cloudAnnotations.map(a => a.target_key))
   const cloudIds = new Set(cloudAnnotations.map(a => a.id))
+  const localById = new Map(localAnnotations.map(annotation => [annotation.id, annotation]))
+
+  for (const cloud of cloudAnnotations) {
+    const local = localById.get(cloud.id)
+    if (
+      local
+      && pendingAnnotationIds.has(local.id)
+      && typeof local.updated_at === 'string'
+      && typeof cloud.updated_at === 'string'
+      && new Date(local.updated_at).getTime() > new Date(cloud.updated_at).getTime()
+    ) {
+      result.push(local)
+      continue
+    }
+    result.push(cloud)
+  }
+
   for (const local of localAnnotations) {
     if (cloudIds.has(local.id)) continue
-    if (isLocalId(local.id) && !cloudTargetKeys.has(local.target_key)) {
+    if (pendingAnnotationIds.has(local.id) && !cloudTargetKeys.has(local.target_key)) {
       result.push(local)
     }
   }

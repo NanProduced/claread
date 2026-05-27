@@ -59,6 +59,7 @@ export type VocabularyLookupMatchResult =
       ok: true;
       status: 200;
       item: ReaderVocabularyLookupMatchDto | null;
+      truncated?: boolean;
     }
   | {
       ok: false;
@@ -460,5 +461,6 @@ export async function getVocabularyLookupMatch(
     ok: true,
     status: 200,
     item: null,
+    truncated: total > MAX_PAGES * limit,
   };
 }

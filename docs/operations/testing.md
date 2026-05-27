@@ -31,12 +31,14 @@ uv run ruff check app tests
 ```powershell
 pnpm --filter @claread/web typecheck
 pnpm --filter @claread/web lint
+pnpm --filter @claread/web test
+pnpm --filter @claread/web test:e2e
 pnpm --filter @claread/web build
 ```
 
 Web baseline smoke 应覆盖手机号登录、分析提交、Reader、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
-当前仓库未提交稳定的 Reader Playwright 用例。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，需在本地浏览器做交互回归；等 committed e2e 恢复后，再把命令补回本文。
+当前已提交基础 Playwright 路由回归，可覆盖公共页、登录态重定向和分析跳转 Reader 主链路。SelectionToolbar、lookup preview、route focus、`multi_text`、Ask panel 与字典联动仍建议在本地浏览器补一轮人工交互回归。
 
 ## 小程序验证
 

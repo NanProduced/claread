@@ -24,7 +24,8 @@ function parseSseChunk(chunk: string): ReaderAskStreamEnvelopeDto[] {
             data: JSON.parse(data) as Record<string, unknown>,
           },
         ];
-      } catch {
+      } catch (error) {
+        console.warn("[reader-ask:sse] failed to parse event payload", { event, data, error });
         return [];
       }
     });

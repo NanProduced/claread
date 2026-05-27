@@ -91,6 +91,7 @@ export type ReaderVocabularyLookupResponseDto =
   | {
       ok: true;
       item: ReaderVocabularyLookupMatchDto | null;
+      truncated?: boolean;
     }
   | {
       ok: false;

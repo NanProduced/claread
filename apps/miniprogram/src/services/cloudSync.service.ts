@@ -220,8 +220,16 @@ async function executeQueueItem(item: SyncQueueItem): Promise<void> {
 
 async function executeSyncRecord(item: SyncQueueItem): Promise<void> {
   const { clientRecordId } = item.payload as { clientRecordId: string }
+  if (!clientRecordId) {
+    throw new Error('executeSyncRecord: clientRecordId is required')
+  }
   const record = getRecord(clientRecordId as string)
-  if (!record || !record.sourceText) return
+  if (!record) {
+    throw new Error(`executeSyncRecord: record not found for ${clientRecordId}`)
+  }
+  if (!record.sourceText) {
+    throw new Error(`executeSyncRecord: sourceText is required for ${clientRecordId}`)
+  }
 
   const fallbackTitle = record.sourceText.split('\n')[0]?.trim() || ''
   const isFallbackTitle = record.title && (
@@ -268,7 +276,9 @@ async function executeUpsertAnnotation(item: SyncQueueItem): Promise<void> {
   const payload = item.payload as Record<string, unknown>
   const annotation = payload.annotation as UserAnnotationDto | undefined
   const isNew = payload.isNew as boolean | undefined
-  if (!annotation) return
+  if (!annotation) {
+    throw new Error('executeUpsertAnnotation: annotation is required')
+  }
 
   try {
     if (isNew) {
@@ -323,7 +333,9 @@ async function executeUpsertNote(item: SyncQueueItem): Promise<void> {
   const payload = item.payload as Record<string, unknown>
   const note = payload.note as ReaderNoteDto | undefined
   const isNew = payload.isNew as boolean | undefined
-  if (!note) return
+  if (!note) {
+    throw new Error('executeUpsertNote: note is required')
+  }
 
   try {
     if (isNew) {

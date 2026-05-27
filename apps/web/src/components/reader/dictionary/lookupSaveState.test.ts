@@ -7,6 +7,10 @@ describe("lookupSaveState", () => {
     expect(getSaveActionCopy("not_saved")).toBe("加入生词本");
   });
 
+  it("returns a neutral copy for unknown lookup states", () => {
+    expect(getSaveActionCopy("unknown")).toBe("检查生词本");
+  });
+
   it("returns already_saved_here when the current sentence is already in saved source refs", () => {
     expect(
       getLookupSaveState(true, "s1", [
