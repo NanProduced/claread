@@ -70,6 +70,17 @@ pnpm web:dev
 
 默认访问 `http://127.0.0.1:3000`。
 
+启动 Claread Console 的 Directus Bootstrap：
+
+```powershell
+pnpm directus:up
+pnpm directus:extensions:watch
+```
+
+默认访问 `http://127.0.0.1:8055`。Bootstrap 只提供本地 Directus runtime、扩展热重载和占位扩展壳子，不包含业务 schema 和执行逻辑。
+
+本地 Directus 默认管理员登录邮箱为 `admin@claread.dev`，密码为 `Nan12091209`。
+
 ## 常用验证
 
 ```powershell
@@ -78,6 +89,7 @@ pnpm miniprogram:typecheck
 pnpm web:build
 pnpm web:typecheck
 pnpm web:lint
+pnpm directus:extensions:build
 ```
 
 后端验证在 `services/api/` 下运行：
@@ -93,5 +105,6 @@ uv run pytest tests/test_health.py -q
 - 不为 Web 复制一套业务后端。
 - 不把微信小程序限制写成全局产品限制。
 - 客户端差异通过 auth adapter、render profile、capability profile 和客户端 UI 层处理。
+- Directus 是 Claread Console 的控制面，不承载业务核心执行逻辑。
 - 真实密钥、模型配置、微信 secret、Zilliz token 和本地私有配置不提交。
 - 开发前阅读当前目录最近的 `AGENTS.md`。

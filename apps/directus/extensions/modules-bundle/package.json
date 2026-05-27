@@ -1,0 +1,47 @@
+{
+  "name": "@claread/directus-modules",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "directus-extension build",
+    "watch": "directus-extension build --watch"
+  },
+  "devDependencies": {
+    "@directus/extensions-sdk": "11.0.10",
+    "typescript": "^5.8.3",
+    "vue": "3.4.27",
+    "vue-router": "4.4.0",
+    "zod": "3.23.8"
+  },
+  "directus:extension": {
+    "type": "bundle",
+    "host": "^11.0.0",
+    "path": {
+      "app": "dist/app.js",
+      "api": "dist/api.js"
+    },
+    "entries": [
+      {
+        "type": "module",
+        "name": "workflow-output-lab",
+        "source": "src/workflow-output-lab/index.ts"
+      },
+      {
+        "type": "module",
+        "name": "rag-workbench",
+        "source": "src/rag-workbench/index.ts"
+      },
+      {
+        "type": "module",
+        "name": "eval-center",
+        "source": "src/eval-center/index.ts"
+      }
+    ]
+  },
+  "pnpm": {
+    "executionEnv": {
+      "nodeVersion": "22.14.0"
+    }
+  }
+}

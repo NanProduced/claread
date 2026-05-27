@@ -1,0 +1,18 @@
+{
+  "name": "@claread/directus",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Claread Directus bootstrap workspace",
+  "devDependencies": {
+    "chokidar": "^4.0.3"
+  },
+  "scripts": {
+    "extensions:build": "pnpm --filter @claread/directus-modules run build && pnpm --filter @claread/directus-panels run build && pnpm --filter @claread/directus-endpoints run build",
+    "extensions:watch": "node ./scripts/watch-extensions.mjs"
+  },
+  "pnpm": {
+    "executionEnv": {
+      "nodeVersion": "22.14.0"
+    }
+  }
+}

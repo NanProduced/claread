@@ -1,0 +1,30 @@
+services:
+  directus:
+    image: directus/directus:11
+    container_name: claread-directus
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8055:8055"
+    environment:
+      SECRET: ${SECRET}
+      PUBLIC_URL: ${PUBLIC_URL}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_EXCLUDE_TABLES: ${DB_EXCLUDE_TABLES}
+      EXTENSIONS_PATH: ${EXTENSIONS_PATH}
+      EXTENSIONS_AUTO_RELOAD: ${EXTENSIONS_AUTO_RELOAD}
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING}
+    volumes:
+      - ../../apps/directus/.runtime/uploads:/directus/uploads
+      - ../../apps/directus/extensions/modules-bundle:/directus/extensions/directus-extension-claread-modules
+      - ../../apps/directus/extensions/panels-bundle:/directus/extensions/directus-extension-claread-panels
+      - ../../apps/directus/extensions/endpoints-bundle:/directus/extensions/directus-extension-claread-endpoints

@@ -4,6 +4,11 @@
   "version": "0.1.0",
   "description": "Claread monorepo",
   "scripts": {
+    "directus:up": "docker compose --env-file infra/docker/.env --env-file apps/directus/.env.example -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml up -d directus",
+    "directus:down": "docker compose --env-file infra/docker/.env --env-file apps/directus/.env.example -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml down",
+    "directus:logs": "docker compose --env-file infra/docker/.env --env-file apps/directus/.env.example -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml logs -f directus",
+    "directus:extensions:build": "pnpm --dir apps/directus run extensions:build",
+    "directus:extensions:watch": "pnpm --dir apps/directus run extensions:watch",
     "miniprogram:build": "pnpm --dir apps/miniprogram run build:weapp",
     "miniprogram:dev": "pnpm --dir apps/miniprogram run dev:weapp",
     "miniprogram:typecheck": "pnpm --dir apps/miniprogram run typecheck",

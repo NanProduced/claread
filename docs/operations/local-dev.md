@@ -27,6 +27,7 @@ JS/TS 侧使用 pnpm workspace，范围由根目录 `pnpm-workspace.yaml` 管理
 
 ```text
 apps/*
+apps/directus/extensions/*
 packages/*
 ```
 
@@ -53,6 +54,11 @@ pnpm install
 | `pnpm web:build` | Web 生产构建 |
 | `pnpm web:typecheck` | Web TypeScript 检查 |
 | `pnpm web:lint` | Web ESLint 检查 |
+| `pnpm directus:up` | 启动 Directus overlay |
+| `pnpm directus:down` | 停止 Directus overlay |
+| `pnpm directus:logs` | 查看 Directus 日志 |
+| `pnpm directus:extensions:build` | 构建 Directus 本地扩展 |
+| `pnpm directus:extensions:watch` | 监听构建 Directus 本地扩展 |
 
 需要直接定位 workspace 包时，也可以使用：
 
@@ -87,6 +93,30 @@ claread_redis_data
 词典三表已恢复到 `claread_postgres_data`。短期连接其他 Postgres 只作为本地 fallback，并且只写在本地 `.env`，不进入默认 compose。
 
 compose 中的 DB / Redis 用户名和密码必须通过 `infra/docker/.env` 注入。
+
+Directus 使用独立 overlay：
+
+```text
+infra/docker/docker-compose.directus.yml
+```
+
+启动方式固定为两个终端：
+
+```powershell
+pnpm directus:up
+pnpm directus:extensions:watch
+```
+
+Directus overlay 读取：
+
+- `infra/docker/.env`
+- `apps/directus/.env.example`
+
+本地默认管理员：
+
+- 登录邮箱：`admin@claread.dev`
+- 显示名：`claread admin`
+- 密码：`Nan12091209`
 
 ## 小程序 API 地址
 
@@ -127,3 +157,10 @@ uv run pytest tests/test_analyze_workflow.py tests/test_academic_workflow.py tes
 ```
 
 小程序和 Web 的构建/类型检查优先使用根目录脚本，见上方 `pnpm workspace`。
+
+Directus Bootstrap 验证入口：
+
+```powershell
+pnpm directus:extensions:build
+docker compose --env-file infra/docker/.env --env-file apps/directus/.env.example -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml config
+```
