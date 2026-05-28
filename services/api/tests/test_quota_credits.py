@@ -211,3 +211,48 @@ class TestCreditServicePureLogic:
 
     def test_default_daily_free_points(self):
         assert DEFAULT_DAILY_FREE_POINTS == 1000
+
+
+class TestParseMetadata:
+    def test_dict_passthrough(self):
+        from app.services.quota.ledger import _parse_metadata
+        data = {"capability_code": "dict_ai_lookup", "query": "dawn"}
+        assert _parse_metadata(data) == data
+
+    def test_empty_dict(self):
+        from app.services.quota.ledger import _parse_metadata
+        assert _parse_metadata({}) == {}
+
+    def test_json_string_parsed(self):
+        from app.services.quota.ledger import _parse_metadata
+        raw = '{"capability_code": "reader_ask", "thread_id": "abc"}'
+        result = _parse_metadata(raw)
+        assert isinstance(result, dict)
+        assert result["capability_code"] == "reader_ask"
+
+    def test_double_serialized_string_parsed(self):
+        from app.services.quota.ledger import _parse_metadata
+        import json
+        inner = {"capability_code": "dict_ai_lookup", "query": "test"}
+        raw = json.dumps(inner)
+        result = _parse_metadata(raw)
+        assert isinstance(result, dict)
+        assert result["capability_code"] == "dict_ai_lookup"
+
+    def test_non_json_string_fallback(self):
+        from app.services.quota.ledger import _parse_metadata
+        assert _parse_metadata("not valid json{") == {}
+
+    def test_json_string_non_dict_fallback(self):
+        from app.services.quota.ledger import _parse_metadata
+        assert _parse_metadata('"just a string"') == {}
+        assert _parse_metadata("42") == {}
+        assert _parse_metadata("null") == {}
+
+    def test_none_fallback(self):
+        from app.services.quota.ledger import _parse_metadata
+        assert _parse_metadata(None) == {}
+
+    def test_int_fallback(self):
+        from app.services.quota.ledger import _parse_metadata
+        assert _parse_metadata(123) == {}

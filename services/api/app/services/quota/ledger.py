@@ -5,10 +5,15 @@ Handles credit ledger query logic.
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
+
+logger = logging.getLogger(__name__)
 
 ENTRY_TYPE_DESCRIPTIONS: dict[str, str] = {
     "analysis_deduct": "分析扣减",
@@ -19,6 +24,19 @@ ENTRY_TYPE_DESCRIPTIONS: dict[str, str] = {
     "refund": "能力失败 · 积分退回",
     "manual_adjust": "管理员调整",
 }
+
+
+def _parse_metadata(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("metadata_json is a non-JSON string, falling back to empty dict")
+            return {}
+    return {}
 
 
 async def get_credit_ledger(
@@ -64,7 +82,7 @@ async def get_credit_ledger(
         entry_type = row["entry_type"]
         description = ENTRY_TYPE_DESCRIPTIONS.get(entry_type, entry_type)
         article_title = row.get("article_title")
-        metadata = row.get("metadata_json") or {}
+        metadata = _parse_metadata(row.get("metadata_json"))
 
         if entry_type == "analysis_deduct" and article_title:
             description = f"分析扣减 · {article_title[:30]}"

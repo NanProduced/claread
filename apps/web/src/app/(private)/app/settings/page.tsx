@@ -6,6 +6,7 @@ import { Button } from "@/components/primitives/button";
 import { ScrollArea } from "@/components/primitives/scroll-area";
 import { appSettingsRoute, loginRoute } from "@/lib/routes";
 import { getProfileSettings, type ProfileBffStatus } from "@/services/bff/profile";
+import { CreditLedgerSection } from "./CreditLedgerSection";
 import { FeedbackForm } from "./FeedbackForm";
 import { LogoutButton } from "./LogoutButton";
 import { ThemePreferencesSection } from "./ThemePreferencesSection";
@@ -84,6 +85,7 @@ export default async function SettingsPage() {
                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-reader-paper border border-hairline/50">
                       <div className="h-full rounded-full bg-lens-blue" style={{ width: `${quotaPercent}%` }} />
                     </div>
+                    {quota ? <CreditLedgerSection /> : null}
                   </div>
                 </SectionCard>
 

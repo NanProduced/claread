@@ -9,7 +9,6 @@ and synchronous AI capabilities that need upfront reservation.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -235,7 +234,7 @@ async def deduct_points(
                     entry_type,
                     -deduct_from_daily,
                     balance_after,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     now,
                 )
 
@@ -251,7 +250,7 @@ async def deduct_points(
                     entry_type,
                     -deduct_from_bonus,
                     balance_after,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     now,
                 )
 
@@ -355,7 +354,7 @@ async def reserve_points(
                     entry_type,
                     -deduct_from_daily,
                     balance_after,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     now,
                 )
 
@@ -371,7 +370,7 @@ async def reserve_points(
                     entry_type,
                     -deduct_from_bonus,
                     balance_after,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     now,
                 )
 
@@ -471,7 +470,7 @@ async def refund_reserved_points(
                     LEDGER_ENTRY_TYPE_REFUND,
                     refund_to_daily,
                     balance_after,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     now,
                 )
 
@@ -487,7 +486,7 @@ async def refund_reserved_points(
                     LEDGER_ENTRY_TYPE_REFUND,
                     bonus_refund,
                     balance_after,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     now,
                 )
 
@@ -585,7 +584,7 @@ async def grant_bonus_credits(
                 entry_type,
                 points,
                 balance_after,
-                json.dumps(metadata or {}),
+                metadata or {},
                 now,
             )
 
