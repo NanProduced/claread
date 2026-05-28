@@ -18,6 +18,52 @@ from app.database import connection as db_connection
 _CONTENT_FIELDS = {"render_scene_json", "page_state_json", "workflow_version", "schema_version"}
 # Fields that are JSONB
 _JSONB_COLUMNS = {"request_payload_json", "render_scene_json", "page_state_json", "usage_summary_json"}
+def _count_english_words(text: str) -> int:
+    matches = text.split()
+    return len(matches)
+
+
+def _build_source_text_excerpt(source_text: str, max_length: int = 160) -> str:
+    first_line = next(
+        (line.strip() for line in source_text.splitlines() if line.strip()),
+        "",
+    )
+    if not first_line:
+        return ""
+    return (
+        first_line[: max_length - 3].rstrip() + "..."
+        if len(first_line) > max_length
+        else first_line
+    )
+
+
+def _summary_sql(user_id_param: str) -> str:
+    return f"""
+        EXISTS(
+            SELECT 1
+            FROM favorite_records f
+            WHERE f.user_id = {user_id_param}
+              AND f.analysis_record_id = r.id
+              AND f.deleted_at IS NULL
+        ) AS is_favorited,
+        (
+            SELECT COUNT(*)
+            FROM reader_notes rn
+            WHERE rn.user_id = {user_id_param}
+              AND rn.analysis_record_id = r.id
+              AND rn.deleted_at IS NULL
+        ) AS note_count,
+        (
+            SELECT COUNT(*)
+            FROM vocabulary_book vb
+            WHERE vb.user_id = {user_id_param}
+              AND EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements(COALESCE(vb.payload_json -> 'source_refs', '[]'::jsonb)) AS ref
+                  WHERE ref ->> 'cloud_record_id' = r.id::text
+              )
+        ) AS vocabulary_count
+    """
 
 
 def _ensure_dict(row: dict | None) -> dict | None:
@@ -39,6 +85,18 @@ def _ensure_dict(row: dict | None) -> dict | None:
             "source_type": row.get("source_type"),
             "extended": row.get("extended", False),
         }
+
+    source_text = row.get("source_text")
+    if isinstance(source_text, str):
+        row["source_text_excerpt"] = _build_source_text_excerpt(source_text)
+        row["word_count"] = _count_english_words(source_text)
+    else:
+        row["source_text_excerpt"] = ""
+        row["word_count"] = 0
+
+    row["note_count"] = int(row.get("note_count") or 0)
+    row["vocabulary_count"] = int(row.get("vocabulary_count") or 0)
+    row["is_favorited"] = bool(row.get("is_favorited") or False)
 
     return row
 
@@ -148,7 +206,8 @@ async def get_record_by_id(
             SELECT r.id, r.user_id, r.client_record_id, r.source_type, r.title, r.source_text,
                    r.source_text_hash, r.reading_goal, r.reading_variant, r.extended,
                    r.user_facing_state, r.analysis_status, r.last_opened_at, r.created_at, r.updated_at
-                   {content_cols}
+                   {content_cols},
+                   {_summary_sql("$2")}
             FROM analysis_records r
             {content_join}
             WHERE r.id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL
@@ -183,7 +242,8 @@ async def get_record_by_client_id(
             SELECT r.id, r.user_id, r.client_record_id, r.source_type, r.title, r.source_text,
                    r.source_text_hash, r.reading_goal, r.reading_variant, r.extended,
                    r.user_facing_state, r.analysis_status, r.last_opened_at, r.created_at, r.updated_at
-                   {content_cols}
+                   {content_cols},
+                   {_summary_sql("$2")}
             FROM analysis_records r
             {content_join}
             WHERE r.client_record_id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL
@@ -222,7 +282,8 @@ async def list_records(
             SELECT r.id, r.user_id, r.client_record_id, r.source_type, r.title, r.source_text,
                    r.source_text_hash, r.reading_goal, r.reading_variant, r.extended,
                    r.user_facing_state, r.analysis_status, r.last_opened_at, r.created_at, r.updated_at
-                   {content_cols}
+                   {content_cols},
+                   {_summary_sql("$1")}
             FROM analysis_records r
             {content_join}
             WHERE r.user_id = $1 AND r.deleted_at IS NULL
@@ -263,7 +324,8 @@ async def update_record(
     async with pool.acquire() as conn:
         async with conn.transaction():
             if metadata_updates:
-                metadata_updates["updated_at"] = now
+                if set(metadata_updates.keys()) != {"last_opened_at"}:
+                    metadata_updates["updated_at"] = now
                 set_parts = []
                 params = []
                 for i, (k, v) in enumerate(metadata_updates.items()):
@@ -297,6 +359,33 @@ async def update_record(
                 )
 
     return await get_record_by_id(user_id, record_id)
+
+
+async def touch_record_opened(
+    user_id: UUID,
+    record_id: UUID,
+    opened_at: datetime | None = None,
+) -> bool:
+    """Update last_opened_at without mutating updated_at."""
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    effective_opened_at = opened_at or datetime.now(timezone.utc)
+
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE analysis_records
+            SET last_opened_at = $3
+            WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+            """,
+            record_id,
+            user_id,
+            effective_opened_at,
+        )
+
+    return "UPDATE 1" in result
 
 
 async def increment_user_reading_count(user_id: UUID) -> bool:

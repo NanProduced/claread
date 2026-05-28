@@ -158,7 +158,7 @@ uv run pytest tests/test_analyze_workflow.py tests/test_academic_workflow.py tes
 
 小程序和 Web 的构建/类型检查优先使用根目录脚本，见上方 `pnpm workspace`。
 
-Directus Bootstrap 验证入口：
+Directus scaffold 验证入口：
 
 ```powershell
 pnpm directus:extensions:build

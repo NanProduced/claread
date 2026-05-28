@@ -24,6 +24,7 @@ Claread Web 当前稳定方向已经沉淀到：
 - `../reader-ia.md`
 - `component-library-v0.md`
 - `component-system.md`
+- `directions/read-home-input-editorial-reference-v1.md`：`/app/read` 首页/输入页主方向定稿参考与信息架构拆解
 
 ## 设计参考管理
 

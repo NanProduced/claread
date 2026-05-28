@@ -30,6 +30,7 @@ Claread 是一个多端英文阅读辅助产品。当前稳定基线包含微信
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
 | `docs/architecture/backend-multiclient-review.md` | 后端多端化架构评审和待评估问题域 |
 | `docs/architecture/workflow.md` | 当前 workflow 基线 |
+| `docs/operations/directus-local-dev.md` | Directus 本地开发与热更新说明 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |
 | `docs/operations/model-config.md` | 模型 profile / preset 配置 |
 | `docs/operations/prompt-versioning.md` | prompt registry 和版本规则 |

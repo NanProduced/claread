@@ -21,13 +21,7 @@
       "app": "dist/app.js",
       "api": "dist/api.js"
     },
-    "entries": [
-      {
-        "type": "panel",
-        "name": "console-overview",
-        "source": "src/console-overview/index.ts"
-      }
-    ]
+    "entries": []
   },
   "pnpm": {
     "executionEnv": {

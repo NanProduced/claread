@@ -42,7 +42,6 @@ import {
 } from "@/components/ui/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ui/reasoning";
 import { Tool, type ToolPart } from "@/components/ui/tool";
-import { Kbd } from "@/components/primitives";
 import { IconButton } from "@/components/primitives/icon-button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import {
@@ -3353,17 +3352,6 @@ export function AiWorkspacePanel({
             </PromptInputActions>
           </div>
 
-          <div className="flex items-center justify-between px-3 pb-3 text-[11px] text-muted">
-            <span className="inline-flex items-center gap-1.5">
-              <Kbd>Enter</Kbd>
-              <span>发送</span>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Kbd>Shift</Kbd>
-              <Kbd>Enter</Kbd>
-              <span>换行</span>
-            </span>
-          </div>
         </PromptInput>
       </div>
     </aside>

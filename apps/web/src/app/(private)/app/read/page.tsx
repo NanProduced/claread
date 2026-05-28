@@ -1,10 +1,20 @@
-import { FileText } from "lucide-react";
 import Link from "next/link";
-import { dailyArticleRoute } from "@/lib/routes";
+import { ScrollArea } from "@/components/primitives";
+import { dailyArticleRoute, dailyRoute } from "@/lib/routes";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
+import { EditorialTagList } from "./EditorialTagList";
 
 export const dynamic = "force-dynamic";
+
+function formatReadingMeta(readTimeMinutes: number, difficulty: string, source?: string) {
+  return [source?.trim(), `${readTimeMinutes} min read`, difficulty].filter(Boolean).join("  ·  ");
+}
+
+function getExcerpt(subtitle?: string | null, fallbackTitle?: string) {
+  const value = subtitle?.trim() || fallbackTitle?.trim() || "";
+  return value.length > 96 ? `${value.slice(0, 93)}...` : value;
+}
 
 export default async function PasteToReadPage() {
   const [todayResult, listResult] = await Promise.all([
@@ -19,155 +29,154 @@ export default async function PasteToReadPage() {
     : [];
   const fallbackLead = !leadArticle ? archiveItems[0] ?? null : null;
   const sideArchiveItems = fallbackLead ? archiveItems.slice(1) : archiveItems.slice(0, 2);
+  const leadPick = leadArticle ?? fallbackLead;
+  const supportingPicks =
+    otherTodayArticles.length > 0
+      ? otherTodayArticles.slice(0, 3)
+      : (leadArticle ? archiveItems : sideArchiveItems).slice(0, 3);
 
   return (
-    <main className="flex h-dvh flex-col overflow-hidden bg-[oklch(96.8%_0.012_84)] px-4 py-4 text-ink sm:px-8 sm:py-6 lg:px-12 lg:py-8">
-      <div className="mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col">
-        <div className="grid min-h-0 flex-1 gap-8 lg:gap-12 lg:grid-cols-[minmax(0,1fr)_280px] xl:gap-16 xl:grid-cols-[minmax(0,1.8fr)_340px]">
-          <div className="flex min-h-0 min-w-0 flex-col">
-            <div className="mb-4 shrink-0 pl-2 lg:mb-8">
-              <p className="mb-3 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-lens-blue lg:mb-5">Paste to read</p>
-              <h1 className="font-headline text-[2.5rem] font-medium leading-[1.05] tracking-tight text-ink md:text-[3rem] xl:text-[4rem]">
-                A Quiet Space <br className="hidden sm:block" /> for Deep Reading.
+    <main className="min-h-dvh bg-reader-paper px-5 py-6 text-ink lg:h-dvh lg:overflow-hidden sm:px-8 lg:px-12 xl:px-16 2xl:px-20">
+      <div className="mx-auto flex w-full max-w-[1500px] flex-col md:h-full">
+        <div className="grid gap-10 md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1fr)_20rem] md:gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_27rem] xl:gap-12 2xl:grid-cols-[minmax(0,1fr)_29rem] 2xl:gap-14">
+          <section className="flex min-w-0 flex-col pt-4 sm:pt-6 md:min-h-0 md:pt-8 md:pr-8 xl:pt-10 xl:pr-10 2xl:pr-12">
+            <div className="max-w-[46rem]">
+              <span className="mb-3 inline-block text-[0.72rem] font-bold uppercase tracking-[0.22em] text-lens-blue">
+                Paste to Begin
+              </span>
+              <h1 className="font-headline text-[clamp(2.5rem,4.5vw,4rem)] font-semibold leading-[0.94] tracking-[-0.045em] text-ink">
+                <span className="block">Bring it to Claread.</span>
+                <span className="mt-1 block">Read It Deeply.</span>
               </h1>
-              <p className="mt-4 max-w-xl text-[0.95rem] leading-relaxed text-muted lg:mt-6 lg:text-[1rem]">
-                粘贴你需要精读的英文材料，Claread 将为你生成一份纯粹的、结构化的阅读体验。
+              <p className="mt-4 max-w-[28rem] font-reading text-[1.08rem] leading-[1.65] text-muted sm:text-[1.12rem]">
+                从粘贴开始，进入深度阅读。
               </p>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col">
+
+            <div className="mt-8 flex flex-1 flex-col md:mt-8 md:min-h-0 xl:mt-10">
               <AnalyzeSubmitForm />
             </div>
-          </div>
+          </section>
 
-          <aside className="hidden min-w-0 space-y-8 overflow-y-auto pb-8 pr-2 lg:block lg:space-y-10 lg:pr-4 xl:pt-2">
-            {/* FEATURED */}
-            <div>
-              <h3 className="mb-6 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-ink">Featured</h3>
-              {leadArticle ? (
-                <article>
-                  <Link href={dailyArticleRoute(leadArticle.id)} className="group block focus-ring rounded-2xl outline-offset-8">
-                    {leadArticle.coverImageUrl ? (
-                      <div className="mb-5 aspect-[16/9] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={leadArticle.coverImageUrl} 
-                          alt="" 
-                          className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105" 
-                        />
-                      </div>
-                    ) : (
-                      <div className="mb-5 aspect-[4/3] w-full rounded-2xl bg-surface-raised ring-1 ring-inset ring-black/5" />
-                    )}
-                    <h4 className="font-headline text-[1.4rem] font-semibold leading-snug tracking-tight text-ink group-hover:text-lens-blue transition-colors">
-                      {leadArticle.title}
-                    </h4>
-                    {leadArticle.subtitle ? (
-                      <p className="mt-2.5 text-[0.95rem] leading-relaxed text-muted line-clamp-2">
-                        {leadArticle.subtitle}
-                      </p>
-                    ) : null}
-                    <div className="mt-4 flex items-center gap-3 text-[0.75rem] font-medium text-muted">
-                      <span className="flex items-center gap-1.5">
-                        <span className="flex h-3 w-3 items-center justify-center rounded-full border border-muted/30">
-                          <span className="h-1 w-1 rounded-full bg-muted/60" />
-                        </span>
-                        {leadArticle.readTimeMinutes} min read
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="flex h-3 items-center gap-0.5">
-                          <span className="h-1.5 w-0.5 bg-muted/30" />
-                          <span className="h-2 w-0.5 bg-muted/50" />
-                          <span className="h-2.5 w-0.5 bg-muted" />
-                        </span>
-                        {leadArticle.difficulty}
-                      </span>
-                    </div>
+          <aside className="min-w-0 border-t border-hairline/70 pt-4 md:min-h-0 md:border-l md:border-t-0 md:pl-8 md:pt-8 lg:pl-10 xl:pl-12 2xl:pl-14">
+            <ScrollArea className="max-h-none md:h-full md:pr-5 xl:pr-6">
+              <div className="pb-8 md:pr-5 xl:pr-6">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <h2 className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-ink">
+                    Editor&apos;s Picks
+                  </h2>
+                  <Link
+                    href={dailyRoute}
+                    className="text-[0.72rem] font-medium tracking-[0.04em] text-muted transition-colors hover:text-ink"
+                  >
+                    查看全部 &rarr;
                   </Link>
-                </article>
-              ) : fallbackLead ? (
-                <article>
-                  <Link href={dailyArticleRoute(fallbackLead.id)} className="group block focus-ring rounded-2xl outline-offset-8">
-                    {fallbackLead.coverImageUrl ? (
-                      <div className="mb-5 aspect-[16/9] w-full overflow-hidden rounded-2xl bg-surface-warm ring-1 ring-inset ring-black/5">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={fallbackLead.coverImageUrl} 
-                          alt="" 
-                          className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105" 
-                        />
-                      </div>
-                    ) : (
-                      <div className="mb-5 aspect-[4/3] w-full rounded-2xl bg-surface-raised ring-1 ring-inset ring-black/5" />
-                    )}
-                    <h4 className="font-headline text-[1.4rem] font-semibold leading-snug tracking-tight text-ink group-hover:text-lens-blue transition-colors">
-                      {fallbackLead.title}
-                    </h4>
-                    <div className="mt-4 flex items-center gap-3 text-[0.75rem] font-medium text-muted">
-                      <span>{fallbackLead.readTimeMinutes} min read</span>
-                      <span>{fallbackLead.difficulty}</span>
-                    </div>
-                  </Link>
-                </article>
-              ) : (
-                <p className="text-sm text-muted">No featured reading today.</p>
-              )}
-            </div>
+                </div>
 
-            {/* MORE TODAY */}
-            {otherTodayArticles.length > 0 ? (
-              <div>
-                <h3 className="mb-6 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-lens-blue">More Today</h3>
-                <div className="space-y-6">
-                  {otherTodayArticles.map((article) => (
+                <h3 className="border-b border-hairline/80 pb-4 font-headline text-[1.8rem] leading-[1.1] tracking-[-0.03em] text-ink sm:text-[2rem] xl:text-[2.2rem]">
+                  今日值得透读
+                </h3>
+
+                {leadPick ? (
+                  <article className="border-b border-hairline/80 py-6 sm:py-7">
+                    <p className="mb-3 text-[0.65rem] font-bold uppercase tracking-[0.18em] text-muted">
+                      Featured
+                    </p>
                     <Link
-                      key={article.id}
-                      href={dailyArticleRoute(article.id)}
-                      className="group flex gap-4 focus-ring rounded-xl outline-offset-4"
+                      href={dailyArticleRoute(leadPick.id)}
+                      className="group grid gap-5 sm:grid-cols-[minmax(0,1fr)_120px] sm:items-start md:grid-cols-[minmax(0,1fr)_128px] xl:grid-cols-[minmax(0,1fr)_144px] xl:gap-7 focus-ring rounded-lg outline-offset-8"
                     >
-                      <div className="flex-shrink-0 mt-0.5 flex h-9 w-9 items-center justify-center rounded-[0.4rem] border border-lens-blue/20 bg-lens-blue/5 text-lens-blue shadow-sm group-hover:border-lens-blue/40 group-hover:bg-lens-blue/10 transition-colors">
-                        <FileText aria-hidden="true" className="h-[18px] w-[18px] stroke-[1.5]" />
-                      </div>
-                      <div>
-                        <p className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-lens-blue">
-                          {article.tags?.[0] || article.difficulty}
-                        </p>
-                        <h4 className="mt-1 font-headline text-[1.05rem] font-semibold leading-[1.4] tracking-tight text-ink group-hover:text-lens-blue transition-colors line-clamp-2">
-                          {article.title}
+                      <div className="min-w-0">
+                        <h4 className="max-w-[14ch] text-balance font-headline text-[1.52rem] leading-[1.06] tracking-[-0.035em] text-ink transition-colors group-hover:text-lens-blue line-clamp-4 xl:text-[1.7rem]">
+                          {leadPick.title}
                         </h4>
+                        {leadPick.subtitle ? (
+                          <p className="mt-4 max-w-[22rem] line-clamp-4 font-reading text-[0.96rem] leading-[1.58] text-muted">
+                            {getExcerpt(leadPick.subtitle, leadPick.title)}
+                          </p>
+                        ) : null}
+                        <div className="mt-5 font-sans text-[0.76rem] font-medium tracking-[0.02em] text-muted">
+                          {formatReadingMeta(
+                            leadPick.readTimeMinutes,
+                            leadPick.difficulty,
+                            leadPick.source,
+                          )}
+                        </div>
+                        <EditorialTagList tags={leadPick.tags} className="mt-3" />
                       </div>
+                      {leadPick.coverImageUrl ? (
+                        <div className="order-first aspect-square w-[120px] overflow-hidden rounded-[2px] bg-surface-raised sm:order-none md:w-[128px] xl:w-[144px]">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={leadPick.coverImageUrl}
+                            alt=""
+                            className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
+                          />
+                        </div>
+                      ) : (
+                        <div className="order-first aspect-square w-[120px] rounded-[2px] bg-surface-raised sm:order-none md:w-[128px] xl:w-[144px]" />
+                      )}
                     </Link>
-                  ))}
+                  </article>
+                ) : null}
+
+                {supportingPicks.length > 0 ? (
+                  <div className="divide-y divide-hairline/80">
+                    {supportingPicks.map((article) => (
+                      <article key={article.id} className="py-7 sm:py-8">
+                      <Link
+                        href={dailyArticleRoute(article.id)}
+                        className="group grid grid-cols-[86px_minmax(0,1fr)] gap-4 sm:grid-cols-[92px_minmax(0,1fr)] sm:gap-5 focus-ring rounded-lg outline-offset-4"
+                      >
+                        {article.coverImageUrl ? (
+                            <div className="aspect-square w-[86px] overflow-hidden rounded-[2px] bg-surface-raised sm:w-[92px]">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={article.coverImageUrl}
+                                alt=""
+                                className="h-full w-full object-cover opacity-95 transition-transform duration-700 group-hover:scale-[1.02]"
+                              />
+                            </div>
+                          ) : (
+                            <div className="aspect-square w-[86px] rounded-[2px] bg-surface-raised sm:w-[92px]" />
+                          )}
+                          <div className="min-w-0 pt-0.5">
+                            <h4 className="max-w-[17ch] text-balance font-headline text-[1.18rem] leading-[1.14] tracking-[-0.03em] text-ink transition-colors group-hover:text-lens-blue">
+                              {article.title}
+                            </h4>
+                            <div className="mt-3 font-sans text-[0.76rem] font-medium tracking-[0.02em] text-muted">
+                              {formatReadingMeta(
+                                article.readTimeMinutes,
+                                article.difficulty,
+                                article.source,
+                              )}
+                            </div>
+                            <EditorialTagList tags={article.tags} className="mt-3" />
+                          </div>
+                        </Link>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="mt-10 flex items-center justify-between border-t border-hairline/80 pt-6">
+                      <Link
+                        href={dailyRoute}
+                        className="flex items-center gap-2 font-sans text-[0.78rem] font-medium tracking-[0.03em] text-muted transition-colors hover:text-ink"
+                      >
+                        <span>阅读档案</span>
+                        <span className="text-[0.66rem] uppercase tracking-[0.14em]">Archive</span>
+                      </Link>
+                      <Link
+                        href={dailyRoute}
+                        className="flex items-center gap-2 font-sans text-[0.78rem] font-medium tracking-[0.03em] text-muted transition-colors hover:text-ink"
+                      >
+                        <span>更多阅读</span>
+                        <span className="text-[0.66rem] uppercase tracking-[0.14em]">More</span>
+                      </Link>
                 </div>
               </div>
-            ) : null}
-
-            {/* ARCHIVE */}
-            {sideArchiveItems.length > 0 ? (
-              <div>
-                <h3 className="mb-6 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-ink">Archive</h3>
-                <div className="space-y-6">
-                  {sideArchiveItems.map((article) => (
-                    <Link
-                      key={article.id}
-                      href={dailyArticleRoute(article.id)}
-                      className="group flex gap-4 focus-ring rounded-xl outline-offset-4"
-                    >
-                      <div className="flex-shrink-0 mt-0.5 flex h-9 w-9 items-center justify-center rounded-[0.4rem] border border-hairline bg-surface/50 text-muted shadow-sm group-hover:border-lens-blue/20 group-hover:bg-lens-blue/5 group-hover:text-lens-blue transition-colors">
-                        <FileText aria-hidden="true" className="h-[18px] w-[18px] stroke-[1.5]" />
-                      </div>
-                      <div>
-                        <p className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-muted group-hover:text-lens-blue transition-colors">
-                          {article.tags?.[0] || article.difficulty}
-                        </p>
-                        <h4 className="mt-1 font-headline text-[1.05rem] font-semibold leading-[1.4] tracking-tight text-ink group-hover:text-lens-blue transition-colors line-clamp-2">
-                          {article.title}
-                        </h4>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+            </ScrollArea>
           </aside>
         </div>
       </div>

@@ -10,7 +10,8 @@ import { ScrollArea } from "@/components/primitives/scroll-area";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [manualCollapsed, setManualCollapsed] = useState<boolean | null>(null);
-  const collapsed = manualCollapsed ?? pathname.startsWith("/app/reader/");
+  const collapsed =
+    manualCollapsed ?? (pathname.startsWith("/app/reader/") || pathname === "/app/read");
 
   const railWidth = collapsed ? "md:pl-[84px]" : "md:pl-[232px]";
 

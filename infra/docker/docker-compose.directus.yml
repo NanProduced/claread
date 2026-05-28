@@ -10,6 +10,7 @@ services:
     environment:
       SECRET: ${SECRET}
       PUBLIC_URL: ${PUBLIC_URL}
+      ROOT_REDIRECT: ${ROOT_REDIRECT}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       ADMIN_TOKEN: ${ADMIN_TOKEN}

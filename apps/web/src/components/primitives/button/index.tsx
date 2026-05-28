@@ -16,6 +16,8 @@ const buttonVariants = cva(
       variant: {
         primary:
           "rounded-[0.82rem] border-[var(--app-primary-border)] [background-image:var(--app-primary-gradient)] text-primary-foreground shadow-[var(--app-primary-shadow)] hover:-translate-y-[0.5px] hover:border-[var(--app-primary-border-hover)] hover:[background-image:var(--app-primary-gradient-hover)] hover:shadow-[var(--app-primary-shadow-hover)]",
+        "primary-ink":
+          "rounded-full bg-ink text-[#FFFFFF] shadow-[0_4px_18px_rgba(17,17,17,0.08)] hover:-translate-y-[1px] hover:bg-ink-soft hover:shadow-[0_6px_24px_rgba(17,17,17,0.15)]",
         secondary:
           "rounded-[0.82rem] border-[var(--app-secondary-border)] [background-image:var(--app-secondary-gradient)] text-white shadow-[var(--app-secondary-shadow)] hover:-translate-y-[0.5px] hover:[background-image:var(--app-secondary-gradient-hover)] hover:shadow-[var(--app-secondary-shadow-hover)] dark:text-foreground",
         outline:
@@ -54,15 +56,21 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { asChild = false, className, type = "button", variant, size, density, ...props },
+  { asChild = false, className, type = "button", variant, size, density, style, ...props },
   ref,
 ) {
   const Comp = asChild ? Slot : "button";
+  
+  const mergedStyle = variant === "primary-ink"
+    ? { color: "var(--surface)", ...style }
+    : style;
+
   return (
     <Comp
       ref={ref}
       type={asChild ? undefined : type}
       className={cn(buttonVariants({ variant, size, density }), className)}
+      style={mergedStyle}
       {...props}
     />
   );

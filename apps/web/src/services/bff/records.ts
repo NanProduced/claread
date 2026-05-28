@@ -54,15 +54,6 @@ function readString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function countEnglishWords(text: string): number {
-  const matches = text.match(/[A-Za-z]+(?:['-][A-Za-z]+)*/g);
-  return matches?.length ?? 0;
-}
-
 function titleFromSourceText(sourceText: string): string {
   const firstLine = sourceText
     .split(/\r?\n/)
@@ -76,14 +67,6 @@ function titleFromSourceText(sourceText: string): string {
   return firstLine.length > 96 ? `${firstLine.slice(0, 96)}...` : firstLine;
 }
 
-function getRenderScene(record: RecordResponseDto): Record<string, unknown> {
-  return isRecord(record.render_scene_json) ? record.render_scene_json : {};
-}
-
-function countSceneItems(record: RecordResponseDto, key: string): number {
-  return readArray(getRenderScene(record)[key]).length;
-}
-
 function projectRecordToListItem(record: RecordResponseDto): RecordListItemVm {
   const request = isRecord(record.request_payload_json) ? record.request_payload_json : {};
 
@@ -91,13 +74,18 @@ function projectRecordToListItem(record: RecordResponseDto): RecordListItemVm {
     id: record.id,
     title: record.title ?? titleFromSourceText(record.source_text),
     sourceText: record.source_text,
+    sourceTextExcerpt: record.source_text_excerpt ?? "",
+    sourceType: record.source_type,
     readingGoal: record.reading_goal ?? readString(request.reading_goal, "daily_reading"),
     readingVariant: record.reading_variant ?? readString(request.reading_variant, "intermediate_reading"),
+    analysisStatus: record.analysis_status,
+    lastOpenedAt: record.last_opened_at,
     createdAt: record.created_at,
-    wordCount: countEnglishWords(record.source_text),
-    inlineMarkCount: countSceneItems(record, "inline_marks"),
-    sentenceEntryCount: countSceneItems(record, "sentence_entries"),
-    translationCount: countSceneItems(record, "translations"),
+    updatedAt: record.updated_at,
+    wordCount: record.word_count,
+    noteCount: record.note_count,
+    vocabularyCount: record.vocabulary_count,
+    isFavorited: record.is_favorited,
   };
 }
 

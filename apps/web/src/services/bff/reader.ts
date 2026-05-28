@@ -4,6 +4,7 @@ import { adaptRecordToReaderRecord, type ReaderRecordVm } from "@/adapters/recor
 import {
   getUpstreamRecordByClientId,
   getUpstreamRecordById,
+  updateUpstreamRecord,
 } from "@/services/api/records";
 import { getWebSession, type WebSession } from "@/services/bff/session";
 import type { RecordResponseDto } from "@/types/api/records";
@@ -89,6 +90,12 @@ export async function getReaderRecord(recordId: string): Promise<ReaderBffResult
   }
 
   const record = adaptRecordToReaderRecord(upstreamResult.data);
+
+  // Reading a record should refresh the "last opened" signal without
+  // rewriting the record's content-level updated_at timestamp.
+  void updateUpstreamRecord(upstreamResult.data.id, session.sessionToken, {
+    last_opened_at: new Date().toISOString(),
+  }).catch(() => undefined);
 
   return {
     ok: true,

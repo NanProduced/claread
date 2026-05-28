@@ -5,8 +5,6 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/primitives/button";
-import { Kbd } from "@/components/primitives";
-import { Sparkles, Settings2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { SegmentedControl } from "@/components/composed/segmented-control";
 import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
@@ -74,6 +72,7 @@ const TERMINAL_STATUS = new Set(["succeeded", "failed", "cancelled", "expired"])
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 45;
 const libraryRoute = appLibraryRoute;
+const intakeCues = ["贴入文本", "链接导入", "上传文档", "示例文章"] as const;
 
 export function AnalyzeSubmitForm() {
   const router = useRouter();
@@ -181,107 +180,121 @@ export function AnalyzeSubmitForm() {
 
   return (
     <div className="flex min-h-0 flex-1 w-full flex-col">
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="sr-only">
-        </div>
+      <div className="flex flex-1 flex-col">
+        <label htmlFor="analysis-text" className="sr-only">
+          在此贴入或导入英文文章
+        </label>
 
-        <div className="relative flex min-h-0 flex-1 w-full">
+        <div className="group relative flex min-h-[12rem] flex-1 w-full shrink-0 lg:shrink">
+          <div className="pointer-events-none absolute left-4 top-7 h-full max-h-[24rem] w-px bg-hairline/60 xl:left-5" />
+          <div className="pointer-events-none absolute left-12 top-10 h-[2.6rem] w-[2px] bg-ink/30 transition-colors duration-500 group-focus-within:bg-ink/72" />
+          
           <textarea
             id="analysis-text"
-            className="h-full w-full resize-none overflow-y-auto bg-transparent pb-4 font-reading text-[1.16rem] leading-[2.1] text-ink outline-none placeholder:text-[#999690] sm:text-[1.28rem]"
-            placeholder={`在此粘贴文章正文...`}
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  void handleSubmit();
-                }
-              }}
-            />
-          {text.length > 0 ? (
+            className="relative z-10 h-full w-full resize-none overflow-y-auto bg-transparent px-14 py-10 font-reading text-[1.08rem] leading-[2.16] text-ink outline-none placeholder:text-muted/78 sm:text-[1.18rem] xl:px-20 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
+            placeholder="在此粘贴文章、链接或导入文档……"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                void handleSubmit();
+              }
+            }}
+          />
+          
+          {text.length > 0 && (
             <button
               type="button"
-              className="absolute right-0 top-0 focus-ring p-2 text-muted hover:text-ink transition-colors"
+              className="absolute right-4 top-4 z-20 p-2 text-subtle transition-colors hover:text-ink focus-ring"
               onClick={() => setText("")}
               title="清空"
             >
               <X aria-hidden className="h-4 w-4" />
             </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-col gap-4 border-t border-hairline/70 pt-5 pb-6 lg:flex-row lg:items-center lg:justify-between pl-4 lg:pl-12 md:pb-4 shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans text-[0.65rem] font-bold uppercase tracking-[0.15em] text-subtle">
+          <span>{intakeCues.join(" · ")}</span>
+          <span className="hidden text-hairline/80 sm:inline">|</span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="font-sans text-[0.65rem] font-bold uppercase tracking-[0.15em] text-muted transition-colors hover:text-ink focus-ring"
+              >
+                模式：{readingOptions.find((option) => option.value === readingGoal)?.label}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-[300px] rounded-none border border-hairline bg-surface p-5 shadow-sm"
+            >
+            <SegmentedControl
+              label="Goal"
+              value={readingGoal}
+              onValueChange={(nextGoal) => {
+                setReadingGoal(nextGoal);
+                setReadingVariant(defaultVariantByGoal[nextGoal]);
+              }}
+              options={readingOptions}
+            />
+            {showVariantOptions ? (
+              <SegmentedControl
+                className="mt-5 border-t border-hairline pt-4"
+                label="Variant"
+                value={readingVariant}
+                onValueChange={setReadingVariant}
+                options={activeVariantOptions}
+              />
+            ) : null}
+            </PopoverContent>
+          </Popover>
+          {text.length > 0 ? (
+            <>
+              <span className="hidden text-hairline/80 sm:inline">|</span>
+              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em]">{text.trim().length.toLocaleString("en-US")} chars</span>
+            </>
           ) : null}
         </div>
-      </div>
 
-      <div className="flex shrink-0 flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-hairline bg-transparent px-0 py-4 lg:py-6">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-4 text-[0.8rem] font-medium uppercase tracking-widest text-muted sm:flex-row sm:gap-8">
-            <Popover>
-              <PopoverTrigger asChild>
-                <button type="button" className="focus-ring flex items-center gap-2 hover:text-ink transition-colors">
-                  <Settings2 aria-hidden className="h-4 w-4" />
-                  设置透读选项
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-[300px] p-4">
-                <SegmentedControl
-                  label="透读模式"
-                  value={readingGoal}
-                  onValueChange={(nextGoal) => {
-                    setReadingGoal(nextGoal);
-                    setReadingVariant(defaultVariantByGoal[nextGoal]);
-                  }}
-                  options={readingOptions}
-                />
-                {showVariantOptions ? (
-                  <SegmentedControl
-                    className="mt-4 border-t border-hairline pt-3"
-                    label="细分场景"
-                    value={readingVariant}
-                    onValueChange={setReadingVariant}
-                    options={activeVariantOptions}
-                  />
-                ) : null}
-              </PopoverContent>
-            </Popover>
-            <div className="flex items-center gap-2">
-              <span>字符数:</span>
-              <span className="text-ink font-semibold">{text.trim().length.toLocaleString("zh-CN")}</span>
-            </div>
+        <div className="flex items-center gap-6 lg:gap-8 self-end lg:self-auto">
+          <div className="hidden font-sans text-[0.65rem] font-bold uppercase tracking-[0.15em] text-subtle/90 lg:block">
+            提交 {submitShortcutLabel}
           </div>
-          <div className="inline-flex items-center gap-2 text-[0.75rem] text-muted">
-            <span>提交</span>
-            <Kbd>{submitShortcutLabel}</Kbd>
-          </div>
+          <Button
+            variant="primary-ink"
+            className="group min-w-[150px] px-8 py-3.5 font-sans text-[0.82rem] font-semibold tracking-[0.08em] transition-all duration-300 focus-ring"
+            disabled={isPending}
+            onClick={handleSubmit}
+          >
+            {isPending ? <Loader2 aria-hidden className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+            {isPending ? "透读中..." : "开始透读"}
+          </Button>
         </div>
-
-        <Button variant="secondary" size="lg" className="rounded-pill shadow-xl text-[0.95rem] min-w-[120px] bg-ink hover:bg-ink-soft border-transparent" disabled={isPending} onClick={handleSubmit}>
-          {isPending ? (
-            <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
-          ) : (
-            <Sparkles aria-hidden className="h-4 w-4" />
-          )}
-          {isPending ? "透读中" : "开始透读"}
-        </Button>
       </div>
 
-      {state.kind !== "idle" ? (
+      {state.kind !== "idle" && (
         <div
-          className={`shrink-0 border-t border-hairline bg-surface-warm px-5 py-3 text-[0.8125rem] ${
-            state.kind === "error" ? "text-red-700" : "text-muted"
+          className={`mt-5 shrink-0 border-t border-hairline/60 bg-surface/35 px-4 py-3 text-[0.8rem] font-medium lg:px-12 ${
+            state.kind === "error" ? "text-red-700" : "text-lens-blue"
           }`}
         >
           {state.message}
-          {errorRecordId ? (
+          {errorRecordId && (
             <button
               type="button"
-              className="ml-3 font-semibold text-ink underline decoration-hairline underline-offset-4"
+              className="ml-4 text-[0.72rem] font-semibold underline decoration-hairline underline-offset-4 transition-colors hover:text-ink"
               onClick={() => router.push(appReaderRoute(errorRecordId))}
             >
-              打开当前任务
+              打开任务
             </button>
-          ) : null}
+          )}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }

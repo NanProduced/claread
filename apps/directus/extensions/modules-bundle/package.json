@@ -21,23 +21,7 @@
       "app": "dist/app.js",
       "api": "dist/api.js"
     },
-    "entries": [
-      {
-        "type": "module",
-        "name": "workflow-output-lab",
-        "source": "src/workflow-output-lab/index.ts"
-      },
-      {
-        "type": "module",
-        "name": "rag-workbench",
-        "source": "src/rag-workbench/index.ts"
-      },
-      {
-        "type": "module",
-        "name": "eval-center",
-        "source": "src/eval-center/index.ts"
-      }
-    ]
+    "entries": []
   },
   "pnpm": {
     "executionEnv": {

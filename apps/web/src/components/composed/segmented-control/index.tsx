@@ -27,11 +27,11 @@ export function SegmentedControl<T extends string>({
   return (
     <fieldset className={cn("min-w-0", className)}>
       {label ? (
-        <legend className="mb-3 text-[0.72rem] font-semibold tracking-[0.14em] text-muted">
+        <legend className="mb-4 text-[0.66rem] font-bold uppercase tracking-[0.2em] text-subtle">
           {label}
         </legend>
       ) : null}
-      <div className="app-segmented-surface inline-flex max-w-full flex-wrap gap-1 rounded-[1.1rem] border border-hairline p-1">
+      <div className="flex flex-wrap gap-2.5">
         {options.map((option) => {
           const active = option.value === value;
           return (
@@ -39,10 +39,10 @@ export function SegmentedControl<T extends string>({
               key={option.value}
               type="button"
               className={cn(
-                "app-segmented-item focus-ring min-h-10 rounded-[0.82rem] border px-4 text-sm font-semibold tracking-[0.01em]",
+                "focus-ring inline-flex h-9 items-center justify-center rounded-full px-4 text-[0.8rem] font-medium tracking-[0.02em] transition-colors",
                 active
-                  ? "app-segmented-item--active border-hairline/90 text-ink"
-                  : "app-segmented-item--inactive border-transparent bg-transparent text-ink-soft hover:text-ink",
+                  ? "bg-ink text-surface shadow-sm"
+                  : "bg-surface-raised text-muted hover:bg-surface-raised/70 hover:text-ink border border-hairline/40",
                 option.disabled && "cursor-not-allowed opacity-45",
               )}
               disabled={option.disabled}

@@ -19,6 +19,11 @@ export interface RecordResponseDto {
   schema_version: string | null;
   analysis_status: string;
   last_opened_at: string | null;
+  source_text_excerpt: string | null;
+  word_count: number;
+  note_count: number;
+  vocabulary_count: number;
+  is_favorited: boolean;
   created_at: string;
   updated_at: string;
 }

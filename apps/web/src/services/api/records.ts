@@ -57,6 +57,18 @@ export function getUpstreamRecordByClientId(
   );
 }
 
+export function updateUpstreamRecord(
+  recordId: string,
+  sessionToken: string,
+  body: Record<string, unknown>,
+): Promise<UpstreamResult<RecordResponseDto>> {
+  return fastApiFetch<RecordResponseDto>(`/records/${encodeURIComponent(recordId)}`, {
+    method: "PATCH",
+    sessionToken,
+    body: JSON.stringify(body),
+  });
+}
+
 export function deleteUpstreamRecord(
   recordId: string,
   sessionToken: string,

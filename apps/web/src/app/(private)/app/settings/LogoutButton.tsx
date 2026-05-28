@@ -17,7 +17,7 @@ export function LogoutButton() {
   }
 
   return (
-    <Button variant="danger" disabled={pending} onClick={handleLogout} type="button">
+    <Button variant="danger" className="w-full justify-center" disabled={pending} onClick={handleLogout} type="button">
       {pending ? "正在退出..." : "退出登录"}
     </Button>
   );

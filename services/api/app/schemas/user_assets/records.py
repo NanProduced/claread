@@ -79,6 +79,11 @@ class RecordResponse(BaseModel):
     schema_version: str | None = Field(default=None)
     analysis_status: str
     last_opened_at: datetime | None = Field(default=None)
+    source_text_excerpt: str | None = Field(default=None)
+    word_count: int = Field(default=0, ge=0)
+    note_count: int = Field(default=0, ge=0)
+    vocabulary_count: int = Field(default=0, ge=0)
+    is_favorited: bool = Field(default=False)
     created_at: datetime
     updated_at: datetime
 
