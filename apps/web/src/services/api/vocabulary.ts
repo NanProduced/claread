@@ -4,6 +4,7 @@ import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
 import type {
   VocabularyCreateRequestDto,
   VocabularyListResponseDto,
+  VocabularyResponseDto,
   VocabularyUpsertResponseDto,
 } from "@/types/api/vocabulary";
 
@@ -52,5 +53,27 @@ export function createVocabulary(
     method: "POST",
     sessionToken,
     body: JSON.stringify(body),
+  });
+}
+
+export function patchVocabulary(
+  sessionToken: string,
+  vocabId: string,
+  body: { mastery_status?: string; short_meaning?: string; payload_json?: Record<string, unknown> },
+): Promise<UpstreamResult<VocabularyResponseDto>> {
+  return fastApiFetch<VocabularyResponseDto>(`/vocabulary/${vocabId}`, {
+    method: "PATCH",
+    sessionToken,
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteVocabulary(
+  sessionToken: string,
+  vocabId: string,
+): Promise<UpstreamResult<{ deleted: boolean }>> {
+  return fastApiFetch<{ deleted: boolean }>(`/vocabulary/${vocabId}`, {
+    method: "DELETE",
+    sessionToken,
   });
 }

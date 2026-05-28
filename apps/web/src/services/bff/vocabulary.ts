@@ -1,6 +1,7 @@
 import "server-only";
 
-import { createVocabulary, listVocabulary } from "@/services/api/vocabulary";
+import { createVocabulary, deleteVocabulary, listVocabulary, patchVocabulary } from "@/services/api/vocabulary";
+import { getUpstreamDueReviewVocabulary } from "@/services/api/review";
 import { getWebSession, projectSession, type WebSession } from "@/services/bff/session";
 import type {
   ReaderVocabularyLookupMatchDto,
@@ -9,6 +10,11 @@ import type {
   VocabularySourceRefDto,
   VocabularyUpsertResponseDto,
 } from "@/types/api/vocabulary";
+import type {
+  DetailExample,
+  DetailMeaning,
+  DetailPhrase,
+} from "@/types/view/VocabularyItemVm";
 import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 
 export type VocabularyBffStatus =
@@ -24,6 +30,7 @@ export interface VocabularyBffResult {
   total: number;
   page: number;
   limit: number;
+  dueCount: number;
   session: ReturnType<typeof projectSession>;
   message?: string;
 }
@@ -87,6 +94,7 @@ function unauthenticatedResult(
     total: 0,
     page: options.page,
     limit: options.limit,
+    dueCount: 0,
     session: projectSession(session),
     message:
       session.kind === "mock_phone"
@@ -104,8 +112,78 @@ function firstSourceRecordId(item: VocabularyResponseDto): string | undefined {
   return firstRef?.cloud_record_id ?? firstRef?.client_record_id;
 }
 
+function parseDetailMeanings(value: unknown): DetailMeaning[] | undefined {
+  if (!Array.isArray(value)) return undefined
+
+  const result = value
+    .filter(isRecord)
+    .map((m) => {
+      const partOfSpeech =
+        (typeof m.partOfSpeech === "string" ? m.partOfSpeech : "") ||
+        (typeof m.part_of_speech === "string" ? m.part_of_speech : "")
+
+      const definitions = Array.isArray(m.definitions)
+        ? m.definitions
+            .map((d: unknown) => {
+              if (typeof d === "string") return { meaning: d }
+              if (!isRecord(d)) return null
+              const def: { meaning: string; example?: string; exampleTranslation?: string } = {
+                meaning: typeof d.meaning === "string" ? d.meaning : "",
+              }
+              if (typeof d.example === "string") def.example = d.example
+              if (typeof d.exampleTranslation === "string")
+                def.exampleTranslation = d.exampleTranslation
+              return def
+            })
+            .filter(
+              (d): d is { meaning: string; example?: string; exampleTranslation?: string } =>
+                d !== null,
+            )
+        : []
+
+      return { partOfSpeech, definitions }
+    })
+    .filter((m) => m.definitions.length > 0)
+
+  return result.length > 0 ? result : undefined
+}
+
+function parseDetailPhrases(value: unknown): DetailPhrase[] | undefined {
+  if (!Array.isArray(value)) return undefined
+
+  const result = value.filter(isRecord).map((p) => ({
+    phrase: typeof p.phrase === "string" ? p.phrase : "",
+    meaning: typeof p.meaning === "string" ? p.meaning : undefined,
+  }))
+
+  return result.length > 0 ? result : undefined
+}
+
+function parseDetailExamples(value: unknown): DetailExample[] | undefined {
+  if (!Array.isArray(value)) return undefined
+
+  const result = value.filter(isRecord).map((e) => ({
+    example: typeof e.example === "string" ? e.example : "",
+    exampleTranslation:
+      typeof e.exampleTranslation === "string" ? e.exampleTranslation : undefined,
+  }))
+
+  return result.length > 0 ? result : undefined
+}
+
 function projectVocabularyItem(item: VocabularyResponseDto): VocabularyItemVm {
-  const word = item.display_word || item.lemma;
+  const word = item.display_word || item.lemma
+  const payload = item.payload_json ?? {}
+  const review = payload.review
+
+  const sourceRefs = readSourceRefs(payload.source_refs)
+  const collectedForms = readStringArray(payload.collected_forms)
+
+  const articleIds = new Set<string>()
+  for (const ref of sourceRefs) {
+    if (ref.cloud_record_id) articleIds.add(ref.cloud_record_id)
+    if (ref.client_record_id) articleIds.add(ref.client_record_id)
+  }
 
   return {
     id: item.id,
@@ -124,7 +202,19 @@ function projectVocabularyItem(item: VocabularyResponseDto): VocabularyItemVm {
     masteryStatus: item.mastery_status,
     reviewCount: item.review_count,
     tags: item.tags,
-  };
+    nextReviewAt: review?.next_review_at ?? undefined,
+    reviewStage: review?.stage ?? undefined,
+    lastReviewedAt: item.last_reviewed_at ?? review?.last_reviewed_at ?? undefined,
+    sourceRefs,
+    collectedForms,
+    dictEntryId: item.dict_entry_id,
+    audioUrl: typeof payload.audio_url === "string" ? payload.audio_url : undefined,
+    detailMeanings: parseDetailMeanings(item.meanings_json),
+    detailPhrases: parseDetailPhrases(payload.detail_phrases),
+    detailExamples: parseDetailExamples(payload.detail_examples),
+    totalSourceCount: sourceRefs.length,
+    totalSourceArticleCount: articleIds.size,
+  }
 }
 
 function projectLookupMatch(item: VocabularyResponseDto): ReaderVocabularyLookupMatchDto {
@@ -284,42 +374,81 @@ function normalizeCreateBody(body: unknown): VocabularyCreateRequestDto | AddVoc
 export async function getVocabularyList(
   options: GetVocabularyOptions = {},
 ): Promise<VocabularyBffResult> {
-  const normalizedOptions = {
-    page: options.page ?? 1,
-    limit: options.limit ?? 50,
-  };
+  const PAGE_LIMIT = 100
+  const MAX_PAGES = 20
   const session = await getWebSession();
 
   if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    return unauthenticatedResult(session, normalizedOptions);
+    return unauthenticatedResult(session, { page: 1, limit: PAGE_LIMIT });
   }
 
-  const upstreamResult = await listVocabulary(session.sessionToken, {
-    ...normalizedOptions,
-    lite: false,
-  });
+  let allItems: VocabularyResponseDto[] = []
+  let page = 1
+  let total = 0
 
-  if (!upstreamResult.ok) {
-    return {
-      status: upstreamStatus(upstreamResult.status),
-      items: [],
-      total: 0,
-      page: normalizedOptions.page,
-      limit: normalizedOptions.limit,
-      session: projectSession(session),
-      message:
-        upstreamResult.status === 0 || upstreamResult.status >= 500
-          ? "生词本服务暂时不可用，请稍后重试。"
-          : upstreamResult.message,
-    };
+  while (page <= MAX_PAGES) {
+    const upstreamResult = await listVocabulary(session.sessionToken, {
+      page,
+      limit: PAGE_LIMIT,
+      lite: false,
+    })
+
+    if (!upstreamResult.ok) {
+      if (allItems.length > 0) {
+        break
+      }
+      return {
+        status: upstreamStatus(upstreamResult.status),
+        items: [],
+        total: 0,
+        page: 1,
+        limit: PAGE_LIMIT,
+        dueCount: 0,
+        session: projectSession(session),
+        message:
+          upstreamResult.status === 0 || upstreamResult.status >= 500
+            ? "生词本服务暂时不可用，请稍后重试。"
+            : upstreamResult.message,
+      }
+    }
+
+    total = upstreamResult.data.total
+    allItems = allItems.concat(upstreamResult.data.items)
+
+    if (upstreamResult.data.items.length < PAGE_LIMIT || allItems.length >= total) {
+      break
+    }
+
+    page++
+  }
+
+  const projectedItems = allItems.map(projectVocabularyItem)
+
+  let dueCount = 0
+  try {
+    const dueResult = await getUpstreamDueReviewVocabulary(session.sessionToken, 1)
+    if (dueResult.ok) {
+      dueCount = dueResult.data.total
+    } else {
+      const now = Date.now()
+      dueCount = projectedItems.filter(
+        (item: VocabularyItemVm) => item.nextReviewAt && new Date(item.nextReviewAt).getTime() <= now,
+      ).length
+    }
+  } catch {
+    const now = Date.now()
+    dueCount = projectedItems.filter(
+      (item: VocabularyItemVm) => item.nextReviewAt && new Date(item.nextReviewAt).getTime() <= now,
+    ).length
   }
 
   return {
     status: "ready",
-    items: upstreamResult.data.items.map(projectVocabularyItem),
-    total: upstreamResult.data.total,
-    page: upstreamResult.data.page,
-    limit: upstreamResult.data.limit,
+    items: projectedItems,
+    total,
+    page: 1,
+    limit: PAGE_LIMIT,
+    dueCount,
     session: projectSession(session),
   };
 }
@@ -407,11 +536,7 @@ export async function getVocabularyLookupMatch(
     };
   }
 
-  // Hard cap: scan at most 5 pages (500 items). This prevents unbounded
-  // sequential upstream requests when a user has a large vocabulary.
-  // TODO: Replace with a direct upstream query by dict_entry_id / lemma
-  // once the FastAPI /vocabulary endpoint supports filtered lookups.
-  const MAX_PAGES = 5;
+  const MAX_PAGES = 20;
   const limit = 100;
   let page = 1;
   let total = 0;
@@ -460,5 +585,88 @@ export async function getVocabularyLookupMatch(
     ok: true,
     status: 200,
     item: null,
+  };
+}
+
+export async function updateVocabularyFromWeb(
+  vocabId: string,
+  body: { mastery_status?: string },
+): Promise<{ ok: true; item: VocabularyItemVm } | { ok: false; status: number; code: string; message: string }> {
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return {
+      ok: false,
+      status: 401,
+      code: "auth_required",
+      message:
+        session.kind === "mock_phone"
+          ? "当前登录态不能修改真实生词本，请使用真实登录会话后再试。"
+          : "请先登录后修改生词本。",
+    };
+  }
+
+  const upstreamResult = await patchVocabulary(session.sessionToken, vocabId, body);
+
+  if (!upstreamResult.ok) {
+    const status = upstreamResult.status === 0 ? 503 : upstreamResult.status;
+
+    return {
+      ok: false,
+      status,
+      code: upstreamResult.status === 0 || upstreamResult.status >= 500
+        ? "upstream_unavailable"
+        : "upstream_error",
+      message:
+        upstreamResult.status === 0 || upstreamResult.status >= 500
+          ? "生词本更新服务暂时不可用，请稍后重试。"
+          : upstreamResult.message,
+    };
+  }
+
+  return {
+    ok: true,
+    item: projectVocabularyItem(upstreamResult.data),
+  };
+}
+
+export async function deleteVocabularyFromWeb(
+  vocabId: string,
+): Promise<{ ok: true; deleted: boolean } | { ok: false; status: number; code: string; message: string }> {
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return {
+      ok: false,
+      status: 401,
+      code: "auth_required",
+      message:
+        session.kind === "mock_phone"
+          ? "当前登录态不能删除真实生词本条目，请使用真实登录会话后再试。"
+          : "请先登录后删除生词本条目。",
+    };
+  }
+
+  const upstreamResult = await deleteVocabulary(session.sessionToken, vocabId);
+
+  if (!upstreamResult.ok) {
+    const status = upstreamResult.status === 0 ? 503 : upstreamResult.status;
+
+    return {
+      ok: false,
+      status,
+      code: upstreamResult.status === 0 || upstreamResult.status >= 500
+        ? "upstream_unavailable"
+        : "upstream_error",
+      message:
+        upstreamResult.status === 0 || upstreamResult.status >= 500
+          ? "生词本删除服务暂时不可用，请稍后重试。"
+          : upstreamResult.message,
+    };
+  }
+
+  return {
+    ok: true,
+    deleted: upstreamResult.data.deleted,
   };
 }

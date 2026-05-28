@@ -54,8 +54,8 @@ export default async function ReviewPage() {
     <main className="paper-grain min-h-screen px-5 py-7 text-ink sm:px-8 lg:px-10">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
         <PageHeader
-          eyebrow="间隔复习"
-          title="复习"
+          eyebrow="Spaced Repetition"
+          title="review"
           description="复习从真实生词本生成，按熟悉程度推进下一次复习时间。"
           actions={
             <div className="app-panel-surface shrink-0 rounded-pill border border-hairline px-3 py-1 text-xs font-semibold text-muted">

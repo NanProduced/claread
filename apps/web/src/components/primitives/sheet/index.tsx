@@ -17,6 +17,7 @@ const sheetContentVariants = cva(
       side: {
         right: "inset-y-0 right-0 h-full w-[min(28rem,100vw)] border-l",
         left: "inset-y-0 left-0 h-full w-[min(28rem,100vw)] border-r",
+        bottom: "fixed inset-x-0 bottom-0 z-50 mt-24 h-[85vh] rounded-t-2xl border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
       },
     },
     defaultVariants: {
