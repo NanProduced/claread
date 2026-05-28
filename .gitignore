@@ -64,6 +64,7 @@ _migration_prep/
 .agents/
 .remember/
 .impeccable/
+.mcp.json
 
 RTK.md
 skills-lock.json

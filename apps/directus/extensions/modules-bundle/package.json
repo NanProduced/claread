@@ -21,7 +21,68 @@
       "app": "dist/app.js",
       "api": "dist/api.js"
     },
-    "entries": []
+    "entries": [
+      {
+        "type": "display",
+        "name": "claread-status-badge",
+        "source": "src/claread-status-badge/index.js"
+      },
+      {
+        "type": "display",
+        "name": "claread-usage-summary",
+        "source": "src/claread-usage-summary/index.js"
+      },
+      {
+        "type": "display",
+        "name": "claread-json-summary",
+        "source": "src/claread-json-summary/index.js"
+      },
+      {
+        "type": "display",
+        "name": "claread-record-context-display",
+        "source": "src/claread-record-context-display/index.js"
+      },
+      {
+        "type": "display",
+        "name": "claread-enum-label-display",
+        "source": "src/claread-enum-label-display/index.js"
+      },
+      {
+        "type": "display",
+        "name": "claread-event-type-display",
+        "source": "src/claread-event-type-display/index.js"
+      },
+      {
+        "type": "interface",
+        "name": "claread-json-summary-interface",
+        "source": "src/claread-json-summary-interface/index.js"
+      },
+      {
+        "type": "interface",
+        "name": "claread-record-context-interface",
+        "source": "src/claread-record-context-interface/index.js"
+      },
+      {
+        "type": "interface",
+        "name": "claread-text-preview-interface",
+        "source": "src/claread-text-preview-interface/index.js"
+      },
+      {
+        "type": "interface",
+        "name": "claread-enum-label-interface",
+        "source": "src/claread-enum-label-interface/index.js"
+      },
+      {
+        "type": "interface",
+        "name": "claread-relational-events-display",
+        "source": "src/claread-relational-events-display/index.js"
+      },
+      {
+        "type": "layout",
+        "name": "claread-observability-groups",
+        "source": "src/claread-observability-groups-layout/index.js"
+      }
+    ]
   },
   "pnpm": {
     "executionEnv": {
