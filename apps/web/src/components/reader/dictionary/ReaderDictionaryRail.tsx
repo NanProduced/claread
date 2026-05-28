@@ -36,6 +36,9 @@ interface ReaderDictionaryRailProps {
   canSaveVocabulary?: boolean;
   onLookupPhraseFromInspect?: (intent: ReaderStructuredInspectIntent) => void;
   onAttachToAsk?: (intent: ReaderStructuredInspectIntent) => void;
+  onFeedback?: () => void;
+  onNotFoundFeedback?: () => void;
+  onInspectFeedback?: (inspect: ReaderStructuredInspectIntent) => void;
   onSelectHistory: (lookup: DictionaryLookupSnapshot) => void;
   className?: string;
   style?: CSSProperties;
@@ -52,6 +55,9 @@ export function ReaderDictionaryRail({
   inspect = null,
   lookup,
   onAttachToAsk,
+  onFeedback,
+  onNotFoundFeedback,
+  onInspectFeedback,
   onCreateAINote,
   onDismiss,
   onLookupPhraseFromInspect,
@@ -109,6 +115,9 @@ export function ReaderDictionaryRail({
             canCreateAINote={canCreateAINote}
             onAttachToAsk={onAttachToAsk}
             onLookupPhraseFromInspect={onLookupPhraseFromInspect}
+            onFeedback={onFeedback}
+            onNotFoundFeedback={onNotFoundFeedback}
+            onInspectFeedback={onInspectFeedback}
             history={history}
             onSelectHistory={onSelectHistory}
           />

@@ -1784,7 +1784,7 @@ function TraceSummaryDisclosure({
   );
 }
 
-function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
+function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { cards: ReaderAskResponseCardDto[]; onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void; analysisRecordId?: string }) {
   if (cards.length === 0) {
     return null;
   }
@@ -1813,6 +1813,12 @@ function ResponseCards({ cards }: { cards: ReaderAskResponseCardDto[] }) {
                 badgeLabel="AI 助手生成"
                 footerAnchorLabel={focusHint}
                 footerSourceLabel="来源: Ask Claread"
+                onFeedback={() =>
+                  onAnnotationFeedback?.({
+                    entryType: entry.entryType,
+                    entryId: entry.id,
+                  })
+                }
               />
               {card.spans.length > 0 ? (
                 <div className="rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-2.5 text-xs text-muted">
@@ -2097,6 +2103,8 @@ function MessageBubble({
   onRetry,
   onJumpToAttachment,
   onJumpToCitation,
+  onAnnotationFeedback,
+  analysisRecordId,
 }: {
   item: AskPanelConversationItem;
   currentRecordId: string;
@@ -2115,6 +2123,8 @@ function MessageBubble({
   onRetry: (messageId: string) => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onJumpToCitation?: (citation: ReaderAskCitationDto) => void;
+  onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
+  analysisRecordId?: string;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -2172,7 +2182,7 @@ function MessageBubble({
                         </div>
                       );
                     case "response_cards":
-                      return <ResponseCards key={`${message.id}-${block.kind}-${index}`} cards={message.response_cards} />;
+                      return <ResponseCards key={`${message.id}-${block.kind}-${index}`} cards={message.response_cards} onAnnotationFeedback={onAnnotationFeedback} analysisRecordId={analysisRecordId} />;
                     case "disambiguation":
                       return (
                         <DisambiguationCards
@@ -2446,6 +2456,8 @@ export interface AiWorkspacePanelProps {
   onComposerTextareaBlur?: () => void;
   onPanelPointerDownOutsideComposer?: () => void;
   onToggle: () => void;
+  onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
+  analysisRecordId?: string;
 }
 
 export function AiWorkspacePanel({
@@ -2472,6 +2484,8 @@ export function AiWorkspacePanel({
   onSupplementDeleted,
   onRemoveAttachment,
   onToggle,
+  onAnnotationFeedback,
+  analysisRecordId,
 }: AiWorkspacePanelProps) {
   const launcherVisibilityClass = hideLauncherInCompactLayout
     ? "hidden 2xl:inline-flex"
@@ -3236,6 +3250,8 @@ export function AiWorkspacePanel({
                   onRetry={handleRetry}
                   onJumpToAttachment={onJumpToAttachment}
                   onJumpToCitation={onJumpToCitation}
+                  onAnnotationFeedback={onAnnotationFeedback}
+                  analysisRecordId={analysisRecordId}
                 />
               ));
               })()}

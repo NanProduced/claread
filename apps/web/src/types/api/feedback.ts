@@ -54,3 +54,20 @@ export interface FeedbackResponseDto {
   status: string;
   created_at: string;
 }
+
+export interface FeedbackListItemDto {
+  id: string;
+  feedback_scope: FeedbackScopeDto;
+  feedback_type: FeedbackTypeDto;
+  sentiment: FeedbackSentimentDto;
+  content: string | null;
+  status: string;
+  reward_points: number;
+  created_at: string;
+}
+
+export interface FeedbackListResponseDto {
+  items: FeedbackListItemDto[];
+  cursor: string | null;
+  has_more: boolean;
+}

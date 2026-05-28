@@ -1,4 +1,4 @@
-import { BookOpen, Sparkles } from "lucide-react";
+import { BookOpen, Flag, Sparkles } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { SentenceEntryModel } from "@/types/view/ReaderMockVm";
 import { parseSentenceAnalysisContent } from "./reader-entry-utils";
@@ -10,6 +10,7 @@ interface SentenceEntryCardProps {
   badgeLabel?: string;
   footerAnchorLabel?: string;
   footerSourceLabel?: string;
+  onFeedback?: () => void;
 }
 
 const entryToneHeaderClass: Record<string, string> = {
@@ -41,6 +42,7 @@ export function SentenceEntryCard({
   badgeLabel,
   footerAnchorLabel,
   footerSourceLabel,
+  onFeedback,
 }: SentenceEntryCardProps) {
   const label = entry.title ?? entry.label ?? "解析";
   const iconClass = entryToneHeaderClass[entry.entryType] ?? entryToneHeaderClass.content_summary;
@@ -112,7 +114,22 @@ export function SentenceEntryCard({
           ) : null}
         </div>
         <div className="mt-4 flex items-center justify-between border-t border-hairline/60 pt-3 text-xs text-muted">
-          <span>{footerAnchorLabel ?? "结构拆解"}</span>
+          <div className="flex items-center gap-2">
+            {onFeedback ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1 text-[0.7rem] font-medium text-muted hover:text-ink hover:bg-ink/[0.02] transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFeedback();
+                }}
+              >
+                <Flag className="h-3 w-3" />
+                反馈
+              </button>
+            ) : null}
+            <span>{footerAnchorLabel ?? "结构拆解"}</span>
+          </div>
           <span>{footerSourceLabel ?? "来源: 机器解析"}</span>
         </div>
       </section>
@@ -142,7 +159,22 @@ export function SentenceEntryCard({
         <p className="whitespace-pre-line text-[0.9375rem] leading-[1.7] text-ink-soft">{entry.content}</p>
       </div>
       <div className="mt-4 flex items-center justify-between border-t border-hairline/60 pt-3 text-xs text-muted">
-        <span>{footerAnchorLabel ?? "锚定本句"}</span>
+        <div className="flex items-center gap-2">
+          {onFeedback ? (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1 text-[0.7rem] font-medium text-muted hover:text-ink hover:bg-ink/[0.02] transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                onFeedback();
+              }}
+            >
+              <Flag className="h-3 w-3" />
+              反馈
+            </button>
+          ) : null}
+          <span>{footerAnchorLabel ?? "锚定本句"}</span>
+        </div>
         <span>{footerSourceLabel ?? "来源: 机器解析"}</span>
       </div>
     </section>

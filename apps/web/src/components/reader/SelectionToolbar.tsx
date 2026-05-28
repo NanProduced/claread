@@ -1,5 +1,6 @@
 import {
   Eraser,
+  Flag,
   Highlighter,
   MessageSquare,
   NotebookPen,
@@ -29,7 +30,8 @@ export type SelectionToolbarAction =
   | "highlight"
   | "note"
   | "lookup"
-  | "clear";
+  | "clear"
+  | "feedback";
 
 export type SelectionToolbarColorValue = string;
 
@@ -47,6 +49,7 @@ export interface SelectionToolbarDisabledStates {
   note?: boolean;
   lookup?: boolean;
   clear?: boolean;
+  feedback?: boolean;
 }
 
 export interface SelectionToolbarProps {
@@ -72,6 +75,7 @@ export interface SelectionToolbarProps {
   onNote?: (selectedText: string) => void;
   onClearAnnotation?: () => void;
   onLookup?: (selectedText: string) => void;
+  onFeedback?: (selectedText: string) => void;
   canToggleHighlightPalette?: boolean;
   highlightPaletteOpen?: boolean;
   onToggleHighlightPalette?: () => void;
@@ -134,6 +138,7 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
     onNote,
     onClearAnnotation,
     onLookup,
+    onFeedback,
     canToggleHighlightPalette = false,
     onToggleHighlightPalette,
     highlightPaletteOpen,
@@ -308,6 +313,19 @@ export const SelectionToolbar = forwardRef<HTMLDivElement, SelectionToolbarProps
             <TooltipContent side="top" className="text-xs">
               {askComingSoon ? "Ask Claread (稍后开放)" : "Ask Claread"}
             </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ReaderToolbarIconButton
+                disabled={!hasSelection || Boolean(disabled?.feedback) || !onFeedback}
+                onClick={() => onFeedback?.(selectedText)}
+                aria-label="反馈"
+              >
+                <Flag aria-hidden="true" className="h-4 w-4" />
+              </ReaderToolbarIconButton>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">反馈</TooltipContent>
           </Tooltip>
 
           {compactStatus ? (

@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Flag,
   Pin,
   Search,
   Sparkles,
@@ -132,6 +133,9 @@ interface ReaderDictionaryDetailPanelProps {
   onToggleAIPanel: () => void;
   onToggleSearchExpanded: () => void;
   onDismiss?: () => void;
+  onFeedback?: () => void;
+  onNotFoundFeedback?: () => void;
+  onInspectFeedback?: (inspect: ReaderStructuredInspectIntent) => void;
   pinned?: boolean;
   onTogglePinned?: () => void;
   variant?: "card" | "sheet";
@@ -155,6 +159,9 @@ export function ReaderDictionaryDetailPanel({
   onAttachToAsk,
   onCreateAINote,
   onDismiss,
+  onFeedback,
+  onNotFoundFeedback,
+  onInspectFeedback,
   onLookupPhraseFromInspect,
   onRequestAI,
   onSave,
@@ -864,6 +871,11 @@ export function ReaderDictionaryDetailPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5">
+          {onFeedback && (
+            <DictionaryIconAction label="词典反馈" onClick={onFeedback}>
+              <Flag className="h-3.5 w-3.5" />
+            </DictionaryIconAction>
+          )}
           {onTogglePinned && (
             <DictionaryIconAction
               label={pinned ? "取消钉住词典" : "钉住词典"}
@@ -901,6 +913,7 @@ export function ReaderDictionaryDetailPanel({
               intent={inspect}
               onAttachToAsk={onAttachToAsk ? () => onAttachToAsk(inspect) : undefined}
               onLookupPhrase={onLookupPhraseFromInspect ? () => onLookupPhraseFromInspect(inspect) : undefined}
+              onFeedback={onInspectFeedback ? () => onInspectFeedback(inspect) : undefined}
               variant="rail"
             />
           </div>
@@ -1167,6 +1180,15 @@ export function ReaderDictionaryDetailPanel({
             </div>
             <div className="space-y-3.5 rounded-[8px] border border-hairline bg-ink/[0.005] px-4 py-4">
               <p className="text-xs font-semibold text-ink select-none">当前词典没有匹配到这个词条。</p>
+              {onNotFoundFeedback ? (
+                <button
+                  type="button"
+                  className={cn(readerCommandControl, "mt-3 inline-flex rounded border border-hairline bg-surface px-3 py-1.5 text-[0.72rem] text-ink-soft hover:bg-ink/[0.02]")}
+                  onClick={onNotFoundFeedback}
+                >
+                  反馈缺失
+                </button>
+              ) : null}
                   {canRequestMissingFallback ? (
                 <div className="space-y-3.5 border-t border-hairline/60 pt-3.5">
                   {renderCollapsedAIStub(

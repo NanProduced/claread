@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Highlighter, Languages, MessageSquare, NotebookPen, Palette, Quote } from "lucide-react";
+import { Flag, Highlighter, Languages, MessageSquare, NotebookPen, Palette, Quote } from "lucide-react";
 
 import type { UserAnnotationColorDto } from "@/types/api/annotations";
 import type { SentenceModel } from "@/types/view/ReaderMockVm";
@@ -33,6 +33,7 @@ export interface ReaderContextPanelProps {
   onNote: () => void;
   onAsk: () => void;
   onAskTranslation?: () => void;
+  onFeedback?: () => void;
   onClose?: () => void;
   hasHighlight?: boolean;
 }
@@ -50,6 +51,7 @@ export function ReaderContextPanel({
   onNote,
   onAsk,
   onAskTranslation,
+  onFeedback,
   onClose,
 }: ReaderContextPanelProps) {
   if (!sentence) {
@@ -94,6 +96,14 @@ export function ReaderContextPanel({
           label="原句 Ask"
           onClick={onAsk}
         />
+
+        {onFeedback ? (
+          <MenuItem
+            icon={<Flag className="h-4 w-4" />}
+            label="反馈"
+            onClick={onFeedback}
+          />
+        ) : null}
 
         {translationText?.trim() && onAskTranslation ? (
           <MenuItem

@@ -1,6 +1,10 @@
 import "server-only";
 
-import { submitUpstreamFeedback } from "@/services/api/feedback";
+import {
+  deleteUpstreamFeedback,
+  listUpstreamFeedback,
+  submitUpstreamFeedback,
+} from "@/services/api/feedback";
 import { getWebSession } from "@/services/bff/session";
 import type {
   FeedbackCreateRequestDto,
@@ -244,4 +248,107 @@ export async function submitFeedbackFromWeb(
   }
 
   return toFeedbackVm(upstreamResult.data);
+}
+
+export type WebFeedbackListItem = {
+  id: string;
+  feedbackScope: FeedbackScopeDto;
+  feedbackType: FeedbackTypeDto;
+  sentiment: FeedbackSentimentDto;
+  content: string | null;
+  status: string;
+  rewardPoints: number;
+  createdAt: string;
+};
+
+export type WebFeedbackListResult =
+  | {
+      ok: true;
+      items: WebFeedbackListItem[];
+      cursor: string | null;
+      hasMore: boolean;
+    }
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+    };
+
+export type WebFeedbackDeleteResult =
+  | { ok: true }
+  | { ok: false; status: number; code: string; message: string };
+
+export async function listFeedbackFromWeb(
+  cursor?: string,
+  limit?: number,
+  feedbackScope?: string,
+): Promise<WebFeedbackListResult> {
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return {
+      ok: false,
+      status: 401,
+      code: "auth_required",
+      message: "请先登录后再查看反馈记录。",
+    };
+  }
+
+  const result = await listUpstreamFeedback(session.sessionToken, cursor, limit, feedbackScope);
+
+  if (!result.ok) {
+    const unavailable = result.status === 0 || result.status >= 500;
+    return {
+      ok: false,
+      status: result.status === 0 ? 503 : result.status,
+      code: unavailable ? "upstream_unavailable" : "upstream_error",
+      message: unavailable ? "反馈服务暂时不可用，请稍后重试。" : result.message,
+    };
+  }
+
+  return {
+    ok: true,
+    items: result.data.items.map((item) => ({
+      id: item.id,
+      feedbackScope: item.feedback_scope,
+      feedbackType: item.feedback_type,
+      sentiment: item.sentiment,
+      content: item.content,
+      status: item.status,
+      rewardPoints: item.reward_points,
+      createdAt: item.created_at,
+    })),
+    cursor: result.data.cursor,
+    hasMore: result.data.has_more,
+  };
+}
+
+export async function deleteFeedbackFromWeb(
+  feedbackId: string,
+): Promise<WebFeedbackDeleteResult> {
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return {
+      ok: false,
+      status: 401,
+      code: "auth_required",
+      message: "请先登录后再操作。",
+    };
+  }
+
+  const result = await deleteUpstreamFeedback(feedbackId, session.sessionToken);
+
+  if (!result.ok) {
+    const unavailable = result.status === 0 || result.status >= 500;
+    return {
+      ok: false,
+      status: result.status === 0 ? 503 : result.status,
+      code: unavailable ? "upstream_unavailable" : "upstream_error",
+      message: unavailable ? "反馈服务暂时不可用，请稍后重试。" : result.message,
+    };
+  }
+
+  return { ok: true };
 }

@@ -11,12 +11,14 @@ interface ReaderStructuredInspectCardProps {
   variant?: "peek" | "rail";
   onLookupPhrase?: () => void;
   onAttachToAsk?: () => void;
+  onFeedback?: () => void;
 }
 
 export function ReaderStructuredInspectCard({
   onAttachToAsk,
   intent,
   onLookupPhrase,
+  onFeedback,
   variant = "peek",
 }: ReaderStructuredInspectCardProps) {
   const title = structuredInspectLabel(intent.annotationType, intent.glossary?.phraseType);
@@ -46,7 +48,7 @@ export function ReaderStructuredInspectCard({
           <p className="text-xs leading-5 text-muted">{intent.glossary.reason}</p>
         ) : null}
       </div>
-      {variant === "rail" && (onLookupPhrase || onAttachToAsk) ? (
+      {variant === "rail" && (onLookupPhrase || onAttachToAsk || onFeedback) ? (
         <div className="mt-3 flex items-center gap-2 border-t border-hairline/60 pt-3">
           {onLookupPhrase ? (
             <button
@@ -55,6 +57,15 @@ export function ReaderStructuredInspectCard({
               onClick={onLookupPhrase}
             >
               查短语
+            </button>
+          ) : null}
+          {onFeedback ? (
+            <button
+              type="button"
+              className={cn(readerCommandControl, "h-8 rounded-md px-2.5 text-[0.72rem] font-semibold")}
+              onClick={onFeedback}
+            >
+              反馈
             </button>
           ) : null}
           {onAttachToAsk ? (

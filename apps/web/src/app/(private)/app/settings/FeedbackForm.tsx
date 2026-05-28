@@ -1,11 +1,15 @@
 "use client";
 
 import { useId, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
+
+import { MyFeedbackList } from "./MyFeedbackList";
 
 const FEEDBACK_TYPE_OPTIONS = [
   { value: "bug_report", label: "遇到问题" },
   { value: "feature_request", label: "功能建议" },
   { value: "quota_issue", label: "配额问题" },
+  { value: "input_page_issue", label: "输入页问题" },
   { value: "ux_issue", label: "体验不顺" },
   { value: "other", label: "其他" },
 ] as const;
@@ -27,6 +31,7 @@ type FeedbackSubmitResponse =
     };
 
 export function FeedbackForm() {
+  const [showMyFeedback, setShowMyFeedback] = useState(false);
   const contentId = useId();
   const [feedbackType, setFeedbackType] =
     useState<(typeof FEEDBACK_TYPE_OPTIONS)[number]["value"]>("bug_report");
@@ -102,7 +107,7 @@ export function FeedbackForm() {
       <div className="flex flex-wrap gap-2">
         {FEEDBACK_TYPE_OPTIONS.map((option) => (
           <button
-            className={`focus-ring min-h-9 rounded-pill border px-3 text-xs font-semibold transition-colors ${
+            className={`focus-ring min-h-9 rounded-lg border px-3 text-xs font-semibold transition-colors ${
               feedbackType === option.value
                 ? "border-lens-blue bg-lens-blue-soft text-lens-blue"
                 : "border-hairline bg-reader-paper text-muted hover:border-muted hover:text-ink"
@@ -146,6 +151,18 @@ export function FeedbackForm() {
         >
           {state.status === "submitting" ? "提交中" : "提交反馈"}
         </button>
+      </div>
+
+      <div className="mt-6 border-t border-hairline pt-4">
+        <button
+          type="button"
+          onClick={() => setShowMyFeedback(!showMyFeedback)}
+          className="flex w-full items-center justify-between text-sm font-semibold text-ink"
+        >
+          <span>我的反馈记录</span>
+          {showMyFeedback ? <ChevronUp className="h-4 w-4 text-muted" /> : <ChevronDown className="h-4 w-4 text-muted" />}
+        </button>
+        {showMyFeedback ? <MyFeedbackList /> : null}
       </div>
     </form>
   );

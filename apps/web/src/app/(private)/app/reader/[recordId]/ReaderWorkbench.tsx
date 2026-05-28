@@ -19,6 +19,7 @@ import {
   SlidersHorizontal,
   Globe,
   Sparkles,
+  Flag,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
@@ -147,6 +148,8 @@ import {
 import { readerCommandControl, readerSegmentedOption } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import { FavoriteButton } from "./FavoriteButton";
+import { FeedbackSheet, FEEDBACK_CONFIG_BY_SCOPE } from "@/components/reader/FeedbackSheet";
+import type { FeedbackScopeDto, FeedbackSentimentDto, FeedbackTypeDto } from "@/types/api/feedback";
 
 type ReaderDataSource = "upstream-render-scene" | "upstream-source-text";
 
@@ -667,6 +670,17 @@ export function ReaderWorkbench({
   const [dictionaryAI, setDictionaryAI] = useState<DictionaryAIViewState>({ kind: "idle" });
   const [dictionaryAIPanelOpen, setDictionaryAIPanelOpen] = useState(false);
   const [dictionaryAINoteState, setDictionaryAINoteState] = useState<SaveState>({ kind: "idle" });
+  const [feedbackSheet, setFeedbackSheet] = useState<{
+    open: boolean;
+    scope: FeedbackScopeDto;
+    sentiment?: FeedbackSentimentDto;
+    feedbackType?: FeedbackTypeDto;
+    analysisRecordId?: string;
+    targetId: string;
+    annotationType?: string;
+    contextSummary?: string;
+    contextJson?: Record<string, unknown>;
+  } | null>(null);
   const activeAnnotationTargetKeyRef = useRef<string | null>(null);
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const [settingsFloatingStyle, setSettingsFloatingStyle] = useState<CSSProperties | null>(null);
@@ -1293,6 +1307,26 @@ export function ReaderWorkbench({
     setDictionaryPinned(false);
     clearLookup();
   }, [clearLookup]);
+
+  const openFeedbackSheet = useCallback(
+    (config: {
+      scope: FeedbackScopeDto;
+      sentiment?: FeedbackSentimentDto;
+      feedbackType?: FeedbackTypeDto;
+      analysisRecordId?: string;
+      targetId: string;
+      annotationType?: string;
+      contextSummary?: string;
+      contextJson?: Record<string, unknown>;
+    }) => {
+      setFeedbackSheet({ open: true, ...config });
+    },
+    [],
+  );
+
+  const closeFeedbackSheet = useCallback(() => {
+    setFeedbackSheet(null);
+  }, []);
 
   useEffect(() => {
     dictionaryAIRequestKeyRef.current = null;
@@ -3699,6 +3733,38 @@ export function ReaderWorkbench({
                     {/* Button 1: Favorite */}
                     <FavoriteButton recordId={record.id} variant="action-bar" />
 
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openFeedbackSheet({
+                          scope: "analysis_result",
+                          targetId: record.id,
+                          analysisRecordId: record.id,
+                          contextJson: {
+                            record_id: record.id,
+                            title: record.title,
+                            sentence_count: reader.article.sentences.length,
+                            reading_goal: record.readingGoal,
+                          },
+                        })
+                      }
+                      className={cn(
+                        readerCommandControl,
+                        "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
+                        "text-ink hover:text-ink-soft",
+                      )}
+                    >
+                      <Flag
+                        aria-hidden="true"
+                        className="h-[18px] w-[18px] shrink-0 text-muted"
+                        strokeWidth={1.5}
+                      />
+                      <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+                        <span className="text-[0.85rem] font-semibold whitespace-nowrap">反馈</span>
+                        <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">解读结果</span>
+                      </span>
+                    </button>
+
                     {/* Button 2: Intensive ("精读") */}
                     <button
                       type="button"
@@ -3946,6 +4012,22 @@ export function ReaderWorkbench({
               onClearAnnotation={deleteTextSelectionAnnotation}
               onLookup={lookupTextSelection}
               onAsk={openAskWithSelection}
+              onFeedback={() => {
+                const sentenceId = textSelection?.sentence?.sentenceId;
+                if (!sentenceId) return;
+                openFeedbackSheet({
+                  scope: "sentence",
+                  sentiment: "negative",
+                  targetId: buildSentenceTargetKey(record.id, sentenceId),
+                  analysisRecordId: record.id,
+                  contextSummary: textSelection.selectedText,
+                  contextJson: {
+                    selected_text: textSelection.selectedText,
+                    sentence_id: sentenceId,
+                    anchor_type: textSelection.anchorType,
+                  },
+                });
+              }}
             />
           </div>
         ) : null}
@@ -4006,6 +4088,53 @@ export function ReaderWorkbench({
             canCreateAINote={Boolean(canCreateDictionaryAINote)}
             onLookupPhraseFromInspect={lookupPhraseFromInspect}
             onAttachToAsk={openAskWithStructuredInspect}
+            onFeedback={() => {
+              if (!activeLookup?.query) return;
+              openFeedbackSheet({
+                scope: "dictionary",
+                sentiment: "negative",
+                targetId: activeLookup.query,
+                analysisRecordId: record.id,
+                contextJson: {
+                  query: activeLookup.query,
+                  context_sentence: activeLookup.contextSentence ?? "",
+                  sentence_id: activeLookup.sentenceId ?? "",
+                  lookup_type: activeLookup.lookupType ?? "",
+                },
+              });
+            }}
+            onNotFoundFeedback={() => {
+              if (!activeLookup?.query) return;
+              openFeedbackSheet({
+                scope: "dictionary",
+                sentiment: "negative",
+                feedbackType: "missing_definition",
+                targetId: activeLookup.query,
+                analysisRecordId: record.id,
+                contextJson: {
+                  query: activeLookup.query,
+                  context_sentence: activeLookup.contextSentence ?? "",
+                  sentence_id: activeLookup.sentenceId ?? "",
+                },
+              });
+            }}
+            onInspectFeedback={(inspect) =>
+              openFeedbackSheet({
+                scope: "annotation",
+                sentiment: "negative",
+                targetId: inspect.markId,
+                analysisRecordId: record.id,
+                annotationType: inspect.annotationType,
+                contextJson: {
+                  mark_id: inspect.markId,
+                  annotation_type: inspect.annotationType,
+                  lookup_text: inspect.lookupText ?? "",
+                  anchor_text: inspect.anchorText ?? "",
+                  label: inspect.label ?? "",
+                  sentence_id: inspect.sentenceId,
+                },
+              })
+            }
             onSelectHistory={selectLookupFromTrail}
           />
         </div>
@@ -4040,6 +4169,53 @@ export function ReaderWorkbench({
             canCreateAINote={Boolean(canCreateDictionaryAINote)}
             onLookupPhraseFromInspect={lookupPhraseFromInspect}
             onAttachToAsk={openAskWithStructuredInspect}
+            onFeedback={() => {
+              if (!activeLookup?.query) return;
+              openFeedbackSheet({
+                scope: "dictionary",
+                sentiment: "negative",
+                targetId: activeLookup.query,
+                analysisRecordId: record.id,
+                contextJson: {
+                  query: activeLookup.query,
+                  context_sentence: activeLookup.contextSentence ?? "",
+                  sentence_id: activeLookup.sentenceId ?? "",
+                  lookup_type: activeLookup.lookupType ?? "",
+                },
+              });
+            }}
+            onNotFoundFeedback={() => {
+              if (!activeLookup?.query) return;
+              openFeedbackSheet({
+                scope: "dictionary",
+                sentiment: "negative",
+                feedbackType: "missing_definition",
+                targetId: activeLookup.query,
+                analysisRecordId: record.id,
+                contextJson: {
+                  query: activeLookup.query,
+                  context_sentence: activeLookup.contextSentence ?? "",
+                  sentence_id: activeLookup.sentenceId ?? "",
+                },
+              });
+            }}
+            onInspectFeedback={(inspect) =>
+              openFeedbackSheet({
+                scope: "annotation",
+                sentiment: "negative",
+                targetId: inspect.markId,
+                analysisRecordId: record.id,
+                annotationType: inspect.annotationType,
+                contextJson: {
+                  mark_id: inspect.markId,
+                  annotation_type: inspect.annotationType,
+                  lookup_text: inspect.lookupText ?? "",
+                  anchor_text: inspect.anchorText ?? "",
+                  label: inspect.label ?? "",
+                  sentence_id: inspect.sentenceId,
+                },
+              })
+            }
             onSelectHistory={selectLookupFromTrail}
           />
         </div>
@@ -4096,6 +4272,20 @@ export function ReaderWorkbench({
               }
               openAskWithTranslation(activeSentence.sentenceId, translationZh);
             }}
+            onFeedback={() => {
+              if (!activeSentence) return;
+              openFeedbackSheet({
+                scope: "sentence",
+                sentiment: "negative",
+                targetId: buildSentenceTargetKey(record.id, activeSentence.sentenceId),
+                analysisRecordId: record.id,
+                contextSummary: activeSentence.text,
+                contextJson: {
+                  sentence_id: activeSentence.sentenceId,
+                  sentence_text: activeSentence.text,
+                },
+              });
+            }}
             onClose={closeContextPanel}
           />
         </div>
@@ -4148,6 +4338,33 @@ export function ReaderWorkbench({
           onComposerTextareaBlur={handleComposerTextareaBlur}
           onPanelPointerDownOutsideComposer={handleAiPanelPointerDownOutsideComposer}
           onToggle={toggleAiWorkspace}
+          onAnnotationFeedback={(params) =>
+            openFeedbackSheet({
+              scope: "annotation",
+              sentiment: "negative",
+              targetId: params.entryId,
+              analysisRecordId: record.id,
+              annotationType: params.entryType,
+              contextJson: {
+                entry_id: params.entryId,
+                entry_type: params.entryType,
+              },
+            })
+          }
+          analysisRecordId={record.id}
+        />
+      ) : null}
+      {feedbackSheet?.open ? (
+        <FeedbackSheet
+          scope={feedbackSheet.scope}
+          prefillSentiment={feedbackSheet.sentiment}
+          prefillType={feedbackSheet.feedbackType}
+          analysisRecordId={feedbackSheet.analysisRecordId}
+          targetId={feedbackSheet.targetId}
+          annotationType={feedbackSheet.annotationType}
+          contextSummary={feedbackSheet.contextSummary}
+          contextJson={feedbackSheet.contextJson}
+          onClose={closeFeedbackSheet}
         />
       ) : null}
     </main>
