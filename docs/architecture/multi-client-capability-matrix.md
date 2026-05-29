@@ -83,16 +83,18 @@
 |----------|-----|--------|-------------|------|
 | 查看解析历史 | 已接入 `/library` | 已接入 history | `/records` | 共享 records |
 | 删除记录 | 已接入 | 已接入或按现有入口支持 | record 状态/删除接口 | 需保证删除后的资产处理策略一致 |
-| 按收藏筛选 | 部分接入 | 已接入 | favorites + records | Web 后续可增强搜索、来源、日期筛选 |
-| 搜索历史记录 | 未接入完整产品体验 | 未接入或基础能力有限 | 需要 records query 扩展 | Web 更适合承载复杂筛选 |
+| 按收藏筛选 | 已接入：支持与搜索、目标筛选、排序组合使用 | 已接入 | favorites + records | Web 当前已支持 `仅收藏` 与 URL 状态保留，后续再补来源/日期筛选 |
+| 搜索历史记录 | 部分接入：支持标题、片段、阅读目标/变体文案检索 | 未接入或基础能力有限 | 当前以前端记录集过滤为主；未来可扩展 records query | Web 已形成可用产品体验，复杂搜索仍更适合放在 Web |
 
 ## 反馈、账户与配额
 
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
-| 提交问题反馈 | 部分接入：设置页/Reader 入口逐步接入 | 已接入基础反馈 | `/feedback` | feedback scope/type 应进入共享 contracts |
-| 查看登录状态 | 已接入：Web session cookie + BFF | 已接入：小程序 session token | `user_sessions` | provider 差异不影响业务用户 |
-| 查看配额/积分 | 已接入基础设置页 | 已接入 profile/credit detail | `/me/quota`、`/me/credit/ledger` | UI 展示分叉，数据共享 |
+| 提交问题反馈 | 已接入：设置页 + Reader 五类 scope 反馈闭环与记录查看 | 已接入基础反馈 | `/feedback` | feedback scope/type 已进入跨端共享语义，后续再评估 contracts 固化 |
+| 查看登录状态 | 已接入：Web session cookie + BFF，设置页可编辑昵称 | 已接入：小程序 session token | `user_sessions`、`/auth/profile` | provider 差异不影响业务用户 |
+| 查看配额/积分 | 已接入：设置页配额摘要 + 积分明细 | 已接入 profile/credit detail | `/me/quota`、`/me/credit/ledger` | UI 展示分叉，数据共享 |
+| 设置默认透读 | 已接入：Web 读写 `default_reading_goal` / `default_reading_variant` | 已接入 | `/auth/profile.settings` | 共享默认项已收敛到 profile settings |
+| Web 偏好云端同步 | 端内能力：主题、Reader mode、字体、字号已同步到 `settings.web_preferences` | 不适用 | `/auth/profile.settings` | 保持与小程序 `reading_preferences` 命名空间隔离 |
 
 ## 分享与导出
 

@@ -16,7 +16,7 @@
 
 - 2026-05-21 验证：Reader 标注体系的数据层已收口为“文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用”；数据库基线已压回单一 `0001_initial_schema.sql`，Web 与小程序构建通过。
 - 2026-05-16 验证：Web typecheck / build 通过；本轮通过本地浏览器回归核对 Reader 的 selection toolbar、lookup preview 和 `multi_text` 交互表现；`services/api/tests/test_user_assets.py` 和 `services/api/tests/test_user_annotations.py` 通过。
-- Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额。
+- Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额；设置页已补齐昵称编辑、积分明细、默认透读和 Web 偏好云端同步，Library 已形成搜索/收藏筛选/排序的基础管理体验。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
 - `Ask Claread` 已完成 Reader 2.0 底座上的重构主线，当前进入冻结校验阶段。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 planner-first runtime、turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期和 current-run hydration。

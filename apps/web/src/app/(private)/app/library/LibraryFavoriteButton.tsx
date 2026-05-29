@@ -3,6 +3,7 @@
 import { Heart } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "@/components/primitives/toast";
 
 type FavoriteState = "idle" | "saving" | "error";
 
@@ -23,6 +24,7 @@ interface LibraryFavoriteButtonProps {
   recordId: string;
   initialFavorited: boolean;
   compact?: boolean;
+  onFavoritedChange?: (favorited: boolean) => void;
 }
 
 async function readFavoriteResponse(response: Response): Promise<FavoriteApiResult> {
@@ -44,6 +46,7 @@ export function LibraryFavoriteButton({
   recordId,
   initialFavorited,
   compact = false,
+  onFavoritedChange,
 }: LibraryFavoriteButtonProps) {
   const router = useRouter();
   const [favorited, setFavorited] = useState(initialFavorited);
@@ -76,17 +79,21 @@ export function LibraryFavoriteButton({
         setFavorited(previous);
         setState("error");
         setMessage(result.message);
+        toast.error(result.message);
         return;
       }
 
       setFavorited(result.favorited);
+      onFavoritedChange?.(result.favorited);
       setState("idle");
       setMessage(null);
       router.refresh();
     } catch (error) {
+      const nextMessage = error instanceof Error ? error.message : "收藏操作失败。";
       setFavorited(previous);
       setState("error");
-      setMessage(error instanceof Error ? error.message : "收藏操作失败。");
+      setMessage(nextMessage);
+      toast.error(nextMessage);
     }
   }
 

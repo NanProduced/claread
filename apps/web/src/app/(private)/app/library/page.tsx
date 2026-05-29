@@ -3,8 +3,6 @@ import { LibraryClient } from "./LibraryClient";
 
 export default async function HistoryPage() {
   const result = await getRecordList({ limit: 100 });
-  const noteCount = result.records.reduce((sum, record) => sum + record.noteCount, 0);
-  const vocabularyCount = result.records.reduce((sum, record) => sum + record.vocabularyCount, 0);
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-reader-paper px-4 py-6 text-ink sm:px-8 lg:px-16 xl:px-24">
@@ -13,9 +11,6 @@ export default async function HistoryPage() {
           records={result.records}
           status={result.status}
           message={result.message}
-          total={result.total}
-          noteCount={noteCount}
-          vocabularyCount={vocabularyCount}
         />
       </div>
     </main>

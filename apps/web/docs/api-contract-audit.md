@@ -47,7 +47,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
 | `POST /records` | ✅ `RecordUpsertResponse` | 🟢 稳定 | Web 需自己生成 `client_record_id` |
-| `GET /records` | ✅ `RecordListResponse` | 🟢 稳定 | Web 需搜索/筛选扩展（按 goal/type/日期） |
+| `GET /records` | ✅ `RecordListResponse` | 🟢 稳定 | Web 已接入前端搜索/收藏筛选/排序；若后续记录量超出前端窗口，再补服务端 search/filter |
 | `GET /records/{record_id}` | ✅ `RecordResponse` | 🟢 稳定 | 详情接口无 `include_render_scene` 参数；当前返回完整记录详情，Web Reader 进入详情时消费此接口 |
 | `GET /records/by-client-id/{id}` | ✅ `RecordResponse` | 🟢 稳定 | Web 复用 |
 | `PATCH /records/{record_id}` | ✅ `RecordResponse` | 🟢 稳定 | Web 复用 |
@@ -95,8 +95,9 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 | 接口 | response_model | 当前状态 | Web 注意事项 |
 |------|---------------|---------|-------------|
-| `POST /feedback` | ✅ `FeedbackResponse` | 🟢 稳定 | Web Settings 已接入；Reader 反馈待 UI/UX 评审 |
-| `GET /feedback` | ✅ `FeedbackListResponse` | 🟢 稳定 | Web 后续可用于反馈历史或内部入口 |
+| `POST /feedback` | ✅ `FeedbackResponse` | 🟢 稳定 | Web Settings 与 Reader 已接入五类 scope 提交 |
+| `GET /feedback` | ✅ `FeedbackListResponse` | 🟢 稳定 | Web Settings 已接入统一反馈记录查看 |
+| `DELETE /feedback/{id}` | ✅ `FeedbackDeleteResponse` | 🟢 稳定 | Web 已接入 pending 反馈撤回 |
 
 ### 每日精读
 
@@ -203,9 +204,9 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
    - 当前 `DailyReaderArticleResponse` 中这四个字段是 `dict`，前端无法类型安全消费
    - 小程序已有完整 DTO 定义（`daily-reader.dto.ts`），可直接对齐
 
-2. **`GET /records` 搜索/筛选增强** — Web 需要按 `reading_goal`、`source_type`、日期范围筛选
+2. **`GET /records` 服务端搜索/筛选增强** — 当前 Web 已在前端 `limit=100` 记录窗口内完成搜索、收藏筛选和排序
+   - 当历史记录规模超出当前前端窗口时，再补服务端 `search` / `reading_goal` / `source_type` / `date_from` / `date_to`
    - 当前只有 `page`/`limit`/`include_render_scene` 参数
-   - 建议新增：`reading_goal`/`source_type`/`date_from`/`date_to`/`search` 参数
 
 3. **Favorites 列表增强** — Web Reader 按 `target_type` / `target_key` 查询文章收藏状态
 

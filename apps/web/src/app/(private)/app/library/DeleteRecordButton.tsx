@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/primitives/button";
+import { toast } from "@/components/primitives/toast";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +33,7 @@ interface DeleteRecordButtonProps {
   recordId: string;
   title: string;
   compact?: boolean;
+  onDeleted?: (payload: { recordId: string; message: string }) => void;
 }
 
 async function readDeleteResponse(response: Response): Promise<DeleteRecordApiResult> {
@@ -49,7 +51,12 @@ async function readDeleteResponse(response: Response): Promise<DeleteRecordApiRe
   };
 }
 
-export function DeleteRecordButton({ recordId, title, compact = false }: DeleteRecordButtonProps) {
+export function DeleteRecordButton({
+  recordId,
+  title,
+  compact = false,
+  onDeleted,
+}: DeleteRecordButtonProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<DeleteState>("idle");
@@ -72,15 +79,19 @@ export function DeleteRecordButton({ recordId, title, compact = false }: DeleteR
       if (!result.ok) {
         setState("error");
         setMessage(result.message);
+        toast.error(result.message);
         return;
       }
 
       setOpen(false);
       setState("idle");
+      onDeleted?.({ recordId, message: result.message });
       router.refresh();
     } catch (error) {
+      const nextMessage = error instanceof Error ? error.message : "删除记录失败。";
       setState("error");
-      setMessage(error instanceof Error ? error.message : "删除记录失败。");
+      setMessage(nextMessage);
+      toast.error(nextMessage);
     }
   }
 

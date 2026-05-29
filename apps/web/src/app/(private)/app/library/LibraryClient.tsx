@@ -8,20 +8,50 @@ import {
   CheckCircle2,
   CircleDashed,
   FileText,
+  Heart,
   LoaderCircle,
   NotebookPen,
   Plus,
   Search,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import type { Route } from "next";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  usePathname,
+  useRouter,
+  useSearchParams,
+  type ReadonlyURLSearchParams,
+} from "next/navigation";
 import { ApertureWatermark } from "@/components/brand/BrandMarks";
 import { Button } from "@/components/primitives/button";
+import { toast } from "@/components/primitives/toast";
 import { appReadRoute, appReaderRoute } from "@/lib/routes";
 import type { RecordsBffStatus } from "@/services/bff/records";
 import type { RecordListItemVm } from "@/types/view/RecordListItemVm";
 import { DeleteRecordButton } from "./DeleteRecordButton";
 import { LibraryFavoriteButton } from "./LibraryFavoriteButton";
+import {
+  countLibraryGoals,
+  filterLibraryRecords,
+  filterRecordsByFavorite,
+  filterRecordsByText,
+  findMostRecentRecord,
+  isLibraryFavoriteFilter,
+  isLibraryGoalFilter,
+  isLibrarySortOption,
+  libraryFavoriteFilters,
+  libraryGoalFilters,
+  librarySortOptions,
+  normalizeLibraryQuery,
+  readingGoalName,
+  readingVariantName,
+  sourceTypeName,
+  summarizeSourceExcerpt,
+  type LibraryFavoriteFilter,
+  type LibraryGoalFilter,
+  type LibrarySortOption,
+} from "./search";
 
 const statusTitle: Record<RecordsBffStatus, string> = {
   ready: "还没有阅读记录",
@@ -31,67 +61,35 @@ const statusTitle: Record<RecordsBffStatus, string> = {
   upstream_error: "读取历史记录失败",
 };
 
-const readingGoalLabel: Record<string, string> = {
-  daily_reading: "日常阅读",
-  academic: "学术摘要",
-  exam: "备考精读",
-};
-
-const readingVariantLabel: Record<string, string> = {
-  beginner_reading: "入门",
-  intermediate_reading: "中级",
-  intensive_reading: "精读",
-  academic_general: "学术通用",
-  gaokao: "高考",
-  cet: "四六级",
-  kaoyan: "考研",
-  tem: "专四专八",
-  ielts_toefl: "雅思托福",
-};
-
-const sourceTypeLabel: Record<string, string> = {
-  user_input: "手动粘贴",
-  daily_article: "每日文章",
-  imported: "导入",
-  ocr: "OCR",
-};
+const libraryScrollStoragePrefix = "claread.library.scroll.";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("zh-CN");
 }
 
-function normalize(value: string) {
-  return value.trim().toLowerCase();
+function queryFromParams(searchParams: URLSearchParams | ReadonlyURLSearchParams) {
+  return searchParams.get("q") ?? "";
 }
 
-function summarizeSourceExcerpt(record: RecordListItemVm) {
-  const excerpt = record.sourceTextExcerpt.trim();
-  if (excerpt) {
-    return excerpt;
+function goalFromParams(searchParams: URLSearchParams | ReadonlyURLSearchParams): LibraryGoalFilter {
+  const goal = searchParams.get("goal");
+  return isLibraryGoalFilter(goal) ? goal : "all";
+}
+
+function favoriteFromParams(
+  searchParams: URLSearchParams | ReadonlyURLSearchParams,
+): LibraryFavoriteFilter {
+  const favorite = searchParams.get("fav");
+  if (favorite === "1") {
+    return "favorited";
   }
 
-  const firstLine = record.sourceText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
-
-  if (!firstLine) {
-    return "暂无原文片段";
-  }
-
-  return firstLine.length > 140 ? `${firstLine.slice(0, 140)}...` : firstLine;
+  return isLibraryFavoriteFilter(favorite) ? favorite : "all";
 }
 
-function readingGoalName(value: string) {
-  return readingGoalLabel[value] ?? "透读文章";
-}
-
-function readingVariantName(value: string) {
-  return readingVariantLabel[value] ?? value;
-}
-
-function sourceTypeName(value: string) {
-  return sourceTypeLabel[value] ?? "外部来源";
+function sortFromParams(searchParams: URLSearchParams | ReadonlyURLSearchParams): LibrarySortOption {
+  const sort = searchParams.get("sort");
+  return isLibrarySortOption(sort) ? sort : "last_opened";
 }
 
 function recordTimeLabel(record: RecordListItemVm) {
@@ -207,73 +205,199 @@ export function LibraryClient({
   records,
   status,
   message,
-  total,
-  noteCount,
-  vocabularyCount,
 }: {
   records: RecordListItemVm[];
   status: RecordsBffStatus;
   message?: string;
-  total: number;
-  noteCount: number;
-  vocabularyCount: number;
 }) {
-  const [query, setQuery] = useState("");
-  const [goalFilter, setGoalFilter] = useState<string>("all");
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [, startTransition] = useTransition();
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const [query, setQuery] = useState(() => queryFromParams(searchParams));
+  const [favoriteFilter, setFavoriteFilter] = useState<LibraryFavoriteFilter>(() =>
+    favoriteFromParams(searchParams),
+  );
+  const [goalFilter, setGoalFilter] = useState<LibraryGoalFilter>(() => goalFromParams(searchParams));
+  const [sortOption, setSortOption] = useState<LibrarySortOption>(() => sortFromParams(searchParams));
+  const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, boolean>>({});
+  const [deletedRecordIds, setDeletedRecordIds] = useState<string[]>([]);
+  const deferredQuery = useDeferredValue(query);
 
-  const normalizedQuery = normalize(query);
+  const normalizedQuery = normalizeLibraryQuery(deferredQuery);
+  const currentSearch = searchParams.toString();
+  const scrollStorageKey = `${libraryScrollStoragePrefix}${pathname}?${currentSearch}`;
 
-  const filteredRecords = useMemo(() => {
-    let result = records;
-
-    if (goalFilter !== "all") {
-      result = result.filter((r) => r.readingGoal === goalFilter);
+  function rememberLibraryScrollPosition() {
+    if (typeof window === "undefined") {
+      return;
     }
 
-    if (normalizedQuery) {
-      result = result.filter((record) => {
-        const haystack = `${record.title}\n${record.sourceText}`.toLowerCase();
-        return haystack.includes(normalizedQuery);
-      });
+    const viewport = scrollViewportRef.current;
+    if (!viewport) {
+      return;
     }
 
-    return result;
-  }, [normalizedQuery, goalFilter, records]);
+    window.sessionStorage.setItem(scrollStorageKey, String(viewport.scrollTop));
+  }
 
-  const goalCounts = useMemo(() => {
-    const counts = {
-      all: records.length,
-      daily_reading: 0,
-      exam: 0,
-      academic: 0,
-    };
+  const recordsWithFavoriteState = useMemo(() => {
+    return records.map((record) => {
+      const override = favoriteOverrides[record.id];
+      return override === undefined ? record : { ...record, isFavorited: override };
+    });
+  }, [favoriteOverrides, records]);
 
-    for (const record of records) {
-      if (record.readingGoal === "daily_reading") {
-        counts.daily_reading += 1;
-      } else if (record.readingGoal === "exam") {
-        counts.exam += 1;
-      } else if (record.readingGoal === "academic") {
-        counts.academic += 1;
+  const activeRecords = useMemo(() => {
+    if (deletedRecordIds.length === 0) {
+      return recordsWithFavoriteState;
+    }
+
+    const deletedSet = new Set(deletedRecordIds);
+    return recordsWithFavoriteState.filter((record) => !deletedSet.has(record.id));
+  }, [deletedRecordIds, recordsWithFavoriteState]);
+
+  const archiveSummary = useMemo(() => {
+    return activeRecords.reduce(
+      (summary, record) => {
+        summary.total += 1;
+        summary.noteCount += record.noteCount;
+        summary.vocabularyCount += record.vocabularyCount;
+        return summary;
+      },
+      { total: 0, noteCount: 0, vocabularyCount: 0 },
+    );
+  }, [activeRecords]);
+
+  useEffect(() => {
+    const nextQuery = queryFromParams(searchParams);
+    const nextFavorite = favoriteFromParams(searchParams);
+    const nextGoal = goalFromParams(searchParams);
+    const nextSort = sortFromParams(searchParams);
+
+    setQuery((current) => (current === nextQuery ? current : nextQuery));
+    setFavoriteFilter((current) => (current === nextFavorite ? current : nextFavorite));
+    setGoalFilter((current) => (current === nextGoal ? current : nextGoal));
+    setSortOption((current) => (current === nextSort ? current : nextSort));
+  }, [searchParams]);
+
+  useEffect(() => {
+    setFavoriteOverrides((current) => {
+      const next: Record<string, boolean> = {};
+
+      for (const [recordId, favorited] of Object.entries(current)) {
+        const record = records.find((item) => item.id === recordId);
+        if (record && record.isFavorited !== favorited) {
+          next[recordId] = favorited;
+        }
       }
-    }
 
-    return counts;
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+
+      if (currentKeys.length === nextKeys.length && currentKeys.every((key) => current[key] === next[key])) {
+        return current;
+      }
+
+      return next;
+    });
   }, [records]);
 
-  const hasQuery = normalizedQuery.length > 0 || goalFilter !== "all";
+  useEffect(() => {
+    setDeletedRecordIds((current) => current.filter((recordId) => records.some((record) => record.id === recordId)));
+  }, [records]);
 
-  const recentRecord = useMemo(() => {
-    if (filteredRecords.length === 0) {
-      return null;
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
     }
 
-    return [...filteredRecords].sort((a, b) => {
-      const dateA = new Date(a.lastOpenedAt || a.createdAt).getTime();
-      const dateB = new Date(b.lastOpenedAt || b.createdAt).getTime();
-      return dateB - dateA;
-    })[0];
-  }, [filteredRecords]);
+    const viewport = scrollViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const savedTop = Number(window.sessionStorage.getItem(scrollStorageKey) ?? "0");
+    const nextTop = Number.isFinite(savedTop) ? savedTop : 0;
+    const frame = window.requestAnimationFrame(() => {
+      viewport.scrollTo({ top: nextTop });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [scrollStorageKey]);
+
+  useEffect(() => {
+    return () => {
+      rememberLibraryScrollPosition();
+    };
+  }, [scrollStorageKey]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    const trimmedQuery = query.trim();
+
+    if (trimmedQuery) {
+      params.set("q", trimmedQuery);
+    } else {
+      params.delete("q");
+    }
+
+    if (favoriteFilter === "favorited") {
+      params.set("fav", "1");
+    } else {
+      params.delete("fav");
+    }
+
+    if (goalFilter !== "all") {
+      params.set("goal", goalFilter);
+    } else {
+      params.delete("goal");
+    }
+
+    if (sortOption !== "last_opened") {
+      params.set("sort", sortOption);
+    } else {
+      params.delete("sort");
+    }
+
+    const nextSearch = params.toString();
+    const currentSearch = searchParams.toString();
+
+    if (nextSearch === currentSearch) {
+      return;
+    }
+
+    startTransition(() => {
+      router.replace((nextSearch ? `${pathname}?${nextSearch}` : pathname) as Route, { scroll: false });
+    });
+  }, [favoriteFilter, goalFilter, pathname, query, router, searchParams, sortOption]);
+
+  const textMatchedRecords = useMemo(
+    () => filterRecordsByText(activeRecords, normalizedQuery),
+    [activeRecords, normalizedQuery],
+  );
+
+  const searchScopedRecords = useMemo(
+    () => filterRecordsByFavorite(textMatchedRecords, favoriteFilter),
+    [favoriteFilter, textMatchedRecords],
+  );
+
+  const filteredRecords = useMemo(() => {
+    return filterLibraryRecords(activeRecords, {
+      normalizedQuery,
+      favoriteFilter,
+      goalFilter,
+      sortOption,
+    });
+  }, [activeRecords, favoriteFilter, goalFilter, normalizedQuery, sortOption]);
+
+  const goalCounts = useMemo(() => countLibraryGoals(searchScopedRecords), [searchScopedRecords]);
+
+  const hasQuery =
+    normalizedQuery.length > 0 || goalFilter !== "all" || favoriteFilter !== "all";
+
+  const recentRecord = useMemo(() => findMostRecentRecord(filteredRecords), [filteredRecords]);
 
   const lastReadDateStr = recentRecord
     ? new Date(recentRecord.lastOpenedAt || recentRecord.createdAt).toLocaleDateString("zh-CN", {
@@ -283,16 +407,53 @@ export function LibraryClient({
       })
     : null;
 
-  const goalOptions = [
-    { value: "all", label: "全部", count: goalCounts.all },
-    { value: "daily_reading", label: "日常阅读", count: goalCounts.daily_reading },
-    { value: "exam", label: "备考精读", count: goalCounts.exam },
-    { value: "academic", label: "学术阅读", count: goalCounts.academic },
-  ] as const;
+  const goalOptions = libraryGoalFilters.map((value) => ({
+    value,
+    label:
+      value === "all"
+        ? "全部"
+        : value === "daily_reading"
+          ? "日常阅读"
+          : value === "exam"
+            ? "备考精读"
+            : "学术阅读",
+    count: goalCounts[value],
+  }));
+
+  const favoriteOptions = libraryFavoriteFilters.map((value) => ({
+    value,
+    label: value === "all" ? "全部归档" : "仅收藏",
+  }));
+
+  const sortOptions = librarySortOptions.map((value) => ({
+    value,
+    label: value === "last_opened" ? "最近阅读" : "最近创建",
+  }));
+
+  const resultCountLabel = hasQuery
+    ? `找到 ${filteredRecords.length} 篇记录`
+    : `共 ${filteredRecords.length} 篇记录`;
 
   function resetFilters() {
     setQuery("");
+    setFavoriteFilter("all");
     setGoalFilter("all");
+  }
+
+  function handleFavoriteChange(recordId: string, favorited: boolean) {
+    setFavoriteOverrides((current) => ({
+      ...current,
+      [recordId]: favorited,
+    }));
+
+    if (favoriteFilter === "favorited" && !favorited) {
+      toast.success("已从收藏中移除。");
+    }
+  }
+
+  function handleRecordDeleted({ recordId, message: successMessage }: { recordId: string; message: string }) {
+    setDeletedRecordIds((current) => (current.includes(recordId) ? current : [...current, recordId]));
+    toast.success(successMessage);
   }
 
   return (
@@ -324,20 +485,70 @@ export function LibraryClient({
             <Search className="h-4 w-4 text-muted" />
             <input
               type="text"
-              aria-label="搜索标题或原文片段"
-              placeholder="搜索标题或原文片段..."
+              aria-label="搜索标题、原文片段或阅读目标"
+              placeholder="搜索标题、原文片段或阅读目标..."
               className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
           <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-ink">
-            共 {filteredRecords.length} 篇记录
+            {resultCountLabel}
           </p>
         </div>
 
+        <div className="mb-7 flex flex-col gap-4 pl-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            {favoriteOptions.map((option) => {
+              const active = favoriteFilter === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setFavoriteFilter(option.value)}
+                  aria-pressed={active}
+                  className={`focus-ring inline-flex items-center gap-2 rounded-pill border px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] transition-colors ${
+                    active
+                      ? "border-ink bg-ink text-reader-paper"
+                      : "border-hairline text-muted hover:border-ink-soft hover:text-ink"
+                  }`}
+                >
+                  {option.value === "favorited" ? <Heart className="h-3.5 w-3.5" /> : null}
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[0.62rem] font-bold uppercase tracking-[0.14em] text-subtle">
+              排序
+            </span>
+            {sortOptions.map((option) => {
+              const active = sortOption === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSortOption(option.value)}
+                  aria-pressed={active}
+                  className={`focus-ring rounded-pill px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] transition-colors ${
+                    active ? "bg-surface-warm text-ink" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {filteredRecords.length > 0 ? (
-          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
+          <div
+            ref={scrollViewportRef}
+            onScroll={rememberLibraryScrollPosition}
+            className="min-h-0 flex-1 overflow-y-auto scrollbar-hide"
+          >
             <section className="pr-5">
               {filteredRecords.map((record) => {
                 const statusDisplay = statusMeta(record.analysisStatus);
@@ -374,6 +585,7 @@ export function LibraryClient({
                       {/* Article Title Linked to Reader */}
                       <Link
                         href={appReaderRoute(record.id)}
+                        onClick={rememberLibraryScrollPosition}
                         className="focus-ring inline-block rounded-md outline-offset-4"
                       >
                         <h2 className="font-headline text-[1.58rem] font-bold leading-[1.28] tracking-tight text-ink transition-colors group-hover:text-lens-blue">
@@ -434,13 +646,20 @@ export function LibraryClient({
                         recordId={record.id}
                         initialFavorited={record.isFavorited}
                         compact
+                        onFavoritedChange={(favorited) => handleFavoriteChange(record.id, favorited)}
                       />
                       
                       {/* Bottom right: Secondary operations appearing on hover for decluttered feed */}
                       <div className="flex items-center gap-2 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-within:opacity-100 transition-opacity duration-300">
-                        <DeleteRecordButton recordId={record.id} title={record.title} compact />
+                        <DeleteRecordButton
+                          recordId={record.id}
+                          title={record.title}
+                          compact
+                          onDeleted={handleRecordDeleted}
+                        />
                         <Link
                           href={appReaderRoute(record.id)}
+                          onClick={rememberLibraryScrollPosition}
                           className="focus-ring group inline-flex items-center justify-center h-8 w-8 rounded-md text-muted transition-all duration-200 hover:text-ink hover:translate-x-[4px] active:translate-x-0 hover:scale-110"
                           title="继续阅读"
                         >
@@ -458,7 +677,7 @@ export function LibraryClient({
             hasQuery,
             title: hasQuery ? "这一栏暂时没有对应记录。" : statusTitle[status],
             description: hasQuery
-              ? "换一个标题、关键词或阅读目标，再把这本归档册翻一页。"
+              ? "换一个标题、关键词或阅读目标，或者清空当前条件，再把这本归档册翻一页。"
               : message ?? "完成一次真实解析后，标题、笔记、生词和最近阅读都会在这里形成可回看的目录。",
             onReset: hasQuery ? resetFilters : undefined,
           })
@@ -483,11 +702,15 @@ export function LibraryClient({
               <div className="space-y-8">
                 <section>
                   <p className="font-reading text-[0.98rem] leading-[1.75] text-ink">
-                    本册收录了 <span className="font-semibold text-ink">{total}</span> 篇文章，留有 {noteCount} 条笔记与 {vocabularyCount} 个生词。
+                    本册收录了 <span className="font-semibold text-ink">{archiveSummary.total}</span> 篇文章，留有 {archiveSummary.noteCount} 条笔记与 {archiveSummary.vocabularyCount} 个生词。
                   </p>
                   {lastReadDateStr ? (
                     <p className="mt-1.5 font-reading text-[0.9rem] leading-[1.6] text-muted">
                       最近一次翻阅在 {lastReadDateStr}。
+                    </p>
+                  ) : hasQuery ? (
+                    <p className="mt-1.5 font-reading text-[0.9rem] leading-[1.6] text-muted">
+                      当前检索条件下还没有匹配的最近阅读记录。
                     </p>
                   ) : (
                     <p className="mt-1.5 font-reading text-[0.9rem] leading-[1.6] text-muted">
@@ -503,6 +726,7 @@ export function LibraryClient({
                   {recentRecord ? (
                     <Link
                       href={appReaderRoute(recentRecord.id)}
+                      onClick={rememberLibraryScrollPosition}
                       className="group block rounded-note focus-ring outline-offset-4"
                     >
                       <h4 className="font-headline text-[1.12rem] font-semibold leading-[1.32] text-ink transition-colors group-hover:text-ink-soft">
@@ -529,26 +753,24 @@ export function LibraryClient({
                     <h3 className="text-[0.62rem] font-bold uppercase tracking-[0.16em] text-subtle">
                       按阅读目标浏览
                     </h3>
-                    {goalFilter !== "all" ? (
-                      <button
-                        type="button"
-                        onClick={resetFilters}
-                        className="text-[0.62rem] font-semibold tracking-[0.08em] text-lens-blue transition-colors hover:text-ink"
-                      >
-                        清除
-                      </button>
-                    ) : null}
                   </div>
                   <div className="space-y-1">
                     {goalOptions.map((option) => {
                       const active = goalFilter === option.value;
+                      const disabled = option.value !== "all" && option.count === 0 && !active;
                       return (
                         <button
                           key={option.value}
                           type="button"
                           onClick={() => setGoalFilter(option.value)}
+                          disabled={disabled}
+                          aria-pressed={active}
                           className={`flex w-full items-center justify-between px-1 py-2 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-lens-blue ${
-                            active ? "text-ink" : "text-subtle hover:text-muted"
+                            active
+                              ? "text-ink"
+                              : disabled
+                                ? "cursor-not-allowed text-hairline/80"
+                                : "text-subtle hover:text-muted"
                           }`}
                         >
                           <span className="inline-flex items-center gap-3">
