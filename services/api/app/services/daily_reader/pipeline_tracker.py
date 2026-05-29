@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import TYPE_CHECKING
 
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 
 if TYPE_CHECKING:
     import asyncpg
@@ -83,7 +83,7 @@ class PipelineRunTracker:
 
     async def add_error(self, stage: str, message: str) -> None:
         pool = await self._ensure_pool()
-        error_entry = json.dumps([{"stage": stage, "message": message}], ensure_ascii=False)
+        error_entry = jsonb_param([{"stage": stage, "message": message}])
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -113,7 +113,7 @@ class PipelineRunTracker:
 
     async def fail(self, stage: str, message: str) -> None:
         pool = await self._ensure_pool()
-        error_entry = json.dumps([{"stage": stage, "message": message}], ensure_ascii=False)
+        error_entry = jsonb_param([{"stage": stage, "message": message}])
         async with pool.acquire() as conn:
             await conn.execute(
                 """

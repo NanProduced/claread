@@ -1,24 +1,15 @@
 from __future__ import annotations
-
-import json
 from typing import Any, Iterable, Mapping
 from uuid import UUID
 
 from fastapi import HTTPException
 
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
+from app.database.json_compat import ensure_json_object
 
 
 def ensure_json_dict(value: Any) -> dict:
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-            return parsed if isinstance(parsed, dict) else {}
-        except (json.JSONDecodeError, TypeError):
-            return {}
-    return {}
+    return ensure_json_object(value)
 
 
 def article_sentence_order(render_scene: dict) -> dict[str, int]:

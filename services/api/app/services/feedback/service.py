@@ -6,13 +6,13 @@ Handles CRUD operations for feedback table.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 
 logger = logging.getLogger("app.services.feedback")
 
@@ -64,7 +64,7 @@ async def submit_feedback(
                 feedback_type,
                 annotation_type,
                 content,
-                json.dumps(context_json),
+                jsonb_param(context_json),
                 app_version,
                 now,
             )

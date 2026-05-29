@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def insert_candidate_entry(
                 classification,
                 result_kind,
                 confidence,
-                json.dumps(generated_payload_json, ensure_ascii=False),
+                jsonb_param(generated_payload_json),
                 context_sentence,
                 record_id,
                 sentence_id,

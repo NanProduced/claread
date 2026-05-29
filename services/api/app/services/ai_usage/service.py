@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -9,6 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
                 event.billing_policy_version,
                 event.error_code,
                 (event.error_message or "")[:1000] or None,
-                json.dumps(metadata_json, ensure_ascii=False),
+                jsonb_param(metadata_json),
                 datetime.now(timezone.utc),
             )
         return inserted_id if isinstance(inserted_id, UUID) else None

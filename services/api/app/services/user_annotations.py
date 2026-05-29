@@ -1,4 +1,3 @@
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -14,6 +13,7 @@ from app.contracts.annotation import (
     utf16_code_unit_length,
 )
 from app.database import connection as db_connect
+from app.database.json_compat import ensure_json_object, jsonb_param
 from app.schemas.user_annotations import (
     UserAnnotationCreateRequest,
     UserAnnotationResponse,
@@ -107,11 +107,7 @@ def _row_to_response(
     row: dict,
     superseded_ids: list[UUID] | None = None,
 ) -> UserAnnotationResponse:
-    payload_json = (
-        row["payload_json"]
-        if isinstance(row["payload_json"], dict)
-        else json.loads(row["payload_json"] or "{}")
-    )
+    payload_json = ensure_json_object(row.get("payload_json"))
     raw_segments = payload_json.get("segments")
     segments = []
     if isinstance(raw_segments, list):
@@ -225,9 +221,7 @@ async def _resolve_single_sentence_conflict(
                 RETURNING {_ANNOTATION_FIELDS}
                 """,
                 existing_row["color"],
-                json.dumps(dict(existing_row.get("payload_json", {})), ensure_ascii=False)
-                if isinstance(existing_row.get("payload_json"), dict)
-                else json.dumps({}, ensure_ascii=False),
+                jsonb_param(ensure_json_object(existing_row.get("payload_json"))),
                 existing_row["id"],
             )
             if not row:
@@ -264,7 +258,7 @@ async def _resolve_single_sentence_conflict(
                 req.end_offset,
                 req.text_hash,
                 existing_row["color"],
-                json.dumps(dict(req.payload_json), ensure_ascii=False),
+                jsonb_param(dict(req.payload_json)),
                 existing_row["id"],
             )
             if not row:
@@ -370,7 +364,7 @@ async def _resolve_single_sentence_conflict(
         new_end_offset,
         new_text_hash,
         merged_color,
-        json.dumps(dict(req.payload_json), ensure_ascii=False),
+        jsonb_param(dict(req.payload_json)),
         earliest_row["id"],
     )
     if not row:

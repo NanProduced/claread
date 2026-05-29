@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import random
 import string
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 
 IdentityBindResult = Literal["created", "already_bound"]
 
@@ -92,7 +92,7 @@ async def _insert_identity(
     provider_user_id: str,
     unionid: str | None,
     app_id: str | None,
-    payload_json: str,
+    auth_payload_json: dict[str, Any],
 ) -> None:
     await conn.execute(
         """
@@ -105,7 +105,7 @@ async def _insert_identity(
         provider_user_id,
         unionid,
         app_id,
-        payload_json,
+        jsonb_param(auth_payload_json),
     )
 
 
@@ -122,7 +122,7 @@ async def get_or_create_user_by_identity(
         raise RuntimeError("Database pool not initialized")
 
     identity_lock_key = _stable_lock_key(f"identity:{provider}:{provider_user_id}")
-    payload_json = json.dumps(auth_payload or {})
+    auth_payload_json = dict(auth_payload or {})
 
     async with db_connection.DB_POOL.acquire() as conn:
         if unionid:
@@ -154,11 +154,11 @@ async def get_or_create_user_by_identity(
                 WHERE provider = $1 AND provider_user_id = $2
                 """,
                 provider,
-                provider_user_id,
-                unionid,
-                app_id,
-                payload_json,
-            )
+                    provider_user_id,
+                    unionid,
+                    app_id,
+                    jsonb_param(auth_payload_json),
+                )
             return IdentityLookupResult(user_id=identity_user_id, created=False)
 
         unionid_user_id = await _find_unionid_user_id(conn, unionid)
@@ -170,7 +170,7 @@ async def get_or_create_user_by_identity(
                 provider_user_id=provider_user_id,
                 unionid=unionid,
                 app_id=app_id,
-                payload_json=payload_json,
+                auth_payload_json=auth_payload_json,
             )
             return IdentityLookupResult(user_id=unionid_user_id, created=False)
 
@@ -190,7 +190,7 @@ async def get_or_create_user_by_identity(
             provider_user_id=provider_user_id,
             unionid=unionid,
             app_id=app_id,
-            payload_json=payload_json,
+            auth_payload_json=auth_payload_json,
         )
 
         return IdentityLookupResult(user_id=user_id, created=True)
@@ -215,7 +215,7 @@ async def bind_identity_to_user(
         raise RuntimeError("Database pool not initialized")
 
     identity_lock_key = _stable_lock_key(f"identity:{provider}:{provider_user_id}")
-    payload_json = json.dumps(auth_payload or {})
+    auth_payload_json = dict(auth_payload or {})
 
     async with db_connection.DB_POOL.acquire() as conn:
         if unionid:
@@ -251,7 +251,7 @@ async def bind_identity_to_user(
                     provider_user_id,
                     unionid,
                     app_id,
-                    payload_json,
+                    jsonb_param(auth_payload_json),
                 )
                 return "already_bound"
 
@@ -272,7 +272,7 @@ async def bind_identity_to_user(
             provider_user_id=provider_user_id,
             unionid=unionid,
             app_id=app_id,
-            payload_json=payload_json,
+            auth_payload_json=auth_payload_json,
         )
 
         return "created"

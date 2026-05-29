@@ -269,8 +269,9 @@ class TestVocabularyCreateInitializesReview:
         assert resp.status_code == 200
         assert resp.json()["created"] is True
 
-        # The INSERT call's payload_json arg ($15) should contain review
+        # The INSERT call's payload_json arg ($15) should contain review and stay as a native dict
         insert_call = mock_conn.fetchrow.call_args_list[1]
-        payload = json.loads(insert_call[0][15])
+        payload = insert_call[0][15]
+        assert isinstance(payload, dict)
         assert payload["review"]["stage"] == 0
         assert payload["review"]["next_review_at"] is not None

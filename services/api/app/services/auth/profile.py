@@ -5,11 +5,11 @@ Handles user profile retrieval and updates.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
+from app.database.json_compat import ensure_json_object, jsonb_param
 
 
 async def get_user_profile(user_id: UUID) -> dict | None:
@@ -34,7 +34,7 @@ async def get_user_profile(user_id: UUID) -> dict | None:
         "nickname": row["display_name"] or "",
         "avatar_url": row["avatar_url"] or "",
         "cumulative_article_count": row["cumulative_article_count"] or 0,
-        "settings": json.loads(row["settings_json"]) if row["settings_json"] else {},
+        "settings": ensure_json_object(row["settings_json"]),
     }
 
 
@@ -54,9 +54,9 @@ async def update_user_profile(
                 current_settings_raw = await conn.fetchval(
                     "SELECT settings_json FROM users WHERE id = $1", user_id
                 )
-                current_settings = json.loads(current_settings_raw) if current_settings_raw else {}
+                current_settings = ensure_json_object(current_settings_raw)
                 current_settings.update(settings)
-                new_settings_json = json.dumps(current_settings, ensure_ascii=False)
+                new_settings_json = jsonb_param(current_settings)
             else:
                 new_settings_json = None
 

@@ -7,12 +7,12 @@ Upsert merges source_refs and collected_forms on conflict instead of overwriting
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
+from app.database.json_compat import ensure_json_object, jsonb_param
 from app.schemas.user_assets.vocabulary import VocabularyPayload
 
 SOURCE_REFS_MAX = 20
@@ -160,11 +160,7 @@ async def upsert_vocabulary(
             )
 
             if existing_row:
-                existing_payload = (
-                    json.loads(existing_row["payload_json"])
-                    if existing_row["payload_json"]
-                    else {}
-                )
+                existing_payload = ensure_json_object(existing_row["payload_json"])
                 merged_payload = _merge_payload_on_conflict(
                     existing_payload=existing_payload,
                     incoming_payload=payload_json,
@@ -213,7 +209,7 @@ async def upsert_vocabulary(
                 phonetic,
                 part_of_speech,
                 short_meaning,
-                json.dumps(meanings_json),
+                jsonb_param(meanings_json),
                 tags,
                 exchange,
                 source_provider,
@@ -221,7 +217,7 @@ async def upsert_vocabulary(
                 source_sentence,
                 source_context,
                 mastery_status,
-                json.dumps(merged_payload),
+                jsonb_param(merged_payload),
                 now,
             )
             if row is None:
@@ -341,7 +337,7 @@ async def update_vocabulary(
     if short_meaning is not None:
         updates["short_meaning"] = short_meaning
     if payload_json is not None:
-        updates["payload_json"] = json.dumps(payload_json)
+        updates["payload_json"] = jsonb_param(payload_json)
 
     if len(updates) == 1:
         return await get_vocabulary_by_id(user_id, vocab_id)
@@ -396,7 +392,7 @@ async def _load_user_vocab_lemmas(
     )
     lemma_map: dict[str, dict[str, Any]] = {}
     for row in rows:
-        payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
+        payload = ensure_json_object(row["payload_json"])
         collected_forms: list[str] = payload.get("collected_forms", [])
         lemma_map[row["lemma"].lower()] = {
             "vocab_id": row["id"],
@@ -588,7 +584,7 @@ async def submit_review(
                 return None
 
             payload_raw = row["payload_json"]
-            payload = json.loads(payload_raw) if payload_raw else {}
+            payload = ensure_json_object(payload_raw)
             review = payload.get("review", {})
             current_stage = review.get("stage", 0)
             review_count = (row["review_count"] or 0) + 1
@@ -625,7 +621,7 @@ async def submit_review(
                     updated_at     = $4
                 WHERE id = $5 AND user_id = $6
                 """,
-                json.dumps(payload),
+                jsonb_param(payload),
                 mastery_status,
                 review_count,
                 now,

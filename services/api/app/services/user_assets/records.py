@@ -7,12 +7,12 @@ Splits heavy content from metadata.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
+from app.database.json_compat import ensure_json_object, jsonb_param
 
 # Fields that reside in analysis_results table
 _CONTENT_FIELDS = {"render_scene_json", "page_state_json", "workflow_version", "schema_version"}
@@ -71,11 +71,8 @@ def _ensure_dict(row: dict | None) -> dict | None:
     if row is None:
         return None
     for col in _JSONB_COLUMNS:
-        if col in row and isinstance(row[col], str):
-            try:
-                row[col] = json.loads(row[col])
-            except (json.JSONDecodeError, TypeError):
-                row[col] = {}
+        if col in row:
+            row[col] = ensure_json_object(row[col])
 
     # Synthesize request_payload_json for backward compatibility
     if "request_payload_json" not in row or not row["request_payload_json"]:
@@ -172,10 +169,10 @@ async def upsert_record(
                         page_state_json   = EXCLUDED.page_state_json,
                         workflow_version  = EXCLUDED.workflow_version,
                         schema_version    = EXCLUDED.schema_version
-                    """,
+                """,
                     record_id,
-                    json.dumps(render_scene_json, ensure_ascii=False),
-                    json.dumps(page_state_json or {}, ensure_ascii=False),
+                    jsonb_param(render_scene_json),
+                    jsonb_param(page_state_json or {}),
                     workflow_version,
                     schema_version,
                     now,
@@ -344,7 +341,7 @@ async def update_record(
                 for i, (k, v) in enumerate(content_updates.items()):
                     if k in _JSONB_COLUMNS:
                         set_parts.append(f"{k} = ${i + 2}::jsonb")
-                        params.append(json.dumps(v, ensure_ascii=False))
+                        params.append(jsonb_param(v))
                     else:
                         set_parts.append(f"{k} = ${i + 2}")
                         params.append(v)

@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
+import pytest
+
+from app.api.routes.vocabulary import _vocab_row_to_response
+from app.database.json_compat import ensure_json_array, ensure_json_object
+from app.schemas.internal.overview_hint import StoredOverviewHint
+from app.services.ai_usage.service import AIUsageEventCreate, record_ai_usage_event
+from app.services.analysis.overview_task_service import update_record_overview_hint
+from app.services.analysis.task_service import submit_task, update_task_status
+from app.services.auth.identity import get_or_create_user_by_identity
+from app.services.auth.profile import get_user_profile, update_user_profile
+from app.services.daily_reader.pipeline_tracker import PipelineRunTracker
+from app.services.dictionary_ai.repository import insert_candidate_entry
+from app.services.feedback.service import submit_feedback
+from app.services.user_annotations import _row_to_response as annotation_row_to_response
+from app.services.user_assets.records import update_record
+from app.services.user_assets.vocabulary import upsert_vocabulary
+
+
+def _make_mock_conn_with_tx() -> AsyncMock:
+    mock_conn = AsyncMock()
+    tx_ctx = MagicMock()
+    tx_ctx.__aenter__ = AsyncMock(return_value=None)
+    tx_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_conn.transaction = MagicMock(return_value=tx_ctx)
+    return mock_conn
+
+
+def _make_mock_pool(mock_conn: AsyncMock) -> MagicMock:
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_pool
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+class TestJsonCompatHelpers:
+    def test_ensure_json_object_accepts_native_and_legacy_values(self):
+        assert ensure_json_object({"a": 1}) == {"a": 1}
+        assert ensure_json_object('{"a": 1}') == {"a": 1}
+        assert ensure_json_object("[1, 2]") == {}
+
+    def test_ensure_json_array_accepts_native_and_legacy_values(self):
+        assert ensure_json_array([1, 2]) == [1, 2]
+        assert ensure_json_array("[1, 2]") == [1, 2]
+        assert ensure_json_array('{"a": 1}') == []
+
+
+class TestJsonCompatibilityReads:
+    def test_vocabulary_route_parses_legacy_string_json(self):
+        now = datetime.now(UTC)
+        row = {
+            "id": uuid4(),
+            "user_id": uuid4(),
+            "lemma": "test",
+            "display_word": "test",
+            "phonetic": None,
+            "part_of_speech": None,
+            "short_meaning": "meaning",
+            "meanings_json": '[{"part_of_speech":"n.","definitions":[]}]',
+            "tags": [],
+            "exchange": [],
+            "source_provider": "tecd3",
+            "dict_entry_id": None,
+            "source_sentence": None,
+            "source_context": None,
+            "mastery_status": "new",
+            "review_count": 0,
+            "last_reviewed_at": None,
+            "payload_json": '{"review":{"stage":1}}',
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        response = _vocab_row_to_response(row)
+
+        assert response.meanings_json[0]["part_of_speech"] == "n."
+        assert response.payload_json["review"]["stage"] == 1
+
+    def test_annotation_response_accepts_native_payload_json(self):
+        now = datetime.now(UTC)
+        row = {
+            "id": uuid4(),
+            "analysis_record_id": uuid4(),
+            "anchor_type": "sentence",
+            "target_key": "record:r:sentence:s1",
+            "paragraph_id": "p1",
+            "sentence_id": "s1",
+            "selected_text": "Test text",
+            "start_offset": None,
+            "end_offset": None,
+            "text_hash": None,
+            "color": "soft_green",
+            "payload_json": {"segments": []},
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        response = annotation_row_to_response(row)
+
+        assert response.payload_json == {"segments": []}
+
+
+class TestJsonbWriteContracts:
+    @pytest.mark.anyio
+    async def test_upsert_vocabulary_writes_native_jsonb(self):
+        mock_conn = _make_mock_conn_with_tx()
+        mock_conn.fetchrow = AsyncMock(side_effect=[
+            None,
+            {"id": uuid4(), "updated_at": datetime.now(UTC), "created": True},
+        ])
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.user_assets.vocabulary.db_connection.DB_POOL", mock_pool):
+            await upsert_vocabulary(
+                user_id=uuid4(),
+                lemma="test",
+                display_word="test",
+                short_meaning="meaning",
+                dict_entry_id=None,
+                phonetic=None,
+                part_of_speech=None,
+                meanings_json=[{"part_of_speech": "n.", "definitions": []}],
+                tags=[],
+                exchange=[],
+                source_provider="tecd3",
+                source_sentence=None,
+                source_context=None,
+                payload_json={},
+            )
+
+        insert_args = mock_conn.fetchrow.await_args_list[1].args
+        assert isinstance(insert_args[7], list)
+        assert isinstance(insert_args[15], dict)
+        assert insert_args[15]["review"]["stage"] == 0
+
+    @pytest.mark.anyio
+    async def test_auth_identity_writes_native_auth_payload_json(self):
+        user_id = UUID("22222222-2222-4222-8222-222222222222")
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = None
+        mock_conn.fetchval.return_value = user_id
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.auth.identity.db_connection.DB_POOL", mock_pool):
+            result = await get_or_create_user_by_identity(
+                provider="phone",
+                provider_user_id="+8613800138000",
+                auth_payload={"verified_by": "mock"},
+            )
+
+        assert result.user_id == user_id
+        insert_args = mock_conn.execute.await_args_list[-1].args
+        assert any(isinstance(arg, dict) and arg["verified_by"] == "mock" for arg in insert_args)
+
+    @pytest.mark.anyio
+    async def test_submit_task_writes_native_event_payload_json(self):
+        user_id = uuid4()
+        record_id = uuid4()
+        task_id = uuid4()
+        mock_conn = _make_mock_conn_with_tx()
+        mock_conn.fetchrow = AsyncMock(side_effect=[None, {"id": record_id}, {"id": task_id}])
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.analysis.task_service.db_connection.DB_POOL", mock_pool):
+            await submit_task(
+                user_id=user_id,
+                text="Hello world",
+                reading_goal="daily_reading",
+                reading_variant="intermediate_reading",
+                source_type="user_input",
+                extended=False,
+            )
+
+        execute_args = mock_conn.execute.await_args.args
+        assert isinstance(execute_args[2], dict)
+        assert execute_args[2] == {}
+
+    @pytest.mark.anyio
+    async def test_update_task_status_writes_native_usage_summary_json(self):
+        mock_conn = AsyncMock()
+        mock_pool = _make_mock_pool(mock_conn)
+        usage_summary = {"aggregate": {"input_tokens": 1}}
+
+        with patch("app.services.analysis.task_service.db_connection.DB_POOL", mock_pool):
+            await update_task_status(uuid4(), status="succeeded", usage_summary_json=usage_summary)
+
+        execute_args = mock_conn.execute.await_args.args
+        assert any(isinstance(arg, dict) and arg == usage_summary for arg in execute_args)
+
+    @pytest.mark.anyio
+    async def test_overview_hint_update_reads_legacy_string_and_writes_native_jsonb(self):
+        mock_conn = _make_mock_conn_with_tx()
+        mock_conn.fetchrow = AsyncMock(return_value={"page_state_json": '{"derived":{}}'})
+        mock_pool = _make_mock_pool(mock_conn)
+        hint = StoredOverviewHint(
+            status="ready",
+            source="learning_overview_hint_agent",
+            source_text_hash="hash-1",
+            workflow_version="3.0.0",
+            schema_version="3.0.0",
+            updated_at=datetime.now(UTC).isoformat(),
+            task_id=str(uuid4()),
+            overview="summary",
+            confidence="medium",
+        )
+
+        with patch("app.services.analysis.overview_task_service.db_connection.DB_POOL", mock_pool):
+            await update_record_overview_hint(record_id=uuid4(), hint=hint)
+
+        execute_args = mock_conn.execute.await_args.args
+        payload = execute_args[2]
+        assert isinstance(payload, dict)
+        assert payload["derived"]["overview_hint"]["overview"] == "summary"
+
+    @pytest.mark.anyio
+    async def test_records_update_record_writes_native_jsonb(self):
+        mock_conn = _make_mock_conn_with_tx()
+        mock_pool = _make_mock_pool(mock_conn)
+        user_id = uuid4()
+        record_id = uuid4()
+
+        with (
+            patch("app.services.user_assets.records.db_connection.DB_POOL", mock_pool),
+            patch("app.services.user_assets.records.get_record_by_id", AsyncMock(return_value={"id": record_id})),
+        ):
+            await update_record(user_id, record_id, render_scene_json={"article": {"title": "Test"}})
+
+        execute_args = mock_conn.execute.await_args.args
+        assert any(isinstance(arg, dict) and arg["article"]["title"] == "Test" for arg in execute_args)
+
+    @pytest.mark.anyio
+    async def test_ai_usage_event_writes_native_metadata_json(self):
+        metadata_json = {"source": "test"}
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = uuid4()
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.ai_usage.service.db_connection.DB_POOL", mock_pool):
+            await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope="user_billed",
+                    capability_code="analysis",
+                    billing_mode="charged",
+                    status="succeeded",
+                    metadata_json=metadata_json,
+                )
+            )
+
+        fetchval_args = mock_conn.fetchval.await_args.args
+        assert any(isinstance(arg, dict) and arg["source"] == "test" for arg in fetchval_args)
+
+    @pytest.mark.anyio
+    async def test_submit_feedback_writes_native_context_json(self):
+        mock_conn = _make_mock_conn_with_tx()
+        mock_conn.fetchrow.return_value = {
+            "id": uuid4(),
+            "feedback_scope": "app",
+            "target_id": "app_general",
+            "sentiment": "positive",
+            "feedback_type": "suggestion",
+            "status": "pending",
+            "created_at": datetime.now(UTC),
+        }
+        mock_pool = _make_mock_pool(mock_conn)
+        context_json = {"page": "home"}
+
+        with patch("app.services.feedback.service.db_connection.DB_POOL", mock_pool):
+            await submit_feedback(
+                user_id=uuid4(),
+                feedback_scope="app",
+                target_id="app_general",
+                analysis_record_id=None,
+                sentiment="positive",
+                feedback_type="suggestion",
+                annotation_type=None,
+                content=None,
+                context_json=context_json,
+                app_version=None,
+            )
+
+        fetchrow_args = mock_conn.fetchrow.await_args.args
+        assert any(isinstance(arg, dict) and arg == context_json for arg in fetchrow_args)
+
+    @pytest.mark.anyio
+    async def test_candidate_entry_writes_native_generated_payload_json(self):
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = uuid4()
+        mock_pool = _make_mock_pool(mock_conn)
+        generated_payload_json = {"candidate": {"word": "doomscroll"}}
+
+        with patch("app.services.dictionary_ai.repository.db_connection.DB_POOL", mock_pool):
+            await insert_candidate_entry(
+                query="doomscrolling",
+                normalized_query="doomscrolling",
+                query_type="word",
+                classification="slang_or_informal",
+                result_kind="ai_entry",
+                confidence="medium",
+                generated_payload_json=generated_payload_json,
+                context_sentence="She spent the whole night doomscrolling.",
+                record_id=None,
+                sentence_id=None,
+                usage_event_id=None,
+            )
+
+        fetchval_args = mock_conn.fetchval.await_args.args
+        assert any(isinstance(arg, dict) and arg == generated_payload_json for arg in fetchval_args)
+
+    @pytest.mark.anyio
+    async def test_update_user_profile_merges_legacy_string_and_writes_native_jsonb(self):
+        mock_conn = _make_mock_conn_with_tx()
+        mock_conn.fetchval.return_value = '{"theme":"light"}'
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.auth.profile.db_connection.DB_POOL", mock_pool):
+            changed = await update_user_profile(uuid4(), settings={"font": "serif"})
+
+        assert changed == ["settings_json"]
+        execute_args = mock_conn.execute.await_args.args
+        assert any(
+            isinstance(arg, dict)
+            and arg["theme"] == "light"
+            and arg["font"] == "serif"
+            for arg in execute_args
+        )
+
+    @pytest.mark.anyio
+    async def test_get_user_profile_accepts_native_settings_json(self):
+        user_id = uuid4()
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow.return_value = {
+            "id": user_id,
+            "display_name": "Claread",
+            "avatar_url": None,
+            "cumulative_article_count": 3,
+            "settings_json": {"theme": "light"},
+        }
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.auth.profile.db_connection.DB_POOL", mock_pool):
+            profile = await get_user_profile(user_id)
+
+        assert profile is not None
+        assert profile["settings"] == {"theme": "light"}
+
+    @pytest.mark.anyio
+    async def test_pipeline_tracker_add_error_writes_native_json_array(self):
+        mock_conn = AsyncMock()
+        mock_pool = _make_mock_pool(mock_conn)
+        tracker = PipelineRunTracker("run-1")
+        tracker._pool = mock_pool
+
+        await tracker.add_error("parse", "boom")
+
+        execute_args = mock_conn.execute.await_args.args
+        assert any(
+            isinstance(arg, list)
+            and arg[0]["stage"] == "parse"
+            and arg[0]["message"] == "boom"
+            for arg in execute_args
+        )

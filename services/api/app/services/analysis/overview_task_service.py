@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
 from app.database import connection as db_connection
+from app.database.json_compat import ensure_json_object, jsonb_param
 from app.schemas.internal.overview_hint import StoredOverviewHint
 
 logger = logging.getLogger(__name__)
@@ -56,16 +56,7 @@ class OverviewTaskExecutionPayload:
 
 
 def _ensure_page_state_dict(payload: Any) -> dict[str, Any]:
-    if isinstance(payload, dict):
-        return dict(payload)
-    if isinstance(payload, str):
-        try:
-            parsed = json.loads(payload)
-            if isinstance(parsed, dict):
-                return parsed
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return {}
+    return ensure_json_object(payload)
 
 
 def _merge_overview_hint(
@@ -111,7 +102,7 @@ async def update_record_overview_hint(
                     page_state_json = EXCLUDED.page_state_json
                 """,
                 record_id,
-                json.dumps(next_page_state, ensure_ascii=False),
+                jsonb_param(next_page_state),
             )
 
 
@@ -199,7 +190,7 @@ async def enqueue_overview_task_if_needed(
                     WHERE record_id = $1
                     """,
                     record_id,
-                    json.dumps(next_page_state, ensure_ascii=False),
+                    jsonb_param(next_page_state),
                 )
                 return UUID(str(active_row["id"]))
 
@@ -222,7 +213,7 @@ async def enqueue_overview_task_if_needed(
                 WHERE record_id = $1
                 """,
                 record_id,
-                json.dumps(next_page_state, ensure_ascii=False),
+                jsonb_param(next_page_state),
             )
             await conn.execute(
                 """
@@ -242,7 +233,7 @@ async def enqueue_overview_task_if_needed(
                 VALUES ($1, 'task_submitted', $2::jsonb, $3)
                 """,
                 task_id,
-                json.dumps(
+                jsonb_param(
                     {
                         "source_text_hash": source_text_hash,
                         "workflow_version": workflow_version,
@@ -287,7 +278,7 @@ async def update_task_status(
             continue
         if field_name in json_fields and isinstance(value, dict):
             sets.append(f"{field_name} = ${idx}::jsonb")
-            params.append(json.dumps(value, ensure_ascii=False))
+            params.append(jsonb_param(value))
         else:
             sets.append(f"{field_name} = ${idx}")
             params.append(value)
@@ -317,7 +308,7 @@ async def insert_task_event(
             """,
             task_id,
             event_type,
-            json.dumps(payload or {}, ensure_ascii=False),
+            jsonb_param(payload or {}),
             datetime.now(timezone.utc),
         )
 
@@ -454,7 +445,7 @@ async def requeue_stale_tasks(*, queued_before: datetime, active_before: datetim
                     VALUES ($1, 'task_requeued', $2::jsonb, $3)
                     """,
                     row["id"],
-                    json.dumps({"reason": "server_restart", "previous_status": row["status"]}, ensure_ascii=False),
+                    jsonb_param({"reason": "server_restart", "previous_status": row["status"]}),
                     now,
                 )
             return len(task_ids)

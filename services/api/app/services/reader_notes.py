@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -10,6 +9,7 @@ from app.contracts.annotation import (
     build_text_range_target_key,
 )
 from app.database import connection as db_connect
+from app.database.json_compat import ensure_json_object
 from app.schemas.reader_notes import (
     ReaderNoteCreateRequest,
     ReaderNoteResponse,
@@ -31,7 +31,7 @@ _NOTE_FIELDS = (
 
 
 def _row_to_response(row: dict) -> ReaderNoteResponse:
-    payload_json = row["payload_json"] if isinstance(row["payload_json"], dict) else json.loads(row["payload_json"] or "{}")
+    payload_json = ensure_json_object(row.get("payload_json"))
     raw_segments = payload_json.get("segments")
     segments = []
     if isinstance(raw_segments, list):

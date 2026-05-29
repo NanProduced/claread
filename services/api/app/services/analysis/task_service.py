@@ -8,13 +8,13 @@ status queries, and record+task lifecycle management.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,7 @@ async def submit_task(
                 VALUES ($1, 'task_submitted', $2, $3)
                 """,
                 task_id,
-                json.dumps({}),
+                jsonb_param({}),
                 now,
             )
 
@@ -341,7 +341,7 @@ async def update_task_status(
         if value is not None:
             if field_name in _JSONB_FIELDS and isinstance(value, dict):
                 sets.append(f"{field_name} = ${idx}::jsonb")
-                params.append(json.dumps(value, ensure_ascii=False))
+                params.append(jsonb_param(value))
             else:
                 sets.append(f"{field_name} = ${idx}")
                 params.append(value)
@@ -392,7 +392,7 @@ async def insert_task_event(
             """,
             task_id,
             event_type,
-            json.dumps(payload or {}),
+            jsonb_param(payload or {}),
             datetime.now(timezone.utc),
         )
 
@@ -525,7 +525,7 @@ async def requeue_stale_tasks(
                         VALUES ($1, 'task_recovered_succeeded', $2, $3)
                         """,
                         tid,
-                        json.dumps({"reason": "record_already_ready"}),
+                        jsonb_param({"reason": "record_already_ready"}),
                         now,
                     )
 
@@ -565,7 +565,7 @@ async def requeue_stale_tasks(
                             VALUES ($1, 'task_requeued', $2, $3)
                             """,
                             row["task_id"],
-                            json.dumps(
+                            jsonb_param(
                                 {
                                     "reason": "server_restart",
                                     "previous_status": row["status"],
