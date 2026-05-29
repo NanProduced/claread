@@ -131,15 +131,9 @@ function buildSignals(scene, normalized, adapter) {
   const sentenceIds = normalized.sentences.map((item) => item.sentence_id);
   const translationIds = new Set(normalized.translations.map((item) => item.sentence_id));
   const missingTranslations = sentenceIds.filter((sentenceId) => !translationIds.has(sentenceId));
-  const entryless = normalized.sentences.filter((sentence) => {
-    const entryCount = normalized.entriesBySentence[sentence.sentence_id]?.length ?? 0;
-    return entryCount === 0;
-  });
-  const highDensity = normalized.sentences.filter((sentence) => {
-    const markCount = normalized.marksBySentence[sentence.sentence_id]?.length ?? 0;
-    const entryCount = normalized.entriesBySentence[sentence.sentence_id]?.length ?? 0;
-    return markCount + entryCount >= adapter.densityThreshold;
-  });
+  const warningSentences = normalized.sentences
+    .filter((sentence) => (normalized.warningsBySentence[sentence.sentence_id]?.length ?? 0) > 0)
+    .map((sentence) => sentence.sentence_id);
 
   const signals = [
     {
@@ -149,16 +143,10 @@ function buildSignals(scene, normalized, adapter) {
       detail: missingTranslations.length > 0 ? missingTranslations.join(", ") : "无",
     },
     {
-      label: "空解释句",
-      tone: entryless.length > 0 ? "warning" : "success",
-      value: entryless.length,
-      detail: entryless.length > 0 ? entryless.map((item) => item.sentence_id).join(", ") : "无",
-    },
-    {
-      label: "高密度句",
-      tone: highDensity.length > 0 ? "warning" : "success",
-      value: highDensity.length,
-      detail: highDensity.length > 0 ? highDensity.map((item) => item.sentence_id).join(", ") : "无",
+      label: "句内告警",
+      tone: warningSentences.length > 0 ? "warning" : "success",
+      value: warningSentences.length,
+      detail: warningSentences.length > 0 ? warningSentences.join(", ") : "无",
     },
   ];
 

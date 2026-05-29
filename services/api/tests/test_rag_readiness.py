@@ -170,6 +170,19 @@ class TestGrammarRAGFallback:
             result = await query_grammar_rag("gaokao", [_TEST_SENTENCE])
         assert result.is_fallback
         assert result.fallback_reason == "low_confidence"
+        assert result.dropped_examples == [
+            {
+                "example_id": "1",
+                "ann_score": 0.85,
+                "rerank_score": 0.05,
+                "reading_variant": "gaokao",
+                "output_type": "grammar_note",
+                "label": "l1",
+                "grammar_tags": [],
+                "drop_stage": "confidence_filter",
+                "drop_reason": "below_confidence_threshold",
+            }
+        ]
 
     @pytest.mark.anyio
     async def test_successful_rag_returns_examples(self):
@@ -226,6 +239,35 @@ class TestGrammarRAGFallback:
         )
         assert result.selected_example_ids == ["1", "2"]
         assert result.embedding_latency_ms > 0
+        assert result.query_sentence_id == "s1"
+        assert result.query_sentence_text == _TEST_SENTENCE["text"]
+        assert result.query_text
+        assert result.ann_hit_count == 2
+        assert result.rerank_hit_count == 2
+        assert result.selected_examples == [
+            {
+                "example_id": "1",
+                "ann_score": 0.85,
+                "rerank_score": 0.95,
+                "reading_variant": "gaokao",
+                "output_type": "grammar_note",
+                "label": "定语从句",
+                "grammar_tags": ["relative_clause"],
+                "source_sentence": "The boy who is wearing a red hat is my brother.",
+                "output_fragment": '{"type": "grammar_note"}',
+            },
+            {
+                "example_id": "2",
+                "ann_score": 0.8,
+                "rerank_score": 0.85,
+                "reading_variant": "gaokao",
+                "output_type": "grammar_note",
+                "label": "倒装结构",
+                "grammar_tags": ["inversion"],
+                "source_sentence": "Not only did the policy raise costs.",
+                "output_fragment": '{"type": "grammar_note"}',
+            },
+        ]
 
     @pytest.mark.anyio
     async def test_injection_budget_limits_grammar_note_to_2(self):
@@ -265,6 +307,19 @@ class TestGrammarRAGFallback:
             _mock_rag_settings(mock_settings)
             result = await query_grammar_rag("gaokao", [_SHORT_SENTENCE])
         assert len(result.examples) == 2
+        assert result.dropped_examples == [
+            {
+                "example_id": "2",
+                "ann_score": 0.8,
+                "rerank_score": 0.75,
+                "reading_variant": "gaokao",
+                "output_type": "grammar_note",
+                "label": "label_2",
+                "grammar_tags": ["tag_2"],
+                "drop_stage": "budget_trim",
+                "drop_reason": "exceeds_injection_budget",
+            }
+        ]
 
     @pytest.mark.anyio
     async def test_diversity_dedup_removes_duplicate_labels(self):
@@ -274,22 +329,35 @@ class TestGrammarRAGFallback:
         )
         candidates = [
             _ScoredCandidate(
-                example_id="1", score=0.9,
+                example_id="1", ann_score=0.93, rerank_score=0.9,
                 entity={"label": "定语从句", "source_sentence": "s1", "grammar_tags": '["a"]'},
             ),
             _ScoredCandidate(
-                example_id="2", score=0.8,
+                example_id="2", ann_score=0.91, rerank_score=0.8,
                 entity={"label": "定语从句", "source_sentence": "s2", "grammar_tags": '["b"]'},
             ),
             _ScoredCandidate(
-                example_id="3", score=0.7,
+                example_id="3", ann_score=0.89, rerank_score=0.7,
                 entity={"label": "倒装", "source_sentence": "s3", "grammar_tags": '["c"]'},
             ),
         ]
-        result = _diversity_dedup(candidates)
-        assert len(result) == 2
-        assert result[0].example_id == "1"
-        assert result[1].example_id == "3"
+        kept, dropped = _diversity_dedup(candidates)
+        assert len(kept) == 2
+        assert kept[0].example_id == "1"
+        assert kept[1].example_id == "3"
+        assert dropped == [
+            {
+                "example_id": "2",
+                "ann_score": 0.91,
+                "rerank_score": 0.8,
+                "reading_variant": None,
+                "output_type": None,
+                "label": "定语从句",
+                "grammar_tags": ["b"],
+                "drop_stage": "diversity_dedup",
+                "drop_reason": "duplicate_label",
+            }
+        ]
 
 
 class TestRAGDebugInfo:
@@ -316,3 +384,14 @@ class TestRAGDebugInfo:
         assert "embedding_latency_ms" in info
         assert "ann_latency_ms" in info
         assert "rerank_latency_ms" in info
+        assert "query_sentence_id" in info
+        assert "query_sentence_text" in info
+        assert "query_text" in info
+        assert "candidate_sentence_ids" in info
+        assert "ann_hit_count" in info
+        assert "rerank_hit_count" in info
+        assert "confidence_threshold" in info
+        assert "ann_hits" in info
+        assert "rerank_hits" in info
+        assert "dropped_examples" in info
+        assert "selected_examples" in info

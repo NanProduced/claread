@@ -14,7 +14,6 @@ from app.schemas.internal.execution_plan import GoalExecutionPlan
 from app.services.analysis.prompting.example_strategy import (
     ExampleStrategy,
     get_grammar_example_strategy,
-    get_grammar_example_strategy_async,
     get_translation_example_strategy,
     get_vocabulary_example_strategy,
 )
@@ -70,9 +69,7 @@ async def build_grammar_bundle_async(
 
     settings = get_settings()
     rag_debug = None
-    example_strategy = await get_grammar_example_strategy_async(
-        plan, sentences=sentences
-    )
+    example_strategy = get_grammar_example_strategy(plan, sentences=sentences)
 
     if settings.grammar_rag_enabled and sentences:
         gn_result = await query_grammar_rag(
@@ -85,6 +82,20 @@ async def build_grammar_bundle_async(
             sentences=sentences,
             output_type="sentence_analysis",
         )
+        rag_examples = gn_result.examples + sa_result.examples
+        if rag_examples:
+            example_strategy = ExampleStrategy(
+                examples=rag_examples,
+                selection_mode="rag",
+            )
+        else:
+            example_strategy = ExampleStrategy(
+                examples=get_grammar_example_strategy(
+                    plan,
+                    sentences=sentences,
+                ).examples,
+                selection_mode="rag_fallback",
+            )
         rag_debug = {
             "grammar_note": build_rag_debug_info(gn_result),
             "sentence_analysis": build_rag_debug_info(sa_result),

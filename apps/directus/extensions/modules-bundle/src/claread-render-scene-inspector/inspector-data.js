@@ -179,7 +179,6 @@ export async function loadInspectorBundle({ recordId, resultId, taskId }) {
     "drop_log_summary_json",
     "runtime_summary_json",
     "academic_quality_json",
-    "few_shot_debug_json",
     "rag_debug_json",
     "trace_refs_json",
     "created_at",

@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS analysis_debug_snapshots (
   drop_log_summary_json JSONB,
   runtime_summary_json JSONB,
   academic_quality_json JSONB,
-  few_shot_debug_json JSONB,
   rag_debug_json JSONB,
   trace_refs_json JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

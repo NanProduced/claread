@@ -89,6 +89,10 @@ class TestFullRAGPipeline:
         assert result.examples[0].example_type == "grammar"
         assert result.examples[0].sentence_text == "The boy who is wearing a red hat is my brother."
         assert result.selected_example_ids == ["1", "2"]
+        assert result.selected_examples[0]["source_sentence"] == result.examples[0].sentence_text
+        assert result.query_text is not None
+        assert result.ann_hits[0]["example_id"] == "1"
+        assert result.rerank_hits[0]["rerank_score"] == 0.95
 
     @pytest.mark.anyio
     async def test_full_rag_pipeline_sentence_analysis(self):
@@ -185,8 +189,8 @@ class TestAsyncStrategyBuilder:
         )
         plan = _make_plan(few_shot_mode="baseline")
         with patch("app.infra.bailian_embedding.embed_single", return_value=[0.1] * 1024), \
-             patch("app.infra.zilliz_client.zilliz_search", return_value=_MOCK_SEARCH_RESULTS), \
-             patch("app.infra.bailian_rerank.rerank", return_value=_MOCK_RERANK_RESULTS), \
+             patch("app.infra.zilliz_client.zilliz_search", return_value=_MOCK_SEARCH_RESULTS) as mock_search, \
+             patch("app.infra.bailian_rerank.rerank", return_value=_MOCK_RERANK_RESULTS) as mock_rerank, \
              patch(
                  "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
              ) as rag_ms, \
@@ -206,6 +210,17 @@ class TestAsyncStrategyBuilder:
             bundle = await build_grammar_bundle_async(plan, sentences=_SENTENCES)
         assert bundle.example_strategy.selection_mode == "rag"
         assert len(bundle.example_strategy.examples) >= 2
+        assert mock_search.call_count == 2
+        assert mock_rerank.call_count == 2
+        assert bundle.rag_debug is not None
+        grammar_note_debug = bundle.rag_debug["grammar_note"]
+        assert grammar_note_debug["selected_examples"][0]["source_sentence"] == (
+            bundle.example_strategy.examples[0].sentence_text
+        )
+        assert grammar_note_debug["selected_examples"][0]["output_fragment"] == (
+            bundle.example_strategy.examples[0].output_fragment
+        )
+        assert grammar_note_debug["query_text"]
 
     @pytest.mark.anyio
     async def test_grammar_bundle_async_with_rag_disabled(self):
@@ -217,6 +232,7 @@ class TestAsyncStrategyBuilder:
             cfg_ms.return_value.grammar_rag_enabled = False
             bundle = await build_grammar_bundle_async(plan, sentences=_SENTENCES)
         assert bundle.example_strategy.selection_mode == "baseline"
+        assert bundle.rag_debug is None
 
     @pytest.mark.anyio
     async def test_grammar_bundle_async_baseline_mode(self):

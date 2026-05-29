@@ -268,7 +268,6 @@ def build_debug_snapshot_payload(
             billed_points=billed_points,
         ),
         "academic_quality_json": build_academic_quality(result),
-        "few_shot_debug_json": result.get("few_shot_debug") if result else None,
         "rag_debug_json": result.get("rag_debug") if result else None,
         "trace_refs_json": build_trace_refs(request_id=request_id),
     }
@@ -300,7 +299,6 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
                 drop_log_summary_json,
                 runtime_summary_json,
                 academic_quality_json,
-                few_shot_debug_json,
                 rag_debug_json,
                 trace_refs_json,
                 created_at,
@@ -309,7 +307,7 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb,
-                $15::jsonb, $16::jsonb, $17::jsonb, $18::jsonb, $19, $19
+                $15::jsonb, $16::jsonb, $17::jsonb, $18, $18
             )
             ON CONFLICT (task_id) DO UPDATE SET
                 record_id = EXCLUDED.record_id,
@@ -326,7 +324,6 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
                 drop_log_summary_json = EXCLUDED.drop_log_summary_json,
                 runtime_summary_json = EXCLUDED.runtime_summary_json,
                 academic_quality_json = EXCLUDED.academic_quality_json,
-                few_shot_debug_json = EXCLUDED.few_shot_debug_json,
                 rag_debug_json = EXCLUDED.rag_debug_json,
                 trace_refs_json = EXCLUDED.trace_refs_json,
                 updated_at = EXCLUDED.updated_at
@@ -346,7 +343,6 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
             jsonb_param(snapshot.get("drop_log_summary_json")),
             jsonb_param(snapshot.get("runtime_summary_json")),
             jsonb_param(snapshot.get("academic_quality_json")),
-            jsonb_param(snapshot.get("few_shot_debug_json")),
             jsonb_param(snapshot.get("rag_debug_json")),
             jsonb_param(snapshot.get("trace_refs_json")),
             now,
