@@ -21,7 +21,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
     return (
       <main className="paper-grain min-h-screen px-5 py-8 text-ink">
         <section className="mx-auto max-w-2xl rounded-note border border-hairline bg-surface p-8 shadow-surface-quiet">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-lens-blue">
+          <p className="text-xs font-semibold tracking-[0.12em] text-lens-blue">
             Reader
           </p>
           <h1 className="mt-3 font-headline text-2xl font-semibold text-ink">

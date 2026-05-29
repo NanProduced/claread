@@ -137,6 +137,36 @@ Reader 只有两种模式。`精读 Intensive` 是主工作模式，强调批注
 - 精读模式说批注语言，沉浸模式说编排语言
 - 句后批注展开是 Claread 最有记忆点的动作
 
+## Brand Assets
+
+Claread Web 的品牌资产不是临时装饰，也不是页面最后补上的角标。Logo 光圈、横版标识、App icon 和品牌探索图共同定义 Claread 的“阅读镜头”记忆点。任何 Web 端视觉工作都必须先检查品牌资产，再决定页面如何表达品牌。
+
+### Source of Truth
+
+- 品牌源资产目录：`packages/design-tokens/assets/brand/`
+- 资产说明：`packages/design-tokens/assets/brand/README.md`
+- Web 运行时资产目录：`apps/web/public/brand/`
+- Web 品牌组件：`apps/web/src/components/brand/BrandMarks.tsx`
+
+`packages/design-tokens/assets/brand/` 是设计源资产目录，不是客户端运行时代码依赖。Web 页面只引用已经复制或导出到 `apps/web/public/brand/` 的图片。新增运行时资产时，先从源目录选择合适版本，再按 Web 需要压缩、命名和复制。
+
+### Current Asset Roles
+
+- `logos/claread-horizontal-bilingual.png`：横版中英品牌标识，优先用于公开页页眉、登录页、分享页和导出页。
+- `logos/claread-primary-fullcolor.png`、`logos/claread-primary-reversed.png`：完整 Logo 的正色和反白版本，用于品牌感更强的页面或深浅背景切换。
+- `icons/claread-icon-fullcolor.png`：独立光圈图标，用于侧栏、品牌水印、低频视觉记忆点和 favicon/app icon 派生。
+- `icons/app-icon.png`、`icons/claread-app-logo-dark.png`：App icon 与深色场景参考，不直接替代横版标识。
+- `design/`：品牌探索、营销视觉和 UI 参考图。它们用于理解气质，不直接进入运行包。
+
+### Usage Rules
+
+- 需要 Logo、横版标识、水印或小印章时，优先复用 `BrandLockup`、`ApertureWatermark`、`ClareadStamp`，不要用纯文字标题、临时 SVG 或重新绘制的几何图形代替品牌资产。
+- 公开产品页、登录页、分享页和导出页的首屏必须有明确 Claread 品牌信号。品牌信号可以来自横版标识、光圈图标、阅读镜头构图或三者组合，但不能只靠导航里的小字。
+- 功能页可以更克制。侧栏、页头或空态中的品牌资产应像编辑台上的印记，不抢正文舞台。
+- 光圈图标用于“聚焦、透读、标记、展开”的场景，不作为普通装饰图案平铺使用。
+- 不重新发明 Claread 的 Logo、品牌色、App icon 或装饰符号。如果现有资产不够，先记录设计缺口，再补源资产和运行时导出。
+- 品牌资产必须服从 Claread 的 editorial / tactile 气质：清楚、克制、像阅读工具，不做高饱和 SaaS logo 墙、玻璃霓虹或学习 App 海报风。
+
 ## Colors
 
 Claread 的色彩不是“暖纸 + 蓝色按钮”，而是一套可跨全站复用的编辑阅读配色。离原文越近，纸感越明确；离原文越远，纸感越克制。外层是干净的工作台面，内层是摊开的稿纸。进入 Reader 时，用户应当感到一点纸的气味；进入功能页或产品页时，这种纸感应当被稀释成受控氛围，而不是变成表面装饰。
@@ -198,6 +228,22 @@ Claread 的色彩不是“暖纸 + 蓝色按钮”，而是一套可跨全站复
 **The Serif Alignment Rule.** 译文出现在原文下方时，必须与原文的衬线节奏对位，即使字号和颜色降一档，也不能失去“同属一段”的归属性。
 
 **The Cover-Moment Rule.** 大标题只属于开场时刻。如果每一页都像封面，就没有任何一页真正像封面。
+
+**The No-Default-Uppercase Rule.** CSS `text-transform: uppercase` 默认禁止使用。全大写只在两种例外下允许：
+
+1. **必须全大写的词或编号**：品牌印章（如 `CLAREAD EDITION`）、功能性编号（如 `A01`, `A02`）。这些词在语义上就是大写形式，不是设计选择。
+2. **全大写视觉效果确实更佳的特殊情况**：极少数 1 词 eyebrow 标签（如 `Library`, `Vocabulary`），uppercase 作为编辑排版中的结构性标记确实比 Title Case 更有区分度。但必须逐例判断，不能批量套用。
+
+以下场景一律不得使用 uppercase：
+
+- **3 词及以上的英文短语**：`Sentence Analysis`, `Editor's Note`, `Key Expressions` 等。多词全大写破坏词间边界，降低可读性，是最典型的 AI 生成痕迹。使用 Title Case。
+- **操作按钮和链接文案**：`Close`, `Expand`, `Show Translation` 等。操作文案需要被快速识别，全大写反而制造阅读障碍。使用 Title Case。
+- **所有中文文案**：CSS `uppercase` 对 CJK 字符无效，在中文标签上添加 `uppercase` 类是代码噪音。中文标签的视觉层级通过 `font-weight`、`font-size`、`letter-spacing` 和 `color` 控制，不依赖大小写变换。
+- **面包屑导航**：`Preferences`, `Feedback` 等。导航路径使用 Title Case。
+- **主题 / 字体选项标签**：`Paper`, `Light`, `Dark`, `Editorial`, `Book`, `Sans` 等。选项标签使用首字母大写。
+- **区块标题**：`Analysis`, `Discussion`, `Writing Moves` 等。区块标题使用 Title Case，靠字号和字重建立层级，不靠全大写。
+
+判断原则：如果去掉 uppercase 后标签仍然能清楚表达其层级和功能，就不应该使用 uppercase。uppercase 是例外，不是默认。
 
 ## Elevation
 

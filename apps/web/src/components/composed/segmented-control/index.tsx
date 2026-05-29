@@ -27,7 +27,7 @@ export function SegmentedControl<T extends string>({
   return (
     <fieldset className={cn("min-w-0", className)}>
       {label ? (
-        <legend className="mb-3 text-[0.66rem] font-bold uppercase tracking-[0.2em] text-subtle">
+        <legend className="mb-3 text-[0.66rem] font-bold tracking-[0.2em] text-subtle">
           {label}
         </legend>
       ) : null}

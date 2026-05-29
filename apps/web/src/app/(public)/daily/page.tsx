@@ -69,7 +69,7 @@ function LeadArticle({ article }: { article: DailyReaderListItem }) {
 
         {/* Content on top of image */}
         <div className="absolute inset-x-0 bottom-0 p-6 sm:p-8 lg:p-10">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/70">
+          <p className="text-xs font-semibold tracking-[0.18em] text-white/70">
             今日精读 · {formatLongDate(article.publishDate)}
           </p>
           <h2 className="mt-3 max-w-2xl font-headline text-[clamp(1.8rem,3.5vw,2.8rem)] font-semibold leading-[1.1] tracking-normal text-white">
@@ -100,7 +100,7 @@ function LeadArticle({ article }: { article: DailyReaderListItem }) {
 function EmptyLeadState() {
   return (
     <div className="flex min-h-[28rem] flex-col justify-center rounded-xl border border-hairline bg-surface-warm/40 px-8 py-12">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-lens-blue">
+      <p className="text-xs font-semibold tracking-[0.18em] text-lens-blue">
         今日精读
       </p>
       <h2 className="mt-4 max-w-xl font-headline text-[clamp(1.6rem,3vw,2.4rem)] font-semibold leading-tight tracking-normal text-ink">
@@ -173,7 +173,7 @@ export default async function DailyReaderPage() {
         <PublicSiteHeader currentHref={dailyRoute} priority />
 
         <section className="mx-auto max-w-7xl py-12 lg:py-16">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-lens-blue">
+          <p className="text-xs font-semibold tracking-[0.18em] text-lens-blue">
             Claread Daily
           </p>
           <h1 className="mt-4 max-w-3xl font-headline text-[clamp(2rem,4vw,3.6rem)] font-semibold leading-[1.06] tracking-normal text-ink">

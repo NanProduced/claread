@@ -38,7 +38,7 @@ export function ReaderStructuredInspectCard({
     >
       {!compact ? (
         <div>
-          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">{title}</p>
+          <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-muted">{title}</p>
           <h3 className="mt-2 reader-serif text-[1.25rem] leading-tight text-ink">{intent.anchorText}</h3>
         </div>
       ) : null}

@@ -69,7 +69,7 @@ export function ThemePreferencesSection() {
             <div className="mt-4 px-1">
               <div className="flex items-baseline gap-2">
                 <span className={`text-sm font-semibold transition-colors ${active ? "text-lens-blue" : "text-ink"}`}>{option.label}</span>
-                <span className={`text-[0.65rem] font-medium uppercase tracking-[0.08em] transition-colors ${active ? "text-lens-blue/70" : "text-muted"}`}>
+                <span className={`text-[0.65rem] font-medium tracking-[0.08em] transition-colors ${active ? "text-lens-blue/70" : "text-muted"}`}>
                   {option.english}
                 </span>
               </div>

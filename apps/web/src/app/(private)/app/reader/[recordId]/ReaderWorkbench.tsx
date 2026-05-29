@@ -19,7 +19,6 @@ import {
   SlidersHorizontal,
   Globe,
   Sparkles,
-  Flag,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
@@ -28,6 +27,7 @@ import {
   AiWorkspacePanel,
   ReaderContextPanel,
   ReaderDictionaryRail,
+  ReaderGlobalFeedbackPrompt,
   ImmersiveReaderSurface,
   IntensiveReaderSurface,
   ReaderNotePanel,
@@ -1402,6 +1402,37 @@ export function ReaderWorkbench({
   const closeFeedbackSheet = useCallback(() => {
     setFeedbackSheet(null);
   }, []);
+
+  const openAnalysisFeedback = useCallback(
+    (entry: {
+      entryId: string;
+      sentenceId: string;
+      entryType: string;
+      label?: string;
+      title?: string;
+      content?: string;
+      sourceKind?: string;
+    }) => {
+      openFeedbackSheet({
+        scope: "annotation",
+        sentiment: "negative",
+        targetId: `record:${record.id}:analysis:${entry.entryType}:${entry.entryId}`,
+        analysisRecordId: record.id,
+        annotationType: entry.entryType,
+        clientSurface: "reader",
+        entryPoint: "reader_analysis_card",
+        contextSummary: entry.title ?? entry.label ?? "标注反馈",
+        contextJson: {
+          entry_id: entry.entryId,
+          entry_type: entry.entryType,
+          sentence_id: entry.sentenceId,
+          source_kind: entry.sourceKind ?? "workflow",
+          content: entry.content ?? "",
+        },
+      });
+    },
+    [openFeedbackSheet, record.id],
+  );
 
   useEffect(() => {
     dictionaryAIRequestKeyRef.current = null;
@@ -3635,7 +3666,7 @@ export function ReaderWorkbench({
       : "mt-3 text-xs opacity-100"
   }`;
   const headerEyebrowClass = isImmersiveMode
-    ? "text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-lens-blue"
+    ? "text-[0.72rem] font-semibold tracking-[0.22em] text-lens-blue"
     : "text-xs font-semibold text-muted";
 
   const formattedDate = useMemo(() => {
@@ -3990,6 +4021,7 @@ export function ReaderWorkbench({
                   onAnalysisToggle={toggleAnalysisEntry}
                   onAnnotationJump={jumpToAnnotation}
                   onHoverAnnotationTargetKeyChange={setHoveredAnnotationTargetKey}
+                  onAnalysisFeedback={openAnalysisFeedback}
                   onOpenSentenceNotes={openSentenceNotes}
                   onDeleteAnalysisSupplement={deleteAnalysisSupplement}
                   onAskAnalysis={openAskWithAnalysis}
@@ -4005,34 +4037,64 @@ export function ReaderWorkbench({
               )}
             </div>
 
-            <div className="mt-12 flex items-center justify-center border-t border-hairline/60 pt-8 pb-16">
-              <div className="flex items-center gap-3 text-[13px] text-muted">
-                <span>本次阅读体验如何？</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    openFeedbackSheet({
-                      scope: "analysis_result",
-                      targetId: record.id,
-                      analysisRecordId: record.id,
-                      clientSurface: "reader",
-                      entryPoint: "reader_feedback_button",
-                      contextJson: {
-                        record_id: record.id,
-                        title: record.title,
-                        sentence_count: reader.article.sentences.length,
-                        reading_goal: record.readingGoal,
-                      },
-                      contextSummary: record.title ?? "本次阅读结果反馈",
-                    })
-                  }
-                  className="flex items-center gap-1.5 rounded-full bg-secondary/80 px-3.5 py-1.5 font-medium text-ink-soft transition-all hover:bg-[var(--app-control-quiet)] hover:text-ink hover:shadow-sm"
-                >
-                  <Flag className="h-3.5 w-3.5" />
-                  反馈解读结果
-                </button>
-              </div>
-            </div>
+            <ReaderGlobalFeedbackPrompt
+              onHelpful={() =>
+                openFeedbackSheet({
+                  scope: "analysis_result",
+                  sentiment: "positive",
+                  feedbackType: "thumbs_up",
+                  targetId: record.id,
+                  analysisRecordId: record.id,
+                  clientSurface: "reader",
+                  entryPoint: "reader_global_helpful",
+                  contextJson: {
+                    record_id: record.id,
+                    title: record.title,
+                    sentence_count: reader.article.sentences.length,
+                    reading_goal: record.readingGoal,
+                    feedback_intent: "helpful",
+                  },
+                  contextSummary: record.title ?? "本次阅读结果反馈",
+                })
+              }
+              onIssue={() =>
+                openFeedbackSheet({
+                  scope: "analysis_result",
+                  sentiment: "negative",
+                  targetId: record.id,
+                  analysisRecordId: record.id,
+                  clientSurface: "reader",
+                  entryPoint: "reader_global_issue",
+                  contextJson: {
+                    record_id: record.id,
+                    title: record.title,
+                    sentence_count: reader.article.sentences.length,
+                    reading_goal: record.readingGoal,
+                    feedback_intent: "issue",
+                  },
+                  contextSummary: record.title ?? "本次阅读结果反馈",
+                })
+              }
+              onSuggestion={() =>
+                openFeedbackSheet({
+                  scope: "app",
+                  sentiment: "neutral",
+                  feedbackType: "feature_request",
+                  targetId: `reader:${record.id}`,
+                  analysisRecordId: record.id,
+                  clientSurface: "reader",
+                  entryPoint: "reader_global_suggestion",
+                  contextJson: {
+                    record_id: record.id,
+                    title: record.title,
+                    sentence_count: reader.article.sentences.length,
+                    reading_goal: record.readingGoal,
+                    feedback_intent: "suggestion",
+                  },
+                  contextSummary: record.title ?? "阅读体验建议",
+                })
+              }
+            />
         </article>
 
         {notePanelSentence ? (

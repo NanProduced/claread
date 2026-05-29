@@ -45,7 +45,7 @@ export default async function PasteToReadPage() {
         <div className="grid gap-10 md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1fr)_20rem] md:gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_27rem] xl:gap-12 2xl:grid-cols-[minmax(0,1fr)_29rem] 2xl:gap-14">
           <section className="flex min-w-0 flex-col pt-4 sm:pt-6 md:min-h-0 md:pt-8 md:pr-8 xl:pt-10 xl:pr-10 2xl:pr-12">
             <div className="max-w-[46rem]">
-              <span className="mb-3 inline-block text-[0.72rem] font-bold uppercase tracking-[0.22em] text-lens-blue">
+              <span className="mb-3 inline-block text-[0.72rem] font-bold tracking-[0.22em] text-lens-blue">
                 Paste to Begin
               </span>
               <h1 className="font-headline text-[clamp(2.5rem,4.5vw,4rem)] font-semibold leading-[0.94] tracking-[-0.045em] text-ink">
@@ -69,7 +69,7 @@ export default async function PasteToReadPage() {
             <ScrollArea className="max-h-none md:h-full md:pr-5 xl:pr-6">
               <div className="pb-8 md:pr-5 xl:pr-6">
                 <div className="mb-3 flex items-center justify-between gap-4">
-                  <h2 className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-ink">
+                  <h2 className="text-[0.68rem] font-bold tracking-[0.2em] text-ink">
                     Editor&apos;s Picks
                   </h2>
                   <Link
@@ -86,7 +86,7 @@ export default async function PasteToReadPage() {
 
                 {leadPick ? (
                   <article className="border-b border-hairline/80 py-6 sm:py-7">
-                    <p className="mb-3 text-[0.65rem] font-bold uppercase tracking-[0.18em] text-muted">
+                    <p className="mb-3 text-[0.65rem] font-bold tracking-[0.18em] text-muted">
                       Featured
                     </p>
                     <Link
@@ -172,14 +172,14 @@ export default async function PasteToReadPage() {
                         className="flex items-center gap-2 font-sans text-[0.78rem] font-medium tracking-[0.03em] text-muted transition-colors hover:text-ink"
                       >
                         <span>阅读档案</span>
-                        <span className="text-[0.66rem] uppercase tracking-[0.14em]">Archive</span>
+                        <span className="text-[0.66rem] tracking-[0.14em]">Archive</span>
                       </Link>
                       <Link
                         href={dailyRoute}
                         className="flex items-center gap-2 font-sans text-[0.78rem] font-medium tracking-[0.03em] text-muted transition-colors hover:text-ink"
                       >
                         <span>更多阅读</span>
-                        <span className="text-[0.66rem] uppercase tracking-[0.14em]">More</span>
+                        <span className="text-[0.66rem] tracking-[0.14em]">More</span>
                       </Link>
                 </div>
               </div>

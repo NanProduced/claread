@@ -26,6 +26,19 @@ Claread Web 当前稳定方向已经沉淀到：
 - `component-system.md`
 - `directions/read-home-input-editorial-reference-v1.md`：`/app/read` 首页/输入页主方向定稿参考与信息架构拆解
 
+## 品牌资产入口
+
+Web 端设计不能只凭文字描述 Claread 品牌。做 UI、产品页、分享页、导出页、登录页或任何含品牌露出的页面前，必须检查：
+
+- `../../../../packages/design-tokens/assets/brand/README.md`
+- `../../../../packages/design-tokens/assets/brand/logos/`
+- `../../../../packages/design-tokens/assets/brand/icons/`
+- `../../../../packages/design-tokens/assets/brand/design/`
+
+这些是跨端品牌源资产。Web 运行时代码只引用复制或导出到 `../../public/brand/` 的文件。当前 Web 侧品牌组件在 `../../src/components/brand/BrandMarks.tsx`，页面中需要 Logo、横版标识、光圈水印或小印章时，优先复用这里的 `BrandLockup`、`ApertureWatermark`、`ClareadStamp`。
+
+如果设计需要新增品牌图片，先从 `packages/design-tokens/assets/brand/` 选择源资产，再导出到 `apps/web/public/brand/`；不要在页面内重画 Logo、发明新品牌图形或用纯文字临时代替。
+
 ## 设计参考管理
 
 PNG 方向图和截图只作为本地评审参考，不作为长期事实来源，也不再进入 Git。当前 `.gitignore` 已忽略 `apps/web/docs/design/**/*.png`；如果本地仍有 `directions/` 或 `component-previews/` 图片，它们只用于临时视觉对齐。

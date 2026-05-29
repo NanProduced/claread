@@ -67,7 +67,7 @@ function CardContent({
     >
       {/* ── Meta Header ── */}
       <div className="mb-6 flex flex-col gap-2 border-b border-hairline/60 pb-5">
-        <div className="flex flex-wrap items-center gap-2 text-[0.68rem] font-bold uppercase tracking-[0.16em] text-subtle">
+        <div className="flex flex-wrap items-center gap-2 text-[0.68rem] font-bold tracking-[0.16em] text-subtle">
           <span>Stage {item.reviewStage}</span>
           <span className="opacity-40" aria-hidden="true">/</span>
           <span>{item.reviewCount} 次复习</span>

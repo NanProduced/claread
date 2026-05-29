@@ -16,6 +16,15 @@
 - 新增跨端类型时优先放入 `packages/contracts/`。
 - Web Reader 不存在 demo/mock 记录页。验证 Reader 时必须使用真实记录，或先走真实创建流程拿到可用 `recordId`，不要假设 `/app/reader/demo-record` 之类的占位路径成立。
 
+## 品牌上下文与资产
+
+- 做 Web 端 UI、视觉、品牌页、分享页或导出页前，必须先读 `apps/web/DESIGN.md`、`apps/web/docs/design/README.md` 和 `packages/design-tokens/assets/brand/README.md`。
+- Claread 品牌源资产放在 `packages/design-tokens/assets/brand/`，这是 logo、图标和品牌探索图的唯一源目录。
+- Web 运行时只能使用复制或导出到 `apps/web/public/brand/` 的资产，不要从运行时代码直接 import `packages/design-tokens/assets/brand/`。
+- 当前 Web 品牌组件集中在 `apps/web/src/components/brand/BrandMarks.tsx`。需要展示 Logo、横版标识、水印或小印章时，优先复用 `BrandLockup`、`ApertureWatermark`、`ClareadStamp`，不要临时用文字或手写 SVG 代替品牌资产。
+- 新页面如果需要品牌识别，先检查 `packages/design-tokens/assets/brand/logos/`、`icons/`、`design/` 中的现有素材，再决定是否复制到 `apps/web/public/brand/`。不要凭印象重画 Logo、重配色或发明新的品牌符号。
+- 公开产品页、分享页、导出页和登录页必须让 Claread 品牌成为首屏可见信号；功能页可以更克制，但仍应保留 Claread 的阅读镜头、纸面和批注语言。
+
 ## 验证
 
 Web 开发开始后，应补齐：

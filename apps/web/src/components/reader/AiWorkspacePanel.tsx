@@ -254,7 +254,7 @@ const ASK_MARKDOWN_COMPONENTS: Partial<Components> = {
     </div>
   ),
   th: ({ children }) => (
-    <th className="border-b border-hairline/70 bg-reader-paper/90 dark:bg-[#2a2f35]/90 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+    <th className="border-b border-hairline/70 bg-reader-paper/90 dark:bg-[#2a2f35]/90 px-3 py-2.5 text-[11px] font-semibold tracking-[0.14em] text-muted">
       {children}
     </th>
   ),
@@ -1280,7 +1280,7 @@ function SupplementCandidateTray({
               >
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold text-ink">{candidate.title}</p>
-                  <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#1e2227] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                  <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#1e2227] px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] text-muted">
                     待确认
                   </span>
                 </div>
@@ -1305,7 +1305,7 @@ function SupplementCandidateTray({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-xs font-semibold text-ink">{item.title}</p>
-                    <span className="rounded-pill border border-lens-blue/20 bg-lens-blue/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-lens-blue">
+                    <span className="rounded-pill border border-lens-blue/20 bg-lens-blue/10 px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] text-lens-blue">
                       已写入
                     </span>
                   </div>
@@ -1361,7 +1361,7 @@ function DisclosureSection({
             className={workspaceDisclosureTriggerClassName}
           >
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{label}</p>
+              <p className="text-[11px] font-semibold tracking-[0.14em] text-muted">{label}</p>
               {summary ? <p className="mt-1 truncate text-[11px] leading-5 text-subtle">{summary}</p> : null}
             </div>
             <ChevronDown
@@ -1400,7 +1400,7 @@ function ContextSummaryDisclosure({
     <DisclosureSection label="依据与上下文" summary={chips.join(" · ")}>
       <div className="space-y-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">当前文章</p>
+          <p className="text-[11px] font-semibold tracking-[0.14em] text-subtle">当前文章</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {chips
               .filter((chip) => !chip.startsWith("外部文章") && !chip.startsWith("外部资产"))
@@ -1448,7 +1448,7 @@ function ContextSummaryDisclosure({
         </div>
         {externalRecordContexts.length > 0 ? (
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">外部文章</p>
+            <p className="text-[11px] font-semibold tracking-[0.14em] text-subtle">外部文章</p>
             <div className="mt-2 space-y-2">
               {externalRecordContexts.map((item) => (
                 <div
@@ -1459,7 +1459,7 @@ function ContextSummaryDisclosure({
                     <p className="truncate text-xs font-semibold text-ink">
                       {item.record_title || item.record_id}
                     </p>
-                    <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                    <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] text-muted">
                       {item.reason === "known_reference_resolved" ? "自动命中" : "显式加入"}
                     </span>
                   </div>
@@ -1511,7 +1511,7 @@ function ContextSummaryDisclosure({
         ) : null}
         {externalAssetContexts.length > 0 ? (
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">外部资产</p>
+            <p className="text-[11px] font-semibold tracking-[0.14em] text-subtle">外部资产</p>
             <div className="mt-2 space-y-2">
               {externalAssetContexts.map((item) => (
                 <div
@@ -1527,7 +1527,7 @@ function ContextSummaryDisclosure({
                         {(item.record_title || item.record_id)} · {item.asset_type === "supplement" ? "AI 补充" : "稳定分析"}
                       </p>
                     </div>
-                    <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                    <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] text-muted">
                       {item.reason === "explicit_attachment" ? "显式加入" : "自动命中"}
                     </span>
                   </div>
@@ -1567,10 +1567,10 @@ function EvidenceDisclosure({
             <div className="flex items-center justify-between gap-3">
               <p className="truncate text-xs font-semibold text-ink">{item.label}</p>
               <div className="flex shrink-0 items-center gap-1.5">
-                <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] text-muted">
                   {item.scope === "external_record" ? "外部" : "当前"}
                 </span>
-                <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted">
+                <span className="rounded-pill border border-hairline bg-reader-paper dark:bg-[#2a2f35] px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] text-muted">
                   {item.kind}
                 </span>
               </div>
@@ -1633,7 +1633,7 @@ function DisambiguationCards({
   return (
     <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 dark:bg-[#1e2227]/72 px-3.5 py-3.5">
       <div className="mb-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">候选文章</p>
+        <p className="text-[11px] font-semibold tracking-[0.14em] text-subtle">候选文章</p>
         <p className="mt-1 text-[11px] leading-5 text-muted">
           {disambiguation.reason || "当前引用命中了多个候选，请明确指定要并入哪篇文章。"}
         </p>
@@ -1685,7 +1685,7 @@ function AssetDisambiguationCards({
   return (
     <div className="rounded-[20px] border border-hairline/80 bg-reader-paper/72 dark:bg-[#1e2227]/72 px-3.5 py-3.5">
       <div className="mb-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">候选资产</p>
+        <p className="text-[11px] font-semibold tracking-[0.14em] text-subtle">候选资产</p>
         <p className="mt-1 text-[11px] leading-5 text-muted">
           {assetDisambiguation.reason || "当前外部文章里命中了多个稳定资产，请先指定要并入哪一个。"}
         </p>
@@ -1868,7 +1868,7 @@ function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { card
           return (
             <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">拆句卡</p>
+                <p className="text-xs font-semibold tracking-[0.16em] text-muted">拆句卡</p>
                 <span className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2 py-0.5 text-[10px] font-medium text-muted">
                   AI 助手生成
                 </span>
@@ -1900,7 +1900,7 @@ function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { card
         if (card.card_type === "vocabulary_in_context_card") {
           return (
             <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">词义卡</p>
+              <p className="text-xs font-semibold tracking-[0.16em] text-muted">词义卡</p>
               <div className="mt-2 flex items-end justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-ink">{card.display_word || card.query}</p>
@@ -1921,7 +1921,7 @@ function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { card
 
         return (
           <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">练习卡</p>
+            <p className="text-xs font-semibold tracking-[0.16em] text-muted">练习卡</p>
             <p className="mt-2 text-sm font-semibold text-ink">{card.title}</p>
             <div className="mt-3 rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-3 text-sm leading-6 text-ink-soft">
               <Markdown components={ASK_MARKDOWN_COMPONENTS} className="space-y-3 text-ink-soft">
@@ -1961,7 +1961,7 @@ function CitationList({
 
   return (
     <div className="space-y-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">引用</p>
+      <p className="text-[11px] font-semibold tracking-[0.14em] text-subtle">引用</p>
       <div className="flex flex-col gap-2">
         {citations.map((citation) => {
           const canJump = citationCanJump(citation, currentRecordId);
@@ -2042,7 +2042,7 @@ function ConfirmActionCard({
           <Sparkles className="h-3.5 w-3.5" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-subtle">建议动作</p>
+          <p className="text-[11px] font-semibold tracking-[0.14em] text-subtle">建议动作</p>
           <p className="mt-1 text-sm font-semibold text-ink">{proposal.label}</p>
           {proposal.description ? <p className="mt-1 text-xs leading-5 text-muted">{proposal.description}</p> : null}
         </div>

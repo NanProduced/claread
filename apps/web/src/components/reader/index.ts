@@ -2,6 +2,7 @@ export * from "./SentenceEntryCard";
 export * from "./ReaderContextPanel";
 export * from "./AnnotationGutter";
 export * from "./AiWorkspacePanel";
+export * from "./ReaderGlobalFeedbackPrompt";
 export * from "./ReaderAnnotationOverlay";
 export * from "./ReaderFloatingLayer";
 export * from "./ReaderNotePanel";

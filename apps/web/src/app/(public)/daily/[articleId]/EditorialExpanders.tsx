@@ -27,8 +27,8 @@ export function ReadingNoteExpander({ note }: ReadingNoteProps) {
             {note.focusQuestion}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            <span className="font-sans text-[0.65rem] font-bold uppercase tracking-[0.1em] text-muted transition-colors group-hover:text-ink">
-              {isOpen ? "CLOSE" : "EXPAND"}
+            <span className="font-sans text-[0.65rem] font-bold tracking-[0.1em] text-muted transition-colors group-hover:text-ink">
+              {isOpen ? "Close" : "Expand"}
             </span>
             <ChevronDown
               className={cn(
@@ -76,8 +76,8 @@ export function TranslationExpander({ translation }: TranslationProps) {
         aria-expanded={isOpen}
       >
         <div className="h-px w-10 bg-hairline transition-all duration-300 group-hover:w-16 group-hover:bg-muted" />
-        <span className="font-sans text-[0.65rem] font-bold uppercase tracking-[0.2em] text-muted transition-colors group-hover:text-ink">
-          {isOpen ? "HIDE TRANSLATION" : "SHOW TRANSLATION"}
+        <span className="font-sans text-[0.65rem] font-bold tracking-[0.2em] text-muted transition-colors group-hover:text-ink">
+          {isOpen ? "Hide Translation" : "Show Translation"}
         </span>
       </button>
 

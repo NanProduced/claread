@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Sparkles } from "lucide-react";
+import { ChevronDown, Flag, Sparkles } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { RenderElement } from "platejs/react";
 import { readerInlineFocusRing, readerPanelItem, readerTransitionStandard } from "@/components/reader/interaction";
@@ -81,6 +81,7 @@ interface ReaderAnalysisElementProps {
   cueIndex?: number;
   onAsk?: () => void;
   onDelete?: () => void;
+  onFeedback?: () => void;
   onToggle?: () => void;
   onFocusChange?: (focused: boolean) => void;
 }
@@ -91,6 +92,7 @@ export function ReaderAnalysisElement({
   cueIndex,
   onAsk,
   onDelete,
+  onFeedback,
   onFocusChange,
   onToggle,
   props,
@@ -174,27 +176,43 @@ export function ReaderAnalysisElement({
               </span>
             ) : null}
             {element.sourceKind === "ask_supplement" ? (
-              <span className="ml-1 shrink-0 rounded bg-lens-blue/10 px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.16em] text-lens-blue">
+              <span className="ml-1 shrink-0 rounded bg-lens-blue/10 px-1.5 py-0.5 text-[0.6rem] font-semibold tracking-[0.16em] text-lens-blue">
                 AI 补充
               </span>
             ) : null}
           </div>
         </button>
         <div className="flex shrink-0 items-center gap-1 pl-2">
-          {expanded && onAsk ? (
+          {expanded && (onAsk || onFeedback) ? (
             <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                className={cn(headerIconActionClassName, "text-lens-blue/72 hover:text-lens-blue focus-visible:text-lens-blue")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onAsk();
-                }}
-                aria-label="带解析进入 Ask"
-                title="带解析进入 Ask"
-              >
-                <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
-              </button>
+              {onAsk ? (
+                <button
+                  type="button"
+                  className={cn(headerIconActionClassName, "text-lens-blue/72 hover:text-lens-blue focus-visible:text-lens-blue")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAsk();
+                  }}
+                  aria-label="带解析进入 Ask"
+                  title="带解析进入 Ask"
+                >
+                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+              {onFeedback ? (
+                <button
+                  type="button"
+                  className={cn(headerIconActionClassName, "hover:text-lens-blue focus-visible:text-lens-blue")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onFeedback();
+                  }}
+                  aria-label="反馈这条标注"
+                  title="反馈这条标注"
+                >
+                  <Flag aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
               {onDelete && element.deletable ? (
                 <button
                   type="button"

@@ -242,7 +242,7 @@ export function VocabularyDetailPanel({
                     )}
                     <div className="border-l-2 border-lens-blue/30 pl-3">
                       {item.sourceRecordTitle && (
-                        <p className="mb-1.5 text-[0.65rem] font-bold tracking-[0.08em] text-subtle uppercase">
+                        <p className="mb-1.5 text-[0.65rem] font-bold tracking-[0.08em] text-subtle">
                           {item.sourceRecordTitle}
                         </p>
                       )}

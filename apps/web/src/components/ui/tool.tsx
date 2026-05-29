@@ -159,7 +159,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <div className="space-y-3 bg-reader-paper/70 p-3.5">
             {input && Object.keys(input).length > 0 && (
               <div>
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                <h4 className="mb-2 text-xs font-semibold tracking-[0.12em] text-muted">
                   输入
                 </h4>
                 <div className="rounded-[var(--cl-radius-control-md)] border border-hairline bg-surface px-3 py-2 text-sm leading-6 text-ink-soft">
@@ -175,7 +175,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 
             {output && (
               <div>
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                <h4 className="mb-2 text-xs font-semibold tracking-[0.12em] text-muted">
                   输出
                 </h4>
                 <div className="max-h-60 overflow-auto rounded-[var(--cl-radius-control-md)] border border-hairline bg-surface px-3 py-2 text-sm leading-6 text-ink-soft">
@@ -188,7 +188,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 
             {state === "output-error" && toolPart.errorText && (
               <div>
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-error-red">错误</h4>
+                <h4 className="mb-2 text-xs font-semibold tracking-[0.12em] text-error-red">错误</h4>
                 <div className="rounded-[var(--cl-radius-control-md)] border border-[rgba(190,18,60,0.14)] bg-[rgba(190,18,60,0.05)] px-3 py-2 text-sm text-error-red">
                   {toolPart.errorText}
                 </div>

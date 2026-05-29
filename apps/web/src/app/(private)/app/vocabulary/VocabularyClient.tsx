@@ -100,7 +100,7 @@ function VocabularyBookmarkRail({
           <div className="overflow-hidden rounded-t-[1.45rem] border border-hairline border-b-0 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--surface)_82%,white)_0%,color-mix(in_srgb,var(--reader-paper)_88%,white)_100%)] px-7 pb-8 pt-10 shadow-[0_16px_40px_rgba(28,24,18,0.08)]">
             {/* Header */}
             <div className="mb-6">
-              <p className="text-[0.58rem] font-bold uppercase tracking-[0.18em] text-subtle">Claread Vocabulary</p>
+              <p className="text-[0.58rem] font-bold tracking-[0.18em] text-subtle">Claread Vocabulary</p>
               <h2 className="mt-1.5 font-headline text-[1.2rem] font-semibold leading-tight text-ink">我的词汇书签</h2>
             </div>
 
@@ -115,7 +115,7 @@ function VocabularyBookmarkRail({
               {/* Browse by status */}
               <section className="border-t border-hairline pt-7">
                 <div className="mb-4 flex items-center justify-between gap-3">
-                  <h3 className="text-[0.62rem] font-bold uppercase tracking-[0.16em] text-subtle">
+                  <h3 className="text-[0.62rem] font-bold tracking-[0.16em] text-subtle">
                     按状态浏览
                   </h3>
                 </div>
@@ -153,7 +153,7 @@ function VocabularyBookmarkRail({
               {/* Recent additions */}
               {recentItems.length > 0 && (
                 <section className="border-t border-hairline pt-7">
-                  <h3 className="mb-4 text-[0.62rem] font-bold uppercase tracking-[0.16em] text-subtle">
+                  <h3 className="mb-4 text-[0.62rem] font-bold tracking-[0.16em] text-subtle">
                     最近加入
                   </h3>
                   <div className="space-y-3">
@@ -174,7 +174,7 @@ function VocabularyBookmarkRail({
               {/* Multi-context words */}
               {multiContextItems.length > 0 && (
                 <section className="border-t border-hairline pt-7">
-                  <h3 className="mb-4 text-[0.62rem] font-bold uppercase tracking-[0.16em] text-subtle">
+                  <h3 className="mb-4 text-[0.62rem] font-bold tracking-[0.16em] text-subtle">
                     多语境词条
                   </h3>
                   <div className="space-y-3">
@@ -430,7 +430,7 @@ export function VocabularyClient({
         <div className="mb-6 shrink-0 flex flex-col sm:flex-row sm:items-end justify-between gap-4 pl-2 border-b border-hairline pb-5">
           <div>
             <div className="mb-2 flex items-center gap-3">
-              <p className="text-[0.6rem] font-bold uppercase tracking-[0.2em] text-lens-blue">Vocabulary</p>
+              <p className="text-[0.6rem] font-bold tracking-[0.2em] text-lens-blue">Vocabulary</p>
               <div className="h-[1px] w-8 bg-hairline" />
             </div>
             <h1 className="font-headline text-[2rem] font-semibold leading-[1] tracking-tight text-ink md:text-[2.5rem] lg:text-[3rem]">
@@ -589,7 +589,7 @@ export function VocabularyClient({
             <div className="relative max-w-[42rem]">
               <div className="mb-5 flex items-center gap-4">
                 <span className="h-px w-10 bg-hairline" />
-                <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-lens-blue">
+                <p className="text-[0.68rem] font-bold tracking-[0.18em] text-lens-blue">
                   {hasQuery ? "Vocabulary Filters" : "Vocabulary Awaits"}
                 </p>
               </div>
@@ -609,15 +609,15 @@ export function VocabularyClient({
                 ) : (
                   <div className="mt-4 grid gap-5 border-t border-hairline/80 pt-6 text-[0.8rem] leading-6 text-muted sm:grid-cols-3">
                     <div>
-                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-ink">词汇与语境</p>
+                      <p className="text-[0.68rem] font-bold tracking-[0.14em] text-ink">词汇与语境</p>
                       <p className="mt-2">每个生词都会留下来源语境、音标和释义，方便回看。</p>
                     </div>
                     <div>
-                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-ink">复习与掌握</p>
+                      <p className="text-[0.68rem] font-bold tracking-[0.14em] text-ink">复习与掌握</p>
                       <p className="mt-2">间隔复习帮你把阅读中遇到的词汇真正记住。</p>
                     </div>
                     <div>
-                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-ink">多语境积累</p>
+                      <p className="text-[0.68rem] font-bold tracking-[0.14em] text-ink">多语境积累</p>
                       <p className="mt-2">同一个词在不同文章中的语境，会在这里汇聚成立体的理解。</p>
                     </div>
                   </div>

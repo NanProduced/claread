@@ -12,7 +12,7 @@ export default async function HomePage() {
       <PublicSiteHeader currentHref={homeRoute} priority />
       <section className="mx-auto grid min-h-[70vh] max-w-6xl content-center gap-8 py-20">
         <div className="max-w-3xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-lens-blue">
+          <p className="text-xs font-semibold tracking-[0.18em] text-lens-blue">
             Claread Web
           </p>
           <h1 className="mt-4 text-5xl font-semibold leading-tight tracking-normal text-[var(--foreground)]">

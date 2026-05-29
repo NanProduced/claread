@@ -121,7 +121,7 @@ export function ReaderSettingsPanel({
               <span className="text-muted/60 font-mono">A01</span>
               <span className="text-ink">主题</span>
             </legend>
-            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle uppercase">
+            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle">
               Theme
             </span>
           </div>
@@ -172,7 +172,7 @@ export function ReaderSettingsPanel({
                   {/* Labels */}
                   <span className="block text-center mt-2 pb-0.5">
                     <span className="block text-[0.78rem] font-semibold text-ink leading-none">{option.label}</span>
-                    <span className="mt-0.5 block text-[0.55rem] uppercase tracking-[0.08em] font-sans font-medium text-subtle leading-none">
+                    <span className="mt-0.5 block text-[0.55rem] tracking-[0.08em] font-sans font-medium text-subtle leading-none">
                       {option.english}
                     </span>
                   </span>
@@ -203,7 +203,7 @@ export function ReaderSettingsPanel({
               <span className="text-muted/60 font-mono">A02</span>
               <span className="text-ink">字号</span>
             </legend>
-            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle uppercase">
+            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle">
               Size
             </span>
           </div>
@@ -238,7 +238,7 @@ export function ReaderSettingsPanel({
               <span className="text-muted/60 font-mono">A03</span>
               <span className="text-ink">字体</span>
             </legend>
-            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle uppercase">
+            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle">
               Typeface
             </span>
           </div>
@@ -260,7 +260,7 @@ export function ReaderSettingsPanel({
                   onClick={() => onChange(updateField(value, "fontFamily", option.value))}
                 >
                   <span className="block text-[0.82rem] font-bold tracking-tight">{option.label}</span>
-                  <span className="mt-0.5 block text-[0.55rem] uppercase tracking-[0.08em] font-sans font-medium text-subtle leading-none">
+                  <span className="mt-0.5 block text-[0.55rem] tracking-[0.08em] font-sans font-medium text-subtle leading-none">
                     {option.english}
                   </span>
                   {active && (

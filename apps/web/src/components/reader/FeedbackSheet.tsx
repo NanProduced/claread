@@ -3,12 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
-  Flag,
-  Heart,
-  Languages,
-  Pencil,
-  ScanSearch,
-  Sparkles,
+  Loader2,
+  MessageSquareText,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -37,7 +33,7 @@ const FEEDBACK_CONFIG_BY_SCOPE: Record<
 > = {
   analysis_result: {
     title: "解读结果反馈",
-    placeholder: "请描述具体问题或建议",
+    placeholder: "可以补充哪里不准，或希望怎么改",
     requiresText: false,
     positiveOptions: [{ value: "thumbs_up", label: "有帮助" }],
     negativeOptions: [
@@ -50,7 +46,7 @@ const FEEDBACK_CONFIG_BY_SCOPE: Record<
   },
   annotation: {
     title: "标注反馈",
-    placeholder: "请描述标注的问题",
+    placeholder: "可以补充这条标注哪里需要调整",
     requiresText: false,
     positiveOptions: [{ value: "helpful", label: "有帮助" }],
     negativeOptions: [
@@ -63,7 +59,7 @@ const FEEDBACK_CONFIG_BY_SCOPE: Record<
   },
   sentence: {
     title: "句子反馈",
-    placeholder: "请描述句子的问题",
+    placeholder: "可以补充句子解析哪里需要调整",
     requiresText: false,
     negativeOptions: [
       { value: "translation_inaccurate", label: "翻译不准" },
@@ -75,7 +71,7 @@ const FEEDBACK_CONFIG_BY_SCOPE: Record<
   },
   dictionary: {
     title: "词典反馈",
-    placeholder: "请描述词典的问题",
+    placeholder: "可以补充释义、词性或例句的问题",
     requiresText: false,
     negativeOptions: [
       { value: "wrong_definition", label: "释义错误" },
@@ -88,7 +84,7 @@ const FEEDBACK_CONFIG_BY_SCOPE: Record<
   },
   app: {
     title: "应用反馈",
-    placeholder: "请描述你遇到的问题或建议",
+    placeholder: "写下建议，或描述你遇到的问题",
     requiresText: true,
     neutralOptions: [
       { value: "bug_report", label: "遇到问题" },
@@ -119,74 +115,43 @@ export interface FeedbackSheetProps {
 
 type SubmitState = "idle" | "submitting" | "success" | "error";
 
-const TYPE_TOKEN_STYLES: Partial<Record<FeedbackTypeDto, string>> = {
-  thumbs_up: "from-[#F9E4A6] via-[#F3C96A] to-[#D79C38] text-amber-950",
-  helpful: "from-[#F9E4A6] via-[#F3C96A] to-[#D79C38] text-amber-950",
-  translation_inaccurate: "from-[#D9EBFF] via-[#A9CCF4] to-[#7FA6D9] text-slate-900",
-  too_few_annotations: "from-[#F2E8D4] via-[#E7D0B0] to-[#C7A67D] text-stone-900",
-  too_many_annotations: "from-[#E6F0DD] via-[#BFD7AC] to-[#8DAA79] text-stone-900",
-  wrong_difficulty: "from-[#EEE4D6] via-[#D8BFA8] to-[#B69276] text-stone-900",
-  wrong_label: "from-[#FDE0D4] via-[#F3B6A7] to-[#D88773] text-stone-900",
-  inaccurate: "from-[#FFD7D5] via-[#F1A9A4] to-[#D0736E] text-stone-900",
-  wrong_boundary: "from-[#DDE7FF] via-[#BACAF3] to-[#8F9ED4] text-stone-900",
-  should_not_annotate: "from-[#E9E4FF] via-[#C9C0F1] to-[#9D95CB] text-stone-900",
-  sentence_analysis_wrong: "from-[#DEE8FF] via-[#B7C8F0] to-[#8EA5D3] text-stone-900",
-  annotation_conflict: "from-[#F4E5D6] via-[#E2C4AB] to-[#BE9473] text-stone-900",
-  selection_issue: "from-[#E2F3EF] via-[#B7DDD5] to-[#7FB5AA] text-stone-900",
-  wrong_definition: "from-[#EDE7DD] via-[#D7C8B4] to-[#B49C80] text-stone-900",
-  missing_definition: "from-[#FCEDD6] via-[#EFD3A2] to-[#D4A95A] text-stone-900",
-  wrong_pos: "from-[#DDEBFF] via-[#B7D0F2] to-[#86A9D8] text-stone-900",
-  wrong_phonetic: "from-[#E6F3EA] via-[#C4E0CB] to-[#95B79E] text-stone-900",
-  bad_example: "from-[#F2E4F0] via-[#D6BFD0] to-[#B694AE] text-stone-900",
-  bug_report: "from-[#FFDCD8] via-[#F0B0A8] to-[#D88579] text-stone-900",
-  feature_request: "from-[#F7E5C7] via-[#E7C38A] to-[#C59553] text-stone-900",
-  quota_issue: "from-[#E5F2F0] via-[#C7DFD8] to-[#93B7AD] text-stone-900",
-  input_page_issue: "from-[#E5E9FA] via-[#C7D0F0] to-[#98A7D6] text-stone-900",
-  ux_issue: "from-[#EFE5D6] via-[#DDC3A6] to-[#BD9974] text-stone-900",
-  other: "from-[#EEEAE1] via-[#D8D0C4] to-[#B4AB9B] text-stone-900",
-};
-
-function feedbackTypeIcon(type: FeedbackTypeDto) {
-  if (type === "thumbs_up" || type === "helpful") return Heart;
-  if (type === "translation_inaccurate" || type === "wrong_definition") return Languages;
-  if (type === "selection_issue" || type === "wrong_boundary") return ScanSearch;
-  if (type === "feature_request" || type === "input_page_issue" || type === "other") return Pencil;
-  return Sparkles;
-}
-
-function FeedbackToken({
-  feedbackType,
-  className,
-}: {
-  feedbackType: FeedbackTypeDto;
-  className?: string;
-}) {
-  const Icon = feedbackTypeIcon(feedbackType);
-  const gradient = TYPE_TOKEN_STYLES[feedbackType] ?? "from-[#F1E6D2] via-[#DDC7A7] to-[#B99774] text-stone-900";
-
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "relative inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_6px_12px_rgba(120,98,70,0.16)] ring-1 ring-black/5",
-        gradient,
-        className,
-      )}
-    >
-      <span className="absolute inset-[1px] rounded-full bg-white/12" />
-      <Icon className="relative size-2.75" strokeWidth={2.2} />
-    </span>
-  );
-}
-
 function SuccessSeal() {
   return (
-    <span className="relative flex size-14 items-center justify-center">
-      <span className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_25%,#FFF7DB_0%,#EAC56E_48%,#BD8D32_100%)] shadow-[0_12px_22px_rgba(120,88,30,0.22)]" />
-      <span className="absolute inset-1 rounded-full border border-white/40" />
-      <Sparkles className="relative z-10 size-5 text-amber-950" strokeWidth={2.1} />
+    <span className="relative flex size-20 items-center justify-center animate-in zoom-in-95 duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]">
+      <img
+        src="/images/feedback/love.png"
+        alt=""
+        className="h-full w-full object-contain drop-shadow-[0_12px_24px_rgba(170,42,58,0.18)]"
+      />
     </span>
   );
+}
+
+function sentimentCopy(sentiment: FeedbackSentimentDto) {
+  if (sentiment === "positive") {
+    return {
+      label: "有帮助",
+      Icon: ThumbsUp,
+      activeClassName: "border-structure-green/35 bg-structure-green/10 text-structure-green shadow-[0_6px_14px_rgba(33,184,117,0.08)]",
+      iconClassName: "border-structure-green/20 bg-structure-green/10",
+    };
+  }
+
+  if (sentiment === "negative") {
+    return {
+      label: "有问题",
+      Icon: ThumbsDown,
+      activeClassName: "border-error-red/30 bg-error-red/10 text-error-red shadow-[0_6px_14px_rgba(190,18,60,0.08)]",
+      iconClassName: "border-error-red/20 bg-error-red/10",
+    };
+  }
+
+  return {
+    label: "反馈",
+    Icon: MessageSquareText,
+    activeClassName: "border-lens-blue/30 bg-lens-blue-soft/60 text-lens-blue shadow-[0_6px_14px_rgba(28,95,190,0.08)]",
+    iconClassName: "border-lens-blue/20 bg-lens-blue/10",
+  };
 }
 
 export function FeedbackSheet({
@@ -208,7 +173,7 @@ export function FeedbackSheet({
   const hasNeutral = Boolean(config.neutralOptions?.length);
 
   const [sentiment, setSentiment] = useState<FeedbackSentimentDto | null>(
-    prefillSentiment ?? null,
+    prefillSentiment ?? (scope === "app" ? "neutral" : null),
   );
   const [feedbackType, setFeedbackType] = useState<FeedbackTypeDto | null>(
     prefillType ?? null,
@@ -227,12 +192,6 @@ export function FeedbackSheet({
   }, [prefillType]);
 
   useEffect(() => {
-    if (sentiment && !prefillType) {
-      setFeedbackType(null);
-    }
-  }, [sentiment, prefillType]);
-
-  useEffect(() => {
     if (feedbackType === "other") {
       textareaRef.current?.focus();
     }
@@ -246,7 +205,47 @@ export function FeedbackSheet({
         ? config.neutralOptions ?? []
         : [];
 
+  useEffect(() => {
+    if (!sentiment) {
+      setFeedbackType(null);
+      return;
+    }
+
+    const options = sentiment === "positive"
+      ? config.positiveOptions ?? []
+      : sentiment === "negative"
+        ? config.negativeOptions ?? []
+        : config.neutralOptions ?? [];
+
+    if (prefillType && options.some((option) => option.value === prefillType)) {
+      setFeedbackType(prefillType);
+      return;
+    }
+
+    if (options.length === 1) {
+      setFeedbackType(options[0].value);
+      return;
+    }
+
+    setFeedbackType(null);
+  }, [
+    config.negativeOptions,
+    config.neutralOptions,
+    config.positiveOptions,
+    prefillType,
+    sentiment,
+  ]);
+
   const requiresExplanation = config.requiresText || feedbackType === "other";
+  const isImplicitPositiveType = sentiment === "positive" && activeOptions.length === 1;
+  const showTypeOptions = activeOptions.length > 0 && !isImplicitPositiveType;
+  const typeLegend = scope === "app" ? "反馈类型" : "问题类型";
+  const textareaLegend = sentiment === "positive" ? "补充说明" : "详细描述";
+  const textareaPlaceholder = feedbackType === "other"
+    ? "请补充具体情况，帮助我们更快定位"
+    : sentiment === "positive"
+      ? "可选：告诉我们哪里有帮助"
+      : config.placeholder;
   const canSubmit =
     submitState === "idle" &&
     sentiment !== null &&
@@ -304,8 +303,9 @@ export function FeedbackSheet({
     targetId,
   ]);
 
+  const initialSentiment = prefillSentiment ?? (scope === "app" ? "neutral" : null);
   const hasUnsavedInput = content.trim().length > 0
-    || sentiment !== (prefillSentiment ?? null)
+    || sentiment !== initialSentiment
     || feedbackType !== (prefillType ?? null);
 
   const handleClose = useCallback(() => {
@@ -327,21 +327,41 @@ export function FeedbackSheet({
     [handleClose],
   );
 
+  useEffect(() => {
+    if (submitState !== "success") return;
+
+    const timeoutId = window.setTimeout(() => {
+      onClose();
+    }, 2600);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [onClose, submitState]);
+
   return (
     <div
       role="dialog"
       aria-modal="false"
-      className="fixed bottom-0 left-0 right-0 z-50 overflow-hidden rounded-t-2xl border border-hairline/60 bg-surface/80 p-0 text-ink shadow-2xl backdrop-blur-2xl ring-1 ring-inset ring-white/20 duration-300 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-8 ease-out sm:bottom-6 sm:left-auto sm:right-6 sm:w-[410px] sm:rounded-2xl"
+      className="fixed bottom-0 left-0 right-0 z-50 overflow-hidden rounded-t-[20px] border border-hairline/70 bg-[color-mix(in_srgb,var(--surface)_88%,transparent)] p-0 text-ink shadow-[0_24px_70px_rgba(28,24,18,0.16)] backdrop-blur-2xl ring-1 ring-inset ring-white/20 duration-300 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-8 ease-out sm:bottom-6 sm:left-auto sm:right-6 sm:w-[430px] sm:rounded-[20px]"
       onKeyDown={handleKeyDown}
     >
       {submitState === "success" ? (
-        <div className="flex flex-col items-center justify-center gap-3 px-6 py-11 text-center">
+        <div className="relative flex flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+          <button
+            type="button"
+            onClick={onClose}
+            className={cn(
+              "absolute right-4 top-4 inline-flex size-8 items-center justify-center rounded-[10px] border border-hairline/75 bg-secondary/70 text-muted",
+              readerInlineFocusRing,
+              readerTransitionFast,
+              "hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
+            )}
+            aria-label="关闭"
+          >
+            <X className="size-4" />
+          </button>
           <SuccessSeal />
-          <div className="space-y-1">
-            <p className="text-sm font-semibold text-ink">已收到反馈</p>
-            <p className="text-xs leading-5 text-muted">你的反馈会帮助 Claread 持续修正这类问题。</p>
-          </div>
-          <span className="inline-flex items-center gap-1 rounded-full border border-hairline/70 bg-surface-warm/80 px-2.5 py-1 text-[0.68rem] text-muted">
+          <p className="text-base font-semibold text-ink">已收到反馈</p>
+          <span className="inline-flex items-center gap-1.5 rounded-[10px] border border-hairline/70 bg-surface-warm/80 px-3 py-1.5 text-[12px] font-medium text-muted">
             <Check className="size-3 text-structure-green" />
             记录已写入
           </span>
@@ -349,27 +369,20 @@ export function FeedbackSheet({
       ) : (
         <>
           <div className="px-5 pt-5 pb-0">
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <h2 className="text-base font-semibold text-ink">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-[17px] font-semibold leading-7 text-ink">
                   {config.title}
                 </h2>
-                {contextSummary ? (
-                  <div className="rounded-xl border border-hairline/70 bg-surface-warm/65 px-3 py-2">
-                    <p className="line-clamp-2 text-xs leading-5 text-muted">
-                      {contextSummary}
-                    </p>
-                  </div>
-                ) : null}
               </div>
               <button
                 type="button"
                 onClick={handleClose}
                 className={cn(
-                  "inline-flex size-7 items-center justify-center rounded-md border border-hairline bg-secondary text-muted",
+                  "inline-flex size-9 items-center justify-center rounded-[12px] border border-hairline/75 bg-secondary/70 text-muted",
                   readerInlineFocusRing,
                   readerTransitionFast,
-                  "hover:bg-[var(--app-control-quiet)] hover:text-ink",
+                  "hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
                 )}
                 aria-label="关闭"
               >
@@ -378,13 +391,13 @@ export function FeedbackSheet({
             </div>
           </div>
 
-          <div className="flex flex-col gap-4 px-5 pt-4 pb-5">
+          <div className="flex flex-col gap-5 px-5 pt-5 pb-5">
             {(hasPositive || hasNegative || hasNeutral) && scope !== "app" ? (
-              <fieldset className="flex flex-col gap-2">
-                <legend className="text-xs font-semibold tracking-[0.02em] text-muted/80">
+              <fieldset className="flex flex-col gap-2.5">
+                <legend className="text-[12px] font-semibold text-muted">
                   评价
                 </legend>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   {hasPositive ? (
                     <SentimentButton
                       sentiment="positive"
@@ -403,49 +416,42 @@ export function FeedbackSheet({
               </fieldset>
             ) : null}
 
-            {scope === "app" && !sentiment ? (
-              <fieldset className="flex flex-col gap-2">
-                <div className="flex gap-2">
-                  <SentimentButton
-                    sentiment="neutral"
-                    active={false}
-                    onClick={() => setSentiment("neutral")}
-                  />
-                </div>
-              </fieldset>
-            ) : null}
-
-            {activeOptions.length > 0 ? (
-              <fieldset className="flex flex-col gap-2">
-                <legend className="text-xs font-semibold tracking-[0.02em] text-muted/80">
-                  问题类型
+            {showTypeOptions ? (
+              <fieldset className="flex flex-col gap-2.5">
+                <legend className="text-[12px] font-semibold text-muted">
+                  {typeLegend}
                 </legend>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="grid grid-cols-2 gap-2">
                   {activeOptions.map((opt) => (
                     <button
                       key={opt.value}
                       type="button"
+                      aria-pressed={feedbackType === opt.value}
                       className={cn(
-                        "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium shadow-[0_1px_0_rgba(255,255,255,0.35)]",
+                        "group flex min-h-11 items-center justify-between rounded-[12px] border px-3 py-2 text-left text-[13px] font-semibold transition-all duration-200",
                         readerInlineFocusRing,
-                        readerTransitionFast,
                         feedbackType === opt.value
-                          ? "border-lens-blue/30 bg-lens-blue-soft/60 text-lens-blue"
-                          : "border-hairline bg-secondary text-ink hover:border-[var(--app-control-border-hover)] hover:bg-[var(--app-control-quiet)]",
+                          ? "border-ink/70 bg-[linear-gradient(180deg,var(--ink),color-mix(in_srgb,var(--ink)_88%,var(--surface)))] text-background shadow-[0_7px_16px_rgba(30,25,18,0.13)]"
+                          : "border-hairline/80 bg-secondary/58 text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
                       )}
                       onClick={() => setFeedbackType(opt.value)}
                     >
-                      <FeedbackToken feedbackType={opt.value} />
-                      {opt.label}
+                      <span>{opt.label}</span>
+                      <Check
+                        className={cn(
+                          "size-3.5 transition-opacity",
+                          feedbackType === opt.value ? "opacity-100" : "opacity-0 group-hover:opacity-35",
+                        )}
+                      />
                     </button>
                   ))}
                 </div>
               </fieldset>
             ) : null}
 
-            <fieldset className="flex flex-col gap-2">
-              <legend className="text-xs font-semibold tracking-[0.02em] text-muted/80">
-                详细描述
+            <fieldset className="flex flex-col gap-2.5">
+              <legend className="text-[12px] font-semibold text-muted">
+                {textareaLegend}
                 {requiresExplanation ? (
                   <span className="ml-1 text-destructive/80">*</span>
                 ) : null}
@@ -454,45 +460,30 @@ export function FeedbackSheet({
                 ref={textareaRef}
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder={feedbackType === "other" ? "请补充具体情况，帮助我们更快定位问题" : config.placeholder}
+                placeholder={textareaPlaceholder}
                 rows={3}
                 className={cn(
-                  "w-full resize-none rounded-xl border border-hairline bg-surface-warm/50 px-3.5 py-3 text-sm text-ink placeholder:text-muted/50 shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] transition-all",
+                  "min-h-[112px] w-full resize-none rounded-[14px] border border-hairline/85 bg-[color-mix(in_srgb,var(--surface-warm)_58%,transparent)] px-3.5 py-3 text-sm leading-6 text-ink placeholder:text-muted/65 shadow-[inset_0_2px_6px_rgba(30,25,18,0.025)] transition-all",
                   readerInlineFocusRing,
-                  "hover:border-[var(--app-control-border-hover)] hover:bg-surface-warm",
+                  "hover:border-[var(--app-control-border-hover)] hover:bg-surface-warm/80",
                   "focus:border-lens-blue/40 focus:bg-surface focus:ring-4 focus:ring-lens-blue/10",
                 )}
               />
-              <p className="text-[0.7rem] leading-5 text-muted">
-                {feedbackType === "other"
-                  ? "“其他” 需要补充说明，避免这条反馈失去可处理性。"
-                  : "你的反馈会帮助 Claread 持续修正这类问题。"}
-              </p>
             </fieldset>
 
             {submitState === "error" ? (
               <p className="text-xs text-destructive">提交失败，请重试</p>
             ) : null}
 
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline/60 bg-surface-warm/55 px-3.5 py-3">
-              <div className="flex items-center gap-2">
-                <FeedbackToken
-                  feedbackType={feedbackType ?? "other"}
-                  className="size-6"
-                />
-                <p className="text-[0.72rem] leading-5 text-muted">
-                  提交后可在“我的反馈”里查看处理状态。
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
+            <div className="mt-1 flex items-center justify-end gap-2 border-t border-hairline/60 pt-4">
                 <button
                   type="button"
                   onClick={handleClose}
                   className={cn(
-                    "inline-flex min-h-9 items-center justify-center rounded-lg border border-hairline bg-secondary px-4 text-sm font-medium text-ink",
+                    "inline-flex min-h-10 items-center justify-center rounded-[12px] border border-hairline/80 bg-secondary/70 px-4 text-sm font-medium text-ink",
                     readerInlineFocusRing,
                     readerTransitionFast,
-                    "hover:bg-[var(--app-control-quiet)]",
+                    "hover:border-muted hover:bg-[var(--app-control-quiet)]",
                   )}
                 >
                   取消
@@ -502,15 +493,21 @@ export function FeedbackSheet({
                   disabled={!canSubmit}
                   onClick={handleSubmit}
                   className={cn(
-                    "inline-flex min-h-9 items-center justify-center rounded-lg bg-lens-blue px-5 text-sm font-semibold text-white shadow-sm ring-1 ring-inset ring-black/10 transition-all",
+                    "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[12px] bg-ink px-5 text-sm font-semibold text-background shadow-[0_8px_18px_rgba(30,25,18,0.16)] ring-1 ring-inset ring-white/10 transition-all",
                     readerInlineFocusRing,
-                    "disabled:pointer-events-none disabled:opacity-40",
-                    "hover:bg-lens-blue/90 hover:shadow-md active:scale-[0.98]",
+                    "disabled:pointer-events-none disabled:bg-muted/55 disabled:text-background/75 disabled:shadow-none",
+                    "hover:bg-ink-soft hover:shadow-[0_8px_18px_rgba(30,25,18,0.18)] active:scale-[0.98]",
                   )}
                 >
-                  {submitState === "submitting" ? "提交中…" : "提交反馈"}
+                  {submitState === "submitting" ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                      提交中
+                    </>
+                  ) : (
+                    "提交反馈"
+                  )}
                 </button>
-              </div>
             </div>
           </div>
         </>
@@ -526,49 +523,37 @@ interface SentimentButtonProps {
 }
 
 function SentimentButton({ sentiment, active, onClick }: SentimentButtonProps) {
-  const icon =
-    sentiment === "positive" ? (
-      <ThumbsUp className="size-3.5" />
-    ) : sentiment === "negative" ? (
-      <ThumbsDown className="size-3.5" />
-    ) : (
-      <Flag className="size-3.5" />
-    );
-
-  const label =
-    sentiment === "positive"
-      ? "有帮助"
-      : sentiment === "negative"
-        ? "有问题"
-        : "反馈";
-
-  const tokenType: FeedbackTypeDto =
-    sentiment === "positive"
-      ? "thumbs_up"
-      : sentiment === "negative"
-        ? "inaccurate"
-        : "feature_request";
+  const meta = sentimentCopy(sentiment);
+  const Icon = meta.Icon;
 
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium",
+        "group flex min-h-[58px] items-center gap-3 rounded-[14px] border px-3.5 py-2.5 text-left transition-all duration-200 ease-[cubic-bezier(0.25,1,0.5,1)]",
         readerInlineFocusRing,
-        readerTransitionFast,
         active
-          ? sentiment === "positive"
-            ? "border-structure-green/30 bg-structure-green/10 text-structure-green"
-            : sentiment === "negative"
-              ? "border-destructive/25 bg-destructive/10 text-destructive"
-              : "border-lens-blue/30 bg-lens-blue-soft/60 text-lens-blue"
-          : "border-hairline bg-secondary text-ink hover:border-[var(--app-control-border-hover)] hover:bg-[var(--app-control-quiet)]",
+          ? meta.activeClassName
+          : "border-hairline/80 bg-secondary/58 text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
       )}
     >
-      <FeedbackToken feedbackType={tokenType} />
-      {icon}
-      {label}
+      <span
+        className={cn(
+          "inline-flex size-9 shrink-0 items-center justify-center rounded-[10px] border bg-background/72 transition-colors",
+          active ? meta.iconClassName : "border-hairline/70",
+        )}
+      >
+        <Icon className="size-[18px]" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1 text-sm font-semibold leading-5">{meta.label}</span>
+      <Check
+        className={cn(
+          "size-4 shrink-0 transition-opacity",
+          active ? "opacity-100" : "opacity-0 group-hover:opacity-35",
+        )}
+      />
     </button>
   );
 }

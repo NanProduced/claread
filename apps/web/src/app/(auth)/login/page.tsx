@@ -25,7 +25,7 @@ export default async function LoginPage() {
 
         <div className="mx-auto grid max-w-7xl gap-8 py-7 lg:grid-cols-[minmax(0,1fr)_400px] lg:py-9 xl:gap-14">
           <section className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-lens-blue">
+            <p className="text-xs font-semibold tracking-[0.18em] text-lens-blue">
               Read deeply, understand clearly
             </p>
             <h1 className="mt-3 max-w-4xl font-headline text-[2.45rem] font-semibold leading-[1.04] tracking-normal text-ink sm:text-[3.85rem]">
@@ -106,7 +106,7 @@ export default async function LoginPage() {
 
           <aside className="lg:pt-16">
             <section className="rounded-[1.75rem] border border-hairline bg-surface-raised/95 p-5 shadow-[0_22px_64px_rgba(35,28,18,0.13)] sm:p-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lens-blue">
+              <p className="text-xs font-semibold tracking-[0.16em] text-lens-blue">
                 Claread Web
               </p>
               <h2 className="mt-3 font-headline text-3xl font-semibold tracking-normal text-ink">

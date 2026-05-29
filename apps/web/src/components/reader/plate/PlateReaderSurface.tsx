@@ -85,6 +85,7 @@ export interface PlateReaderSurfaceProps {
   onAskAnalysis?: (sentenceId: string, entryId: string) => void;
   onAskContentSummary?: (summary: ReaderContentSummaryNode) => void;
   onDeleteAnalysisSupplement?: (supplementId: string) => void;
+  onAnalysisFeedback?: (entry: ReaderAnalysisBlockNode) => void;
 }
 
 function focusRangesBySentence(
@@ -147,6 +148,7 @@ export function PlateReaderSurface({
   readerNotesBySentence = new Map<string, WebReaderNoteVm[]>(),
   activeReaderNoteId = null,
   onAnalysisFocusChange,
+  onAnalysisFeedback,
   onAnalysisToggle,
   onAnnotationJump,
   onOpenSentenceNotes,
@@ -510,6 +512,7 @@ export function PlateReaderSurface({
               visible={analysisEntryVisible(element.entryType, annotationVisibilityGroups)}
               cueIndex={cueIndex}
               onAsk={onAskAnalysis ? () => onAskAnalysis(element.sentenceId, element.entryId) : undefined}
+              onFeedback={onAnalysisFeedback ? () => onAnalysisFeedback(element) : undefined}
               onDelete={
                 onDeleteAnalysisSupplement && element.supplementId
                   ? () => onDeleteAnalysisSupplement(String(element.supplementId))
@@ -541,6 +544,7 @@ export function PlateReaderSurface({
       onLookupIntent,
       onOpenSentenceActions,
       onAnnotationJump,
+      onAnalysisFeedback,
       onAskAnalysis,
       onAskContentSummary,
       onDeleteAnalysisSupplement,

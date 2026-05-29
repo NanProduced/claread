@@ -132,7 +132,7 @@ function PreReadingGuide({ article }: { article: DailyReaderArticle }) {
 
   return (
     <section className="mt-12 border-y border-hairline py-8">
-      <h2 className="mb-4 text-[0.65rem] font-bold uppercase tracking-[0.2em] text-lens-blue">
+      <h2 className="mb-4 text-[0.65rem] font-bold tracking-[0.2em] text-lens-blue">
         Editor&apos;s Note
       </h2>
       {article.preReadingGuide.overview ? (
@@ -175,7 +175,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
     <section className="relative mt-20 border-t border-hairline pt-16">
       <div className="mb-12 flex items-center justify-center">
         <span className="block h-px w-12 bg-hairline"></span>
-        <h2 className="mx-4 text-xs font-bold uppercase tracking-[0.2em] text-muted">Analysis</h2>
+        <h2 className="mx-4 text-xs font-bold tracking-[0.2em] text-muted">Analysis</h2>
         <span className="block h-px w-12 bg-hairline"></span>
       </div>
 
@@ -188,14 +188,14 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
       <div className="mx-auto mt-16 space-y-16">
         {analysis.writingMoves && analysis.writingMoves.length > 0 ? (
           <div>
-            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Writing Moves</h3>
+            <h3 className="mb-6 font-sans text-xs font-bold tracking-[0.15em] text-ink">Writing Moves</h3>
             <div className="space-y-10">
               {analysis.writingMoves.map((move, i) => (
                 <div key={`wm-${i}`} className="relative pl-8">
                   <span className="absolute left-0 top-0 font-sans text-[0.75rem] font-bold text-subtle">
                     {String(i + 1).padStart(2, "0")}
                   </span>
-                  <span className="inline-block font-sans text-[0.7rem] font-bold uppercase tracking-wider text-lens-blue">
+                  <span className="inline-block font-sans text-[0.7rem] font-bold tracking-wider text-lens-blue">
                     {move.moveType}
                   </span>
                   <p className="mt-3 font-reading text-[1.1rem] italic leading-[1.8] text-ink">
@@ -218,7 +218,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
 
         {analysis.sentenceNotes && analysis.sentenceNotes.length > 0 ? (
           <div className="border-t border-hairline pt-12">
-            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Sentence Analysis</h3>
+            <h3 className="mb-6 font-sans text-xs font-bold tracking-[0.15em] text-ink">Sentence Analysis</h3>
             <div className="space-y-10">
               {analysis.sentenceNotes.map((note, i) => (
                 <div key={`sn-${i}`}>
@@ -242,7 +242,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
 
         {analysis.keyExpressions.length > 0 ? (
           <div className="border-t border-hairline pt-12">
-            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Key Expressions</h3>
+            <h3 className="mb-6 font-sans text-xs font-bold tracking-[0.15em] text-ink">Key Expressions</h3>
             <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
               {analysis.keyExpressions.map((item, i) => (
                 <div key={`ke-${i}`}>
@@ -259,7 +259,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
 
         {analysis.discussionQuestions.length > 0 ? (
           <div className="border-t border-hairline pt-12">
-            <h3 className="mb-6 font-sans text-xs font-bold uppercase tracking-[0.15em] text-ink">Discussion</h3>
+            <h3 className="mb-6 font-sans text-xs font-bold tracking-[0.15em] text-ink">Discussion</h3>
             <div className="space-y-4">
               {analysis.discussionQuestions.map((question, i) => (
                 <div key={`dq-${i}`} className="flex gap-3">
@@ -320,7 +320,7 @@ export default async function DailyArticlePage({
       {/* Article content */}
       <article className="mx-auto max-w-[680px] px-5 sm:px-8">
         {/* Daily Reader label */}
-        <p className="mt-10 text-xs font-semibold uppercase tracking-[0.16em] text-lens-blue">
+        <p className="mt-10 text-xs font-semibold tracking-[0.16em] text-lens-blue">
           Daily Reader · {formatPublishDate(article.publishDate)}
         </p>
 

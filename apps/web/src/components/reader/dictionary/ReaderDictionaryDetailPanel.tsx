@@ -463,7 +463,7 @@ export function ReaderDictionaryDetailPanel({
               <dl className="grid gap-3.5">
                 {details.map((item) => (
                   <div key={item.label} className="grid gap-1">
-                    <dt className="text-[0.64rem] font-bold tracking-[0.08em] text-subtle uppercase">{item.label}</dt>
+                    <dt className="text-[0.64rem] font-bold tracking-[0.08em] text-subtle">{item.label}</dt>
                     <dd className="text-[0.84rem] leading-6 text-ink-soft/92">{item.value}</dd>
                   </div>
                 ))}
@@ -520,7 +520,7 @@ export function ReaderDictionaryDetailPanel({
           {renderAINoteAction()}
           {missingFallbackResult.suggestedQuery.length > 0 ? (
             <div className="mt-3.5 border-t border-hairline/60 pt-3 select-none">
-              <p className="text-[0.66rem] font-bold tracking-wider text-subtle uppercase">换个词再查</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-subtle">换个词再查</p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {missingFallbackResult.suggestedQuery.map((query) => (
                   <button
@@ -597,7 +597,7 @@ export function ReaderDictionaryDetailPanel({
 
         {missingFallbackResult.suggestedQuery.length > 0 ? (
           <div className="mt-3.5 border-t border-hairline/60 pt-3 select-none">
-            <p className="text-[0.66rem] font-bold tracking-wider text-subtle uppercase">换个词再查</p>
+            <p className="text-[0.66rem] font-bold tracking-wider text-subtle">换个词再查</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {missingFallbackResult.suggestedQuery.map((query) => (
                 <button
@@ -615,7 +615,7 @@ export function ReaderDictionaryDetailPanel({
 
         {aiEntrySenseItems.length > 0 ? (
           <div className="mt-3.5 border-t border-hairline/60 pt-3">
-            <p className="text-[0.66rem] font-bold tracking-wider text-subtle uppercase select-none">释义</p>
+            <p className="text-[0.66rem] font-bold tracking-wider text-subtle select-none">释义</p>
             <ol className="mt-2.5 space-y-3.5">
               {aiEntrySenseItems.slice(0, 4).map((sense, index) => (
                 <li key={sense.key} className="flex items-start gap-3">
@@ -940,7 +940,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup?.state.kind === "error" ? (
           <div className="space-y-4 px-5 py-5 select-none">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted uppercase">查询失败</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted">查询失败</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             <div className="rounded-[8px] border border-exam-red/20 bg-exam-red/[0.01] px-4 py-3">
@@ -1134,7 +1134,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup && disambiguationResult ? (
           <div className="space-y-5 px-5 py-5 select-none">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted uppercase">歧义选择</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted">歧义选择</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             <div className="space-y-5">
@@ -1175,7 +1175,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup && notFoundResult ? (
           <div className="space-y-4 px-5 py-5">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted uppercase select-none">未收录结果</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted select-none">未收录结果</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             <div className="space-y-3.5 rounded-[8px] border border-hairline bg-ink/[0.005] px-4 py-4">
@@ -1207,7 +1207,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup && errorResult ? (
           <div className="space-y-4 px-5 py-5 select-none">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted uppercase">词典暂不可用</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted">词典暂不可用</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             <div className="rounded-[8px] border border-exam-red/20 bg-exam-red/[0.01] px-4 py-3">

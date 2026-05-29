@@ -6,6 +6,7 @@ export interface LedgerEntryVm {
   balanceAfter: number;
   description: string;
   articleTitle: string | null;
+  metadata: Record<string, unknown>;
   taskId: string | null;
   createdAt: string;
 }

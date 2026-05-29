@@ -57,7 +57,7 @@ export default async function ExamplePage({
         </header>
 
         <article className="reading-paper mt-8 rounded-[2rem] border border-hairline px-6 py-8 shadow-[0_28px_80px_rgba(35,28,18,0.12)] sm:px-12 sm:py-12">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lens-blue">
+          <p className="text-xs font-semibold tracking-[0.16em] text-lens-blue">
             {example.label}
           </p>
           <h1 className="mt-5 max-w-3xl font-headline text-[2.5rem] font-semibold leading-tight tracking-normal text-ink sm:text-[3.4rem]">

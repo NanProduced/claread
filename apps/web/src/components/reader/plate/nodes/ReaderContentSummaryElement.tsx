@@ -40,7 +40,7 @@ export function ReaderContentSummaryElement({
           aria-label={`${expanded ? "收起" : "展开"}内容概要`}
         >
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-lens-blue">内容概要</p>
+            <p className="text-[0.72rem] font-semibold tracking-[0.12em] text-lens-blue">内容概要</p>
             <span className="rounded-full border border-border bg-background px-2.5 py-0.5 text-[0.68rem] font-medium text-muted-foreground">
               {contentSummaryCompletenessLabel(element.completeness)}
             </span>
@@ -84,19 +84,19 @@ export function ReaderContentSummaryElement({
           <p className="text-[0.97rem] leading-[1.85] text-foreground">{element.overview}</p>
           {element.researchQuestion ? (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">研究问题</p>
+              <p className="text-xs font-semibold tracking-[0.08em] text-muted-foreground">研究问题</p>
               <p>{element.researchQuestion}</p>
             </div>
           ) : null}
           {element.methodology ? (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">方法</p>
+              <p className="text-xs font-semibold tracking-[0.08em] text-muted-foreground">方法</p>
               <p>{element.methodology}</p>
             </div>
           ) : null}
           {element.keyFindings.length > 0 ? (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">主要发现</p>
+              <p className="text-xs font-semibold tracking-[0.08em] text-muted-foreground">主要发现</p>
               <ul className="list-disc space-y-1 pl-5">
                 {element.keyFindings.map((item) => (
                   <li key={item}>{item}</li>
@@ -106,7 +106,7 @@ export function ReaderContentSummaryElement({
           ) : null}
           {element.limitations.length > 0 ? (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">局限性</p>
+              <p className="text-xs font-semibold tracking-[0.08em] text-muted-foreground">局限性</p>
               <ul className="list-disc space-y-1 pl-5">
                 {element.limitations.map((item) => (
                   <li key={item}>{item}</li>

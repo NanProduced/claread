@@ -40,7 +40,7 @@ export function EditorialTagList({ tags, className }: EditorialTagListProps) {
 
   return (
     <div
-      className={cn("flex flex-wrap items-center gap-x-1.5 gap-y-1 font-sans text-[0.66rem] font-bold uppercase tracking-[0.1em] text-muted", className)}
+      className={cn("flex flex-wrap items-center gap-x-1.5 gap-y-1 font-sans text-[0.66rem] font-bold tracking-[0.1em] text-muted", className)}
     >
       {visibleTags.map((tag, index) => (
         <span key={tag} className="inline-flex items-center">

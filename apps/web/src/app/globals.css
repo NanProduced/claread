@@ -676,7 +676,6 @@ select {
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .theme-preview-surface__eyebrow-dot {
@@ -2353,7 +2352,6 @@ select {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .reader-entry-analysis-text {
@@ -3139,7 +3137,6 @@ select {
   font-size: 0.78rem !important;
   font-weight: 700 !important;
   letter-spacing: 0.05em !important;
-  text-transform: uppercase !important;
   width: fit-content !important;
   line-height: 1.25 !important;
 }

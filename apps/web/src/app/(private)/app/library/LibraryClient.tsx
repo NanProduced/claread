@@ -158,7 +158,7 @@ function renderArchiveEmptyState({
       <div className="relative max-w-[42rem]">
         <div className="mb-5 flex items-center gap-4">
           <span className="h-px w-10 bg-hairline" />
-          <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-lens-blue">
+          <p className="text-[0.68rem] font-bold tracking-[0.18em] text-lens-blue">
             {hasQuery ? "Archive Filters" : "Archive Awaits"}
           </p>
         </div>
@@ -185,15 +185,15 @@ function renderArchiveEmptyState({
         {!hasQuery ? (
           <div className="mt-12 grid gap-5 border-t border-hairline/80 pt-6 text-[0.8rem] leading-6 text-muted sm:grid-cols-3">
             <div>
-              <p className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-ink">标题与片段</p>
+              <p className="text-[0.68rem] font-bold tracking-[0.14em] text-ink">标题与片段</p>
               <p className="mt-2">每篇文章都会留下标题、原文片段和最近阅读时间，方便回找。</p>
             </div>
             <div>
-              <p className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-ink">笔记与生词</p>
+              <p className="text-[0.68rem] font-bold tracking-[0.14em] text-ink">笔记与生词</p>
               <p className="mt-2">你留下的笔记和生词，会在这里形成真正可回看的阅读痕迹。</p>
             </div>
             <div>
-              <p className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-ink">按目标重读</p>
+              <p className="text-[0.68rem] font-bold tracking-[0.14em] text-ink">按目标重读</p>
               <p className="mt-2">日常阅读、备考精读与学术阅读，会在页边书签里成为快速索引。</p>
             </div>
           </div>
@@ -465,7 +465,7 @@ export function LibraryClient({
         <div className="mb-6 shrink-0 flex flex-col sm:flex-row sm:items-end justify-between gap-4 pl-2 border-b border-hairline pb-5">
           <div>
             <div className="mb-2 flex items-center gap-3">
-              <p className="text-[0.6rem] font-bold uppercase tracking-[0.2em] text-lens-blue">Library</p>
+              <p className="text-[0.6rem] font-bold tracking-[0.2em] text-lens-blue">Library</p>
               <div className="h-[1px] w-8 bg-hairline" />
             </div>
             <h1 className="font-headline text-[2rem] font-semibold leading-[1] tracking-tight text-ink md:text-[2.5rem] lg:text-[3rem]">
@@ -523,7 +523,7 @@ export function LibraryClient({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[0.62rem] font-bold uppercase tracking-[0.14em] text-subtle">
+            <span className="text-[0.62rem] font-bold tracking-[0.14em] text-subtle">
               排序
             </span>
             {sortOptions.map((option) => {
@@ -700,7 +700,7 @@ export function LibraryClient({
 
             <div className="overflow-hidden rounded-t-[1.45rem] border border-hairline border-b-0 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--surface)_82%,white)_0%,color-mix(in_srgb,var(--reader-paper)_88%,white)_100%)] px-7 pb-8 pt-10 shadow-[0_16px_40px_rgba(28,24,18,0.08)]">
               <div className="mb-6">
-                <p className="text-[0.58rem] font-bold uppercase tracking-[0.18em] text-subtle">Claread Archive</p>
+                <p className="text-[0.58rem] font-bold tracking-[0.18em] text-subtle">Claread Archive</p>
                 <h2 className="mt-1.5 font-headline text-[1.2rem] font-semibold leading-tight text-ink">我的归档书签</h2>
               </div>
 
@@ -725,7 +725,7 @@ export function LibraryClient({
                 </section>
 
                 <section className="border-t border-hairline pt-7">
-                  <h3 className="mb-4 text-[0.62rem] font-bold uppercase tracking-[0.16em] text-subtle">
+                  <h3 className="mb-4 text-[0.62rem] font-bold tracking-[0.16em] text-subtle">
                     最近重读
                   </h3>
                   {recentRecord ? (
@@ -755,7 +755,7 @@ export function LibraryClient({
 
                 <section className="border-t border-hairline pt-7">
                   <div className="mb-4 flex items-center justify-between gap-3">
-                    <h3 className="text-[0.62rem] font-bold uppercase tracking-[0.16em] text-subtle">
+                    <h3 className="text-[0.62rem] font-bold tracking-[0.16em] text-subtle">
                       按阅读目标浏览
                     </h3>
                   </div>

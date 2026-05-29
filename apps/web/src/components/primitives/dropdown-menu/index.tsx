@@ -87,7 +87,7 @@ const DropdownMenuSubContent = React.forwardRef<
 function DropdownMenuLabel({ className, inset, ...props }: React.HTMLAttributes<HTMLDivElement> & { inset?: boolean }) {
   return (
     <div
-      className={cn("px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted", inset && "pl-8", className)}
+      className={cn("px-3 py-2 text-xs font-semibold tracking-[0.14em] text-muted", inset && "pl-8", className)}
       {...props}
     />
   )

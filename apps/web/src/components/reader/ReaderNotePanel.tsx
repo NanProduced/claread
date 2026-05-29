@@ -305,8 +305,8 @@ function PanelBody({
     <div className="flex max-h-[min(42rem,calc(100vh-2rem))] w-full xl:w-[23.5rem] flex-col overflow-hidden text-foreground animate-in slide-in-from-right-4 fade-in duration-300">
       <div className="px-1 py-4 pb-4">
         <div className="flex items-center justify-between">
-          <div className="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-muted-foreground/60">
-            {currentSentenceIndex ? `${currentSentenceIndex} · READER NOTES` : "READER NOTES"}
+          <div className="text-[0.68rem] font-semibold tracking-[0.2em] text-muted-foreground/60">
+            {currentSentenceIndex ? `${currentSentenceIndex} · Reader Notes` : "Reader Notes"}
           </div>
           <button
             type="button"

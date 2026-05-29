@@ -194,14 +194,14 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
       </div>
 
       <div className="mt-5 flex flex-col gap-4 border-t border-hairline/70 pt-5 pb-6 lg:flex-row lg:items-center lg:justify-between pl-4 lg:pl-12 md:pb-4 shrink-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans text-[0.65rem] font-bold uppercase tracking-[0.15em] text-subtle">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans text-[0.65rem] font-bold tracking-[0.15em] text-subtle">
           <span>{intakeCues.join(" · ")}</span>
           <span className="hidden text-hairline/80 sm:inline">|</span>
           <Popover>
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="font-sans text-[0.65rem] font-bold uppercase tracking-[0.15em] text-muted transition-colors hover:text-ink focus-ring"
+                className="font-sans text-[0.65rem] font-bold tracking-[0.15em] text-muted transition-colors hover:text-ink focus-ring"
               >
                 模式：{READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label}
               </button>
@@ -233,13 +233,13 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           {text.length > 0 ? (
             <>
               <span className="hidden text-hairline/80 sm:inline">|</span>
-              <span className="text-[0.65rem] font-bold uppercase tracking-[0.15em]">{text.trim().length.toLocaleString("en-US")} chars</span>
+              <span className="text-[0.65rem] font-bold tracking-[0.15em]">{text.trim().length.toLocaleString("en-US")} chars</span>
             </>
           ) : null}
         </div>
 
         <div className="flex items-center gap-6 lg:gap-8 self-end lg:self-auto">
-          <div className="hidden font-sans text-[0.65rem] font-bold uppercase tracking-[0.15em] text-subtle/90 lg:block">
+          <div className="hidden font-sans text-[0.65rem] font-bold tracking-[0.15em] text-subtle/90 lg:block">
             提交 {submitShortcutLabel}
           </div>
           <Button

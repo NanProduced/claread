@@ -115,7 +115,7 @@ function ReaderQuickPeekShell({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {eyebrow ? (
-            <div className={`text-[0.7rem] font-semibold uppercase tracking-[0.12em] ${eyebrowClassName}`}>
+            <div className={`text-[0.7rem] font-semibold tracking-[0.12em] ${eyebrowClassName}`}>
               {eyebrow}
             </div>
           ) : null}
