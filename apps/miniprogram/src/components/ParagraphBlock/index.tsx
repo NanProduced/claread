@@ -1140,6 +1140,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
               analysisRecordId: cloudId || recordId,
               annotationType: feedbackTarget.annotationType,
               contextJson: feedbackTarget.contextJson,
+              clientSurface: 'reader',
+              entryPoint: 'feedback_sheet',
             }}
             contextSummary={(feedbackTarget.contextJson.title as string) || (feedbackTarget.contextJson.content_preview as string)}
             onClose={() => setFeedbackTarget(null)}

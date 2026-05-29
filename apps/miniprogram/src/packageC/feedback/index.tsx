@@ -36,6 +36,10 @@ export default function FeedbackPage() {
         feedbackType: selectedCategory,
         content: content.trim(),
         contextJson: { app_area: selectedCategory },
+        contextSummary: `应用反馈 · ${selectedCategory}`,
+        clientPlatform: 'wechat_miniprogram',
+        clientSurface: 'profile',
+        entryPoint: 'app_feedback_page',
       })
       setSubmitted(true)
     } catch {

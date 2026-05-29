@@ -690,6 +690,8 @@ export function ReaderWorkbench({
     annotationType?: string;
     contextSummary?: string;
     contextJson?: Record<string, unknown>;
+    clientSurface?: string;
+    entryPoint?: string;
   } | null>(null);
   const activeAnnotationTargetKeyRef = useRef<string | null>(null);
   const readerSettingsHydratedRef = useRef(false);
@@ -1389,6 +1391,8 @@ export function ReaderWorkbench({
       annotationType?: string;
       contextSummary?: string;
       contextJson?: Record<string, unknown>;
+      clientSurface?: string;
+      entryPoint?: string;
     }) => {
       setFeedbackSheet({ open: true, ...config });
     },
@@ -3804,38 +3808,6 @@ export function ReaderWorkbench({
                     {/* Button 1: Favorite */}
                     <FavoriteButton recordId={record.id} variant="action-bar" />
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openFeedbackSheet({
-                          scope: "analysis_result",
-                          targetId: record.id,
-                          analysisRecordId: record.id,
-                          contextJson: {
-                            record_id: record.id,
-                            title: record.title,
-                            sentence_count: reader.article.sentences.length,
-                            reading_goal: record.readingGoal,
-                          },
-                        })
-                      }
-                      className={cn(
-                        readerCommandControl,
-                        "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
-                        "text-ink hover:text-ink-soft",
-                      )}
-                    >
-                      <Flag
-                        aria-hidden="true"
-                        className="h-[18px] w-[18px] shrink-0 text-muted"
-                        strokeWidth={1.5}
-                      />
-                      <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
-                        <span className="text-[0.85rem] font-semibold whitespace-nowrap">反馈</span>
-                        <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">解读结果</span>
-                      </span>
-                    </button>
-
                     {/* Button 2: Intensive ("精读") */}
                     <button
                       type="button"
@@ -4032,6 +4004,35 @@ export function ReaderWorkbench({
                 />
               )}
             </div>
+
+            <div className="mt-12 flex items-center justify-center border-t border-hairline/60 pt-8 pb-16">
+              <div className="flex items-center gap-3 text-[13px] text-muted">
+                <span>本次阅读体验如何？</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    openFeedbackSheet({
+                      scope: "analysis_result",
+                      targetId: record.id,
+                      analysisRecordId: record.id,
+                      clientSurface: "reader",
+                      entryPoint: "reader_feedback_button",
+                      contextJson: {
+                        record_id: record.id,
+                        title: record.title,
+                        sentence_count: reader.article.sentences.length,
+                        reading_goal: record.readingGoal,
+                      },
+                      contextSummary: record.title ?? "本次阅读结果反馈",
+                    })
+                  }
+                  className="flex items-center gap-1.5 rounded-full bg-secondary/80 px-3.5 py-1.5 font-medium text-ink-soft transition-all hover:bg-[var(--app-control-quiet)] hover:text-ink hover:shadow-sm"
+                >
+                  <Flag className="h-3.5 w-3.5" />
+                  反馈解读结果
+                </button>
+              </div>
+            </div>
         </article>
 
         {notePanelSentence ? (
@@ -4091,6 +4092,8 @@ export function ReaderWorkbench({
                   sentiment: "negative",
                   targetId: buildSentenceTargetKey(record.id, sentenceId),
                   analysisRecordId: record.id,
+                  clientSurface: "reader",
+                  entryPoint: "selection_toolbar",
                   contextSummary: textSelection.selectedText,
                   contextJson: {
                     selected_text: textSelection.selectedText,
@@ -4166,6 +4169,9 @@ export function ReaderWorkbench({
                 sentiment: "negative",
                 targetId: activeLookup.query,
                 analysisRecordId: record.id,
+                clientSurface: "dictionary",
+                entryPoint: "dictionary_panel",
+                contextSummary: activeLookup.query,
                 contextJson: {
                   query: activeLookup.query,
                   context_sentence: activeLookup.contextSentence ?? "",
@@ -4182,6 +4188,9 @@ export function ReaderWorkbench({
                 feedbackType: "missing_definition",
                 targetId: activeLookup.query,
                 analysisRecordId: record.id,
+                clientSurface: "dictionary",
+                entryPoint: "dictionary_not_found",
+                contextSummary: activeLookup.query,
                 contextJson: {
                   query: activeLookup.query,
                   context_sentence: activeLookup.contextSentence ?? "",
@@ -4196,6 +4205,9 @@ export function ReaderWorkbench({
                 targetId: inspect.markId,
                 analysisRecordId: record.id,
                 annotationType: inspect.annotationType,
+                clientSurface: "reader",
+                entryPoint: "dictionary_inspect_feedback",
+                contextSummary: inspect.label ?? inspect.anchorText ?? inspect.lookupText ?? "标注反馈",
                 contextJson: {
                   mark_id: inspect.markId,
                   annotation_type: inspect.annotationType,
@@ -4247,6 +4259,9 @@ export function ReaderWorkbench({
                 sentiment: "negative",
                 targetId: activeLookup.query,
                 analysisRecordId: record.id,
+                clientSurface: "dictionary",
+                entryPoint: "dictionary_panel",
+                contextSummary: activeLookup.query,
                 contextJson: {
                   query: activeLookup.query,
                   context_sentence: activeLookup.contextSentence ?? "",
@@ -4263,6 +4278,9 @@ export function ReaderWorkbench({
                 feedbackType: "missing_definition",
                 targetId: activeLookup.query,
                 analysisRecordId: record.id,
+                clientSurface: "dictionary",
+                entryPoint: "dictionary_not_found",
+                contextSummary: activeLookup.query,
                 contextJson: {
                   query: activeLookup.query,
                   context_sentence: activeLookup.contextSentence ?? "",
@@ -4277,6 +4295,9 @@ export function ReaderWorkbench({
                 targetId: inspect.markId,
                 analysisRecordId: record.id,
                 annotationType: inspect.annotationType,
+                clientSurface: "reader",
+                entryPoint: "dictionary_inspect_feedback",
+                contextSummary: inspect.label ?? inspect.anchorText ?? inspect.lookupText ?? "标注反馈",
                 contextJson: {
                   mark_id: inspect.markId,
                   annotation_type: inspect.annotationType,
@@ -4350,6 +4371,8 @@ export function ReaderWorkbench({
                 sentiment: "negative",
                 targetId: buildSentenceTargetKey(record.id, activeSentence.sentenceId),
                 analysisRecordId: record.id,
+                clientSurface: "reader",
+                entryPoint: "sentence_context_panel",
                 contextSummary: activeSentence.text,
                 contextJson: {
                   sentence_id: activeSentence.sentenceId,
@@ -4416,6 +4439,9 @@ export function ReaderWorkbench({
               targetId: params.entryId,
               analysisRecordId: record.id,
               annotationType: params.entryType,
+              clientSurface: "reader",
+              entryPoint: "ai_workspace_annotation_feedback",
+              contextSummary: params.entryType,
               contextJson: {
                 entry_id: params.entryId,
                 entry_type: params.entryType,
@@ -4435,6 +4461,8 @@ export function ReaderWorkbench({
           annotationType={feedbackSheet.annotationType}
           contextSummary={feedbackSheet.contextSummary}
           contextJson={feedbackSheet.contextJson}
+          clientSurface={feedbackSheet.clientSurface}
+          entryPoint={feedbackSheet.entryPoint}
           onClose={closeFeedbackSheet}
         />
       ) : null}

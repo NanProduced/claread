@@ -38,6 +38,10 @@ async def submit_feedback(
         annotation_type=body.annotation_type,
         content=body.content,
         context_json=body.context_json,
+        context_summary=body.context_summary,
+        client_platform=body.client_platform,
+        client_surface=body.client_surface,
+        entry_point=body.entry_point,
         app_version=body.app_version,
     )
     return FeedbackResponse(
@@ -46,6 +50,10 @@ async def submit_feedback(
         target_id=row["target_id"],
         sentiment=row["sentiment"],
         feedback_type=row["feedback_type"],
+        client_platform=row["client_platform"],
+        client_surface=row.get("client_surface"),
+        entry_point=row.get("entry_point"),
+        context_summary=row.get("context_summary"),
         status=row["status"],
         created_at=row["created_at"],
     )
@@ -57,6 +65,9 @@ async def list_feedback(
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     feedback_scope: str | None = Query(default=None),
+    client_platform: str | None = Query(default=None),
+    client_surface: str | None = Query(default=None),
+    status: str | None = Query(default=None),
 ) -> FeedbackListResponse:
     """分页获取当前用户的反馈列表。"""
     user_id = UUID(current_user.user_id)
@@ -65,6 +76,9 @@ async def list_feedback(
         cursor=cursor,
         limit=limit,
         feedback_scope=feedback_scope,
+        client_platform=client_platform,
+        client_surface=client_surface,
+        status=status,
     )
     return FeedbackListResponse(
         items=[
@@ -74,6 +88,11 @@ async def list_feedback(
                 feedback_type=item["feedback_type"],
                 sentiment=item["sentiment"],
                 content=item.get("content"),
+                context_summary=item.get("context_summary"),
+                client_platform=item["client_platform"],
+                client_surface=item.get("client_surface"),
+                entry_point=item.get("entry_point"),
+                resolution_note=item.get("admin_note"),
                 status=item["status"],
                 reward_points=item.get("reward_points", 0),
                 created_at=item["created_at"],

@@ -267,7 +267,11 @@ class TestJsonbWriteContracts:
             "feedback_scope": "app",
             "target_id": "app_general",
             "sentiment": "positive",
-            "feedback_type": "suggestion",
+            "feedback_type": "feature_request",
+            "client_platform": "web",
+            "client_surface": "settings",
+            "entry_point": "settings_form",
+            "context_summary": "Settings form",
             "status": "pending",
             "created_at": datetime.now(UTC),
         }
@@ -281,10 +285,14 @@ class TestJsonbWriteContracts:
                 target_id="app_general",
                 analysis_record_id=None,
                 sentiment="positive",
-                feedback_type="suggestion",
+                feedback_type="feature_request",
                 annotation_type=None,
                 content=None,
                 context_json=context_json,
+                context_summary="Settings form",
+                client_platform="web",
+                client_surface="settings",
+                entry_point="settings_form",
                 app_version=None,
             )
 

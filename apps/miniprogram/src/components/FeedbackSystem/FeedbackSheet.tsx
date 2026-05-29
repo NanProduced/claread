@@ -15,6 +15,8 @@ export interface FeedbackContextPayload {
   annotationType?: string
   content?: string
   contextJson?: Record<string, unknown>
+  clientSurface?: string
+  entryPoint?: string
 }
 
 interface FeedbackSheetProps {
@@ -72,6 +74,10 @@ export default function FeedbackSheet({
         annotationType: payload.annotationType,
         content: content || undefined,
         contextJson: payload.contextJson || {},
+        contextSummary: contextSummary,
+        clientPlatform: 'wechat_miniprogram',
+        clientSurface: payload.clientSurface,
+        entryPoint: payload.entryPoint,
       })
       // If we had a way to detect upsert from response we'd pass it, assuming false for now
       setSuccessResult({ isUpsert: false })

@@ -6,6 +6,10 @@ interface FeedbackSubmitDto {
   target_id: string
   sentiment: string
   feedback_type: string
+  client_platform: string
+  client_surface: string | null
+  entry_point: string | null
+  context_summary: string | null
   status: string
   created_at: string
 }
@@ -16,6 +20,10 @@ interface FeedbackListItemDto {
   feedback_type: string
   sentiment: string
   content: string | null
+  context_summary: string | null
+  client_platform: string
+  client_surface: string | null
+  entry_point: string | null
   status: string
   reward_points: number
   created_at: string
@@ -33,6 +41,10 @@ export interface FeedbackSubmitResult {
   targetId: string
   sentiment: string
   feedbackType: string
+  clientPlatform: string
+  clientSurface: string | null
+  entryPoint: string | null
+  contextSummary: string | null
   status: string
   createdAt: string
 }
@@ -43,6 +55,10 @@ export interface FeedbackListItem {
   feedbackType: string
   sentiment: string
   content: string | null
+  contextSummary: string | null
+  clientPlatform: string
+  clientSurface: string | null
+  entryPoint: string | null
   status: string
   rewardPoints: number
   createdAt: string
@@ -61,6 +77,10 @@ function dtoToFeedbackListItem(dto: FeedbackListItemDto): FeedbackListItem {
     feedbackType: dto.feedback_type,
     sentiment: dto.sentiment,
     content: dto.content,
+    contextSummary: dto.context_summary,
+    clientPlatform: dto.client_platform,
+    clientSurface: dto.client_surface,
+    entryPoint: dto.entry_point,
     status: dto.status,
     rewardPoints: dto.reward_points,
     createdAt: dto.created_at,
@@ -76,6 +96,10 @@ export async function submitFeedback(params: {
   annotationType?: string
   content?: string
   contextJson?: Record<string, unknown>
+  contextSummary?: string
+  clientPlatform?: string
+  clientSurface?: string
+  entryPoint?: string
   appVersion?: string
 }): Promise<FeedbackSubmitResult> {
   const dto = await request<FeedbackSubmitDto>({
@@ -90,6 +114,10 @@ export async function submitFeedback(params: {
       annotation_type: params.annotationType,
       content: params.content,
       context_json: params.contextJson || {},
+      context_summary: params.contextSummary,
+      client_platform: params.clientPlatform || 'wechat_miniprogram',
+      client_surface: params.clientSurface,
+      entry_point: params.entryPoint,
       app_version: params.appVersion,
     },
   })
@@ -99,6 +127,10 @@ export async function submitFeedback(params: {
     targetId: dto.target_id,
     sentiment: dto.sentiment,
     feedbackType: dto.feedback_type,
+    clientPlatform: dto.client_platform,
+    clientSurface: dto.client_surface,
+    entryPoint: dto.entry_point,
+    contextSummary: dto.context_summary,
     status: dto.status,
     createdAt: dto.created_at,
   }

@@ -7,6 +7,7 @@ import {
 } from "@/services/api/feedback";
 import { getWebSession } from "@/services/bff/session";
 import type {
+  FeedbackClientPlatformDto,
   FeedbackCreateRequestDto,
   FeedbackResponseDto,
   FeedbackScopeDto,
@@ -78,6 +79,10 @@ export type WebFeedbackSubmitInput = {
   annotationType?: unknown;
   content?: unknown;
   contextJson?: unknown;
+  contextSummary?: unknown;
+  clientPlatform?: unknown;
+  clientSurface?: unknown;
+  entryPoint?: unknown;
   appVersion?: unknown;
 };
 
@@ -90,6 +95,10 @@ export type WebFeedbackSubmitResult =
         targetId: string;
         sentiment: FeedbackSentimentDto;
         feedbackType: FeedbackTypeDto;
+        clientPlatform: FeedbackClientPlatformDto;
+        clientSurface: string | null;
+        entryPoint: string | null;
+        contextSummary: string | null;
         status: string;
         createdAt: string;
       };
@@ -120,6 +129,10 @@ function isFeedbackSentiment(value: unknown): value is FeedbackSentimentDto {
   return value === "positive" || value === "negative" || value === "neutral";
 }
 
+function isFeedbackClientPlatform(value: unknown): value is FeedbackClientPlatformDto {
+  return value === "web" || value === "wechat_miniprogram";
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -142,6 +155,10 @@ function toFeedbackVm(dto: FeedbackResponseDto): Extract<WebFeedbackSubmitResult
       targetId: dto.target_id,
       sentiment: dto.sentiment,
       feedbackType: dto.feedback_type,
+      clientPlatform: dto.client_platform,
+      clientSurface: dto.client_surface ?? null,
+      entryPoint: dto.entry_point ?? null,
+      contextSummary: dto.context_summary ?? null,
       status: dto.status,
       createdAt: dto.created_at,
     },
@@ -190,12 +207,23 @@ function buildPayload(input: WebFeedbackSubmitInput): FeedbackCreateRequestDto |
 
   const analysisRecordId = readString(input.analysisRecordId);
   const annotationType = readString(input.annotationType);
+  const content = readString(input.content) ?? null;
+  const contextSummary = readString(input.contextSummary) ?? null;
+  const clientSurface = readString(input.clientSurface) ?? null;
+  const entryPoint = readString(input.entryPoint) ?? null;
+  const clientPlatform = input.clientPlatform;
 
   if ((feedbackScope === "analysis_result" || feedbackScope === "annotation") && !analysisRecordId) {
     return invalid("Missing analysis record id for this feedback scope.");
   }
   if (feedbackScope === "annotation" && !annotationType) {
     return invalid("Missing annotation type for annotation feedback.");
+  }
+  if (!isFeedbackClientPlatform(clientPlatform)) {
+    return invalid("Invalid client platform.");
+  }
+  if (normalizedType === "other" && !content) {
+    return invalid("请补充详细说明。");
   }
 
   return {
@@ -205,8 +233,12 @@ function buildPayload(input: WebFeedbackSubmitInput): FeedbackCreateRequestDto |
     sentiment,
     feedback_type: normalizedType,
     annotation_type: annotationType ?? null,
-    content: readString(input.content) ?? null,
+    content,
     context_json: isObjectRecord(input.contextJson) ? input.contextJson : {},
+    context_summary: contextSummary,
+    client_platform: clientPlatform,
+    client_surface: clientSurface,
+    entry_point: entryPoint,
     app_version: readString(input.appVersion) ?? "web",
   };
 }
@@ -256,6 +288,11 @@ export type WebFeedbackListItem = {
   feedbackType: FeedbackTypeDto;
   sentiment: FeedbackSentimentDto;
   content: string | null;
+  contextSummary: string | null;
+  clientPlatform: FeedbackClientPlatformDto;
+  clientSurface: string | null;
+  entryPoint: string | null;
+  resolutionNote: string | null;
   status: string;
   rewardPoints: number;
   createdAt: string;
@@ -283,6 +320,9 @@ export async function listFeedbackFromWeb(
   cursor?: string,
   limit?: number,
   feedbackScope?: string,
+  clientPlatform?: string,
+  clientSurface?: string,
+  status?: string,
 ): Promise<WebFeedbackListResult> {
   const session = await getWebSession();
 
@@ -295,7 +335,15 @@ export async function listFeedbackFromWeb(
     };
   }
 
-  const result = await listUpstreamFeedback(session.sessionToken, cursor, limit, feedbackScope);
+  const result = await listUpstreamFeedback(
+    session.sessionToken,
+    cursor,
+    limit,
+    feedbackScope,
+    clientPlatform,
+    clientSurface,
+    status,
+  );
 
   if (!result.ok) {
     const unavailable = result.status === 0 || result.status >= 500;
@@ -315,6 +363,11 @@ export async function listFeedbackFromWeb(
       feedbackType: item.feedback_type,
       sentiment: item.sentiment,
       content: item.content,
+      contextSummary: item.context_summary ?? null,
+      clientPlatform: item.client_platform,
+      clientSurface: item.client_surface ?? null,
+      entryPoint: item.entry_point ?? null,
+      resolutionNote: item.resolution_note ?? null,
       status: item.status,
       rewardPoints: item.reward_points,
       createdAt: item.created_at,

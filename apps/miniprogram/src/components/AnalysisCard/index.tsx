@@ -142,6 +142,10 @@ export default function AnalysisCard({
         annotationType: annotationType || type,
         content: undefined,
         contextJson: { title, content_preview: content.slice(0, 200) },
+        contextSummary: title,
+        clientPlatform: 'wechat_miniprogram',
+        clientSurface: 'reader',
+        entryPoint: 'inline_feedback_row',
       })
       Taro.showToast({ title: '感谢反馈', icon: 'success', duration: 1200 })
     } catch {

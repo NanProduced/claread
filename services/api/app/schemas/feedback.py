@@ -71,6 +71,7 @@ for _group in FEEDBACK_TYPES_BY_SCOPE.values():
 
 FeedbackScope = Literal["analysis_result", "annotation", "sentence", "dictionary", "app"]
 Sentiment = Literal["positive", "negative", "neutral"]
+ClientPlatform = Literal["web", "wechat_miniprogram"]
 
 
 class FeedbackCreateRequest(BaseModel):
@@ -84,6 +85,10 @@ class FeedbackCreateRequest(BaseModel):
     annotation_type: str | None = Field(default=None, max_length=64)
     content: str | None = Field(default=None, max_length=2000)
     context_json: dict[str, Any] = Field(default_factory=dict)
+    context_summary: str | None = Field(default=None, max_length=280)
+    client_platform: ClientPlatform
+    client_surface: str | None = Field(default=None, max_length=64)
+    entry_point: str | None = Field(default=None, max_length=64)
     app_version: str | None = Field(default=None, max_length=32)
 
     @model_validator(mode="after")
@@ -138,6 +143,10 @@ class FeedbackResponse(BaseModel):
     target_id: str
     sentiment: str
     feedback_type: str
+    client_platform: ClientPlatform
+    client_surface: str | None = None
+    entry_point: str | None = None
+    context_summary: str | None = None
     status: str
     created_at: datetime
 
@@ -152,6 +161,11 @@ class FeedbackListItem(BaseModel):
     feedback_type: str
     sentiment: str
     content: str | None
+    context_summary: str | None = None
+    client_platform: ClientPlatform
+    client_surface: str | None = None
+    entry_point: str | None = None
+    resolution_note: str | None = None
     status: str
     reward_points: int
     created_at: datetime

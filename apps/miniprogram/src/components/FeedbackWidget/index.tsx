@@ -51,6 +51,10 @@ export default function FeedbackWidget({
         sentiment: 'positive',
         feedbackType: 'thumbs_up',
         contextJson,
+        contextSummary: '关于本次整篇文章的解读结果',
+        clientPlatform: 'wechat_miniprogram',
+        clientSurface: 'result_page',
+        entryPoint: 'feedback_widget',
       })
       setSubmittedPositive(true)
       Taro.showToast({ title: '感谢反馈', icon: 'success', duration: 1200 })
@@ -132,6 +136,8 @@ export default function FeedbackWidget({
               targetId: cloudId || recordId,
               analysisRecordId: cloudId || recordId,
               contextJson,
+              clientSurface: 'result_page',
+              entryPoint: 'feedback_sheet',
             }}
             contextSummary='关于本次整篇文章的解读结果'
             onClose={() => setSheetState({ visible: false })}

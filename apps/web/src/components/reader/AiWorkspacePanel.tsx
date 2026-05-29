@@ -1813,7 +1813,31 @@ function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { card
                 badgeLabel="AI 助手生成"
                 footerAnchorLabel={focusHint}
                 footerSourceLabel="来源: Ask Claread"
-                onFeedback={() =>
+                onFeedbackPositive={() => {
+                  if (analysisRecordId) {
+                    fetch("/api/web/feedback", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        feedbackScope: "annotation",
+                        sentiment: "positive",
+                        feedbackType: "helpful",
+                        targetId: entry.id,
+                        analysisRecordId,
+                        annotationType: entry.entryType,
+                        clientPlatform: "web",
+                        clientSurface: "reader",
+                        entryPoint: "ai_workspace_annotation_positive",
+                        contextSummary: entry.label ?? entry.title ?? "AI 助手生成标注",
+                        contextJson: {
+                          entry_id: entry.id,
+                          entry_type: entry.entryType,
+                        },
+                      }),
+                    }).catch(() => {});
+                  }
+                }}
+                onFeedbackNegative={() =>
                   onAnnotationFeedback?.({
                     entryType: entry.entryType,
                     entryId: entry.id,

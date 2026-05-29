@@ -1023,6 +1023,8 @@ export default function Result() {
                 text: selectionContext.selectedText,
                 translation: selectionContext.translation,
               },
+              clientSurface: 'reader',
+              entryPoint: 'selection_toolbar',
             }}
             onClose={() => { setShowFeedbackSheet(false); clearSelection() }}
           />

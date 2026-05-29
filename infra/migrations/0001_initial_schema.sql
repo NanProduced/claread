@@ -599,8 +599,11 @@ CREATE TABLE feedback (
   annotation_type TEXT,
   content TEXT,
   context_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  context_summary TEXT,
   app_version TEXT,
-  client_platform TEXT NOT NULL DEFAULT 'wechat_miniprogram',
+  client_platform TEXT NOT NULL CHECK (client_platform IN ('web', 'wechat_miniprogram')),
+  client_surface TEXT,
+  entry_point TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
     'pending', 'adopted', 'resolved', 'dismissed'
   )),
@@ -612,8 +615,7 @@ CREATE TABLE feedback (
   rag_harvested BOOLEAN NOT NULL DEFAULT FALSE,
   rag_harvested_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_feedback_user_target_type UNIQUE (user_id, target_id, feedback_type)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_feedback_user_created ON feedback(user_id, created_at DESC);
@@ -623,6 +625,11 @@ CREATE INDEX idx_feedback_record ON feedback(analysis_record_id)
 CREATE INDEX idx_feedback_annotation_type ON feedback(annotation_type)
   WHERE annotation_type IS NOT NULL;
 CREATE INDEX idx_feedback_sentiment ON feedback(sentiment, feedback_scope);
+CREATE INDEX idx_feedback_client_platform_created
+  ON feedback(client_platform, created_at DESC);
+CREATE INDEX idx_feedback_client_surface_created
+  ON feedback(client_surface, created_at DESC)
+  WHERE client_surface IS NOT NULL;
 CREATE INDEX idx_feedback_status ON feedback(status)
   WHERE status = 'pending';
 CREATE INDEX idx_feedback_rag_harvested ON feedback(rag_harvested)
@@ -1017,6 +1024,10 @@ COMMENT ON COLUMN feedback.sentiment IS '情感倾向：positive（正面）、n
 COMMENT ON COLUMN feedback.feedback_type IS '结构化反馈分类，含义随 feedback_scope 变化。';
 COMMENT ON COLUMN feedback.annotation_type IS '标注类型，仅 annotation 作用域有值。';
 COMMENT ON COLUMN feedback.context_json IS '反馈时的上下文快照 JSON，用于 RAG 训练数据提取。';
+COMMENT ON COLUMN feedback.context_summary IS '供列表与后台快速浏览的上下文摘要。';
+COMMENT ON COLUMN feedback.client_platform IS '反馈来源端标识，如 web 或 wechat_miniprogram。';
+COMMENT ON COLUMN feedback.client_surface IS '反馈来源场景，如 reader、dictionary、settings、result_page、profile。';
+COMMENT ON COLUMN feedback.entry_point IS '具体触发入口，如 selection_toolbar、inline_feedback_row、settings_form。';
 COMMENT ON COLUMN feedback.status IS '处理状态：pending（待处理）、adopted（已采纳，触发奖励）、resolved（已解决）、dismissed（已关闭）。';
 COMMENT ON COLUMN feedback.reward_points IS '因反馈被采纳而发放的奖励积分数，0 表示未发放。';
 COMMENT ON COLUMN feedback.rag_harvested IS '是否已被用于 RAG 训练数据提取。';

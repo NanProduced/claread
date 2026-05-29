@@ -1098,7 +1098,9 @@ export default function WordPopup({
                 dict_entry_id: entry?.id,
                 context_sentence: contextSentence || '',
                 reading_variant: readingVariant || '',
-              }
+              },
+              clientSurface: 'dictionary',
+              entryPoint: 'feedback_sheet',
             }}
             contextSummary={`${lookupText}${entry?.phonetic ? ` ${entry.phonetic}` : ''}`}
             onClose={() => setShowDictFeedback(false)}

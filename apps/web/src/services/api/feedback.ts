@@ -23,11 +23,17 @@ export function listUpstreamFeedback(
   cursor?: string,
   limit?: number,
   feedbackScope?: string,
+  clientPlatform?: string,
+  clientSurface?: string,
+  status?: string,
 ): Promise<UpstreamResult<FeedbackListResponseDto>> {
   const params = new URLSearchParams();
   if (cursor) params.set("cursor", cursor);
   if (limit) params.set("limit", String(limit));
   if (feedbackScope) params.set("feedback_scope", feedbackScope);
+  if (clientPlatform) params.set("client_platform", clientPlatform);
+  if (clientSurface) params.set("client_surface", clientSurface);
+  if (status) params.set("status", status);
   const qs = params.toString();
   return fastApiFetch<FeedbackListResponseDto>(`/feedback${qs ? `?${qs}` : ""}`, {
     method: "GET",

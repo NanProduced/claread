@@ -13,6 +13,7 @@ import './my-feedback.scss'
 const SCOPE_LABELS: Record<string, string> = {
   analysis_result: '结果反馈',
   annotation: '标注反馈',
+  sentence: '句子反馈',
   dictionary: '词典反馈',
   app: '应用反馈',
 }

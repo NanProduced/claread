@@ -29,6 +29,10 @@ async def submit_feedback(
     annotation_type: str | None,
     content: str | None,
     context_json: dict[str, Any],
+    context_summary: str | None,
+    client_platform: str,
+    client_surface: str | None,
+    entry_point: str | None,
     app_version: str | None,
 ) -> dict[str, Any]:
     pool = db_connection.DB_POOL
@@ -45,16 +49,15 @@ async def submit_feedback(
                     user_id, feedback_scope, target_id,
                     analysis_record_id, sentiment, feedback_type,
                     annotation_type, content, context_json,
-                    app_version, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
-                ON CONFLICT (user_id, target_id, feedback_type) DO UPDATE SET
-                    sentiment = EXCLUDED.sentiment,
-                    content = COALESCE(EXCLUDED.content, feedback.content),
-                    context_json = EXCLUDED.context_json,
-                    annotation_type = COALESCE(EXCLUDED.annotation_type, feedback.annotation_type),
-                    updated_at = $11
+                    context_summary, app_version, client_platform,
+                    client_surface, entry_point, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    $10, $11, $12, $13, $14, $15, $15
+                )
                 RETURNING id, feedback_scope, target_id, sentiment, feedback_type,
-                          status, created_at
+                          client_platform, client_surface, entry_point,
+                          context_summary, status, created_at
                 """,
                 user_id,
                 feedback_scope,
@@ -65,14 +68,18 @@ async def submit_feedback(
                 annotation_type,
                 content,
                 jsonb_param(context_json),
+                context_summary,
                 app_version,
+                client_platform,
+                client_surface,
+                entry_point,
                 now,
             )
             if row is None:
-                raise RuntimeError("Failed to upsert feedback")
+                raise RuntimeError("Failed to insert feedback")
             logger.info(
-                "Feedback %s from user %s (scope=%s, type=%s)",
-                row["id"], user_id, feedback_scope, feedback_type,
+                "Feedback %s from user %s (scope=%s, type=%s, platform=%s, surface=%s, entry=%s)",
+                row["id"], user_id, feedback_scope, feedback_type, client_platform, client_surface, entry_point,
             )
             return dict(row)
 
@@ -82,6 +89,9 @@ async def list_user_feedback(
     cursor: str | None = None,
     limit: int = FEEDBACK_LIST_LIMIT,
     feedback_scope: str | None = None,
+    client_platform: str | None = None,
+    client_surface: str | None = None,
+    status: str | None = None,
 ) -> tuple[list[dict], str | None, bool]:
     pool = db_connection.DB_POOL
     if pool is None:
@@ -98,6 +108,18 @@ async def list_user_feedback(
         params.append(feedback_scope)
         where_clauses.append(f"feedback_scope = ${len(params)}")
 
+    if client_platform:
+        params.append(client_platform)
+        where_clauses.append(f"client_platform = ${len(params)}")
+
+    if client_surface:
+        params.append(client_surface)
+        where_clauses.append(f"client_surface = ${len(params)}")
+
+    if status:
+        params.append(status)
+        where_clauses.append(f"status = ${len(params)}")
+
     limit_val = min(limit, 100)
     params.append(limit_val + 1)
     query_limit = f"${len(params)}"
@@ -108,7 +130,8 @@ async def list_user_feedback(
         rows = await conn.fetch(
             f"""
             SELECT id, feedback_scope, feedback_type, sentiment, content,
-                   status, reward_points, created_at
+                   context_summary, client_platform, client_surface,
+                   entry_point, admin_note, status, reward_points, created_at
             FROM feedback
             WHERE {where_sql}
             ORDER BY created_at DESC

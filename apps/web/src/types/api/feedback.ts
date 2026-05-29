@@ -6,6 +6,7 @@ export type FeedbackScopeDto =
   | "app";
 
 export type FeedbackSentimentDto = "positive" | "negative" | "neutral";
+export type FeedbackClientPlatformDto = "web" | "wechat_miniprogram";
 
 export type FeedbackTypeDto =
   | "thumbs_up"
@@ -42,6 +43,10 @@ export interface FeedbackCreateRequestDto {
   annotation_type?: string | null;
   content?: string | null;
   context_json: Record<string, unknown>;
+  context_summary?: string | null;
+  client_platform: FeedbackClientPlatformDto;
+  client_surface?: string | null;
+  entry_point?: string | null;
   app_version?: string | null;
 }
 
@@ -51,6 +56,10 @@ export interface FeedbackResponseDto {
   target_id: string;
   sentiment: FeedbackSentimentDto;
   feedback_type: FeedbackTypeDto;
+  client_platform: FeedbackClientPlatformDto;
+  client_surface?: string | null;
+  entry_point?: string | null;
+  context_summary?: string | null;
   status: string;
   created_at: string;
 }
@@ -61,6 +70,11 @@ export interface FeedbackListItemDto {
   feedback_type: FeedbackTypeDto;
   sentiment: FeedbackSentimentDto;
   content: string | null;
+  context_summary?: string | null;
+  client_platform: FeedbackClientPlatformDto;
+  client_surface?: string | null;
+  entry_point?: string | null;
+  resolution_note?: string | null;
   status: string;
   reward_points: number;
   created_at: string;

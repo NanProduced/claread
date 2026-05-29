@@ -37,7 +37,11 @@ MOCK_FEEDBACK_ROW = {
     "feedback_scope": "analysis_result",
     "target_id": "target_001",
     "sentiment": "negative",
-    "feedback_type": "incorrect_annotation",
+    "feedback_type": "translation_inaccurate",
+    "client_platform": "web",
+    "client_surface": "reader",
+    "entry_point": "selection_toolbar",
+    "context_summary": "Original sentence",
     "status": "pending",
     "created_at": datetime.now(UTC),
 }
@@ -58,6 +62,10 @@ class TestSubmitFeedback:
                 "sentiment": "positive",
                 "feedback_type": "thumbs_up",
                 "context_json": {},
+                "context_summary": "整体反馈",
+                "client_platform": "web",
+                "client_surface": "reader",
+                "entry_point": "feedback_sheet",
             },
             headers=AUTH_HEADERS,
         )
@@ -65,6 +73,7 @@ class TestSubmitFeedback:
         data = response.json()
         assert data["feedback_scope"] == "analysis_result"
         assert data["sentiment"] == "positive"
+        assert data["client_platform"] == "web"
 
     @_mock_auth()
     @patch("app.api.routes.feedback.feedback_svc.submit_feedback", new_callable=AsyncMock)
@@ -80,6 +89,10 @@ class TestSubmitFeedback:
                 "feedback_type": "feature_request",
                 "content": "Great app!",
                 "context_json": {"page": "home"},
+                "context_summary": "设置页建议",
+                "client_platform": "web",
+                "client_surface": "settings",
+                "entry_point": "settings_form",
             },
             headers=AUTH_HEADERS,
         )
@@ -103,6 +116,10 @@ class TestSubmitFeedback:
                 "feedback_type": "selection_issue",
                 "annotation_type": "sentence_action",
                 "context_json": {"sentence_id": "s1"},
+                "context_summary": "Sentence issue",
+                "client_platform": "web",
+                "client_surface": "reader",
+                "entry_point": "selection_toolbar",
             },
             headers=AUTH_HEADERS,
         )
@@ -131,9 +148,14 @@ class TestListFeedback:
         item_row = {
             "id": uuid4(),
             "feedback_scope": "annotation",
-            "feedback_type": "incorrect_annotation",
+            "feedback_type": "inaccurate",
             "sentiment": "negative",
             "content": "Wrong label",
+            "context_summary": "Annotation summary",
+            "client_platform": "web",
+            "client_surface": "reader",
+            "entry_point": "inline_feedback_row",
+            "admin_note": "已修复",
             "status": "pending",
             "reward_points": 0,
             "created_at": datetime.now(UTC).isoformat(),
@@ -147,6 +169,8 @@ class TestListFeedback:
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
+        assert data["items"][0]["client_platform"] == "web"
+        assert data["items"][0]["resolution_note"] == "已修复"
 
     @_mock_auth()
     @patch("app.services.feedback.service.db_connection.DB_POOL")
@@ -157,6 +181,20 @@ class TestListFeedback:
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
         response = client.get("/feedback?feedback_scope=annotation", headers=AUTH_HEADERS)
+        assert response.status_code == 200
+
+    @_mock_auth()
+    @patch("app.services.feedback.service.db_connection.DB_POOL")
+    def test_list_feedback_with_platform_and_status_filters(self, mock_pool, mock_auth):
+        mock_conn = AsyncMock()
+        mock_conn.fetch.return_value = []
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        response = client.get(
+            "/feedback?client_platform=web&client_surface=reader&status=pending",
+            headers=AUTH_HEADERS,
+        )
         assert response.status_code == 200
 
 
@@ -191,9 +229,11 @@ class TestFeedbackUnauthorized:
             json={
                 "feedback_scope": "app",
                 "target_id": "test",
-                "sentiment": "positive",
-                "feedback_type": "suggestion",
+                "sentiment": "neutral",
+                "feedback_type": "feature_request",
                 "context_json": {},
+                "context_summary": "Unauthed",
+                "client_platform": "web",
             },
         )
         assert response.status_code in (401, 403)
