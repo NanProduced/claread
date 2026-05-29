@@ -370,11 +370,15 @@ export function VocabularyClient({
       if (!res.ok) throw new Error("Failed to delete");
       const data = await res.json();
       if (data.ok) {
-        setItems((prev) => prev.filter((v) => v.id !== deleteTarget.id));
+        const remaining = items.filter((v) => v.id !== deleteTarget.id);
+        setItems(remaining);
         if (wasDue) setDueCount((c) => Math.max(0, c - 1));
         if (selectedId === deleteTarget.id) {
-          const remaining = items.filter((v) => v.id !== deleteTarget.id);
           const deletedIndex = items.findIndex((v) => v.id === deleteTarget.id);
+          const nextItem =
+            remaining[deletedIndex] ??
+            remaining[Math.max(0, deletedIndex - 1)] ??
+            null;
           setSelectedId(nextItem?.id ?? null);
         }
       }

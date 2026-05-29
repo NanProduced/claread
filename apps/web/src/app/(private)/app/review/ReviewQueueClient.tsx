@@ -120,7 +120,7 @@ function CardContent({
         <Button
           type="button"
           variant="outline"
-          size="xl"
+          size="lg"
           className="h-14 rounded-[12px] text-[0.95rem] font-semibold tracking-[0.04em] text-ink-soft transition-colors hover:bg-surface-warm"
           disabled={!isTop || disabled}
           onClick={() => onAction("unfamiliar")}
@@ -130,7 +130,7 @@ function CardContent({
         <Button
           type="button"
           variant="primary-ink"
-          size="xl"
+          size="lg"
           className="h-14 rounded-[12px] text-[0.95rem] font-semibold tracking-[0.04em] transition-colors"
           disabled={!isTop || disabled}
           onClick={() => onAction("known")}
