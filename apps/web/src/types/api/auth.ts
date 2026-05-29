@@ -31,3 +31,14 @@ export interface SessionInfoResponseDto {
   cumulative_article_count: number;
   settings: Record<string, unknown>;
 }
+
+export interface ProfileUpdateRequestDto {
+  nickname?: string;
+  avatar_url?: string;
+  settings?: Record<string, unknown>;
+}
+
+export interface ProfileUpdateResponseDto {
+  ok: boolean;
+  updated: string[];
+}

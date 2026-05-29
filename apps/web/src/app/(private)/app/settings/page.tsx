@@ -9,6 +9,7 @@ import { getProfileSettings, type ProfileBffStatus } from "@/services/bff/profil
 import { CreditLedgerSection } from "./CreditLedgerSection";
 import { FeedbackForm } from "./FeedbackForm";
 import { LogoutButton } from "./LogoutButton";
+import { NicknameEditor } from "./NicknameEditor";
 import { ThemePreferencesSection } from "./ThemePreferencesSection";
 
 const statusLabel: Record<ProfileBffStatus, string> = {
@@ -26,6 +27,7 @@ export default async function SettingsPage() {
     ? Math.min(100, Math.round((quota.quotaUsed / Math.max(quota.quotaLimit, 1)) * 100))
     : 0;
   const displayName = settings.profile?.nickname || settings.session.phone || "Web User";
+  const realNickname = settings.profile?.nickname || "";
   const avatarText = displayName.trim().slice(0, 1).toUpperCase() || "U";
 
   return (
@@ -57,9 +59,7 @@ export default async function SettingsPage() {
                       {avatarText}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-base font-semibold text-ink">
-                        {settings.session.phone ? `手机号用户 ${settings.session.phone}` : displayName}
-                      </h2>
+                      <NicknameEditor initialNickname={realNickname} displayFallback={displayName} />
                       <p className="mt-1 text-sm leading-6 text-muted">{statusLabel[settings.status]}</p>
                     </div>
                   </div>

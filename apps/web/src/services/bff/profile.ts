@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getUpstreamSessionMe } from "@/services/api/auth";
+import { getUpstreamSessionMe, patchUpstreamProfile } from "@/services/api/auth";
 import { getUpstreamQuota } from "@/services/api/quota";
 import { getWebSession, projectSession, type WebSession } from "@/services/bff/session";
 import type { SessionInfoResponseDto } from "@/types/api/auth";
@@ -113,4 +113,50 @@ export async function getProfileSettings(): Promise<ProfileSettingsVm> {
     profile,
     quota: projectQuota(quotaResult.data, sessionResult.data.user_id),
   };
+}
+
+export interface UpdateNicknameBffResult {
+  ok: boolean;
+  httpStatus: number;
+  message?: string;
+}
+
+export async function updateProfileNickname(
+  nickname: string,
+): Promise<UpdateNicknameBffResult> {
+  const webSession = await getWebSession();
+
+  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+    return {
+      ok: false,
+      httpStatus: 401,
+      message: "当前会话无法修改资料，请重新登录。",
+    };
+  }
+
+  const trimmed = nickname.trim();
+  if (!trimmed || trimmed.length > 50) {
+    return {
+      ok: false,
+      httpStatus: 400,
+      message: trimmed ? "昵称不能超过 50 个字符。" : "昵称不能为空。",
+    };
+  }
+
+  const result = await patchUpstreamProfile(webSession.sessionToken, {
+    nickname: trimmed,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      httpStatus: result.status === 0 ? 503 : result.status,
+      message:
+        result.status === 0 || result.status >= 500
+          ? "服务暂时不可用，请稍后重试。"
+          : result.message,
+    };
+  }
+
+  return { ok: true, httpStatus: 200 };
 }
