@@ -106,6 +106,40 @@ docker compose --env-file infra/docker/.env --env-file apps/directus/.env.exampl
 - parse-run observability 当前优先走原始业务表 + 关系建模，复杂跨表摘要按需补轻量只读接口。
 - Parse run observability 的 Task 1 / Task 2 metadata 通过 repo 内脚本同步，不直接手改 live Directus metadata。
 
+## 业务表 reset 与 Directus 配置
+
+开发阶段允许按 `services/api/docs/database.md` 中的说明重置 `dict_*` 之外的业务表。
+
+需要区分：
+
+- 业务表
+  - `analysis_*`、`ai_usage_events`、`reader_ask_*` 等
+- Directus system tables
+  - `directus_collections`
+  - `directus_fields`
+  - `directus_relations`
+  - `directus_presets`
+
+当前 reset 脚本只处理业务表，不会删除 `directus_*` system tables。
+
+因此：
+
+- 重置业务表后，Directus 的 collection / fields / relations / presets 配置默认仍在
+- 页面可视化不会因为 reset 直接消失，只是业务数据被清空
+- 如果业务 schema 有新增或删减，重建业务表后应再执行一次：
+
+```powershell
+pnpm directus:parse-run:sync-metadata
+```
+
+建议：
+
+- `reset_dev_keep_dict.sql`
+  - 适合清空业务数据但保留现有 Directus 配置
+- `reset_full_keep_dict.sql`
+  - 适合表结构升级后重建业务表
+  - 跑完 migration 后，再补一次 Directus metadata sync
+
 ## 当前扩展状态
 
 - `modules-bundle`

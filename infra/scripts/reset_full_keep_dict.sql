@@ -24,6 +24,7 @@ DROP TABLE IF EXISTS
   user_annotations,
   dict_ai_candidate_entries,
   ai_usage_events,
+  analysis_debug_snapshots,
   analysis_overview_task_events,
   analysis_overview_tasks,
   analysis_task_events,

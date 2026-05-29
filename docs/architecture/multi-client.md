@@ -58,6 +58,7 @@ PostgreSQL 是事务型数据真相源。
 - analysis_tasks
 - analysis_records
 - analysis_results
+- analysis_debug_snapshots
 - vocabulary_book
 - favorite_records
 - user_annotations
@@ -75,11 +76,12 @@ Zilliz 用于 Grammar RAG few-shot 示例检索。
 
 ## 结果分层
 
-分析结果应分成三层：
+分析结果应分成四层：
 
 ```text
 canonical analysis result
-  -> client render snapshot
+  -> persisted render scene snapshot
+  -> reader scene view
   -> client local UI state
 ```
 
@@ -87,27 +89,39 @@ canonical analysis result
 
 后端 workflow 生成的稳定语义结果，尽量跨端复用。
 
-### Render Snapshot
+### Persisted Render Scene Snapshot
 
-面向某个客户端的渲染投影。
+后端当前已经把全量结果快照持久化到：
 
-当前小程序 render scene 仍保存在分析记录相关 JSON 字段中。后续建议新增模型：
+```text
+analysis_results.render_scene_json
+```
+
+它的职责是：
+
+- 作为当前结果真相源
+- 支撑 Directus observability / Inspector
+- 支撑后续 compare / eval / debug
+
+它不是长期面向客户端阅读页的最小 contract。
+
+### Reader Scene View
+
+面向阅读页消费的精简视图层。
+
+当前稳定事实：
+
+- Web / 小程序阅读页后续统一切到专用 `reader scene view`
+- `/records` 继续承担通用记录详情 / 同步真相源职责
+- `reader scene view` 可以保留服务端 supplements 合并与 fallback，但不要求返回全量 render scene
+
+长期如果要继续做多端 render profile，仍可在此基础上继续评估：
 
 ```text
 analysis_render_snapshots
 ```
 
-建议字段：
-
-```text
-record_id
-target_client        # miniprogram / web / app / admin
-schema_version
-renderer_version
-capability_profile   # mini_basic / web_rich / mobile_app
-render_scene_json
-created_at
-```
+但它不是当前开发基线的前置条件。
 
 ### Client Local State
 
@@ -117,7 +131,25 @@ created_at
 
 记录应该保存来源，但来源不是访问边界。
 
-当前 baseline 尚未包含以下字段。后续建议增加：
+当前已经稳定落地的来源 / 请求快照字段：
+
+```text
+request_payload_json
+```
+
+它当前挂在：
+
+```text
+analysis_records.request_payload_json
+```
+
+用途：
+
+- 持久化 reading goal / variant / source_type 等请求侧事实
+- 支撑 Reader 页来源信息展示
+- 支撑后续 `reader scene view` 组装
+
+除了 `request_payload_json` 之外，下面这些更细的跨客户端来源元数据仍属于后续增强项：
 
 ```text
 created_client_type
@@ -134,7 +166,30 @@ source_input_type
 
 - 追踪记录生成来源。
 - 判断当前客户端是否能直接展示。
-- 必要时为目标客户端懒生成新的 render snapshot。
+- 必要时为目标客户端懒生成新的 render snapshot 或 reader scene view。
+
+## 调试摘要层
+
+当前已经有独立调试摘要表：
+
+```text
+analysis_debug_snapshots
+```
+
+它的职责不是替代 `render_scene_json`，而是补充：
+
+- preprocess summary
+- normalize / drop summary
+- runtime summary
+- few-shot provenance
+- grammar RAG provenance
+- academic quality summary
+
+当前 v1 采用：
+
+- 一 task 一行
+- `task_id UNIQUE`
+- 历史 task 允许没有 snapshot
 
 ## 认证策略
 

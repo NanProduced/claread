@@ -92,6 +92,15 @@ const COLLECTIONS = [
     sort_field: "created_at",
     sort: 7,
   },
+  {
+    collection: "analysis_debug_snapshots",
+    icon: "bug_report",
+    color: "#0EA5E9",
+    note: "主解析任务调试摘要快照，用于 Inspector 和 workflow 质量诊断。",
+    display_template: "{{ task_id.analysis_record_id.title }} {{ task_status }} {{ created_at }}",
+    sort_field: "created_at",
+    sort: 8,
+  },
 ];
 
 const FIELD_METADATA = [
@@ -257,6 +266,25 @@ const FIELD_METADATA = [
       width: "full",
       sort: 12,
       note: "原始输入文本折叠预览。",
+    },
+  },
+  {
+    collection: "analysis_records",
+    field: "request_payload_json",
+    meta: {
+      interface: "claread-json-summary-interface",
+      options: {
+        summary_kind: "generic",
+      },
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 13,
+      note: "请求侧持久化快照 JSON。用于来源信息和 reader scene 组装。",
     },
   },
   {
@@ -1366,6 +1394,302 @@ const FIELD_METADATA = [
       note: "每日精读文章 ID。",
     },
   },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "id",
+    meta: {
+      interface: "input",
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 1,
+      note: "调试摘要快照主键。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "record_id",
+    meta: {
+      special: ["m2o"],
+      interface: "select-dropdown-m2o",
+      options: {
+        template: "{{ title }} {{ id }}",
+      },
+      display: "claread-record-context-display",
+      display_options: {
+        target: "record",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 2,
+      note: "关联的解析记录。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "task_id",
+    meta: {
+      special: ["m2o"],
+      interface: "select-dropdown-m2o",
+      options: {
+        template: "{{ analysis_record_id.title }} {{ status }} {{ id }}",
+      },
+      display: "claread-record-context-display",
+      display_options: {
+        target: "analysis_task",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 3,
+      note: "关联的主解析任务。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "workflow_name",
+    meta: {
+      interface: "input",
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 4,
+      note: "workflow 名称。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "workflow_version",
+    meta: {
+      interface: "input",
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 5,
+      note: "workflow 版本号。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "schema_version",
+    meta: {
+      interface: "input",
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 6,
+      note: "render scene schema 版本号。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "prompt_version",
+    meta: {
+      interface: "input",
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 7,
+      note: "prompt registry 版本号。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "task_status",
+    meta: {
+      interface: "input",
+      display: "claread-status-badge",
+      display_options: {
+        variant: "task_status",
+      },
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 8,
+      note: "任务最终状态。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "user_facing_state",
+    meta: {
+      interface: "input",
+      display: "claread-status-badge",
+      display_options: {
+        variant: "user_facing_state",
+      },
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 9,
+      note: "面向用户的结果状态。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "failure_code",
+    meta: {
+      interface: "input",
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 10,
+      note: "失败代码。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "failure_message",
+    meta: {
+      interface: "input-multiline",
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 11,
+      note: "失败信息。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "created_at",
+    meta: {
+      interface: "datetime",
+      readonly: true,
+      hidden: false,
+      width: "half",
+      sort: 12,
+      note: "快照创建时间。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "preprocess_summary_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 20,
+      note: "预处理摘要 JSON。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "normalize_summary_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 21,
+      note: "normalize 摘要 JSON。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "drop_log_summary_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: true,
+      width: "full",
+      sort: 22,
+      note: "drop log 摘要 JSON。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "runtime_summary_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 23,
+      note: "运行时摘要 JSON。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "academic_quality_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 24,
+      note: "academic 质量摘要 JSON。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "few_shot_debug_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 25,
+      note: "few-shot provenance JSON。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "rag_debug_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: false,
+      width: "full",
+      sort: 26,
+      note: "grammar RAG provenance JSON。",
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    field: "trace_refs_json",
+    meta: {
+      interface: "input-code",
+      display: "claread-json-summary",
+      display_options: {
+        summary_kind: "generic",
+      },
+      readonly: true,
+      hidden: true,
+      width: "full",
+      sort: 27,
+      note: "trace refs JSON。",
+    },
+  },
 ];
 
 const ALIAS_FIELDS = [
@@ -1394,6 +1718,12 @@ const ALIAS_FIELDS = [
     sort: 93,
   },
   {
+    collection: "analysis_records",
+    field: "debug_snapshots",
+    note: "关联的调试摘要快照。",
+    sort: 94,
+  },
+  {
     collection: "analysis_tasks",
     field: "events",
     note: "主解析任务事件流。",
@@ -1407,6 +1737,12 @@ const ALIAS_FIELDS = [
     field: "usage_events",
     note: "关联到该主任务的 AI usage 事件。",
     sort: 91,
+  },
+  {
+    collection: "analysis_tasks",
+    field: "debug_snapshot",
+    note: "关联到该主任务的调试摘要快照。",
+    sort: 92,
   },
   {
     collection: "analysis_overview_tasks",
@@ -1468,6 +1804,20 @@ const RELATIONS = [
     one_collection: "analysis_tasks",
     one_field: "usage_events",
     one_deselect_action: "nullify",
+  },
+  {
+    many_collection: "analysis_debug_snapshots",
+    many_field: "record_id",
+    one_collection: "analysis_records",
+    one_field: "debug_snapshots",
+    one_deselect_action: "delete",
+  },
+  {
+    many_collection: "analysis_debug_snapshots",
+    many_field: "task_id",
+    one_collection: "analysis_tasks",
+    one_field: "debug_snapshot",
+    one_deselect_action: "delete",
   },
 ];
 
@@ -1577,6 +1927,24 @@ const DEFAULT_PRESETS = [
           "latency_ms",
           "model_provider",
           "model_name",
+          "created_at",
+        ],
+      },
+    },
+  },
+  {
+    collection: "analysis_debug_snapshots",
+    layout: "tabular",
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "task_id",
+          "task_status",
+          "user_facing_state",
+          "workflow_version",
+          "schema_version",
+          "failure_code",
           "created_at",
         ],
       },
@@ -2095,17 +2463,21 @@ async function verify(token) {
   const checks = [
     ["/collections/analysis_records", "analysis_records collection"],
     ["/collections/analysis_tasks", "analysis_tasks collection"],
+    ["/collections/analysis_debug_snapshots", "analysis_debug_snapshots collection"],
     ["/fields/analysis_records/id", "analysis_records.id field metadata"],
     ["/fields/analysis_records/analysis_status", "analysis_records.analysis_status display metadata"],
     ["/fields/analysis_records/client_record_id", "analysis_records.client_record_id source display metadata"],
     ["/fields/analysis_records/source_text", "analysis_records.source_text preview metadata"],
+    ["/fields/analysis_records/request_payload_json", "analysis_records.request_payload_json metadata"],
     ["/fields/analysis_records/result", "analysis_records.result alias field"],
     ["/fields/analysis_records/analysis_tasks", "analysis_records.analysis_tasks alias field"],
+    ["/fields/analysis_records/debug_snapshots", "analysis_records.debug_snapshots alias field"],
     ["/fields/analysis_results/record_id", "analysis_results.record_id field metadata"],
     ["/fields/analysis_results/render_scene_json", "analysis_results.render_scene_json display metadata"],
     ["/fields/analysis_tasks/id", "analysis_tasks.id field metadata"],
     ["/fields/analysis_tasks/status", "analysis_tasks.status display metadata"],
     ["/fields/analysis_tasks/events", "analysis_tasks.events alias display metadata"],
+    ["/fields/analysis_tasks/debug_snapshot", "analysis_tasks.debug_snapshot alias field"],
     ["/fields/analysis_tasks/analysis_record_id", "analysis_tasks.analysis_record_id relation field"],
     ["/fields/analysis_overview_tasks/id", "analysis_overview_tasks.id field metadata"],
     ["/fields/analysis_overview_tasks/status", "analysis_overview_tasks.status display metadata"],
@@ -2121,8 +2493,12 @@ async function verify(token) {
     ["/fields/ai_usage_events/capability_code", "ai_usage_events.capability_code display metadata"],
     ["/fields/ai_usage_events/usage_scope", "ai_usage_events.usage_scope display metadata"],
     ["/fields/ai_usage_events/billing_mode", "ai_usage_events.billing_mode display metadata"],
+    ["/fields/analysis_debug_snapshots/id", "analysis_debug_snapshots.id field metadata"],
+    ["/fields/analysis_debug_snapshots/task_id", "analysis_debug_snapshots.task_id relation field"],
+    ["/fields/analysis_debug_snapshots/runtime_summary_json", "analysis_debug_snapshots.runtime_summary_json metadata"],
     ["/relations/analysis_tasks/analysis_record_id", "analysis_tasks.analysis_record_id relation"],
     ["/relations/ai_usage_events/task_id", "ai_usage_events.task_id relation"],
+    ["/relations/analysis_debug_snapshots/task_id", "analysis_debug_snapshots.task_id relation"],
     ["/presets", "presets endpoint"],
   ];
 
