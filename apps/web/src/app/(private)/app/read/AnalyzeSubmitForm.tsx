@@ -7,42 +7,16 @@ import { useState } from "react";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { SegmentedControl } from "@/components/composed/segmented-control";
+import {
+  DEFAULT_READING_VARIANT_BY_GOAL,
+  READING_GOAL_OPTIONS,
+  READING_VARIANT_OPTIONS,
+  type ReadingDefaultState,
+  normalizeReadingDefaults,
+} from "@/lib/reading-defaults";
 import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
 import { formatShortcut } from "@/lib/shortcuts";
 import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
-
-const readingOptions = [
-  { value: "daily_reading", label: "日常阅读" },
-  { value: "academic", label: "学术摘要" },
-  { value: "exam", label: "备考精读" },
-] as const;
-
-const readingVariantOptions: Record<
-  ReadingGoalDto,
-  Array<{ value: ReadingVariantDto; label: string; helper: string }>
-> = {
-  daily_reading: [
-    { value: "beginner_reading", label: "入门", helper: "句意拆解更直白" },
-    { value: "intermediate_reading", label: "中级", helper: "词句平衡" },
-    { value: "intensive_reading", label: "精读", helper: "语法和表达更深入" },
-  ],
-  academic: [
-    { value: "academic_general", label: "学术通用", helper: "术语、逻辑和摘要" },
-  ],
-  exam: [
-    { value: "gaokao", label: "高考", helper: "中学语法与阅读题感" },
-    { value: "cet", label: "四六级", helper: "快速定位主干信息" },
-    { value: "kaoyan", label: "考研", helper: "长难句结构优先" },
-    { value: "tem", label: "专四专八", helper: "修辞和文学语感" },
-    { value: "ielts_toefl", label: "雅思托福", helper: "信息提取和题型判断" },
-  ],
-};
-
-const defaultVariantByGoal: Record<ReadingGoalDto, ReadingVariantDto> = {
-  daily_reading: "intermediate_reading",
-  academic: "academic_general",
-  exam: "cet",
-};
 
 type SubmitState =
   | { kind: "idle" }
@@ -74,11 +48,14 @@ const MAX_POLL_ATTEMPTS = 45;
 const libraryRoute = appLibraryRoute;
 const intakeCues = ["贴入文本", "链接导入", "上传文档", "示例文章"] as const;
 
-export function AnalyzeSubmitForm() {
+interface AnalyzeSubmitFormProps extends ReadingDefaultState {}
+
+export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: initialVariant }: AnalyzeSubmitFormProps) {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [readingGoal, setReadingGoal] = useState<ReadingGoalDto>("daily_reading");
-  const [readingVariant, setReadingVariant] = useState<ReadingVariantDto>("intermediate_reading");
+  const defaults = normalizeReadingDefaults({ readingGoal: initialGoal, readingVariant: initialVariant });
+  const [readingGoal, setReadingGoal] = useState<ReadingGoalDto>(defaults.readingGoal);
+  const [readingVariant, setReadingVariant] = useState<ReadingVariantDto>(defaults.readingVariant);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
 
   async function pollTaskUntilReady(taskId: string): Promise<AnalysisTaskStatusResponse> {
@@ -174,7 +151,7 @@ export function AnalyzeSubmitForm() {
 
   const isPending = state.kind === "pending";
   const errorRecordId = state.kind === "error" ? state.recordId : undefined;
-  const activeVariantOptions = readingVariantOptions[readingGoal];
+  const activeVariantOptions = READING_VARIANT_OPTIONS[readingGoal];
   const showVariantOptions = activeVariantOptions.length > 1;
   const submitShortcutLabel = formatShortcut("Primary+Enter");
 
@@ -226,7 +203,7 @@ export function AnalyzeSubmitForm() {
                 type="button"
                 className="font-sans text-[0.65rem] font-bold uppercase tracking-[0.15em] text-muted transition-colors hover:text-ink focus-ring"
               >
-                模式：{readingOptions.find((option) => option.value === readingGoal)?.label}
+                模式：{READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label}
               </button>
             </PopoverTrigger>
             <PopoverContent
@@ -238,9 +215,9 @@ export function AnalyzeSubmitForm() {
               value={readingGoal}
               onValueChange={(nextGoal) => {
                 setReadingGoal(nextGoal);
-                setReadingVariant(defaultVariantByGoal[nextGoal]);
+                setReadingVariant(DEFAULT_READING_VARIANT_BY_GOAL[nextGoal]);
               }}
-              options={readingOptions}
+              options={READING_GOAL_OPTIONS}
             />
             {showVariantOptions ? (
               <SegmentedControl

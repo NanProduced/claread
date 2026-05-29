@@ -1,15 +1,17 @@
-import { MessageSquare, Palette } from "lucide-react";
+import { BookOpenText, MessageSquare, Palette } from "lucide-react";
 import Link from "next/link";
 import { ApertureWatermark } from "@/components/brand/BrandMarks";
 import { SectionCard } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
 import { ScrollArea } from "@/components/primitives/scroll-area";
+import { readReadingDefaultsFromSettings } from "@/lib/reading-defaults";
 import { appSettingsRoute, loginRoute } from "@/lib/routes";
 import { getProfileSettings, type ProfileBffStatus } from "@/services/bff/profile";
 import { CreditLedgerSection } from "./CreditLedgerSection";
 import { FeedbackForm } from "./FeedbackForm";
 import { LogoutButton } from "./LogoutButton";
 import { NicknameEditor } from "./NicknameEditor";
+import { ReadingDefaultsSection } from "./ReadingDefaultsSection";
 import { ThemePreferencesSection } from "./ThemePreferencesSection";
 
 const statusLabel: Record<ProfileBffStatus, string> = {
@@ -29,6 +31,8 @@ export default async function SettingsPage() {
   const displayName = settings.profile?.nickname || settings.session.phone || "Web User";
   const realNickname = settings.profile?.nickname || "";
   const avatarText = displayName.trim().slice(0, 1).toUpperCase() || "U";
+  const readingDefaults = readReadingDefaultsFromSettings(settings.profile?.settings);
+  const canEditSharedDefaults = settings.status === "ready";
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-reader-paper px-4 py-6 text-ink sm:px-8 lg:px-16 xl:px-24">
@@ -100,6 +104,22 @@ export default async function SettingsPage() {
                   }
                 >
                   <ThemePreferencesSection />
+                </SectionCard>
+
+                <SectionCard
+                  title="默认透读"
+                  icon={BookOpenText}
+                  footer={
+                    <p className="text-xs leading-5 text-muted">
+                      共享默认值会写入账户设置，并被 Web 输入页优先读取；它不替代 Reader 内的本地阅读样式偏好。
+                    </p>
+                  }
+                >
+                  <ReadingDefaultsSection
+                    readingGoal={readingDefaults.readingGoal}
+                    readingVariant={readingDefaults.readingVariant}
+                    canEdit={canEditSharedDefaults}
+                  />
                 </SectionCard>
 
                 {/* Feedback form */}

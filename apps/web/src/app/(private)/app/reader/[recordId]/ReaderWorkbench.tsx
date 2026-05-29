@@ -47,6 +47,16 @@ import {
 } from "@/components/reader";
 import { useAppearance } from "@/components/providers/appearance-provider";
 import {
+  buildWebPreferencesFromLocal,
+  isWebPreferencesSyncReady,
+  syncWebPreferencesToCloud,
+} from "@/lib/web-preferences-sync";
+import {
+  type WebPreferences,
+  WEB_PREFERENCES_APPLIED_EVENT,
+  WEB_PREFERENCES_SYNC_READY_EVENT,
+} from "@/lib/web-preferences";
+import {
   askAttachmentFromAnnotation,
   askAttachmentFromAnalysisBlock,
   askAttachmentFromContentSummary,
@@ -682,8 +692,11 @@ export function ReaderWorkbench({
     contextJson?: Record<string, unknown>;
   } | null>(null);
   const activeAnnotationTargetKeyRef = useRef<string | null>(null);
+  const readerSettingsHydratedRef = useRef(false);
+  const skipNextReaderSettingsSyncRef = useRef(false);
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const [settingsFloatingStyle, setSettingsFloatingStyle] = useState<CSSProperties | null>(null);
+  const [webPreferencesSyncReady, setWebPreferencesSyncReady] = useState(() => isWebPreferencesSyncReady());
 
   useEffect(() => {
     queueMicrotask(() => setReaderScene(record.reader));
@@ -744,11 +757,69 @@ export function ReaderWorkbench({
   });
 
   useEffect(() => {
+    if (!readerSettingsHydratedRef.current || !webPreferencesSyncReady) {
+      return;
+    }
+
+    if (skipNextReaderSettingsSyncRef.current) {
+      skipNextReaderSettingsSyncRef.current = false;
+      return;
+    }
+
     persistReaderSettings(readerSettings);
-  }, [readerSettings]);
+    try {
+      const prefs = buildWebPreferencesFromLocal();
+      prefs.reader_mode = readerSettings.mode;
+      prefs.font_family = readerSettings.fontFamily;
+      prefs.font_scale = readerSettings.fontScale;
+      prefs.updated_at = new Date().toISOString();
+      syncWebPreferencesToCloud(prefs);
+    } catch {}
+  }, [readerSettings, webPreferencesSyncReady]);
 
   useEffect(() => {
-    queueMicrotask(() => setReaderSettings(readStoredReaderSettings()));
+    queueMicrotask(() => {
+      readerSettingsHydratedRef.current = true;
+      setReaderSettings(readStoredReaderSettings());
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isWebPreferencesSyncReady()) {
+      setWebPreferencesSyncReady(true);
+      return;
+    }
+
+    function handleSyncReady() {
+      setWebPreferencesSyncReady(true);
+    }
+
+    window.addEventListener(WEB_PREFERENCES_SYNC_READY_EVENT, handleSyncReady);
+    return () => {
+      window.removeEventListener(WEB_PREFERENCES_SYNC_READY_EVENT, handleSyncReady);
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleApplied(event: Event) {
+      const prefs = (event as CustomEvent<WebPreferences>).detail;
+      if (!prefs) {
+        return;
+      }
+
+      skipNextReaderSettingsSyncRef.current = true;
+      setReaderSettings({
+        mode: prefs.reader_mode,
+        fontFamily: prefs.font_family,
+        fontScale: prefs.font_scale,
+        updatedAt: prefs.updated_at || undefined,
+      });
+    }
+
+    window.addEventListener(WEB_PREFERENCES_APPLIED_EVENT, handleApplied as EventListener);
+    return () => {
+      window.removeEventListener(WEB_PREFERENCES_APPLIED_EVENT, handleApplied as EventListener);
+    };
   }, []);
 
   useEffect(() => {

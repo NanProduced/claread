@@ -30,6 +30,11 @@ import {
   themeColorForTheme,
   type ThemeName,
 } from "@/lib/appearance";
+import {
+  buildWebPreferencesFromLocal,
+  syncWebPreferencesToCloud,
+} from "@/lib/web-preferences-sync";
+import { persistWebPreferences } from "@/lib/web-preferences";
 
 interface AppearanceContextValue {
   themeName: ThemeName;
@@ -72,20 +77,14 @@ function AppearanceContextBridge({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
+    if (typeof window === "undefined") return;
 
     try {
       const nextStoredTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-      if (nextStoredTheme) {
-        return;
-      }
+      if (nextStoredTheme) return;
 
       const legacyStoredTheme = window.localStorage.getItem(LEGACY_APPEARANCE_STORAGE_KEY);
-      if (!legacyStoredTheme) {
-        return;
-      }
+      if (!legacyStoredTheme) return;
 
       const migratedTheme = migrateLegacyAppearanceTheme(
         legacyStoredTheme,
@@ -95,14 +94,22 @@ function AppearanceContextBridge({ children }: { children: React.ReactNode }) {
       );
 
       setTheme(migratedTheme);
-    } catch {
-    }
+    } catch {}
   }, [setTheme]);
 
   const value = useMemo<AppearanceContextValue>(
     () => ({
       themeName: mounted ? normalizeThemeName(theme) : "paper",
-      setThemeName: (next) => setTheme(next),
+      setThemeName: (next) => {
+        setTheme(next);
+        try {
+          const local = buildWebPreferencesFromLocal();
+          local.theme = next;
+          local.updated_at = new Date().toISOString();
+          persistWebPreferences(local);
+          syncWebPreferencesToCloud(local);
+        } catch {}
+      },
     }),
     [mounted, setTheme, theme],
   );

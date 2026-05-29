@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { ScrollArea } from "@/components/primitives";
+import { readReadingDefaultsFromSettings } from "@/lib/reading-defaults";
 import { dailyArticleRoute, dailyRoute } from "@/lib/routes";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
+import { getProfileSettings } from "@/services/bff/profile";
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 import { EditorialTagList } from "./EditorialTagList";
 
@@ -17,10 +19,12 @@ function getExcerpt(subtitle?: string | null, fallbackTitle?: string) {
 }
 
 export default async function PasteToReadPage() {
-  const [todayResult, listResult] = await Promise.all([
+  const [todayResult, listResult, profileSettings] = await Promise.all([
     fetchDailyReaderToday(),
     fetchDailyReaderList({ limit: 6 }),
+    getProfileSettings(),
   ]);
+  const readingDefaults = readReadingDefaultsFromSettings(profileSettings.profile?.settings);
   const leadArticle = todayResult.ok ? todayResult.data[0] ?? null : null;
   const otherTodayArticles = todayResult.ok ? todayResult.data.slice(1) : [];
   const todayIds = new Set(todayResult.ok ? todayResult.data.map((article) => article.id) : []);
@@ -54,7 +58,10 @@ export default async function PasteToReadPage() {
             </div>
 
             <div className="mt-8 flex flex-1 flex-col md:mt-8 md:min-h-0 xl:mt-10">
-              <AnalyzeSubmitForm />
+              <AnalyzeSubmitForm
+                readingGoal={readingDefaults.readingGoal}
+                readingVariant={readingDefaults.readingVariant}
+              />
             </div>
           </section>
 

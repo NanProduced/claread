@@ -14,6 +14,7 @@
 - 桌面和移动 Web 都要考虑，但第一阶段可以先定义 MVP 范围。
 - 设计规则放在 `docs/design/` 和 `apps/web/docs/`，不要复用旧小程序 handoff 文档作为 Web 真相源。
 - 新增跨端类型时优先放入 `packages/contracts/`。
+- Web Reader 不存在 demo/mock 记录页。验证 Reader 时必须使用真实记录，或先走真实创建流程拿到可用 `recordId`，不要假设 `/app/reader/demo-record` 之类的占位路径成立。
 
 ## 验证
 

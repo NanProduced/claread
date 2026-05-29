@@ -160,3 +160,74 @@ export async function updateProfileNickname(
 
   return { ok: true, httpStatus: 200 };
 }
+
+export interface CloudSettingsBffResult {
+  ok: boolean;
+  httpStatus: number;
+  settings: Record<string, unknown> | null;
+  message?: string;
+}
+
+export async function getCloudSettings(): Promise<CloudSettingsBffResult> {
+  const webSession = await getWebSession();
+
+  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+    return { ok: false, httpStatus: 401, settings: null };
+  }
+
+  const result = await getUpstreamSessionMe(webSession.sessionToken);
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      httpStatus: result.status === 0 ? 503 : result.status,
+      settings: null,
+      message: result.status === 0 || result.status >= 500
+        ? "服务暂时不可用。"
+        : result.message,
+    };
+  }
+
+  return {
+    ok: true,
+    httpStatus: 200,
+    settings: (result.data.settings as Record<string, unknown>) ?? {},
+  };
+}
+
+export async function updateProfileSettings(
+  settings: Record<string, unknown>,
+): Promise<UpdateNicknameBffResult> {
+  const webSession = await getWebSession();
+
+  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+    return {
+      ok: false,
+      httpStatus: 401,
+      message: "当前会话无法同步偏好，请重新登录。",
+    };
+  }
+
+  if (!settings || typeof settings !== "object") {
+    return {
+      ok: false,
+      httpStatus: 400,
+      message: "settings 格式无效。",
+    };
+  }
+
+  const result = await patchUpstreamProfile(webSession.sessionToken, { settings });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      httpStatus: result.status === 0 ? 503 : result.status,
+      message:
+        result.status === 0 || result.status >= 500
+          ? "服务暂时不可用，请稍后重试。"
+          : result.message,
+    };
+  }
+
+  return { ok: true, httpStatus: 200 };
+}
