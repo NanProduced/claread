@@ -11,6 +11,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.internal_feedback import router as internal_feedback_router
 from app.api.routes.prompt_debug import router as prompt_debug_router
 from app.api.routes.quota import router as quota_router
+from app.api.routes.reader import router as reader_router
 from app.api.routes.reader_ask import router as reader_ask_router
 from app.api.routes.reader_notes import router as reader_notes_router
 from app.api.routes.records import router as records_router
@@ -26,6 +27,7 @@ api_router.include_router(auth_router)
 api_router.include_router(records_router)
 api_router.include_router(tasks_router)
 api_router.include_router(quota_router)
+api_router.include_router(reader_router)
 api_router.include_router(reader_ask_router)
 api_router.include_router(favorites_router)
 api_router.include_router(reader_notes_router)

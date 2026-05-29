@@ -38,6 +38,7 @@ from app.services.analysis.postprocess.draft_validators import validate_all_draf
 from app.services.analysis.postprocess.normalize_and_ground import normalize_and_ground
 from app.services.analysis.postprocess.projection import project_to_render_scene
 from app.services.analysis.preprocess.input_preparation import prepare_input
+from app.services.analysis.prompting.prompt_loader import get_prompt_version, load_examples
 from app.services.analysis.prompting.strategy_builder import (
     build_grammar_bundle_async,
     build_translation_bundle,
@@ -96,6 +97,38 @@ def _aggregate_usage_summary(
             "output_tokens": _sum_token("output_tokens"),
             "total_tokens": _sum_token("total_tokens"),
         },
+    }
+
+
+def _build_learning_few_shot_debug(
+    plan: Any,
+) -> dict[str, Any]:
+    def _agent_debug(example_family: str) -> dict[str, Any]:
+        return {
+            "few_shot_mode": getattr(plan, "few_shot_mode", "baseline"),
+            "baseline_selection_mode": "baseline",
+            "example_family": example_family,
+            "variant": plan.variant_id,
+            "example_count": len(load_examples(example_family, plan.variant_id)),
+        }
+
+    return {
+        "prompt_registry_version": get_prompt_version(),
+        "agents": {
+            "vocabulary": _agent_debug("vocabulary"),
+            "grammar": _agent_debug("grammar"),
+            "translation": _agent_debug("translation"),
+        },
+    }
+
+
+def _build_learning_rag_debug(grammar_bundle: Any) -> dict[str, Any] | None:
+    if not getattr(grammar_bundle, "rag_debug", None):
+        return None
+    return {
+        "agents": {
+            "grammar": grammar_bundle.rag_debug,
+        }
     }
 
 
@@ -359,6 +392,8 @@ async def _run_parallel_agents(
         "grammar_usage": grammar_usage,
         "translation_usage": translation_usage,
         "usage_summary": usage_summary,
+        "few_shot_debug": _build_learning_few_shot_debug(plan),
+        "rag_debug": _build_learning_rag_debug(grammar_bundle),
         "agent_errors": errors,
     }
 
@@ -377,6 +412,8 @@ async def parallel_agents_node(state: AnalyzeState, config: RunnableConfig) -> A
         "grammar_usage": result.get("grammar_usage"),
         "translation_usage": result.get("translation_usage"),
         "usage_summary": result.get("usage_summary"),
+        "few_shot_debug": result.get("few_shot_debug"),
+        "rag_debug": result.get("rag_debug"),
         "warnings": [*state.get("warnings", []), *errors],
     }
 

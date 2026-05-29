@@ -24,6 +24,8 @@ class AnalyzeState(TypedDict, total=False):
     translation_usage: dict[str, object] | None
     repair_usage: dict[str, object] | None
     usage_summary: dict[str, object] | None
+    few_shot_debug: dict[str, object] | None
+    rag_debug: dict[str, object] | None
 
     # Normalization result
     normalized_result: NormalizedAnnotationResult | None

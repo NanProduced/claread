@@ -105,6 +105,7 @@ async def upsert_record(
     title: str | None,
     source_text: str,
     source_text_hash: str,
+    request_payload_json: dict[str, Any] | None,
     reading_goal: str | None,
     reading_variant: str | None,
     user_facing_state: str | None,
@@ -130,14 +131,19 @@ async def upsert_record(
                 """
                 INSERT INTO analysis_records (
                     user_id, client_record_id, source_type, title, source_text,
-                    source_text_hash, reading_goal, reading_variant, extended,
+                    source_text_hash, request_payload_json, reading_goal, reading_variant, extended,
                     user_facing_state, analysis_status, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $13)
                 ON CONFLICT (user_id, client_record_id) DO UPDATE SET
                     title            = COALESCE(EXCLUDED.title, analysis_records.title),
                     source_text      = EXCLUDED.source_text,
                     source_text_hash = EXCLUDED.source_text_hash,
+                    request_payload_json = CASE
+                        WHEN EXCLUDED.request_payload_json = '{}'::jsonb
+                        THEN analysis_records.request_payload_json
+                        ELSE EXCLUDED.request_payload_json
+                    END,
                     reading_goal        = EXCLUDED.reading_goal,
                     reading_variant     = EXCLUDED.reading_variant,
                     extended            = EXCLUDED.extended,
@@ -145,11 +151,12 @@ async def upsert_record(
                     analysis_status     = EXCLUDED.analysis_status,
                     deleted_at          = NULL,
                     deleted_by          = NULL,
-                    updated_at          = $12
+                    updated_at          = $13
                 RETURNING id, updated_at, (xmax = 0) AS created
                 """,
                 user_id, client_record_id, source_type, title, source_text,
-                source_text_hash, reading_goal, reading_variant, extended,
+                source_text_hash, jsonb_param(request_payload_json or {}),
+                reading_goal, reading_variant, extended,
                 user_facing_state or 'processing', analysis_status, now,
             )
             assert record_row is not None
@@ -201,7 +208,7 @@ async def get_record_by_id(
         row = await conn.fetchrow(
             f"""
             SELECT r.id, r.user_id, r.client_record_id, r.source_type, r.title, r.source_text,
-                   r.source_text_hash, r.reading_goal, r.reading_variant, r.extended,
+                   r.source_text_hash, r.request_payload_json, r.reading_goal, r.reading_variant, r.extended,
                    r.user_facing_state, r.analysis_status, r.last_opened_at, r.created_at, r.updated_at
                    {content_cols},
                    {_summary_sql("$2")}
@@ -237,7 +244,7 @@ async def get_record_by_client_id(
         row = await conn.fetchrow(
             f"""
             SELECT r.id, r.user_id, r.client_record_id, r.source_type, r.title, r.source_text,
-                   r.source_text_hash, r.reading_goal, r.reading_variant, r.extended,
+                   r.source_text_hash, r.request_payload_json, r.reading_goal, r.reading_variant, r.extended,
                    r.user_facing_state, r.analysis_status, r.last_opened_at, r.created_at, r.updated_at
                    {content_cols},
                    {_summary_sql("$2")}
@@ -277,7 +284,7 @@ async def list_records(
         rows = await conn.fetch(
             f"""
             SELECT r.id, r.user_id, r.client_record_id, r.source_type, r.title, r.source_text,
-                   r.source_text_hash, r.reading_goal, r.reading_variant, r.extended,
+                   r.source_text_hash, r.request_payload_json, r.reading_goal, r.reading_variant, r.extended,
                    r.user_facing_state, r.analysis_status, r.last_opened_at, r.created_at, r.updated_at
                    {content_cols},
                    {_summary_sql("$1")}
@@ -308,7 +315,7 @@ async def update_record(
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
-    allowed_metadata = {"title", "user_facing_state", "analysis_status", "last_opened_at", "extended"}
+    allowed_metadata = {"title", "user_facing_state", "analysis_status", "last_opened_at", "extended", "request_payload_json"}
     allowed_content = {"render_scene_json", "page_state_json", "workflow_version", "schema_version"}
 
     metadata_updates = {k: v for k, v in fields.items() if k in allowed_metadata and v is not None}
@@ -326,8 +333,12 @@ async def update_record(
                 set_parts = []
                 params = []
                 for i, (k, v) in enumerate(metadata_updates.items()):
-                    set_parts.append(f"{k} = ${i + 1}")
-                    params.append(v)
+                    if k in _JSONB_COLUMNS:
+                        set_parts.append(f"{k} = ${i + 1}::jsonb")
+                        params.append(jsonb_param(v))
+                    else:
+                        set_parts.append(f"{k} = ${i + 1}")
+                        params.append(v)
                 params.extend([record_id, user_id])
                 await conn.execute(
                     f"UPDATE analysis_records SET {', '.join(set_parts)} "

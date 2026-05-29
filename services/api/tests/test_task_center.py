@@ -410,6 +410,49 @@ class TestTaskSubmitRoute:
         submit_mock.assert_awaited_once()
 
     @pytest.mark.anyio
+    async def test_submit_task_preserves_request_payload_metadata(self):
+        user_id = uuid4()
+        task_id = uuid4()
+        record_id = uuid4()
+        body = TaskSubmitRequest(
+            text="Hello world",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+            request_payload_json={
+                "url": "https://example.com/article",
+                "source_url": "https://example.com/article",
+                "source_label": "Example",
+            },
+        )
+        current_user = SimpleNamespace(user_id=str(user_id))
+        created = TaskSubmitResult(
+            task_id=task_id,
+            record_id=record_id,
+            client_record_id="task-test-record",
+            status="queued",
+            created=True,
+        )
+
+        with (
+            patch("app.api.routes.tasks.ensure_credit_account", AsyncMock()),
+            patch("app.api.routes.tasks.get_active_task", AsyncMock(return_value=None)),
+            patch("app.api.routes.tasks.check_quota", AsyncMock(return_value=1)),
+            patch("app.api.routes.tasks.submit_task", AsyncMock(return_value=created)) as submit_mock,
+        ):
+            response = await submit_analysis_task(current_user, body)
+
+        assert response.status_code == 202
+        submit_mock.assert_awaited_once()
+        payload = submit_mock.await_args.kwargs["request_payload_json"]
+        assert payload["url"] == "https://example.com/article"
+        assert payload["source_url"] == "https://example.com/article"
+        assert payload["source_label"] == "Example"
+        assert payload["reading_goal"] == "daily_reading"
+        assert payload["reading_variant"] == "intermediate_reading"
+        assert payload["source_type"] == "user_input"
+        assert payload["extended"] is False
+
+    @pytest.mark.anyio
     async def test_wait_for_result_returns_render_scene_when_task_succeeds(self):
         user_id = uuid4()
         task_id = uuid4()
@@ -611,6 +654,10 @@ class TestTaskExecutorCharging:
                 "app.services.analysis.task_executor.record_ai_usage_event",
                 AsyncMock(return_value=True),
             ) as usage_event_mock,
+            patch(
+                "app.services.analysis.task_executor._write_debug_snapshot",
+                AsyncMock(),
+            ) as snapshot_mock,
         ):
             await execute_task(
                 task_id=task_id,
@@ -629,6 +676,7 @@ class TestTaskExecutorCharging:
         assert event.status == "succeeded"
         assert event.usage_scope == "user_billed"
         assert event.billed_points == 17
+        snapshot_mock.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_execute_task_does_not_charge_unrenderable_heavy_result(self):
@@ -716,6 +764,10 @@ class TestTaskExecutorCharging:
                 "app.services.analysis.task_executor.record_ai_usage_event",
                 AsyncMock(return_value=True),
             ) as usage_event_mock,
+            patch(
+                "app.services.analysis.task_executor._write_debug_snapshot",
+                AsyncMock(),
+            ) as snapshot_mock,
         ):
             await execute_task(
                 task_id=task_id,
@@ -735,6 +787,52 @@ class TestTaskExecutorCharging:
         usage_event = usage_event_mock.await_args.args[0]
         assert usage_event.status == "failed"
         assert usage_event.billed_points == 0
+        snapshot_mock.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_execute_task_still_writes_debug_snapshot_when_failure_cleanup_errors(self):
+        task_id = uuid4()
+        record_id = uuid4()
+        user_id = uuid4()
+
+        with (
+            patch(
+                "app.services.analysis.task_executor.run_article_analysis_with_state",
+                AsyncMock(side_effect=RuntimeError("workflow exploded")),
+            ),
+            patch(
+                "app.services.analysis.task_executor.update_task_status",
+                AsyncMock(),
+            ),
+            patch(
+                "app.services.analysis.task_executor.records_svc.update_record",
+                AsyncMock(),
+            ),
+            patch(
+                "app.services.analysis.task_executor.record_ai_usage_event",
+                AsyncMock(side_effect=RuntimeError("usage write failed")),
+            ),
+            patch(
+                "app.services.analysis.task_executor.insert_task_event",
+                AsyncMock(),
+            ),
+            patch(
+                "app.services.analysis.task_executor._write_debug_snapshot",
+                AsyncMock(),
+            ) as snapshot_mock,
+        ):
+            await execute_task(
+                task_id=task_id,
+                record_id=record_id,
+                user_id=user_id,
+                text="Hello world",
+                reading_goal="daily_reading",
+                reading_variant="intermediate_reading",
+                source_type="user_input",
+                extended=False,
+            )
+
+        snapshot_mock.assert_awaited_once()
 
 
 class TestWorkerLoop:

@@ -33,6 +33,10 @@ class TaskSubmitRequest(BaseModel):
     client_record_id: str | None = Field(default=None, max_length=64, description="客户端生成的记录唯一标识。")
     source_type: SourceType = Field(default="user_input")
     extended: bool = Field(default=False)
+    request_payload_json: dict[str, Any] | None = Field(
+        default=None,
+        description="原始请求元信息，供记录详情/阅读页保留来源和扩展字段。",
+    )
     wait_for_result: bool = Field(
         default=False,
         description="是否在本次请求内等待任务结果（超时后仍返回任务状态）。",

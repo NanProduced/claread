@@ -15,7 +15,7 @@ from app.schemas.user_assets.records import (
     RecordUpdateRequest,
     RecordUpsertResponse,
 )
-from app.services.reader_ask import supplements as ask_supplements_svc
+from app.services import reader_scene as reader_scene_svc
 from app.services.auth.dependencies import AuthUserDep
 from app.services.user_assets import records as records_svc
 
@@ -25,15 +25,7 @@ router = APIRouter(prefix="/records", tags=["records"])
 
 
 async def _merge_reader_ask_supplements(user_id: UUID, record: dict) -> dict:
-    render_scene = record.get("render_scene_json")
-    if not isinstance(render_scene, dict):
-        return record
-    supplements = await ask_supplements_svc.list_supplements_for_record(user_id, UUID(str(record["id"])))
-    if not supplements:
-        return record
-    merged = dict(record)
-    merged["render_scene_json"] = ask_supplements_svc.merge_supplements_into_render_scene(render_scene, supplements)
-    return merged
+    return await reader_scene_svc.merge_record_with_reader_ask_supplements(user_id, record)
 
 
 @router.post("", response_model=RecordUpsertResponse, summary="保存分析记录")
@@ -54,6 +46,7 @@ async def create_record(
             title=body.title,
             source_text=body.source_text,
             source_text_hash=body.source_text_hash,
+            request_payload_json=body.request_payload_json,
             reading_goal=reading_goal,
             reading_variant=reading_variant,
             extended=extended,

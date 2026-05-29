@@ -27,6 +27,7 @@ export interface TaskSubmitRequestDto {
   client_record_id?: string;
   source_type: "user_input";
   extended: boolean;
+  request_payload_json?: Record<string, unknown>;
   wait_for_result: boolean;
   wait_timeout_seconds: number;
 }

@@ -9,7 +9,7 @@ import {
   checkAnonymousQuota,
   ApiError,
 } from '../services/api/client'
-import { fetchCloudRecord, fetchCloudRecordByClientId } from '../services/api/records.client'
+import { fetchCloudReaderScene, fetchCloudReaderSceneByClientId } from '../services/api/reader-scene.client'
 import { analyzeResponseDtoToVm } from '../services/api/adapters/render-scene.adapter'
 import { normalizeServerAnalyzeParams } from '../config/purpose'
 import { useAuthStore } from './auth'
@@ -156,7 +156,7 @@ export const useArticleStore = create<ArticleState>((set, get) => {
 
         if (statusRes.status === 'succeeded') {
           const recordId = statusRes.cloud_record_id
-          const cloudRecord = await fetchCloudRecord(recordId)
+          const cloudRecord = await fetchCloudReaderScene(recordId)
           if (!cloudRecord) {
             throw new Error('Record not found')
           }
@@ -365,7 +365,7 @@ export const useArticleStore = create<ArticleState>((set, get) => {
              taskId = current.task.task_id
              serverRecordId = current.task.cloud_record_id
 
-             const cloudRecord = await fetchCloudRecord(serverRecordId)
+             const cloudRecord = await fetchCloudReaderScene(serverRecordId)
              if (!cloudRecord) {
                 const message = '无法恢复当前任务，请稍后重试'
                 set({ error: message, errorCode: 'RECOVERY_FAILED', phase: 'error', pageState: 'failed' })
@@ -433,7 +433,7 @@ export const useArticleStore = create<ArticleState>((set, get) => {
 
           const sessionId = ++_pollSessionId
 
-          const cloudRecord = await fetchCloudRecord(serverRecordId)
+          const cloudRecord = await fetchCloudReaderScene(serverRecordId)
           if (!cloudRecord) {
              return
           }
@@ -474,7 +474,7 @@ export const useArticleStore = create<ArticleState>((set, get) => {
         const { isLoggedIn } = useAuthStore.getState()
         if (isLoggedIn) {
           try {
-            const cloudRecord = await fetchCloudRecordByClientId(recordId) || await fetchCloudRecord(recordId)
+            const cloudRecord = await fetchCloudReaderSceneByClientId(recordId) || await fetchCloudReaderScene(recordId)
             if (cloudRecord) {
               saveRecord(cloudRecord)
               if (cloudRecord.cloudId) {

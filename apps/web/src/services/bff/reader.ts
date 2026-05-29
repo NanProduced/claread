@@ -1,13 +1,15 @@
 import "server-only";
 
-import { adaptRecordToReaderRecord, type ReaderRecordVm } from "@/adapters/records.adapter";
+import { adaptReaderSceneResponseToReaderRecord, type ReaderRecordVm } from "@/adapters/records.adapter";
 import {
-  getUpstreamRecordByClientId,
-  getUpstreamRecordById,
+  getUpstreamReaderSceneByClientId,
+  getUpstreamReaderSceneById,
+} from "@/services/api/reader-scene";
+import {
   updateUpstreamRecord,
 } from "@/services/api/records";
 import { getWebSession, type WebSession } from "@/services/bff/session";
-import type { RecordResponseDto } from "@/types/api/records";
+import type { ReaderSceneResponseDto } from "@/types/api/reader-scene";
 
 export type ReaderDataSource =
   | "upstream-render-scene"
@@ -36,14 +38,10 @@ export type ReaderBffResult =
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function hasRenderableScene(record: RecordResponseDto): boolean {
-  const scene = record.render_scene_json;
-  return Boolean(
-    scene &&
-      typeof scene === "object" &&
-      "article" in scene &&
-      (Array.isArray((scene as { translations?: unknown }).translations) ||
-        Array.isArray((scene as { inline_marks?: unknown }).inline_marks)),
+function usesSourceTextFallback(response: ReaderSceneResponseDto): boolean {
+  return (
+    response.view_meta.data_source === "source_text_fallback" ||
+    response.view_meta.fallback_mode !== "none"
   );
 }
 
@@ -64,8 +62,8 @@ export async function getReaderRecord(recordId: string): Promise<ReaderBffResult
   }
 
   const upstreamResult = UUID_RE.test(recordId)
-    ? await getUpstreamRecordById(recordId, session.sessionToken)
-    : await getUpstreamRecordByClientId(recordId, session.sessionToken);
+    ? await getUpstreamReaderSceneById(recordId, session.sessionToken)
+    : await getUpstreamReaderSceneByClientId(recordId, session.sessionToken);
 
   if (!upstreamResult.ok) {
     return {
@@ -89,23 +87,21 @@ export async function getReaderRecord(recordId: string): Promise<ReaderBffResult
     };
   }
 
-  const record = adaptRecordToReaderRecord(upstreamResult.data);
+  const record = adaptReaderSceneResponseToReaderRecord(upstreamResult.data);
 
   // Reading a record should refresh the "last opened" signal without
   // rewriting the record's content-level updated_at timestamp.
-  void updateUpstreamRecord(upstreamResult.data.id, session.sessionToken, {
+  void updateUpstreamRecord(upstreamResult.data.record_meta.id, session.sessionToken, {
     last_opened_at: new Date().toISOString(),
   }).catch(() => undefined);
+
+  const sourceTextFallback = usesSourceTextFallback(upstreamResult.data);
 
   return {
     ok: true,
     record,
-    dataSource: hasRenderableScene(upstreamResult.data)
-      ? "upstream-render-scene"
-      : "upstream-source-text",
+    dataSource: sourceTextFallback ? "upstream-source-text" : "upstream-render-scene",
     session,
-    message: hasRenderableScene(upstreamResult.data)
-      ? undefined
-      : "这条记录暂时没有完整解析结果，当前仅显示原文。",
+    message: sourceTextFallback ? "这条记录暂时没有完整解析结果，当前仅显示原文。" : undefined,
   };
 }

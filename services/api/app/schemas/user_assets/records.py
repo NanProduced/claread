@@ -44,6 +44,7 @@ class RecordUpdateRequest(BaseModel):
     """PATCH /records/{id} — partial update."""
 
     title: str | None = Field(default=None, max_length=256)
+    request_payload_json: dict[str, Any] | None = None
     render_scene_json: dict[str, Any] | None = None
     page_state_json: dict[str, Any] | None = None
     user_facing_state: str | None = None

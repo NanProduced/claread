@@ -125,6 +125,12 @@ async def submit_analysis_task(
                 required=1,
             )
 
+        request_payload_json = dict(body.request_payload_json or {})
+        request_payload_json.setdefault("reading_goal", body.reading_goal)
+        request_payload_json.setdefault("reading_variant", body.reading_variant)
+        request_payload_json.setdefault("source_type", body.source_type)
+        request_payload_json.setdefault("extended", body.extended)
+
         result = await submit_task(
             user_id=user_id,
             text=body.text,
@@ -133,6 +139,7 @@ async def submit_analysis_task(
             source_type=body.source_type,
             extended=body.extended,
             client_record_id=body.client_record_id,
+            request_payload_json=request_payload_json,
         )
 
         response_status = 202

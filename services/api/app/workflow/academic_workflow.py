@@ -28,7 +28,11 @@ from app.services.analysis.postprocess.academic_normalize import academic_normal
 from app.services.analysis.postprocess.academic_projection import project_to_academic_render_scene
 from app.services.analysis.preprocess.input_preparation import prepare_input
 from app.services.analysis.prompting.example_strategy import ExampleEntry
-from app.services.analysis.prompting.prompt_loader import load_examples, load_policy_lines
+from app.services.analysis.prompting.prompt_loader import (
+    get_prompt_version,
+    load_examples,
+    load_policy_lines,
+)
 from app.services.analysis.prompting.prompt_strategy import (
     PromptStrategy,
 )
@@ -75,6 +79,26 @@ def _aggregate_usage_summary(
             "input_tokens": _sum_token("input_tokens"),
             "output_tokens": _sum_token("output_tokens"),
             "total_tokens": _sum_token("total_tokens"),
+        },
+    }
+
+
+def _build_academic_few_shot_debug(plan: Any) -> dict[str, Any]:
+    def _agent_debug(example_family: str) -> dict[str, Any]:
+        return {
+            "few_shot_mode": "baseline",
+            "baseline_selection_mode": "baseline",
+            "example_family": example_family,
+            "variant": plan.variant_id,
+            "example_count": len(load_examples("academic", example_family)),
+        }
+
+    return {
+        "prompt_registry_version": get_prompt_version(),
+        "agents": {
+            "term": _agent_debug("term"),
+            "translation": _agent_debug("academic_translation"),
+            "understanding": _agent_debug("understanding"),
         },
     }
 
@@ -262,6 +286,8 @@ async def parallel_term_translation_node(
         "term_usage": term_usage,
         "translation_usage": translation_usage,
         "usage_summary": usage_summary,
+        "few_shot_debug": _build_academic_few_shot_debug(plan),
+        "rag_debug": None,
         "warnings": [*state.get("warnings", []), *errors],
     }
 

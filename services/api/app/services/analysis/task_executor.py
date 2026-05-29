@@ -35,6 +35,10 @@ from app.services.ai_usage import (
     resolve_model_metadata,
 )
 from app.services.analysis.credit_service import deduct_credits
+from app.services.analysis.debug_snapshots import (
+    build_debug_snapshot_payload,
+    upsert_debug_snapshot,
+)
 from app.services.analysis.overview_task_service import enqueue_overview_task_if_needed
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.analysis.task_service import (
@@ -180,6 +184,7 @@ async def execute_task(
     payload: AnalyzeRequest | None = None
     render_scene_dict: dict[str, Any] | None = None
     request_id: str | None = None
+    result: dict[str, Any] | None = None
     model_metadata = resolve_model_metadata(get_settings(), MODEL_ROUTE_ANNOTATION_GENERATION)
 
     try:
@@ -338,6 +343,21 @@ async def execute_task(
             usage_summary_json=usage_summary or {},
             quota_cost_points=actual_deducted,
         )
+        await _write_debug_snapshot(
+            task_id=task_id,
+            record_id=record_id,
+            source_text=text,
+            task_status="succeeded",
+            usage_summary=usage_summary,
+            latency_ms=int((perf_counter() - start_perf) * 1000),
+            billed_points=actual_deducted,
+            failure_code=None,
+            failure_message=None,
+            request_id=request_id,
+            user_facing_state=user_facing_state,
+            result=result,
+            schema_version=render_scene_dict.get("schema_version", ANALYZE_SCHEMA_VERSION),
+        )
         await insert_task_event(
             task_id,
             "task_succeeded",
@@ -359,6 +379,7 @@ async def execute_task(
 
         failure_code = type(exc).__name__
         failure_message = str(exc)[:500]
+        cost_points = compute_cost_points(usage_summary) if usage_summary else 0
 
         try:
             await update_task_status(
@@ -375,8 +396,6 @@ async def execute_task(
                 analysis_status="failed",
                 user_facing_state="failed"
             )
-
-            cost_points = compute_cost_points(usage_summary) if usage_summary else 0
 
             await record_ai_usage_event(
                 AIUsageEventCreate(
@@ -430,11 +449,66 @@ async def execute_task(
                 task_id,
                 inner_exc,
             )
+        finally:
+            await _write_debug_snapshot(
+                task_id=task_id,
+                record_id=record_id,
+                source_text=text,
+                task_status="failed",
+                usage_summary=usage_summary,
+                latency_ms=int((perf_counter() - start_perf) * 1000),
+                billed_points=0,
+                failure_code=failure_code,
+                failure_message=failure_message,
+                request_id=request_id,
+                user_facing_state=(render_scene_dict or {}).get("user_facing_state") or "failed",
+                result=result,
+                schema_version=extract_schema_version_from_render_scene(render_scene_dict or {})
+                or ANALYZE_SCHEMA_VERSION,
+            )
     finally:
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat_task
+
+
+async def _write_debug_snapshot(
+    *,
+    task_id: UUID,
+    record_id: UUID,
+    source_text: str,
+    task_status: str,
+    usage_summary: dict[str, Any] | None,
+    latency_ms: int,
+    billed_points: int,
+    failure_code: str | None,
+    failure_message: str | None,
+    request_id: str | None,
+    user_facing_state: str | None,
+    result: dict[str, Any] | None,
+    schema_version: str | None,
+) -> None:
+    try:
+        snapshot = build_debug_snapshot_payload(
+            record_id=record_id,
+            task_id=task_id,
+            source_text=source_text,
+            task_status=task_status,
+            usage_summary=usage_summary,
+            latency_ms=latency_ms,
+            billed_points=billed_points,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            request_id=request_id,
+            user_facing_state=user_facing_state,
+            result=result,
+            schema_version=schema_version,
+            prompt_version=get_prompt_version(),
+        )
+        await upsert_debug_snapshot(snapshot)
+    except Exception:
+        logger.exception("Failed to write debug snapshot for task %s", task_id)
 
 
 def launch_task(payload: TaskExecutionPayload) -> asyncio.Task:

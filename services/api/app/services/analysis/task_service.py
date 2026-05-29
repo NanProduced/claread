@@ -102,6 +102,7 @@ async def submit_task(
     source_type: str,
     extended: bool,
     client_record_id: str | None = None,
+    request_payload_json: dict[str, Any] | None = None,
 ) -> TaskSubmitResult:
     """
     Submit an analysis task with single-active-task control.
@@ -138,11 +139,11 @@ async def submit_task(
                 """
                 INSERT INTO analysis_records (
                     user_id, client_record_id, source_type,
-                    source_text, source_text_hash,
+                    source_text, source_text_hash, request_payload_json,
                     reading_goal, reading_variant, extended,
                     analysis_status, user_facing_state, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', 'processing', $9, $9)
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, 'queued', 'processing', $10, $10)
                 RETURNING id
                 """,
                 user_id,
@@ -150,6 +151,12 @@ async def submit_task(
                 source_type,
                 text,
                 source_text_hash,
+                jsonb_param(request_payload_json or {
+                    "reading_goal": reading_goal,
+                    "reading_variant": reading_variant,
+                    "source_type": source_type,
+                    "extended": extended,
+                }),
                 reading_goal,
                 reading_variant,
                 extended,

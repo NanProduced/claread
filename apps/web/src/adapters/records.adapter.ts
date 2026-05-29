@@ -1,4 +1,5 @@
 import type { RecordResponseDto } from "@/types/api/records";
+import type { ReaderSceneResponseDto } from "@/types/api/reader-scene";
 import type {
   ArticleModel,
   AnnotationType,
@@ -381,6 +382,41 @@ function sourceTextToArticle(sourceText: string): ArticleModel {
 export function adaptRecordToReaderRecord(record: RecordResponseDto): ReaderRecordVm {
   const renderScene = isRecord(record.render_scene_json) ? record.render_scene_json : {};
   const request = isRecord(renderScene.request) ? renderScene.request : {};
+  const schemaVersion = readString(renderScene.schema_version, record.schema_version ?? "3.0.0");
+
+  return {
+    id: record.id,
+    title: record.title ?? readString(renderScene.title, "Untitled record"),
+    createdAt: record.created_at,
+    sourceText: record.source_text,
+    readingGoal: record.reading_goal ?? readString(request.reading_goal, "daily_reading"),
+    readingVariant: record.reading_variant ?? readString(request.reading_variant, "intermediate_reading"),
+    analysisStatus: record.analysis_status,
+    requestPayloadJson: record.request_payload_json,
+    reader: {
+      schemaVersion,
+      request: {
+        requestId: readString(request.request_id, record.client_record_id ?? record.id),
+        sourceType: readString(request.source_type, record.source_type),
+        readingGoal: record.reading_goal ?? readString(request.reading_goal, "daily_reading"),
+        readingVariant: record.reading_variant ?? readString(request.reading_variant, "intermediate_reading"),
+        profileId: readString(request.profile_id, "upstream"),
+      },
+      article: mapArticle(renderScene.article, record.source_text),
+      userFacingState: toContentResultState(renderScene.user_facing_state ?? record.user_facing_state),
+      contentSummary: mapContentSummary(renderScene.content_summary),
+      translations: mapTranslations(renderScene.translations),
+      inlineMarks: mapInlineMarks(renderScene.inline_marks),
+      sentenceEntries: mapSentenceEntries(renderScene.sentence_entries),
+      warnings: mapWarnings(renderScene.warnings),
+    },
+  };
+}
+
+export function adaptReaderSceneResponseToReaderRecord(response: ReaderSceneResponseDto): ReaderRecordVm {
+  const record = response.record_meta;
+  const renderScene: UnknownRecord = isRecord(response.reader_scene) ? response.reader_scene : {};
+  const request: UnknownRecord = isRecord(renderScene.request) ? renderScene.request : {};
   const schemaVersion = readString(renderScene.schema_version, record.schema_version ?? "3.0.0");
 
   return {
