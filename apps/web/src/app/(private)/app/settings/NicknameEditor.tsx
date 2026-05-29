@@ -82,7 +82,8 @@ export function NicknameEditor({ initialNickname, displayFallback }: NicknameEdi
           maxLength={50}
           disabled={editState === "saving"}
           placeholder="输入昵称"
-          className="h-8 flex-1 rounded border border-lens-blue bg-reader-paper px-2 text-sm text-ink outline-none focus:ring-1 focus:ring-lens-blue disabled:opacity-50"
+          aria-label="编辑昵称"
+          className="h-9 flex-1 rounded border border-lens-blue bg-reader-paper px-3 text-sm text-ink outline-none focus:ring-1 focus:ring-lens-blue disabled:opacity-50"
           autoFocus
           onKeyDown={(e) => {
             if (e.key === "Enter") saveNickname();
@@ -93,19 +94,19 @@ export function NicknameEditor({ initialNickname, displayFallback }: NicknameEdi
           type="button"
           onClick={saveNickname}
           disabled={editState === "saving"}
-          className="flex size-7 items-center justify-center rounded text-structure-green hover:bg-structure-green/10 disabled:opacity-40"
-          aria-label="保存"
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-structure-green hover:bg-structure-green/10 disabled:opacity-40"
+          aria-label="保存昵称"
         >
-          <Check className="size-4" strokeWidth={2} />
+          <Check className="size-5" strokeWidth={2} />
         </button>
         <button
           type="button"
           onClick={cancelEditing}
           disabled={editState === "saving"}
-          className="flex size-7 items-center justify-center rounded text-muted hover:bg-muted/10 disabled:opacity-40"
-          aria-label="取消"
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted hover:bg-muted/10 disabled:opacity-40"
+          aria-label="取消编辑"
         >
-          <X className="size-4" strokeWidth={2} />
+          <X className="size-5" strokeWidth={2} />
         </button>
       </div>
     );
@@ -120,10 +121,10 @@ export function NicknameEditor({ initialNickname, displayFallback }: NicknameEdi
       <button
         type="button"
         onClick={startEditing}
-        className="flex size-6 items-center justify-center rounded text-muted hover:bg-muted/10 hover:text-ink"
+        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted hover:bg-muted/10 hover:text-ink -ml-2"
         aria-label="编辑昵称"
       >
-        <Pencil className="size-3.5" strokeWidth={1.8} />
+        <Pencil className="size-4" strokeWidth={1.8} />
       </button>
       {editState === "error" && errorMessage ? (
         <span className="text-xs text-red-500">{errorMessage}</span>

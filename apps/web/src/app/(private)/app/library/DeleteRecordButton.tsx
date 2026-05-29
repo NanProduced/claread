@@ -6,13 +6,15 @@ import { Trash2 } from "lucide-react";
 import { Button } from "@/components/primitives/button";
 import { toast } from "@/components/primitives/toast";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/primitives/dialog";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/primitives/alert-dialog";
 
 type DeleteState = "idle" | "deleting" | "error";
 
@@ -120,15 +122,15 @@ export function DeleteRecordButton({
         {!compact && "删除"}
       </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent variant="danger" size="sm" overlayClassName="bg-transparent! backdrop-blur-none!">
-          <DialogHeader>
-            <DialogTitle>删除阅读记录？</DialogTitle>
-            <DialogDescription className="font-sans leading-relaxed text-[0.88rem] text-muted">
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent className="max-w-[400px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除阅读记录？</AlertDialogTitle>
+            <AlertDialogDescription className="font-sans leading-relaxed text-[0.88rem] text-muted">
               你确定要删除阅读记录 <strong>「{title}」</strong> 吗？
               此操作会连同相关的句子解读、生词库及你记下的笔记一并移除。此操作无法撤销。
-            </DialogDescription>
-          </DialogHeader>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
           
           {state === "error" && message ? (
             <p className="text-[0.75rem] font-medium text-error-red leading-5 bg-error-red/5 border border-error-red/10 rounded-md px-3 py-2">
@@ -136,27 +138,33 @@ export function DeleteRecordButton({
             </p>
           ) : null}
 
-          <DialogFooter className="mt-2">
-            <Button
-              variant="subtle"
-              density="compact"
-              onClick={() => setOpen(false)}
-              disabled={state === "deleting"}
-            >
-              取消
-            </Button>
-            <Button
-              variant="danger"
-              density="compact"
-              onClick={deleteRecord}
-              disabled={state === "deleting"}
-              className="min-w-[80px]"
-            >
-              {state === "deleting" ? "删除中..." : "确认删除"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          <AlertDialogFooter>
+            <AlertDialogCancel asChild>
+              <Button
+                variant="subtle"
+                density="compact"
+                disabled={state === "deleting"}
+              >
+                取消
+              </Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                variant="danger"
+                density="compact"
+                onClick={(e) => {
+                  e.preventDefault();
+                  deleteRecord();
+                }}
+                disabled={state === "deleting"}
+                className="min-w-[80px]"
+              >
+                {state === "deleting" ? "删除中..." : "确认删除"}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

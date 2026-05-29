@@ -1,4 +1,4 @@
-import { BookOpen, Flag, Sparkles } from "lucide-react";
+import { BookOpen, Sparkles, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { SentenceEntryModel } from "@/types/view/ReaderMockVm";
 import { parseSentenceAnalysisContent } from "./reader-entry-utils";
@@ -10,7 +10,8 @@ interface SentenceEntryCardProps {
   badgeLabel?: string;
   footerAnchorLabel?: string;
   footerSourceLabel?: string;
-  onFeedback?: () => void;
+  onFeedbackPositive?: () => void;
+  onFeedbackNegative?: () => void;
 }
 
 const entryToneHeaderClass: Record<string, string> = {
@@ -42,7 +43,8 @@ export function SentenceEntryCard({
   badgeLabel,
   footerAnchorLabel,
   footerSourceLabel,
-  onFeedback,
+  onFeedbackPositive,
+  onFeedbackNegative,
 }: SentenceEntryCardProps) {
   const label = entry.title ?? entry.label ?? "解析";
   const iconClass = entryToneHeaderClass[entry.entryType] ?? entryToneHeaderClass.content_summary;
@@ -115,18 +117,35 @@ export function SentenceEntryCard({
         </div>
         <div className="mt-4 flex items-center justify-between border-t border-hairline/60 pt-3 text-xs text-muted">
           <div className="flex items-center gap-2">
-            {onFeedback ? (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1 text-[0.7rem] font-medium text-muted hover:text-ink hover:bg-ink/[0.02] transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onFeedback();
-                }}
-              >
-                <Flag className="h-3 w-3" />
-                反馈
-              </button>
+            {onFeedbackPositive || onFeedbackNegative ? (
+              <div className="flex items-center gap-1">
+                {onFeedbackPositive ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-structure-green/10 hover:text-structure-green transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFeedbackPositive();
+                    }}
+                    title="有帮助"
+                  >
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+                {onFeedbackNegative ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-destructive/10 hover:text-destructive transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFeedbackNegative();
+                    }}
+                    title="有问题"
+                  >
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
             ) : null}
             <span>{footerAnchorLabel ?? "结构拆解"}</span>
           </div>
@@ -160,18 +179,35 @@ export function SentenceEntryCard({
       </div>
       <div className="mt-4 flex items-center justify-between border-t border-hairline/60 pt-3 text-xs text-muted">
         <div className="flex items-center gap-2">
-          {onFeedback ? (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1 text-[0.7rem] font-medium text-muted hover:text-ink hover:bg-ink/[0.02] transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                onFeedback();
-              }}
-            >
-              <Flag className="h-3 w-3" />
-              反馈
-            </button>
+          {onFeedbackPositive || onFeedbackNegative ? (
+            <div className="flex items-center gap-1">
+              {onFeedbackPositive ? (
+                <button
+                  type="button"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-structure-green/10 hover:text-structure-green transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFeedbackPositive();
+                  }}
+                  title="有帮助"
+                >
+                  <ThumbsUp className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+              {onFeedbackNegative ? (
+                <button
+                  type="button"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFeedbackNegative();
+                  }}
+                  title="有问题"
+                >
+                  <ThumbsDown className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
           ) : null}
           <span>{footerAnchorLabel ?? "锚定本句"}</span>
         </div>

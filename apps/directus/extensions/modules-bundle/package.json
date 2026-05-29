@@ -53,6 +53,11 @@
         "source": "src/claread-event-type-display/index.js"
       },
       {
+        "type": "display",
+        "name": "claread-inspector-launcher",
+        "source": "src/claread-inspector-launcher/index.js"
+      },
+      {
         "type": "interface",
         "name": "claread-json-summary-interface",
         "source": "src/claread-json-summary-interface/index.js"
@@ -74,8 +79,18 @@
       },
       {
         "type": "interface",
+        "name": "claread-inspector-launcher-interface",
+        "source": "src/claread-inspector-launcher-interface/index.js"
+      },
+      {
+        "type": "interface",
         "name": "claread-relational-events-display",
         "source": "src/claread-relational-events-display/index.js"
+      },
+      {
+        "type": "module",
+        "name": "claread-render-scene-inspector",
+        "source": "src/claread-render-scene-inspector/index.js"
       },
       {
         "type": "layout",

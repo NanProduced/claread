@@ -238,8 +238,7 @@ async def enqueue_overview_task_if_needed(
                         "source_text_hash": source_text_hash,
                         "workflow_version": workflow_version,
                         "schema_version": schema_version,
-                    },
-                    ensure_ascii=False,
+                    }
                 ),
                 now,
             )

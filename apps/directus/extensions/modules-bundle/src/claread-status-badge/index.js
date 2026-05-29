@@ -53,6 +53,7 @@ const STATUS_MAPS = {
   user_facing_state: {
     normal: { label: "正常", tone: "success" },
     degraded_light: { label: "轻度降级", tone: "warning" },
+    degraded_heavy: { label: "重度降级", tone: "danger" },
     failed: { label: "失败", tone: "danger" },
   },
   task_status: {

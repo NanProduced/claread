@@ -7,14 +7,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApertureWatermark } from "@/components/brand/BrandMarks";
 import { Button } from "@/components/primitives/button";
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/primitives/dialog";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/primitives/alert-dialog";
+import { ScrollArea } from "@/components/primitives/scroll-area";
 import { Sheet, SheetContent } from "@/components/primitives/sheet";
 import { VocabularyDetailPanel } from "@/components/vocabulary/VocabularyDetailPanel";
 import { appReaderRoute, appReviewRoute } from "@/lib/routes";
@@ -479,7 +481,7 @@ export function VocabularyClient({
 
         {/* ── Vocabulary List ── */}
         {filteredItems.length > 0 ? (
-          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
+          <ScrollArea className="min-h-0 flex-1">
             <section className="pr-5 pb-8" role="listbox" tabIndex={0} onKeyDown={handleKeyDown}>
               {filteredItems.map((item) => {
                 const isSelected = selectedId === item.id;
@@ -576,7 +578,7 @@ export function VocabularyClient({
                 );
               })}
             </section>
-          </div>
+          </ScrollArea>
         ) : (
           /* ── Empty State ── */
           <section className="relative mt-10 border-t border-hairline pt-16">
@@ -674,22 +676,24 @@ export function VocabularyClient({
       )}
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
-        <DialogContent variant="danger" size="sm">
-          <DialogHeader>
-            <DialogTitle>删除生词</DialogTitle>
-            <DialogDescription>
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent className="max-w-[400px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除生词</AlertDialogTitle>
+            <AlertDialogDescription>
               确定要删除「{deleteTarget?.word}」吗？此操作不可撤销。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose asChild>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel asChild>
               <Button variant="outline">取消</Button>
-            </DialogClose>
-            <Button variant="danger" onClick={handleConfirmDelete}>删除</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button variant="danger" onClick={handleConfirmDelete}>删除</Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { CheckCircle2, AlertCircle } from "lucide-react";
 
 import { SegmentedControl } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
+import { Alert, AlertDescription } from "@/components/primitives/alert";
 import {
   DEFAULT_READING_VARIANT_BY_GOAL,
   READING_GOAL_OPTIONS,
@@ -34,6 +36,15 @@ export function ReadingDefaultsSection({
   const variantOptions = useMemo(() => READING_VARIANT_OPTIONS[draft.readingGoal], [draft.readingGoal]);
   const dirty =
     draft.readingGoal !== saved.readingGoal || draft.readingVariant !== saved.readingVariant;
+
+  useEffect(() => {
+    if (state.kind === "saved" || state.kind === "error") {
+      const timer = setTimeout(() => {
+        setState({ kind: "idle" });
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [state.kind]);
 
   async function handleSave() {
     if (!canEdit || !dirty || state.kind === "saving") {
@@ -90,13 +101,7 @@ export function ReadingDefaultsSection({
   }
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h3 className="text-sm font-semibold text-ink">默认透读模式</h3>
-        <p className="mt-1 text-sm leading-6 text-muted">
-          新建透读任务时，Web 输入页会优先带入这里保存的默认阅读目标与难度。
-        </p>
-      </div>
+    <div className="space-y-6">
 
       <SegmentedControl
         label="阅读目标"
@@ -106,13 +111,13 @@ export function ReadingDefaultsSection({
       />
 
       <SegmentedControl
-        label="默认难度"
+        label="解析模式"
         value={draft.readingVariant}
         onValueChange={handleVariantChange}
         options={variantOptions}
       />
-
-      <div className="flex flex-wrap items-center gap-3 border-t border-hairline pt-4">
+      
+      <div className="flex flex-wrap items-center gap-3 pt-4">
         <Button
           variant="primary-ink"
           className="min-w-[128px] justify-center"
@@ -129,16 +134,30 @@ export function ReadingDefaultsSection({
         >
           取消
         </Button>
-        <p className="text-xs leading-5 text-muted">
-          {canEdit
-            ? state.kind === "saved"
-              ? state.message
-              : state.kind === "error"
-                ? state.message
-                : "只影响 Web 默认带入值；提交前仍可在输入页临时切换。"
-            : "当前会话未连接真实账户，无法保存共享默认值。"}
-        </p>
       </div>
+      
+      {/* Feedback Messages */}
+      {canEdit && (state.kind === "saved" || state.kind === "error") && (
+        <div className="pt-2 max-w-sm transition-all animate-in fade-in slide-in-from-top-1 duration-300">
+          <Alert 
+            variant={state.kind === "error" ? "destructive" : "default"} 
+            className={`py-2 px-3 flex items-center ${state.kind === "saved" ? "border-structure-green/30 bg-structure-green/5 text-structure-green [&>svg]:text-structure-green" : ""}`}
+          >
+            {state.kind === "saved" ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+            <AlertDescription className="text-xs font-medium ml-1">
+              {state.message}
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
+      
+      {!canEdit && (
+        <div className="pt-2">
+          <p className="text-xs leading-5 text-muted">
+            当前会话未连接真实账户，无法保存共享默认值。
+          </p>
+        </div>
+      )}
     </div>
   );
 }

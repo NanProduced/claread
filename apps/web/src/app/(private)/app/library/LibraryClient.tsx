@@ -31,6 +31,8 @@ import type { RecordsBffStatus } from "@/services/bff/records";
 import type { RecordListItemVm } from "@/types/view/RecordListItemVm";
 import { DeleteRecordButton } from "./DeleteRecordButton";
 import { LibraryFavoriteButton } from "./LibraryFavoriteButton";
+import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
+import { ScrollBar } from "@/components/primitives/scroll-area";
 import {
   countLibraryGoals,
   filterLibraryRecords,
@@ -544,134 +546,137 @@ export function LibraryClient({
         </div>
 
         {filteredRecords.length > 0 ? (
-          <div
-            ref={scrollViewportRef}
-            onScroll={rememberLibraryScrollPosition}
-            className="min-h-0 flex-1 overflow-y-auto scrollbar-hide"
-          >
-            <section className="pr-5">
-              {filteredRecords.map((record) => {
-                const statusDisplay = statusMeta(record.analysisStatus);
-                const StatusIcon = statusDisplay.icon;
+          <ScrollAreaPrimitive.Root className="min-h-0 flex-1 relative overflow-hidden">
+            <ScrollAreaPrimitive.Viewport
+              ref={scrollViewportRef}
+              onScroll={rememberLibraryScrollPosition}
+              className="h-full w-full rounded-[inherit]"
+            >
+              <section className="pr-5">
+                {filteredRecords.map((record) => {
+                  const statusDisplay = statusMeta(record.analysisStatus);
+                  const StatusIcon = statusDisplay.icon;
 
-                return (
-                  <div
-                    key={record.id}
-                    className="group relative flex items-stretch justify-between gap-8 border-b border-hairline/40 py-7 first:pt-3 transition-all duration-300"
-                  >
-                    <div className="relative z-10 min-w-0 flex-1">
-                      {/* Editorial Breadcrumb Tagline */}
-                      <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.66rem] font-semibold tracking-[0.1em] text-muted">
-                        <span className={`${statusDisplay.className} inline-flex items-center gap-1.5 text-[0.66rem] font-bold tracking-[0.05em]`}>
-                          <StatusIcon
-                            className={`h-3.5 w-3.5 ${statusDisplay.iconClassName} ${
-                              record.analysisStatus === "queued" ||
-                              record.analysisStatus === "running" ||
-                              record.analysisStatus === "finalizing"
-                                ? "animate-spin"
-                                : ""
-                            }`}
-                          />
-                          {statusDisplay.label}
-                        </span>
-                        <span className="text-muted/30 select-none">·</span>
-                        <span className="text-ink-soft/90">{readingGoalName(record.readingGoal)}</span>
-                        <span className="text-muted/30 select-none">·</span>
-                        <span className="text-ink-soft/90">{readingVariantName(record.readingVariant)}</span>
-                        <span className="text-muted/30 select-none">·</span>
-                        <span className="text-ink-soft/80">{sourceTypeName(record.sourceType)}</span>
-                      </div>
-
-                      {/* Article Title Linked to Reader */}
-                      <Link
-                        href={appReaderRoute(record.id)}
-                        onClick={rememberLibraryScrollPosition}
-                        className="focus-ring inline-block rounded-md outline-offset-4"
-                      >
-                        <h2 className="font-headline text-[1.58rem] font-bold leading-[1.28] tracking-tight text-ink transition-colors group-hover:text-lens-blue">
-                          {record.title}
-                        </h2>
-                      </Link>
-
-                      {/* Excerpt with Reader Serif Stack */}
-                      <p className="mt-3 line-clamp-2 max-w-3xl font-reading text-[1rem] leading-[1.7] text-muted/95">
-                        {summarizeSourceExcerpt(record)}
-                      </p>
-
-                      {/* Dynamic Semantic Stats Row (Printed Editorial Style) */}
-                      <div className="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[0.72rem] font-medium tracking-[0.05em] text-muted">
-                        <span className="flex items-center gap-1 text-muted/75">
-                          <Calendar className="h-3.5 w-3.5 opacity-60" />
-                          {recordTimeLabel(record)}
-                        </span>
-                        <span className="text-muted/30 select-none">·</span>
-                        
-                        <span className="flex items-center gap-1 text-muted/75">
-                          <FileText className="h-3.5 w-3.5 opacity-60" />
-                          {record.wordCount} 词
-                        </span>
-                        <span className="text-muted/30 select-none">·</span>
-                        
-                        {record.noteCount > 0 ? (
-                          <span className="flex items-center gap-1 text-vocab-amber font-semibold transition-colors hover:text-vocab-amber/90">
-                            <NotebookPen className="h-3.5 w-3.5" />
-                            {record.noteCount} 笔记
+                  return (
+                    <div
+                      key={record.id}
+                      className="group relative flex items-stretch justify-between gap-8 border-b border-hairline/40 py-7 first:pt-3 transition-all duration-300"
+                    >
+                      <div className="relative z-10 min-w-0 flex-1">
+                        {/* Editorial Breadcrumb Tagline */}
+                        <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.66rem] font-semibold tracking-[0.1em] text-muted">
+                          <span className={`${statusDisplay.className} inline-flex items-center gap-1.5 text-[0.66rem] font-bold tracking-[0.05em]`}>
+                            <StatusIcon
+                              className={`h-3.5 w-3.5 ${statusDisplay.iconClassName} ${
+                                record.analysisStatus === "queued" ||
+                                record.analysisStatus === "running" ||
+                                record.analysisStatus === "finalizing"
+                                  ? "animate-spin"
+                                  : ""
+                              }`}
+                            />
+                            {statusDisplay.label}
                           </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-muted/50">
-                            <NotebookPen className="h-3.5 w-3.5 opacity-40" />
-                            0 笔记
-                          </span>
-                        )}
-                        <span className="text-muted/30 select-none">·</span>
-                        
-                        {record.vocabularyCount > 0 ? (
-                          <span className="flex items-center gap-1 text-grammar-violet font-semibold transition-colors hover:text-grammar-violet/90">
-                            <BookMarked className="h-3.5 w-3.5" />
-                            {record.vocabularyCount} 生词
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-muted/50">
-                            <BookMarked className="h-3.5 w-3.5 opacity-40" />
-                            0 生词
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                          <span className="text-muted/30 select-none">·</span>
+                          <span className="text-ink-soft/90">{readingGoalName(record.readingGoal)}</span>
+                          <span className="text-muted/30 select-none">·</span>
+                          <span className="text-ink-soft/90">{readingVariantName(record.readingVariant)}</span>
+                          <span className="text-muted/30 select-none">·</span>
+                          <span className="text-ink-soft/80">{sourceTypeName(record.sourceType)}</span>
+                        </div>
 
-                    {/* Integrated Tactile Actions Panel */}
-                    <div className="relative z-10 flex shrink-0 flex-col items-end justify-between self-stretch py-0.5 min-w-[40px]">
-                      {/* Top right: Favorite toggle */}
-                      <LibraryFavoriteButton
-                        recordId={record.id}
-                        initialFavorited={record.isFavorited}
-                        compact
-                        onFavoritedChange={(favorited) => handleFavoriteChange(record.id, favorited)}
-                      />
-                      
-                      {/* Bottom right: Secondary operations appearing on hover for decluttered feed */}
-                      <div className="flex items-center gap-2 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-within:opacity-100 transition-opacity duration-300">
-                        <DeleteRecordButton
-                          recordId={record.id}
-                          title={record.title}
-                          compact
-                          onDeleted={handleRecordDeleted}
-                        />
+                        {/* Article Title Linked to Reader */}
                         <Link
                           href={appReaderRoute(record.id)}
                           onClick={rememberLibraryScrollPosition}
-                          className="focus-ring group inline-flex items-center justify-center h-8 w-8 rounded-md text-muted transition-all duration-200 hover:text-ink hover:translate-x-[4px] active:translate-x-0 hover:scale-110"
-                          title="继续阅读"
+                          className="focus-ring inline-block rounded-md outline-offset-4"
                         >
-                          <ArrowRight className="h-4.5 w-4.5 transition-all duration-200 stroke-[1.8] group-hover:stroke-[2.3] group-hover:text-ink" />
+                          <h2 className="font-headline text-[1.58rem] font-bold leading-[1.28] tracking-tight text-ink transition-colors group-hover:text-lens-blue">
+                            {record.title}
+                          </h2>
                         </Link>
+
+                        {/* Excerpt with Reader Serif Stack */}
+                        <p className="mt-3 line-clamp-2 max-w-3xl font-reading text-[1rem] leading-[1.7] text-muted/95">
+                          {summarizeSourceExcerpt(record)}
+                        </p>
+
+                        {/* Dynamic Semantic Stats Row (Printed Editorial Style) */}
+                        <div className="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[0.72rem] font-medium tracking-[0.05em] text-muted">
+                          <span className="flex items-center gap-1 text-muted/75">
+                            <Calendar className="h-3.5 w-3.5 opacity-60" />
+                            {recordTimeLabel(record)}
+                          </span>
+                          <span className="text-muted/30 select-none">·</span>
+                          
+                          <span className="flex items-center gap-1 text-muted/75">
+                            <FileText className="h-3.5 w-3.5 opacity-60" />
+                            {record.wordCount} 词
+                          </span>
+                          <span className="text-muted/30 select-none">·</span>
+                          
+                          {record.noteCount > 0 ? (
+                            <span className="flex items-center gap-1 text-vocab-amber font-semibold transition-colors hover:text-vocab-amber/90">
+                              <NotebookPen className="h-3.5 w-3.5" />
+                              {record.noteCount} 笔记
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-muted/50">
+                              <NotebookPen className="h-3.5 w-3.5 opacity-40" />
+                              0 笔记
+                            </span>
+                          )}
+                          <span className="text-muted/30 select-none">·</span>
+                          
+                          {record.vocabularyCount > 0 ? (
+                            <span className="flex items-center gap-1 text-grammar-violet font-semibold transition-colors hover:text-grammar-violet/90">
+                              <BookMarked className="h-3.5 w-3.5" />
+                              {record.vocabularyCount} 生词
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-muted/50">
+                              <BookMarked className="h-3.5 w-3.5 opacity-40" />
+                              0 生词
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Integrated Tactile Actions Panel */}
+                      <div className="relative z-10 flex shrink-0 flex-col items-end justify-between self-stretch py-0.5 min-w-[40px]">
+                        {/* Top right: Favorite toggle */}
+                        <LibraryFavoriteButton
+                          recordId={record.id}
+                          initialFavorited={record.isFavorited}
+                          compact
+                          onFavoritedChange={(favorited) => handleFavoriteChange(record.id, favorited)}
+                        />
+                        
+                        {/* Bottom right: Secondary operations appearing on hover for decluttered feed */}
+                        <div className="flex items-center gap-2 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-within:opacity-100 transition-opacity duration-300">
+                          <DeleteRecordButton
+                            recordId={record.id}
+                            title={record.title}
+                            compact
+                            onDeleted={handleRecordDeleted}
+                          />
+                          <Link
+                            href={appReaderRoute(record.id)}
+                            onClick={rememberLibraryScrollPosition}
+                            className="focus-ring group inline-flex items-center justify-center h-8 w-8 rounded-md text-muted transition-all duration-200 hover:text-ink hover:translate-x-[4px] active:translate-x-0 hover:scale-110"
+                            title="继续阅读"
+                          >
+                            <ArrowRight className="h-4.5 w-4.5 transition-all duration-200 stroke-[1.8] group-hover:stroke-[2.3] group-hover:text-ink" />
+                          </Link>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </section>
-          </div>
+                  );
+                })}
+              </section>
+            </ScrollAreaPrimitive.Viewport>
+            <ScrollBar />
+          </ScrollAreaPrimitive.Root>
         ) : (
           renderArchiveEmptyState({
             hasQuery,

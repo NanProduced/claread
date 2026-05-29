@@ -27,11 +27,11 @@ export function SegmentedControl<T extends string>({
   return (
     <fieldset className={cn("min-w-0", className)}>
       {label ? (
-        <legend className="mb-4 text-[0.66rem] font-bold uppercase tracking-[0.2em] text-subtle">
+        <legend className="mb-3 text-[0.66rem] font-bold uppercase tracking-[0.2em] text-subtle">
           {label}
         </legend>
       ) : null}
-      <div className="flex flex-wrap gap-2.5">
+      <div className="inline-flex flex-wrap items-center rounded-xl bg-hairline/40 p-1 shadow-inner">
         {options.map((option) => {
           const active = option.value === value;
           return (
@@ -39,10 +39,10 @@ export function SegmentedControl<T extends string>({
               key={option.value}
               type="button"
               className={cn(
-                "focus-ring inline-flex h-9 items-center justify-center rounded-full px-4 text-[0.8rem] font-medium tracking-[0.02em] transition-colors",
+                "focus-ring relative flex h-8 items-center justify-center rounded-lg px-5 text-[0.8rem] font-medium tracking-[0.02em] transition-all duration-200",
                 active
-                  ? "bg-ink text-surface shadow-sm"
-                  : "bg-surface-raised text-muted hover:bg-surface-raised/70 hover:text-ink border border-hairline/40",
+                  ? "bg-surface text-ink shadow-[0_1px_3px_rgba(0,0,0,0.1)] ring-1 ring-black/5"
+                  : "text-muted hover:text-ink",
                 option.disabled && "cursor-not-allowed opacity-45",
               )}
               disabled={option.disabled}
@@ -50,7 +50,7 @@ export function SegmentedControl<T extends string>({
               aria-pressed={active}
               title={option.description}
             >
-              {option.label}
+              <span className="relative z-10">{option.label}</span>
             </button>
           );
         })}

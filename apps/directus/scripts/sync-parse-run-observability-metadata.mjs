@@ -108,12 +108,17 @@ const FIELD_METADATA = [
     collection: "analysis_records",
     field: "id",
     meta: {
-      interface: "input",
+      interface: "claread-inspector-launcher-interface",
+      options: {
+        buttonLabel: "Open Inspector",
+        showContext: false,
+        target: "record",
+      },
       readonly: true,
       hidden: false,
       width: "full",
       sort: 1,
-      note: "解析记录主键。",
+      note: "解析记录主键，并在详情页提供 Inspector 入口。",
     },
   },
   {
@@ -351,10 +356,11 @@ const FIELD_METADATA = [
     collection: "analysis_results",
     field: "record_id",
     meta: {
-      interface: "claread-record-context-interface",
+      interface: "claread-inspector-launcher-interface",
       options: {
+        buttonLabel: "Open Inspector",
+        showContext: true,
         target: "record",
-        preview_length: 240,
       },
       display: "claread-record-context-display",
       display_options: {
@@ -364,7 +370,7 @@ const FIELD_METADATA = [
       hidden: false,
       width: "full",
       sort: 1,
-      note: "关联的解析记录主键。保持普通只读主键字段，不恢复为关系输入；详情页改为展示记录上下文。",
+      note: "关联的解析记录主键，并在详情页提供 Inspector 入口。",
     },
   },
   {

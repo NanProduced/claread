@@ -2,7 +2,7 @@
 
 import { useState, type CSSProperties } from "react";
 import { Sparkles, Trash2, X, Pencil, MoreHorizontal } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/primitives/scroll-area";
 import {
   DropdownMenu,
   DropdownMenuContent,

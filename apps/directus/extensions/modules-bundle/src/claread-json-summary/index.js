@@ -67,7 +67,7 @@ function buildSummary(value, summaryKind) {
       ["paragraphs", "段落"],
       ["sentences", "句子"],
       ["blocks", "块"],
-      ["inline_annotations", "标注"],
+      ["inline_marks", "标注"],
       ["sentence_entries", "讲解"],
       ["warnings", "告警"],
     ];
@@ -77,6 +77,10 @@ function buildSummary(value, summaryKind) {
       if (count > 0) {
         chips.push(`${label} ${count}`);
       }
+    }
+
+    if (normalized.content_summary && typeof normalized.content_summary === "object") {
+      chips.push("含 content_summary");
     }
   }
 
