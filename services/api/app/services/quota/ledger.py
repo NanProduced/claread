@@ -109,6 +109,7 @@ async def get_credit_ledger(
             "balance_after": row["balance_after"],
             "description": description,
             "article_title": article_title,
+            "metadata": metadata,
             "task_id": str(row["task_id"]) if row.get("task_id") else None,
             "created_at": row["created_at"],
         })

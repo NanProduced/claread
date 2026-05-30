@@ -5,9 +5,12 @@ import * as Popover from "@radix-ui/react-popover";
 import type { DailyReaderHighlight } from "@/types/view/DailyReaderVm";
 
 const highlightClass: Record<DailyReaderHighlight["type"], string> = {
-  vocab_highlight: "bg-amber-marker/25 text-ink ring-amber-marker/35",
-  phrase_gloss: "bg-lavender-note/30 text-ink ring-lavender-note/40",
-  context_gloss: "bg-context-blue/18 text-ink ring-context-blue/30",
+  vocab_highlight:
+    "font-semibold decoration-amber-marker/75 hover:bg-amber-marker/12 focus-visible:bg-amber-marker/14",
+  phrase_gloss:
+    "font-medium italic decoration-lavender-note/80 hover:bg-lavender-note/14 focus-visible:bg-lavender-note/16",
+  context_gloss:
+    "font-semibold decoration-context-blue/70 hover:bg-context-blue/10 focus-visible:bg-context-blue/12",
 };
 
 interface InteractiveHighlightProps {
@@ -27,11 +30,17 @@ export function InteractiveHighlight({ highlight, children }: InteractiveHighlig
         <span
           role="button"
           tabIndex={0}
-          className={`cursor-pointer rounded-sm px-1 py-0.5 ring-1 transition-colors hover:ring-2 ${highlightClass[highlight.type]}`}
+          className={`cursor-pointer rounded-[2px] underline decoration-[0.075em] underline-offset-[0.16em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lens-blue/45 ${highlightClass[highlight.type]}`}
           aria-expanded={open}
           onClick={(e) => {
             e.preventDefault();
             setOpen((prev) => !prev);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setOpen((prev) => !prev);
+            }
           }}
         >
           {children}

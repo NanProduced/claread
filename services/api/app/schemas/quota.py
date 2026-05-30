@@ -6,8 +6,9 @@ Defines request/response Pydantic models for /me/quota endpoints.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class QuotaResponse(BaseModel):
@@ -42,6 +43,7 @@ class LedgerEntryResponse(BaseModel):
     balance_after: int
     description: str
     article_title: str | None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     task_id: str | None = None
     created_at: datetime
 
