@@ -2071,6 +2071,118 @@ const GLOBAL_BOOKMARKS = [
     },
   },
   {
+    bookmark: "Parse Records / Degraded",
+    collection: "analysis_records",
+    layout: "tabular",
+    filter: {
+      _and: [
+        {
+          user_facing_state: {
+            _in: ["degraded_light", "degraded_heavy"],
+          },
+        },
+        {
+          deleted_at: {
+            _null: true,
+          },
+        },
+      ],
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "title",
+          "client_record_id",
+          "source_type",
+          "reading_goal",
+          "reading_variant",
+          "analysis_status",
+          "user_facing_state",
+          "updated_at",
+        ],
+        sort: ["-updated_at"],
+      },
+    },
+  },
+  {
+    bookmark: "Analysis Tasks / Active",
+    collection: "analysis_tasks",
+    layout: "tabular",
+    filter: {
+      status: {
+        _in: ["queued", "running", "finalizing"],
+      },
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "id",
+          "analysis_record_id",
+          "status",
+          "queued_at",
+          "started_at",
+          "updated_at",
+          "attempt_no",
+        ],
+        sort: ["queued_at"],
+      },
+    },
+  },
+  {
+    bookmark: "Analysis Tasks / Stale",
+    collection: "analysis_tasks",
+    layout: "tabular",
+    filter: {
+      _or: [
+        {
+          _and: [
+            {
+              status: {
+                _eq: "queued",
+              },
+            },
+            {
+              queued_at: {
+                _lt: "$NOW(-5 minutes)",
+              },
+            },
+          ],
+        },
+        {
+          _and: [
+            {
+              status: {
+                _in: ["running", "finalizing"],
+              },
+            },
+            {
+              updated_at: {
+                _lt: "$NOW(-5 minutes)",
+              },
+            },
+          ],
+        },
+      ],
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "id",
+          "analysis_record_id",
+          "status",
+          "queued_at",
+          "started_at",
+          "updated_at",
+          "failure_code",
+        ],
+        sort: ["queued_at"],
+      },
+    },
+  },
+  {
     bookmark: "Analysis Tasks / Failed",
     collection: "analysis_tasks",
     layout: "tabular",
@@ -2096,6 +2208,83 @@ const GLOBAL_BOOKMARKS = [
     },
   },
   {
+    bookmark: "Overview Tasks / Active",
+    collection: "analysis_overview_tasks",
+    layout: "tabular",
+    filter: {
+      status: {
+        _in: ["queued", "running", "finalizing"],
+      },
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "id",
+          "analysis_record_id",
+          "status",
+          "queued_at",
+          "started_at",
+          "updated_at",
+          "attempt_no",
+        ],
+        sort: ["queued_at"],
+      },
+    },
+  },
+  {
+    bookmark: "Overview Tasks / Stale",
+    collection: "analysis_overview_tasks",
+    layout: "tabular",
+    filter: {
+      _or: [
+        {
+          _and: [
+            {
+              status: {
+                _eq: "queued",
+              },
+            },
+            {
+              queued_at: {
+                _lt: "$NOW(-5 minutes)",
+              },
+            },
+          ],
+        },
+        {
+          _and: [
+            {
+              status: {
+                _in: ["running", "finalizing"],
+              },
+            },
+            {
+              updated_at: {
+                _lt: "$NOW(-5 minutes)",
+              },
+            },
+          ],
+        },
+      ],
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "id",
+          "analysis_record_id",
+          "status",
+          "queued_at",
+          "started_at",
+          "updated_at",
+          "failure_code",
+        ],
+        sort: ["queued_at"],
+      },
+    },
+  },
+  {
     bookmark: "Overview Tasks / Failed",
     collection: "analysis_overview_tasks",
     layout: "tabular",
@@ -2117,6 +2306,39 @@ const GLOBAL_BOOKMARKS = [
           "finished_at",
         ],
         sort: ["-queued_at"],
+      },
+    },
+  },
+  {
+    bookmark: "Usage Events / RAG",
+    collection: "ai_usage_events",
+    layout: "tabular",
+    filter: {
+      capability_code: {
+        _in: ["rag_embedding", "rag_rerank"],
+      },
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "record_id",
+          "task_id",
+          "capability_code",
+          "status",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "billed_points",
+          "usage_scope",
+          "billing_mode",
+          "latency_ms",
+          "model_provider",
+          "model_name",
+          "metadata_json",
+          "created_at",
+        ],
+        sort: ["-created_at"],
       },
     },
   },
@@ -2179,6 +2401,57 @@ const GLOBAL_BOOKMARKS = [
           "created_at",
         ],
         sort: ["-created_at"],
+      },
+    },
+  },
+  {
+    bookmark: "Debug Snapshots / RAG",
+    collection: "analysis_debug_snapshots",
+    layout: "tabular",
+    filter: {
+      rag_debug_json: {
+        _nnull: true,
+      },
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "record_id",
+          "task_id",
+          "task_status",
+          "user_facing_state",
+          "failure_code",
+          "rag_debug_json",
+          "updated_at",
+        ],
+        sort: ["-updated_at"],
+      },
+    },
+  },
+  {
+    bookmark: "Debug Snapshots / Failed",
+    collection: "analysis_debug_snapshots",
+    layout: "tabular",
+    filter: {
+      task_status: {
+        _eq: "failed",
+      },
+    },
+    layout_query: {
+      tabular: {
+        page: 1,
+        fields: [
+          "record_id",
+          "task_id",
+          "task_status",
+          "user_facing_state",
+          "failure_code",
+          "failure_message",
+          "runtime_summary_json",
+          "updated_at",
+        ],
+        sort: ["-updated_at"],
       },
     },
   },
@@ -2300,7 +2573,7 @@ const DASHBOARD_PANELS = [
     show_header: true,
     note: "analysis_full / analysis_overview_hint / rag_embedding / rag_rerank usage 汇总。",
     options: {
-      targetUrl: "/admin/content/ai_usage_events",
+      targetUrl: "/admin/content/ai_usage_events/+?bookmark=Usage%20Events%20%2F%20RAG",
       breakdownMode: "capability",
     },
   },
@@ -2335,7 +2608,7 @@ const DASHBOARD_PANELS = [
     show_header: true,
     note: "按 model_provider / model_name 聚合解析与 RAG usage。",
     options: {
-      targetUrl: "/admin/content/ai_usage_events",
+      targetUrl: "/admin/content/ai_usage_events/+?bookmark=Usage%20Events%20%2F%20RAG",
       breakdownMode: "model",
     },
   },
@@ -2356,7 +2629,7 @@ const DASHBOARD_PANELS = [
     note: "近 7 天成功率、失败、active 和 stale 任务。",
     options: {
       endpointUrl: "/parse-run-observability/summary?days=7",
-      targetUrl: "/admin/content/analysis_tasks",
+      targetUrl: "/admin/content/analysis_tasks/+?bookmark=Analysis%20Tasks%20%2F%20Active",
     },
   },
   {
@@ -2416,7 +2689,7 @@ const DASHBOARD_PANELS = [
     note: "近 7 天 analysis_records.user_facing_state 分布。",
     options: {
       endpointUrl: "/parse-run-observability/summary?days=7",
-      targetUrl: "/admin/content/analysis_records",
+      targetUrl: "/admin/content/analysis_records/+?bookmark=Parse%20Records%20%2F%20Degraded",
     },
   },
   {
@@ -2425,20 +2698,40 @@ const DASHBOARD_PANELS = [
     name: "模型成本趋势",
     icon: "query_stats",
     type: "claread-parse-run-model-cost-trend",
-    position_x: 1,
+    position_x: 25,
     position_y: 45,
     normal_position_x: 25,
     normal_position_y: 57,
     normal_width: 48,
     normal_height: 14,
-    width: 72,
+    width: 48,
     height: 16,
     color: "#30445F",
     show_header: true,
     note: "近 7 天 parse/RAG usage tokens、points 和 Top 模型。",
     options: {
       endpointUrl: "/parse-run-observability/summary?days=7",
-      targetUrl: "/admin/content/ai_usage_events",
+      targetUrl: "/admin/content/ai_usage_events/+?bookmark=Usage%20Events%20%2F%20RAG",
+    },
+  },
+  {
+    id: "4ad98e26-314a-4f6f-a7b1-2d5f85b8e112",
+    dashboard: PARSE_RUN_DASHBOARD_ID,
+    name: "RAG 检索质量",
+    icon: "hub",
+    type: "claread-parse-run-rag-quality",
+    position_x: 1,
+    position_y: 45,
+    normal_position_x: 1,
+    normal_position_y: 73,
+    width: 24,
+    height: 16,
+    color: "#11795B",
+    show_header: true,
+    note: "近 7 天 RAG 检索命中、fallback、低置信度和淘汰原因。",
+    options: {
+      endpointUrl: "/parse-run-observability/summary?days=7",
+      targetUrl: "/admin/content/analysis_debug_snapshots/+?bookmark=Debug%20Snapshots%20%2F%20RAG",
     },
   },
 ];

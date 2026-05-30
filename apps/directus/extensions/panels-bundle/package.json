@@ -66,6 +66,11 @@
         "type": "panel",
         "name": "claread-parse-run-model-cost-trend",
         "source": "src/model-cost-trend/index.js"
+      },
+      {
+        "type": "panel",
+        "name": "claread-parse-run-rag-quality",
+        "source": "src/rag-quality/index.js"
       }
     ]
   },

@@ -168,6 +168,49 @@ function normalizeTopRows(rows) {
   }));
 }
 
+function normalizeRagOverview(row) {
+  const snapshots = toNumber(row.snapshots);
+  const outputTypeCount = toNumber(row.output_type_count);
+  const ragHits = toNumber(row.rag_hits);
+
+  return {
+    snapshots,
+    output_type_count: outputTypeCount,
+    rag_hits: ragHits,
+    fallback_count: toNumber(row.fallback_count),
+    low_confidence_count: toNumber(row.low_confidence_count),
+    hit_rate: outputTypeCount > 0 ? ragHits / outputTypeCount : 0,
+  };
+}
+
+function normalizeRagOutputRows(rows) {
+  return rows.map((row) => {
+    const outputTypeCount = toNumber(row.output_type_count);
+    const ragHits = toNumber(row.rag_hits);
+    return {
+      output_type: row.output_type || "unknown",
+      output_type_count: outputTypeCount,
+      rag_hits: ragHits,
+      fallback_count: toNumber(row.fallback_count),
+      low_confidence_count: toNumber(row.low_confidence_count),
+      hit_rate: outputTypeCount > 0 ? ragHits / outputTypeCount : 0,
+      avg_ann_hit_count: toNumber(row.avg_ann_hit_count),
+      avg_rerank_hit_count: toNumber(row.avg_rerank_hit_count),
+      avg_selected_examples: toNumber(row.avg_selected_examples),
+      avg_embedding_latency_ms: toNumber(row.avg_embedding_latency_ms),
+      avg_rerank_latency_ms: toNumber(row.avg_rerank_latency_ms),
+    };
+  });
+}
+
+function normalizeReasonRows(rows, keyField) {
+  return rows.map((row) => ({
+    key: row[keyField] || "unknown",
+    label: row[keyField] || "unknown",
+    count: toNumber(row.count),
+  }));
+}
+
 export default (router, { database }) => {
   router.get("/recent-failures", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
@@ -241,6 +284,10 @@ export default (router, { database }) => {
         dailyCostResult,
         topModelResult,
         topCapabilityResult,
+        ragOverviewResult,
+        ragByOutputTypeResult,
+        ragFallbackReasonResult,
+        ragDropReasonResult,
       ] = await Promise.all([
         database.raw(
           `
@@ -439,6 +486,150 @@ export default (router, { database }) => {
           `,
           [...usageCapabilities, days],
         ),
+        database.raw(
+          `
+            WITH snapshots AS (
+              SELECT id
+              FROM analysis_debug_snapshots
+              WHERE rag_debug_json IS NOT NULL
+                AND created_at >= now() - (?::int * interval '1 day')
+            ),
+            expanded AS (
+              SELECT
+                snapshot.id AS snapshot_id,
+                entry.key AS output_type,
+                entry.value AS item
+              FROM snapshots snapshot
+              JOIN analysis_debug_snapshots source ON source.id = snapshot.id
+              CROSS JOIN LATERAL jsonb_each(
+                COALESCE(source.rag_debug_json #> '{agents,grammar}', '{}'::jsonb)
+              ) AS entry(key, value)
+            )
+            SELECT
+              (SELECT COUNT(*) FROM snapshots) AS snapshots,
+              COUNT(*) AS output_type_count,
+              COUNT(*) FILTER (WHERE item ->> 'selection_mode' = 'rag') AS rag_hits,
+              COUNT(*) FILTER (
+                WHERE item ->> 'is_fallback' = 'true'
+                   OR item ->> 'selection_mode' IN ('rag_fallback', 'baseline')
+                   OR COALESCE(NULLIF(item ->> 'fallback_reason', ''), '') <> ''
+              ) AS fallback_count,
+              COUNT(*) FILTER (WHERE item ->> 'fallback_reason' = 'low_confidence') AS low_confidence_count
+            FROM expanded
+          `,
+          [days],
+        ),
+        database.raw(
+          `
+            WITH expanded AS (
+              SELECT
+                entry.key AS output_type,
+                entry.value AS item
+              FROM analysis_debug_snapshots source
+              CROSS JOIN LATERAL jsonb_each(
+                COALESCE(source.rag_debug_json #> '{agents,grammar}', '{}'::jsonb)
+              ) AS entry(key, value)
+              WHERE source.rag_debug_json IS NOT NULL
+                AND source.created_at >= now() - (?::int * interval '1 day')
+            ),
+            typed AS (
+              SELECT
+                output_type,
+                item ->> 'selection_mode' AS selection_mode,
+                item ->> 'fallback_reason' AS fallback_reason,
+                item ->> 'is_fallback' AS is_fallback,
+                CASE WHEN jsonb_typeof(item -> 'ann_hit_count') = 'number'
+                  THEN (item ->> 'ann_hit_count')::numeric ELSE 0 END AS ann_hit_count,
+                CASE WHEN jsonb_typeof(item -> 'rerank_hit_count') = 'number'
+                  THEN (item ->> 'rerank_hit_count')::numeric ELSE 0 END AS rerank_hit_count,
+                CASE WHEN jsonb_typeof(item -> 'example_count') = 'number'
+                  THEN (item ->> 'example_count')::numeric ELSE 0 END AS selected_examples,
+                CASE WHEN jsonb_typeof(item -> 'embedding_latency_ms') = 'number'
+                  THEN (item ->> 'embedding_latency_ms')::numeric ELSE 0 END AS embedding_latency_ms,
+                CASE WHEN jsonb_typeof(item -> 'rerank_latency_ms') = 'number'
+                  THEN (item ->> 'rerank_latency_ms')::numeric ELSE 0 END AS rerank_latency_ms
+              FROM expanded
+            )
+            SELECT
+              output_type,
+              COUNT(*) AS output_type_count,
+              COUNT(*) FILTER (WHERE selection_mode = 'rag') AS rag_hits,
+              COUNT(*) FILTER (
+                WHERE is_fallback = 'true'
+                   OR selection_mode IN ('rag_fallback', 'baseline')
+                   OR COALESCE(NULLIF(fallback_reason, ''), '') <> ''
+              ) AS fallback_count,
+              COUNT(*) FILTER (WHERE fallback_reason = 'low_confidence') AS low_confidence_count,
+              COALESCE(AVG(ann_hit_count), 0) AS avg_ann_hit_count,
+              COALESCE(AVG(rerank_hit_count), 0) AS avg_rerank_hit_count,
+              COALESCE(AVG(selected_examples), 0) AS avg_selected_examples,
+              COALESCE(AVG(embedding_latency_ms), 0) AS avg_embedding_latency_ms,
+              COALESCE(AVG(rerank_latency_ms), 0) AS avg_rerank_latency_ms
+            FROM typed
+            GROUP BY output_type
+            ORDER BY output_type
+          `,
+          [days],
+        ),
+        database.raw(
+          `
+            WITH expanded AS (
+              SELECT
+                COALESCE(NULLIF(entry.value ->> 'fallback_reason', ''), 'UnknownFallback') AS fallback_reason,
+                entry.value ->> 'selection_mode' AS selection_mode,
+                entry.value ->> 'is_fallback' AS is_fallback
+              FROM analysis_debug_snapshots source
+              CROSS JOIN LATERAL jsonb_each(
+                COALESCE(source.rag_debug_json #> '{agents,grammar}', '{}'::jsonb)
+              ) AS entry(key, value)
+              WHERE source.rag_debug_json IS NOT NULL
+                AND source.created_at >= now() - (?::int * interval '1 day')
+            )
+            SELECT fallback_reason, COUNT(*) AS count
+            FROM expanded
+            WHERE is_fallback = 'true'
+               OR selection_mode IN ('rag_fallback', 'baseline')
+               OR fallback_reason <> 'UnknownFallback'
+            GROUP BY fallback_reason
+            ORDER BY count DESC, fallback_reason
+            LIMIT 5
+          `,
+          [days],
+        ),
+        database.raw(
+          `
+            WITH expanded AS (
+              SELECT entry.value AS item
+              FROM analysis_debug_snapshots source
+              CROSS JOIN LATERAL jsonb_each(
+                COALESCE(source.rag_debug_json #> '{agents,grammar}', '{}'::jsonb)
+              ) AS entry(key, value)
+              WHERE source.rag_debug_json IS NOT NULL
+                AND source.created_at >= now() - (?::int * interval '1 day')
+            ),
+            drops AS (
+              SELECT
+                COALESCE(NULLIF(drop_item ->> 'drop_stage', ''), 'unknown') AS drop_stage,
+                COALESCE(NULLIF(drop_item ->> 'drop_reason', ''), 'unknown') AS drop_reason
+              FROM expanded
+              CROSS JOIN LATERAL jsonb_array_elements(
+                CASE
+                  WHEN jsonb_typeof(item -> 'dropped_examples') = 'array'
+                  THEN item -> 'dropped_examples'
+                  ELSE '[]'::jsonb
+                END
+              ) AS drop_item
+            )
+            SELECT
+              drop_stage || ':' || drop_reason AS drop_reason,
+              COUNT(*) AS count
+            FROM drops
+            GROUP BY drop_stage, drop_reason
+            ORDER BY count DESC, drop_stage, drop_reason
+            LIMIT 5
+          `,
+          [days],
+        ),
       ]);
 
       res.json({
@@ -455,6 +646,12 @@ export default (router, { database }) => {
             days: normalizeDailyCostRows(normalizeRows(dailyCostResult)),
             top_models: normalizeTopRows(normalizeRows(topModelResult)),
             top_capabilities: normalizeTopRows(normalizeRows(topCapabilityResult)),
+          },
+          rag_quality: {
+            overview: normalizeRagOverview(firstRow(ragOverviewResult)),
+            by_output_type: normalizeRagOutputRows(normalizeRows(ragByOutputTypeResult)),
+            fallback_reasons: normalizeReasonRows(normalizeRows(ragFallbackReasonResult), "fallback_reason"),
+            drop_reasons: normalizeReasonRows(normalizeRows(ragDropReasonResult), "drop_reason"),
           },
         },
       });
