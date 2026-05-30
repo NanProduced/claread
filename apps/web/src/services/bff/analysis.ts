@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import {
+  getUpstreamCurrentAnalysisTask,
   getUpstreamAnalysisTaskStatus,
   submitUpstreamAnalysisTask,
 } from "@/services/api/tasks";
@@ -11,6 +12,7 @@ import type {
   ReadingGoalDto,
   ReadingVariantDto,
   TaskSubmitRequestDto,
+  TaskStatusResponseDto,
   TaskStatusDto,
 } from "@/types/api/tasks";
 
@@ -63,6 +65,28 @@ export type WebAnalysisTaskStatusResult =
       message: string;
     };
 
+export type WebAnalysisActiveTask = {
+  taskId: string;
+  recordId: string;
+  status: TaskStatusDto;
+  readerUrl: string;
+  failureCode?: string | null;
+  failureMessage?: string | null;
+};
+
+export type WebAnalysisCurrentTaskResult =
+  | {
+      ok: true;
+      hasActive: boolean;
+      task?: WebAnalysisActiveTask | null;
+    }
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+    };
+
 function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -99,6 +123,31 @@ function readCloudRecordId(payload: unknown): string | undefined {
   return readStringField(payload, "cloud_record_id");
 }
 
+function isTaskStatus(value: unknown): value is TaskStatusDto {
+  return (
+    value === "queued" ||
+    value === "running" ||
+    value === "finalizing" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "cancelled" ||
+    value === "expired"
+  );
+}
+
+function projectTaskStatus(task: TaskStatusResponseDto): WebAnalysisActiveTask {
+  const recordId = task.cloud_record_id;
+
+  return {
+    taskId: task.task_id,
+    recordId,
+    status: task.status,
+    readerUrl: `/app/reader/${recordId}`,
+    failureCode: task.failure_code,
+    failureMessage: task.failure_message,
+  };
+}
+
 function upstreamErrorCode(status: number): string {
   if (status === 401) {
     return "upstream_auth_failed";
@@ -116,6 +165,35 @@ function upstreamErrorCode(status: number): string {
     return "upstream_unavailable";
   }
   return "upstream_error";
+}
+
+async function getCurrentAnalysisTaskForSession(
+  sessionToken: string,
+): Promise<WebAnalysisCurrentTaskResult> {
+  const upstreamResult = await getUpstreamCurrentAnalysisTask(sessionToken);
+
+  if (!upstreamResult.ok) {
+    return {
+      ok: false,
+      status: upstreamResult.status,
+      code: upstreamErrorCode(upstreamResult.status),
+      message: upstreamResult.message,
+    };
+  }
+
+  if (!upstreamResult.data.has_active || !upstreamResult.data.task) {
+    return {
+      ok: true,
+      hasActive: false,
+      task: null,
+    };
+  }
+
+  return {
+    ok: true,
+    hasActive: true,
+    task: projectTaskStatus(upstreamResult.data.task),
+  };
 }
 
 export async function submitAnalysisFromWeb(input: {
@@ -164,6 +242,34 @@ export async function submitAnalysisFromWeb(input: {
   const upstreamResult = await submitUpstreamAnalysisTask(payload, session.sessionToken);
 
   if (!upstreamResult.ok) {
+    if (upstreamResult.status === 409) {
+      const current = await getCurrentAnalysisTaskForSession(session.sessionToken);
+      if (current.ok && current.hasActive && current.task) {
+        return {
+          ok: true,
+          taskId: current.task.taskId,
+          recordId: current.task.recordId,
+          status: current.task.status,
+          readerUrl: current.task.readerUrl,
+          message: "有一篇文章正在透读，稍后可在记录页看到。",
+        };
+      }
+
+      const taskId = readStringField(upstreamResult.payload, "task_id");
+      const recordId = readCloudRecordId(upstreamResult.payload);
+      const status = readStringField(upstreamResult.payload, "status");
+      if (taskId && recordId && isTaskStatus(status)) {
+        return {
+          ok: true,
+          taskId,
+          recordId,
+          status,
+          readerUrl: `/app/reader/${recordId}`,
+          message: "有一篇文章正在透读，稍后可在记录页看到。",
+        };
+      }
+    }
+
     return {
       ok: false,
       status: upstreamResult.status,
@@ -197,6 +303,21 @@ export async function submitAnalysisFromWeb(input: {
         ? "解析完成，正在打开 Reader。"
         : "解析任务已提交，正在打开 Reader。",
   };
+}
+
+export async function getCurrentAnalysisTaskFromWeb(): Promise<WebAnalysisCurrentTaskResult> {
+  const session = await getWebSession();
+
+  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+    return {
+      ok: false,
+      status: 401,
+      code: "auth_required",
+      message: "请先登录后再查询解析任务。",
+    };
+  }
+
+  return getCurrentAnalysisTaskForSession(session.sessionToken);
 }
 
 export async function getAnalysisTaskStatusFromWeb(

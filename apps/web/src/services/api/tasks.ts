@@ -2,6 +2,7 @@ import "server-only";
 
 import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
 import type {
+  ActiveTaskResponseDto,
   TaskSubmitRequestDto,
   TaskSubmitResponseDto,
   TaskStatusResponseDto,
@@ -23,6 +24,15 @@ export function getUpstreamAnalysisTaskStatus(
   sessionToken: string,
 ): Promise<UpstreamResult<TaskStatusResponseDto>> {
   return fastApiFetch<TaskStatusResponseDto>(`/analysis-tasks/${encodeURIComponent(taskId)}`, {
+    method: "GET",
+    sessionToken,
+  });
+}
+
+export function getUpstreamCurrentAnalysisTask(
+  sessionToken: string,
+): Promise<UpstreamResult<ActiveTaskResponseDto>> {
+  return fastApiFetch<ActiveTaskResponseDto>("/analysis-tasks/current", {
     method: "GET",
     sessionToken,
   });
