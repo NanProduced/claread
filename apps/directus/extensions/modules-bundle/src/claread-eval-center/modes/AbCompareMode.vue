@@ -91,6 +91,32 @@ function identityDeltaSummary(delta) {
   return Object.keys(delta).join(", ") || "—";
 }
 
+function identityDeltaDetail(delta) {
+  if (!delta || typeof delta !== "object") return [];
+  const lines = [];
+  for (const [identityKey, change] of Object.entries(delta)) {
+    if (!change || typeof change !== "object") continue;
+    const base = change.baseline;
+    const cand = change.candidate;
+    if (base && cand && typeof base === "object" && typeof cand === "object") {
+      const allKeys = new Set([...Object.keys(base), ...Object.keys(cand)]);
+      for (const field of allKeys) {
+        const bv = base[field];
+        const cv = cand[field];
+        if (JSON.stringify(bv) !== JSON.stringify(cv)) {
+          lines.push({
+            identity: identityKey,
+            field,
+            baseline: bv == null ? "—" : (typeof bv === "object" ? JSON.stringify(bv) : String(bv)),
+            candidate: cv == null ? "—" : (typeof cv === "object" ? JSON.stringify(cv) : String(cv)),
+          });
+        }
+      }
+    }
+  }
+  return lines;
+}
+
 function verdictClass(verdict) {
   return {
     "is-win": verdict === "win",
@@ -206,25 +232,42 @@ function verdictClass(verdict) {
               <span>Identity</span>
               <span>Reason</span>
             </div>
-            <div v-for="item in report.comparisons" :key="item.case_id" class="comparison-row">
-              <span>{{ item.case_id }}</span>
-              <span class="verdict-pill" :class="verdictClass(item.verdict)">{{ item.verdict }}</span>
-              <span>{{ item.baseline_hard_failures }}H / {{ item.baseline_soft_failures }}S · {{ dash(item.baseline_status) }}</span>
-              <span>{{ item.candidate_hard_failures }}H / {{ item.candidate_soft_failures }}S · {{ dash(item.candidate_status) }}</span>
-              <span>{{ identityDeltaSummary(item.identity_delta) }}</span>
-              <span>{{ item.reasons?.join("; ") || "—" }}</span>
-            </div>
+            <template v-for="item in report.comparisons" :key="item.case_id">
+              <div class="comparison-row" :class="{ 'is-loss': item.verdict === 'loss' }">
+                <span>{{ item.case_id }}</span>
+                <span class="verdict-pill" :class="verdictClass(item.verdict)">{{ item.verdict }}</span>
+                <span>{{ item.baseline_hard_failures }}H / {{ item.baseline_soft_failures }}S · {{ dash(item.baseline_status) }}</span>
+                <span>{{ item.candidate_hard_failures }}H / {{ item.candidate_soft_failures }}S · {{ dash(item.candidate_status) }}</span>
+                <span>{{ identityDeltaSummary(item.identity_delta) }}</span>
+                <span>{{ item.reasons?.join("; ") || "—" }}</span>
+              </div>
+              <details v-if="item.identity_delta" class="delta-detail">
+                <summary>{{ identityDeltaSummary(item.identity_delta) }} delta</summary>
+                <div class="delta-detail-row delta-detail-head">
+                  <span>Identity</span>
+                  <span>Field</span>
+                  <span>Baseline</span>
+                  <span>Candidate</span>
+                </div>
+                <div v-for="line in identityDeltaDetail(item.identity_delta)" :key="`${line.identity}-${line.field}`" class="delta-detail-row">
+                  <span>{{ line.identity }}</span>
+                  <span>{{ line.field }}</span>
+                  <span>{{ line.baseline }}</span>
+                  <span>{{ line.candidate }}</span>
+                </div>
+              </details>
+            </template>
           </div>
         </ResultBlock>
 
-        <ResultBlock title="Identity Delta JSON">
+        <ResultBlock title="Identity Delta JSON" :open="false">
           <pre>{{ formatJson(report.comparisons?.filter((item) => item.identity_delta).map((item) => ({
             case_id: item.case_id,
             identity_delta: item.identity_delta,
           }))) || "无 identity delta。" }}</pre>
         </ResultBlock>
 
-        <ResultBlock title="A/B Report JSON">
+        <ResultBlock title="A/B Report JSON" :open="false">
           <pre>{{ formatJson(report) }}</pre>
         </ResultBlock>
       </template>
@@ -379,6 +422,43 @@ function verdictClass(verdict) {
 }
 
 .comparison-head {
+  color: var(--theme--foreground-subdued);
+  font-weight: 700;
+}
+
+.comparison-row.is-loss {
+  border-color: var(--theme--danger);
+}
+
+.delta-detail {
+  margin: 0 0 6px 20px;
+  border-left: 3px solid var(--theme--primary);
+  padding: 6px 0;
+}
+
+.delta-detail summary {
+  margin: 0 8px 6px;
+  color: var(--theme--primary);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.delta-detail-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(100px, 1fr) minmax(120px, 1.2fr) minmax(120px, 1.2fr);
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.delta-detail-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delta-detail-head {
   color: var(--theme--foreground-subdued);
   font-weight: 700;
 }

@@ -255,20 +255,49 @@ async function loadRunDetail(root, runId) {
   const reportPath = path.join(dir, "report.json");
   const report = (await fileExists(reportPath)) ? await readJsonFile(reportPath) : null;
   const caseIds = await listJsonIds(path.join(dir, "cases"));
-  const artifacts = [];
+  const caseSummaries = [];
   for (const caseId of caseIds) {
-    artifacts.push(await readJsonFile(caseArtifactPath(root, runId, caseId)));
+    try {
+      const artifact = await readJsonFile(caseArtifactPath(root, runId, caseId));
+      caseSummaries.push(summarizeCaseArtifact(artifact));
+    } catch {
+      caseSummaries.push({
+        case_id: caseId,
+        run_id: runId,
+        adapter_status: "unreadable",
+        user_facing_state: null,
+        error: null,
+        warning_count: 0,
+        drop_count: 0,
+        hard_failures: 0,
+        soft_failures: 0,
+        grader_count: 0,
+        failed_grader_count: 0,
+        grader_summaries: [],
+        translation_count: 0,
+        inline_mark_count: 0,
+        sentence_entry_count: 0,
+        latency_seconds: null,
+        total_tokens: null,
+        input_tokens: null,
+        output_tokens: null,
+        workflow_identity: null,
+        schema_identity: null,
+        prompt_identity: null,
+        model_identity: null,
+      });
+    }
   }
   const abReportIds = await listJsonIds(path.join(dir, "ab"));
 
   return {
     summary: summarizeRun(run, report, {
-      case_artifact_count: artifacts.length,
+      case_artifact_count: caseSummaries.length,
       ab_report_count: abReportIds.length,
     }),
     run,
     report,
-    case_artifacts: artifacts.map(summarizeCaseArtifact),
+    case_artifacts: caseSummaries,
     ab_reports: abReportIds.map((id) => ({
       id,
       href: `/eval-center/runs/${encodeURIComponent(runId)}/ab/${encodeURIComponent(id)}`,

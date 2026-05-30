@@ -348,7 +348,7 @@ function verdictClass(verdict) {
               </div>
             </div>
 
-            <ResultBlock title="Output / Render Scene">
+            <ResultBlock title="Output / Render Scene" :open="false">
               <pre>{{ formatJson(selectedCaseArtifact.output) || "暂无 output。" }}</pre>
             </ResultBlock>
 
@@ -447,7 +447,7 @@ function verdictClass(verdict) {
               </div>
             </ResultBlock>
 
-            <ResultBlock title="Full Case Artifact JSON">
+            <ResultBlock title="Full Case Artifact JSON" :open="false">
               <pre>{{ formatJson(selectedCaseArtifact) }}</pre>
             </ResultBlock>
           </template>
@@ -528,25 +528,25 @@ function verdictClass(verdict) {
               </div>
             </div>
 
-            <ResultBlock title="Identity Delta JSON">
+            <ResultBlock title="Identity Delta JSON" :open="false">
               <pre>{{ formatJson(selectedAbReport.comparisons?.filter((item) => item.identity_delta).map((item) => ({
                 case_id: item.case_id,
                 identity_delta: item.identity_delta,
               }))) || "无 identity delta。" }}</pre>
             </ResultBlock>
 
-            <ResultBlock title="A/B Report JSON">
+            <ResultBlock title="A/B Report JSON" :open="false">
               <pre>{{ formatJson(selectedAbReport) }}</pre>
             </ResultBlock>
           </template>
           <p v-else class="muted-line">点击 A/B report 读取对比结果。</p>
         </ResultBlock>
 
-        <ResultBlock title="Report JSON">
+        <ResultBlock title="Report JSON" :open="false">
           <pre>{{ formatJson(selectedRun.report) || "暂无 report.json。" }}</pre>
         </ResultBlock>
 
-        <ResultBlock title="Run JSON">
+        <ResultBlock title="Run JSON" :open="false">
           <pre>{{ formatJson(selectedRun.run) }}</pre>
         </ResultBlock>
       </template>
@@ -586,7 +586,7 @@ function verdictClass(verdict) {
           </div>
         </ResultBlock>
 
-        <ResultBlock title="Identity / Observations" :open="true">
+        <ResultBlock title="Identity / Observations">
           <pre>{{ formatJson({
             prompt_identity: selectedNodeProbeRun.prompt_identity_json,
             model_identity: selectedNodeProbeRun.model_identity_json,
@@ -605,11 +605,11 @@ function verdictClass(verdict) {
           <pre>{{ selectedNodeProbeRun.prompt_preview || "暂无 prompt preview。" }}</pre>
         </ResultBlock>
 
-        <ResultBlock title="Node Output">
+        <ResultBlock title="Node Output" :open="false">
           <pre>{{ formatJson(selectedNodeProbeRun.node_output_json) || "暂无节点输出。" }}</pre>
         </ResultBlock>
 
-        <ResultBlock title="Saved Record JSON">
+        <ResultBlock title="Saved Record JSON" :open="false">
           <pre>{{ formatJson(selectedNodeProbeRun) }}</pre>
         </ResultBlock>
       </template>
