@@ -2106,6 +2106,183 @@ select {
   filter: var(--brand-aperture-mark-filter);
 }
 
+.aperture-corner-cta {
+  --aperture-corner-ink: #111113;
+  --aperture-corner-ink-soft: #18181a;
+  --aperture-corner-text: #ffffff;
+  --aperture-corner-muted: #e6e6e6;
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  min-height: 3rem;
+  min-width: 14rem;
+  overflow: hidden;
+  padding: 0 1.05rem 0 5.88rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius: 4px !important;
+  color: var(--aperture-corner-text) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, var(--aperture-corner-ink-soft), var(--aperture-corner-ink) 62%) !important;
+  box-shadow:
+    0 3px 7px rgba(23, 21, 17, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  clip-path: polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px);
+  transition:
+    transform 180ms var(--cl-ease-standard),
+    border-color 180ms var(--cl-ease-standard),
+    box-shadow 180ms var(--cl-ease-standard);
+}
+
+.aperture-corner-cta::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  transform: rotate(-45deg) translate(-0.43rem, -0.52rem);
+  transform-origin: left top;
+  opacity: 0.72;
+  transition:
+    opacity 180ms var(--cl-ease-standard),
+    transform 180ms var(--cl-ease-standard);
+}
+
+.aperture-corner-cta:hover {
+  transform: translateY(-0.5px);
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    0 4px 8px rgba(23, 21, 17, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+.aperture-corner-cta:hover::before {
+  opacity: 0.9;
+  transform: rotate(-45deg) translate(-0.34rem, -0.46rem);
+}
+
+.aperture-corner-cta:active {
+  transform: translateY(0);
+}
+
+.aperture-corner-cta:disabled {
+  opacity: 0.88;
+}
+
+.aperture-corner-cta__mark {
+  position: absolute;
+  left: 0;
+  top: -0.5rem;
+  z-index: 0;
+  width: 6rem;
+  height: 4rem;
+  overflow: hidden;
+  pointer-events: none;
+  transform-origin: 1.8rem 2.2rem;
+}
+
+.aperture-corner-cta__asset {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-position: left top;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  transition:
+    opacity 180ms var(--cl-ease-standard),
+    transform 180ms var(--cl-ease-standard);
+}
+
+.aperture-corner-cta__asset--default {
+  background-image: url("/brand/aperture-corner-cta/aperture-corner-texture-default@2x.png");
+  opacity: 1;
+}
+
+.aperture-corner-cta__asset--focus {
+  background-image: url("/brand/aperture-corner-cta/aperture-corner-texture-hover@2x.png");
+  opacity: 0;
+}
+
+.aperture-corner-cta:hover .aperture-corner-cta__asset--default,
+.aperture-corner-cta[data-pending="true"] .aperture-corner-cta__asset--default {
+  opacity: 0;
+}
+
+.aperture-corner-cta:hover .aperture-corner-cta__asset--focus,
+.aperture-corner-cta[data-pending="true"] .aperture-corner-cta__asset--focus {
+  opacity: 1;
+}
+
+.aperture-corner-cta[data-pending="true"] .aperture-corner-cta__mark {
+  animation: aperture-corner-pending 1400ms steps(4, end) infinite;
+}
+
+.aperture-corner-cta--ready .aperture-corner-cta__asset--focus {
+  opacity: 0.12;
+}
+
+.aperture-corner-cta__content {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.aperture-corner-cta__label {
+  position: relative;
+  line-height: 1;
+  font-size: 1.02rem;
+  font-weight: 620;
+  letter-spacing: 0;
+  color: var(--aperture-corner-text);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.aperture-corner-cta__arrow {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--aperture-corner-muted);
+  transition:
+    color 180ms var(--cl-ease-standard),
+    transform 180ms var(--cl-ease-standard);
+}
+
+.aperture-corner-cta:hover .aperture-corner-cta__arrow {
+  color: #ffffff;
+  transform: translateX(2px);
+}
+
+@keyframes aperture-corner-pending {
+  to {
+    transform: rotate(4deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aperture-corner-cta,
+  .aperture-corner-cta::before,
+  .aperture-corner-cta__mark,
+  .aperture-corner-cta__asset,
+  .aperture-corner-cta__arrow {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (min-width: 640px) {
+  .aperture-corner-cta {
+    width: 14rem;
+  }
+}
+
 .reader-entry-note::before {
   content: "";
   position: absolute;

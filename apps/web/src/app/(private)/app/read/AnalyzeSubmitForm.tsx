@@ -1,21 +1,21 @@
 "use client";
 
-import { Loader2, X } from "lucide-react";
+import { ArrowRight, BookOpen, Check, ChevronDown, ClipboardPaste, FileUp, Link2, X, FileText, Target } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
-import { SegmentedControl } from "@/components/composed/segmented-control";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
+import { cn } from "@/lib/cn";
 import {
-  DEFAULT_READING_VARIANT_BY_GOAL,
   READING_GOAL_OPTIONS,
   READING_VARIANT_OPTIONS,
+  DEFAULT_READING_VARIANT_BY_GOAL,
   type ReadingDefaultState,
   normalizeReadingDefaults,
 } from "@/lib/reading-defaults";
 import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
-import { formatShortcut } from "@/lib/shortcuts";
 import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 
 type SubmitState =
@@ -46,12 +46,129 @@ const TERMINAL_STATUS = new Set(["succeeded", "failed", "cancelled", "expired"])
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 45;
 const libraryRoute = appLibraryRoute;
-const intakeCues = ["贴入文本", "链接导入", "上传文档", "示例文章"] as const;
+const intakeMethods = [
+  { key: "paste", label: "贴入文本", icon: ClipboardPaste, available: true },
+  { key: "link", label: "链接导入", icon: Link2, available: false },
+  { key: "upload", label: "上传文档", icon: FileUp, available: false },
+  { key: "sample", label: "示例文章", icon: BookOpen, available: false },
+] as const;
 
-interface AnalyzeSubmitFormProps extends ReadingDefaultState {}
+const SHORT_DESC: Record<string, string> = {
+  daily_reading: "自然读懂",
+  academic: "术语与结构",
+  exam: "长难句与考点",
+};
+
+const GOAL_ICONS: Record<string, React.ElementType> = {
+  daily_reading: BookOpen,
+  academic: FileText,
+  exam: Target,
+};
+
+function GoalCard({
+  goal,
+  active,
+  onSelect,
+}: {
+  goal: { value: string; label: string };
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const Icon = GOAL_ICONS[goal.value] || BookOpen;
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onSelect}
+      className={`group relative flex w-full flex-col items-center justify-center gap-2.5 rounded-[14px] border p-3 pt-4 text-center transition-all duration-300 ease-out focus-ring ${
+        active
+          ? "border-transparent bg-white shadow-[0_6px_20px_rgba(17,17,17,0.06)] ring-1 ring-ink/5"
+          : "border-transparent bg-transparent hover:bg-ink/[0.03]"
+      }`}
+    >
+      {active && (
+        <div className="absolute right-2 top-2 flex h-[1.1rem] w-[1.1rem] items-center justify-center rounded-full bg-lens-blue text-white shadow-sm">
+          <Check className="h-[0.7rem] w-[0.7rem]" strokeWidth={3} />
+        </div>
+      )}
+      <div className="flex flex-col items-center gap-0.5">
+        <span className={`font-sans text-[0.85rem] tracking-tight ${active ? "font-semibold text-ink" : "font-medium text-ink/80 group-hover:text-ink"}`}>
+          {goal.label}
+        </span>
+        <span className="font-sans text-[0.72rem] tracking-wide text-muted">{SHORT_DESC[goal.value]}</span>
+      </div>
+      <div className={`mt-0.5 flex h-7 w-7 items-center justify-center transition-colors duration-300 ${active ? "text-ink/80" : "text-subtle group-hover:text-muted"}`}>
+        <Icon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
+      </div>
+    </button>
+  );
+}
+
+function VariantPill({
+  variant,
+  active,
+  onSelect,
+}: {
+  variant: { value: string; label: string };
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onSelect}
+      className={`relative flex min-h-[2.25rem] w-full items-center justify-center gap-1.5 rounded-[8px] border px-1 transition-all duration-300 ease-out focus-ring ${
+        active
+          ? "border-lens-blue/30 bg-[rgba(37,99,235,0.06)] text-ink ring-1 ring-lens-blue/20"
+          : "border-hairline/60 bg-transparent text-muted hover:border-hairline hover:bg-ink/[0.03] hover:text-ink"
+      }`}
+    >
+      <span className={`text-[0.78rem] tracking-tight ${active ? "font-semibold" : "font-medium"}`}>{variant.label}</span>
+      {active && <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-lens-blue" />}
+    </button>
+  );
+}
+
+function ApertureCornerSubmitButton({
+  isPending,
+  isReady,
+  onClick,
+}: {
+  isPending: boolean;
+  isReady: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      variant="primary-ink"
+      className={cn("aperture-corner-cta group/aperture font-sans", isReady && "aperture-corner-cta--ready")}
+      data-pending={isPending ? "true" : "false"}
+      data-ready={isReady ? "true" : "false"}
+      disabled={isPending}
+      onClick={onClick}
+    >
+      <span className="aperture-corner-cta__mark" aria-hidden="true">
+        <span className="aperture-corner-cta__asset aperture-corner-cta__asset--default" />
+        <span className="aperture-corner-cta__asset aperture-corner-cta__asset--focus" />
+      </span>
+      <span className="aperture-corner-cta__content">
+        <span className="aperture-corner-cta__label">
+          {isPending ? "透读中..." : "开始透读"}
+        </span>
+        {!isPending ? (
+          <ArrowRight aria-hidden className="aperture-corner-cta__arrow" />
+        ) : null}
+      </span>
+    </Button>
+  );
+}
+
+type AnalyzeSubmitFormProps = ReadingDefaultState;
 
 export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: initialVariant }: AnalyzeSubmitFormProps) {
   const router = useRouter();
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [text, setText] = useState("");
   const defaults = normalizeReadingDefaults({ readingGoal: initialGoal, readingVariant: initialVariant });
   const [readingGoal, setReadingGoal] = useState<ReadingGoalDto>(defaults.readingGoal);
@@ -151,25 +268,43 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
 
   const isPending = state.kind === "pending";
   const errorRecordId = state.kind === "error" ? state.recordId : undefined;
-  const activeVariantOptions = READING_VARIANT_OPTIONS[readingGoal];
-  const showVariantOptions = activeVariantOptions.length > 1;
-  const submitShortcutLabel = formatShortcut("Primary+Enter");
+  const selectedGoalLabel = READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label;
+  const selectedVariantLabel = READING_VARIANT_OPTIONS[readingGoal].find(
+    (option) => option.value === readingVariant,
+  )?.label;
 
   return (
     <div className="flex min-h-0 flex-1 w-full flex-col">
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <label htmlFor="analysis-text" className="sr-only">
           在此贴入或导入英文文章
         </label>
 
-        <div className="group relative flex min-h-[12rem] flex-1 w-full shrink-0 lg:shrink">
-          <div className="pointer-events-none absolute left-4 top-7 h-full max-h-[24rem] w-px bg-hairline/60 xl:left-5" />
-          <div className="pointer-events-none absolute left-12 top-10 h-[2.6rem] w-[2px] bg-ink/30 transition-colors duration-500 group-focus-within:bg-ink/72" />
-          
+        <div className="group/manuscript relative flex min-h-[22rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-[linear-gradient(180deg,rgba(251,247,238,0.62),rgba(251,247,238,0.18)_48%,rgba(251,247,238,0)_100%)] ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:shadow-[0_18px_44px_rgba(23,21,17,0.055)] lg:min-h-[31rem] lg:shrink 2xl:min-h-[34rem]">
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 z-0 cursor-text"
+            onClick={() => textareaRef.current?.focus()}
+          />
+          <div className="pointer-events-none absolute left-4 top-5 h-[calc(100%-2.5rem)] w-px bg-hairline/75 transition-colors duration-300 group-focus-within/manuscript:bg-lens-blue/28 xl:left-5" />
+          <div className="pointer-events-none absolute left-12 top-9 h-[3.4rem] w-[2px] bg-ink/22 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/manuscript:h-[4.4rem] group-focus-within/manuscript:bg-lens-blue/58 xl:left-16" />
+
+          {!text.trim() ? (
+            <div className="pointer-events-none absolute left-16 top-9 z-10 max-w-[26rem] xl:left-24 xl:top-11">
+              <p className="font-reading text-[1.16rem] leading-tight text-ink/78 xl:text-[1.28rem]">
+                Paste an English article here
+              </p>
+              <p className="mt-2 max-w-[21rem] font-sans text-[0.78rem] leading-6 text-muted">
+                粘贴英文文章，Claread 会带你进入透读。
+              </p>
+            </div>
+          ) : null}
+
           <textarea
+            ref={textareaRef}
             id="analysis-text"
-            className="relative z-10 h-full w-full resize-none overflow-y-auto bg-transparent px-14 py-10 font-reading text-[1.08rem] leading-[2.16] text-ink outline-none placeholder:text-muted/78 sm:text-[1.18rem] xl:px-20 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
-            placeholder="在此粘贴文章、链接或导入文档……"
+            className="relative z-10 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent px-16 py-10 font-reading text-[1.08rem] leading-[2.08] text-ink outline-none placeholder:text-transparent sm:text-[1.18rem] xl:px-24 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
+            placeholder="Paste an English article here"
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
@@ -179,84 +314,157 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
               }
             }}
           />
-          
+
           {text.length > 0 && (
             <button
               type="button"
-              className="absolute right-4 top-4 z-20 p-2 text-subtle transition-colors hover:text-ink focus-ring"
-              onClick={() => setText("")}
+              className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface/70 hover:text-ink focus-ring"
+              onClick={() => {
+                setText("");
+                textareaRef.current?.focus();
+              }}
               title="清空"
             >
               <X aria-hidden className="h-4 w-4" />
             </button>
           )}
-        </div>
-      </div>
 
-      <div className="mt-5 flex flex-col gap-4 border-t border-hairline/70 pt-5 pb-6 lg:flex-row lg:items-center lg:justify-between pl-4 lg:pl-12 md:pb-4 shrink-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans text-[0.65rem] font-bold tracking-[0.15em] text-subtle">
-          <span>{intakeCues.join(" · ")}</span>
-          <span className="hidden text-hairline/80 sm:inline">|</span>
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                className="font-sans text-[0.65rem] font-bold tracking-[0.15em] text-muted transition-colors hover:text-ink focus-ring"
-              >
-                模式：{READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="start"
-              className="w-[300px] rounded-none border border-hairline bg-surface p-5 shadow-sm"
-            >
-            <SegmentedControl
-              label="Goal"
-              value={readingGoal}
-              onValueChange={(nextGoal) => {
-                setReadingGoal(nextGoal);
-                setReadingVariant(DEFAULT_READING_VARIANT_BY_GOAL[nextGoal]);
-              }}
-              options={READING_GOAL_OPTIONS}
-            />
-            {showVariantOptions ? (
-              <SegmentedControl
-                className="mt-5 border-t border-hairline pt-4"
-                label="Variant"
-                value={readingVariant}
-                onValueChange={setReadingVariant}
-                options={activeVariantOptions}
+          <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-10 xl:mx-14">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <TooltipProvider delayDuration={180}>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 font-sans">
+                  {intakeMethods.map((method) => {
+                    const Icon = method.icon;
+                    const content = (
+                      <button
+                        type="button"
+                        aria-disabled={!method.available}
+                        className={`focus-ring group/source inline-flex min-h-9 items-center gap-2 px-0 text-[0.78rem] font-medium leading-none transition-colors duration-200 ${
+                          method.available
+                            ? "text-ink hover:text-lens-blue"
+                            : "cursor-default text-subtle/62 hover:text-muted"
+                        }`}
+                        onClick={() => {
+                          if (method.available) {
+                            textareaRef.current?.focus();
+                          }
+                        }}
+                      >
+                        <span
+                          className={`inline-flex h-6 w-6 items-center justify-center rounded-[7px] border transition-colors duration-200 ${
+                            method.available
+                              ? "border-ink/12 bg-reader-paper/54 text-ink group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue"
+                              : "border-transparent bg-transparent text-subtle/62"
+                          }`}
+                        >
+                          <Icon aria-hidden className="h-3.5 w-3.5" />
+                        </span>
+                        <span>{method.label}</span>
+                      </button>
+                    );
+                    const node = method.available ? (
+                      content
+                    ) : (
+                      <Tooltip>
+                        <TooltipTrigger asChild>{content}</TooltipTrigger>
+                        <TooltipContent side="top">即将支持</TooltipContent>
+                      </Tooltip>
+                    );
+
+                    return (
+                      <span key={method.key} className="inline-flex items-center">
+                        {node}
+                      </span>
+                    );
+                  })}
+                </div>
+              </TooltipProvider>
+
+              <div className="flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted transition-colors duration-200 hover:bg-reader-paper/46 hover:text-ink data-[state=open]:bg-reader-paper/60 data-[state=open]:text-ink"
+                    >
+                      <span>
+                        模式：{selectedGoalLabel}
+                        {selectedVariantLabel && selectedVariantLabel !== "学术通用" ? ` · ${selectedVariantLabel}` : ""}
+                      </span>
+                      <ChevronDown aria-hidden className="h-3.5 w-3.5" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    side="top"
+                    sideOffset={14}
+                    className="w-[min(420px,calc(100vw-2rem))] rounded-[20px] border border-hairline/78 bg-[color-mix(in_srgb,var(--surface)_96%,var(--reader-paper)_4%)] p-4 shadow-[0_24px_48px_rgba(23,21,17,0.14)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=top]:slide-in-from-bottom-2"
+                  >
+                    <div className="flex items-center justify-between gap-4 px-1.5 pb-2 font-sans">
+                      <p className="text-[0.85rem] font-semibold tracking-tight text-ink">透读模式</p>
+                      <span className="max-w-[14rem] truncate text-right text-[0.72rem] font-medium tracking-tight text-muted">
+                        当前：{selectedGoalLabel}
+                        {selectedVariantLabel && selectedVariantLabel !== "学术通用" ? ` · ${selectedVariantLabel}` : ""}
+                      </span>
+                    </div>
+
+                    <div className="mt-1 flex gap-2">
+                      {READING_GOAL_OPTIONS.map((goal) => (
+                        <div key={goal.value} className="flex-1">
+                          <GoalCard
+                            goal={goal}
+                            active={goal.value === readingGoal}
+                            onSelect={() => {
+                              setReadingGoal(goal.value);
+                              const variants = READING_VARIANT_OPTIONS[goal.value];
+                              if (!variants.find((v) => v.value === readingVariant)) {
+                                setReadingVariant(DEFAULT_READING_VARIANT_BY_GOAL[goal.value] || variants[0].value);
+                              }
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 min-h-[7rem] px-1 pb-0.5">
+                      <div className="mb-3 flex items-center gap-3">
+                        <span className="shrink-0 text-[0.72rem] font-semibold tracking-tight text-muted/90">细分方式</span>
+                        <div className="h-px flex-1 bg-hairline/60" />
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {READING_VARIANT_OPTIONS[readingGoal].map((variant) => (
+                          <VariantPill
+                            key={variant.value}
+                            variant={variant}
+                            active={variant.value === readingVariant}
+                            onSelect={() => setReadingVariant(variant.value)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+              {text.length > 0 ? (
+                <span className="self-center font-sans text-[0.72rem] font-medium text-subtle">
+                  {text.trim().length.toLocaleString("en-US")} chars
+                </span>
+              ) : null}
+
+              <ApertureCornerSubmitButton
+                isPending={isPending}
+                isReady={text.trim().length > 0}
+                onClick={handleSubmit}
               />
-            ) : null}
-            </PopoverContent>
-          </Popover>
-          {text.length > 0 ? (
-            <>
-              <span className="hidden text-hairline/80 sm:inline">|</span>
-              <span className="text-[0.65rem] font-bold tracking-[0.15em]">{text.trim().length.toLocaleString("en-US")} chars</span>
-            </>
-          ) : null}
-        </div>
-
-        <div className="flex items-center gap-6 lg:gap-8 self-end lg:self-auto">
-          <div className="hidden font-sans text-[0.65rem] font-bold tracking-[0.15em] text-subtle/90 lg:block">
-            提交 {submitShortcutLabel}
+              </div>
+            </div>
           </div>
-          <Button
-            variant="primary-ink"
-            className="group min-w-[150px] px-8 py-3.5 font-sans text-[0.82rem] font-semibold tracking-[0.08em] transition-all duration-300 focus-ring"
-            disabled={isPending}
-            onClick={handleSubmit}
-          >
-            {isPending ? <Loader2 aria-hidden className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-            {isPending ? "透读中..." : "开始透读"}
-          </Button>
         </div>
       </div>
 
       {state.kind !== "idle" && (
         <div
-          className={`mt-5 shrink-0 border-t border-hairline/60 bg-surface/35 px-4 py-3 text-[0.8rem] font-medium lg:px-12 ${
+          className={`mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 text-[0.82rem] font-medium lg:mx-12 ${
             state.kind === "error" ? "text-red-700" : "text-lens-blue"
           }`}
         >
