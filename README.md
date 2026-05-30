@@ -79,7 +79,7 @@ pnpm directus:extensions:watch
 
 默认访问 `http://127.0.0.1:8055`。Bootstrap 只提供本地 Directus runtime、扩展热重载和占位扩展壳子，不包含业务 schema 和执行逻辑。
 
-本地 Directus 默认管理员登录邮箱为 `admin@claread.dev`，密码为 `Nan12091209`。
+本地 Directus 默认管理员登录邮箱为 `admin@claread.dev`，密码由本地 `apps/directus/.env` 或启动环境中的 `ADMIN_PASSWORD` 配置；仓库示例只保留占位值。
 
 ## 常用验证
 

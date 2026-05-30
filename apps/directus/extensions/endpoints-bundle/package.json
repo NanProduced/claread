@@ -26,6 +26,11 @@
         "type": "endpoint",
         "name": "parse-run-observability",
         "source": "src/parse-run-observability/index.js"
+      },
+      {
+        "type": "endpoint",
+        "name": "eval-center",
+        "source": "src/eval-center/index.js"
       }
     ]
   },

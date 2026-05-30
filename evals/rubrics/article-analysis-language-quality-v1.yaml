@@ -1,0 +1,55 @@
+id: article-analysis-language-quality-v1
+version: "1.0"
+target: article_analysis
+description: Judge natural, specific, non-template English learning annotations.
+criteria:
+  - id: naturalness
+    label: Natural Chinese Explanation
+    description: Explanations should sound like a thoughtful teacher, not a rigid template.
+    score_min: 1
+    score_max: 5
+    pass_score: 4
+    weight: 1.0
+    evidence_fields:
+      - sentence_entries
+      - translations
+  - id: specificity
+    label: Text-Specific Insight
+    description: Feedback should respond to the actual sentence and avoid generic grammar boilerplate.
+    score_min: 1
+    score_max: 5
+    pass_score: 4
+    weight: 1.2
+    evidence_fields:
+      - sentence_entries
+  - id: anti_template
+    label: Anti-Template Variation
+    description: Annotations should vary wording and structure when the source text differs.
+    score_min: 1
+    score_max: 5
+    pass_score: 4
+    weight: 1.2
+    evidence_fields:
+      - sentence_entries
+  - id: pedagogical_fit
+    label: Reading Goal Fit
+    description: Explanation depth should match reading_goal and reading_variant.
+    score_min: 1
+    score_max: 5
+    pass_score: 4
+    weight: 1.0
+    evidence_fields:
+      - reading_goal
+      - reading_variant
+      - sentence_entries
+  - id: ui_schema_usefulness
+    label: UI Schema Usefulness
+    description: Output should provide usable entries, anchors, and translations for rendering.
+    score_min: 1
+    score_max: 5
+    pass_score: 4
+    weight: 0.8
+    evidence_fields:
+      - sentence_entries
+      - inline_marks
+      - translations

@@ -1,0 +1,6 @@
+variant_id: no-few-shot-v1
+target: article_analysis
+description: Disable baseline few-shot examples for learning topology prompt experiments.
+few_shot_mode: off
+policies: {}
+examples: {}

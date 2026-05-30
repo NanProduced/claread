@@ -7,6 +7,10 @@ from pathlib import Path
 import yaml
 from cachetools import TTLCache
 
+from app.services.analysis.prompting.runtime_context import (
+    get_prompt_override_policy_lines,
+)
+
 PROMPTS_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent / "prompts"
 
 _REGISTRY_PATH = PROMPTS_ROOT / "registry.yaml"
@@ -62,6 +66,10 @@ def load_policy_lines(
     focus: str,
     variant: str | None = None,
 ) -> list[str]:
+    override_lines = get_prompt_override_policy_lines(policy_name, focus, variant)
+    if override_lines is not None:
+        return override_lines
+
     data = _load_yaml_file(f"policies/{policy_name}.yaml")
     focus_data = data.get(focus)
     if focus_data is None:

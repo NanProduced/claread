@@ -10,6 +10,7 @@
     "directus:extensions:build": "pnpm --dir apps/directus run extensions:build",
     "directus:extensions:watch": "pnpm --dir apps/directus run extensions:watch",
     "directus:parse-run:sync-metadata": "pnpm --dir apps/directus run parse-run:sync-metadata",
+    "directus:eval-center:sync-metadata": "pnpm --dir apps/directus run eval-center:sync-metadata",
     "miniprogram:build": "pnpm --dir apps/miniprogram run build:weapp",
     "miniprogram:dev": "pnpm --dir apps/miniprogram run dev:weapp",
     "miniprogram:typecheck": "pnpm --dir apps/miniprogram run typecheck",

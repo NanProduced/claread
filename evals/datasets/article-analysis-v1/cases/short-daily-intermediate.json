@@ -1,0 +1,15 @@
+{
+  "id": "short-daily-intermediate",
+  "text": "The quick brown fox jumps over the lazy dog. She decided to take a different route home because the main road was blocked by construction. It was a beautiful evening, and the sunset painted the sky in shades of orange and pink.",
+  "reading_goal": "daily_reading",
+  "reading_variant": "intermediate_reading",
+  "source_type": "user_input",
+  "tags": ["short_text", "daily_reading"],
+  "difficulty": "easy",
+  "target_phenomena": ["translation_coverage"],
+  "expected": {
+    "min_translation_coverage": 0.95,
+    "allowed_warning_codes": [],
+    "max_warning_count": 0
+  }
+}

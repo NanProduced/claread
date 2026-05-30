@@ -1,0 +1,213 @@
+<script setup>
+import { computed, ref } from "vue";
+import AbCompareMode from "./modes/AbCompareMode.vue";
+import NodeProbeMode from "./modes/NodeProbeMode.vue";
+import RunHistoryMode from "./modes/RunHistoryMode.vue";
+import PlaceholderPanel from "./components/PlaceholderPanel.vue";
+
+const modes = [
+  {
+    id: "node-probe",
+    label: "节点探针",
+    kicker: "Node Probe",
+    description: "单独运行 workflow 中的 LLM 节点，用于 prompt、few-shot 和模型快速调试。",
+    ready: true,
+    questions: ["当前节点最终 prompt 是什么？", "节点输出是否符合目标阅读变体？", "模型、prompt、预处理是否与业务主线一致？"],
+  },
+  {
+    id: "workflow-eval",
+    label: "Workflow 评测",
+    kicker: "Workflow Eval",
+    description: "端到端运行 article analysis workflow，验证 render scene、drop log 和整体输出质量。",
+    ready: false,
+    questions: ["整条 workflow 是否稳定完成？", "render scene 是否可渲染且信息完整？", "prompt 或 few-shot 改动是否带来整体提升？"],
+  },
+  {
+    id: "ab-compare",
+    label: "A/B 对比",
+    kicker: "A/B Report",
+    description: "比较 baseline 与 candidate run，输出成对差异和回归风险。",
+    ready: true,
+    questions: ["candidate 是否比 baseline 更好？", "差异来自 prompt、模型还是样本输入？", "是否存在明显回归 case？"],
+  },
+  {
+    id: "prompt-variants",
+    label: "Prompt Variant",
+    kicker: "Prompt Lab",
+    description: "管理 eval-only prompt variant draft、manifest 和导出。",
+    ready: false,
+    questions: ["有哪些候选 prompt variant？", "variant 是否可复现？", "是否可以导出到文件型 eval harness？"],
+  },
+  {
+    id: "run-history",
+    label: "运行历史",
+    kicker: "Run History",
+    description: "回看 evals/ run artifacts、报告和人工观察记录。",
+    ready: true,
+    questions: ["历史 run 存在哪里？", "某次运行使用了什么模型和 prompt？", "哪些 case 需要复查或补入数据集？"],
+  },
+  {
+    id: "few-shot-rag",
+    label: "Few-shot / RAG",
+    kicker: "RAG Workbench",
+    description: "few-shot candidate、RAG example 验证和 promotion。后置。",
+    ready: false,
+    questions: ["哪些 example 值得进入候选集？", "检索结果是否污染输出风格？", "何时 promotion 到 fallback baseline？"],
+  },
+];
+
+const activeMode = ref("node-probe");
+
+const currentMode = computed(() => modes.find((item) => item.id === activeMode.value) ?? modes[0]);
+</script>
+
+<template>
+  <private-view title="Eval Center">
+    <template #headline>
+      Claread Console
+    </template>
+
+    <template #navigation>
+      <nav class="eval-nav" aria-label="Eval Center modes">
+        <div class="eval-nav-label">评测模式</div>
+        <button
+          v-for="mode in modes"
+          :key="mode.id"
+          class="eval-nav-item"
+          :class="{ 'is-active': activeMode === mode.id }"
+          type="button"
+          @click="activeMode = mode.id"
+        >
+          <span>
+            <strong>{{ mode.label }}</strong>
+            <small>{{ mode.kicker }}</small>
+          </span>
+          <em>{{ mode.ready ? "可用" : "占位" }}</em>
+        </button>
+      </nav>
+    </template>
+
+    <main class="eval-center">
+      <header class="eval-header">
+        <div>
+          <p class="eyebrow">Eval Center</p>
+          <h1>{{ currentMode.label }}</h1>
+          <p>{{ currentMode.description }}</p>
+        </div>
+        <div class="mode-state" :class="{ ready: currentMode.ready }">
+          {{ currentMode.ready ? "MVP 可用" : "规划中" }}
+        </div>
+      </header>
+
+      <NodeProbeMode v-if="activeMode === 'node-probe'" />
+      <AbCompareMode v-else-if="activeMode === 'ab-compare'" />
+      <RunHistoryMode v-else-if="activeMode === 'run-history'" />
+      <PlaceholderPanel v-else :mode="currentMode" />
+    </main>
+  </private-view>
+</template>
+
+<style scoped>
+.eval-nav {
+  padding: 16px 12px;
+}
+
+.eval-nav-label {
+  margin: 0 0 10px 8px;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.eval-nav-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 10px 8px;
+  color: var(--theme--foreground);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.eval-nav-item:hover,
+.eval-nav-item.is-active {
+  background: var(--theme--background-subdued);
+}
+
+.eval-nav-item strong,
+.eval-nav-item small {
+  display: block;
+}
+
+.eval-nav-item small,
+.eval-nav-item em {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.eval-center {
+  padding: 24px;
+}
+
+.eval-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.eval-header h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.eval-header p {
+  max-width: 760px;
+  margin: 6px 0 0;
+  color: var(--theme--foreground-subdued);
+}
+
+.eyebrow {
+  margin: 0 0 4px !important;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mode-state {
+  flex: 0 0 auto;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mode-state.ready {
+  background: var(--theme--success-background);
+  color: var(--theme--foreground);
+}
+
+@media (max-width: 720px) {
+  .eval-center {
+    padding: 16px;
+  }
+
+  .eval-header {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+</style>

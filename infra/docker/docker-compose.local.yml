@@ -13,6 +13,8 @@ services:
     volumes:
       - claread_postgres_data:/var/lib/postgresql/data
       - ../migrations/0001_initial_schema.sql:/docker-entrypoint-initdb.d/0001_initial_schema.sql:ro
+      - ../migrations/0002_reader_scene_and_debug_snapshots.sql:/docker-entrypoint-initdb.d/0002_reader_scene_and_debug_snapshots.sql:ro
+      - ../migrations/0003_eval_control_tables.sql:/docker-entrypoint-initdb.d/0003_eval_control_tables.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]
       interval: 5s

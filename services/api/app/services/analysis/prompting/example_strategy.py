@@ -15,6 +15,10 @@ from typing import Literal
 
 from app.schemas.internal.execution_plan import GoalExecutionPlan
 from app.services.analysis.prompting.prompt_loader import load_examples
+from app.services.analysis.prompting.runtime_context import (
+    get_prompt_override_examples,
+    resolve_few_shot_mode,
+)
 
 
 @dataclass
@@ -32,11 +36,18 @@ class ExampleEntry:
 class ExampleStrategy:
     """Example 策略。"""
     examples: list[ExampleEntry]
-    selection_mode: Literal["baseline", "rag", "manual"] = "baseline"
+    selection_mode: Literal[
+        "baseline",
+        "rag",
+        "rag_fallback",
+        "manual",
+        "off",
+        "variant",
+        "settings",
+    ] = "baseline"
 
 
-def _load_baseline_examples(example_name: str, variant: str) -> list[ExampleEntry]:
-    raw_entries = load_examples(example_name, variant)
+def _example_entries(raw_entries: list[dict]) -> list[ExampleEntry]:
     return [
         ExampleEntry(
             example_type=entry["example_type"],
@@ -45,6 +56,18 @@ def _load_baseline_examples(example_name: str, variant: str) -> list[ExampleEntr
         )
         for entry in raw_entries
     ]
+
+
+def _load_baseline_examples(example_name: str, variant: str) -> list[ExampleEntry]:
+    return _example_entries(load_examples(example_name, variant))
+
+
+def _load_variant_examples(example_name: str, variant: str) -> list[ExampleEntry]:
+    return _example_entries(get_prompt_override_examples(example_name, variant))
+
+
+def _learning_few_shot_mode(plan: GoalExecutionPlan) -> str:
+    return resolve_few_shot_mode(plan.few_shot_mode)
 
 
 def get_vocabulary_example_strategy(
@@ -56,14 +79,22 @@ def get_vocabulary_example_strategy(
     RAG-03: vocabulary 不走 RAG。即使 plan.few_shot_mode == "rag"，
     也直接回退到 baseline。
     """
-    if plan.few_shot_mode == "rag":
+    few_shot_mode = _learning_few_shot_mode(plan)
+    if few_shot_mode == "off":
+        return ExampleStrategy(examples=[], selection_mode="off")
+    if few_shot_mode == "variant":
+        return ExampleStrategy(
+            examples=_load_variant_examples("vocabulary", plan.variant_id),
+            selection_mode="variant",
+        )
+    if few_shot_mode == "rag":
         # vocabulary 不支持 RAG，始终回退 baseline
         return ExampleStrategy(
             examples=_load_baseline_examples("vocabulary", plan.variant_id),
             selection_mode="baseline",
         )
-    if plan.few_shot_mode != "baseline":
-        return ExampleStrategy(examples=[], selection_mode=plan.few_shot_mode)
+    if few_shot_mode != "baseline":
+        return ExampleStrategy(examples=[], selection_mode="manual")
 
     return ExampleStrategy(
         examples=_load_baseline_examples("vocabulary", plan.variant_id),
@@ -80,7 +111,15 @@ def get_grammar_example_strategy(
     RAG 仅在 GRAMMAR_RAG_ENABLED=true 时激活。
     同步版本不调用 RAG；异步 RAG 编排由 strategy_builder 负责。
     """
-    if plan.few_shot_mode == "rag":
+    few_shot_mode = _learning_few_shot_mode(plan)
+    if few_shot_mode == "off":
+        return ExampleStrategy(examples=[], selection_mode="off")
+    if few_shot_mode == "variant":
+        return ExampleStrategy(
+            examples=_load_variant_examples("grammar", plan.variant_id),
+            selection_mode="variant",
+        )
+    if few_shot_mode == "rag":
         from app.config.settings import get_settings
 
         settings = get_settings()
@@ -94,13 +133,15 @@ def get_grammar_example_strategy(
             examples=_load_baseline_examples("grammar", plan.variant_id),
             selection_mode="baseline",
         )
-    if plan.few_shot_mode not in ("baseline", "rag"):
-        return ExampleStrategy(examples=[], selection_mode=plan.few_shot_mode)
+    if few_shot_mode not in ("baseline", "rag"):
+        return ExampleStrategy(examples=[], selection_mode="manual")
 
     return ExampleStrategy(
         examples=_load_baseline_examples("grammar", plan.variant_id),
         selection_mode="baseline",
     )
+
+
 def get_translation_example_strategy(
     plan: GoalExecutionPlan,
     sentences: list[dict] | None = None,
@@ -110,14 +151,22 @@ def get_translation_example_strategy(
     RAG-03: translation 不走 RAG。即使 plan.few_shot_mode == "rag"，
     也直接回退到 baseline。
     """
-    if plan.few_shot_mode == "rag":
+    few_shot_mode = _learning_few_shot_mode(plan)
+    if few_shot_mode == "off":
+        return ExampleStrategy(examples=[], selection_mode="off")
+    if few_shot_mode == "variant":
+        return ExampleStrategy(
+            examples=_load_variant_examples("translation", plan.variant_id),
+            selection_mode="variant",
+        )
+    if few_shot_mode == "rag":
         # translation 不支持 RAG，始终回退 baseline
         return ExampleStrategy(
             examples=_load_baseline_examples("translation", plan.variant_id),
             selection_mode="baseline",
         )
-    if plan.few_shot_mode != "baseline":
-        return ExampleStrategy(examples=[], selection_mode=plan.few_shot_mode)
+    if few_shot_mode != "baseline":
+        return ExampleStrategy(examples=[], selection_mode="manual")
 
     return ExampleStrategy(
         examples=_load_baseline_examples("translation", plan.variant_id),

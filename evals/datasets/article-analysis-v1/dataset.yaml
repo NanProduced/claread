@@ -1,0 +1,9 @@
+id: article-analysis-v1
+schema_version: eval-dataset-v1
+target: article_analysis
+description: Claread article analysis prompt and workflow eval set.
+case_globs:
+  - cases/*.json
+tags:
+  - prompt
+  - learning-workflow

@@ -23,6 +23,7 @@ logs/
 *.log
 services/api/logs/
 services/api/static/covers/
+evals/runs/
 
 # Local configuration and secrets
 .env

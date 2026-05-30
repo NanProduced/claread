@@ -1,0 +1,36 @@
+[project]
+name = "claread-eval"
+version = "0.1.0"
+description = "Claread Eval Center - deterministic eval harness and grader framework"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pydantic>=2.10,<3.0.0",
+    "pyyaml>=6.0,<7.0",
+    "orjson>=3.11.1,<4.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1,<9.0.0",
+    "pytest-asyncio>=0.24.0,<0.25.0",
+    "ruff>=0.12.8,<0.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["claread_eval"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"

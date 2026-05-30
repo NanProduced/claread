@@ -93,6 +93,11 @@
         "source": "src/claread-render-scene-inspector/index.js"
       },
       {
+        "type": "module",
+        "name": "claread-eval-center",
+        "source": "src/claread-eval-center/index.js"
+      },
+      {
         "type": "layout",
         "name": "claread-observability-groups",
         "source": "src/claread-observability-groups-layout/index.js"

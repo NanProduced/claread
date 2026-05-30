@@ -9,6 +9,7 @@ Claread 后端使用 PostgreSQL 作为业务事实源。Redis 用于缓存和任
 ```text
 infra/migrations/0001_initial_schema.sql
 infra/migrations/0002_reader_scene_and_debug_snapshots.sql
+infra/migrations/0003_eval_control_tables.sql
 ```
 
 `0001` 必须包含：
@@ -28,6 +29,11 @@ infra/migrations/0002_reader_scene_and_debug_snapshots.sql
 - `analysis_records.request_payload_json`
 - `analysis_debug_snapshots`
 - 与 reader scene view / debug snapshot 相关的结构补充
+
+`0003` 当前必须包含：
+
+- `eval_node_probe_runs`
+- Eval Center Node Probe 手动保存记录所需索引
 
 ## 词典数据
 
@@ -70,7 +76,7 @@ infra/scripts/reset_full_keep_dict.sql
 - `vocabulary_book.dict_entry_id` 外键使用 `DO` block 处理重复约束，避免 keep-dict 场景重复执行失败。
 - `analysis_debug_snapshots` 属于业务表，必须纳入 reset 范围。
 
-PostgreSQL Docker init 脚本只在 volume 首次创建时执行。已有 volume 不会因为修改 `0001/0002` 自动升级；现有开发库如果已经创建过，应先执行 `reset_full_keep_dict.sql`，再依次执行新的 `0001_initial_schema.sql` 与 `0002_reader_scene_and_debug_snapshots.sql` 重建业务表，最后执行 `check_schema_baseline.sql` 验证基线完整性。
+PostgreSQL Docker init 脚本只在 volume 首次创建时执行。已有 volume 不会因为修改 `0001/0002/0003` 自动升级；现有开发库如果已经创建过，应先执行 `reset_full_keep_dict.sql`，再依次执行新的 `0001_initial_schema.sql`、`0002_reader_scene_and_debug_snapshots.sql` 与 `0003_eval_control_tables.sql` 重建业务表，最后执行 `check_schema_baseline.sql` 验证基线完整性。
 
 ## Directus 本地配置与业务表 reset
 

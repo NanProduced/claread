@@ -57,7 +57,7 @@ pnpm directus:parse-run:sync-metadata
 
 - 登录邮箱：`admin@claread.dev`
 - 显示名：`claread admin`
-- 密码：`Nan12091209`
+- 密码：由本地 `apps/directus/.env` 或启动环境中的 `ADMIN_PASSWORD` 配置；仓库示例只保留占位值。
 
 Directus 登录使用邮箱，不使用独立用户名。
 

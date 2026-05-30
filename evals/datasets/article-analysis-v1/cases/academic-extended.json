@@ -1,0 +1,16 @@
+{
+  "id": "academic-extended",
+  "text": "The phenomenon of quantum entanglement, first described by Einstein, Podolsky, and Rosen in their seminal 1935 paper, remains one of the most profound and counterintuitive aspects of quantum mechanics. When two particles become entangled, their quantum states become correlated in such a way that the measurement of one particle instantaneously affects the state of the other, regardless of the distance separating them. Einstein famously referred to this as \"spooky action at a distance,\" viewing it as evidence that quantum mechanics was incomplete. However, subsequent experiments, most notably those conducted by Alain Aspect in the 1980s and the more recent loophole-free Bell tests, have confirmed that entanglement is a genuine feature of nature. The implications extend far beyond theoretical physics. Quantum entanglement forms the foundation of emerging technologies such as quantum computing, quantum cryptography, and quantum teleportation. In quantum computing, entangled qubits enable parallel processing capabilities that far exceed those of classical computers for certain problem classes. Quantum key distribution leverages entanglement to create theoretically unbreakable encryption, as any attempt to eavesdrop on the quantum channel inevitably disturbs the entangled state and reveals the intrusion.",
+  "reading_goal": "academic",
+  "reading_variant": "academic_general",
+  "source_type": "user_input",
+  "tags": ["academic", "extended", "physics"],
+  "difficulty": "hard",
+  "target_phenomena": ["academic_vocabulary", "translation_coverage", "term_note"],
+  "extended": true,
+  "expected": {
+    "min_translation_coverage": 0.90,
+    "allowed_warning_codes": [],
+    "max_warning_count": 2
+  }
+}
