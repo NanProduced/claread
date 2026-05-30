@@ -162,7 +162,7 @@ const DailyReaderFooterAnalysis = memo(function DailyReaderFooterAnalysis({
 
           {writingMoves.length > 0 && (
             <View className='daily-footer__section daily-footer__section--folded'>
-              {renderSectionHeader('moves', '写作观察', 'PenTool', writingMoves.length, true)}
+              {renderSectionHeader('moves', '写作借鉴', 'PenTool', writingMoves.length, true)}
               {expandedSections.moves && (
                 <View className='daily-footer__moves'>
                   {writingMoves.map((move, idx) => (
@@ -170,7 +170,10 @@ const DailyReaderFooterAnalysis = memo(function DailyReaderFooterAnalysis({
                       <Text className='daily-footer__move-anchor'>{move.anchor}</Text>
                       <Text className='daily-footer__move-desc'>{move.explanation}</Text>
                       {move.reusablePattern && (
-                        <Text className='daily-footer__move-pattern'>{move.reusablePattern}</Text>
+                        <View className='daily-footer__sn-note'>
+                          <Text className='daily-footer__sn-label'>可借句式</Text>
+                          <Text className='daily-footer__sn-text'>{move.reusablePattern}</Text>
+                        </View>
                       )}
                     </View>
                   ))}

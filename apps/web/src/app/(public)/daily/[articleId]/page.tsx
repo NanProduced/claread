@@ -188,7 +188,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
       <div className="mx-auto mt-16 space-y-16">
         {analysis.writingMoves && analysis.writingMoves.length > 0 ? (
           <div>
-            <h3 className="mb-6 font-sans text-xs font-bold tracking-[0.15em] text-ink">Writing Moves</h3>
+            <h3 className="mb-6 font-sans text-xs font-bold tracking-[0.15em] text-ink">写作借鉴</h3>
             <div className="space-y-10">
               {analysis.writingMoves.map((move, i) => (
                 <div key={`wm-${i}`} className="relative pl-8">
@@ -204,7 +204,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
                   <p className="mt-3 text-[0.95rem] leading-[1.8] text-ink-soft">{move.explanation}</p>
                   {move.reusablePattern ? (
                     <p className="mt-4 font-sans text-[0.85rem] font-medium tracking-wide text-muted">
-                      PATTERN: {move.reusablePattern}
+                      可借句式：{move.reusablePattern}
                     </p>
                   ) : null}
                   {i < analysis.writingMoves!.length - 1 && (

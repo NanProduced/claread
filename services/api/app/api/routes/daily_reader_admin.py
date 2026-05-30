@@ -155,7 +155,7 @@ async def retry_workflow(
     """对已有素材的精读文章重新执行 AI 工作流。"""
     from app.services.daily_reader.pipeline import run_workflow_only
 
-    article = await service.get_article_by_id(request.id)
+    article = await service.get_article_by_id_any_status(request.id)
     if article is None:
         raise HTTPException(status_code=404, detail="Article not found")
 

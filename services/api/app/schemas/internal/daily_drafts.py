@@ -116,12 +116,12 @@ class WritingMove(BaseModel):
     anchor: str = Field(description="The text fragment that demonstrates this writing move")
     paragraph_id: str = Field(description="Paragraph ID where this anchor appears")
     move_type: str = Field(
-        description="Type of writing technique: e.g. metaphor, concession, parallelism, hedging, etc."
+        description="中文短标签，描述可借鉴的写法，如'用时间点制造紧迫感'、'先让步再转折'。不要用 metaphor/hedging/parallelism 等术语标签"
     )
-    explanation: str = Field(description="Why this move is effective and how it works (Chinese)")
+    explanation: str = Field(description="为什么这个写法值得借鉴，如何起作用（中文）")
     reusable_pattern: str | None = Field(
         default=None,
-        description="A reusable pattern the reader can apply in their own writing (English + Chinese)"
+        description="可借句式或简短框架，读者可在自己写作中套用（英文+中文，可选）"
     )
 
 
@@ -140,10 +140,9 @@ class CloseReadingTakeaways(BaseModel):
         description="1-2 difficult sentence analyses"
     )
     writing_moves: list[WritingMove] = Field(
-        ...,
-        min_length=1,
+        default_factory=list,
         max_length=2,
-        description="1-2 writing technique observations"
+        description="0-2 个写作借鉴观察"
     )
     discussion_questions: list[str] = Field(
         ...,

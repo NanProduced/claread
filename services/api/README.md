@@ -93,6 +93,8 @@ infra/migrations/
 
 词典表是高成本数据资产，保护和恢复策略见 `services/api/docs/database.md`。
 
+Daily Reader 的 workflow、reading unit 语义和后续收口项见 `services/api/docs/daily-reader.md`。
+
 ## API 契约
 
 关键 API：

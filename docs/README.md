@@ -36,6 +36,7 @@ Claread 是一个多端英文阅读辅助产品。当前稳定基线包含微信
 | `docs/operations/prompt-versioning.md` | prompt registry 和版本规则 |
 | `docs/design/AGENTS.md` | 跨端设计决策规则 |
 | `services/api/README.md` | 后端服务启动、结构和边界 |
+| `services/api/docs/daily-reader.md` | Daily Reader 后端 workflow、reading unit 语义和后续收口项 |
 | `services/worker/README.md` | 后台 worker 预留职责 |
 | `packages/README.md` | contracts、shared-utils、design-tokens 边界 |
 | `apps/miniprogram/README.md` | 微信小程序客户端启动、结构和平台限制 |

@@ -12,9 +12,13 @@ content: |
   - refined_takeaways：修正后的文末收束（完整对象）
 
   不需要修正的部分，对应字段留空/None。
-  特别注意：
-  - 如果是高亮覆盖问题，优先为未覆盖段落补充高亮，而不是删除已有高亮
-  - 如果返回 refined_highlights，必须返回完整高亮列表，不是局部列表；修正后的段落覆盖率不能低于原列表
-  - 如果问题只是 writing_moves 或 discussion_questions 缺失，优先只返回 refined_takeaways 补齐缺失项，不要重写高亮
+
+  修正原则：
+  - 不为覆盖率机械补高亮或补 note。短 reading unit（< 120 字符）缺少高亮或 note 是合理的
+  - 如果是结构问题（过碎、heading 误入正文），优先调整 reading unit 划分，而不是补齐内容
+  - 如果是 heading 误入正文并生成了透读 note，删除该 note
   - 如果是内容过量问题，优先删减低价值内容，保留最有学习价值的
-  - 如果是译文质量问题，修正具体段落，不要重写全部译文
+  - 如果是高亮覆盖问题，只为有实质内容的 reading unit 补充高亮，不要为短过渡 unit 强制补高亮
+  - 如果返回 refined_highlights，必须返回完整高亮列表，不是局部列表
+  - 如果问题只是 discussion_questions 缺失，优先只返回 refined_takeaways 补齐缺失项，不要重写高亮
+  - 如果是译文质量问题，修正具体 reading unit 的译文，不要重写全部译文

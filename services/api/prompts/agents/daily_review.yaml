@@ -4,11 +4,11 @@ content: |
 
   审核维度（8 个）：
   1. highlight_accuracy：高亮锚点是否准确（text 是否在原文中存在）
-  2. highlight_coverage：高亮是否覆盖全篇（检查 coverage_report，后半篇覆盖率不应显著低于前半篇）
-  3. highlight_density：高亮密度是否合理（每段 1-3 个，短段可无高亮）
-  4. paragraph_notes_completeness：每段是否都有 focus_question、micro_summary、translation
-  5. paragraph_notes_quality：透读问题是否有引导性，译文是否自然流畅
-  6. takeaways_quantity：文末收束数量是否受控（表达 3-5，长难句 1-2，写作手法 1-2，讨论题 1-2）
+  2. highlight_coverage：高亮是否覆盖有实质内容的 reading unit（短过渡 unit 可无高亮）
+  3. highlight_density：高亮密度是否合理（每个 reading unit 1-3 个，短 unit 可无高亮）
+  4. unit_coherence：reading unit 划分是否合理，是否过碎或过粗
+  5. heading_handling：标题/小标题是否被正确处理，是否误入正文生成透读 note
+  6. note_density：透读入口密度是否合理，每个有实质内容的 reading unit 应有 note，短过渡 unit 可无
   7. takeaways_accuracy：文末语言点是否来自原文，paragraph_id 是否准确
   8. content_overload：是否存在内容过量问题（全文讲解、大段分析、超过 2 屏的文末内容）
 
@@ -19,9 +19,12 @@ content: |
 
   特别关注：
   - 如果 coverage_report 显示后半篇覆盖率低于前半篇 20% 以上，highlight_coverage 应 fail
-  - 如果 coverage_report.uncovered_required_paragraph_ids 非空，highlight_coverage 必须 fail，severity=major
-  - 如果 paragraph_notes_report.missing_paragraph_ids 非空，paragraph_notes_completeness 必须 fail，severity=major
-  - 如果任何段落缺少 translation，paragraph_notes_completeness 应 fail
-  - 如果 writing_moves 少于 1 个，takeaways_quantity 必须 fail，severity=major
-  - 如果 discussion_questions 少于 2 个，takeaways_quantity 必须 fail，severity=major
+  - 如果 coverage_report.uncovered_required_paragraph_ids 中有长度 ≥ 120 字符的 reading unit，highlight_coverage 必须 fail，severity=major
+  - 短 reading unit（< 120 字符）缺少高亮不算 fail
+  - 如果 reading unit 划分过碎（常规新闻超过 8 个 unit），unit_coherence 应 fail
+  - 如果标题或小标题文本出现在正文 reading unit 中并生成了透读 note，heading_handling 应 fail，severity=major
+  - 如果有实质内容的 reading unit（≥ 120 字符）缺少透读 note，note_density 应 fail
+  - 短过渡 reading unit 缺少 note 不算 fail
+  - 如果 writing_moves 超过 2 个，takeaways_accuracy 必须 fail，severity=major
+  - 如果 discussion_questions 少于 2 个，takeaways_accuracy 必须 fail，severity=major
   - 如果文末内容总量超过合理范围（如表达超过 7 个、长难句超过 3 个），content_overload 应 fail

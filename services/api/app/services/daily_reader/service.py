@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 
 import asyncpg
 import orjson
@@ -17,12 +17,32 @@ from app.schemas.daily_reader import (
 
 logger = logging.getLogger(__name__)
 
+BUSINESS_TZ = timezone(timedelta(hours=8))
+
+
+def business_today() -> date:
+    return datetime.now(BUSINESS_TZ).date()
+
+
+def encode_cursor(publish_date: date, article_id: str) -> str:
+    return f"{publish_date.isoformat()}|{article_id}"
+
+
+def decode_cursor(cursor: str) -> tuple[date, str]:
+    if "|" in cursor:
+        parts = cursor.split("|", 1)
+        return date.fromisoformat(parts[0]), parts[1]
+    try:
+        return date.fromisoformat(cursor), ""
+    except ValueError:
+        raise ValueError(f"Invalid cursor format: {cursor!r}")
+
 
 async def get_today_articles() -> list[DailyReaderArticleResponse]:
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
-    today = date.today()
+    today = business_today()
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -40,6 +60,24 @@ async def get_today_articles() -> list[DailyReaderArticleResponse]:
 
 
 async def get_article_by_id(article_id: str) -> DailyReaderArticleResponse | None:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM daily_readers WHERE id = $1 AND status = 'published'",
+                article_id,
+            )
+    except asyncpg.UndefinedTableError:
+        logger.warning("daily_readers table does not exist, returning None")
+        return None
+    if row is None:
+        return None
+    return _row_to_article_response(row)
+
+
+async def get_article_by_id_any_status(article_id: str) -> DailyReaderArticleResponse | None:
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
@@ -67,13 +105,19 @@ async def list_articles(
     params: list[object] = [limit + 1]
 
     if cursor:
-        params.append(cursor)
+        try:
+            cursor_date, cursor_id = decode_cursor(cursor)
+        except (ValueError, IndexError):
+            cursor_date = date.fromisoformat(cursor)
+            cursor_id = ""
+        params.extend([cursor_date, cursor_id])
         query = """
             SELECT id, title, subtitle, source, publish_date, difficulty,
                    read_time_minutes, tags, cover_image_url, cover_theme
             FROM daily_readers
-            WHERE status = 'published' AND publish_date < $2
-            ORDER BY publish_date DESC
+            WHERE status = 'published'
+              AND (publish_date < $2 OR (publish_date = $2 AND id < $3))
+            ORDER BY publish_date DESC, id DESC
             LIMIT $1
         """
     else:
@@ -82,7 +126,7 @@ async def list_articles(
                    read_time_minutes, tags, cover_image_url, cover_theme
             FROM daily_readers
             WHERE status = 'published'
-            ORDER BY publish_date DESC
+            ORDER BY publish_date DESC, id DESC
             LIMIT $1
         """
 
@@ -98,7 +142,8 @@ async def list_articles(
 
     next_cursor = None
     if has_more and items:
-        next_cursor = str(items[-1].publish_date)
+        last = items[-1]
+        next_cursor = encode_cursor(last.publish_date, last.id)
 
     return DailyReaderListResponse(items=items, cursor=next_cursor, has_more=has_more)
 

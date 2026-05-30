@@ -98,7 +98,7 @@ class TestArticleList:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        response = client.get("/daily-reader?cursor=2026-04-27&limit=5")
+        response = client.get("/daily-reader?cursor=2026-04-27|daily_2026_04_27_003&limit=5")
         assert response.status_code == 200
 
     @patch("app.services.daily_reader.service.db_connection.DB_POOL")
@@ -235,6 +235,38 @@ async def test_score_article_records_skipped_event_when_model_unavailable():
     event = usage_mock.await_args.args[0]
     assert event.status == "skipped"
     assert event.usage_scope == "system_internal"
+
+
+class TestBusinessTimezone:
+    def test_business_today_uses_utc8(self):
+        from app.services.daily_reader.service import business_today, BUSINESS_TZ
+        from datetime import datetime
+
+        now_utc8 = datetime.now(BUSINESS_TZ).date()
+        assert business_today() == now_utc8
+
+    def test_encode_decode_cursor_roundtrip(self):
+        from app.services.daily_reader.service import encode_cursor, decode_cursor
+
+        d = date(2026, 5, 23)
+        aid = "daily_2026_05_23_002"
+        encoded = encode_cursor(d, aid)
+        decoded_date, decoded_id = decode_cursor(encoded)
+        assert decoded_date == d
+        assert decoded_id == aid
+
+    def test_decode_cursor_rejects_invalid_format(self):
+        from app.services.daily_reader.service import decode_cursor
+
+        with pytest.raises(ValueError):
+            decode_cursor("invalid-no-pipe")
+
+    def test_decode_cursor_backward_compat_date_only(self):
+        from app.services.daily_reader.service import decode_cursor
+
+        cursor_date, cursor_id = decode_cursor("2026-05-23")
+        assert cursor_date == date(2026, 5, 23)
+        assert cursor_id == ""
 
 
 @pytest.fixture

@@ -47,6 +47,7 @@ from app.services.daily_reader.scoring import (
     score_article,
     SCORE_THRESHOLD,
 )
+from app.services.daily_reader.service import business_today
 
 logger = logging.getLogger(__name__)
 
@@ -592,7 +593,7 @@ async def run_workflow_only(article_id: str) -> dict | None:
 async def _assemble_payload(
     article: DiscoveredArticle, score: ArticleScore, state: dict, local_cover_url: str | None = None
 ) -> dict:
-    today = date.today()
+    today = business_today()
     nnn = await _next_sequence_number(today)
     return {
         "id": f"daily_{today.strftime('%Y')}_{today.strftime('%m')}_{today.strftime('%d')}_{nnn:03d}",

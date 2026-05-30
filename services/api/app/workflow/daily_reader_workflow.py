@@ -73,7 +73,10 @@ WORKFLOW_VERSION = "2.0.0"
 HIGHLIGHT_BATCH_SIZE = 3
 MAX_PARAGRAPH_CHARS = 900
 MAX_PARAGRAPH_SENTENCES = 8
-MIN_REQUIRED_HIGHLIGHT_CHARS = 80
+MIN_REQUIRED_HIGHLIGHT_CHARS = 120
+READING_UNIT_TARGET_CHARS = 520
+READING_UNIT_MIN_CHARS = 260
+SECTION_HEADING_MAX_CHARS = 80
 
 
 class DailyReaderState(TypedDict, total=False):
@@ -255,12 +258,13 @@ async def _run_daily_refinement_llm_span(
 
 def light_normalize_node(state: DailyReaderState) -> dict:
     text = state.get("original_text", "")
-    paragraphs = _split_into_paragraphs(text)
+    title = state.get("title", "")
+    raw_blocks = _split_into_raw_blocks(text)
+    classified_blocks = _classify_raw_blocks(raw_blocks, title)
+    reading_units = _plan_reading_units(classified_blocks)
     normalized = []
-    for i, para in enumerate(paragraphs):
-        cleaned = _clean_paragraph(para)
-        if cleaned:
-            normalized.append({"paragraph_id": f"p_{i}", "text": cleaned})
+    for i, unit in enumerate(reading_units):
+        normalized.append({"paragraph_id": f"p_{i}", "text": unit["text"]})
     return {"normalized_paragraphs": normalized}
 
 
@@ -506,7 +510,7 @@ async def quality_review_node(state: DailyReaderState) -> dict:
                 "paragraph_count": len(paragraphs),
                 "highlight_count": len(highlights),
                 "coverage_ratio": coverage_report.get("coverage_ratio"),
-                "missing_note_ids": paragraph_notes_report.get("missing_paragraph_ids"),
+                "missing_note_ids": paragraph_notes_report.get("missing_required_note_ids"),
             },
         )
 
@@ -675,29 +679,198 @@ def build_daily_reader_graph() -> Any:
     return graph.compile()
 
 
-def _split_into_paragraphs(text: str) -> list[str]:
-    if re.search(r"\n\s*\n", text):
-        parts = re.split(r"\n\s*\n", text)
-    elif "\n" in text:
-        parts = re.split(r"\n", text)
-    else:
-        sentences = re.split(r"(?<=[.!?])\s+", text)
-        parts: list[str] = []
-        chunk: list[str] = []
-        for s in sentences:
-            chunk.append(s)
-            if len(chunk) >= 3 or len(" ".join(chunk)) > 300:
-                parts.append(" ".join(chunk))
-                chunk = []
-        if chunk:
-            parts.append(" ".join(chunk))
+def _split_into_raw_blocks(text: str) -> list[dict]:
+    sections = re.split(r"\n\s*\n", text)
+    blocks: list[dict] = []
+    block_idx = 0
+    section_idx = 0
+    section_block_counts: dict[int, int] = {}
 
-    expanded: list[str] = []
-    for part in parts:
-        cleaned = part.strip()
-        if cleaned:
-            expanded.extend(_split_long_paragraph(cleaned))
-    return expanded
+    for section in sections:
+        section_stripped = section.strip()
+        if not section_stripped:
+            section_idx += 1
+            continue
+
+        if "\n" in section_stripped:
+            lines = section_stripped.split("\n")
+        elif len(section_stripped) > MAX_PARAGRAPH_CHARS:
+            lines = re.split(r"(?<=[.!?])\s+", section_stripped)
+        else:
+            lines = [section_stripped]
+
+        count = 0
+        for line in lines:
+            cleaned = _clean_paragraph(line)
+            if cleaned:
+                blocks.append({
+                    "block_id": f"b_{block_idx}",
+                    "text": cleaned,
+                    "section_idx": section_idx,
+                })
+                block_idx += 1
+                count += 1
+        section_block_counts[section_idx] = count
+        section_idx += 1
+
+    for block in blocks:
+        block["is_solo_in_section"] = (
+            section_block_counts.get(block["section_idx"], 0) == 1
+        )
+
+    return blocks
+
+
+def _classify_raw_blocks(blocks: list[dict], title: str) -> list[dict]:
+    title_clean = title.strip().lower() if title else ""
+    for idx, block in enumerate(blocks):
+        text = block["text"].strip()
+        if title_clean and text.lower() == title_clean:
+            block["role"] = "title_duplicate"
+        elif _is_section_heading_candidate(
+            text, block.get("is_solo_in_section", False), idx
+        ):
+            block["role"] = "section_heading"
+        else:
+            block["role"] = "content"
+    return blocks
+
+
+def _is_section_heading_candidate(
+    text: str,
+    is_solo_in_section: bool,
+    block_index: int,
+) -> bool:
+    if block_index == 0:
+        return False
+    if len(text) >= SECTION_HEADING_MAX_CHARS:
+        return False
+    if text and text[-1] in ".!?;:":
+        return False
+    if not is_solo_in_section:
+        return False
+    return True
+
+
+def _plan_reading_units(classified_blocks: list[dict]) -> list[dict]:
+    filtered = [b for b in classified_blocks if b["role"] != "title_duplicate"]
+    if not filtered:
+        return []
+
+    preliminary_groups: list[list[dict]] = []
+    current_group: list[dict] = []
+
+    for block in filtered:
+        if block["role"] == "section_heading" and current_group:
+            preliminary_groups.append(current_group)
+            current_group = []
+        elif block["role"] == "content":
+            current_group.append(block)
+    if current_group:
+        preliminary_groups.append(current_group)
+
+    merged_groups = _merge_short_groups(preliminary_groups)
+
+    reading_units: list[dict] = []
+    for group in merged_groups:
+        if not group:
+            continue
+        units = _merge_content_blocks_into_units(group)
+        reading_units.extend(units)
+
+    return reading_units
+
+
+def _merge_short_groups(groups: list[list[dict]]) -> list[list[dict]]:
+    if not groups:
+        return groups
+
+    result = list(groups)
+    if len(result) > 1:
+        first_chars = sum(len(b["text"]) for b in result[0])
+        if first_chars < READING_UNIT_MIN_CHARS:
+            result[1] = result[0] + result[1]
+            result.pop(0)
+
+    merged = [result[0]] if result else []
+    for i in range(1, len(result)):
+        prev = merged[-1]
+        curr = result[i]
+        total_chars = sum(len(b["text"]) for b in curr)
+        if total_chars < READING_UNIT_MIN_CHARS and prev:
+            prev.extend(curr)
+        else:
+            merged.append(curr)
+    return merged
+
+
+def _merge_content_blocks_into_units(blocks: list[dict]) -> list[dict]:
+    if not blocks:
+        return []
+
+    units: list[dict] = []
+    current_texts: list[str] = []
+    current_len = 0
+
+    for block in blocks:
+        text = block["text"]
+        would_len = current_len + len(text) + (1 if current_texts else 0)
+
+        if current_texts and would_len > READING_UNIT_TARGET_CHARS:
+            merged = " ".join(current_texts)
+            if len(merged) > MAX_PARAGRAPH_CHARS:
+                for chunk in _split_long_paragraph(merged):
+                    units.append({"text": chunk})
+            else:
+                units.append({"text": merged})
+            current_texts = [text]
+            current_len = len(text)
+        else:
+            current_texts.append(text)
+            current_len = would_len
+
+    if current_texts:
+        merged = " ".join(current_texts)
+        if len(merged) > MAX_PARAGRAPH_CHARS:
+            for chunk in _split_long_paragraph(merged):
+                units.append({"text": chunk})
+        else:
+            units.append({"text": merged})
+
+    return _merge_short_units(units)
+
+
+def _merge_short_units(units: list[dict]) -> list[dict]:
+    if not units:
+        return units
+
+    result = [dict(units[0])]
+    for i in range(1, len(units)):
+        prev = result[-1]
+        curr = units[i]
+        if len(prev["text"]) < READING_UNIT_MIN_CHARS:
+            merged_text = prev["text"] + " " + curr["text"]
+            if len(merged_text) <= MAX_PARAGRAPH_CHARS:
+                prev["text"] = merged_text
+            else:
+                result.append(dict(curr))
+        elif len(curr["text"]) < READING_UNIT_MIN_CHARS and i == len(units) - 1:
+            merged_text = prev["text"] + " " + curr["text"]
+            if len(merged_text) <= MAX_PARAGRAPH_CHARS:
+                prev["text"] = merged_text
+            else:
+                result.append(dict(curr))
+        else:
+            result.append(dict(curr))
+
+    return result
+
+
+def _split_into_paragraphs(text: str) -> list[str]:
+    raw_blocks = _split_into_raw_blocks(text)
+    classified_blocks = _classify_raw_blocks(raw_blocks, title="")
+    reading_units = _plan_reading_units(classified_blocks)
+    return [unit["text"] for unit in reading_units]
 
 
 def _split_long_paragraph(text: str) -> list[str]:
@@ -804,6 +977,8 @@ def _check_highlight_coverage(
     return {
         "total_paragraphs": len(para_ids),
         "covered_paragraphs": len(covered_pids),
+        "total_reading_units": len(para_ids),
+        "covered_reading_units": len(covered_pids),
         "coverage_ratio": len(covered_pids) / len(para_ids),
         "first_half_coverage": first_covered / len(first_half) if first_half else 0.0,
         "second_half_coverage": second_covered / len(second_half) if second_half else 0.0,
@@ -846,11 +1021,20 @@ def _check_paragraph_notes_coverage(
         and n.get("translation")
     }
     missing = [pid for pid in para_ids if pid not in note_ids]
+    required_para_ids = [
+        p.get("paragraph_id", "")
+        for p in paragraphs
+        if len(p.get("text", "")) >= MIN_REQUIRED_HIGHLIGHT_CHARS
+    ]
+    missing_required = [pid for pid in required_para_ids if pid not in note_ids]
     return {
         "total_paragraphs": len(para_ids),
         "noted_paragraphs": len(para_ids) - len(missing),
+        "total_reading_units": len(para_ids),
+        "noted_reading_units": len(para_ids) - len(missing),
         "coverage_ratio": (len(para_ids) - len(missing)) / len(para_ids) if para_ids else 0.0,
         "missing_paragraph_ids": missing,
+        "missing_required_note_ids": missing_required,
     }
 
 
