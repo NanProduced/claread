@@ -22,6 +22,7 @@ from app.services.ai_usage import (
     record_ai_usage_event,
     resolve_model_metadata,
 )
+from app.services.analysis.rag_usage_events import record_rag_usage_events_from_result
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.workflow.analyze import (
     ANALYZE_SCHEMA_VERSION,
@@ -79,6 +80,24 @@ async def analyze(payload: AnalyzeRequest) -> AnyRenderSceneModel:
         result = await run_article_analysis_with_state(payload)
         render_scene = result["render_scene"]
         request_id = extract_request_id_from_render_scene(render_scene) or request_id
+        schema_version = extract_schema_version_from_render_scene(render_scene) or ANALYZE_SCHEMA_VERSION
+
+        await record_rag_usage_events_from_result(
+            result=result,
+            user_id=None,
+            task_id=None,
+            record_id=None,
+            request_id=request_id,
+            workflow_name=WORKFLOW_NAME,
+            workflow_version=WORKFLOW_VERSION,
+            schema_version=schema_version,
+            prompt_version=get_prompt_version(),
+            metadata_json={
+                **event_metadata,
+                "entrypoint": "/analyze",
+                "contract_role": "anonymous_trial_or_debug_direct",
+            },
+        )
 
         await record_ai_usage_event(
             AIUsageEventCreate(
@@ -89,8 +108,7 @@ async def analyze(payload: AnalyzeRequest) -> AnyRenderSceneModel:
                 request_id=request_id,
                 workflow_name=WORKFLOW_NAME,
                 workflow_version=WORKFLOW_VERSION,
-                schema_version=extract_schema_version_from_render_scene(render_scene)
-                or ANALYZE_SCHEMA_VERSION,
+                schema_version=schema_version,
                 prompt_version=get_prompt_version(),
                 usage_data=result.get("usage_summary"),
                 latency_ms=int((perf_counter() - started_at) * 1000),

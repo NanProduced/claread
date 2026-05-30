@@ -41,6 +41,7 @@ from app.services.analysis.debug_snapshots import (
 )
 from app.services.analysis.overview_task_service import enqueue_overview_task_if_needed
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.analysis.rag_usage_events import record_rag_usage_events_from_result
 from app.services.analysis.task_service import (
     TaskExecutionPayload,
     claim_next_queued_task,
@@ -251,6 +252,28 @@ async def execute_task(
         )
         request_id = extract_request_id_from_render_scene(render_scene_dict)
         user_facing_state = getattr(render_scene, "user_facing_state", "normal")
+
+        await record_rag_usage_events_from_result(
+            result=result,
+            user_id=user_id,
+            task_id=task_id,
+            record_id=record_id,
+            request_id=request_id,
+            workflow_name=WORKFLOW_NAME,
+            workflow_version=WORKFLOW_VERSION,
+            schema_version=extract_schema_version_from_render_scene(render_scene_dict)
+            or ANALYZE_SCHEMA_VERSION,
+            prompt_version=get_prompt_version(),
+            metadata_json={
+                "entrypoint": "analysis-task-worker",
+                "task_execution_mode": "worker",
+                "source_type": source_type,
+                "reading_goal": reading_goal,
+                "reading_variant": reading_variant,
+                "extended": extended,
+            },
+        )
+
         if (
             isinstance(render_scene_dict, dict)
             and _is_unrenderable_failure(render_scene_dict, user_facing_state)

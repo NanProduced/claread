@@ -71,6 +71,8 @@ const groupedUsageEvents = computed(() => {
   return {
     analysis: events.filter((item) => item.capability_code === "analysis_full"),
     overview: events.filter((item) => item.capability_code === "analysis_overview_hint"),
+    ragEmbedding: events.filter((item) => item.capability_code === "rag_embedding"),
+    ragRerank: events.filter((item) => item.capability_code === "rag_rerank"),
   };
 });
 
@@ -268,7 +270,7 @@ const summaryHelpText = {
   runtime:
     "运行证据先看主任务和概览任务的状态、失败码、时长和版本，再看事件时间线。事件载荷只提取 worker、版本、积分、tokens 和失败信息，不直接堆原始 JSON。",
   usage:
-    "调用消耗先看总 tokens、输入输出、积分和总耗时，再看主解析与概览提示分别占了多少。分组卡显示模型、Prompt 版本和单次调用明细，耗时统一按秒展示。",
+    "调用消耗先看总 tokens、输入输出、积分和总耗时，再看主解析、概览提示与 RAG 检索分别占了多少。分组卡显示模型、Prompt 版本和单次调用明细，耗时统一按秒展示。",
   snapshot:
     "调试快照按预处理、标准化、丢弃日志、运行时、RAG、学术质量和 trace 分层查看。RAG 检索单独看查询句、命中样例和召回链路，其余分区先看结构化事实，再回查原始 JSON。",
 };
@@ -904,6 +906,18 @@ const usageGroups = computed(() => {
       title: "概览提示调用",
       detail: "对应 overview_hint 派生任务的补充消耗。",
       items: groupedUsageEvents.value.overview,
+    },
+    {
+      key: "rag-embedding",
+      title: "RAG Embedding",
+      detail: "语法 RAG 检索 query embedding 的百炼调用消耗。",
+      items: groupedUsageEvents.value.ragEmbedding,
+    },
+    {
+      key: "rag-rerank",
+      title: "RAG Rerank",
+      detail: "语法 RAG 候选样例精排的百炼调用消耗。",
+      items: groupedUsageEvents.value.ragRerank,
     },
   ];
 

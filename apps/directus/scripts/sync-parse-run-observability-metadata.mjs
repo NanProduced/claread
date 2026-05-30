@@ -5,6 +5,9 @@ const DIRECTUS_CONTAINER = process.env.DIRECTUS_CONTAINER ?? "claread-directus";
 const POSTGRES_CONTAINER = process.env.DIRECTUS_POSTGRES_CONTAINER ?? "claread-postgres";
 const POSTGRES_DB = process.env.DIRECTUS_POSTGRES_DB ?? "claread";
 const POSTGRES_USER = process.env.DIRECTUS_POSTGRES_USER ?? "claread";
+const PARSE_RUN_DASHBOARD_ID = "4ad98e26-314a-4f6f-a7b1-2d5f85b8e001";
+const RESET_PARSE_RUN_DASHBOARD =
+  String(process.env.RESET_PARSE_RUN_DASHBOARD ?? "").toLowerCase() === "true";
 
 function readContainerEnv(container, name) {
   try {
@@ -2217,6 +2220,127 @@ const GLOBAL_BOOKMARKS = [
   },
 ];
 
+const DASHBOARDS = [
+  {
+    id: PARSE_RUN_DASHBOARD_ID,
+    name: "Parse Run Observability",
+    icon: "monitoring",
+    color: "#245CB8",
+    note: "解析链路观测首页：记录趋势、任务状态、usage 和最近失败任务。",
+  },
+];
+
+const DASHBOARD_PANELS = [
+  {
+    id: "4ad98e26-314a-4f6f-a7b1-2d5f85b8e101",
+    dashboard: PARSE_RUN_DASHBOARD_ID,
+    name: "解析记录 / 近 7 天",
+    icon: "monitoring",
+    type: "claread-parse-run-records-7d",
+    position_x: 1,
+    position_y: 29,
+    width: 72,
+    height: 12,
+    color: "#245CB8",
+    show_header: true,
+    note: "最近 7 天解析记录数量和日趋势。",
+    options: {
+      targetUrl: "/admin/content/analysis_records",
+    },
+  },
+  {
+    id: "4ad98e26-314a-4f6f-a7b1-2d5f85b8e102",
+    dashboard: PARSE_RUN_DASHBOARD_ID,
+    name: "主解析任务状态",
+    icon: "donut_large",
+    type: "claread-parse-run-task-status",
+    position_x: 37,
+    position_y: 1,
+    width: 18,
+    height: 16,
+    color: "#9A5B00",
+    show_header: true,
+    note: "analysis_tasks 状态分布。",
+    options: {
+      collection: "analysis_tasks",
+      laneLabel: "主解析任务",
+      targetUrl: "/admin/content/analysis_tasks",
+    },
+  },
+  {
+    id: "4ad98e26-314a-4f6f-a7b1-2d5f85b8e103",
+    dashboard: PARSE_RUN_DASHBOARD_ID,
+    name: "Overview 任务状态",
+    icon: "summarize",
+    type: "claread-parse-run-task-status",
+    position_x: 55,
+    position_y: 1,
+    width: 18,
+    height: 16,
+    color: "#11795B",
+    show_header: true,
+    note: "analysis_overview_tasks 状态分布。",
+    options: {
+      collection: "analysis_overview_tasks",
+      laneLabel: "Overview 任务",
+      targetUrl: "/admin/content/analysis_overview_tasks",
+    },
+  },
+  {
+    id: "4ad98e26-314a-4f6f-a7b1-2d5f85b8e104",
+    dashboard: PARSE_RUN_DASHBOARD_ID,
+    name: "解析 Usage",
+    icon: "toll",
+    type: "claread-parse-run-usage-total",
+    position_x: 1,
+    position_y: 17,
+    width: 36,
+    height: 12,
+    color: "#0F6CBD",
+    show_header: true,
+    note: "analysis_full / analysis_overview_hint / rag_embedding / rag_rerank usage 汇总。",
+    options: {
+      targetUrl: "/admin/content/ai_usage_events",
+      breakdownMode: "capability",
+    },
+  },
+  {
+    id: "4ad98e26-314a-4f6f-a7b1-2d5f85b8e105",
+    dashboard: PARSE_RUN_DASHBOARD_ID,
+    name: "最近失败任务",
+    icon: "error",
+    type: "claread-parse-run-recent-failures",
+    position_x: 1,
+    position_y: 1,
+    width: 36,
+    height: 16,
+    color: "#BE123C",
+    show_header: true,
+    note: "合并主解析与 Overview lane 的最近失败任务。",
+    options: {
+      endpointUrl: "/parse-run-observability/recent-failures?limit=5",
+    },
+  },
+  {
+    id: "4ad98e26-314a-4f6f-a7b1-2d5f85b8e106",
+    dashboard: PARSE_RUN_DASHBOARD_ID,
+    name: "模型 Usage 分布",
+    icon: "memory",
+    type: "claread-parse-run-usage-total",
+    position_x: 37,
+    position_y: 17,
+    width: 36,
+    height: 12,
+    color: "#30445F",
+    show_header: true,
+    note: "按 model_provider / model_name 聚合解析与 RAG usage。",
+    options: {
+      targetUrl: "/admin/content/ai_usage_events",
+      breakdownMode: "model",
+    },
+  },
+];
+
 function sqlLiteral(value) {
   if (value == null) return "NULL";
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -2315,7 +2439,20 @@ async function request(token, method, path, body) {
 function buildCleanupSql() {
   const collectionList = COLLECTIONS.map((item) => sqlLiteral(item.collection)).join(", ");
   const bookmarkList = GLOBAL_BOOKMARKS.map((item) => sqlLiteral(item.bookmark)).join(", ");
+  const dashboardPanelCleanupSql = RESET_PARSE_RUN_DASHBOARD
+    ? `
+    DELETE FROM directus_panels
+    WHERE dashboard IN (${DASHBOARDS.map((item) => sqlLiteral(item.id)).join(", ")})
+       OR dashboard IN (
+        SELECT id
+        FROM directus_dashboards
+        WHERE name IN (${DASHBOARDS.map((item) => sqlLiteral(item.name)).join(", ")})
+      );
+`
+    : "";
   return `
+    ${dashboardPanelCleanupSql}
+
     DELETE FROM directus_presets
     WHERE collection IN (${collectionList})
       AND bookmark IS NULL
@@ -2349,6 +2486,62 @@ function buildCleanupSql() {
     INSERT INTO directus_collections (collection, accountability, collapse)
     VALUES ${COLLECTIONS.map((item) => `(${sqlLiteral(item.collection)}, 'all', 'open')`).join(", ")}
     ON CONFLICT (collection) DO NOTHING;
+  `;
+}
+
+function buildDashboardsInsertSql() {
+  return `
+    INSERT INTO directus_dashboards (
+      id,
+      name,
+      icon,
+      note,
+      color
+    )
+    VALUES
+      ${DASHBOARDS.map(
+        (item) =>
+          `(${sqlLiteral(item.id)}, ${sqlLiteral(item.name)}, ${sqlLiteral(item.icon)}, ${sqlLiteral(item.note)}, ${sqlLiteral(item.color)})`,
+      ).join(",\n      ")}
+    ON CONFLICT (id) DO UPDATE SET
+      name = EXCLUDED.name,
+      icon = EXCLUDED.icon,
+      note = EXCLUDED.note,
+      color = EXCLUDED.color;
+  `;
+}
+
+function buildPanelsInsertSql() {
+  return `
+    INSERT INTO directus_panels (
+      id,
+      dashboard,
+      name,
+      icon,
+      color,
+      show_header,
+      note,
+      type,
+      position_x,
+      position_y,
+      width,
+      height,
+      options
+    )
+    VALUES
+      ${DASHBOARD_PANELS.map(
+        (item) =>
+          `(${sqlLiteral(item.id)}, ${sqlLiteral(item.dashboard)}, ${sqlLiteral(item.name)}, ${sqlLiteral(item.icon)}, ${sqlLiteral(item.color)}, ${item.show_header ? "TRUE" : "FALSE"}, ${sqlLiteral(item.note)}, ${sqlLiteral(item.type)}, ${item.position_x}, ${item.position_y}, ${item.width}, ${item.height}, ${sqlLiteral(JSON.stringify(item.options))}::json)`,
+      ).join(",\n      ")}
+    ON CONFLICT (id) DO UPDATE SET
+      dashboard = EXCLUDED.dashboard,
+      name = EXCLUDED.name,
+      icon = EXCLUDED.icon,
+      color = EXCLUDED.color,
+      show_header = EXCLUDED.show_header,
+      note = EXCLUDED.note,
+      type = EXCLUDED.type,
+      options = EXCLUDED.options;
   `;
 }
 
@@ -2506,6 +2699,7 @@ async function verify(token) {
     ["/relations/ai_usage_events/task_id", "ai_usage_events.task_id relation"],
     ["/relations/analysis_debug_snapshots/task_id", "analysis_debug_snapshots.task_id relation"],
     ["/presets", "presets endpoint"],
+    [`/dashboards/${PARSE_RUN_DASHBOARD_ID}`, "Parse Run Observability dashboard"],
   ];
 
   for (const [path, label] of checks) {
@@ -2526,6 +2720,8 @@ async function main() {
   runSql(buildRelationsInsertSql());
   runSql(buildPresetsInsertSql());
   runSql(buildBookmarksInsertSql());
+  runSql(buildDashboardsInsertSql());
+  runSql(buildPanelsInsertSql());
 
   // Relation metadata is written through SQL for local bootstrap convenience.
   // Restart Directus so the running schema cache picks up virtual O2M alias fields.

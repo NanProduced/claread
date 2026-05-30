@@ -21,7 +21,28 @@
       "app": "dist/app.js",
       "api": "dist/api.js"
     },
-    "entries": []
+    "entries": [
+      {
+        "type": "panel",
+        "name": "claread-parse-run-records-7d",
+        "source": "src/records-7d/index.js"
+      },
+      {
+        "type": "panel",
+        "name": "claread-parse-run-task-status",
+        "source": "src/task-status/index.js"
+      },
+      {
+        "type": "panel",
+        "name": "claread-parse-run-usage-total",
+        "source": "src/usage-total/index.js"
+      },
+      {
+        "type": "panel",
+        "name": "claread-parse-run-recent-failures",
+        "source": "src/recent-failures/index.js"
+      }
+    ]
   },
   "pnpm": {
     "executionEnv": {

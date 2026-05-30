@@ -29,6 +29,25 @@ function formatMilliseconds(value) {
   return `${value.toFixed(1)} ms`;
 }
 
+function usageAggregate(value) {
+  if (!value || typeof value !== "object") return null;
+  const aggregate = value.aggregate && typeof value.aggregate === "object" ? value.aggregate : value;
+  return aggregate && typeof aggregate === "object" ? aggregate : null;
+}
+
+function formatUsageTokens(value) {
+  if (!value || typeof value !== "object") return "未记录";
+  if (!value.provider_usage_available) return "Provider 未返回";
+  const aggregate = usageAggregate(value);
+  const total = aggregate?.total_tokens;
+  return typeof total === "number" ? `${total.toLocaleString("zh-CN")} tok` : "未记录";
+}
+
+function formatModelName(value) {
+  const raw = String(value || "").trim();
+  return raw || "未记录";
+}
+
 function roundScore(value) {
   if (typeof value !== "number" || Number.isNaN(value)) return "未记录";
   return value.toFixed(4);
@@ -184,8 +203,12 @@ const ragGroups = computed(() => {
         { label: "Rerank 命中", value: formatInteger(item.rerank_hit_count) },
         { label: "淘汰项", value: formatInteger(droppedExamples.length) },
         { label: "置信度阈值", value: item.confidence_threshold != null ? String(item.confidence_threshold) : "未记录" },
+        { label: "Embedding 模型", value: formatModelName(item.embedding_model) },
+        { label: "Embedding Tokens", value: formatUsageTokens(item.embedding_usage) },
         { label: "Embedding", value: formatMilliseconds(item.embedding_latency_ms) },
         { label: "ANN", value: formatMilliseconds(item.ann_latency_ms) },
+        { label: "Rerank 模型", value: formatModelName(item.rerank_model) },
+        { label: "Rerank Tokens", value: formatUsageTokens(item.rerank_usage) },
         { label: "Rerank", value: formatMilliseconds(item.rerank_latency_ms) },
       ],
       hasSparseExamples: selectedExamples.some((example) => example.outputMissing),
@@ -469,6 +492,7 @@ const hasSparseExamples = computed(() => ragGroups.value.some((group) => group.h
   font-size: 1rem;
   line-height: 1.25;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .rag-note {

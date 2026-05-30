@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import dashscope
 
 from app.config.settings import get_settings
+from app.infra.bailian_usage import provider_metadata_from_response, usage_data_from_response
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +35,31 @@ class RerankResult:
     document: str
 
 
+@dataclass
+class RerankCallResult:
+    results: list[RerankResult]
+    usage_data: dict
+    provider_metadata: dict
+    model: str
+    input_count: int
+    input_chars: int
+    top_n: int
+
+
+@dataclass
+class _RerankBatchResult:
+    results: list[RerankResult]
+    usage_data: dict
+    provider_metadata: dict
+
+
 def _call_rerank_sync(
     query: str,
     documents: list[str],
     top_n: int,
     model: str,
     api_key: str,
-) -> list[RerankResult]:
+) -> _RerankBatchResult:
     """同步调用 dashscope Rerank。
 
     Args:
@@ -81,7 +100,11 @@ def _call_rerank_sync(
             )
         )
 
-    return results
+    return _RerankBatchResult(
+        results=results,
+        usage_data=usage_data_from_response(resp),
+        provider_metadata=provider_metadata_from_response(resp),
+    )
 
 
 async def rerank(
@@ -114,7 +137,7 @@ async def rerank(
 
     actual_top_n = min(top_n, len(documents))
 
-    results = await asyncio.to_thread(
+    batch_result = await asyncio.to_thread(
         _call_rerank_sync,
         query=query,
         documents=documents,
@@ -126,8 +149,68 @@ async def rerank(
     logger.debug(
         "Reranked %d documents, returned top %d (model=%s)",
         len(documents),
-        len(results),
+        len(batch_result.results),
         model,
     )
 
-    return results
+    return batch_result.results
+
+
+async def rerank_with_metadata(
+    query: str,
+    documents: list[str],
+    top_n: int = 5,
+    model: str = "qwen3-rerank",
+) -> RerankCallResult:
+    """对候选文档精排，并返回安全裁剪后的 provider usage metadata。"""
+    if not documents:
+        return RerankCallResult(
+            results=[],
+            usage_data={
+                "provider_usage_available": False,
+                "aggregate": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0,
+                },
+            },
+            provider_metadata={"provider_usage_available": False},
+            model=model,
+            input_count=0,
+            input_chars=len(query or ""),
+            top_n=0,
+        )
+
+    settings = get_settings()
+    api_key = settings.bailian_api_key
+    if not api_key:
+        raise RerankError("BAILIAN_API_KEY is not configured")
+
+    actual_top_n = min(top_n, len(documents))
+    batch_result = await asyncio.to_thread(
+        _call_rerank_sync,
+        query=query,
+        documents=documents,
+        top_n=actual_top_n,
+        model=model,
+        api_key=api_key,
+    )
+
+    logger.debug(
+        "Reranked %d documents, returned top %d (model=%s)",
+        len(documents),
+        len(batch_result.results),
+        model,
+    )
+
+    return RerankCallResult(
+        results=batch_result.results,
+        usage_data=batch_result.usage_data,
+        provider_metadata=batch_result.provider_metadata,
+        model=model,
+        input_count=len(documents),
+        input_chars=len(query or "") + sum(len(document or "") for document in documents),
+        top_n=actual_top_n,
+    )

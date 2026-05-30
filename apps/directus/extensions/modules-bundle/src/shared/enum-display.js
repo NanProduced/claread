@@ -54,6 +54,8 @@ const VARIANT_MAPS = {
   capability_code: {
     analysis_full: { label: "全文解析", tone: "info" },
     analysis_overview_hint: { label: "概览提示派生", tone: "warning" },
+    rag_embedding: { label: "RAG Embedding", tone: "muted" },
+    rag_rerank: { label: "RAG Rerank", tone: "muted" },
     dict_ai_lookup: { label: "词典 AI 查询", tone: "info" },
     reader_ask: { label: "阅读问答", tone: "info" },
     daily_reader_pipeline: { label: "每日精读流水线", tone: "muted" },

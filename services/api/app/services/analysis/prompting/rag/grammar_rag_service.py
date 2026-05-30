@@ -63,6 +63,16 @@ class RAGQueryResult:
     ann_hit_count: int = 0
     rerank_hit_count: int = 0
     confidence_threshold: float | None = None
+    embedding_model: str | None = None
+    embedding_usage: dict[str, Any] | None = None
+    embedding_provider_metadata: dict[str, Any] | None = None
+    embedding_input_count: int = 0
+    embedding_input_chars: int = 0
+    rerank_model: str | None = None
+    rerank_usage: dict[str, Any] | None = None
+    rerank_provider_metadata: dict[str, Any] | None = None
+    rerank_input_count: int = 0
+    rerank_input_chars: int = 0
 
     @property
     def is_fallback(self) -> bool:
@@ -276,8 +286,8 @@ async def _retrieve_from_backend(
     result: RAGQueryResult,
 ) -> list[_ScoredCandidate]:
     """调用外部检索后端（Zilliz + Bailian）。"""
-    from app.infra.bailian_embedding import embed_single
-    from app.infra.bailian_rerank import rerank
+    from app.infra.bailian_embedding import embed_single_with_metadata
+    from app.infra.bailian_rerank import rerank_with_metadata
     from app.infra.zilliz_client import zilliz_search
 
     settings = get_settings()
@@ -305,12 +315,18 @@ async def _retrieve_from_backend(
     result.query_text = query_text
 
     t0 = time.monotonic()
-    query_vector = await embed_single(
+    embedding_result = await embed_single_with_metadata(
         query_text,
         model=settings.bailian_embedding_model,
         dimension=settings.bailian_embedding_dimension,
     )
+    query_vector = embedding_result.embeddings[0]
     result.embedding_latency_ms = (time.monotonic() - t0) * 1000
+    result.embedding_model = embedding_result.model
+    result.embedding_usage = embedding_result.usage_data
+    result.embedding_provider_metadata = embedding_result.provider_metadata
+    result.embedding_input_count = embedding_result.input_count
+    result.embedding_input_chars = embedding_result.input_chars
 
     collection_name = (
         settings.zilliz_collection_grammar_note
@@ -387,15 +403,21 @@ async def _retrieve_from_backend(
         rerank_docs.append(doc)
 
     t0 = time.monotonic()
-    rerank_results = await rerank(
+    rerank_result = await rerank_with_metadata(
         query=query_text,
         documents=rerank_docs,
         top_n=settings.grammar_rag_rerank_topn,
         model=settings.bailian_rerank_model,
     )
+    rerank_results = rerank_result.results
     result.rerank_latency_ms = (time.monotonic() - t0) * 1000
     result.rerank_topn = settings.grammar_rag_rerank_topn
     result.rerank_hit_count = len(rerank_results)
+    result.rerank_model = rerank_result.model
+    result.rerank_usage = rerank_result.usage_data
+    result.rerank_provider_metadata = rerank_result.provider_metadata
+    result.rerank_input_count = rerank_result.input_count
+    result.rerank_input_chars = rerank_result.input_chars
 
     candidates: list[_ScoredCandidate] = []
     rerank_hits: list[dict[str, Any]] = []
@@ -508,6 +530,16 @@ def build_rag_debug_info(result: RAGQueryResult) -> dict[str, Any]:
         "embedding_latency_ms": round(result.embedding_latency_ms, 1),
         "ann_latency_ms": round(result.ann_latency_ms, 1),
         "rerank_latency_ms": round(result.rerank_latency_ms, 1),
+        "embedding_model": result.embedding_model,
+        "embedding_usage": result.embedding_usage,
+        "embedding_provider_metadata": result.embedding_provider_metadata,
+        "embedding_input_count": result.embedding_input_count,
+        "embedding_input_chars": result.embedding_input_chars,
+        "rerank_model": result.rerank_model,
+        "rerank_usage": result.rerank_usage,
+        "rerank_provider_metadata": result.rerank_provider_metadata,
+        "rerank_input_count": result.rerank_input_count,
+        "rerank_input_chars": result.rerank_input_chars,
         "query_sentence_id": result.query_sentence_id,
         "query_sentence_text": result.query_sentence_text,
         "query_text": result.query_text,

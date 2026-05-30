@@ -21,7 +21,13 @@
       "app": "dist/app.js",
       "api": "dist/api.js"
     },
-    "entries": []
+    "entries": [
+      {
+        "type": "endpoint",
+        "name": "parse-run-observability",
+        "source": "src/parse-run-observability/index.js"
+      }
+    ]
   },
   "pnpm": {
     "executionEnv": {
