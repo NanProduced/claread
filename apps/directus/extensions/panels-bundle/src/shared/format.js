@@ -43,3 +43,16 @@ export function formatDayLabel(date) {
     day: "2-digit",
   }).format(date);
 }
+
+export function formatPercent(value) {
+  return `${Math.round(toNumber(value) * 100)}%`;
+}
+
+export function formatDurationSeconds(value) {
+  const seconds = toNumber(value);
+  if (seconds <= 0) return "0 秒";
+  if (seconds < 60) return `${Math.round(seconds)} 秒`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟`;
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)} 小时`;
+  return `${(seconds / 86400).toFixed(1)} 天`;
+}
