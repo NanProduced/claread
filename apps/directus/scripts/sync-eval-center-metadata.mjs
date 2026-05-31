@@ -64,7 +64,7 @@ const COLLECTIONS = [
     collection: "eval_review_notes",
     icon: "rate_review",
     color: "#B45309",
-    note: "Eval Center human review notes linked to runs, cases, A/B reports, or prompt variants. Artifacts remain immutable.",
+    note: "Eval Center human review notes linked to workflow runs, node probe runs, cases, A/B reports, or prompt variants. Artifacts remain immutable.",
     display_template: "{{ target_type }} {{ target_id }} {{ verdict }}",
     sort_field: "date_created",
     sort: 34,
@@ -131,6 +131,7 @@ const FIELD_METADATA = [
   ],
   ["prompt_variant_id", { interface: "input", width: "half", sort: 21 }],
   ["prompt_preview", { interface: "input-rich-text-md", width: "full", sort: 22 }],
+  ["agent_instructions", { interface: "input-rich-text-md", width: "full", sort: 23 }],
   [
     "human_verdict",
     {
@@ -160,10 +161,11 @@ const FIELD_METADATA = [
   ["example_summary_json", jsonMeta(46, "Example summary")],
   ["preprocess_summary_json", jsonMeta(47, "Preprocess summary")],
   ["node_output_json", jsonMeta(48, "Node output")],
-  ["warnings_json", jsonMeta(49, "Warnings")],
-  ["runtime_summary_json", jsonMeta(50, "Runtime summary")],
-  ["trace_refs_json", jsonMeta(51, "Trace refs")],
-  ["error_json", jsonMeta(52, "Error")],
+  ["rag_debug_json", jsonMeta(49, "Sanitized RAG/debug evidence")],
+  ["warnings_json", jsonMeta(50, "Warnings")],
+  ["runtime_summary_json", jsonMeta(51, "Runtime summary")],
+  ["trace_refs_json", jsonMeta(52, "Trace refs")],
+  ["error_json", jsonMeta(53, "Error")],
 ];
 
 const PROMPT_VARIANT_FIELD_METADATA = [
@@ -346,6 +348,7 @@ const REVIEW_NOTES_FIELD_METADATA = [
       options: {
         choices: [
           { text: "Workflow Run", value: "workflow_run" },
+          { text: "Node Probe Run", value: "node_probe_run" },
           { text: "Case Artifact", value: "case_artifact" },
           { text: "A/B Report", value: "ab_report" },
           { text: "Prompt Variant", value: "prompt_variant" },

@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, BookOpen, Check, ChevronDown, ClipboardPaste, FileUp, Link2, X, FileText, Target } from "lucide-react";
+import Image from "next/image";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -183,6 +184,260 @@ function MiniAperturePulse({ className }: { className?: string }) {
   );
 }
 
+function AnalysisLoadingArtwork() {
+  return (
+    <div className="relative h-[18.5rem] w-full max-w-[34rem] sm:h-[20rem]">
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="relative aspect-[16/11] w-full max-w-[29rem]">
+          <Image
+            src="/images/loading/analysis-loading-stage-idle.png"
+            alt=""
+            aria-hidden="true"
+            fill
+            sizes="(max-width: 640px) 80vw, 29rem"
+            className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain"
+          />
+
+          <div className="pointer-events-none absolute inset-0 motion-reduce:hidden" aria-hidden="true">
+            <span className="loading-stage__pulse loading-stage__pulse--outer" />
+            <span className="loading-stage__pulse loading-stage__pulse--inner" />
+            <span className="loading-stage__scan-track" />
+            <span className="loading-stage__scan-core" />
+            <span className="loading-stage__glint loading-stage__glint--left" />
+            <span className="loading-stage__glint loading-stage__glint--right" />
+            <span className="loading-stage__highlight-shimmer" />
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        .loading-stage__pulse {
+          position: absolute;
+          left: 57%;
+          top: 46.2%;
+          transform: translate(-50%, -50%) scale(0.92);
+          border-radius: 999px;
+          border: 1px solid rgba(31, 94, 255, 0.16);
+          opacity: 0;
+          animation: loading-stage-pulse 3.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+        }
+
+        .loading-stage__pulse--outer {
+          width: 26%;
+          height: 26%;
+        }
+
+        .loading-stage__pulse--inner {
+          width: 18%;
+          height: 18%;
+          animation-delay: 0.24s;
+        }
+
+        .loading-stage__scan-track {
+          position: absolute;
+          left: 28%;
+          right: 19%;
+          top: 49.2%;
+          height: 1px;
+          overflow: hidden;
+        }
+
+        .loading-stage__scan-core {
+          position: absolute;
+          left: 28%;
+          top: calc(49.2% - 3px);
+          width: 52%;
+          height: 6px;
+          border-radius: 999px;
+          background: linear-gradient(
+            90deg,
+            rgba(31, 94, 255, 0) 0%,
+            rgba(31, 94, 255, 0.08) 24%,
+            rgba(140, 174, 255, 0.8) 50%,
+            rgba(31, 94, 255, 0.08) 76%,
+            rgba(31, 94, 255, 0) 100%
+          );
+          opacity: 0;
+          filter: blur(0.4px);
+          animation: loading-stage-scan 3.1s ease-in-out infinite;
+        }
+
+        .loading-stage__glint {
+          position: absolute;
+          width: 16px;
+          height: 16px;
+          opacity: 0;
+        }
+
+        .loading-stage__glint::before,
+        .loading-stage__glint::after {
+          content: "";
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          border-radius: 999px;
+          background: rgba(245, 186, 63, 0.92);
+        }
+
+        .loading-stage__glint::before {
+          width: 16px;
+          height: 2px;
+        }
+
+        .loading-stage__glint::after {
+          width: 2px;
+          height: 16px;
+        }
+
+        .loading-stage__glint--left {
+          left: 19.2%;
+          top: 60.8%;
+          animation: loading-stage-glint-left 3.1s ease-in-out infinite;
+        }
+
+        .loading-stage__glint--right {
+          left: 78.4%;
+          top: 29.8%;
+          width: 14px;
+          height: 14px;
+          animation: loading-stage-glint-right 3.1s ease-in-out infinite;
+        }
+
+        .loading-stage__highlight-shimmer {
+          position: absolute;
+          left: 36.2%;
+          top: 63.6%;
+          width: 18.5%;
+          height: 4.2%;
+          overflow: hidden;
+          border-radius: 999px;
+          opacity: 0;
+          animation: loading-stage-shimmer 3.1s ease-in-out infinite;
+        }
+
+        .loading-stage__highlight-shimmer::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 251, 239, 0.15) 32%,
+            rgba(255, 255, 255, 0.82) 50%,
+            rgba(255, 251, 239, 0.15) 68%,
+            rgba(255, 255, 255, 0) 100%
+          );
+          transform: translateX(-115%);
+          animation: loading-stage-shimmer-pass 3.1s ease-in-out infinite;
+        }
+
+        @keyframes loading-stage-pulse {
+          0%,
+          14%,
+          100% {
+            opacity: 0;
+            transform: translate(-50%, -50%) scale(0.92);
+          }
+
+          30% {
+            opacity: 0.42;
+          }
+
+          56% {
+            opacity: 0;
+            transform: translate(-50%, -50%) scale(1.18);
+          }
+        }
+
+        @keyframes loading-stage-scan {
+          0%,
+          16%,
+          100% {
+            opacity: 0;
+            transform: translateX(-18%);
+          }
+
+          28% {
+            opacity: 0.88;
+          }
+
+          62% {
+            opacity: 0.24;
+            transform: translateX(18%);
+          }
+        }
+
+        @keyframes loading-stage-glint-left {
+          0%,
+          38%,
+          100% {
+            opacity: 0;
+            transform: scale(0.72);
+          }
+
+          46% {
+            opacity: 0.88;
+            transform: scale(1);
+          }
+
+          58% {
+            opacity: 0;
+            transform: scale(1.08);
+          }
+        }
+
+        @keyframes loading-stage-glint-right {
+          0%,
+          60%,
+          100% {
+            opacity: 0;
+            transform: scale(0.74);
+          }
+
+          68% {
+            opacity: 0.72;
+            transform: scale(1);
+          }
+
+          79% {
+            opacity: 0;
+            transform: scale(1.06);
+          }
+        }
+
+        @keyframes loading-stage-shimmer {
+          0%,
+          56%,
+          100% {
+            opacity: 0;
+          }
+
+          68%,
+          88% {
+            opacity: 0.72;
+          }
+        }
+
+        @keyframes loading-stage-shimmer-pass {
+          0%,
+          56% {
+            transform: translateX(-115%);
+          }
+
+          86% {
+            transform: translateX(118%);
+          }
+
+          100% {
+            transform: translateX(118%);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function AnalysisLoadingStage({
   title,
   animationSlot,
@@ -206,45 +461,12 @@ function AnalysisLoadingStage({
       </div>
 
       <div className="relative flex w-full max-w-[36rem] flex-col items-center text-center">
-        {animationSlot ?? (
-          <div className="relative h-[18rem] w-full max-w-[32rem]">
-            <div className="absolute inset-x-8 bottom-9 h-20 rounded-[50%] bg-ink/[0.035] blur-xl" />
-            <div className="absolute left-1/2 top-7 h-44 w-64 -translate-x-1/2 rounded-[10px] border border-hairline/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.74),rgba(251,247,238,0.55))] shadow-[0_16px_34px_rgba(23,21,17,0.07)]">
-              <div className="absolute left-7 top-7 h-10 w-px bg-ink/20" />
-              <div className="absolute left-12 top-8 right-8 space-y-3">
-                <span className="block h-2 w-1/2 rounded-full bg-ink/10" />
-                <span className="block h-px w-full rounded-full bg-ink/18" />
-                <span className="block h-px w-[92%] rounded-full bg-ink/14" />
-                <span className="block h-[3px] w-[78%] rounded-full bg-vocab-amber/45" />
-                <span className="block h-px w-[86%] rounded-full bg-ink/14" />
-                <span className="block h-px w-[62%] rounded-full bg-ink/14" />
-              </div>
-              <span className="absolute right-8 top-[5.7rem] h-7 w-10 rounded-l-full border-l border-t border-b border-grammar-violet/50" />
-              <span className="absolute right-12 bottom-8 h-2 w-2 rounded-full bg-structure-green/70" />
-              <span className="absolute left-1/2 top-[5.25rem] h-16 w-16 -translate-x-1/2 rounded-full border border-lens-blue/35 bg-lens-blue/[0.035] shadow-[0_0_34px_rgba(31,94,255,0.16)] motion-safe:animate-pulse motion-reduce:animate-none" />
-              <span
-                className="brand-aperture-mark absolute left-1/2 top-[6rem] h-8 w-8 -translate-x-1/2 bg-[url('/brand/claread-icon-fullcolor.png')] bg-contain bg-center bg-no-repeat"
-              />
-            </div>
+        {animationSlot ?? <AnalysisLoadingArtwork />}
 
-            <div className="absolute bottom-10 left-[calc(50%-10rem)] h-16 w-24 text-ink/80">
-              <div className="absolute bottom-2 left-5 h-8 w-14 rounded-[55%_55%_45%_45%] border border-current bg-reader-paper/40" />
-              <div className="absolute bottom-6 left-1 h-8 w-9 rounded-[50%] border border-current bg-reader-paper/50" />
-              <div className="absolute bottom-[2.75rem] left-1 h-5 w-3 -rotate-12 rounded-t-full border-l border-t border-current" />
-              <div className="absolute bottom-[2.75rem] left-6 h-5 w-3 rotate-12 rounded-t-full border-r border-t border-current" />
-              <div className="absolute bottom-0 left-11 h-4 w-px bg-current" />
-              <div className="absolute bottom-0 left-16 h-4 w-px bg-current" />
-              <div className="absolute bottom-8 left-6 h-1 w-1 rounded-full bg-current" />
-            </div>
-
-            <div className="absolute left-1/2 top-[6.8rem] h-[3px] w-52 -translate-x-1/2 rounded-full bg-lens-blue/30 blur-[1px] motion-safe:animate-pulse motion-reduce:animate-none" />
-          </div>
-        )}
-
-        <p className="font-sans text-[0.76rem] font-bold tracking-[0.16em] text-lens-blue">
+        <p className="mt-1 font-sans text-[0.72rem] font-bold tracking-[0.16em] text-lens-blue/88">
           Claread Reading Desk
         </p>
-        <h2 className="mt-3 font-headline text-[1.55rem] font-semibold leading-tight text-ink sm:text-[1.85rem]">
+        <h2 className="mt-2.5 font-headline text-[1.5rem] font-semibold leading-tight text-ink sm:text-[1.78rem]">
           {title}
         </h2>
       </div>

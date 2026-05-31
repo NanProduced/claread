@@ -1896,6 +1896,61 @@ export default (router, context) => {
   const env = context?.env;
   const database = context?.database;
 
+  router.get("/article-analysis/model-profiles", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    const baseUrl = readEnv(env, "CLAREAD_API_BASE_URL");
+    const adminKey =
+      readEnv(env, "CLAREAD_API_ADMIN_KEY") ||
+      readEnv(env, "DAILY_READER_ADMIN_API_KEY");
+
+    if (!baseUrl || !adminKey) {
+      res.status(503).json({
+        errors: [
+          {
+            message: "Eval proxy is not configured.",
+            extensions: { code: "SERVICE_UNAVAILABLE" },
+          },
+        ],
+      });
+      return;
+    }
+
+    try {
+      const upstream = await fetch(
+        joinUrl(baseUrl, "/eval/article-analysis/model-profiles"),
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            "x-admin-api-key": adminKey,
+          },
+        },
+      );
+
+      if (!upstream.ok) {
+        const errorPayload = await parseUpstreamError(upstream);
+        res.status(upstream.status).json({
+          errors: [
+            {
+              message: errorPayload?.detail || errorPayload?.message || "Upstream request failed.",
+              extensions: {
+                code: "UPSTREAM_EVAL_ERROR",
+                upstream_status: upstream.status,
+              },
+            },
+          ],
+        });
+        return;
+      }
+
+      const payload = await upstream.json();
+      res.json({ data: payload });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post("/article-analysis/node-probe", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 

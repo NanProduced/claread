@@ -2,6 +2,7 @@
 import { useApi } from "@directus/extensions-sdk";
 import { computed, onMounted, ref, watch } from "vue";
 import ResultBlock from "../components/ResultBlock.vue";
+import NodeProbeOutputView from "../components/NodeProbeOutputView.vue";
 import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";
 
 const api = useApi();
@@ -10,6 +11,8 @@ const nodeProbeRunsEndpoint =
   "/items/eval_node_probe_runs?sort=-date_created&limit=50";
 const props = defineProps({
   initialRunId: { type: String, default: "" },
+  initialSource: { type: String, default: "workflow" },
+  initialNodeProbeRunId: { type: String, default: "" },
 });
 const emit = defineEmits(["compare-run"]);
 
@@ -56,7 +59,20 @@ const filteredCaseArtifacts = computed(() => {
   return artifacts;
 });
 
+const nodeProbeLegacyReview = computed(() => {
+  if (!selectedNodeProbeRun.value) return null;
+  if (!selectedNodeProbeRun.value.human_verdict && !selectedNodeProbeRun.value.human_notes) return null;
+  return {
+    verdict: selectedNodeProbeRun.value.human_verdict || null,
+    notes: selectedNodeProbeRun.value.human_notes || "",
+  };
+});
+
 onMounted(() => {
+  if (props.initialSource === "node_probe" && props.initialNodeProbeRunId) {
+    void openNodeProbeRun(props.initialNodeProbeRunId);
+    return;
+  }
   if (props.initialRunId) {
     void openWorkflowRun(props.initialRunId);
     return;
@@ -65,8 +81,12 @@ onMounted(() => {
 });
 
 watch(
-  () => props.initialRunId,
-  (runId) => {
+  () => [props.initialSource, props.initialRunId, props.initialNodeProbeRunId],
+  ([initialSource, runId, nodeProbeRunId]) => {
+    if (initialSource === "node_probe" && nodeProbeRunId) {
+      void openNodeProbeRun(nodeProbeRunId);
+      return;
+    }
     if (runId) void openWorkflowRun(runId);
   },
 );
@@ -131,6 +151,33 @@ async function refreshNodeProbeRuns() {
     error.value = err?.message || "读取 Node Probe runs 失败。请先同步 eval_node_probe_runs metadata。";
   } finally {
     loading.value = false;
+  }
+}
+
+async function fetchNodeProbeRunById(recordId) {
+  if (!recordId) return null;
+  return fetchJson(`/items/eval_node_probe_runs/${encodeURIComponent(recordId)}`);
+}
+
+async function openNodeProbeRun(recordId) {
+  if (!recordId) return;
+  activeSource.value = "node_probe";
+  detailLoading.value = true;
+  error.value = "";
+  if (!nodeProbeRuns.value.length) {
+    await refreshNodeProbeRuns();
+  }
+  const fromList = nodeProbeRuns.value.find((item) => item.id === recordId) || null;
+  try {
+    selectedNodeProbeRun.value = fromList || await fetchNodeProbeRunById(recordId);
+    if (selectedNodeProbeRun.value && !nodeProbeRuns.value.some((item) => item.id === selectedNodeProbeRun.value.id)) {
+      nodeProbeRuns.value = [selectedNodeProbeRun.value, ...nodeProbeRuns.value];
+    }
+  } catch (err) {
+    selectedNodeProbeRun.value = null;
+    error.value = err?.message || "读取 Node Probe 记录失败。";
+  } finally {
+    detailLoading.value = false;
   }
 }
 
@@ -436,7 +483,7 @@ function compareAsCandidate() {
           class="run-row"
           :class="{ 'is-active': selectedNodeProbeRun?.id === run.id }"
           type="button"
-          @click="selectedNodeProbeRun = run"
+          @click="openNodeProbeRun(run.id)"
         >
           <span>
             <strong>{{ run.node_name }} · {{ run.reading_variant }}</strong>
@@ -1002,10 +1049,16 @@ function compareAsCandidate() {
           </div>
         </div>
 
-        <ResultBlock title="Human Review" :open="true">
+        <ReviewNotesPanel
+          title="Node Probe Review Notes"
+          target-type="node_probe_run"
+          :target-id="selectedNodeProbeRun.id"
+        />
+
+        <ResultBlock v-if="nodeProbeLegacyReview" title="Legacy Inline Review" :open="false">
           <div class="review-box">
-            <strong>{{ dash(selectedNodeProbeRun.human_verdict) }}</strong>
-            <p>{{ selectedNodeProbeRun.human_notes || "暂无人工备注。" }}</p>
+            <strong>{{ dash(nodeProbeLegacyReview.verdict) }}</strong>
+            <p>{{ nodeProbeLegacyReview.notes || "暂无人工备注。" }}</p>
           </div>
         </ResultBlock>
 
@@ -1017,6 +1070,7 @@ function compareAsCandidate() {
             schema_identity: selectedNodeProbeRun.schema_identity_json,
             preprocess_summary: selectedNodeProbeRun.preprocess_summary_json,
             example_summary: selectedNodeProbeRun.example_summary_json,
+            rag_debug: selectedNodeProbeRun.rag_debug_json,
             warnings: selectedNodeProbeRun.warnings_json,
             runtime_summary: selectedNodeProbeRun.runtime_summary_json,
             trace_refs: selectedNodeProbeRun.trace_refs_json,
@@ -1024,11 +1078,40 @@ function compareAsCandidate() {
           }) }}</pre>
         </ResultBlock>
 
-        <ResultBlock title="Prompt Preview" :open="true">
-          <pre>{{ selectedNodeProbeRun.prompt_preview || "暂无 prompt preview。" }}</pre>
+        <ResultBlock title="Prompt Packet" :open="true">
+          <div class="review-packet-grid">
+            <section class="review-packet-card">
+              <header>
+                <h4>System Prompt / Agent Instructions</h4>
+              </header>
+              <pre>{{ selectedNodeProbeRun.agent_instructions || "暂无 agent instructions。" }}</pre>
+            </section>
+            <section class="review-packet-card">
+              <header>
+                <h4>Runtime Prompt</h4>
+              </header>
+              <pre>{{ selectedNodeProbeRun.prompt_preview || "暂无 prompt preview。" }}</pre>
+            </section>
+            <section class="review-packet-card">
+              <header>
+                <h4>Prepared Sentences</h4>
+              </header>
+              <pre>{{ formatJson(selectedNodeProbeRun.prepared_sentences_json) || "暂无预处理句子。" }}</pre>
+            </section>
+            <section class="review-packet-card">
+              <header>
+                <h4>Examples Summary</h4>
+              </header>
+              <pre>{{ formatJson(selectedNodeProbeRun.example_summary_json) || "暂无 examples 摘要。" }}</pre>
+            </section>
+          </div>
         </ResultBlock>
 
         <ResultBlock title="Node Output" :open="false">
+          <NodeProbeOutputView :node-name="selectedNodeProbeRun.node_name" :output="selectedNodeProbeRun.node_output_json" />
+        </ResultBlock>
+
+        <ResultBlock title="Raw Node Output JSON" :open="false">
           <pre>{{ formatJson(selectedNodeProbeRun.node_output_json) || "暂无节点输出。" }}</pre>
         </ResultBlock>
 
@@ -1554,6 +1637,25 @@ function compareAsCandidate() {
   margin: 6px 0 0;
   color: var(--theme--foreground-subdued);
   line-height: 1.6;
+}
+
+.review-packet-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.review-packet-card {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  background: var(--theme--background-subdued);
+  padding: 12px;
+}
+
+.review-packet-card header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 pre {

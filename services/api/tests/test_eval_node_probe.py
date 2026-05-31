@@ -272,6 +272,31 @@ def test_eval_node_probe_route_prefers_eval_admin_key(
     run_mock.assert_awaited_once()
 
 
+def test_eval_model_profiles_route_returns_sanitized_summaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(eval_debug, "get_settings", _eval_admin_settings)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    response = client.get(
+        "/eval/article-analysis/model-profiles",
+        headers={"x-admin-api-key": "eval-key"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert payload[0]["profile_name"] == "eval-profile"
+    assert payload[0]["provider"] == "openai_compatible"
+    assert payload[0]["model_name"] == "eval-model"
+    assert payload[0]["annotation_route_default"] is False
+    assert "api_key" not in payload[0]
+    assert "base_url" not in payload[0]
+
+
 @pytest.mark.anyio
 async def test_vocabulary_node_probe_dry_run_builds_prompt_without_llm(
     monkeypatch: pytest.MonkeyPatch,

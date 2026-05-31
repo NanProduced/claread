@@ -69,14 +69,33 @@ const modes = [
 
 const activeMode = ref("node-probe");
 const runHistoryInitialRunId = ref("");
+const runHistoryInitialSource = ref("workflow");
+const runHistoryInitialNodeProbeRunId = ref("");
 const abInitialBaselineRunId = ref("");
 const abInitialCandidateRunId = ref("");
 
 const currentMode = computed(() => modes.find((item) => item.id === activeMode.value) ?? modes[0]);
 
-function openRunHistory(runId) {
-  if (!runId) return;
-  runHistoryInitialRunId.value = runId;
+function openRunHistory(selection) {
+  if (!selection) return;
+  if (typeof selection === "string") {
+    runHistoryInitialSource.value = "workflow";
+    runHistoryInitialRunId.value = selection;
+    runHistoryInitialNodeProbeRunId.value = "";
+    activeMode.value = "run-history";
+    return;
+  }
+  if (selection.source === "node_probe" && selection.recordId) {
+    runHistoryInitialSource.value = "node_probe";
+    runHistoryInitialNodeProbeRunId.value = selection.recordId;
+    runHistoryInitialRunId.value = "";
+    activeMode.value = "run-history";
+    return;
+  }
+  if (!selection.runId) return;
+  runHistoryInitialSource.value = "workflow";
+  runHistoryInitialRunId.value = selection.runId;
+  runHistoryInitialNodeProbeRunId.value = "";
   activeMode.value = "run-history";
 }
 
@@ -125,7 +144,7 @@ function openAbCompare(selection) {
         </div>
       </header>
 
-      <NodeProbeMode v-if="activeMode === 'node-probe'" />
+      <NodeProbeMode v-if="activeMode === 'node-probe'" @open-run-history="openRunHistory" />
       <WorkflowEvalMode v-else-if="activeMode === 'workflow-eval'" @open-run-history="openRunHistory" />
       <AbCompareMode
         v-else-if="activeMode === 'ab-compare'"
@@ -136,6 +155,8 @@ function openAbCompare(selection) {
       <RunHistoryMode
         v-else-if="activeMode === 'run-history'"
         :initial-run-id="runHistoryInitialRunId"
+        :initial-source="runHistoryInitialSource"
+        :initial-node-probe-run-id="runHistoryInitialNodeProbeRunId"
         @compare-run="openAbCompare"
       />
       <JudgeMode v-else-if="activeMode === 'llm-judge'" />

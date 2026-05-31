@@ -78,6 +78,16 @@ class ModelIdentity(BaseModel):
     model_settings: dict[str, Any] = Field(default_factory=dict)
 
 
+class ModelProfileSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_name: str
+    provider: str
+    model_name: str
+    annotation_route_default: bool = False
+    default_profile: bool = False
+
+
 class ArticleAnalysisEvalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

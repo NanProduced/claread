@@ -11,9 +11,11 @@ from uuid import uuid4
 from app.config.settings import Settings, get_settings
 from app.eval_adapter.schemas import (
     ModelIdentity,
+    ModelProfileSummary,
     PromptIdentity,
     RequestSnapshot,
 )
+from app.llm.registry import build_model_registry
 from app.llm.router import resolve_model_config
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.llm.types import ModelSelection
@@ -111,6 +113,34 @@ def model_identity(
         model_name=config.model_name,
         fallback_profiles=list(config.fallback_profiles),
         model_settings=model_settings_payload(config.model_settings),
+    )
+
+
+def list_model_profile_summaries(
+    *,
+    settings: Settings | None = None,
+) -> list[ModelProfileSummary]:
+    registry = build_model_registry(settings or get_settings())
+    annotation_default = registry.route_defaults.get(MODEL_ROUTE_ANNOTATION_GENERATION)
+    default_profile = registry.default_profile
+    summaries = [
+        ModelProfileSummary(
+            profile_name=profile_name,
+            provider=profile.provider,
+            model_name=profile.model_name,
+            annotation_route_default=profile_name == annotation_default,
+            default_profile=profile_name == default_profile,
+        )
+        for profile_name, profile in registry.profiles.items()
+        if profile.is_configured()
+    ]
+    return sorted(
+        summaries,
+        key=lambda item: (
+            not item.annotation_route_default,
+            not item.default_profile,
+            item.profile_name.lower(),
+        ),
     )
 
 

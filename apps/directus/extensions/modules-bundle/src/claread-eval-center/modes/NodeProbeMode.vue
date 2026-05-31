@@ -1,9 +1,13 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import ResultBlock from "../components/ResultBlock.vue";
+import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";
+import NodeProbeOutputView from "../components/NodeProbeOutputView.vue";
 
 const endpoint = "/eval-center/article-analysis/node-probe";
+const modelProfilesEndpoint = "/eval-center/article-analysis/model-profiles";
 const nodeProbeRunsEndpoint = "/items/eval_node_probe_runs";
+const emit = defineEmits(["open-run-history"]);
 
 const nodeOptions = [
   { text: "Grammar", value: "grammar" },
@@ -38,7 +42,7 @@ const sourceTypes = [
 
 const sectionLinks = [
   { id: "eval-summary", label: "结果概览" },
-  { id: "eval-prompt", label: "Prompt" },
+  { id: "eval-prompt-packet", label: "Prompt Packet" },
   { id: "eval-output", label: "节点输出" },
   { id: "eval-evidence", label: "运行证据" },
   { id: "eval-raw", label: "原始数据" },
@@ -52,6 +56,9 @@ const promptMode = ref("baseline");
 const customVariantId = ref("");
 const customFewShotMode = ref("off");
 const modelProfile = ref("");
+const modelProfiles = ref([]);
+const modelProfilesLoading = ref(false);
+const modelProfilesError = ref("");
 const timeoutSeconds = ref(60);
 const traceScope = ref("off");
 const loading = ref(false);
@@ -60,8 +67,7 @@ const error = ref("");
 const saveMessage = ref("");
 const result = ref(null);
 const lastRunMode = ref("");
-const humanVerdict = ref(null);
-const humanNotes = ref("");
+const savedRecordId = ref("");
 
 const canRun = computed(() => text.value.trim().length > 0 && !loading.value);
 const status = computed(() => result.value?.status || "");
@@ -74,6 +80,7 @@ const agentInstructions = computed(() => result.value?.agent_instructions || "")
 const preparedSentences = computed(() => Array.isArray(result.value?.prepared_sentences) ? result.value.prepared_sentences : []);
 const nodeOutput = computed(() => result.value?.node_output || null);
 const traceRefs = computed(() => result.value?.trace_refs || null);
+const ragDebug = computed(() => result.value?.rag_debug || null);
 const promptIdentity = computed(() => result.value?.prompt_identity || null);
 const modelIdentity = computed(() => result.value?.model_identity || null);
 const warnings = computed(() => Array.isArray(result.value?.warnings) ? result.value.warnings : []);
@@ -81,6 +88,19 @@ const preprocessSummary = computed(() => result.value?.preprocess_summary || nul
 const workflowIdentity = computed(() => result.value?.workflow_identity || null);
 const schemaIdentity = computed(() => result.value?.schema_identity || null);
 const isDryRunResult = computed(() => lastRunMode.value === "dry_run");
+const modelProfileOptions = computed(() => modelProfiles.value.map((item) => ({
+  text: `${item.profile_name} · ${item.provider} / ${item.model_name}${item.annotation_route_default ? " · annotation 默认" : ""}`,
+  value: item.profile_name,
+})));
+const selectedModelProfileSummary = computed(() => {
+  const profile = modelProfiles.value.find((item) => item.profile_name === modelProfile.value.trim());
+  if (profile) return profile;
+  const currentProfile = modelIdentity.value?.profile_name;
+  return modelProfiles.value.find((item) => item.profile_name === currentProfile) || null;
+});
+const defaultAnnotationProfile = computed(() =>
+  modelProfiles.value.find((item) => item.annotation_route_default) || null,
+);
 
 const nodeLabel = computed(() => {
   const map = { grammar: "Grammar", vocabulary: "Vocabulary", translation: "Translation" };
@@ -92,6 +112,16 @@ watch(activeNode, () => {
   error.value = "";
   saveMessage.value = "";
   lastRunMode.value = "";
+  savedRecordId.value = "";
+});
+
+watch([text, readingVariant, sourceType, promptMode, customVariantId, customFewShotMode, modelProfile], () => {
+  saveMessage.value = "";
+  savedRecordId.value = "";
+});
+
+onMounted(() => {
+  void loadModelProfiles();
 });
 
 const runModeLabel = computed(() => {
@@ -265,6 +295,38 @@ function sanitizeError(errorValue) {
   };
 }
 
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, {
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.errors?.[0]?.message || `Request failed: ${response.status}`;
+    throw new Error(message);
+  }
+  return payload?.data !== undefined ? payload.data : payload;
+}
+
+async function loadModelProfiles() {
+  modelProfilesLoading.value = true;
+  modelProfilesError.value = "";
+  try {
+    const data = await fetchJson(modelProfilesEndpoint, { method: "GET" });
+    modelProfiles.value = Array.isArray(data) ? data : [];
+  } catch (err) {
+    modelProfiles.value = [];
+    modelProfilesError.value = err?.message || "读取模型列表失败。";
+  } finally {
+    modelProfilesLoading.value = false;
+  }
+}
+
 function buildSavePayload() {
   const snapshot = result.value?.request_snapshot || {};
   return {
@@ -281,6 +343,7 @@ function buildSavePayload() {
     prompt_variant_id: promptIdentity.value?.prompt_variant_id || null,
     prompt_identity_json: promptIdentity.value || {},
     prompt_preview: promptPreview.value || null,
+    agent_instructions: agentInstructions.value || null,
     model_profile: modelProfile.value.trim() || null,
     model_identity_json: stripSensitiveJson(modelIdentity.value || {}),
     workflow_identity_json: workflowIdentity.value || {},
@@ -289,12 +352,11 @@ function buildSavePayload() {
     example_summary_json: summarizeExampleSummary(exampleSummary.value),
     preprocess_summary_json: preprocessSummary.value || {},
     node_output_json: nodeOutput.value,
+    rag_debug_json: ragDebug.value || {},
     warnings_json: warnings.value,
     runtime_summary_json: stripSensitiveJson(runtime.value || {}),
     trace_refs_json: sanitizeTraceRefs(traceRefs.value),
     error_json: sanitizeError(result.value?.error),
-    human_verdict: humanVerdict.value || null,
-    human_notes: humanNotes.value.trim() || null,
     tags: [],
     promote_candidate: false,
   };
@@ -311,25 +373,13 @@ async function runProbe(dryRun) {
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
   try {
-    const response = await fetch(endpoint, {
+    result.value = await fetchJson(endpoint, {
       method: "POST",
-      credentials: "include",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
       body: JSON.stringify(buildRequest(dryRun)),
       signal: controller.signal,
     });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = payload?.errors?.[0]?.message || `Request failed: ${response.status}`;
-      throw new Error(message);
-    }
-
-    result.value = payload?.data !== undefined ? payload.data : payload;
     saveMessage.value = "";
+    savedRecordId.value = "";
   } catch (err) {
     error.value =
       err?.name === "AbortError"
@@ -348,21 +398,12 @@ async function saveNodeProbeRun() {
   saveMessage.value = "";
 
   try {
-    const response = await fetch(nodeProbeRunsEndpoint, {
+    const payload = await fetchJson(nodeProbeRunsEndpoint, {
       method: "POST",
-      credentials: "include",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
       body: JSON.stringify(buildSavePayload()),
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = payload?.errors?.[0]?.message || `Save failed: ${response.status}`;
-      throw new Error(message);
-    }
-    saveMessage.value = `已保存：${payload?.data?.id || "eval_node_probe_runs"}`;
+    savedRecordId.value = payload?.id || "";
+    saveMessage.value = `已保存：${savedRecordId.value || "eval_node_probe_runs"}`;
   } catch (err) {
     error.value = err?.message || "保存 Node Probe 结果失败。";
   } finally {
@@ -390,6 +431,14 @@ function scrollToSection(id) {
 async function copyResultJson() {
   if (!result.value) return;
   await navigator.clipboard.writeText(formatJson(result.value));
+}
+
+function openSavedRecord() {
+  if (!savedRecordId.value) return;
+  emit("open-run-history", {
+    source: "node_probe",
+    recordId: savedRecordId.value,
+  });
 }
 </script>
 
@@ -450,8 +499,23 @@ async function copyResultJson() {
             <v-select v-model="customFewShotMode" :items="fewShotModes" />
           </label>
           <label class="field-block">
-            <span>模型 Profile <i :title="help('留空时使用 services/api 当前 annotation route 默认模型。可参考 services/api/config/model-profiles.json。')">?</i></span>
-            <v-input v-model="modelProfile" placeholder="使用默认 route" />
+            <span>模型 Profile <i :title="help('默认使用 annotation_generation route 的默认 profile。这里提供安全摘要下拉，支持保留手动输入。')">?</i></span>
+            <v-select
+              v-model="modelProfile"
+              :items="modelProfileOptions"
+              :loading="modelProfilesLoading"
+              :allow-other="true"
+              placeholder="使用 annotation 默认模型"
+            />
+            <small class="field-hint">
+              {{
+                selectedModelProfileSummary
+                  ? `${selectedModelProfileSummary.provider} / ${selectedModelProfileSummary.model_name}`
+                  : defaultAnnotationProfile
+                    ? `默认 annotation route: ${defaultAnnotationProfile.profile_name} · ${defaultAnnotationProfile.provider} / ${defaultAnnotationProfile.model_name}`
+                    : "未加载到模型摘要，将继续沿用 services/api 当前默认路由。"
+              }}
+            </small>
           </label>
           <label class="field-block">
             <span>超时秒数</span>
@@ -477,7 +541,9 @@ async function copyResultJson() {
           </v-button>
         </div>
 
+        <p class="persistence-note">“预览 Prompt”会执行真实预处理和 example 选择，但不会调用目标节点 LLM；“运行节点”才会产出节点输出与对应 token 统计。</p>
         <p class="persistence-note">当前运行结果不会自动保存。需要保留时点击“保存本次结果”，它会写入 eval_node_probe_runs；正式 workflow eval 仍保存在 evals/runs。</p>
+        <p v-if="modelProfilesError" class="error-message">{{ modelProfilesError }}</p>
         <p v-if="error" class="error-message">{{ error }}</p>
       </section>
 
@@ -500,32 +566,23 @@ async function copyResultJson() {
         </div>
 
         <div v-if="result" class="save-panel">
-          <label class="field-block">
-            <span>人工结论</span>
-            <v-select
-              v-model="humanVerdict"
-              :items="[
-                { text: '未标注', value: null },
-                { text: 'Good', value: 'good' },
-                { text: 'Bad', value: 'bad' },
-                { text: 'Mixed', value: 'mixed' },
-                { text: 'Needs Review', value: 'needs_review' },
-              ]"
-            />
-          </label>
-          <label class="field-block notes-field">
-            <span>人工备注</span>
-            <v-textarea
-              v-model="humanNotes"
-              :rows="2"
-              placeholder="记录模板化、过度自由、值得进入候选集等观察..."
-            />
-          </label>
+          <div class="save-copy">
+            <strong>保存当前 probe 结果</strong>
+            <p>保存后可直接跳转运行历史，并使用统一的 Review Notes 机制记录 verdict、观察和 promote candidate 决策。</p>
+          </div>
           <div class="save-actions">
             <v-button small :loading="saving" @click="saveNodeProbeRun">保存本次结果</v-button>
+            <v-button v-if="savedRecordId" small secondary @click="openSavedRecord">前往运行历史</v-button>
             <span v-if="saveMessage">{{ saveMessage }}</span>
           </div>
         </div>
+
+        <ReviewNotesPanel
+          v-if="savedRecordId"
+          title="Node Probe Review Notes"
+          target-type="node_probe_run"
+          :target-id="savedRecordId"
+        />
 
         <nav v-if="result" class="section-nav" aria-label="结果分区">
           <button v-for="link in sectionLinks" :key="link.id" type="button" @click="scrollToSection(link.id)">
@@ -603,34 +660,54 @@ async function copyResultJson() {
           </section>
         </div>
 
-        <ResultBlock id="eval-prompt" :title="`Runtime Prompt（发送给 ${nodeLabel.toLowerCase()} agent 的 prompt）`" :open="Boolean(result)">
-          <pre>{{ promptPreview || `点击"预览 Prompt"或"运行 ${nodeLabel} 节点"后展示。` }}</pre>
+        <ResultBlock id="eval-prompt-packet" :title="`${nodeLabel} Prompt Packet`" :open="Boolean(result)">
+          <div class="packet-layout">
+            <section class="packet-card">
+              <header>
+                <h4>System Prompt / Agent Instructions</h4>
+                <small>业务 agent instructions</small>
+              </header>
+              <pre>{{ agentInstructions || "运行后展示。当前 eval override v1 不覆盖 agent instructions。" }}</pre>
+            </section>
+
+            <section class="packet-card">
+              <header>
+                <h4>Runtime Prompt</h4>
+                <small>{{ isDryRunResult ? "已预览，不调用节点 LLM" : "节点实际发送 prompt" }}</small>
+              </header>
+              <pre>{{ promptPreview || `点击"预览 Prompt"或"运行 ${nodeLabel} 节点"后展示。` }}</pre>
+            </section>
+
+            <section class="packet-card">
+              <header>
+                <h4>Examples</h4>
+                <small>{{ exampleSummary?.selection_mode || "—" }} / {{ exampleSummary?.example_count ?? 0 }} 条</small>
+              </header>
+              <pre>{{ formatJson({ summary: exampleSummary, examples }) || "暂无 examples。" }}</pre>
+            </section>
+
+            <section class="packet-card">
+              <header>
+                <h4>Prepared Sentences</h4>
+                <small>prepare_input() 真实切句结果</small>
+              </header>
+              <div v-if="preparedSentences.length" class="sentence-list">
+                <div v-for="sentence in preparedSentences" :key="sentence.sentence_id" class="sentence-row">
+                  <code>{{ sentence.sentence_id }}</code>
+                  <span>{{ sentence.text }}</span>
+                </div>
+              </div>
+              <p v-else class="muted-line">运行后展示 prepare_input() 产出的句子。</p>
+            </section>
+          </div>
         </ResultBlock>
 
         <ResultBlock id="eval-output" :title="`${nodeLabel} Draft Output`" :open="Boolean(result) && !isDryRunResult">
-          <p v-if="isDryRunResult" class="muted-line">Dry run 只预览 Prompt，没有调用 LLM。</p>
-          <pre v-else>{{ formatJson(nodeOutput) || "暂无节点输出。" }}</pre>
+          <p v-if="isDryRunResult" class="muted-line">Dry run 已完成预处理与 prompt 组装，但没有调用目标节点 LLM。</p>
+          <NodeProbeOutputView v-else :node-name="activeNode" :output="nodeOutput" />
         </ResultBlock>
 
-        <ResultBlock id="eval-evidence" title="Prepared Sentences（真实预处理切句）">
-          <div v-if="preparedSentences.length" class="sentence-list">
-            <div v-for="sentence in preparedSentences" :key="sentence.sentence_id" class="sentence-row">
-              <code>{{ sentence.sentence_id }}</code>
-              <span>{{ sentence.text }}</span>
-            </div>
-          </div>
-          <p v-else class="muted-line">运行后展示 prepare_input() 产出的句子。</p>
-        </ResultBlock>
-
-        <ResultBlock title="Examples">
-          <pre>{{ formatJson({ summary: exampleSummary, examples }) || "暂无 examples。" }}</pre>
-        </ResultBlock>
-
-        <ResultBlock :title="`Agent Instructions（业务 ${nodeLabel.toLowerCase()} agent instructions）`">
-          <pre>{{ agentInstructions || "运行后展示。当前 eval override v1 不覆盖 agent instructions。" }}</pre>
-        </ResultBlock>
-
-        <ResultBlock title="Observations / Trace">
+        <ResultBlock id="eval-evidence" title="Observations / Trace">
           <div class="observation-grid">
             <div>
               <span>Warnings</span>
@@ -648,7 +725,11 @@ async function copyResultJson() {
               <small>{{ dash(traceRefs?.langsmith_url || traceRefs?.run_id) }}</small>
             </div>
           </div>
-          <pre>{{ formatJson({ warnings, preprocess_summary: preprocessSummary, runtime_summary: runtime, trace_refs: traceRefs }) }}</pre>
+          <pre>{{ formatJson({ warnings, preprocess_summary: preprocessSummary, runtime_summary: runtime, rag_debug: ragDebug, trace_refs: traceRefs }) }}</pre>
+        </ResultBlock>
+
+        <ResultBlock title="Raw Node Output JSON">
+          <pre>{{ formatJson(nodeOutput) || "暂无节点输出。" }}</pre>
         </ResultBlock>
 
         <ResultBlock id="eval-raw" title="完整结果 JSON">
@@ -745,6 +826,14 @@ async function copyResultJson() {
   font-size: 11px;
 }
 
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .source-input {
   margin-bottom: 16px;
 }
@@ -770,7 +859,6 @@ async function copyResultJson() {
 
 .save-panel {
   display: grid;
-  grid-template-columns: minmax(160px, 0.45fr) minmax(240px, 1fr);
   gap: 12px;
   margin-bottom: 16px;
   border: 1px solid var(--theme--border-color);
@@ -779,11 +867,23 @@ async function copyResultJson() {
   padding: 12px;
 }
 
+.save-copy strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.save-copy p {
+  margin: 0;
+  color: var(--theme--foreground-subdued);
+  line-height: 1.6;
+}
+
 .save-actions {
   display: flex;
-  grid-column: 1 / -1;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -898,6 +998,37 @@ async function copyResultJson() {
 .status-pill.variant,
 .status-pill.custom {
   background: var(--theme--warning-background);
+}
+
+.packet-layout {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.packet-card {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  background: var(--theme--background-subdued);
+  padding: 12px;
+}
+
+.packet-card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.packet-card h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.packet-card small {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
 }
 
 pre {
