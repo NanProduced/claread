@@ -348,6 +348,263 @@ async function parseUpstreamError(response) {
   }
 }
 
+const VALID_ADAPTER_KINDS = ["fake", "in_process"];
+const VALID_EVAL_PURPOSES = ["dataset_regression", "prompt_experiment", "manual_debug"];
+const VALID_RAG_MODES = ["off", "baseline", "rag", "rag_fallback", "settings"];
+
+const CONFIG_PRESETS = [
+  {
+    id: "article-analysis-baseline-fake",
+    label: "Baseline Fake（无 LLM，验证流程）",
+    file: "article-analysis-baseline-fake.yaml",
+  },
+  {
+    id: "article-analysis-no-few-shot-fake",
+    label: "No-Few-Shot Fake（无 LLM，关闭 few-shot）",
+    file: "article-analysis-no-few-shot-fake.yaml",
+  },
+  {
+    id: "smoke-fake",
+    label: "Smoke Fake（冒烟测试）",
+    file: "smoke-fake.yaml",
+  },
+];
+
+function generateRunId(prefix) {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${prefix || "eval"}-${ts}-${rand}`;
+}
+
+function resolveEvalsRoot(env) {
+  const configured = readEnv(env, "CLAREAD_EVALS_ROOT");
+  if (configured) return configured;
+  const runsRoot = resolveRunsRoot(env);
+  return path.dirname(runsRoot);
+}
+
+function datasetsDir(evalsRoot) {
+  return path.join(evalsRoot, "datasets");
+}
+
+function runConfigsDir(evalsRoot) {
+  return path.join(evalsRoot, "run-configs");
+}
+
+async function listDirectories(dirPath) {
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+async function listYamlIds(dirPath) {
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && (entry.name.endsWith(".yaml") || entry.name.endsWith(".yml")))
+      .map((entry) => entry.name.replace(/\.(yaml|yml)$/, ""))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function buildYamlContent(config) {
+  const lines = [];
+  lines.push(`run_id: "${config.run_id}"`);
+  lines.push(`dataset_id: "${config.dataset_id}"`);
+  lines.push(`mode: ${config.mode || "workflow"}`);
+  lines.push(`eval_purpose: ${config.eval_purpose || "dataset_regression"}`);
+  lines.push(`adapter_kind: ${config.adapter_kind || "fake"}`);
+  lines.push(`prompt_version: null`);
+  if (config.prompt_variant_id) {
+    lines.push(`prompt_variant_id: "${config.prompt_variant_id}"`);
+    lines.push(`prompt_variant_path: ../prompt-variants/article-analysis/${config.prompt_variant_id}/manifest.yaml`);
+  } else {
+    lines.push(`prompt_variant_id: null`);
+  }
+  lines.push(`workflow_version: null`);
+  lines.push(`model_selection: {}`);
+  lines.push(`rag_mode: ${config.rag_mode || "off"}`);
+  lines.push(`trace_scope: ${config.trace_scope || "off"}`);
+  lines.push(`trace_project: claread-eval`);
+  lines.push(`timeout_seconds: ${config.timeout_seconds || 120}`);
+  lines.push(`runs_root: ../runs`);
+  lines.push(`datasets_root: ../datasets`);
+  lines.push(`fake_latency_seconds: 0.0`);
+  return lines.join("\n") + "\n";
+}
+
+function validateWorkflowRunRequest(body) {
+  const errors = [];
+  if (!body.dataset_id || typeof body.dataset_id !== "string") {
+    errors.push({ field: "dataset_id", message: "dataset_id is required." });
+  }
+  if (body.adapter_kind && !VALID_ADAPTER_KINDS.includes(body.adapter_kind)) {
+    errors.push({ field: "adapter_kind", message: `adapter_kind must be one of: ${VALID_ADAPTER_KINDS.join(", ")}.` });
+  }
+  if (body.eval_purpose && !VALID_EVAL_PURPOSES.includes(body.eval_purpose)) {
+    errors.push({ field: "eval_purpose", message: `eval_purpose must be one of: ${VALID_EVAL_PURPOSES.join(", ")}.` });
+  }
+  if (body.rag_mode && !VALID_RAG_MODES.includes(body.rag_mode)) {
+    errors.push({ field: "rag_mode", message: `rag_mode must be one of: ${VALID_RAG_MODES.join(", ")}.` });
+  }
+  if (body.run_id && !isSafeFileId(body.run_id)) {
+    errors.push({ field: "run_id", message: "run_id contains unsafe characters." });
+  }
+  return errors;
+}
+
+async function sendWorkflowRequest(req, res, env) {
+  const evalsRoot = resolveEvalsRoot(env);
+  const config = req.body || {};
+
+  if (config.preset_id) {
+    const preset = CONFIG_PRESETS.find((p) => p.id === config.preset_id);
+    if (!preset) {
+      res.status(422).json({
+        errors: [{
+          message: `Unknown preset "${config.preset_id}". Available: ${CONFIG_PRESETS.map((p) => p.id).join(", ")}`,
+          extensions: { code: "VALIDATION_ERROR", field: "preset_id" },
+        }],
+      });
+      return;
+    }
+
+    if (config.run_id && !isSafeFileId(config.run_id)) {
+      res.status(422).json({
+        errors: [{
+          message: "run_id contains unsafe characters.",
+          extensions: { code: "VALIDATION_ERROR", field: "run_id" },
+        }],
+      });
+      return;
+    }
+
+    const yamlPath = path.join(runConfigsDir(evalsRoot), preset.file);
+    let yamlContent;
+    try {
+      yamlContent = await readFile(yamlPath, "utf-8");
+    } catch {
+      res.status(422).json({
+        errors: [{
+          message: `Preset config file "${preset.file}" not found at ${yamlPath}.`,
+          extensions: { code: "VALIDATION_ERROR", field: "preset_id" },
+        }],
+      });
+      return;
+    }
+
+    const runId = config.run_id || generateRunId("fake");
+    const runDirPath = path.join(resolveRunsRoot(env), runId);
+    const runDirExists = await fileExists(runDirPath);
+    if (runDirExists) {
+      res.status(409).json({
+        errors: [{
+          message: `Run directory "${runId}" already exists. Choose a different run_id or let the system generate one.`,
+          extensions: { code: "CONFLICT", field: "run_id" },
+        }],
+      });
+      return;
+    }
+
+    let patchedYaml = yamlContent.replace(/^run_id:\s*.+$/m, `run_id: "${runId}"`);
+
+    const configFileName = `ui-${runId}.yaml`;
+    const cliCommand = `cd evals && uv run python -m claread_eval.runner.entrypoint --config run-configs/${configFileName}`;
+
+    res.status(201).json({
+      data: {
+        status: "pending_manual_execution",
+        run_id: runId,
+        preset_id: config.preset_id,
+        config: null,
+        yaml_content: patchedYaml,
+        config_file: `evals/run-configs/${configFileName}`,
+        recommended_cli_command: cliCommand,
+        message: "Config generated. Save the YAML content to the path below, then run the CLI command. This will NOT auto-execute.",
+      },
+    });
+    return;
+  }
+
+  const validationErrors = validateWorkflowRunRequest(config);
+  if (config.prompt_variant_id) {
+    validationErrors.push({
+      field: "prompt_variant_id",
+      message: "Custom config v1 does not support prompt_variant_id. Use a preset (e.g. article-analysis-no-few-shot-fake) or edit the YAML manually.",
+    });
+  }
+  if (validationErrors.length > 0) {
+    res.status(422).json({
+      errors: validationErrors.map((e) => ({
+        message: e.message,
+        extensions: { code: "VALIDATION_ERROR", field: e.field },
+      })),
+    });
+    return;
+  }
+
+  const runId = config.run_id || generateRunId(config.adapter_kind === "fake" ? "fake" : "eval");
+
+  const dsDir = path.join(datasetsDir(evalsRoot), config.dataset_id);
+  const datasetYaml = path.join(dsDir, "dataset.yaml");
+  const datasetExists = await fileExists(datasetYaml);
+  if (!datasetExists) {
+    res.status(422).json({
+      errors: [{
+        message: `Dataset "${config.dataset_id}" not found at ${dsDir}.`,
+        extensions: { code: "VALIDATION_ERROR", field: "dataset_id" },
+      }],
+    });
+    return;
+  }
+
+  const runDirPath = path.join(resolveRunsRoot(env), runId);
+  const runDirExists = await fileExists(runDirPath);
+  if (runDirExists) {
+    res.status(409).json({
+      errors: [{
+        message: `Run directory "${runId}" already exists. Choose a different run_id or let the system generate one.`,
+        extensions: { code: "CONFLICT", field: "run_id" },
+      }],
+    });
+    return;
+  }
+
+  const fullConfig = {
+    run_id: runId,
+    dataset_id: config.dataset_id,
+    mode: "workflow",
+    eval_purpose: config.eval_purpose || "dataset_regression",
+    adapter_kind: config.adapter_kind || "fake",
+    prompt_variant_id: config.prompt_variant_id || null,
+    rag_mode: config.rag_mode || "off",
+    trace_scope: config.trace_scope || "off",
+    timeout_seconds: config.timeout_seconds || 120,
+  };
+
+  const yamlContent = buildYamlContent(fullConfig);
+  const configFileName = `ui-${runId}.yaml`;
+  const cliCommand = `cd evals && uv run python -m claread_eval.runner.entrypoint --config run-configs/${configFileName}`;
+
+  res.status(201).json({
+    data: {
+      status: "pending_manual_execution",
+      run_id: runId,
+      preset_id: null,
+      config: fullConfig,
+      yaml_content: yamlContent,
+      config_file: `evals/run-configs/${configFileName}`,
+      recommended_cli_command: cliCommand,
+      message: "Config generated. Save the YAML content to the path below, then run the CLI command. This will NOT auto-execute.",
+    },
+  });
+}
+
 export default (router, context) => {
   const env = context?.env;
 
@@ -531,6 +788,57 @@ export default (router, context) => {
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
+    }
+  });
+
+  router.get("/workflow-runs/datasets", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const evalsRoot = resolveEvalsRoot(env);
+      const dsDir = datasetsDir(evalsRoot);
+      const datasetIds = await listDirectories(dsDir);
+      const datasets = [];
+      for (const id of datasetIds) {
+        const yamlPath = path.join(dsDir, id, "dataset.yaml");
+        const exists = await fileExists(yamlPath);
+        datasets.push({ id, has_dataset_yaml: exists });
+      }
+      res.json({ data: datasets });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/workflow-runs/config-presets", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const evalsRoot = resolveEvalsRoot(env);
+      const configsDir = runConfigsDir(evalsRoot);
+      const configIds = await listYamlIds(configsDir);
+      const presets = [];
+      for (const id of configIds) {
+        const yamlPath = path.join(configsDir, `${id}.yaml`);
+        const ymlPath = path.join(configsDir, `${id}.yml`);
+        const exists = (await fileExists(yamlPath)) || (await fileExists(ymlPath));
+        if (exists) {
+          presets.push({ id, href: `/eval-center/workflow-runs/config-presets/${id}` });
+        }
+      }
+      res.json({ data: presets });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/workflow-runs/requests", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      await sendWorkflowRequest(req, res, env);
+    } catch (error) {
+      next(error);
     }
   });
 };

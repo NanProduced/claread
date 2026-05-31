@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import AbCompareMode from "./modes/AbCompareMode.vue";
 import NodeProbeMode from "./modes/NodeProbeMode.vue";
 import RunHistoryMode from "./modes/RunHistoryMode.vue";
+import WorkflowEvalMode from "./modes/WorkflowEvalMode.vue";
 import PlaceholderPanel from "./components/PlaceholderPanel.vue";
 
 const modes = [
@@ -18,8 +19,8 @@ const modes = [
     id: "workflow-eval",
     label: "Workflow 评测",
     kicker: "Workflow Eval",
-    description: "端到端运行 article analysis workflow，验证 render scene、drop log 和整体输出质量。",
-    ready: false,
+    description: "生成 eval run config 并在终端执行。历史 run 回看请使用运行历史模式。",
+    ready: true,
     questions: ["整条 workflow 是否稳定完成？", "render scene 是否可渲染且信息完整？", "prompt 或 few-shot 改动是否带来整体提升？"],
   },
   {
@@ -100,6 +101,7 @@ const currentMode = computed(() => modes.find((item) => item.id === activeMode.v
       </header>
 
       <NodeProbeMode v-if="activeMode === 'node-probe'" />
+      <WorkflowEvalMode v-else-if="activeMode === 'workflow-eval'" />
       <AbCompareMode v-else-if="activeMode === 'ab-compare'" />
       <RunHistoryMode v-else-if="activeMode === 'run-history'" />
       <PlaceholderPanel v-else :mode="currentMode" />
