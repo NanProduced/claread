@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import ResultBlock from "../components/ResultBlock.vue";
 import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";
 
+const api = useApi();
 const runsEndpoint = "/eval-center/runs";
 const nodeProbeRunsEndpoint =
   "/items/eval_node_probe_runs?sort=-date_created&limit=50";
@@ -20,9 +21,18 @@ const selectedRunId = ref("");
 const selectedRun = ref(null);
 const selectedCaseArtifact = ref(null);
 const selectedAbReport = ref(null);
+const selectedJudgeReport = ref(null);
 const nodeProbeRuns = ref([]);
 const selectedNodeProbeRun = ref(null);
 const caseFilter = ref("all");
+const judgeRubrics = ref([]);
+const judgeRequests = ref([]);
+const selectedJudgeRubricId = ref("");
+const judgeAdapterKind = ref("fake");
+const judgeMaxCases = ref(50);
+const judgeLoading = ref(false);
+const judgeSubmitting = ref(false);
+const judgeError = ref("");
 
 const filteredCaseArtifacts = computed(() => {
   const artifacts = selectedRun.value?.case_artifacts || [];
@@ -127,11 +137,13 @@ async function selectRun(runId) {
   selectedRunId.value = runId;
   selectedCaseArtifact.value = null;
   selectedAbReport.value = null;
+  selectedJudgeReport.value = null;
   caseFilter.value = "all";
   detailLoading.value = true;
   error.value = "";
   try {
     selectedRun.value = await fetchJson(`${runsEndpoint}/${encodeURIComponent(runId)}`);
+    await Promise.allSettled([loadJudgeRubrics(), loadJudgeRequestsForRun()]);
   } catch (err) {
     selectedRun.value = null;
     error.value = err?.message || "读取 run detail 失败。";
@@ -145,6 +157,7 @@ async function selectCaseArtifact(caseId) {
   detailLoading.value = true;
   error.value = "";
   selectedAbReport.value = null;
+  selectedJudgeReport.value = null;
   try {
     selectedCaseArtifact.value = await fetchJson(
       `${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}/cases/${encodeURIComponent(caseId)}`,
@@ -157,11 +170,143 @@ async function selectCaseArtifact(caseId) {
   }
 }
 
+async function loadJudgeRubrics() {
+  try {
+    const resp = await api.get("/eval-center/judge/rubrics");
+    const data = resp?.data?.data || resp?.data || [];
+    judgeRubrics.value = Array.isArray(data) ? data : [];
+    if (!selectedJudgeRubricId.value && judgeRubrics.value.length) {
+      selectedJudgeRubricId.value = judgeRubrics.value[0].id;
+    }
+    if (
+      selectedJudgeRubricId.value &&
+      !judgeRubrics.value.some((rubric) => rubric.id === selectedJudgeRubricId.value)
+    ) {
+      selectedJudgeRubricId.value = judgeRubrics.value[0]?.id || "";
+    }
+  } catch {
+    judgeRubrics.value = [];
+  }
+}
+
+async function loadJudgeRequestsForRun() {
+  if (!selectedRunId.value) return;
+  judgeLoading.value = true;
+  judgeError.value = "";
+  try {
+    const resp = await api.get("/eval-center/judge/requests", {
+      params: {
+        run_id: selectedRunId.value,
+        limit: 50,
+      },
+    });
+    const data = resp?.data?.data || resp?.data || [];
+    judgeRequests.value = Array.isArray(data) ? data : [];
+    await loadJudgeArtifactsForRun();
+  } catch (err) {
+    const errData = err?.response?.data;
+    judgeError.value = errData?.errors?.map((item) => item.message).join("; ") || err.message;
+  } finally {
+    judgeLoading.value = false;
+  }
+}
+
+async function loadJudgeArtifactsForRun() {
+  if (!selectedRunId.value || !selectedRun.value) return;
+  const data = await fetchJson(`${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}/judge`);
+  const reports = Array.isArray(data) ? data : [];
+  selectedRun.value = {
+    ...selectedRun.value,
+    summary: {
+      ...selectedRun.value.summary,
+      judge_report_count: reports.length,
+    },
+    judge_reports: reports,
+  };
+}
+
+async function queueJudgeRequest() {
+  if (!selectedRunId.value || !selectedJudgeRubricId.value) return;
+  judgeSubmitting.value = true;
+  judgeError.value = "";
+  try {
+    await api.post("/eval-center/judge/requests", {
+      run_id: selectedRunId.value,
+      rubric_id: selectedJudgeRubricId.value,
+      judge_adapter_kind: judgeAdapterKind.value,
+      config_json: {
+        source: "run_history_mode",
+        max_concurrency: 1,
+        max_cases: Number(judgeMaxCases.value) || 50,
+      },
+    });
+    await loadJudgeRequestsForRun();
+  } catch (err) {
+    const errData = err?.response?.data;
+    judgeError.value = errData?.errors?.map((item) => item.message).join("; ") || err.message;
+  } finally {
+    judgeSubmitting.value = false;
+  }
+}
+
+async function cancelJudgeRequest(row) {
+  if (!row?.id || !["queued", "running"].includes(row.status)) return;
+  const ok = window.confirm(
+    `Cancel judge request ${row.judge_run_id}?\n\nThe worker is not killed; completion write-back is guarded by status and lease owner.`,
+  );
+  if (!ok) return;
+  judgeError.value = "";
+  try {
+    await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/cancel`);
+    await loadJudgeRequestsForRun();
+  } catch (err) {
+    const errData = err?.response?.data;
+    judgeError.value = errData?.errors?.map((item) => item.message).join("; ") || err.message;
+  }
+}
+
+async function retryJudgeRequest(row) {
+  if (!row?.id || !["failed", "cancelled"].includes(row.status)) return;
+  const ok = window.confirm(
+    `Retry judge request ${row.judge_run_id} as a new judge run?\n\nA new judge_run_id will be generated. Existing judge artifacts will not be modified.`,
+  );
+  if (!ok) return;
+  judgeError.value = "";
+  try {
+    await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/retry`, {
+      retry_reason: "manual retry from Run History",
+    });
+    await loadJudgeRequestsForRun();
+  } catch (err) {
+    const errData = err?.response?.data;
+    judgeError.value = errData?.errors?.map((item) => item.message).join("; ") || err.message;
+  }
+}
+
+async function selectJudgeReport(judgeRunId) {
+  if (!selectedRunId.value || !judgeRunId) return;
+  detailLoading.value = true;
+  error.value = "";
+  selectedCaseArtifact.value = null;
+  selectedAbReport.value = null;
+  try {
+    selectedJudgeReport.value = await fetchJson(
+      `${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}/judge/${encodeURIComponent(judgeRunId)}`,
+    );
+  } catch (err) {
+    selectedJudgeReport.value = null;
+    error.value = err?.message || "读取 judge report 失败。";
+  } finally {
+    detailLoading.value = false;
+  }
+}
+
 async function selectAbReport(reportId) {
   if (!selectedRunId.value || !reportId) return;
   detailLoading.value = true;
   error.value = "";
   selectedCaseArtifact.value = null;
+  selectedJudgeReport.value = null;
   try {
     selectedAbReport.value = await fetchJson(
       `${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}/ab/${encodeURIComponent(reportId)}`,
@@ -200,9 +345,9 @@ function failedGraderSummary(artifact) {
 
 function verdictClass(verdict) {
   return {
-    "is-win": verdict === "win",
-    "is-loss": verdict === "loss",
-    "is-review": verdict === "manual_review",
+    "is-win": ["win", "pass", "succeeded"].includes(verdict),
+    "is-loss": ["loss", "fail", "failed", "error"].includes(verdict),
+    "is-review": ["manual_review", "needs_review", "queued", "running", "cancelled"].includes(verdict),
   };
 }
 
@@ -339,6 +484,10 @@ function compareAsCandidate() {
             <span>A/B Reports</span>
             <strong>{{ selectedRun.summary.ab_report_count }}</strong>
           </div>
+          <div>
+            <span>Judge Reports</span>
+            <strong>{{ selectedRun.summary.judge_report_count }}</strong>
+          </div>
         </div>
 
         <div class="run-action-bar">
@@ -353,6 +502,161 @@ function compareAsCandidate() {
           :run-id="selectedRunId"
           :prompt-variant-id="selectedRun.summary.prompt_variant_id || ''"
         />
+
+        <ResultBlock title="LLM-as-a-Judge" :open="true">
+          <p v-if="judgeError" class="error-message">{{ judgeError }}</p>
+
+          <div class="judge-control-row">
+            <label>
+              <span>Rubric</span>
+              <select v-model="selectedJudgeRubricId">
+                <option
+                  v-for="rubric in judgeRubrics"
+                  :key="rubric.id"
+                  :value="rubric.id"
+                >
+                  {{ rubric.id }}@{{ rubric.version || "unknown" }}
+                </option>
+              </select>
+            </label>
+            <label>
+              <span>Adapter</span>
+              <select v-model="judgeAdapterKind">
+                <option value="fake">Fake</option>
+                <option value="llm">LLM</option>
+              </select>
+            </label>
+            <label>
+              <span>Max Cases</span>
+              <input v-model.number="judgeMaxCases" type="number" min="1" max="1000" step="1">
+            </label>
+            <button
+              type="button"
+              :disabled="judgeSubmitting || !selectedJudgeRubricId"
+              @click="queueJudgeRequest"
+            >
+              Queue Judge
+            </button>
+            <button type="button" :disabled="judgeLoading" @click="loadJudgeRequestsForRun">
+              Refresh
+            </button>
+          </div>
+
+          <div v-if="judgeRequests.length" class="judge-request-table">
+            <div class="judge-request-row judge-request-head">
+              <span>Request</span>
+              <span>Status</span>
+              <span>Adapter</span>
+              <span>Artifact</span>
+              <span>Action</span>
+            </div>
+            <div
+              v-for="request in judgeRequests"
+              :key="request.id"
+              class="judge-request-row"
+            >
+              <span>
+                {{ request.judge_run_id }}
+                <small>{{ request.rubric_id }}@{{ request.rubric_version }}</small>
+              </span>
+              <span class="verdict-pill" :class="verdictClass(request.status)">
+                {{ request.status }}
+                <small v-if="request.error">{{ request.error.code }}</small>
+                <small v-else-if="request.attempt_no > 1">attempt {{ request.attempt_no }}</small>
+              </span>
+              <span>{{ request.judge_adapter_kind }}</span>
+              <span>{{ dash(request.artifact_path || request.expected_artifact_path) }}</span>
+              <span class="judge-actions">
+                <button
+                  v-if="['queued', 'running'].includes(request.status)"
+                  type="button"
+                  @click="cancelJudgeRequest(request)"
+                >
+                  Cancel
+                </button>
+                <button
+                  v-if="['failed', 'cancelled'].includes(request.status)"
+                  type="button"
+                  @click="retryJudgeRequest(request)"
+                >
+                  Retry
+                </button>
+              </span>
+            </div>
+          </div>
+          <p v-else class="muted-line">暂无 judge request。Queue Judge 只创建请求，模型调用由 evals judge worker 执行。</p>
+
+          <div v-if="selectedRun.judge_reports?.length" class="judge-report-list">
+            <button
+              v-for="report in selectedRun.judge_reports"
+              :key="report.id"
+              type="button"
+              :class="{ 'is-active': selectedJudgeReport?.summary?.judge_run_id === report.judge_run_id }"
+              @click="selectJudgeReport(report.judge_run_id)"
+            >
+              {{ report.judge_run_id }}
+              <small>{{ report.passed }} pass / {{ report.failed }} fail / {{ report.errored }} error</small>
+            </button>
+          </div>
+        </ResultBlock>
+
+        <ResultBlock title="Selected Judge Report" :open="Boolean(selectedJudgeReport)">
+          <template v-if="selectedJudgeReport">
+            <div class="summary-grid compact">
+              <div>
+                <span>Judge Run</span>
+                <strong>{{ selectedJudgeReport.summary.judge_run_id }}</strong>
+              </div>
+              <div>
+                <span>Rubric</span>
+                <strong>{{ selectedJudgeReport.summary.rubric_id }}</strong>
+                <small>{{ selectedJudgeReport.summary.rubric_version }}</small>
+              </div>
+              <div>
+                <span>Cases</span>
+                <strong>{{ selectedJudgeReport.summary.total_cases }}</strong>
+              </div>
+              <div>
+                <span>Pass / Fail</span>
+                <strong>{{ selectedJudgeReport.summary.passed }} / {{ selectedJudgeReport.summary.failed }}</strong>
+              </div>
+              <div>
+                <span>Needs Review</span>
+                <strong>{{ selectedJudgeReport.summary.needs_review }}</strong>
+              </div>
+              <div>
+                <span>Average</span>
+                <strong>{{ dash(selectedJudgeReport.summary.average_score) }}</strong>
+              </div>
+            </div>
+
+            <div class="grader-table">
+              <div class="grader-row grader-head">
+                <span>Case</span>
+                <span>Verdict</span>
+                <span>Status</span>
+                <span>Score</span>
+                <span>Error</span>
+              </div>
+              <div
+                v-for="item in selectedJudgeReport.report.case_summaries || []"
+                :key="item.case_id"
+                class="grader-row"
+              >
+                <span>{{ item.case_id }}</span>
+                <span class="verdict-pill" :class="verdictClass(item.verdict)">{{ item.verdict }}</span>
+                <span>{{ item.status }}</span>
+                <span>{{ dash(item.overall_score) }}</span>
+                <span>{{ item.error?.message || item.error?.code || "—" }}</span>
+              </div>
+            </div>
+
+            <ResultBlock title="Judge Report JSON" :open="false">
+              <pre>{{ formatJson(selectedJudgeReport) }}</pre>
+            </ResultBlock>
+          </template>
+          <p v-else class="muted-line">点击 judge report 读取结果。Judge verdict 仅作为 evidence，不自动放行 promotion。</p>
+        </ResultBlock>
 
         <ResultBlock title="Case Artifacts" :open="true">
           <div class="case-filter-bar">
@@ -813,6 +1117,91 @@ function compareAsCandidate() {
   padding: 6px 8px;
 }
 
+.judge-control-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(120px, 0.7fr) minmax(90px, 0.5fr) auto auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.judge-control-row label {
+  display: grid;
+  gap: 4px;
+}
+
+.judge-control-row span {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.judge-control-row select,
+.judge-control-row input,
+.judge-control-row button,
+.judge-request-row button,
+.judge-report-list button {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.judge-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.judge-control-row button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.judge-request-table {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.judge-request-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.2fr) 110px 80px minmax(180px, 1.4fr) 80px;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--theme--border-color);
+  padding: 8px 0;
+  font-size: 12px;
+}
+
+.judge-request-head {
+  color: var(--theme--foreground-subdued);
+  font-weight: 700;
+}
+
+.judge-request-row small,
+.judge-report-list small {
+  display: block;
+  overflow: hidden;
+  color: var(--theme--foreground-subdued);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.judge-report-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.judge-report-list button.is-active {
+  border-color: var(--theme--primary);
+  color: var(--theme--primary);
+}
+
 .source-tabs button {
   border: 1px solid var(--theme--border-color);
   border-radius: 999px;
@@ -1159,6 +1548,8 @@ pre {
   .grader-row,
   .identity-panels,
   .comparison-row,
+  .judge-control-row,
+  .judge-request-row,
   .case-row {
     grid-template-columns: 1fr;
   }

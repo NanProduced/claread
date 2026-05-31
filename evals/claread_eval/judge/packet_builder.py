@@ -42,6 +42,8 @@ def build_run_rubric_inputs(
     *,
     rubric: RubricSpec,
     run_dir: str | Path,
+    source_text_char_limit: int = 1800,
+    output_item_limit: int = 12,
 ) -> list[RubricCaseInput]:
     cases_dir = Path(run_dir) / "cases"
     if not cases_dir.is_dir():
@@ -49,7 +51,14 @@ def build_run_rubric_inputs(
     packets: list[RubricCaseInput] = []
     for case_path in sorted(cases_dir.glob("*.json")):
         artifact = EvalCaseArtifact.model_validate(orjson.loads(case_path.read_bytes()))
-        packets.append(build_rubric_case_input(rubric=rubric, artifact=artifact))
+        packets.append(
+            build_rubric_case_input(
+                rubric=rubric,
+                artifact=artifact,
+                source_text_char_limit=source_text_char_limit,
+                output_item_limit=output_item_limit,
+            )
+        )
     return packets
 
 

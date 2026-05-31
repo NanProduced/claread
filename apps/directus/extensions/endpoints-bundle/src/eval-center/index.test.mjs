@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
   attachPromptVariantSnapshot,
+  buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
+  cancelJudgeRunRequest,
+  isJudgeRunRequestCancelable,
+  isJudgeRunRequestRetryable,
   isWorkflowRunRequestCancelable,
   isWorkflowRunRequestRetryable,
+  judgeRequestRow,
+  judgeRunRequestSummary,
   promptVariantSnapshotFromRow,
+  retryJudgeRunRequest,
   retryWorkflowRunRequest,
   workflowConfigWithPromptVariantSnapshot,
   workflowRequestRow,
@@ -69,6 +79,66 @@ function createPromptVariantDb(initialRows) {
   }
 
   return database;
+}
+
+function createJudgeRequestDb(initialRows) {
+  const rows = initialRows.map((row) => ({ ...row }));
+
+  function database(tableName) {
+    assert.equal(tableName, "eval_judge_run_requests");
+    const state = { where: {}, whereIn: null };
+    const builder = {
+      select() {
+        return builder;
+      },
+      where(criteria) {
+        Object.assign(state.where, criteria);
+        return builder;
+      },
+      whereIn(field, values) {
+        state.whereIn = { field, values };
+        return builder;
+      },
+      first() {
+        return rows.find((row) => matches(row, state)) || null;
+      },
+      update(patch) {
+        let count = 0;
+        for (const row of rows) {
+          if (!matches(row, state)) continue;
+          Object.assign(row, patch);
+          count += 1;
+        }
+        return Promise.resolve(count);
+      },
+      insert(row) {
+        rows.push({
+          id: `judge-req-${rows.length + 1}`,
+          date_created: "2026-05-31T00:00:00.000Z",
+          ...row,
+        });
+        return Promise.resolve(1);
+      },
+    };
+    return builder;
+  }
+
+  database.fn = {
+    now() {
+      return "NOW";
+    },
+  };
+  database.rows = rows;
+  return database;
+}
+
+function matches(row, state) {
+  const whereMatches = Object.entries(state.where).every(([key, value]) => row[key] === value);
+  if (!whereMatches) return false;
+  if (state.whereIn) {
+    return state.whereIn.values.includes(row[state.whereIn.field]);
+  }
+  return true;
 }
 
 test("workflowRequestRow does not prefill artifact fields before execution", () => {
@@ -162,12 +232,87 @@ test("workflowRunRequestSummary exposes expected artifact path separately", () =
   assert.equal(summary.config_summary.preset_id, "smoke-fake");
 });
 
+test("judgeRequestRow does not prefill artifact path before worker execution", () => {
+  const row = judgeRequestRow(
+    { accountability: { user: "00000000-0000-0000-0000-000000000001" } },
+    {
+      judge_run_id: "judge-001",
+      run_id: "source-run",
+      rubric_id: "language-quality-v1",
+      rubric_version: "v1",
+      judge_adapter_kind: "fake",
+      config_json: { max_concurrency: 1 },
+    },
+  );
+
+  assert.equal(row.status, "queued");
+  assert.equal(row.artifact_path, null);
+  assert.equal(row.judge_run_id, "judge-001");
+  assert.equal(row.run_id, "source-run");
+  assert.equal(row.judge_adapter_kind, "fake");
+  assert.equal(row.config_json.max_concurrency, 1);
+  assert.equal(row.attempt_no, 1);
+  assert.equal(row.max_attempts, 1);
+  assert.equal(row.source_request_id, null);
+});
+
+test("judgeRunRequestSummary exposes expected immutable artifact path", () => {
+  const summary = judgeRunRequestSummary({
+    id: "judge-req-1",
+    judge_run_id: "judge-001",
+    run_id: "source-run",
+    rubric_id: "language-quality-v1",
+    rubric_version: "v1",
+    status: "queued",
+    judge_adapter_kind: "fake",
+    config_json: { source: "directus_eval_center", max_concurrency: 1 },
+    artifact_path: null,
+    source_request_id: "judge-req-parent",
+    attempt_no: 2,
+    max_attempts: 2,
+    retry_reason: "manual retry",
+    lease_owner: null,
+    lease_until: null,
+    heartbeat_at: null,
+    started_at: null,
+    finished_at: null,
+    date_created: "2026-05-31T00:00:00.000Z",
+    date_updated: null,
+    error_json: null,
+  });
+
+  assert.equal(summary.artifact_path, null);
+  assert.equal(summary.expected_artifact_path, "evals/runs/source-run/judge/judge-001");
+  assert.equal(summary.source_request_id, "judge-req-parent");
+  assert.equal(summary.attempt_no, 2);
+  assert.equal(summary.retry_reason, "manual retry");
+  assert.equal(summary.cancelable, true);
+  assert.equal(summary.retryable, false);
+  assert.equal(summary.config_summary.source, "directus_eval_center");
+});
+
 test("isWorkflowRunRequestCancelable allows only queued and running", () => {
   assert.equal(isWorkflowRunRequestCancelable("queued"), true);
   assert.equal(isWorkflowRunRequestCancelable("running"), true);
   assert.equal(isWorkflowRunRequestCancelable("succeeded"), false);
   assert.equal(isWorkflowRunRequestCancelable("failed"), false);
   assert.equal(isWorkflowRunRequestCancelable("cancelled"), false);
+});
+
+test("isJudgeRunRequestCancelable allows only queued and running", () => {
+  assert.equal(isJudgeRunRequestCancelable("queued"), true);
+  assert.equal(isJudgeRunRequestCancelable("running"), true);
+  assert.equal(isJudgeRunRequestCancelable("succeeded"), false);
+  assert.equal(isJudgeRunRequestCancelable("failed"), false);
+  assert.equal(isJudgeRunRequestCancelable("cancelled"), false);
+});
+
+test("isJudgeRunRequestRetryable allows only failed and cancelled", () => {
+  assert.equal(isJudgeRunRequestRetryable("queued"), false);
+  assert.equal(isJudgeRunRequestRetryable("running"), false);
+  assert.equal(isJudgeRunRequestRetryable("succeeded"), false);
+  assert.equal(isJudgeRunRequestRetryable("failed"), true);
+  assert.equal(isJudgeRunRequestRetryable("cancelled"), true);
 });
 
 test("isWorkflowRunRequestRetryable allows only failed and cancelled", () => {
@@ -182,6 +327,13 @@ test("buildRetryRunId generates a safe new run id", () => {
   assert.equal(
     buildRetryRunId("source-run", new Date("2026-05-31T01:02:03.000Z"), "x1"),
     "source-run-retry-20260531010203-x1",
+  );
+});
+
+test("buildRetryJudgeRunId generates a safe new judge id", () => {
+  assert.equal(
+    buildRetryJudgeRunId("judge-source", new Date("2026-05-31T01:02:03.000Z"), "x1"),
+    "judge-source-retry-20260531010203-x1",
   );
 });
 
@@ -367,4 +519,79 @@ test("retryWorkflowRunRequest clones a failed request as a new queued request", 
   assert.equal(row.artifact_path, null);
   assert.match(row.config_json.yaml_content, /^run_id: "new-run"$/m);
   assert.equal(database.rows.length, 2);
+});
+
+test("cancelJudgeRunRequest cancels queued judge request without artifact mutation", async () => {
+  const database = createJudgeRequestDb([
+    {
+      id: "judge-req-1",
+      judge_run_id: "judge-001",
+      run_id: "source-run",
+      rubric_id: "language-quality-v1",
+      rubric_version: "v1",
+      status: "queued",
+      judge_adapter_kind: "fake",
+      artifact_path: null,
+      error_json: null,
+    },
+  ]);
+
+  const row = await cancelJudgeRunRequest(
+    database,
+    { accountability: { user: "00000000-0000-0000-0000-000000000001" } },
+    "judge-req-1",
+  );
+
+  assert.equal(row.status, "cancelled");
+  assert.equal(row.artifact_path, null);
+  assert.equal(row.error_json, null);
+});
+
+test("retryJudgeRunRequest clones a failed judge request as a new queued request", async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), "claread-judge-retry-"));
+  try {
+    mkdirSync(join(runsRoot, "source-run", "judge"), { recursive: true });
+    const database = createJudgeRequestDb([
+      {
+        id: "judge-req-parent",
+        judge_run_id: "judge-old",
+        run_id: "source-run",
+        rubric_id: "language-quality-v1",
+        rubric_version: "v1",
+        status: "failed",
+        judge_adapter_kind: "fake",
+        config_json: {
+          source: "directus_eval_center",
+          max_concurrency: 1,
+          max_cases: 10,
+        },
+        attempt_no: 1,
+        max_attempts: 1,
+        artifact_path: null,
+        error_json: { code: "Test", message: "failed" },
+      },
+    ]);
+
+    const row = await retryJudgeRunRequest(
+      database,
+      { accountability: { user: "00000000-0000-0000-0000-000000000001" } },
+      { CLAREAD_EVAL_RUNS_ROOT: runsRoot },
+      "judge-req-parent",
+      { judge_run_id: "judge-new", retry_reason: "fixed env" },
+    );
+
+    assert.equal(row.judge_run_id, "judge-new");
+    assert.equal(row.run_id, "source-run");
+    assert.equal(row.status, "queued");
+    assert.equal(row.source_request_id, "judge-req-parent");
+    assert.equal(row.attempt_no, 2);
+    assert.equal(row.max_attempts, 2);
+    assert.equal(row.retry_reason, "fixed env");
+    assert.equal(row.artifact_path, null);
+    assert.equal(row.config_json.retry_of_judge_run_id, "judge-old");
+    assert.equal(row.config_json.max_cases, 10);
+    assert.equal(database.rows.length, 2);
+  } finally {
+    rmSync(runsRoot, { recursive: true, force: true });
+  }
 });

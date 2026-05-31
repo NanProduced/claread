@@ -89,6 +89,16 @@ function abReportPath(root, candidateRunId, reportId) {
   return path.join(runDir(root, candidateRunId), "ab", `${reportId}.json`);
 }
 
+function judgeArtifactDir(root, runId, judgeRunId) {
+  if (!isSafeFileId(judgeRunId)) {
+    const error = new Error("Invalid judge run id.");
+    error.status = 400;
+    error.code = "INVALID_JUDGE_RUN_ID";
+    throw error;
+  }
+  return path.join(runDir(root, runId), "judge", judgeRunId);
+}
+
 async function readJsonFile(filePath) {
   try {
     const data = await readFile(filePath, "utf8");
@@ -173,6 +183,7 @@ function summarizeRun(run, report, counts) {
       : null,
     case_artifact_count: counts.case_artifact_count,
     ab_report_count: counts.ab_report_count,
+    judge_report_count: counts.judge_report_count ?? 0,
   };
 }
 
@@ -228,6 +239,7 @@ async function loadRunSummary(root, runId) {
   return summarizeRun(run, report, {
     case_artifact_count: caseIndex?.total_cases ?? await countJsonFiles(path.join(dir, "cases")),
     ab_report_count: await countJsonFiles(path.join(dir, "ab")),
+    judge_report_count: await countJudgeArtifactDirs(path.join(dir, "judge")),
   });
 }
 
@@ -263,11 +275,13 @@ async function loadRunDetail(root, runId) {
   const caseIndex = await loadCaseIndex(root, runId);
   const caseSummaries = caseIndex?.cases ?? await loadCaseArtifactSummaries(root, runId, dir);
   const abReportIds = await listJsonIds(path.join(dir, "ab"));
+  const judgeReports = await listJudgeArtifacts(root, runId);
 
   return {
     summary: summarizeRun(run, report, {
       case_artifact_count: caseSummaries.length,
       ab_report_count: abReportIds.length,
+      judge_report_count: judgeReports.length,
     }),
     run,
     report,
@@ -283,6 +297,7 @@ async function loadRunDetail(root, runId) {
       id,
       href: `/eval-center/runs/${encodeURIComponent(runId)}/ab/${encodeURIComponent(id)}`,
     })),
+    judge_reports: judgeReports,
   };
 }
 
@@ -339,6 +354,78 @@ async function loadCaseArtifactSummaries(root, runId, dir) {
   return caseSummaries;
 }
 
+async function countJudgeArtifactDirs(dirPath) {
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    return entries.filter((entry) => entry.isDirectory() && isSafeFileId(entry.name)).length;
+  } catch (error) {
+    if (error?.code === "ENOENT") return 0;
+    throw error;
+  }
+}
+
+async function listJudgeArtifacts(root, runId) {
+  const dirPath = path.join(runDir(root, runId), "judge");
+  let entries;
+  try {
+    entries = await readdir(dirPath, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+  const reports = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !isSafeFileId(entry.name)) continue;
+    try {
+      const report = await readJsonFile(path.join(dirPath, entry.name, "report.json"));
+      reports.push(summarizeJudgeArtifact(runId, entry.name, report));
+    } catch {
+      reports.push({
+        id: entry.name,
+        judge_run_id: entry.name,
+        run_id: runId,
+        status: "unreadable",
+        href: `/eval-center/runs/${encodeURIComponent(runId)}/judge/${encodeURIComponent(entry.name)}`,
+      });
+    }
+  }
+  return reports.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+}
+
+async function loadJudgeArtifact(root, runId, judgeRunId) {
+  const dir = judgeArtifactDir(root, runId, judgeRunId);
+  const report = await readJsonFile(path.join(dir, "report.json"));
+  const caseResults = await readJsonFile(path.join(dir, "case-results.json"));
+  const judgeRun = await readJsonFile(path.join(dir, "judge-run.json"));
+  const packetIds = await listJsonIds(path.join(dir, "packets"));
+  return {
+    summary: summarizeJudgeArtifact(runId, judgeRunId, report),
+    judge_run: judgeRun,
+    report,
+    case_results: caseResults,
+    packets: packetIds.map((id) => ({ id, href: `packets/${id}.json` })),
+  };
+}
+
+function summarizeJudgeArtifact(runId, judgeRunId, report) {
+  return {
+    id: judgeRunId,
+    judge_run_id: report?.judge_run_id || judgeRunId,
+    run_id: report?.run_id || runId,
+    rubric_id: report?.rubric_id || null,
+    rubric_version: report?.rubric_version || null,
+    judge_adapter_kind: report?.judge_adapter_kind || null,
+    created_at: report?.created_at || null,
+    total_cases: report?.total_cases ?? null,
+    passed: report?.passed ?? null,
+    failed: report?.failed ?? null,
+    needs_review: report?.needs_review ?? null,
+    errored: report?.errored ?? null,
+    average_score: report?.average_score ?? null,
+    href: `/eval-center/runs/${encodeURIComponent(runId)}/judge/${encodeURIComponent(judgeRunId)}`,
+  };
+}
+
 function summarizePayload(payload) {
   if (!payload || typeof payload !== "object") return payload;
   return {
@@ -388,6 +475,8 @@ const VALID_RAG_MODES = ["off", "baseline", "rag", "rag_fallback", "settings"];
 const VALID_TRACE_SCOPES = ["off", "isolated", "inherit"];
 const VALID_EXECUTION_MODES = ["manual", "runner_bridge"];
 const VALID_WORKFLOW_REQUEST_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
+const VALID_JUDGE_ADAPTER_KINDS = ["fake", "llm"];
+const VALID_JUDGE_REQUEST_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
 
 const CONFIG_PRESETS = [
   {
@@ -424,6 +513,10 @@ function buildRetryRunId(sourceRunId, now = new Date(), suffix = Math.random().t
   return `${safeSource}-retry-${compactTimestamp}-${safeSuffix}`;
 }
 
+function buildRetryJudgeRunId(sourceJudgeRunId, now = new Date(), suffix = Math.random().toString(36).slice(2, 6)) {
+  return buildRetryRunId(sourceJudgeRunId, now, suffix);
+}
+
 function resolveEvalsRoot(env) {
   const configured = readEnv(env, "CLAREAD_EVALS_ROOT");
   if (configured) return configured;
@@ -437,6 +530,10 @@ function datasetsDir(evalsRoot) {
 
 function runConfigsDir(evalsRoot) {
   return path.join(evalsRoot, "run-configs");
+}
+
+function rubricsDir(evalsRoot) {
+  return path.join(evalsRoot, "rubrics");
 }
 
 async function listDirectories(dirPath) {
@@ -458,6 +555,49 @@ async function listYamlIds(dirPath) {
   } catch {
     return [];
   }
+}
+
+async function listJudgeRubrics(env) {
+  const dirPath = rubricsDir(resolveEvalsRoot(env));
+  const ids = await listYamlIds(dirPath);
+  const rubrics = [];
+  for (const fileId of ids) {
+    const yamlPath = await findYamlFile(dirPath, fileId);
+    if (!yamlPath) continue;
+    const content = await readFile(yamlPath, "utf-8");
+    const id = simpleYamlValue(content, "id", fileId);
+    if (!id || !isSafeFileId(id)) continue;
+    rubrics.push({
+      id,
+      file_id: fileId,
+      version: simpleYamlValue(content, "version", ""),
+      target: simpleYamlValue(content, "target", ""),
+      description: simpleYamlValue(content, "description", ""),
+      criteria_count: countYamlListItems(content, "criteria"),
+      path: `evals/rubrics/${path.basename(yamlPath)}`,
+    });
+  }
+  return rubrics.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+async function findYamlFile(dirPath, fileId) {
+  const yamlPath = path.join(dirPath, `${fileId}.yaml`);
+  if (await fileExists(yamlPath)) return yamlPath;
+  const ymlPath = path.join(dirPath, `${fileId}.yml`);
+  if (await fileExists(ymlPath)) return ymlPath;
+  return null;
+}
+
+function countYamlListItems(yamlContent, fieldName) {
+  const lines = String(yamlContent || "").split(/\r?\n/);
+  const startIndex = lines.findIndex((line) => line.match(new RegExp(`^${fieldName}:\\s*$`)));
+  if (startIndex < 0) return 0;
+  let count = 0;
+  for (const line of lines.slice(startIndex + 1)) {
+    if (/^\S/.test(line)) break;
+    if (/^\s*-\s+/.test(line)) count += 1;
+  }
+  return count;
 }
 
 function buildYamlContent(config) {
@@ -742,6 +882,427 @@ function isWorkflowRunRequestCancelable(status) {
 
 function isWorkflowRunRequestRetryable(status) {
   return ["failed", "cancelled"].includes(status);
+}
+
+function judgeRequestRow(req, config) {
+  const attemptNo = Number.parseInt(String(config.attempt_no || 1), 10);
+  const safeAttemptNo = Number.isFinite(attemptNo) && attemptNo > 0 ? attemptNo : 1;
+  const maxAttempts = Number.parseInt(String(config.max_attempts || safeAttemptNo), 10);
+  return {
+    judge_run_id: config.judge_run_id,
+    run_id: config.run_id,
+    rubric_id: config.rubric_id,
+    rubric_version: config.rubric_version,
+    status: "queued",
+    judge_adapter_kind: config.judge_adapter_kind || "fake",
+    config_json: config.config_json || {},
+    artifact_path: null,
+    source_request_id: config.source_request_id || null,
+    attempt_no: safeAttemptNo,
+    max_attempts: Number.isFinite(maxAttempts) && maxAttempts >= safeAttemptNo
+      ? maxAttempts
+      : safeAttemptNo,
+    retry_reason: config.retry_reason || null,
+    user_created: req.accountability?.user || null,
+  };
+}
+
+function judgeRunRequestSummary(row) {
+  const config = row?.config_json && typeof row.config_json === "object"
+    ? row.config_json
+    : {};
+  const errorJson = row?.error_json && typeof row.error_json === "object"
+    ? row.error_json
+    : null;
+  return {
+    id: row.id,
+    judge_run_id: row.judge_run_id,
+    run_id: row.run_id,
+    rubric_id: row.rubric_id,
+    rubric_version: row.rubric_version,
+    status: row.status,
+    judge_adapter_kind: row.judge_adapter_kind,
+    artifact_path: row.artifact_path,
+    expected_artifact_path: row.run_id && row.judge_run_id
+      ? `evals/runs/${row.run_id}/judge/${row.judge_run_id}`
+      : null,
+    source_request_id: row.source_request_id || null,
+    attempt_no: row.attempt_no || 1,
+    max_attempts: row.max_attempts || row.attempt_no || 1,
+    retry_reason: row.retry_reason || null,
+    cancelable: isJudgeRunRequestCancelable(row.status),
+    retryable: isJudgeRunRequestRetryable(row.status),
+    lease_owner: row.lease_owner,
+    lease_until: row.lease_until,
+    heartbeat_at: row.heartbeat_at,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    date_created: row.date_created,
+    date_updated: row.date_updated,
+    error: errorJson
+      ? {
+          code: errorJson.code || null,
+          message: errorJson.message || null,
+        }
+      : null,
+    config_summary: {
+      source: config.source || null,
+      max_concurrency: config.max_concurrency || 1,
+      max_cases: config.max_cases || null,
+      source_text_char_limit: config.source_text_char_limit || null,
+      output_item_limit: config.output_item_limit || null,
+    },
+  };
+}
+
+function isJudgeRunRequestCancelable(status) {
+  return ["queued", "running"].includes(status);
+}
+
+function isJudgeRunRequestRetryable(status) {
+  return ["failed", "cancelled"].includes(status);
+}
+
+function validateJudgeRunRequest(body) {
+  const errors = [];
+  if (!body.run_id || !isSafeFileId(body.run_id)) {
+    errors.push({ field: "run_id", message: "run_id is required and must be safe." });
+  }
+  if (!body.rubric_id || !isSafeFileId(body.rubric_id)) {
+    errors.push({ field: "rubric_id", message: "rubric_id is required and must be safe." });
+  }
+  if (body.judge_run_id && !isSafeFileId(body.judge_run_id)) {
+    errors.push({ field: "judge_run_id", message: "judge_run_id contains unsafe characters." });
+  }
+  if (body.judge_adapter_kind && !VALID_JUDGE_ADAPTER_KINDS.includes(body.judge_adapter_kind)) {
+    errors.push({
+      field: "judge_adapter_kind",
+      message: `judge_adapter_kind must be one of: ${VALID_JUDGE_ADAPTER_KINDS.join(", ")}.`,
+    });
+  }
+  if (body.config_json && (typeof body.config_json !== "object" || Array.isArray(body.config_json))) {
+    errors.push({ field: "config_json", message: "config_json must be a JSON object." });
+  }
+  return errors;
+}
+
+async function createJudgeRunRequest(database, req, env, body) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "EVAL_JUDGE_QUEUE_UNAVAILABLE";
+    throw error;
+  }
+  const validationErrors = validateJudgeRunRequest(body);
+  if (validationErrors.length > 0) {
+    const error = new Error(validationErrors[0].message);
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = validationErrors[0].field;
+    error.validationErrors = validationErrors;
+    throw error;
+  }
+
+  const runsRoot = resolveRunsRoot(env);
+  const runPath = runDir(runsRoot, body.run_id);
+  if (!(await fileExists(path.join(runPath, "report.json"))) || !(await fileExists(path.join(runPath, "case-index.json")))) {
+    const error = new Error(`Run "${body.run_id}" does not have complete report.json and case-index.json artifacts.`);
+    error.status = 422;
+    error.code = "JUDGE_SOURCE_RUN_INCOMPLETE";
+    error.field = "run_id";
+    throw error;
+  }
+
+  const rubric = await findRubricSummary(env, body.rubric_id);
+  if (!rubric) {
+    const error = new Error(`Rubric "${body.rubric_id}" was not found.`);
+    error.status = 422;
+    error.code = "JUDGE_RUBRIC_NOT_FOUND";
+    error.field = "rubric_id";
+    throw error;
+  }
+  if (body.rubric_version && body.rubric_version !== rubric.version) {
+    const error = new Error(`Rubric version mismatch: request=${body.rubric_version}, file=${rubric.version}.`);
+    error.status = 422;
+    error.code = "JUDGE_RUBRIC_VERSION_MISMATCH";
+    error.field = "rubric_version";
+    throw error;
+  }
+
+  const judgeRunId = body.judge_run_id || generateRunId("judge");
+  const artifactDir = judgeArtifactDir(runsRoot, body.run_id, judgeRunId);
+  if (await fileExists(artifactDir)) {
+    const error = new Error(`Judge artifact directory "${judgeRunId}" already exists for run "${body.run_id}".`);
+    error.status = 409;
+    error.code = "JUDGE_ARTIFACT_CONFLICT";
+    error.field = "judge_run_id";
+    throw error;
+  }
+
+  const existingRequest = await database("eval_judge_run_requests")
+    .select(["id"])
+    .where({ run_id: body.run_id, judge_run_id: judgeRunId })
+    .first();
+  if (existingRequest) {
+    const error = new Error(`Judge request "${judgeRunId}" already exists for run "${body.run_id}".`);
+    error.status = 409;
+    error.code = "JUDGE_REQUEST_CONFLICT";
+    error.field = "judge_run_id";
+    throw error;
+  }
+
+  const config = {
+    judge_run_id: judgeRunId,
+    run_id: body.run_id,
+    rubric_id: rubric.id,
+    rubric_version: rubric.version,
+    judge_adapter_kind: body.judge_adapter_kind || "fake",
+    config_json: {
+      source: "directus_eval_center",
+      max_concurrency: 1,
+      ...(body.config_json || {}),
+    },
+  };
+  const row = judgeRequestRow(req, config);
+  await database("eval_judge_run_requests").insert(row);
+  return database("eval_judge_run_requests")
+    .where({ run_id: body.run_id, judge_run_id: judgeRunId })
+    .first();
+}
+
+async function findRubricSummary(env, rubricId) {
+  const rubrics = await listJudgeRubrics(env);
+  return rubrics.find((item) => item.id === rubricId || item.file_id === rubricId) || null;
+}
+
+async function listJudgeRunRequests(database, query) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "EVAL_JUDGE_QUEUE_UNAVAILABLE";
+    throw error;
+  }
+
+  const limit = clampLimit(query?.limit);
+  const status = String(query?.status || "all");
+  if (status !== "all" && !VALID_JUDGE_REQUEST_STATUSES.includes(status)) {
+    const error = new Error(`status must be one of: all, ${VALID_JUDGE_REQUEST_STATUSES.join(", ")}.`);
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    throw error;
+  }
+  const runId = String(query?.run_id || "");
+  if (runId && !isSafeFileId(runId)) {
+    const error = new Error("run_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "run_id";
+    throw error;
+  }
+
+  const builder = database("eval_judge_run_requests")
+    .select([
+      "id",
+      "date_created",
+      "date_updated",
+      "judge_run_id",
+      "run_id",
+      "rubric_id",
+      "rubric_version",
+      "status",
+      "judge_adapter_kind",
+      "config_json",
+      "artifact_path",
+      "source_request_id",
+      "attempt_no",
+      "max_attempts",
+      "retry_reason",
+      "lease_owner",
+      "lease_until",
+      "heartbeat_at",
+      "started_at",
+      "finished_at",
+      "error_json",
+    ])
+    .orderBy("date_created", "desc")
+    .limit(limit);
+
+  if (status !== "all") builder.where({ status });
+  if (runId) builder.where({ run_id: runId });
+  return builder;
+}
+
+async function ensureJudgeRunIdAvailable(database, env, runId, judgeRunId) {
+  if (!isSafeFileId(judgeRunId)) {
+    const error = new Error("judge_run_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "judge_run_id";
+    throw error;
+  }
+
+  const existingRequest = await database("eval_judge_run_requests")
+    .select(["id"])
+    .where({ run_id: runId, judge_run_id: judgeRunId })
+    .first();
+  if (existingRequest) {
+    const error = new Error(`Judge request "${judgeRunId}" already exists for run "${runId}".`);
+    error.status = 409;
+    error.code = "JUDGE_REQUEST_CONFLICT";
+    error.field = "judge_run_id";
+    throw error;
+  }
+
+  const artifactDir = judgeArtifactDir(resolveRunsRoot(env), runId, judgeRunId);
+  if (await fileExists(artifactDir)) {
+    const error = new Error(`Judge artifact directory "${judgeRunId}" already exists for run "${runId}".`);
+    error.status = 409;
+    error.code = "JUDGE_ARTIFACT_CONFLICT";
+    error.field = "judge_run_id";
+    throw error;
+  }
+}
+
+async function cancelJudgeRunRequest(database, req, requestId) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "EVAL_JUDGE_QUEUE_UNAVAILABLE";
+    throw error;
+  }
+
+  const current = await database("eval_judge_run_requests")
+    .select(["id", "status"])
+    .where({ id: requestId })
+    .first();
+
+  if (!current) {
+    const error = new Error("Judge run request not found.");
+    error.status = 404;
+    error.code = "JUDGE_RUN_REQUEST_NOT_FOUND";
+    throw error;
+  }
+  if (!isJudgeRunRequestCancelable(current.status)) {
+    const error = new Error("Only queued or running judge run requests can be cancelled in v1.");
+    error.status = 409;
+    error.code = "JUDGE_RUN_REQUEST_NOT_CANCELABLE";
+    throw error;
+  }
+
+  const updatedCount = await database("eval_judge_run_requests")
+    .where({ id: requestId })
+    .whereIn("status", ["queued", "running"])
+    .update({
+      status: "cancelled",
+      finished_at: database.fn.now(),
+      date_updated: database.fn.now(),
+      user_updated: req.accountability?.user || null,
+      error_json: null,
+    });
+
+  if (!updatedCount) {
+    const error = new Error("Judge run request changed before it could be cancelled.");
+    error.status = 409;
+    error.code = "JUDGE_RUN_REQUEST_NOT_CANCELABLE";
+    throw error;
+  }
+
+  return database("eval_judge_run_requests").where({ id: requestId }).first();
+}
+
+async function retryJudgeRunRequest(database, req, env, requestId, body = {}) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "EVAL_JUDGE_QUEUE_UNAVAILABLE";
+    throw error;
+  }
+
+  const current = await database("eval_judge_run_requests")
+    .select([
+      "id",
+      "judge_run_id",
+      "run_id",
+      "rubric_id",
+      "rubric_version",
+      "status",
+      "judge_adapter_kind",
+      "config_json",
+      "attempt_no",
+      "max_attempts",
+    ])
+    .where({ id: requestId })
+    .first();
+
+  if (!current) {
+    const error = new Error("Judge run request not found.");
+    error.status = 404;
+    error.code = "JUDGE_RUN_REQUEST_NOT_FOUND";
+    throw error;
+  }
+  if (!isJudgeRunRequestRetryable(current.status)) {
+    const error = new Error("Only failed or cancelled judge run requests can be retried in v1.");
+    error.status = 409;
+    error.code = "JUDGE_RUN_REQUEST_NOT_RETRYABLE";
+    throw error;
+  }
+
+  let judgeRunId = String(body?.judge_run_id || "").trim();
+  if (judgeRunId) {
+    await ensureJudgeRunIdAvailable(database, env, current.run_id, judgeRunId);
+  } else {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const candidateJudgeRunId = buildRetryJudgeRunId(current.judge_run_id);
+      try {
+        await ensureJudgeRunIdAvailable(database, env, current.run_id, candidateJudgeRunId);
+        judgeRunId = candidateJudgeRunId;
+        break;
+      } catch (error) {
+        if (error?.status !== 409) throw error;
+      }
+    }
+    if (!judgeRunId) {
+      const error = new Error("Could not generate an available judge_run_id.");
+      error.status = 409;
+      error.code = "JUDGE_REQUEST_CONFLICT";
+      error.field = "judge_run_id";
+      throw error;
+    }
+  }
+
+  const previousAttemptNo = Number.parseInt(String(current.attempt_no || 1), 10);
+  const attemptNo = (Number.isFinite(previousAttemptNo) && previousAttemptNo > 0
+    ? previousAttemptNo
+    : 1) + 1;
+  const previousMaxAttempts = Number.parseInt(String(current.max_attempts || 1), 10);
+  const maxAttempts = Number.isFinite(previousMaxAttempts)
+    ? Math.max(previousMaxAttempts, attemptNo)
+    : attemptNo;
+  const retryReason = String(body?.retry_reason || body?.reason || "").trim().slice(0, 1000) || null;
+  const originalConfig = normalizeConfigJson(current.config_json);
+  const row = judgeRequestRow(req, {
+    judge_run_id: judgeRunId,
+    run_id: current.run_id,
+    rubric_id: current.rubric_id,
+    rubric_version: current.rubric_version,
+    judge_adapter_kind: originalConfig.judge_adapter_kind || current.judge_adapter_kind || "fake",
+    config_json: {
+      ...originalConfig,
+      source: originalConfig.source || "directus_eval_center",
+      max_concurrency: originalConfig.max_concurrency || 1,
+      retry_of_judge_run_id: current.judge_run_id,
+      retry_reason: retryReason,
+    },
+    source_request_id: current.id,
+    attempt_no: attemptNo,
+    max_attempts: maxAttempts,
+    retry_reason: retryReason,
+  });
+
+  await database("eval_judge_run_requests").insert(row);
+  return database("eval_judge_run_requests")
+    .where({ run_id: current.run_id, judge_run_id: judgeRunId })
+    .first();
 }
 
 async function createWorkflowRunRequest(database, req, config) {
@@ -1105,13 +1666,23 @@ async function retryWorkflowRunRequest(database, req, env, requestId, body = {})
 
 export {
   attachPromptVariantSnapshot,
+  buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
+  cancelJudgeRunRequest,
+  createJudgeRunRequest,
+  isJudgeRunRequestCancelable,
+  isJudgeRunRequestRetryable,
   isWorkflowRunRequestCancelable,
   isWorkflowRunRequestRetryable,
+  judgeRequestRow,
+  judgeRunRequestSummary,
+  listJudgeRunRequests,
+  listJudgeRubrics,
   listReadyPromptVariantSnapshots,
   patchYamlRunId,
   promptVariantSnapshotFromRow,
+  retryJudgeRunRequest,
   retryWorkflowRunRequest,
   workflowConfigWithPromptVariantSnapshot,
   workflowRequestRow,
@@ -1436,6 +2007,30 @@ export default (router, context) => {
     }
   });
 
+  router.get("/runs/:runId/judge", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const root = resolveRunsRoot(env);
+      res.json({ data: await listJudgeArtifacts(root, req.params.runId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  router.get("/runs/:runId/judge/:judgeRunId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const root = resolveRunsRoot(env);
+      res.json({ data: await loadJudgeArtifact(root, req.params.runId, req.params.judgeRunId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
   router.get("/runs/:runId/ab", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
@@ -1538,6 +2133,16 @@ export default (router, context) => {
     }
   });
 
+  router.get("/judge/rubrics", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      res.json({ data: await listJudgeRubrics(env) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/prompt-variants/ready", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
@@ -1592,6 +2197,110 @@ export default (router, context) => {
       });
     } catch (error) {
       next(error);
+    }
+  });
+
+  router.get("/judge/requests", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const rows = await listJudgeRunRequests(database, req.query || {});
+      res.json({ data: rows.map((row) => judgeRunRequestSummary(row)) });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "JUDGE_RUN_REQUEST_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/judge/requests", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const row = await createJudgeRunRequest(database, req, env, req.body || {});
+      res.status(201).json({ data: judgeRunRequestSummary(row) });
+    } catch (error) {
+      if (error?.status) {
+        const errors = Array.isArray(error.validationErrors)
+          ? error.validationErrors.map((item) => ({
+              message: item.message,
+              extensions: { code: error.code || "VALIDATION_ERROR", field: item.field },
+            }))
+          : [
+              {
+                message: error.message,
+                extensions: {
+                  code: error.code || "JUDGE_RUN_REQUEST_ERROR",
+                  field: error.field,
+                },
+              },
+            ];
+        res.status(error.status).json({ errors });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/judge/requests/:requestId/cancel", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const row = await cancelJudgeRunRequest(database, req, req.params.requestId);
+      res.json({ data: judgeRunRequestSummary(row) });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "JUDGE_RUN_REQUEST_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/judge/requests/:requestId/retry", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const row = await retryJudgeRunRequest(database, req, env, req.params.requestId, req.body || {});
+      res.status(201).json({ data: judgeRunRequestSummary(row) });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "JUDGE_RUN_REQUEST_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
     }
   });
 

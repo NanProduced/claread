@@ -151,6 +151,66 @@ CREATE INDEX IF NOT EXISTS idx_eval_workflow_run_requests_source_request
 COMMENT ON TABLE eval_workflow_run_requests IS
     'Eval Center runner bridge request queue. Directus creates requests; an external worker performs execution and writes evals/runs artifacts.';
 
+CREATE TABLE IF NOT EXISTS eval_judge_run_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    date_created TIMESTAMPTZ NOT NULL DEFAULT now(),
+    date_updated TIMESTAMPTZ,
+    user_created UUID,
+    user_updated UUID,
+
+    judge_run_id TEXT NOT NULL CHECK (judge_run_id ~ '^[A-Za-z0-9._-]+$'),
+    run_id TEXT NOT NULL CHECK (run_id ~ '^[A-Za-z0-9._-]+$'),
+    rubric_id TEXT NOT NULL CHECK (rubric_id ~ '^[A-Za-z0-9._-]+$'),
+    rubric_version TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (
+        status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')
+    ),
+    judge_adapter_kind TEXT NOT NULL DEFAULT 'fake' CHECK (
+        judge_adapter_kind IN ('fake', 'llm')
+    ),
+    config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    artifact_path TEXT,
+    source_request_id UUID REFERENCES eval_judge_run_requests(id),
+    attempt_no INTEGER NOT NULL DEFAULT 1 CHECK (attempt_no >= 1),
+    max_attempts INTEGER NOT NULL DEFAULT 1 CHECK (max_attempts >= attempt_no),
+    retry_reason TEXT,
+    lease_owner TEXT,
+    lease_until TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    error_json JSONB,
+    notes TEXT,
+    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+    UNIQUE (run_id, judge_run_id)
+);
+
+ALTER TABLE IF EXISTS eval_judge_run_requests
+    ADD COLUMN IF NOT EXISTS source_request_id UUID REFERENCES eval_judge_run_requests(id);
+
+ALTER TABLE IF EXISTS eval_judge_run_requests
+    ADD COLUMN IF NOT EXISTS attempt_no INTEGER NOT NULL DEFAULT 1 CHECK (attempt_no >= 1);
+
+ALTER TABLE IF EXISTS eval_judge_run_requests
+    ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 1 CHECK (max_attempts >= attempt_no);
+
+ALTER TABLE IF EXISTS eval_judge_run_requests
+    ADD COLUMN IF NOT EXISTS retry_reason TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_eval_judge_run_requests_status_created
+    ON eval_judge_run_requests (status, date_created ASC);
+
+CREATE INDEX IF NOT EXISTS idx_eval_judge_run_requests_run
+    ON eval_judge_run_requests (run_id, date_created DESC);
+
+CREATE INDEX IF NOT EXISTS idx_eval_judge_run_requests_source_request
+    ON eval_judge_run_requests (source_request_id)
+    WHERE source_request_id IS NOT NULL;
+
+COMMENT ON TABLE eval_judge_run_requests IS
+    'Eval Center LLM-as-a-Judge request queue. Directus creates and views requests; an external evals worker performs judge execution and writes immutable judge artifacts.';
+
 CREATE TABLE IF NOT EXISTS eval_review_notes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     date_created TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -52,13 +52,22 @@ const COLLECTIONS = [
     sort: 32,
   },
   {
+    collection: "eval_judge_run_requests",
+    icon: "fact_check",
+    color: "#4338CA",
+    note: "LLM-as-a-Judge request queue. Directus 只创建/查看请求，执行由 evals judge worker 完成。",
+    display_template: "{{ run_id }} {{ judge_run_id }} {{ status }}",
+    sort_field: "date_created",
+    sort: 33,
+  },
+  {
     collection: "eval_review_notes",
     icon: "rate_review",
     color: "#B45309",
     note: "Eval Center human review notes linked to runs, cases, A/B reports, or prompt variants. Artifacts remain immutable.",
     display_template: "{{ target_type }} {{ target_id }} {{ verdict }}",
     sort_field: "date_created",
-    sort: 33,
+    sort: 34,
   },
 ];
 
@@ -265,6 +274,63 @@ const WORKFLOW_RUN_REQUEST_FIELD_METADATA = [
   ["error_json", jsonMeta(41, "Runner error summary")],
 ];
 
+const JUDGE_RUN_REQUEST_FIELD_METADATA = [
+  ["id", { hidden: true, readonly: true, interface: "input", sort: 1 }],
+  ["date_created", { readonly: true, interface: "datetime", width: "half", sort: 2 }],
+  ["date_updated", { readonly: true, interface: "datetime", width: "half", sort: 3 }],
+  ["user_created", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 4, hidden: true }],
+  ["user_updated", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 5, hidden: true }],
+  ["judge_run_id", { interface: "input", width: "half", sort: 10 }],
+  ["run_id", { interface: "input", width: "half", sort: 11 }],
+  ["rubric_id", { interface: "input", width: "half", sort: 12 }],
+  ["rubric_version", { interface: "input", width: "half", sort: 13, readonly: true }],
+  [
+    "status",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 14,
+      options: {
+        choices: [
+          { text: "Queued", value: "queued" },
+          { text: "Running", value: "running" },
+          { text: "Succeeded", value: "succeeded" },
+          { text: "Failed", value: "failed" },
+          { text: "Cancelled", value: "cancelled" },
+        ],
+      },
+    },
+  ],
+  [
+    "judge_adapter_kind",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 15,
+      options: {
+        choices: [
+          { text: "Fake", value: "fake" },
+          { text: "LLM", value: "llm" },
+        ],
+      },
+    },
+  ],
+  ["artifact_path", { interface: "input", width: "half", sort: 16, readonly: true }],
+  ["source_request_id", { interface: "input", width: "half", sort: 17, readonly: true }],
+  ["attempt_no", { interface: "input", width: "half", sort: 18, readonly: true }],
+  ["max_attempts", { interface: "input", width: "half", sort: 19, readonly: true }],
+  ["retry_reason", { interface: "input-multiline", width: "full", sort: 20 }],
+  ["lease_owner", { interface: "input", width: "half", sort: 21 }],
+  ["lease_until", { interface: "datetime", width: "half", sort: 22 }],
+  ["heartbeat_at", { interface: "datetime", width: "half", sort: 23 }],
+  ["started_at", { interface: "datetime", width: "half", sort: 24 }],
+  ["finished_at", { interface: "datetime", width: "half", sort: 25 }],
+  ["notes", { interface: "input-rich-text-md", width: "full", sort: 30 }],
+  ["tags", { interface: "tags", width: "half", sort: 31 }],
+  ["config_json", jsonMeta(40, "Judge config snapshot")],
+  ["error_json", jsonMeta(41, "Judge worker error summary")],
+];
+
 const REVIEW_NOTES_FIELD_METADATA = [
   ["id", { hidden: true, readonly: true, interface: "input", sort: 1 }],
   ["date_created", { readonly: true, interface: "datetime", width: "half", sort: 2 }],
@@ -322,6 +388,7 @@ const FIELD_METADATA_BY_COLLECTION = {
   eval_node_probe_runs: FIELD_METADATA,
   eval_prompt_variant_drafts: PROMPT_VARIANT_FIELD_METADATA,
   eval_workflow_run_requests: WORKFLOW_RUN_REQUEST_FIELD_METADATA,
+  eval_judge_run_requests: JUDGE_RUN_REQUEST_FIELD_METADATA,
   eval_review_notes: REVIEW_NOTES_FIELD_METADATA,
 };
 
