@@ -1,4 +1,5 @@
 <script setup>
+import { useApi } from "@directus/extensions-sdk";
 import { computed, onMounted, ref, watch } from "vue";
 import ResultBlock from "../components/ResultBlock.vue";
 import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";

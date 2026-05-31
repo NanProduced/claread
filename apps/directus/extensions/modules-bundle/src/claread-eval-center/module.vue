@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from "vue";
 import AbCompareMode from "./modes/AbCompareMode.vue";
+import JudgeMode from "./modes/JudgeMode.vue";
 import NodeProbeMode from "./modes/NodeProbeMode.vue";
 import PromptVariantMode from "./modes/PromptVariantMode.vue";
 import RunHistoryMode from "./modes/RunHistoryMode.vue";
@@ -47,6 +48,14 @@ const modes = [
     description: "回看 evals/ run artifacts、报告和人工观察记录。",
     ready: true,
     questions: ["历史 run 存在哪里？", "某次运行使用了什么模型和 prompt？", "哪些 case 需要复查或补入数据集？"],
+  },
+  {
+    id: "llm-judge",
+    label: "LLM Judge",
+    kicker: "LLM-as-a-Judge",
+    description: "创建 judge request，查看 judge worker 状态和 report artifact。",
+    ready: true,
+    questions: ["哪些 case 需要模型裁判补充证据？", "judge request 当前执行到哪里？", "judge report 是否支持人工复查结论？"],
   },
   {
     id: "few-shot-rag",
@@ -129,6 +138,7 @@ function openAbCompare(selection) {
         :initial-run-id="runHistoryInitialRunId"
         @compare-run="openAbCompare"
       />
+      <JudgeMode v-else-if="activeMode === 'llm-judge'" />
       <PlaceholderPanel v-else :mode="currentMode" />
     </main>
   </private-view>
