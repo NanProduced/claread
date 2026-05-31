@@ -202,6 +202,10 @@ function openAbCompare(selection) {
   margin-bottom: 20px;
 }
 
+.eval-header > div {
+  min-width: 0;
+}
+
 .eval-header h1 {
   margin: 0;
   font-size: 24px;
@@ -212,6 +216,7 @@ function openAbCompare(selection) {
   max-width: 760px;
   margin: 6px 0 0;
   color: var(--theme--foreground-subdued);
+  overflow-wrap: anywhere;
 }
 
 .eyebrow {

@@ -555,11 +555,17 @@ function statusClass(status) {
   margin: 0 0 4px;
 }
 
+.section-heading > div,
+.panel-heading > div {
+  min-width: 0;
+}
+
 .section-heading span,
 .panel-heading span,
 .muted-line {
   color: var(--theme--foreground-subdued);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .error-message,
@@ -711,6 +717,12 @@ function statusClass(status) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.request-head span,
+.case-summary-head span {
   white-space: nowrap;
 }
 

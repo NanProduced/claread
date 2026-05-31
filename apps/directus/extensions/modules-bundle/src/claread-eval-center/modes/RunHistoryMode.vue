@@ -34,6 +34,7 @@ const judgeMaxCases = ref(50);
 const judgeLoading = ref(false);
 const judgeSubmitting = ref(false);
 const judgeError = ref("");
+const judgeMessage = ref("");
 
 const filteredCaseArtifacts = computed(() => {
   const artifacts = selectedRun.value?.case_artifacts || [];
@@ -230,8 +231,9 @@ async function queueJudgeRequest() {
   if (!selectedRunId.value || !selectedJudgeRubricId.value) return;
   judgeSubmitting.value = true;
   judgeError.value = "";
+  judgeMessage.value = "";
   try {
-    await api.post("/eval-center/judge/requests", {
+    const resp = await api.post("/eval-center/judge/requests", {
       run_id: selectedRunId.value,
       rubric_id: selectedJudgeRubricId.value,
       judge_adapter_kind: judgeAdapterKind.value,
@@ -241,6 +243,8 @@ async function queueJudgeRequest() {
         max_cases: Number(judgeMaxCases.value) || 50,
       },
     });
+    const created = resp?.data?.data || resp?.data || {};
+    judgeMessage.value = `Queued judge request ${created.judge_run_id || ""}`.trim();
     await loadJudgeRequestsForRun();
   } catch (err) {
     const errData = err?.response?.data;
@@ -257,8 +261,10 @@ async function cancelJudgeRequest(row) {
   );
   if (!ok) return;
   judgeError.value = "";
+  judgeMessage.value = "";
   try {
     await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/cancel`);
+    judgeMessage.value = `Cancelled judge request ${row.judge_run_id}.`;
     await loadJudgeRequestsForRun();
   } catch (err) {
     const errData = err?.response?.data;
@@ -273,10 +279,13 @@ async function retryJudgeRequest(row) {
   );
   if (!ok) return;
   judgeError.value = "";
+  judgeMessage.value = "";
   try {
-    await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/retry`, {
+    const resp = await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/retry`, {
       retry_reason: "manual retry from Run History",
     });
+    const created = resp?.data?.data || resp?.data || {};
+    judgeMessage.value = `Queued retry judge request ${created.judge_run_id || ""}`.trim();
     await loadJudgeRequestsForRun();
   } catch (err) {
     const errData = err?.response?.data;
@@ -506,6 +515,7 @@ function compareAsCandidate() {
 
         <ResultBlock title="LLM-as-a-Judge" :open="true">
           <p v-if="judgeError" class="error-message">{{ judgeError }}</p>
+          <p v-if="judgeMessage" class="success-message">{{ judgeMessage }}</p>
 
           <div class="judge-control-row">
             <label>
@@ -576,11 +586,18 @@ function compareAsCandidate() {
                   Cancel
                 </button>
                 <button
-                  v-if="['failed', 'cancelled'].includes(request.status)"
+                  v-else-if="['failed', 'cancelled'].includes(request.status)"
                   type="button"
                   @click="retryJudgeRequest(request)"
                 >
                   Retry
+                </button>
+                <button
+                  v-else-if="request.status === 'succeeded'"
+                  type="button"
+                  @click="selectJudgeReport(request.judge_run_id)"
+                >
+                  View
                 </button>
               </span>
             </div>
@@ -1051,15 +1068,27 @@ function compareAsCandidate() {
   margin: 0;
 }
 
+.section-heading > div {
+  min-width: 0;
+}
+
 .section-heading span,
 .muted-line,
 .empty-state p {
   color: var(--theme--foreground-subdued);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .error-message {
   color: var(--theme--danger);
+  font-size: 13px;
+}
+
+.success-message {
+  border-left: 3px solid var(--theme--success);
+  padding-left: 10px;
+  color: var(--theme--foreground);
   font-size: 13px;
 }
 
@@ -1181,6 +1210,11 @@ function compareAsCandidate() {
 .judge-request-head {
   color: var(--theme--foreground-subdued);
   font-weight: 700;
+}
+
+.judge-request-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .judge-request-row small,
