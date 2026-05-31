@@ -146,6 +146,36 @@ def test_write_case_artifact_strip_mode_removes_sensitive_fields() -> None:
     ]
 
 
+def test_sanitizer_detects_generic_token_fields() -> None:
+    artifact = EvalCaseArtifact(
+        case_id="case-sensitive-token",
+        run_id="test-run-001",
+        model_identity={"model_settings": {"token": "secret"}},
+    )
+
+    with pytest.raises(ArtifactSanitizationError, match="token"):
+        sanitized_artifact_payload(artifact)
+
+
+def test_sanitizer_redacts_secret_like_string_values_in_strip_mode() -> None:
+    artifact = EvalCaseArtifact(
+        case_id="case-secret-value",
+        run_id="test-run-001",
+        warnings=[
+            {
+                "code": "upstream_error",
+                "level": "warning",
+                "message": "upstream returned sk-testsecret123456",
+            }
+        ],
+    )
+
+    payload = sanitized_artifact_payload(artifact, mode="strip")
+
+    assert payload["warnings"][0]["message"] == "<redacted>"
+    assert "warnings[0].message" in payload["artifact_sanitization"]["removed_fields"]
+
+
 def test_init_run_dir_rejects_sensitive_model_selection(tmp_path: Path) -> None:
     run_config = EvalRunConfig(
         run_id="sensitive-run-001",

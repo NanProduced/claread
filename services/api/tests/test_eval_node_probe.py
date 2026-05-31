@@ -214,7 +214,7 @@ async def test_node_probe_rejects_academic_topology(
 def test_eval_node_probe_route_is_admin_key_protected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(eval_debug, "get_settings", _admin_settings)
+    monkeypatch.setattr(eval_debug, "get_settings", _eval_admin_settings)
     run_mock = AsyncMock(return_value=_fake_probe_result())
     monkeypatch.setattr(eval_debug, "run_article_analysis_node_probe", run_mock)
 
@@ -227,13 +227,19 @@ def test_eval_node_probe_route_is_admin_key_protected(
         headers={"x-admin-api-key": "wrong"},
         json={"text": "Sentence."},
     )
-    allowed = client.post(
+    denied_with_daily_key = client.post(
         "/eval/article-analysis/node-probe",
         headers={"x-admin-api-key": "admin-key"},
         json={"text": "Sentence.", "dry_run": True},
     )
+    allowed = client.post(
+        "/eval/article-analysis/node-probe",
+        headers={"x-admin-api-key": "eval-key"},
+        json={"text": "Sentence.", "dry_run": True},
+    )
 
     assert denied.status_code == 401
+    assert denied_with_daily_key.status_code == 401
     assert allowed.status_code == 200
     assert allowed.json()["node_name"] == "grammar"
     run_mock.assert_awaited_once()

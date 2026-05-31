@@ -19,7 +19,7 @@ router = APIRouter(prefix="/eval", tags=["eval"])
 
 async def verify_eval_api_key(x_admin_api_key: str = Header(...)) -> str:
     settings = get_settings()
-    eval_api_key = settings.eval_admin_api_key or settings.daily_reader_admin_api_key
+    eval_api_key = settings.eval_admin_api_key
     if not eval_api_key:
         raise HTTPException(status_code=503, detail="Eval API not configured")
     if not secrets.compare_digest(x_admin_api_key, eval_api_key):

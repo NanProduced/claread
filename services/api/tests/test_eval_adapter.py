@@ -75,7 +75,7 @@ def _render_scene(request_id: str = "eval:req") -> RenderSceneModel:
 def _admin_settings() -> Settings:
     return Settings(
         daily_reader_admin_api_key="admin-key",
-        eval_admin_api_key="",
+        eval_admin_api_key="eval-key",
         default_model_profile="",
         annotation_model_profile="",
     )
@@ -351,13 +351,19 @@ def test_eval_workflow_route_is_admin_key_protected(
         headers={"x-admin-api-key": "wrong"},
         json={"text": "Sentence."},
     )
-    allowed = client.post(
+    denied_with_daily_key = client.post(
         "/eval/article-analysis/workflow",
         headers={"x-admin-api-key": "admin-key"},
         json={"text": "Sentence.", "rag_mode": "off"},
     )
+    allowed = client.post(
+        "/eval/article-analysis/workflow",
+        headers={"x-admin-api-key": "eval-key"},
+        json={"text": "Sentence.", "rag_mode": "off"},
+    )
 
     assert denied.status_code == 401
+    assert denied_with_daily_key.status_code == 401
     assert allowed.status_code == 200
     assert allowed.json()["workflow_identity"]["workflow_name"] == "article_analysis"
     run_mock.assert_awaited_once()

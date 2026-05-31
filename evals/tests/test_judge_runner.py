@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
-from claread_eval.judge.adapters import OpenAICompatibleJudgeAdapterClient
+from claread_eval.judge.adapters import JudgeAdapterError, OpenAICompatibleJudgeAdapterClient
 from claread_eval.judge.packet_builder import build_run_rubric_inputs
 from claread_eval.judge.runner import JudgeArtifactWriteError, JudgeRunConfig, run_judge
 from claread_eval.schemas.rubric import load_rubric
@@ -241,6 +243,51 @@ async def test_openai_compatible_adapter_parses_mocked_response(
     assert result.verdict == "pass"
     assert result.overall_score == 5
     assert result.criteria[0].criterion_id == "clarity"
+
+
+def test_openai_compatible_adapter_requires_https_for_non_local_base_url() -> None:
+    with pytest.raises(RuntimeError, match="must use https"):
+        OpenAICompatibleJudgeAdapterClient(
+            base_url="http://judge.example.com/v1",
+            api_key="test-key",
+            model="judge-model",
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_adapter_redacts_http_error_body(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    evals_root = tmp_path / "evals"
+    _write_rubric(evals_root)
+    run_dir = _write_run(evals_root)
+    rubric = load_rubric(evals_root / "rubrics" / "language-quality-v1.yaml")
+    packet = build_run_rubric_inputs(rubric=rubric, run_dir=run_dir)[0]
+
+    def fake_urlopen(request, timeout):
+        del request, timeout
+        raise urllib.error.HTTPError(
+            url="https://judge.local/v1/chat/completions",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=BytesIO(b'{"error":"bad key","api_key":"sk-secret123456"}'),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    adapter = OpenAICompatibleJudgeAdapterClient(
+        base_url="https://judge.local/v1",
+        api_key="test-key",
+        model="judge-model",
+    )
+
+    with pytest.raises(JudgeAdapterError) as exc_info:
+        await adapter.judge_case(packet)
+
+    message = str(exc_info.value)
+    assert "sk-secret123456" not in message
+    assert "<redacted>" in message
 
 
 @pytest.mark.asyncio

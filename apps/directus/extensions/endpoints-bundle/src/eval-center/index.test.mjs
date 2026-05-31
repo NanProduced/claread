@@ -6,10 +6,12 @@ import test from "node:test";
 
 import {
   attachPromptVariantSnapshot,
+  buildAuthGuard,
   buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
   cancelJudgeRunRequest,
+  isSafeFileId,
   isJudgeRunRequestCancelable,
   isJudgeRunRequestRetryable,
   isWorkflowRunRequestCancelable,
@@ -19,6 +21,7 @@ import {
   promptVariantSnapshotFromRow,
   retryJudgeRunRequest,
   retryWorkflowRunRequest,
+  validateWorkflowRunRequest,
   workflowConfigWithPromptVariantSnapshot,
   workflowRequestRow,
   workflowRunRequestSummary,
@@ -140,6 +143,65 @@ function matches(row, state) {
   }
   return true;
 }
+
+function createResponseProbe() {
+  return {
+    statusCode: 200,
+    payload: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.payload = payload;
+      return this;
+    },
+  };
+}
+
+test("buildAuthGuard requires a Directus admin user", () => {
+  const nonAdminResponse = createResponseProbe();
+  const anonymousResponse = createResponseProbe();
+  const adminResponse = createResponseProbe();
+
+  assert.equal(
+    buildAuthGuard(
+      { accountability: { user: "00000000-0000-0000-0000-000000000001", admin: false } },
+      nonAdminResponse,
+    ),
+    false,
+  );
+  assert.equal(buildAuthGuard({ accountability: null }, anonymousResponse), false);
+  assert.equal(
+    buildAuthGuard(
+      { accountability: { user: "00000000-0000-0000-0000-000000000001", admin: true } },
+      adminResponse,
+    ),
+    true,
+  );
+  assert.equal(nonAdminResponse.statusCode, 403);
+  assert.equal(anonymousResponse.statusCode, 403);
+  assert.equal(adminResponse.statusCode, 200);
+});
+
+test("isSafeFileId rejects traversal-looking values", () => {
+  assert.equal(isSafeFileId("run.v1-2026_05"), true);
+  assert.equal(isSafeFileId(".."), false);
+  assert.equal(isSafeFileId("../run"), false);
+  assert.equal(isSafeFileId("run..backup"), false);
+  assert.equal(isSafeFileId(".env"), false);
+  assert.equal(isSafeFileId("run/child"), false);
+});
+
+test("validateWorkflowRunRequest rejects unsafe dataset ids", () => {
+  const errors = validateWorkflowRunRequest({
+    run_id: "safe-run",
+    dataset_id: "../article-analysis-v1",
+    adapter_kind: "fake",
+  });
+
+  assert.equal(errors[0].field, "dataset_id");
+});
 
 test("workflowRequestRow does not prefill artifact fields before execution", () => {
   const row = workflowRequestRow(

@@ -15,6 +15,7 @@ from claread_eval.schemas.judge import (
     JudgeVerdict,
 )
 from claread_eval.schemas.rubric import RubricCaseInput, RubricCriterion
+from claread_eval.security import redact_sensitive_text, validate_https_or_local_url
 
 
 class JudgeAdapterError(RuntimeError):
@@ -77,6 +78,12 @@ class OpenAICompatibleJudgeAdapterClient:
     timeout_seconds: float = 60.0
     adapter_kind: str = "llm"
 
+    def __post_init__(self) -> None:
+        self.base_url = validate_https_or_local_url(
+            self.base_url,
+            setting_name="CLAREAD_EVAL_JUDGE_BASE_URL",
+        )
+
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> OpenAICompatibleJudgeAdapterClient:
         values = env or os.environ
@@ -104,7 +111,10 @@ class OpenAICompatibleJudgeAdapterClient:
         if timeout_seconds <= 0:
             timeout_seconds = 60.0
         return cls(
-            base_url=base_url,
+            base_url=validate_https_or_local_url(
+                base_url,
+                setting_name="CLAREAD_EVAL_JUDGE_BASE_URL",
+            ),
             api_key=api_key,
             model=model,
             timeout_seconds=timeout_seconds,
@@ -128,7 +138,7 @@ class OpenAICompatibleJudgeAdapterClient:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
+            body = redact_sensitive_text(exc.read().decode("utf-8", errors="replace"))
             raise JudgeAdapterError(f"Judge LLM HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise JudgeAdapterError(f"Judge LLM request failed: {exc.reason}") from exc

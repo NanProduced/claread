@@ -4,11 +4,11 @@ import path from "node:path";
 
 function buildAuthGuard(req, res) {
   const accountability = req.accountability;
-  if (!accountability?.user && accountability?.admin !== true) {
+  if (!accountability?.user || accountability?.admin !== true) {
     res.status(403).json({
       errors: [
         {
-          message: "Authentication required.",
+          message: "Directus admin access required.",
           extensions: { code: "FORBIDDEN" },
         },
       ],
@@ -48,7 +48,15 @@ function clampLimit(value) {
 }
 
 function isSafeFileId(value) {
-  return typeof value === "string" && /^[A-Za-z0-9._-]+$/.test(value);
+  return (
+    typeof value === "string"
+    && value.length > 0
+    && value.length <= 160
+    && /^[A-Za-z0-9._-]+$/.test(value)
+    && !value.includes("..")
+    && !value.startsWith(".")
+    && !value.endsWith(".")
+  );
 }
 
 function resolveRunsRoot(env) {
@@ -756,8 +764,8 @@ function validatePromptVariantDraft(body) {
 
 function validateWorkflowRunRequest(body) {
   const errors = [];
-  if (!body.dataset_id || typeof body.dataset_id !== "string") {
-    errors.push({ field: "dataset_id", message: "dataset_id is required." });
+  if (!body.dataset_id || !isSafeFileId(body.dataset_id)) {
+    errors.push({ field: "dataset_id", message: "dataset_id is required and must be safe." });
   }
   if (body.adapter_kind && !VALID_ADAPTER_KINDS.includes(body.adapter_kind)) {
     errors.push({ field: "adapter_kind", message: `adapter_kind must be one of: ${VALID_ADAPTER_KINDS.join(", ")}.` });
@@ -1666,11 +1674,13 @@ async function retryWorkflowRunRequest(database, req, env, requestId, body = {})
 
 export {
   attachPromptVariantSnapshot,
+  buildAuthGuard,
   buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
   cancelJudgeRunRequest,
   createJudgeRunRequest,
+  isSafeFileId,
   isJudgeRunRequestCancelable,
   isJudgeRunRequestRetryable,
   isWorkflowRunRequestCancelable,
@@ -1684,6 +1694,7 @@ export {
   promptVariantSnapshotFromRow,
   retryJudgeRunRequest,
   retryWorkflowRunRequest,
+  validateWorkflowRunRequest,
   workflowConfigWithPromptVariantSnapshot,
   workflowRequestRow,
   workflowRunRequestSummary,

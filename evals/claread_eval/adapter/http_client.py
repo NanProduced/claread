@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 from claread_eval.schemas.dataset import EvalCase
 from claread_eval.schemas.run import EvalRunConfig
+from claread_eval.security import redact_sensitive_text, validate_https_or_local_url
 
 
 class HttpArticleAnalysisAdapterClient:
@@ -20,7 +21,10 @@ class HttpArticleAnalysisAdapterClient:
     ) -> None:
         if not admin_key:
             raise RuntimeError("CLAREAD_API_ADMIN_KEY is required for adapter_kind=http")
-        self._base_url = base_url.rstrip("/")
+        self._base_url = validate_https_or_local_url(
+            base_url,
+            setting_name="CLAREAD_API_BASE_URL",
+        )
         self._admin_key = admin_key
         self._timeout_seconds = timeout_seconds
 
@@ -61,4 +65,5 @@ class HttpArticleAnalysisAdapterClient:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"HTTP eval adapter failed: {exc.code} {detail}") from exc
+            safe_detail = redact_sensitive_text(detail)
+            raise RuntimeError(f"HTTP eval adapter failed: {exc.code} {safe_detail}") from exc

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -11,8 +12,10 @@ SENSITIVE_FIELD_NAMES = {
     "access_token",
     "api_key",
     "api_secret",
+    "api_token",
     "app_secret",
     "auth_header",
+    "auth_token",
     "authorization",
     "base_url",
     "bearer_token",
@@ -26,6 +29,7 @@ SENSITIVE_FIELD_NAMES = {
     "extra_headers",
     "id_token",
     "langsmith_token",
+    "openai_api_key",
     "passwd",
     "password",
     "private_key",
@@ -33,15 +37,27 @@ SENSITIVE_FIELD_NAMES = {
     "record_id",
     "refresh_token",
     "secret",
+    "secret_key",
     "session_id",
     "session_token",
     "task_id",
+    "token",
     "user_id",
 }
+
+SENSITIVE_VALUE_PATTERNS = [
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+]
 
 
 class ArtifactSanitizationError(ValueError):
     pass
+
+
+def _looks_sensitive_string(value: str) -> bool:
+    return any(pattern.search(value) for pattern in SENSITIVE_VALUE_PATTERNS)
 
 
 def _scan_sensitive(value: Any, path: str, findings: list[str]) -> None:
@@ -55,6 +71,8 @@ def _scan_sensitive(value: Any, path: str, findings: list[str]) -> None:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             _scan_sensitive(child, f"{path}[{index}]", findings)
+    elif isinstance(value, str) and _looks_sensitive_string(value):
+        findings.append(path or "<root>")
 
 
 def _strip_sensitive(value: Any, path: str, findings: list[str]) -> Any:
@@ -73,6 +91,9 @@ def _strip_sensitive(value: Any, path: str, findings: list[str]) -> Any:
             _strip_sensitive(child, f"{path}[{index}]", findings)
             for index, child in enumerate(value)
         ]
+    if isinstance(value, str) and _looks_sensitive_string(value):
+        findings.append(path or "<root>")
+        return "<redacted>"
     return value
 
 
