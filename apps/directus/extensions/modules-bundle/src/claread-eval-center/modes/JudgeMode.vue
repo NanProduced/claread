@@ -12,6 +12,7 @@ const loadingRequests = ref(false);
 const submitting = ref(false);
 const error = ref("");
 const requestError = ref("");
+const message = ref("");
 
 const runs = ref([]);
 const selectedRunId = ref("");
@@ -113,20 +114,16 @@ async function loadSelectedRun() {
   loadingDetail.value = true;
   error.value = "";
   try {
-    const [detail, reports] = await Promise.all([
-      fetchJson(`${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}`),
-      fetchJson(`${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}/judge`).catch(() => []),
-    ]);
-    const safeReports = Array.isArray(reports) ? reports : [];
+    const detail = await fetchJson(`${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}`);
     selectedRunDetail.value = {
       ...detail,
       summary: {
         ...detail.summary,
-        judge_report_count: safeReports.length,
+        judge_report_count: 0,
       },
-      judge_reports: safeReports,
+      judge_reports: [],
     };
-    await loadRequests();
+    await Promise.allSettled([loadJudgeArtifactsForSelectedRun(), loadRequests({ refreshArtifacts: false })]);
   } catch (err) {
     selectedRunDetail.value = null;
     error.value = err?.message || "读取 run detail 失败。";
@@ -135,7 +132,27 @@ async function loadSelectedRun() {
   }
 }
 
-async function loadRequests() {
+async function loadJudgeArtifactsForSelectedRun() {
+  if (!selectedRunId.value || !selectedRunDetail.value) return;
+  const reports = await fetchJson(`${runsEndpoint}/${encodeURIComponent(selectedRunId.value)}/judge`).catch(() => []);
+  const safeReports = Array.isArray(reports) ? reports : [];
+  selectedRunDetail.value = {
+    ...selectedRunDetail.value,
+    summary: {
+      ...selectedRunDetail.value.summary,
+      judge_report_count: safeReports.length,
+    },
+    judge_reports: safeReports,
+  };
+  if (
+    selectedJudgeReport.value?.summary?.judge_run_id &&
+    !safeReports.some((report) => report.judge_run_id === selectedJudgeReport.value.summary.judge_run_id)
+  ) {
+    selectedJudgeReport.value = null;
+  }
+}
+
+async function loadRequests(options = {}) {
   loadingRequests.value = true;
   requestError.value = "";
   try {
@@ -148,6 +165,9 @@ async function loadRequests() {
     });
     const data = resp?.data?.data || resp?.data || [];
     requestRows.value = Array.isArray(data) ? data : [];
+    if (options.refreshArtifacts !== false) {
+      await loadJudgeArtifactsForSelectedRun();
+    }
   } catch (err) {
     requestError.value = err?.response?.data?.errors?.map((item) => item.message).join("; ") || err.message;
   } finally {
@@ -159,8 +179,9 @@ async function queueJudgeRequest() {
   if (!canQueueJudge.value) return;
   submitting.value = true;
   requestError.value = "";
+  message.value = "";
   try {
-    await api.post("/eval-center/judge/requests", {
+    const resp = await api.post("/eval-center/judge/requests", {
       run_id: selectedRunId.value,
       rubric_id: selectedRubricId.value,
       judge_adapter_kind: judgeAdapterKind.value,
@@ -170,6 +191,8 @@ async function queueJudgeRequest() {
         max_cases: Number(judgeMaxCases.value) || 50,
       },
     });
+    const created = resp?.data?.data || resp?.data || {};
+    message.value = `Queued judge request ${created.judge_run_id || ""}`.trim();
     requestStatusFilter.value = "all";
     await loadRequests();
   } catch (err) {
@@ -186,8 +209,10 @@ async function cancelJudgeRequest(row) {
   );
   if (!ok) return;
   requestError.value = "";
+  message.value = "";
   try {
     await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/cancel`);
+    message.value = `Cancelled judge request ${row.judge_run_id}.`;
     await loadRequests();
   } catch (err) {
     requestError.value = err?.response?.data?.errors?.map((item) => item.message).join("; ") || err.message;
@@ -201,10 +226,13 @@ async function retryJudgeRequest(row) {
   );
   if (!ok) return;
   requestError.value = "";
+  message.value = "";
   try {
-    await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/retry`, {
+    const resp = await api.post(`/eval-center/judge/requests/${encodeURIComponent(row.id)}/retry`, {
       retry_reason: "manual retry from Judge mode",
     });
+    const created = resp?.data?.data || resp?.data || {};
+    message.value = `Queued retry judge request ${created.judge_run_id || ""}`.trim();
     requestStatusFilter.value = "all";
     await loadRequests();
   } catch (err) {
@@ -229,7 +257,7 @@ async function selectJudgeReport(judgeRunId) {
 }
 
 async function refreshSelectedArtifacts() {
-  await loadSelectedRun();
+  await loadJudgeArtifactsForSelectedRun();
 }
 
 function dash(value) {
@@ -282,6 +310,7 @@ function statusClass(status) {
 
     <p v-if="error" class="error-message">{{ error }}</p>
     <p v-if="requestError" class="error-message">{{ requestError }}</p>
+    <p v-if="message" class="success-message">{{ message }}</p>
 
     <div class="judge-controls">
       <label>
@@ -317,6 +346,12 @@ function statusClass(status) {
         {{ submitting ? "Queueing" : "Queue Judge" }}
       </button>
     </div>
+    <p v-if="!runOptions.length && !loadingRuns" class="muted-line">
+      暂无可用 workflow run。请先通过 Workflow Eval / Runner Bridge 生成完整 run artifact。
+    </p>
+    <p v-if="runOptions.length && !rubrics.length" class="muted-line">
+      暂无可用 rubric。请确认 `evals/rubrics` 已挂载到 Directus。
+    </p>
 
     <div v-if="selectedRunSummary" class="summary-grid">
       <div>
@@ -404,6 +439,13 @@ function statusClass(status) {
               @click="retryJudgeRequest(request)"
             >
               Retry
+            </button>
+            <button
+              v-else-if="request.status === 'succeeded'"
+              type="button"
+              @click="selectJudgeReport(request.judge_run_id)"
+            >
+              View
             </button>
           </span>
         </div>
@@ -523,6 +565,13 @@ function statusClass(status) {
 .error-message,
 .error-text {
   color: var(--theme--danger);
+  font-size: 13px;
+}
+
+.success-message {
+  border-left: 3px solid var(--theme--success);
+  padding-left: 10px;
+  color: var(--theme--foreground);
   font-size: 13px;
 }
 
