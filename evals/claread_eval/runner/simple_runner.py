@@ -23,7 +23,12 @@ from claread_eval.schemas.run import (
     WarningEntry,
     WorkflowIdentity,
 )
-from claread_eval.writer.artifact_writer import init_run_dir, write_case_artifact, write_report
+from claread_eval.writer.artifact_writer import (
+    init_run_dir,
+    write_case_artifact,
+    write_case_index,
+    write_report,
+)
 
 DEFAULT_GRADERS: list[BaseGrader] = [
     SchemaPresenceGrader(),
@@ -49,12 +54,14 @@ async def run_eval(
 
     all_grader_results: list[GraderResult] = []
     case_summaries: list[CaseSummary] = []
+    artifacts: list[EvalCaseArtifact] = []
 
     for case in cases:
         artifact = await _run_single_case(case, run_config, adapter, adapter_run_config)
         case_grader_results = [g.grade(case, artifact) for g in graders]
         artifact.grader_results = [r.model_dump(mode="json") for r in case_grader_results]
         all_grader_results.extend(case_grader_results)
+        artifacts.append(artifact)
 
         write_case_artifact(run_dir, artifact)
 
@@ -62,6 +69,7 @@ async def run_eval(
         case_summaries.append(summary)
 
     report = _build_report(run_config, case_summaries, all_grader_results)
+    write_case_index(run_dir, run_config, artifacts)
     write_report(run_dir, report)
 
     return report

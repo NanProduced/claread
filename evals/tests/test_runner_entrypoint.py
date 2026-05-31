@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from claread_eval.runner.adapter_config import adapter_run_config
 from claread_eval.runner.config_loader import RunConfigLoadError, load_runner_config
 from claread_eval.runner.entrypoint import run_from_config_file
 from claread_eval.schemas.prompt_variant import PromptVariantLoadError
@@ -45,6 +46,38 @@ def test_load_runner_config_resolves_wrapper_fields(tmp_path: Path) -> None:
     assert config.dataset_dir == tmp_path / "datasets" / "article-analysis-v1"
     assert config.run_dir == tmp_path / "out-runs" / "config-test-001"
     assert config.run_config.model_selection == {}
+
+
+def test_load_runner_config_preserves_embedded_prompt_override(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "run_id: config-test-embedded-variant",
+                "dataset_id: article-analysis-v1",
+                "adapter_kind: fake",
+                "prompt_variant_id: embedded-variant",
+                "model_selection: {}",
+                "rag_mode: off",
+                "trace_scope: off",
+                "prompt_override:",
+                "  variant_id: embedded-variant",
+                "  target: article_analysis",
+                "  few_shot_mode: off",
+                "  prompt_snapshot_hash: abc123",
+                "  policies: {}",
+                "  examples: {}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_runner_config(config_path)
+    runtime_config = adapter_run_config(config)
+
+    assert config.prompt_override is not None
+    assert runtime_config["prompt_override"]["variant_id"] == "embedded-variant"
+    assert runtime_config["prompt_override"]["prompt_snapshot_hash"] == "abc123"
 
 
 def test_load_runner_config_normalizes_nested_off_literals(tmp_path: Path) -> None:
@@ -120,6 +153,7 @@ async def test_run_from_config_file_writes_fake_run(tmp_path: Path) -> None:
     assert report.total_cases >= 3
     assert run_dir == tmp_path / "entrypoint-smoke-001"
     assert (run_dir / "run.json").is_file()
+    assert (run_dir / "case-index.json").is_file()
     assert (run_dir / "report.json").is_file()
     assert (run_dir / "report.md").is_file()
     artifact_path = run_dir / "cases" / "short-daily-intermediate.json"

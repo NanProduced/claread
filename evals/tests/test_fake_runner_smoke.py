@@ -42,6 +42,7 @@ async def test_fake_runner_smoke(dataset_path: Path, tmp_path: Path) -> None:
     run_dir = tmp_path / "smoke-test-001"
     assert run_dir.is_dir()
     assert (run_dir / "run.json").is_file()
+    assert (run_dir / "case-index.json").is_file()
     assert (run_dir / "report.json").is_file()
     assert (run_dir / "report.md").is_file()
 

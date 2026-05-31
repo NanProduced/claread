@@ -1,10 +1,15 @@
 <script setup>
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import ResultBlock from "../components/ResultBlock.vue";
+import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";
 
 const runsEndpoint = "/eval-center/runs";
 const nodeProbeRunsEndpoint =
   "/items/eval_node_probe_runs?sort=-date_created&limit=50";
+const props = defineProps({
+  initialRunId: { type: String, default: "" },
+});
+const emit = defineEmits(["compare-run"]);
 
 const loading = ref(false);
 const detailLoading = ref(false);
@@ -17,10 +22,42 @@ const selectedCaseArtifact = ref(null);
 const selectedAbReport = ref(null);
 const nodeProbeRuns = ref([]);
 const selectedNodeProbeRun = ref(null);
+const caseFilter = ref("all");
+
+const filteredCaseArtifacts = computed(() => {
+  const artifacts = selectedRun.value?.case_artifacts || [];
+  if (caseFilter.value === "hard_failures") {
+    return artifacts.filter((artifact) => Number(artifact.hard_failures || 0) > 0);
+  }
+  if (caseFilter.value === "soft_failures") {
+    return artifacts.filter((artifact) => Number(artifact.soft_failures || 0) > 0);
+  }
+  if (caseFilter.value === "warnings") {
+    return artifacts.filter((artifact) => Number(artifact.warning_count || 0) > 0);
+  }
+  if (caseFilter.value === "adapter_failed") {
+    return artifacts.filter((artifact) => artifact.adapter_status && artifact.adapter_status !== "succeeded");
+  }
+  if (caseFilter.value === "prompt_variant") {
+    return artifacts.filter((artifact) => artifact.prompt_identity?.prompt_variant_id);
+  }
+  return artifacts;
+});
 
 onMounted(() => {
+  if (props.initialRunId) {
+    void openWorkflowRun(props.initialRunId);
+    return;
+  }
   void refreshCurrent();
 });
+
+watch(
+  () => props.initialRunId,
+  (runId) => {
+    if (runId) void openWorkflowRun(runId);
+  },
+);
 
 async function fetchJson(url) {
   const response = await fetch(url, {
@@ -44,13 +81,13 @@ async function refreshCurrent() {
   await refreshWorkflowRuns();
 }
 
-async function refreshWorkflowRuns() {
+async function refreshWorkflowRuns(options = {}) {
   loading.value = true;
   error.value = "";
   try {
     const data = await fetchJson(runsEndpoint);
     runs.value = Array.isArray(data?.runs) ? data.runs : [];
-    if (!selectedRunId.value && runs.value.length) {
+    if (options.selectFirst !== false && !selectedRunId.value && runs.value.length) {
       await selectRun(runs.value[0].run_id);
     }
   } catch (err) {
@@ -58,6 +95,15 @@ async function refreshWorkflowRuns() {
   } finally {
     loading.value = false;
   }
+}
+
+async function openWorkflowRun(runId) {
+  if (!runId) return;
+  activeSource.value = "workflow";
+  if (!runs.value.length) {
+    await refreshWorkflowRuns({ selectFirst: false });
+  }
+  await selectRun(runId);
 }
 
 async function refreshNodeProbeRuns() {
@@ -81,6 +127,7 @@ async function selectRun(runId) {
   selectedRunId.value = runId;
   selectedCaseArtifact.value = null;
   selectedAbReport.value = null;
+  caseFilter.value = "all";
   detailLoading.value = true;
   error.value = "";
   try {
@@ -157,6 +204,16 @@ function verdictClass(verdict) {
     "is-loss": verdict === "loss",
     "is-review": verdict === "manual_review",
   };
+}
+
+function compareAsBaseline() {
+  if (!selectedRunId.value) return;
+  emit("compare-run", { baseline_run_id: selectedRunId.value });
+}
+
+function compareAsCandidate() {
+  if (!selectedRunId.value) return;
+  emit("compare-run", { candidate_run_id: selectedRunId.value });
 }
 </script>
 
@@ -284,7 +341,34 @@ function verdictClass(verdict) {
           </div>
         </div>
 
+        <div class="run-action-bar">
+          <button type="button" @click="compareAsBaseline">Compare as baseline</button>
+          <button type="button" @click="compareAsCandidate">Compare as candidate</button>
+        </div>
+
+        <ReviewNotesPanel
+          title="Run Review Notes"
+          target-type="workflow_run"
+          :target-id="selectedRunId"
+          :run-id="selectedRunId"
+          :prompt-variant-id="selectedRun.summary.prompt_variant_id || ''"
+        />
+
         <ResultBlock title="Case Artifacts" :open="true">
+          <div class="case-filter-bar">
+            <label>
+              <span>Case filter</span>
+              <select v-model="caseFilter">
+                <option value="all">All cases</option>
+                <option value="hard_failures">Hard failures</option>
+                <option value="soft_failures">Soft failures</option>
+                <option value="warnings">Warnings</option>
+                <option value="adapter_failed">Adapter failed</option>
+                <option value="prompt_variant">Prompt variant</option>
+              </select>
+            </label>
+            <small>{{ filteredCaseArtifacts.length }} / {{ selectedRun.case_artifacts.length }} cases</small>
+          </div>
           <div class="case-table">
             <div class="case-row case-head">
               <span>Case</span>
@@ -294,7 +378,7 @@ function verdictClass(verdict) {
               <span>Prompt</span>
             </div>
             <button
-              v-for="artifact in selectedRun.case_artifacts"
+              v-for="artifact in filteredCaseArtifacts"
               :key="artifact.case_id"
               class="case-row"
               :class="{ 'is-active': selectedCaseArtifact?.case_id === artifact.case_id }"
@@ -321,6 +405,15 @@ function verdictClass(verdict) {
 
         <ResultBlock title="Selected Case Artifact" :open="Boolean(selectedCaseArtifact)">
           <template v-if="selectedCaseArtifact">
+            <ReviewNotesPanel
+              title="Case Review Notes"
+              target-type="case_artifact"
+              :target-id="`${selectedRunId}/${selectedCaseArtifact.case_id}`"
+              :run-id="selectedRunId"
+              :case-id="selectedCaseArtifact.case_id"
+              :prompt-variant-id="selectedCaseArtifact.prompt_identity?.prompt_variant_id || ''"
+            />
+
             <div class="summary-grid compact">
               <div>
                 <span>Case</span>
@@ -471,6 +564,14 @@ function verdictClass(verdict) {
 
         <ResultBlock title="Selected A/B Report" :open="Boolean(selectedAbReport)">
           <template v-if="selectedAbReport">
+            <ReviewNotesPanel
+              title="A/B Review Notes"
+              target-type="ab_report"
+              :target-id="`${selectedRunId}/${selectedAbReport.baseline_run_id}`"
+              :run-id="selectedRunId"
+              :ab-report-id="`vs-${selectedAbReport.baseline_run_id}`"
+            />
+
             <div class="summary-grid compact">
               <div>
                 <span>Baseline</span>
@@ -667,6 +768,49 @@ function verdictClass(verdict) {
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.run-action-bar,
+.case-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.run-action-bar button {
+  border: 1px solid var(--theme--primary);
+  border-radius: 4px;
+  background: var(--theme--background);
+  color: var(--theme--primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.case-filter-bar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.case-filter-bar span,
+.case-filter-bar small {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.case-filter-bar select {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
 }
 
 .source-tabs button {

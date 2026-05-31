@@ -6,10 +6,21 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from app.api.routes import eval_debug
 from app.config.settings import Settings
 from app.eval_adapter import article_analysis as eval_article_analysis
-from app.eval_adapter.schemas import ArticleAnalysisEvalRequest
+from app.eval_adapter.schemas import (
+    ArticleAnalysisEvalRequest,
+    ArticleAnalysisEvalResult,
+    ModelIdentity,
+    PromptIdentity,
+    RequestSnapshot,
+    SchemaIdentity,
+    WorkflowIdentity,
+)
 from app.llm.types import ModelSelection
 from app.schemas.analysis import AnalyzeRequestMeta, ArticleStructure, RenderSceneModel
 from app.services.analysis.prompting.runtime_context import is_grammar_rag_enabled
@@ -58,6 +69,45 @@ def _render_scene(request_id: str = "eval:req") -> RenderSceneModel:
         inline_marks=[],
         sentence_entries=[],
         warnings=[],
+    )
+
+
+def _admin_settings() -> Settings:
+    return Settings(
+        daily_reader_admin_api_key="admin-key",
+        eval_admin_api_key="",
+        default_model_profile="",
+        annotation_model_profile="",
+    )
+
+
+def _fake_eval_result() -> ArticleAnalysisEvalResult:
+    return ArticleAnalysisEvalResult(
+        status="succeeded",
+        request_snapshot=RequestSnapshot(
+            request_id="eval:run:case",
+            source_text_hash="hash",
+            source_char_count=9,
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+            source_type="user_input",
+            extended=False,
+            rag_mode="off",
+            trace_scope="off",
+        ),
+        workflow_identity=WorkflowIdentity(
+            workflow_name="article_analysis",
+            workflow_version="3.0.0",
+            topology_mode="learning",
+        ),
+        schema_identity=SchemaIdentity(
+            schema_version="3.0.0",
+            render_schema_version="3.0.0",
+            topology_mode="learning",
+        ),
+        prompt_identity=PromptIdentity(prompt_version="prompt-test"),
+        model_identity=ModelIdentity(route="annotation_generation"),
+        render_scene=_render_scene("eval:run:case"),
     )
 
 
@@ -283,3 +333,31 @@ def test_repair_llm_span_forwards_model_selection(monkeypatch: pytest.MonkeyPatc
 
     assert result["output"] == "ok"
     assert captured["model_selection"] == selection
+
+
+def test_eval_workflow_route_is_admin_key_protected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(eval_debug, "get_settings", _admin_settings)
+    run_mock = AsyncMock(return_value=_fake_eval_result())
+    monkeypatch.setattr(eval_debug, "run_article_analysis_eval", run_mock)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    denied = client.post(
+        "/eval/article-analysis/workflow",
+        headers={"x-admin-api-key": "wrong"},
+        json={"text": "Sentence."},
+    )
+    allowed = client.post(
+        "/eval/article-analysis/workflow",
+        headers={"x-admin-api-key": "admin-key"},
+        json={"text": "Sentence.", "rag_mode": "off"},
+    )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()["workflow_identity"]["workflow_name"] == "article_analysis"
+    run_mock.assert_awaited_once()

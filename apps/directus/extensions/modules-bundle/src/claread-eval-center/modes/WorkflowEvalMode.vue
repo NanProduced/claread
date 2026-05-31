@@ -1,10 +1,12 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import ResultBlock from "../components/ResultBlock.vue";
 
 const api = useApi();
+const emit = defineEmits(["open-run-history"]);
 
 const mode = ref("preset");
+const executionMode = ref("manual");
 
 const presetId = ref("article-analysis-baseline-fake");
 const customRunId = ref("");
@@ -13,21 +15,46 @@ const adapterKind = ref("fake");
 const datasetId = ref("article-analysis-v1");
 const evalPurpose = ref("prompt_experiment");
 const ragMode = ref("off");
+const traceScope = ref("off");
 const timeoutSeconds = ref(120);
+const promptVariantId = ref("");
+const modelSelectionJson = ref("{}");
 
 const submitting = ref(false);
 const submitResult = ref(null);
 const submitError = ref(null);
+const requestRows = ref([]);
+const requestLoading = ref(false);
+const requestError = ref(null);
+const requestStatusFilter = ref("all");
+const promptVariants = ref([]);
+const promptVariantsLoading = ref(false);
+const expandedRequestId = ref("");
 
-const presetOptions = [
+const presetOptions = ref([
   { text: "Baseline Fake（无 LLM，验证流程）", value: "article-analysis-baseline-fake" },
   { text: "No-Few-Shot Fake（无 LLM，关闭 few-shot）", value: "article-analysis-no-few-shot-fake" },
   { text: "Smoke Fake（冒烟测试）", value: "smoke-fake" },
+]);
+
+const executionOptions = [
+  { text: "Manual CLI", value: "manual" },
+  { text: "Runner Bridge Queue", value: "runner_bridge" },
+];
+
+const requestStatusOptions = [
+  { text: "All", value: "all" },
+  { text: "Queued", value: "queued" },
+  { text: "Running", value: "running" },
+  { text: "Succeeded", value: "succeeded" },
+  { text: "Failed", value: "failed" },
+  { text: "Cancelled", value: "cancelled" },
 ];
 
 const adapterOptions = [
   { text: "Fake（无 LLM 调用，快速验证流程）", value: "fake" },
   { text: "In-Process（真实 LLM 调用，需 API Key）", value: "in_process" },
+  { text: "HTTP services/api", value: "http" },
 ];
 
 const purposeOptions = [
@@ -44,25 +71,93 @@ const ragOptions = [
   { text: "Settings", value: "settings" },
 ];
 
+const traceScopeOptions = [
+  { text: "Off", value: "off" },
+  { text: "Isolated", value: "isolated" },
+  { text: "Inherit", value: "inherit" },
+];
+
 const canSubmit = computed(() => {
   if (mode.value === "preset") return presetId.value && !submitting.value;
-  return datasetId.value && !submitting.value;
+  return datasetId.value && !submitting.value && !promptVariantRagConflict.value;
 });
+
+const selectedPromptVariant = computed(() => (
+  promptVariants.value.find((item) => item.variant_id === promptVariantId.value)
+));
+
+const promptVariantRagConflict = computed(() => Boolean(promptVariantId.value && ragMode.value !== "off"));
+
+onMounted(() => {
+  void loadConfigPresets();
+  void loadPromptVariants();
+  void loadRequests();
+});
+
+async function loadConfigPresets() {
+  try {
+    const resp = await api.get("/eval-center/workflow-runs/config-presets");
+    const data = resp?.data?.data || resp?.data || [];
+    if (Array.isArray(data) && data.length > 0) {
+      presetOptions.value = data.map((item) => ({
+        text: item.id,
+        value: item.id,
+      }));
+      if (!presetOptions.value.some((item) => item.value === presetId.value)) {
+        presetId.value = presetOptions.value[0].value;
+      }
+    }
+  } catch {
+    // Keep built-in presets if the endpoint is unavailable.
+  }
+}
+
+async function loadPromptVariants() {
+  promptVariantsLoading.value = true;
+  try {
+    const resp = await api.get("/eval-center/prompt-variants/ready");
+    const data = resp?.data?.data || resp?.data || [];
+    promptVariants.value = Array.isArray(data) ? data : [];
+    if (promptVariantId.value && !promptVariants.value.some((item) => item.variant_id === promptVariantId.value)) {
+      promptVariantId.value = "";
+    }
+  } catch {
+    promptVariants.value = [];
+  } finally {
+    promptVariantsLoading.value = false;
+  }
+}
 
 async function submitRequest() {
   submitting.value = true;
   submitResult.value = null;
   submitError.value = null;
 
-  const payload = {};
+  const payload = { execution_mode: executionMode.value };
   if (mode.value === "preset") {
     payload.preset_id = presetId.value;
   } else {
+    let modelSelection = {};
+    try {
+      modelSelection = JSON.parse(modelSelectionJson.value || "{}");
+      if (!modelSelection || typeof modelSelection !== "object" || Array.isArray(modelSelection)) {
+        throw new Error("model_selection must be a JSON object.");
+      }
+    } catch (err) {
+      submitError.value = err?.message || "Invalid model_selection JSON.";
+      submitting.value = false;
+      return;
+    }
     payload.dataset_id = datasetId.value;
     payload.adapter_kind = adapterKind.value;
     payload.eval_purpose = evalPurpose.value;
     payload.rag_mode = ragMode.value;
+    payload.trace_scope = traceScope.value;
+    payload.model_selection = modelSelection;
     payload.timeout_seconds = Number(timeoutSeconds.value) || 120;
+    if (promptVariantId.value) {
+      payload.prompt_variant_id = promptVariantId.value;
+    }
   }
 
   if (customRunId.value.trim()) {
@@ -72,12 +167,113 @@ async function submitRequest() {
   try {
     const resp = await api.post("/eval-center/workflow-runs/requests", payload);
     submitResult.value = resp?.data?.data || resp?.data;
+    await loadRequests();
   } catch (err) {
     const errData = err?.response?.data;
     submitError.value = errData?.errors?.map((e) => e.message).join("; ") || err.message;
   } finally {
     submitting.value = false;
   }
+}
+
+async function loadRequests() {
+  requestLoading.value = true;
+  requestError.value = null;
+  try {
+    const resp = await api.get("/eval-center/workflow-runs/requests", {
+      params: {
+        status: requestStatusFilter.value,
+        limit: 30,
+      },
+    });
+    const data = resp?.data?.data || resp?.data || [];
+    requestRows.value = Array.isArray(data) ? data : [];
+  } catch (err) {
+    const errData = err?.response?.data;
+    requestError.value = errData?.errors?.map((e) => e.message).join("; ") || err.message;
+  } finally {
+    requestLoading.value = false;
+  }
+}
+
+async function cancelRequest(row) {
+  if (!row?.id || !["queued", "running"].includes(row.status)) return;
+  const detail = row.status === "running"
+    ? "The worker process is not killed; it will stop writing completion after heartbeat detects cancellation."
+    : "The request will not be claimed by a worker.";
+  const ok = window.confirm(`Cancel ${row.status} eval request ${row.run_id}?\n\n${detail}`);
+  if (!ok) return;
+  requestError.value = null;
+  try {
+    await api.post(`/eval-center/workflow-runs/requests/${encodeURIComponent(row.id)}/cancel`);
+    await loadRequests();
+  } catch (err) {
+    const errData = err?.response?.data;
+    requestError.value = errData?.errors?.map((e) => e.message).join("; ") || err.message;
+  }
+}
+
+async function retryRequest(row) {
+  if (!row?.id || !["failed", "cancelled"].includes(row.status)) return;
+  const ok = window.confirm(
+    `Retry eval request ${row.run_id} as a new run?\n\nA new run_id will be generated. Existing artifacts will not be modified.`,
+  );
+  if (!ok) return;
+  requestError.value = null;
+  try {
+    await api.post(
+      `/eval-center/workflow-runs/requests/${encodeURIComponent(row.id)}/retry`,
+      { retry_reason: "manual_retry_from_runner_queue" },
+    );
+    requestStatusFilter.value = "all";
+    await loadRequests();
+  } catch (err) {
+    const errData = err?.response?.data;
+    requestError.value = errData?.errors?.map((e) => e.message).join("; ") || err.message;
+  }
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function requestStatusClass(status) {
+  return {
+    queued: "pending",
+    running: "running",
+    succeeded: "success",
+    failed: "failed",
+    cancelled: "cancelled",
+  }[status] || "pending";
+}
+
+function requestErrorSummary(row) {
+  if (!row?.error) return "";
+  return [row.error.code, row.error.message].filter(Boolean).join(": ");
+}
+
+function promptVariantLabel(item) {
+  if (!item) return "";
+  return `${item.variant_id} · ${item.snapshot_hash || "snapshot"}`;
+}
+
+function openRunHistory(row) {
+  const runId = row?.artifact_run_id || row?.run_id;
+  if (!runId) return;
+  emit("open-run-history", runId);
+}
+
+function toggleRequestDetails(row) {
+  expandedRequestId.value = expandedRequestId.value === row.id ? "" : row.id;
+}
+
+function attemptSummary(row) {
+  const attemptNo = Number(row?.attempt_no || 1);
+  if (attemptNo <= 1 && !row?.source_request_id) return "";
+  return `Attempt ${attemptNo}${row?.source_request_id ? " · retry" : ""}`;
 }
 
 function copyToClipboard(text) {
@@ -95,6 +291,16 @@ function copyToClipboard(text) {
     <div class="mode-tabs">
       <button class="mode-tab" :class="{ 'is-active': mode === 'preset' }" type="button" @click="mode = 'preset'">使用 Config Preset</button>
       <button class="mode-tab" :class="{ 'is-active': mode === 'custom' }" type="button" @click="mode = 'custom'">自定义配置</button>
+    </div>
+
+    <div class="control-grid">
+      <div class="control-group">
+        <label>Execution Mode</label>
+        <select v-model="executionMode">
+          <option v-for="opt in executionOptions" :key="opt.value" :value="opt.value">{{ opt.text }}</option>
+        </select>
+        <small>Manual only generates YAML. Runner Bridge only queues a request; an external worker still performs execution.</small>
+      </div>
     </div>
 
     <div v-if="mode === 'preset'" class="control-grid">
@@ -141,11 +347,43 @@ function copyToClipboard(text) {
         <select v-model="ragMode">
           <option v-for="opt in ragOptions" :key="opt.value" :value="opt.value">{{ opt.text }}</option>
         </select>
+        <small v-if="promptVariantRagConflict" class="error-text">
+          Prompt variant snapshot v1 requires RAG Mode Off.
+        </small>
+      </div>
+
+      <div class="control-group">
+        <label>Prompt Variant</label>
+        <select v-model="promptVariantId" :disabled="promptVariantsLoading">
+          <option value="">None</option>
+          <option v-for="variant in promptVariants" :key="variant.variant_id" :value="variant.variant_id">
+            {{ promptVariantLabel(variant) }}
+          </option>
+        </select>
+        <small v-if="selectedPromptVariant">
+          Ready snapshot {{ selectedPromptVariant.snapshot_hash }} will be embedded in the request.
+        </small>
+        <small v-else-if="promptVariantsLoading">Loading ready snapshots...</small>
+        <small v-else>Only ready_for_eval workflow_eval snapshots are selectable.</small>
+      </div>
+
+      <div class="control-group">
+        <label>Trace Scope</label>
+        <select v-model="traceScope">
+          <option v-for="opt in traceScopeOptions" :key="opt.value" :value="opt.value">{{ opt.text }}</option>
+        </select>
+        <small>Use Off unless you intentionally need LangSmith trace isolation.</small>
       </div>
 
       <div class="control-group">
         <label>Timeout（秒）</label>
         <input v-model.number="timeoutSeconds" type="number" min="10" max="600" />
+      </div>
+
+      <div class="control-group full-width">
+        <label>Model Selection JSON</label>
+        <textarea v-model="modelSelectionJson" rows="4" spellcheck="false" />
+        <small>Leave as {} to use the default annotation_generation model route.</small>
       </div>
 
       <div class="control-group">
@@ -156,7 +394,7 @@ function copyToClipboard(text) {
 
       <div class="control-group full-width">
         <div class="warning-banner">
-          <strong>注意：</strong>自定义配置暂不支持 prompt_variant_id。如需测试 prompt variant，请使用 "No-Few-Shot Fake" preset 或直接编辑 YAML。
+          <strong>注意：</strong>Prompt Variant 会作为 eval-only snapshot 嵌入 request，不会修改业务 prompt YAML；v1 要求 RAG Mode 为 Off。
         </div>
       </div>
     </div>
@@ -185,6 +423,18 @@ function copyToClipboard(text) {
           <div class="result-row" v-if="submitResult.preset_id">
             <span class="result-label">Preset</span>
             <code>{{ submitResult.preset_id }}</code>
+          </div>
+          <div class="result-row" v-if="submitResult.prompt_variant_id || submitResult.config?.prompt_variant_id">
+            <span class="result-label">Prompt Variant</span>
+            <code>{{ submitResult.prompt_variant_id || submitResult.config?.prompt_variant_id }}</code>
+          </div>
+          <div class="result-row">
+            <span class="result-label">Execution</span>
+            <code>{{ submitResult.execution_mode || "manual" }}</code>
+          </div>
+          <div class="result-row" v-if="submitResult.runner_bridge_request">
+            <span class="result-label">Bridge</span>
+            <code>{{ submitResult.runner_bridge_request.status }}</code>
           </div>
         </div>
 
@@ -224,6 +474,151 @@ function copyToClipboard(text) {
         </details>
       </ResultBlock>
     </div>
+
+    <section class="request-queue">
+      <div class="queue-heading">
+        <div>
+          <h3>Runner Bridge Queue</h3>
+          <p>Recent workflow eval requests created by Directus. Execution is performed by the external eval worker.</p>
+        </div>
+        <div class="queue-actions">
+          <select v-model="requestStatusFilter" @change="loadRequests">
+            <option v-for="opt in requestStatusOptions" :key="opt.value" :value="opt.value">{{ opt.text }}</option>
+          </select>
+          <button class="copy-btn" type="button" :disabled="requestLoading" @click="loadRequests">
+            {{ requestLoading ? "Refreshing" : "Refresh" }}
+          </button>
+        </div>
+      </div>
+
+      <div v-if="requestError" class="submit-error">
+        <strong>Queue error: </strong>{{ requestError }}
+      </div>
+
+      <div class="queue-table-wrap">
+        <table class="queue-table">
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Status</th>
+              <th>Adapter</th>
+              <th>Worker</th>
+              <th>Heartbeat</th>
+              <th>Artifact</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!requestLoading && requestRows.length === 0">
+              <td colspan="7" class="empty-cell">No workflow eval requests found.</td>
+            </tr>
+            <tr v-for="row in requestRows" :key="row.id">
+              <td>
+                <div class="run-cell">
+                  <code>{{ row.run_id }}</code>
+                  <span>{{ row.dataset_id }}</span>
+                  <small v-if="attemptSummary(row)" class="attempt-text">
+                    {{ attemptSummary(row) }}
+                  </small>
+                  <small v-if="row.prompt_variant_id" class="variant-text">
+                    Variant {{ row.prompt_variant_id }}
+                  </small>
+                  <small>{{ formatDate(row.date_created) }}</small>
+                  <small v-if="requestErrorSummary(row)" class="error-text">
+                    {{ requestErrorSummary(row) }}
+                  </small>
+                </div>
+              </td>
+              <td>
+                <span class="verdict-pill" :class="requestStatusClass(row.status)">
+                  {{ row.status }}
+                </span>
+              </td>
+              <td>{{ row.adapter_kind }}</td>
+              <td>{{ row.lease_owner || "-" }}</td>
+              <td>{{ formatDate(row.heartbeat_at || row.lease_until) }}</td>
+              <td>
+                <code v-if="row.artifact_path">{{ row.artifact_path }}</code>
+                <span v-else-if="row.expected_artifact_path" class="expected-artifact">
+                  Expected {{ row.expected_artifact_path }}
+                </span>
+                <span v-else>-</span>
+              </td>
+              <td>
+                <button
+                  v-if="['queued', 'running'].includes(row.status)"
+                  class="cancel-btn"
+                  type="button"
+                  @click="cancelRequest(row)"
+                >
+                  Cancel
+                </button>
+                <button
+                  v-else-if="['failed', 'cancelled'].includes(row.status)"
+                  class="retry-btn"
+                  type="button"
+                  @click="retryRequest(row)"
+                >
+                  Retry
+                </button>
+                <button
+                  v-else-if="row.status === 'succeeded'"
+                  class="open-btn"
+                  type="button"
+                  @click="openRunHistory(row)"
+                >
+                  Open
+                </button>
+                <button class="details-btn" type="button" @click="toggleRequestDetails(row)">
+                  {{ expandedRequestId === row.id ? "Hide" : "Details" }}
+                </button>
+              </td>
+            </tr>
+            <tr v-for="row in requestRows.filter((item) => item.id === expandedRequestId)" :key="`${row.id}-details`">
+              <td colspan="7">
+                <div class="request-details">
+                  <div>
+                    <span>Request</span>
+                    <code>{{ row.id }}</code>
+                  </div>
+                  <div>
+                    <span>Attempt</span>
+                    <code>{{ row.attempt_no || 1 }} / {{ row.max_attempts || 1 }}</code>
+                  </div>
+                  <div>
+                    <span>Source</span>
+                    <code>{{ row.source_request_id || "-" }}</code>
+                  </div>
+                  <div>
+                    <span>Lease</span>
+                    <code>{{ row.lease_owner || "-" }} · {{ formatDate(row.lease_until) }}</code>
+                  </div>
+                  <div>
+                    <span>Started / Finished</span>
+                    <code>{{ formatDate(row.started_at) }} · {{ formatDate(row.finished_at) }}</code>
+                  </div>
+                  <div>
+                    <span>Config</span>
+                    <code>{{ row.config_summary?.config_file || "-" }}</code>
+                  </div>
+                  <div v-if="row.retry_reason">
+                    <span>Retry Reason</span>
+                    <code>{{ row.retry_reason }}</code>
+                  </div>
+                  <div v-if="requestErrorSummary(row)">
+                    <span>Error</span>
+                    <code>{{ requestErrorSummary(row) }}</code>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="requestLoading">
+              <td colspan="7" class="empty-cell">Loading requests...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </section>
 </template>
 
@@ -292,7 +687,8 @@ function copyToClipboard(text) {
 }
 
 .control-group select,
-.control-group input {
+.control-group input,
+.control-group textarea {
   padding: 8px 10px;
   border: 1px solid var(--theme--border-color);
   border-radius: 4px;
@@ -303,9 +699,14 @@ function copyToClipboard(text) {
 }
 
 .control-group select:focus,
-.control-group input:focus {
+.control-group input:focus,
+.control-group textarea:focus {
   border-color: var(--theme--primary);
   outline: none;
+}
+
+.control-group textarea {
+  resize: vertical;
 }
 
 .control-group small {
@@ -387,6 +788,26 @@ function copyToClipboard(text) {
 .verdict-pill.pending {
   background: var(--theme--warning-background);
   color: var(--theme--foreground);
+}
+
+.verdict-pill.running {
+  background: var(--theme--primary-background);
+  color: var(--theme--primary);
+}
+
+.verdict-pill.success {
+  background: var(--theme--success-background);
+  color: var(--theme--foreground);
+}
+
+.verdict-pill.failed {
+  background: var(--theme--danger-background);
+  color: var(--theme--danger);
+}
+
+.verdict-pill.cancelled {
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
 }
 
 .steps-section {
@@ -476,8 +897,214 @@ function copyToClipboard(text) {
   overflow-x: auto;
 }
 
+.request-queue {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--theme--border-color);
+}
+
+.queue-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.queue-heading h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.queue-heading p {
+  margin: 0;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+}
+
+.queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-actions select {
+  padding: 6px 8px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  font: inherit;
+  font-size: 12px;
+}
+
+.queue-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
+}
+
+.queue-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+  font-size: 12px;
+}
+
+.queue-table th,
+.queue-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--theme--border-color);
+  text-align: left;
+  vertical-align: top;
+}
+
+.queue-table th {
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  font-weight: 700;
+}
+
+.queue-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.run-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 180px;
+}
+
+.run-cell span,
+.run-cell small,
+.muted {
+  color: var(--theme--foreground-subdued);
+}
+
+.error-text {
+  color: var(--theme--danger);
+  max-width: 280px;
+  overflow-wrap: anywhere;
+}
+
+.expected-artifact {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+}
+
+.attempt-text {
+  color: var(--theme--primary);
+}
+
+.variant-text {
+  color: var(--theme--foreground-subdued);
+}
+
+.empty-cell {
+  color: var(--theme--foreground-subdued);
+  text-align: center;
+}
+
+.cancel-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--theme--danger);
+  border-radius: 4px;
+  background: var(--theme--background);
+  color: var(--theme--danger);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cancel-btn:hover {
+  background: var(--theme--danger-background);
+}
+
+.retry-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--theme--primary);
+  border-radius: 4px;
+  background: var(--theme--background);
+  color: var(--theme--primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.retry-btn:hover {
+  background: var(--theme--primary-background);
+}
+
+.open-btn,
+.details-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
+  margin-left: 6px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.open-btn {
+  border-color: var(--theme--primary);
+  color: var(--theme--primary);
+}
+
+.open-btn:hover,
+.details-btn:hover {
+  background: var(--theme--background-subdued);
+}
+
+.request-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  background: var(--theme--background-subdued);
+  padding: 10px;
+}
+
+.request-details div {
+  min-width: 0;
+}
+
+.request-details span,
+.request-details code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.request-details span {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.request-details code {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
 @media (max-width: 720px) {
   .control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-heading {
+    flex-direction: column;
+  }
+
+  .queue-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .request-details {
     grid-template-columns: 1fr;
   }
 }

@@ -27,6 +27,7 @@ class RunnerFileConfig(BaseModel):
     datasets_root: Path
     fake_latency_seconds: float = Field(default=0.0, ge=0.0)
     prompt_variant_path: Path | None = None
+    prompt_override: dict[str, Any] | None = None
 
     @property
     def dataset_dir(self) -> Path:
@@ -77,6 +78,7 @@ def load_runner_config(path: str | Path) -> RunnerFileConfig:
     runs_root = _resolve_path(base_dir, payload.pop("runs_root", "../runs"))
     datasets_root = _resolve_path(base_dir, payload.pop("datasets_root", "../datasets"))
     fake_latency_seconds = payload.pop("fake_latency_seconds", 0.0)
+    prompt_override = payload.pop("prompt_override", None)
     prompt_variant_path_raw = payload.pop("prompt_variant_path", None)
     prompt_variant_path = (
         _resolve_path(base_dir, prompt_variant_path_raw)
@@ -91,4 +93,5 @@ def load_runner_config(path: str | Path) -> RunnerFileConfig:
         datasets_root=datasets_root,
         fake_latency_seconds=fake_latency_seconds,
         prompt_variant_path=prompt_variant_path,
+        prompt_override=prompt_override,
     )

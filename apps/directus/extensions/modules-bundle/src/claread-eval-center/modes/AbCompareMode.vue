@@ -1,8 +1,12 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import ResultBlock from "../components/ResultBlock.vue";
 
 const runsEndpoint = "/eval-center/runs";
+const props = defineProps({
+  initialBaselineRunId: { type: String, default: "" },
+  initialCandidateRunId: { type: String, default: "" },
+});
 
 const loading = ref(false);
 const comparing = ref(false);
@@ -30,6 +34,13 @@ onMounted(() => {
   void refreshRuns();
 });
 
+watch(
+  () => [props.initialBaselineRunId, props.initialCandidateRunId],
+  () => {
+    applyInitialSelection();
+  },
+);
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     method: "GET",
@@ -50,6 +61,7 @@ async function refreshRuns() {
   try {
     const data = await fetchJson(`${runsEndpoint}?limit=100`);
     runs.value = Array.isArray(data?.runs) ? data.runs : [];
+    applyInitialSelection();
     if (!baselineRunId.value && runs.value.length > 1) baselineRunId.value = runs.value[1].run_id;
     if (!candidateRunId.value && runs.value.length) candidateRunId.value = runs.value[0].run_id;
   } catch (err) {
@@ -57,6 +69,19 @@ async function refreshRuns() {
   } finally {
     loading.value = false;
   }
+}
+
+function applyInitialSelection() {
+  let changed = false;
+  if (props.initialBaselineRunId && baselineRunId.value !== props.initialBaselineRunId) {
+    baselineRunId.value = props.initialBaselineRunId;
+    changed = true;
+  }
+  if (props.initialCandidateRunId && candidateRunId.value !== props.initialCandidateRunId) {
+    candidateRunId.value = props.initialCandidateRunId;
+    changed = true;
+  }
+  if (changed) report.value = null;
 }
 
 async function loadComparison() {

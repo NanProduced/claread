@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Claread Eval Center - deterministic eval harness and grader framework"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+    "asyncpg>=0.30.0,<0.31.0",
     "pydantic>=2.10,<3.0.0",
     "pyyaml>=6.0,<7.0",
     "orjson>=3.11.1,<4.0.0",

@@ -33,6 +33,33 @@ const COLLECTIONS = [
     sort_field: "date_created",
     sort: 30,
   },
+  {
+    collection: "eval_prompt_variant_drafts",
+    icon: "edit_note",
+    color: "#7C3AED",
+    note: "Eval-only prompt variant drafts. 不直接修改业务 prompt YAML。",
+    display_template: "{{ variant_id }} {{ status }}",
+    sort_field: "date_updated",
+    sort: 31,
+  },
+  {
+    collection: "eval_workflow_run_requests",
+    icon: "pending_actions",
+    color: "#0F766E",
+    note: "Runner bridge 请求队列。Directus 只创建请求，执行由外部 worker 完成。",
+    display_template: "{{ run_id }} {{ status }}",
+    sort_field: "date_created",
+    sort: 32,
+  },
+  {
+    collection: "eval_review_notes",
+    icon: "rate_review",
+    color: "#B45309",
+    note: "Eval Center human review notes linked to runs, cases, A/B reports, or prompt variants. Artifacts remain immutable.",
+    display_template: "{{ target_type }} {{ target_id }} {{ verdict }}",
+    sort_field: "date_created",
+    sort: 33,
+  },
 ];
 
 const FIELD_METADATA = [
@@ -129,6 +156,174 @@ const FIELD_METADATA = [
   ["trace_refs_json", jsonMeta(51, "Trace refs")],
   ["error_json", jsonMeta(52, "Error")],
 ];
+
+const PROMPT_VARIANT_FIELD_METADATA = [
+  ["id", { hidden: true, readonly: true, interface: "input", sort: 1 }],
+  ["date_created", { readonly: true, interface: "datetime", width: "half", sort: 2 }],
+  ["date_updated", { readonly: true, interface: "datetime", width: "half", sort: 3 }],
+  ["user_created", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 4, hidden: true }],
+  ["user_updated", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 5, hidden: true }],
+  ["variant_id", { interface: "input", width: "half", sort: 10 }],
+  ["target", { interface: "input", width: "half", sort: 11, readonly: true }],
+  [
+    "status",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 12,
+      options: {
+        choices: [
+          { text: "Draft", value: "draft" },
+          { text: "Ready for Eval", value: "ready_for_eval" },
+          { text: "Archived", value: "archived" },
+        ],
+      },
+    },
+  ],
+  [
+    "scope",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 13,
+      options: {
+        choices: [
+          { text: "Workflow Eval", value: "workflow_eval" },
+          { text: "Node Probe", value: "node_probe" },
+        ],
+      },
+    },
+  ],
+  [
+    "few_shot_mode",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 14,
+      options: {
+        choices: [
+          { text: "Off", value: "off" },
+          { text: "Baseline", value: "baseline" },
+          { text: "Variant", value: "variant" },
+          { text: "Settings", value: "settings" },
+        ],
+      },
+    },
+  ],
+  ["snapshot_hash", { interface: "input", readonly: true, width: "half", sort: 15 }],
+  ["notes", { interface: "input-rich-text-md", width: "full", sort: 16 }],
+  ["policies_json", jsonMeta(20, "Policy overrides")],
+  ["examples_json", jsonMeta(21, "Variant examples")],
+  ["manifest_json", jsonMeta(22, "Normalized manifest snapshot")],
+];
+
+const WORKFLOW_RUN_REQUEST_FIELD_METADATA = [
+  ["id", { hidden: true, readonly: true, interface: "input", sort: 1 }],
+  ["date_created", { readonly: true, interface: "datetime", width: "half", sort: 2 }],
+  ["date_updated", { readonly: true, interface: "datetime", width: "half", sort: 3 }],
+  ["user_created", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 4, hidden: true }],
+  ["user_updated", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 5, hidden: true }],
+  ["run_id", { interface: "input", width: "half", sort: 10 }],
+  [
+    "status",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 11,
+      options: {
+        choices: [
+          { text: "Queued", value: "queued" },
+          { text: "Running", value: "running" },
+          { text: "Succeeded", value: "succeeded" },
+          { text: "Failed", value: "failed" },
+          { text: "Cancelled", value: "cancelled" },
+        ],
+      },
+    },
+  ],
+  ["dataset_id", { interface: "input", width: "half", sort: 12 }],
+  ["eval_purpose", { interface: "input", width: "half", sort: 13 }],
+  ["adapter_kind", { interface: "input", width: "half", sort: 14 }],
+  ["runner_kind", { interface: "input", width: "half", sort: 15, readonly: true }],
+  ["prompt_variant_id", { interface: "input", width: "half", sort: 16 }],
+  ["prompt_variant_snapshot_hash", { interface: "input", width: "half", sort: 17 }],
+  ["artifact_run_id", { interface: "input", width: "half", sort: 18 }],
+  ["artifact_path", { interface: "input", width: "half", sort: 19 }],
+  ["source_request_id", { interface: "input", width: "half", sort: 20, readonly: true }],
+  ["attempt_no", { interface: "input", width: "half", sort: 21, readonly: true }],
+  ["max_attempts", { interface: "input", width: "half", sort: 22, readonly: true }],
+  ["retry_reason", { interface: "input-multiline", width: "full", sort: 23 }],
+  ["max_concurrency", { interface: "input", width: "half", sort: 24 }],
+  ["lease_owner", { interface: "input", width: "half", sort: 25 }],
+  ["lease_until", { interface: "datetime", width: "half", sort: 26 }],
+  ["heartbeat_at", { interface: "datetime", width: "half", sort: 27 }],
+  ["started_at", { interface: "datetime", width: "half", sort: 28 }],
+  ["finished_at", { interface: "datetime", width: "half", sort: 29 }],
+  ["notes", { interface: "input-rich-text-md", width: "full", sort: 30 }],
+  ["tags", { interface: "tags", width: "half", sort: 31 }],
+  ["config_json", jsonMeta(40, "Runner config snapshot")],
+  ["error_json", jsonMeta(41, "Runner error summary")],
+];
+
+const REVIEW_NOTES_FIELD_METADATA = [
+  ["id", { hidden: true, readonly: true, interface: "input", sort: 1 }],
+  ["date_created", { readonly: true, interface: "datetime", width: "half", sort: 2 }],
+  ["date_updated", { readonly: true, interface: "datetime", width: "half", sort: 3, hidden: true }],
+  ["user_created", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 4, hidden: true }],
+  ["user_updated", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 5, hidden: true }],
+  [
+    "target_type",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 10,
+      options: {
+        choices: [
+          { text: "Workflow Run", value: "workflow_run" },
+          { text: "Case Artifact", value: "case_artifact" },
+          { text: "A/B Report", value: "ab_report" },
+          { text: "Prompt Variant", value: "prompt_variant" },
+        ],
+      },
+    },
+  ],
+  ["target_id", { interface: "input", width: "half", sort: 11 }],
+  ["run_id", { interface: "input", width: "half", sort: 12 }],
+  ["case_id", { interface: "input", width: "half", sort: 13 }],
+  ["ab_report_id", { interface: "input", width: "half", sort: 14 }],
+  ["prompt_variant_id", { interface: "input", width: "half", sort: 15 }],
+  [
+    "verdict",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 16,
+      options: {
+        allowNone: true,
+        choices: [
+          { text: "Good", value: "good" },
+          { text: "Bad", value: "bad" },
+          { text: "Mixed", value: "mixed" },
+          { text: "Needs Review", value: "needs_review" },
+          { text: "Win", value: "win" },
+          { text: "Loss", value: "loss" },
+          { text: "Tie", value: "tie" },
+          { text: "Blocked", value: "blocked" },
+        ],
+      },
+    },
+  ],
+  ["promote_candidate", { interface: "boolean", width: "half", sort: 17 }],
+  ["tags", { interface: "tags", width: "half", sort: 18 }],
+  ["note", { interface: "input-rich-text-md", width: "full", sort: 19 }],
+];
+
+const FIELD_METADATA_BY_COLLECTION = {
+  eval_node_probe_runs: FIELD_METADATA,
+  eval_prompt_variant_drafts: PROMPT_VARIANT_FIELD_METADATA,
+  eval_workflow_run_requests: WORKFLOW_RUN_REQUEST_FIELD_METADATA,
+  eval_review_notes: REVIEW_NOTES_FIELD_METADATA,
+};
 
 function jsonMeta(sort, note) {
   return {
@@ -270,10 +465,12 @@ async function syncCollections(token) {
 }
 
 async function syncFields(token) {
-  for (const [field, meta] of FIELD_METADATA) {
-    await request(token, "PATCH", `/fields/eval_node_probe_runs/${field}`, {
-      meta,
-    });
+  for (const [collection, fields] of Object.entries(FIELD_METADATA_BY_COLLECTION)) {
+    for (const [field, meta] of fields) {
+      await request(token, "PATCH", `/fields/${collection}/${field}`, {
+        meta,
+      });
+    }
   }
 }
 

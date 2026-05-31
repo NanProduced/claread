@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import AbCompareMode from "./modes/AbCompareMode.vue";
 import NodeProbeMode from "./modes/NodeProbeMode.vue";
+import PromptVariantMode from "./modes/PromptVariantMode.vue";
 import RunHistoryMode from "./modes/RunHistoryMode.vue";
 import WorkflowEvalMode from "./modes/WorkflowEvalMode.vue";
 import PlaceholderPanel from "./components/PlaceholderPanel.vue";
@@ -36,7 +37,7 @@ const modes = [
     label: "Prompt Variant",
     kicker: "Prompt Lab",
     description: "管理 eval-only prompt variant draft、manifest 和导出。",
-    ready: false,
+    ready: true,
     questions: ["有哪些候选 prompt variant？", "variant 是否可复现？", "是否可以导出到文件型 eval harness？"],
   },
   {
@@ -58,8 +59,23 @@ const modes = [
 ];
 
 const activeMode = ref("node-probe");
+const runHistoryInitialRunId = ref("");
+const abInitialBaselineRunId = ref("");
+const abInitialCandidateRunId = ref("");
 
 const currentMode = computed(() => modes.find((item) => item.id === activeMode.value) ?? modes[0]);
+
+function openRunHistory(runId) {
+  if (!runId) return;
+  runHistoryInitialRunId.value = runId;
+  activeMode.value = "run-history";
+}
+
+function openAbCompare(selection) {
+  if (selection?.baseline_run_id) abInitialBaselineRunId.value = selection.baseline_run_id;
+  if (selection?.candidate_run_id) abInitialCandidateRunId.value = selection.candidate_run_id;
+  activeMode.value = "ab-compare";
+}
 </script>
 
 <template>
@@ -101,9 +117,18 @@ const currentMode = computed(() => modes.find((item) => item.id === activeMode.v
       </header>
 
       <NodeProbeMode v-if="activeMode === 'node-probe'" />
-      <WorkflowEvalMode v-else-if="activeMode === 'workflow-eval'" />
-      <AbCompareMode v-else-if="activeMode === 'ab-compare'" />
-      <RunHistoryMode v-else-if="activeMode === 'run-history'" />
+      <WorkflowEvalMode v-else-if="activeMode === 'workflow-eval'" @open-run-history="openRunHistory" />
+      <AbCompareMode
+        v-else-if="activeMode === 'ab-compare'"
+        :initial-baseline-run-id="abInitialBaselineRunId"
+        :initial-candidate-run-id="abInitialCandidateRunId"
+      />
+      <PromptVariantMode v-else-if="activeMode === 'prompt-variants'" />
+      <RunHistoryMode
+        v-else-if="activeMode === 'run-history'"
+        :initial-run-id="runHistoryInitialRunId"
+        @compare-run="openAbCompare"
+      />
       <PlaceholderPanel v-else :mode="currentMode" />
     </main>
   </private-view>

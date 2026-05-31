@@ -287,12 +287,17 @@ async def test_report_generation_end_to_end(tmp_path: Path) -> None:
     run_dir = tmp_path / "report-test-001"
     report_json = run_dir / "report.json"
     report_md = run_dir / "report.md"
+    case_index = run_dir / "case-index.json"
     assert report_json.is_file()
     assert report_md.is_file()
+    assert case_index.is_file()
 
     import json
     data = json.loads(report_json.read_text(encoding="utf-8"))
     assert data["total_cases"] == len(cases)
+    index_data = json.loads(case_index.read_text(encoding="utf-8"))
+    assert index_data["schema_version"] == "eval-case-index-v1"
+    assert index_data["total_cases"] == len(cases)
 
     md = report_md.read_text(encoding="utf-8")
     assert "Eval Report" in md

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "directus-extension build",
+    "test": "node --test src/eval-center/index.test.mjs",
     "watch": "directus-extension build --watch"
   },
   "devDependencies": {

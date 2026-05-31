@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 from claread_eval.adapter.protocol import ArticleAnalysisAdapterClient
 
-AdapterKind = Literal["fake", "in_process"]
+AdapterKind = Literal["fake", "in_process", "http"]
 
 
 def create_adapter_client(
@@ -20,4 +21,11 @@ def create_adapter_client(
         from claread_eval.adapter.in_process_client import InProcessArticleAnalysisAdapterClient
 
         return InProcessArticleAnalysisAdapterClient()
+    if kind == "http":
+        from claread_eval.adapter.http_client import HttpArticleAnalysisAdapterClient
+
+        return HttpArticleAnalysisAdapterClient(
+            base_url=os.environ.get("CLAREAD_API_BASE_URL", "http://127.0.0.1:8000"),
+            admin_key=os.environ.get("CLAREAD_API_ADMIN_KEY", ""),
+        )
     raise ValueError(f"Unsupported adapter kind: {kind}")

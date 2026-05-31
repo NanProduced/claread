@@ -10,6 +10,7 @@ from claread_eval.writer.artifact_writer import (
     ArtifactWriteError,
     init_run_dir,
     write_case_artifact,
+    write_case_index,
     write_report,
 )
 from claread_eval.writer.dataset_writer import (
@@ -73,6 +74,37 @@ def test_write_case_artifact_immutable(
     write_case_artifact(run_dir, sample_artifact)
     with pytest.raises(ArtifactWriteError, match="already exists"):
         write_case_artifact(run_dir, sample_artifact)
+
+
+def test_write_case_index(
+    tmp_path: Path, run_config: EvalRunConfig, sample_artifact: EvalCaseArtifact
+) -> None:
+    sample_artifact.grader_results = [
+        {
+            "grader_name": "schema_presence",
+            "verdict": "fail",
+            "severity": "hard",
+            "metric": "schema",
+            "evidence": "missing field",
+        }
+    ]
+    sample_artifact.usage_summary.total_tokens = 12
+    run_dir = init_run_dir(tmp_path, run_config)
+    write_case_artifact(run_dir, sample_artifact)
+
+    index_path = write_case_index(run_dir, run_config, [sample_artifact])
+
+    data = json.loads(index_path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == "eval-case-index-v1"
+    assert data["run_id"] == "test-run-001"
+    assert data["total_cases"] == 1
+    assert data["cases"][0]["case_id"] == "case-001"
+    assert data["cases"][0]["artifact_href"] == "cases/case-001.json"
+    assert data["cases"][0]["hard_failures"] == 1
+    assert data["cases"][0]["total_tokens"] == 12
+
+    with pytest.raises(ArtifactWriteError, match="Case index already exists"):
+        write_case_index(run_dir, run_config, [sample_artifact])
 
 
 def test_write_case_artifact_rejects_sensitive_fields(
