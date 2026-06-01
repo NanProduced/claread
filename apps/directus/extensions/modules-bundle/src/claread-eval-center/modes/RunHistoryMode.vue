@@ -1108,7 +1108,11 @@ function compareAsCandidate() {
         </ResultBlock>
 
         <ResultBlock title="Node Output" :open="false">
-          <NodeProbeOutputView :node-name="selectedNodeProbeRun.node_name" :output="selectedNodeProbeRun.node_output_json" />
+          <NodeProbeOutputView
+            :node-name="selectedNodeProbeRun.node_name"
+            :output="selectedNodeProbeRun.node_output_json"
+            :prepared-sentences="selectedNodeProbeRun.prepared_sentences_json || []"
+          />
         </ResultBlock>
 
         <ResultBlock title="Raw Node Output JSON" :open="false">

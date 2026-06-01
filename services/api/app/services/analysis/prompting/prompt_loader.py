@@ -61,15 +61,11 @@ def load_agent_instructions(agent_name: str) -> str:
     return str(content).strip()
 
 
-def load_policy_lines(
+def load_policy_lines_raw(
     policy_name: str,
     focus: str,
     variant: str | None = None,
 ) -> list[str]:
-    override_lines = get_prompt_override_policy_lines(policy_name, focus, variant)
-    if override_lines is not None:
-        return override_lines
-
     data = _load_yaml_file(f"policies/{policy_name}.yaml")
     focus_data = data.get(focus)
     if focus_data is None:
@@ -83,6 +79,17 @@ def load_policy_lines(
     else:
         lines = focus_data.get("default", [])
     return lines if isinstance(lines, list) else [lines]
+
+
+def load_policy_lines(
+    policy_name: str,
+    focus: str,
+    variant: str | None = None,
+) -> list[str]:
+    override_lines = get_prompt_override_policy_lines(policy_name, focus, variant)
+    if override_lines is not None:
+        return override_lines
+    return load_policy_lines_raw(policy_name, focus, variant)
 
 
 def load_examples(

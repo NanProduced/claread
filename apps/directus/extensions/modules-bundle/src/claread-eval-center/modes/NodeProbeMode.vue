@@ -704,7 +704,12 @@ function openSavedRecord() {
 
         <ResultBlock id="eval-output" :title="`${nodeLabel} Draft Output`" :open="Boolean(result) && !isDryRunResult">
           <p v-if="isDryRunResult" class="muted-line">Dry run 已完成预处理与 prompt 组装，但没有调用目标节点 LLM。</p>
-          <NodeProbeOutputView v-else :node-name="activeNode" :output="nodeOutput" />
+          <NodeProbeOutputView
+            v-else
+            :node-name="activeNode"
+            :output="nodeOutput"
+            :prepared-sentences="preparedSentences"
+          />
         </ResultBlock>
 
         <ResultBlock id="eval-evidence" title="Observations / Trace">

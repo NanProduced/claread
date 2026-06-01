@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import AbCompareMode from "./modes/AbCompareMode.vue";
 import JudgeMode from "./modes/JudgeMode.vue";
-import NodeProbeMode from "./modes/NodeProbeMode.vue";
+import NodeLabMode from "./modes/NodeLabMode.vue";
 import PromptVariantMode from "./modes/PromptVariantMode.vue";
 import RunHistoryMode from "./modes/RunHistoryMode.vue";
 import WorkflowEvalMode from "./modes/WorkflowEvalMode.vue";
@@ -10,12 +10,12 @@ import PlaceholderPanel from "./components/PlaceholderPanel.vue";
 
 const modes = [
   {
-    id: "node-probe",
-    label: "节点探针",
-    kicker: "Node Probe",
-    description: "单独运行 workflow 中的 LLM 节点，用于 prompt、few-shot 和模型快速调试。",
+    id: "node-lab",
+    label: "Node Lab",
+    kicker: "Node Lab",
+    description: "单 node 的 prompt、few-shot、模型实验工作台，包含 Single Run、Baseline Compare、Judge Compare 和 Sessions。",
     ready: true,
-    questions: ["当前节点最终 prompt 是什么？", "节点输出是否符合目标阅读变体？", "模型、prompt、预处理是否与业务主线一致？"],
+    questions: ["当前 baseline 与 candidate 的差异是什么？", "这个 node 的 prompt、few-shot、模型调整是否更好？", "这轮 Session 下的 trial 和 judge 结论是否可追溯？"],
   },
   {
     id: "workflow-eval",
@@ -67,7 +67,7 @@ const modes = [
   },
 ];
 
-const activeMode = ref("node-probe");
+const activeMode = ref("node-lab");
 const runHistoryInitialRunId = ref("");
 const runHistoryInitialSource = ref("workflow");
 const runHistoryInitialNodeProbeRunId = ref("");
@@ -144,7 +144,7 @@ function openAbCompare(selection) {
         </div>
       </header>
 
-      <NodeProbeMode v-if="activeMode === 'node-probe'" @open-run-history="openRunHistory" />
+      <NodeLabMode v-if="activeMode === 'node-lab'" @open-run-history="openRunHistory" />
       <WorkflowEvalMode v-else-if="activeMode === 'workflow-eval'" @open-run-history="openRunHistory" />
       <AbCompareMode
         v-else-if="activeMode === 'ab-compare'"

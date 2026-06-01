@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { registerNodeLabRoutes } from "./node-lab.js";
 
 function buildAuthGuard(req, res) {
   const accountability = req.accountability;
@@ -1895,6 +1896,17 @@ async function sendWorkflowRequest(req, res, env, database) {
 export default (router, context) => {
   const env = context?.env;
   const database = context?.database;
+
+  registerNodeLabRoutes(router, context, {
+    buildAuthGuard,
+    clampLimit,
+    isSafeFileId,
+    joinUrl,
+    parseUpstreamError,
+    readEnv,
+    resolveEvalsRoot,
+    resolveRequestTimeoutMs,
+  });
 
   router.get("/article-analysis/model-profiles", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
