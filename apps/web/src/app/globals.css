@@ -1894,6 +1894,10 @@ select {
   color: var(--analysis-accent) !important;
 }
 
+.reader-sentence--has-active-analysis .reader-analysis-atom .reader-mark {
+  color: inherit !important;
+}
+
 .reader-sentence--analysis-expanded {
   background: transparent;
 }

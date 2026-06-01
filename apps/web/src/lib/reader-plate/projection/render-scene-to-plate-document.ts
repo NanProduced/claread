@@ -49,11 +49,10 @@ type MarkRange = {
 function createTextLeaf(
   text: string,
   options?: {
-    mark?: InlineMarkModel;
-    markAnchorText?: string;
     sentenceId?: string;
     startOffset?: number;
     endOffset?: number;
+    marks?: { mark: InlineMarkModel; anchorText: string }[];
   },
 ): ReaderPlateTextLeaf {
   const baseLeaf: ReaderPlateTextLeaf = {
@@ -63,23 +62,38 @@ function createTextLeaf(
     readerTextEndOffset: options?.endOffset,
   };
 
-  const mark = options?.mark;
-  if (!mark) {
+  if (!options?.marks || options.marks.length === 0) {
     return baseLeaf;
   }
 
+  const readerMarks = options.marks.map(({ mark, anchorText }) => ({
+    annotationType: mark.annotationType,
+    anchorText: anchorText,
+    clickable: mark.clickable,
+    glossary: mark.glossary,
+    id: mark.id,
+    parentId: mark.parentId,
+    lookupKind: mark.lookupKind,
+    lookupText: mark.lookupText,
+    renderType: mark.renderType,
+    visualTone: mark.visualTone,
+  }));
+
+  const primaryMark = readerMarks[0];
+
   return {
     ...baseLeaf,
-    readerMarkAnnotationType: mark.annotationType,
-    readerMarkAnchorText: options?.markAnchorText ?? undefined,
-    readerMarkClickable: mark.clickable,
-    readerMarkGlossary: mark.glossary,
-    readerMarkId: mark.id,
-    readerMarkParentId: mark.parentId,
-    readerMarkLookupKind: mark.lookupKind,
-    readerMarkLookupText: mark.lookupText,
-    readerMarkRenderType: mark.renderType,
-    readerMarkVisualTone: mark.visualTone,
+    readerMarks,
+    readerMarkAnnotationType: primaryMark.annotationType,
+    readerMarkAnchorText: primaryMark.anchorText,
+    readerMarkClickable: primaryMark.clickable,
+    readerMarkGlossary: primaryMark.glossary,
+    readerMarkId: primaryMark.id,
+    readerMarkParentId: primaryMark.parentId,
+    readerMarkLookupKind: primaryMark.lookupKind,
+    readerMarkLookupText: primaryMark.lookupText,
+    readerMarkRenderType: primaryMark.renderType,
+    readerMarkVisualTone: primaryMark.visualTone,
   };
 }
 
@@ -109,7 +123,7 @@ function findTextAnchorPosition(text: string, anchorText: string, occurrence = 1
   return -1;
 }
 
-function buildMarkRanges(
+function extractMarkRanges(
   sentence: SentenceModel,
   inlineMarks: InlineMarkModel[],
 ): MarkRange[] {
@@ -157,45 +171,15 @@ function buildMarkRanges(
     });
   }
 
-  return ranges
-    .sort((left, right) => {
-      if (left.start !== right.start) {
-        return left.start - right.start;
-      }
-      if (left.end !== right.end) {
-        return right.end - left.end;
-      }
-
-      return tonePriority[left.mark.visualTone] - tonePriority[right.mark.visualTone];
-    })
-    .reduce<MarkRange[]>((accepted, range) => {
-      const previous = accepted.at(-1);
-      if (previous && range.start < previous.end) {
-        if (range.end <= previous.end) {
-          return accepted;
-        }
-
-        const visibleStart = previous.end;
-        accepted.push({
-          ...range,
-          key: `${range.key}-tail`,
-          start: visibleStart,
-          anchorText: sentence.text.slice(visibleStart, range.end),
-        });
-
-        return accepted;
-      }
-
-      accepted.push(range);
-      return accepted;
-    }, []);
+  return ranges;
 }
 
 function createSentenceTextLeaves(
   sentence: SentenceModel,
   inlineMarks: InlineMarkModel[],
 ): ReaderPlateTextLeaf[] {
-  const ranges = buildMarkRanges(sentence, inlineMarks);
+  const ranges = extractMarkRanges(sentence, inlineMarks);
+  
   if (ranges.length === 0) {
     return [
       createTextLeaf(sentence.text, {
@@ -206,39 +190,38 @@ function createSentenceTextLeaves(
     ];
   }
 
-  const leaves: ReaderPlateTextLeaf[] = [];
-  let cursor = 0;
-
-  for (const range of ranges) {
-    if (range.start > cursor) {
-      leaves.push(
-        createTextLeaf(sentence.text.slice(cursor, range.start), {
-          sentenceId: sentence.sentenceId,
-          startOffset: cursor,
-          endOffset: range.start,
-        }),
-      );
-    }
-
-    leaves.push(
-      createTextLeaf(range.anchorText, {
-        mark: range.mark,
-        markAnchorText: range.fullAnchorText,
-        sentenceId: sentence.sentenceId,
-        startOffset: range.start,
-        endOffset: range.end,
-      }),
-    );
-    cursor = range.end;
+  const boundaries = new Set<number>([0, sentence.text.length]);
+  for (const r of ranges) {
+    boundaries.add(r.start);
+    boundaries.add(r.end);
   }
+  
+  const points = Array.from(boundaries).sort((a, b) => a - b);
+  const leaves: ReaderPlateTextLeaf[] = [];
 
-  if (cursor < sentence.text.length) {
+  for (let i = 0; i < points.length - 1; i++) {
+    const start = points[i];
+    const end = points[i + 1];
+    if (start === end) continue;
+
+    const segmentRanges = ranges.filter(r => r.start <= start && r.end >= end);
+    
+    segmentRanges.sort((left, right) => {
+      const leftLen = left.end - left.start;
+      const rightLen = right.end - right.start;
+      if (leftLen !== rightLen) {
+        return rightLen - leftLen;
+      }
+      return tonePriority[left.mark.visualTone] - tonePriority[right.mark.visualTone];
+    });
+
     leaves.push(
-      createTextLeaf(sentence.text.slice(cursor), {
+      createTextLeaf(sentence.text.slice(start, end), {
         sentenceId: sentence.sentenceId,
-        startOffset: cursor,
-        endOffset: sentence.text.length,
-      }),
+        startOffset: start,
+        endOffset: end,
+        marks: segmentRanges.map(r => ({ mark: r.mark, anchorText: r.fullAnchorText }))
+      })
     );
   }
 
