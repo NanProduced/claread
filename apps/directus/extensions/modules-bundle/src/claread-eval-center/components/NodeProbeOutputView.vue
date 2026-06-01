@@ -168,6 +168,17 @@ function evidenceStatus(warnings) {
     ? { label: `${warnings.length} 处待检查`, tone: "warning" }
     : { label: "命中正常", tone: "success" };
 }
+
+function simpleAnchorStatus(sentenceId, fragments) {
+  const source = sentenceText(sentenceId);
+  const anchors = Array.isArray(fragments)
+    ? fragments.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (!source || anchors.length === 0) return { label: "待人工复看", tone: "neutral" };
+  const missing = anchors.filter((anchor) => !source.includes(anchor));
+  if (missing.length) return { label: `${missing.length} 处待检查`, tone: "warning", missing };
+  return { label: "命中正常", tone: "success", missing: [] };
+}
 </script>
 
 <template>
@@ -275,9 +286,34 @@ function evidenceStatus(warnings) {
         <h4>Vocab Highlights</h4>
         <small>{{ vocabHighlights.length }} 条</small>
       </header>
-      <article v-for="(item, index) in vocabHighlights" :key="`vocab-${index}`" class="output-card compact">
-        <strong>{{ dash(item.text) }}</strong>
-        <span>{{ dash(item.sentence_id) }}</span>
+      <article v-for="(item, index) in vocabHighlights" :key="`vocab-${index}`" class="output-card">
+        <div class="card-head">
+          <div class="card-heading">
+            <strong>{{ dash(item.text) }}</strong>
+            <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
+          </div>
+          <span class="evidence-pill" :class="`is-${simpleAnchorStatus(item.sentence_id, [item.text]).tone}`">
+            {{ simpleAnchorStatus(item.sentence_id, [item.text]).label }}
+          </span>
+        </div>
+        <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
+          <span class="context-label">原句</span>
+          <p class="context-text">
+            <template v-for="(segment, segmentIndex) in highlightSegments(sentenceText(item.sentence_id), [item.text])" :key="`vocab-segment-${index}-${segmentIndex}`">
+              <mark v-if="segment.highlighted" class="anchor-mark">{{ segment.text }}</mark>
+              <span v-else>{{ segment.text }}</span>
+            </template>
+          </p>
+        </div>
+        <div class="evidence-row">
+          <div class="evidence-summary">
+            <span class="evidence-label">锚点</span>
+            <span class="evidence-value">{{ dash(item.text) }}</span>
+          </div>
+        </div>
+        <ul v-if="simpleAnchorStatus(item.sentence_id, [item.text]).missing?.length" class="warning-list">
+          <li>原文中未找到锚点：{{ simpleAnchorStatus(item.sentence_id, [item.text]).missing.join("，") }}</li>
+        </ul>
       </article>
     </section>
 
@@ -288,11 +324,37 @@ function evidenceStatus(warnings) {
       </header>
       <article v-for="(item, index) in phraseGlosses" :key="`phrase-${index}`" class="output-card">
         <div class="card-head">
-          <strong>{{ dash(item.text) }}</strong>
-          <span>{{ dash(item.phrase_type) }}</span>
+          <div class="card-heading">
+            <strong>{{ dash(item.text) }}</strong>
+            <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
+          </div>
+          <span class="evidence-pill" :class="`is-${simpleAnchorStatus(item.sentence_id, [item.text]).tone}`">
+            {{ simpleAnchorStatus(item.sentence_id, [item.text]).label }}
+          </span>
         </div>
+        <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
+          <span class="context-label">原句</span>
+          <p class="context-text">
+            <template v-for="(segment, segmentIndex) in highlightSegments(sentenceText(item.sentence_id), [item.text])" :key="`phrase-segment-${index}-${segmentIndex}`">
+              <mark v-if="segment.highlighted" class="anchor-mark">{{ segment.text }}</mark>
+              <span v-else>{{ segment.text }}</span>
+            </template>
+          </p>
+        </div>
+        <div class="evidence-row">
+          <div class="evidence-summary">
+            <span class="evidence-label">锚点</span>
+            <span class="evidence-value">{{ dash(item.text) }}</span>
+          </div>
+          <div class="evidence-summary">
+            <span class="evidence-label">类型</span>
+            <span class="evidence-value">{{ dash(item.phrase_type) }}</span>
+          </div>
+        </div>
+        <ul v-if="simpleAnchorStatus(item.sentence_id, [item.text]).missing?.length" class="warning-list">
+          <li>原文中未找到锚点：{{ simpleAnchorStatus(item.sentence_id, [item.text]).missing.join("，") }}</li>
+        </ul>
         <p>{{ dash(item.zh) }}</p>
-        <small>{{ dash(item.sentence_id) }}</small>
       </article>
     </section>
 
@@ -303,9 +365,32 @@ function evidenceStatus(warnings) {
       </header>
       <article v-for="(item, index) in contextGlosses" :key="`context-${index}`" class="output-card">
         <div class="card-head">
-          <strong>{{ dash(item.text) }}</strong>
-          <span>{{ dash(item.sentence_id) }}</span>
+          <div class="card-heading">
+            <strong>{{ dash(item.text) }}</strong>
+            <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
+          </div>
+          <span class="evidence-pill" :class="`is-${simpleAnchorStatus(item.sentence_id, [item.text]).tone}`">
+            {{ simpleAnchorStatus(item.sentence_id, [item.text]).label }}
+          </span>
         </div>
+        <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
+          <span class="context-label">原句</span>
+          <p class="context-text">
+            <template v-for="(segment, segmentIndex) in highlightSegments(sentenceText(item.sentence_id), [item.text])" :key="`context-segment-${index}-${segmentIndex}`">
+              <mark v-if="segment.highlighted" class="anchor-mark">{{ segment.text }}</mark>
+              <span v-else>{{ segment.text }}</span>
+            </template>
+          </p>
+        </div>
+        <div class="evidence-row">
+          <div class="evidence-summary">
+            <span class="evidence-label">锚点</span>
+            <span class="evidence-value">{{ dash(item.text) }}</span>
+          </div>
+        </div>
+        <ul v-if="simpleAnchorStatus(item.sentence_id, [item.text]).missing?.length" class="warning-list">
+          <li>原文中未找到锚点：{{ simpleAnchorStatus(item.sentence_id, [item.text]).missing.join("，") }}</li>
+        </ul>
         <p><strong>语境义：</strong>{{ dash(item.gloss) }}</p>
         <p><strong>原因：</strong>{{ dash(item.reason) }}</p>
       </article>
@@ -326,8 +411,15 @@ function evidenceStatus(warnings) {
       </article>
       <article v-for="(item, index) in sentenceTranslations" :key="`translation-${index}`" class="output-card">
         <div class="card-head">
-          <strong>{{ dash(item.sentence_id) }}</strong>
+          <div class="card-heading">
+            <strong>{{ dash(item.sentence_id) }}</strong>
+            <span class="sentence-id">逐句翻译</span>
+          </div>
           <span>逐句翻译</span>
+        </div>
+        <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
+          <span class="context-label">原句</span>
+          <p class="context-text">{{ sentenceText(item.sentence_id) }}</p>
         </div>
         <p>{{ dash(item.translation_zh) }}</p>
       </article>

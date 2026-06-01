@@ -524,7 +524,7 @@ async def _run_node_lab_once(
         )
         node_output: dict[str, Any] | None = None
         usage: dict[str, Any] | None = None
-        if not request.dry_run:
+        if not getattr(request, "dry_run", False):
             with trace_scope(request):
                 result = await _run_dynamic_agent(
                     node_name=request.node_name,

@@ -294,6 +294,47 @@ async def test_node_lab_compare_returns_baseline_and_candidate(
     assert result.compare_summary["candidate_latency_ms"] == 25
 
 
+@pytest.mark.anyio
+async def test_node_lab_compare_real_path_does_not_require_dry_run_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    settings.annotation_model_profile = "eval-profile"
+    monkeypatch.setattr(node_lab, "get_settings", lambda: settings)
+    dynamic_run_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            output=GrammarDraft(
+                grammar_notes=[
+                    GrammarNote(
+                        sentence_id="s1",
+                        spans=[SpanRef(text="Although", role="subordinator")],
+                        label="Clause focus",
+                        note_zh="测试",
+                    )
+                ],
+                sentence_analyses=[],
+            )
+        )
+    )
+    monkeypatch.setattr(node_lab, "_run_dynamic_agent", dynamic_run_mock)
+
+    result = await node_lab.compare_article_analysis_node_lab(
+        node_lab.ArticleAnalysisNodeLabCompareRequest(
+            node_name="grammar",
+            text="Although the plan looked simple, it required careful coordination.",
+            candidate_override={
+                "candidate_id": "cand-a",
+                "node_name": "grammar",
+                "model_selection": {"default_profile": "eval-profile"},
+            },
+        )
+    )
+
+    assert result.baseline.status == "succeeded"
+    assert result.candidate.status == "succeeded"
+    assert dynamic_run_mock.await_count == 2
+
+
 def test_node_lab_baseline_config_uses_raw_policy_loader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

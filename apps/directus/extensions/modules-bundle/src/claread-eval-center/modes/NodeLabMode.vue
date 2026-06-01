@@ -104,6 +104,7 @@ const state = reactive({
   singleRunResultsByNode: {},
   singleRunUiStateByNode: {},
   compareResultsByNode: {},
+  compareUiStateByNode: {},
   savedCandidatesByNode: {},
   savedJudgeConfigsByNode: {},
   judgeDraftsByNode: {},
@@ -279,6 +280,11 @@ function formatRuntimeTokens(summary) {
   return `${aggregate.total_tokens}（输入 ${input} / 输出 ${output}）`;
 }
 
+function formatDurationMs(value) {
+  if (!Number.isFinite(value)) return "未记录";
+  return `${(value / 1000).toFixed(value >= 10000 ? 1 : 2)} s`;
+}
+
 function buildPromptPacketSections(resultEntry) {
   if (!resultEntry) return [];
   return [
@@ -287,6 +293,81 @@ function buildPromptPacketSections(resultEntry) {
     { key: "examples", title: "示例输入", value: formatJson(resultEntry.example_summary || null) },
     { key: "prepared_sentences", title: "预处理后的句子", value: formatJson(resultEntry.prepared_sentences || []) },
   ];
+}
+
+function sentenceOrderKey(sentenceId) {
+  const raw = String(sentenceId || "");
+  const match = raw.match(/(\d+)/);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+function compareDeltaTone(value, kind) {
+  if (!Number.isFinite(value) || value === 0) return "neutral";
+  if (kind === "latency") return value < 0 ? "success" : "danger";
+  if (kind === "tokens") return value < 0 ? "success" : "warning";
+  return "neutral";
+}
+
+function formatSignedDelta(value, suffix = "") {
+  if (!Number.isFinite(value) || value === 0) return "持平";
+  return `${value > 0 ? "+" : ""}${value}${suffix}`;
+}
+
+function statusBadgeLabel(entry) {
+  if (!entry) return "未运行";
+  return statusLabel(entry.status);
+}
+
+function groupEntriesBySentence(items) {
+  const map = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    const sentenceId = String(item?.sentence_id || "");
+    if (!sentenceId) continue;
+    if (!map.has(sentenceId)) map.set(sentenceId, []);
+    map.get(sentenceId).push(item);
+  }
+  return map;
+}
+
+function compareSentenceModel(entry, nodeName) {
+  const preparedSentences = Array.isArray(entry?.prepared_sentences) ? entry.prepared_sentences : [];
+  const sentenceMap = new Map(
+    preparedSentences
+      .filter((item) => item && item.sentence_id)
+      .map((item) => [String(item.sentence_id), String(item.text || "")]),
+  );
+  const output = entry?.node_output || {};
+  if (nodeName === "grammar") {
+    return {
+      sentenceMap,
+      notes: groupEntriesBySentence(output.grammar_notes),
+      analyses: groupEntriesBySentence(output.sentence_analyses),
+    };
+  }
+  if (nodeName === "vocabulary") {
+    return {
+      sentenceMap,
+      vocabHighlights: groupEntriesBySentence(output.vocab_highlights),
+      phraseGlosses: groupEntriesBySentence(output.phrase_glosses),
+      contextGlosses: groupEntriesBySentence(output.context_glosses),
+    };
+  }
+  return {
+    sentenceMap,
+    translations: groupEntriesBySentence(output.sentence_translations),
+  };
+}
+
+function sentenceToneClass(index) {
+  const tones = [
+    "tone-amber",
+    "tone-blue",
+    "tone-green",
+    "tone-violet",
+    "tone-rose",
+    "tone-slate",
+  ];
+  return tones[index % tones.length];
 }
 
 function defaultCandidateDraft(nodeName, baselineConfig = null) {
@@ -367,6 +448,7 @@ const currentSessions = computed(() => state.sessionsByNode[state.activeNode] ||
 const singleRunResult = computed(() => state.singleRunResultsByNode[state.activeNode] || null);
 const singleRunUiState = computed(() => state.singleRunUiStateByNode[state.activeNode] || null);
 const compareResult = computed(() => state.compareResultsByNode[state.activeNode] || null);
+const compareUiState = computed(() => state.compareUiStateByNode[state.activeNode] || null);
 
 const selectedSessionId = computed({
   get: () => state.selectedSessionIdByNode[state.activeNode] || "",
@@ -510,6 +592,36 @@ const singleRunRefreshState = computed(() => {
   };
 });
 
+const compareRefreshState = computed(() => {
+  const uiState = compareUiState.value || {};
+  const hasResult = Boolean(compareResult.value);
+  if (loading.compare && hasResult) {
+    return {
+      active: true,
+      mode: "refreshing",
+      title: "正在刷新 Compare 结果",
+      detail: `${uiState.requestLabel || "本次 Compare"} 已发出请求。当前先保留上一轮差异供参考，完成后会自动替换。`,
+    };
+  }
+  if (loading.compare) {
+    return {
+      active: true,
+      mode: "loading",
+      title: "正在生成首条 Compare 结果",
+      detail: `${uiState.requestLabel || "本次 Compare"} 正在执行，结果返回后会显示在右侧。`,
+    };
+  }
+  if (hasResult && uiState.lastCompletedAt) {
+    return {
+      active: true,
+      mode: "updated",
+      title: "Compare 结果已更新",
+      detail: `最近一次完成于 ${formatClockTime(uiState.lastCompletedAt)}。即使内容变化不大，也代表这次 Compare 已执行完成。`,
+    };
+  }
+  return { active: false, mode: "idle", title: "", detail: "" };
+});
+
 const baselineSummaryFacts = computed(() => {
   const baseline = baselineConfig.value;
   if (!baseline) return [];
@@ -570,7 +682,7 @@ const singleRunSummaryFacts = computed(() => {
     ["模型", result.model_identity?.model_name || "未记录"],
     ["Few-shot", result.example_summary?.selection_mode || "未记录"],
     ["Prompt Snapshot", result.prompt_identity?.prompt_snapshot_hash || "baseline"],
-    ["延迟", Number.isFinite(result.runtime_summary?.latency_ms) ? `${result.runtime_summary.latency_ms} ms` : "未记录"],
+    ["延迟", formatDurationMs(result.runtime_summary?.latency_ms)],
     ["Tokens", formatRuntimeTokens(result.runtime_summary)],
   ];
   return compactFactRows(facts);
@@ -583,51 +695,144 @@ const singleRunGrammarValidation = computed(() => {
 
 const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
 
-const compareDecisionFacts = computed(() => {
+const compareResultStatus = computed(() => {
   const result = compareResult.value;
-  if (!result) return [];
-  const resultStatus = result.compare_summary?.result_status || {};
-  const baselineExamples = result.baseline?.example_summary?.selection_mode || "未记录";
-  const candidateExamples = result.candidate?.example_summary?.selection_mode || "未记录";
-  const modelChanged = (result.baseline?.model_identity?.model_name || "") !== (result.candidate?.model_identity?.model_name || "");
-  return compactFactRows([
-    ["Baseline 状态", statusLabel(resultStatus.baseline_status)],
-    ["Candidate 状态", statusLabel(resultStatus.candidate_status)],
-    ["Compare 状态", statusLabel(resultStatus.compare_status)],
-    ["Prompt 变化", result.compare_summary?.prompt_changed ? "已变化" : "未变化"],
-    ["Few-shot 变化", baselineExamples === candidateExamples ? "未变化" : `${baselineExamples} → ${candidateExamples}`],
-    ["模型变化", modelChanged ? `${result.baseline?.model_identity?.model_name || "默认"} → ${result.candidate?.model_identity?.model_name || "默认"}` : "未变化"],
-    ["Token Delta", Number.isFinite(result.compare_summary?.token_delta) ? `${result.compare_summary.token_delta}` : "未记录"],
-    ["Baseline 延迟", Number.isFinite(result.compare_summary?.baseline_latency_ms) ? `${result.compare_summary.baseline_latency_ms} ms` : "未记录"],
-    ["Candidate 延迟", Number.isFinite(result.compare_summary?.candidate_latency_ms) ? `${result.compare_summary.candidate_latency_ms} ms` : "未记录"],
-    ["延迟差值", Number.isFinite(result.compare_summary?.latency_delta_ms) ? `${result.compare_summary.latency_delta_ms} ms` : "未记录"],
-    ["最近持久化 Trial", latestCompareTrialId.value || "未写入 Session"],
-  ]);
+  return result?.compare_summary?.result_status || {};
 });
 
-const compareHighlights = computed(() => {
+const compareOverviewCards = computed(() => {
   const result = compareResult.value;
   if (!result) return [];
-  const resultStatus = result.compare_summary?.result_status || {};
-  const items = [];
-  if (resultStatus.compare_status === "complete") {
-    items.push("这次 Compare 已完整完成，可以直接阅读差异并决定是否进入 Judge。");
-  } else {
-    items.push(`本次 Compare 没有完整成功：Baseline ${statusLabel(resultStatus.baseline_status)}，Candidate ${statusLabel(resultStatus.candidate_status)}。`);
-  }
-  if (state.activeNode === "grammar") {
-    const baselineValidation = result.baseline?.quick_validation;
-    const candidateValidation = result.candidate?.quick_validation;
-    if (baselineValidation?.status === "warning" || candidateValidation?.status === "warning") {
-      items.push(`Grammar 快速校验发现问题：Baseline ${quickValidationLabel(baselineValidation)}，Candidate ${quickValidationLabel(candidateValidation)}。`);
+  const latencyDelta = Number.isFinite(result.compare_summary?.latency_delta_ms) ? result.compare_summary.latency_delta_ms : null;
+  const tokenDelta = Number.isFinite(result.compare_summary?.token_delta) ? result.compare_summary.token_delta : null;
+  const modelChanged = (result.baseline?.model_identity?.model_name || "") !== (result.candidate?.model_identity?.model_name || "");
+  const fewShotChanged = (result.baseline?.example_summary?.selection_mode || "未记录") !== (result.candidate?.example_summary?.selection_mode || "未记录");
+  return [
+    {
+      key: "baseline",
+      title: "Baseline",
+      status: statusBadgeLabel(result.baseline),
+      tone: statusTone(result.baseline?.status),
+      model: result.baseline?.model_identity?.model_name || "未记录",
+      fewShot: result.baseline?.example_summary?.selection_mode || "未记录",
+      latency: formatDurationMs(result.compare_summary?.baseline_latency_ms),
+      tokens: formatRuntimeTokens(result.baseline?.runtime_summary),
+      prompt: result.baseline?.prompt_identity?.prompt_snapshot_hash || "baseline",
+      deltaLatency: null,
+      deltaTokens: null,
+      deltaModel: modelChanged ? "参考基线" : null,
+      deltaFewShot: fewShotChanged ? "参考基线" : null,
+    },
+    {
+      key: "candidate",
+      title: "Candidate",
+      status: statusBadgeLabel(result.candidate),
+      tone: statusTone(result.candidate?.status),
+      model: result.candidate?.model_identity?.model_name || "未记录",
+      fewShot: result.candidate?.example_summary?.selection_mode || "未记录",
+      latency: formatDurationMs(result.compare_summary?.candidate_latency_ms),
+      tokens: formatRuntimeTokens(result.candidate?.runtime_summary),
+      prompt: result.candidate?.prompt_identity?.prompt_snapshot_hash || "baseline",
+      deltaLatency: latencyDelta,
+      deltaTokens: tokenDelta,
+      deltaModel: modelChanged ? `${result.baseline?.model_identity?.model_name || "默认"} → ${result.candidate?.model_identity?.model_name || "默认"}` : null,
+      deltaFewShot: fewShotChanged ? `${result.baseline?.example_summary?.selection_mode || "未记录"} → ${result.candidate?.example_summary?.selection_mode || "未记录"}` : null,
+    },
+  ];
+});
+
+const comparePromptSections = computed(() => {
+  const baselineSections = buildPromptPacketSections(compareResult.value?.baseline);
+  const candidateSections = buildPromptPacketSections(compareResult.value?.candidate);
+  const orderedKeys = [];
+  const sectionMap = new Map();
+
+  for (const section of [...baselineSections, ...candidateSections]) {
+    if (!sectionMap.has(section.key)) {
+      sectionMap.set(section.key, {
+        key: section.key,
+        title: section.title,
+        baseline: "未记录",
+        candidate: "未记录",
+      });
+      orderedKeys.push(section.key);
     }
   }
-  items.push(result.compare_summary?.prompt_changed ? "Candidate 的 Prompt Packet 已发生变化。" : "Prompt Packet 与 baseline 一致，更像是在验证模型或 few-shot 影响。");
-  if (Number.isFinite(result.compare_summary?.token_delta)) {
-    items.push(`Token Delta 为 ${result.compare_summary.token_delta}，可结合输出质量判断成本变化是否值得。`);
+
+  for (const section of baselineSections) {
+    sectionMap.get(section.key).baseline = section.value;
   }
-  return items;
+
+  for (const section of candidateSections) {
+    sectionMap.get(section.key).candidate = section.value;
+  }
+
+  return orderedKeys.map((key) => sectionMap.get(key));
 });
+
+const compareSentenceRows = computed(() => {
+  const result = compareResult.value;
+  if (!result) return [];
+  const baselineModel = compareSentenceModel(result.baseline, state.activeNode);
+  const candidateModel = compareSentenceModel(result.candidate, state.activeNode);
+  const sentenceIds = new Set();
+  if (state.activeNode === "grammar") {
+    [...baselineModel.notes.keys(), ...baselineModel.analyses.keys(), ...candidateModel.notes.keys(), ...candidateModel.analyses.keys()].forEach((id) => sentenceIds.add(id));
+  } else if (state.activeNode === "vocabulary") {
+    [...baselineModel.vocabHighlights.keys(), ...baselineModel.phraseGlosses.keys(), ...baselineModel.contextGlosses.keys(), ...candidateModel.vocabHighlights.keys(), ...candidateModel.phraseGlosses.keys(), ...candidateModel.contextGlosses.keys()].forEach((id) => sentenceIds.add(id));
+  } else {
+    [...baselineModel.translations.keys(), ...candidateModel.translations.keys()].forEach((id) => sentenceIds.add(id));
+  }
+
+  return [...sentenceIds]
+    .sort((left, right) => sentenceOrderKey(left) - sentenceOrderKey(right) || String(left).localeCompare(String(right)))
+    .map((sentenceId, index) => ({
+      sentenceId,
+      sentenceText: baselineModel.sentenceMap.get(sentenceId) || candidateModel.sentenceMap.get(sentenceId) || "",
+      toneClass: sentenceToneClass(index),
+      baseline: {
+        notes: baselineModel.notes?.get(sentenceId) || [],
+        analyses: baselineModel.analyses?.get(sentenceId) || [],
+        vocabHighlights: baselineModel.vocabHighlights?.get(sentenceId) || [],
+        phraseGlosses: baselineModel.phraseGlosses?.get(sentenceId) || [],
+        contextGlosses: baselineModel.contextGlosses?.get(sentenceId) || [],
+        translations: baselineModel.translations?.get(sentenceId) || [],
+      },
+      candidate: {
+        notes: candidateModel.notes?.get(sentenceId) || [],
+        analyses: candidateModel.analyses?.get(sentenceId) || [],
+        vocabHighlights: candidateModel.vocabHighlights?.get(sentenceId) || [],
+        phraseGlosses: candidateModel.phraseGlosses?.get(sentenceId) || [],
+        contextGlosses: candidateModel.contextGlosses?.get(sentenceId) || [],
+        translations: candidateModel.translations?.get(sentenceId) || [],
+      },
+    }));
+});
+
+function scopedPreparedSentences(entry, sentenceId) {
+  const sentences = Array.isArray(entry?.prepared_sentences) ? entry.prepared_sentences : [];
+  return sentences.filter((item) => String(item?.sentence_id || "") === String(sentenceId));
+}
+
+function scopedOutputForRow(rowSide, nodeName) {
+  if (nodeName === "grammar") {
+    return {
+      grammar_notes: rowSide.notes || [],
+      sentence_analyses: rowSide.analyses || [],
+    };
+  }
+  if (nodeName === "vocabulary") {
+    return {
+      vocab_highlights: rowSide.vocabHighlights || [],
+      phrase_glosses: rowSide.phraseGlosses || [],
+      context_glosses: rowSide.contextGlosses || [],
+    };
+  }
+  return {
+    title: "",
+    sentence_translations: rowSide.translations || [],
+  };
+}
 
 const judgePrerequisite = computed(() => {
   if (!latestCompareTrialId.value) {
@@ -1141,6 +1346,10 @@ async function runCompare({ persist = false } = {}) {
   loading.compare = true;
   setFeedback();
   try {
+    state.compareUiStateByNode[state.activeNode] = {
+      ...(state.compareUiStateByNode[state.activeNode] || {}),
+      requestLabel: persist ? "写入 Session 的 Compare" : "当前 Compare",
+    };
     const sessionId = persist ? await ensureCurrentSession() : "";
     const data = await fetchJson(compareEndpoint, {
       method: "POST",
@@ -1159,6 +1368,11 @@ async function runCompare({ persist = false } = {}) {
       }),
     });
     state.compareResultsByNode[state.activeNode] = data.result;
+    state.compareUiStateByNode[state.activeNode] = {
+      ...(state.compareUiStateByNode[state.activeNode] || {}),
+      requestLabel: persist ? "写入 Session 的 Compare" : "当前 Compare",
+      lastCompletedAt: new Date().toISOString(),
+    };
     if (data.trial?.trial_id) {
       state.latestPersistedCompareTrialByNode[state.activeNode] = data.trial.trial_id;
       await loadSessionDetail(data.trial.session_id || sessionId);
@@ -1451,7 +1665,14 @@ const savedJudgeConfigsMapped = computed(() => [
     <div v-if="feedback.error" class="feedback-banner error">{{ feedback.error }}</div>
     <div v-else-if="feedback.info" class="feedback-banner info">{{ feedback.info }}</div>
 
-    <div v-if="state.activeWorkspace !== 'sessions'" class="workbench">
+    <div
+      v-if="state.activeWorkspace !== 'sessions'"
+      class="workbench"
+      :class="{
+        'is-compare': state.activeWorkspace === 'baseline_compare',
+        'is-judge': state.activeWorkspace === 'judge_compare',
+      }"
+    >
       <!-- Left Column: Inputs & Configuration -->
       <div class="panel-column column-editor">
         
@@ -1803,7 +2024,7 @@ const savedJudgeConfigsMapped = computed(() => [
                             <li><strong>错误码：</strong>{{ singleRunResult.run.error?.code || "未记录" }}</li>
                             <li><strong>错误信息：</strong>{{ singleRunResult.run.error?.message || "未记录" }}</li>
                             <li><strong>Trace Request：</strong>{{ singleRunResult.run.trace_refs?.request_id || "未记录" }}</li>
-                            <li><strong>耗时：</strong>{{ Number.isFinite(singleRunResult.run.runtime_summary?.latency_ms) ? `${singleRunResult.run.runtime_summary.latency_ms} ms` : "未记录" }}</li>
+                            <li><strong>耗时：</strong>{{ formatDurationMs(singleRunResult.run.runtime_summary?.latency_ms) }}</li>
                           </ul>
                         </div>
                       </div>
@@ -1840,71 +2061,256 @@ const savedJudgeConfigsMapped = computed(() => [
           </template>
 
           <template v-else-if="state.activeWorkspace === 'baseline_compare'">
-            <div v-if="compareResult">
-              <div class="meta-grid mb-4">
-                <div class="meta-item" v-for="[label, value] in compareDecisionFacts" :key="label">
-                  <span class="meta-label">{{ label }}</span>
-                  <span class="meta-value" :class="{ 'text-status': label.includes('状态') }">{{ value }}</span>
-                </div>
+            <div
+              v-if="compareRefreshState.active"
+              class="refresh-banner"
+              :class="`is-${compareRefreshState.mode}`"
+            >
+              <div class="refresh-banner__title">
+                <span v-if="compareRefreshState.mode === 'refreshing' || compareRefreshState.mode === 'loading'" class="refresh-spinner" aria-hidden="true"></span>
+                <strong>{{ compareRefreshState.title }}</strong>
               </div>
-              
-              <div class="highlight-box">
-                <h4 class="block-title mb-2">核心差异洞察</h4>
-                <ul class="insight-list">
-                  <li v-for="item in compareHighlights" :key="item">{{ item }}</li>
-                </ul>
+              <p>{{ compareRefreshState.detail }}</p>
+            </div>
+            <div v-if="compareResult">
+              <div class="compare-overview">
+                <article
+                  v-for="card in compareOverviewCards"
+                  :key="card.key"
+                  class="compare-status-card"
+                  :class="`is-${card.tone}`"
+                >
+                  <div class="compare-status-card__header">
+                    <h4>{{ card.title }}</h4>
+                    <span class="badge" :class="`badge-${card.tone}`">{{ card.status }}</span>
+                  </div>
+                  <div class="compare-status-card__facts">
+                    <div class="status-fact">
+                      <span class="meta-label">模型</span>
+                      <span class="meta-value">{{ card.model }}</span>
+                    </div>
+                    <div class="status-fact">
+                      <span class="meta-label">Few-shot</span>
+                      <span class="meta-value">{{ card.fewShot }}</span>
+                    </div>
+                    <div class="status-fact">
+                      <span class="meta-label">延迟</span>
+                      <span class="meta-value">
+                        {{ card.latency }}
+                        <small
+                          v-if="card.key === 'candidate' && Number.isFinite(card.deltaLatency)"
+                          class="delta-inline"
+                          :class="`text-${compareDeltaTone(card.deltaLatency, 'latency')}`"
+                        >
+                          {{ formatSignedDelta(Number((card.deltaLatency / 1000).toFixed(card.deltaLatency >= 10000 ? 1 : 2)), " s") }}
+                        </small>
+                      </span>
+                    </div>
+                    <div class="status-fact">
+                      <span class="meta-label">Tokens</span>
+                      <span class="meta-value">
+                        {{ card.tokens }}
+                        <small
+                          v-if="card.key === 'candidate' && Number.isFinite(card.deltaTokens)"
+                          class="delta-inline"
+                          :class="`text-${compareDeltaTone(card.deltaTokens, 'tokens')}`"
+                        >
+                          {{ formatSignedDelta(card.deltaTokens) }}
+                        </small>
+                      </span>
+                    </div>
+                    <div class="status-fact">
+                      <span class="meta-label">Prompt</span>
+                      <span class="meta-value">
+                        {{ card.prompt }}
+                        <small
+                          v-if="card.key === 'candidate' && compareResult?.compare_summary?.prompt_changed"
+                          class="delta-inline text-warning"
+                        >
+                          已变化
+                        </small>
+                      </span>
+                    </div>
+                    <div class="status-fact">
+                      <span class="meta-label">模型 / Few-shot</span>
+                      <span class="meta-value">
+                        {{ card.model }}
+                        <small v-if="card.key === 'candidate' && card.deltaModel" class="delta-inline text-warning">{{ card.deltaModel }}</small>
+                        <small v-if="card.key === 'candidate' && card.deltaFewShot" class="delta-inline text-warning">{{ card.deltaFewShot }}</small>
+                      </span>
+                    </div>
+                  </div>
+                </article>
               </div>
 
-              <div class="compare-split">
-                <div class="compare-pane">
-                  <div class="pane-header">
-                    <h4>Baseline</h4>
-                    <span class="badge" :class="`badge-${statusTone(compareResult.baseline?.status)}`">{{ statusLabel(compareResult.baseline?.status) }}</span>
-                  </div>
-                  <div
-                    v-if="resultIssue(compareResult?.baseline, 'Baseline')"
-                    class="execution-alert compact"
-                    :class="`is-${resultIssue(compareResult?.baseline, 'Baseline').tone}`"
-                  >
-                    <div class="execution-alert__header">
-                      <strong>{{ resultIssue(compareResult?.baseline, 'Baseline').title }}</strong>
-                    </div>
-                    <p>{{ resultIssue(compareResult?.baseline, 'Baseline').detail }}</p>
-                  </div>
-                  <NodeProbeOutputView
-                    :node-name="state.activeNode"
-                    :output="compareResult?.baseline?.node_output || null"
-                    :prepared-sentences="compareResult?.baseline?.prepared_sentences || []"
-                    :quick-validation="compareResult?.baseline?.quick_validation || null"
-                    empty-text="尚无 baseline 输出。"
-                  />
+              <div class="compare-status-line">
+                <div class="compare-status-line__item">
+                  <span class="meta-label">Compare 状态</span>
+                  <strong :class="`text-${statusTone(compareResultStatus.compare_status)}`">{{ statusLabel(compareResultStatus.compare_status) }}</strong>
+                  <span class="compare-status-line__detail">Baseline {{ statusLabel(compareResultStatus.baseline_status) }} / Candidate {{ statusLabel(compareResultStatus.candidate_status) }}</span>
                 </div>
-                <div class="compare-pane">
-                  <div class="pane-header">
-                    <h4>Candidate</h4>
-                    <span class="badge" :class="`badge-${statusTone(compareResult.candidate?.status)}`">{{ statusLabel(compareResult.candidate?.status) }}</span>
+                <div class="compare-status-line__item">
+                  <span class="meta-label">最近持久化 Trial</span>
+                  <strong>{{ latestCompareTrialId || "未写入 Session" }}</strong>
+                  <span class="compare-status-line__detail">{{ latestCompareTrialId ? "可继续挂 judge request 或回看 Session" : "当前结果只保留在页面状态中" }}</span>
+                </div>
+              </div>
+
+              <div class="compare-canvas">
+                <div
+                  v-for="row in compareSentenceRows"
+                  :key="row.sentenceId"
+                  class="compare-row"
+                  :class="row.toneClass"
+                >
+                  <div class="compare-row__header">
+                    <span class="compare-row__id">{{ row.sentenceId }}</span>
+                    <p class="compare-row__sentence">{{ row.sentenceText || '当前未返回原句。' }}</p>
                   </div>
-                  <div
-                    v-if="resultIssue(compareResult?.candidate, 'Candidate')"
-                    class="execution-alert compact"
-                    :class="`is-${resultIssue(compareResult?.candidate, 'Candidate').tone}`"
-                  >
-                    <div class="execution-alert__header">
-                      <strong>{{ resultIssue(compareResult?.candidate, 'Candidate').title }}</strong>
+                  <div class="compare-row__body">
+                    <div class="compare-column">
+                      <div class="compare-column__header">
+                        <h4>Baseline</h4>
+                        <span class="badge" :class="`badge-${statusTone(compareResult.baseline?.status)}`">{{ statusLabel(compareResult.baseline?.status) }}</span>
+                      </div>
+                      <div
+                        v-if="resultIssue(compareResult?.baseline, 'Baseline')"
+                        class="execution-alert compact"
+                        :class="`is-${resultIssue(compareResult?.baseline, 'Baseline').tone}`"
+                      >
+                        <div class="execution-alert__header">
+                          <strong>{{ resultIssue(compareResult?.baseline, 'Baseline').title }}</strong>
+                        </div>
+                        <p>{{ resultIssue(compareResult?.baseline, 'Baseline').detail }}</p>
+                      </div>
+                      <template v-if="state.activeNode === 'grammar'">
+                        <NodeProbeOutputView
+                          v-if="row.baseline.notes.length || row.baseline.analyses.length"
+                          :node-name="state.activeNode"
+                          :output="scopedOutputForRow(row.baseline, state.activeNode)"
+                          :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+                          :quick-validation="compareResult?.baseline?.quick_validation || null"
+                          empty-text="该句在 Baseline 中没有结构化输出。"
+                        />
+                        <div v-else class="compare-empty">该句在 Baseline 中没有结构化输出。</div>
+                      </template>
+                      <template v-else-if="state.activeNode === 'vocabulary'">
+                        <NodeProbeOutputView
+                          v-if="row.baseline.vocabHighlights.length || row.baseline.phraseGlosses.length || row.baseline.contextGlosses.length"
+                          :node-name="state.activeNode"
+                          :output="scopedOutputForRow(row.baseline, state.activeNode)"
+                          :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+                          empty-text="该句在 Baseline 中没有词汇标注。"
+                        />
+                        <div v-else class="compare-empty">该句在 Baseline 中没有词汇标注。</div>
+                      </template>
+                      <template v-else>
+                        <NodeProbeOutputView
+                          v-if="row.baseline.translations.length"
+                          :node-name="state.activeNode"
+                          :output="scopedOutputForRow(row.baseline, state.activeNode)"
+                          :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+                          empty-text="该句在 Baseline 中没有翻译输出。"
+                        />
+                        <div v-else class="compare-empty">该句在 Baseline 中没有翻译输出。</div>
+                      </template>
                     </div>
-                    <p>{{ resultIssue(compareResult?.candidate, 'Candidate').detail }}</p>
+
+                    <div class="compare-column">
+                      <div class="compare-column__header">
+                        <h4>Candidate</h4>
+                        <span class="badge" :class="`badge-${statusTone(compareResult.candidate?.status)}`">{{ statusLabel(compareResult.candidate?.status) }}</span>
+                      </div>
+                      <div
+                        v-if="resultIssue(compareResult?.candidate, 'Candidate')"
+                        class="execution-alert compact"
+                        :class="`is-${resultIssue(compareResult?.candidate, 'Candidate').tone}`"
+                      >
+                        <div class="execution-alert__header">
+                          <strong>{{ resultIssue(compareResult?.candidate, 'Candidate').title }}</strong>
+                        </div>
+                        <p>{{ resultIssue(compareResult?.candidate, 'Candidate').detail }}</p>
+                      </div>
+                      <template v-if="state.activeNode === 'grammar'">
+                        <NodeProbeOutputView
+                          v-if="row.candidate.notes.length || row.candidate.analyses.length"
+                          :node-name="state.activeNode"
+                          :output="scopedOutputForRow(row.candidate, state.activeNode)"
+                          :prepared-sentences="scopedPreparedSentences(compareResult?.candidate, row.sentenceId)"
+                          :quick-validation="compareResult?.candidate?.quick_validation || null"
+                          empty-text="该句在 Candidate 中没有结构化输出。"
+                        />
+                        <div v-else class="compare-empty">该句在 Candidate 中没有结构化输出。</div>
+                      </template>
+                      <template v-else-if="state.activeNode === 'vocabulary'">
+                        <NodeProbeOutputView
+                          v-if="row.candidate.vocabHighlights.length || row.candidate.phraseGlosses.length || row.candidate.contextGlosses.length"
+                          :node-name="state.activeNode"
+                          :output="scopedOutputForRow(row.candidate, state.activeNode)"
+                          :prepared-sentences="scopedPreparedSentences(compareResult?.candidate, row.sentenceId)"
+                          empty-text="该句在 Candidate 中没有词汇标注。"
+                        />
+                        <div v-else class="compare-empty">该句在 Candidate 中没有词汇标注。</div>
+                      </template>
+                      <template v-else>
+                        <NodeProbeOutputView
+                          v-if="row.candidate.translations.length"
+                          :node-name="state.activeNode"
+                          :output="scopedOutputForRow(row.candidate, state.activeNode)"
+                          :prepared-sentences="scopedPreparedSentences(compareResult?.candidate, row.sentenceId)"
+                          empty-text="该句在 Candidate 中没有翻译输出。"
+                        />
+                        <div v-else class="compare-empty">该句在 Candidate 中没有翻译输出。</div>
+                      </template>
+                    </div>
                   </div>
-                  <NodeProbeOutputView
-                    :node-name="state.activeNode"
-                    :output="compareResult?.candidate?.node_output || null"
-                    :prepared-sentences="compareResult?.candidate?.prepared_sentences || []"
-                    :quick-validation="compareResult?.candidate?.quick_validation || null"
-                    empty-text="尚无 candidate 输出。"
-                  />
                 </div>
               </div>
 
               <div class="details-group mt-4">
+                <ResultBlock title="Prompt Packet 对比" :open="false">
+                  <div class="compare-prompt-stack">
+                    <section
+                      v-for="section in comparePromptSections"
+                      :key="section.key"
+                      class="compare-prompt-row"
+                    >
+                      <header class="compare-prompt-row__title">
+                        <h4>{{ section.title }}</h4>
+                      </header>
+                      <div class="compare-row__body compare-prompt-grid">
+                        <div class="compare-column">
+                          <div class="compare-column__header">
+                            <h5>Baseline</h5>
+                          </div>
+                          <div class="packet-item">
+                            <JsonTreeView
+                              v-if="isStructuredJsonValue(parseNestedJson(section.baseline))"
+                              :value="parseNestedJson(section.baseline)"
+                              :empty-text="`${section.title} 暂无数据。`"
+                            />
+                            <XmlPromptViewer v-else-if="section.key === 'runtime_prompt'" :text="String(section.baseline || '')" />
+                            <pre v-else class="packet-content">{{ formatJson(section.baseline) }}</pre>
+                          </div>
+                        </div>
+                        <div class="compare-column">
+                          <div class="compare-column__header">
+                            <h5>Candidate</h5>
+                          </div>
+                          <div class="packet-item">
+                            <JsonTreeView
+                              v-if="isStructuredJsonValue(parseNestedJson(section.candidate))"
+                              :value="parseNestedJson(section.candidate)"
+                              :empty-text="`${section.title} 暂无数据。`"
+                            />
+                            <XmlPromptViewer v-else-if="section.key === 'runtime_prompt'" :text="String(section.candidate || '')" />
+                            <pre v-else class="packet-content">{{ formatJson(section.candidate) }}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </ResultBlock>
                 <ResultBlock
                   v-if="resultIssue(compareResult?.baseline, 'Baseline') || resultIssue(compareResult?.candidate, 'Candidate')"
                   title="Compare 调试信息"
@@ -1935,10 +2341,16 @@ const savedJudgeConfigsMapped = computed(() => [
           <template v-else>
             <div class="output-block">
               <h4 class="block-title">当前 Compare 摘要</h4>
-              <div v-if="compareResult" class="meta-grid">
-                <div class="meta-item" v-for="[label, value] in compareDecisionFacts.slice(0, 8)" :key="label">
-                  <span class="meta-label">{{ label }}</span>
-                  <span class="meta-value">{{ value }}</span>
+              <div v-if="compareResult" class="compare-status-line">
+                <div class="compare-status-line__item">
+                  <span class="meta-label">Compare 状态</span>
+                  <strong :class="`text-${statusTone(compareResultStatus.compare_status)}`">{{ statusLabel(compareResultStatus.compare_status) }}</strong>
+                  <span class="compare-status-line__detail">Baseline {{ statusLabel(compareResultStatus.baseline_status) }} / Candidate {{ statusLabel(compareResultStatus.candidate_status) }}</span>
+                </div>
+                <div class="compare-status-line__item">
+                  <span class="meta-label">最近持久化 Trial</span>
+                  <strong>{{ latestCompareTrialId || "未写入 Session" }}</strong>
+                  <span class="compare-status-line__detail">{{ latestCompareTrialId ? "可继续挂 judge request 或回看 Session" : "当前结果只保留在页面状态中" }}</span>
                 </div>
               </div>
               <div v-else class="text-muted mt-2 text-sm">暂无 Compare 摘要</div>
@@ -2243,6 +2655,10 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   grid-template-columns: minmax(400px, 550px) 1fr;
   gap: 24px;
   align-items: start;
+}
+
+.workbench.is-compare {
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
 }
 
 .panel-column {
@@ -2654,14 +3070,345 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
   opacity: 0.62;
 }
 
-.highlight-box { padding: 16px; background: color-mix(in srgb, var(--theme--warning, #f59e0b) 10%, var(--color-surface)); border-radius: var(--radius-md); margin-bottom: 24px; }
-.insight-list { margin: 0; padding-left: 20px; font-size: 13px; color: var(--color-text); line-height: 1.6; }
-.insight-list li { margin-bottom: 4px; }
-
 .compare-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .compare-pane { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 16px; }
 .pane-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .pane-header h4 { font-size: 14px; font-weight: 500; }
+
+.compare-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.compare-status-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 18px 18px 16px;
+  background: var(--color-surface);
+}
+
+.compare-status-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.compare-status-card__header h4 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.compare-status-card__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+
+.delta-inline {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.status-fact {
+  display: grid;
+  gap: 4px;
+}
+
+.compare-status-card.is-success {
+  border-color: color-mix(in srgb, var(--theme--success, #10b981) 24%, var(--color-border));
+}
+
+.compare-status-card.is-warning {
+  border-color: color-mix(in srgb, var(--theme--warning, #f59e0b) 24%, var(--color-border));
+}
+
+.compare-status-card.is-danger {
+  border-color: color-mix(in srgb, var(--theme--danger, #dc2626) 24%, var(--color-border));
+}
+
+.compare-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.compare-metric-card {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+  display: grid;
+  gap: 6px;
+}
+
+.compare-metric-card__value {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.compare-metric-card__detail {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-subdued);
+}
+
+.compare-metric-card.is-success {
+  background: color-mix(in srgb, var(--theme--success, #10b981) 6%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--theme--success, #10b981) 22%, var(--color-border));
+}
+
+.compare-metric-card.is-success .compare-metric-card__value {
+  color: var(--theme--success, #10b981);
+}
+
+.compare-metric-card.is-warning {
+  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 6%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--theme--warning, #f59e0b) 22%, var(--color-border));
+}
+
+.compare-metric-card.is-warning .compare-metric-card__value {
+  color: var(--theme--warning, #d97706);
+}
+
+.compare-metric-card.is-danger {
+  background: color-mix(in srgb, var(--theme--danger, #dc2626) 6%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--theme--danger, #dc2626) 22%, var(--color-border));
+}
+
+.compare-metric-card.is-danger .compare-metric-card__value {
+  color: var(--theme--danger, #dc2626);
+}
+
+.compare-canvas {
+  display: grid;
+  gap: 16px;
+}
+
+.compare-row {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.compare-row__header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--sentence-tint, #eef2ff) 65%, var(--color-surface));
+  display: grid;
+  gap: 8px;
+}
+
+.compare-row__id {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--sentence-accent, #6366f1);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.compare-row__sentence {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--color-text);
+}
+
+.compare-row__body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 16px;
+}
+
+.compare-prompt-grid {
+  padding: 0;
+}
+
+.compare-prompt-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.compare-prompt-row {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.compare-prompt-row__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-subdued);
+  background: var(--color-surface-subdued);
+}
+
+.compare-prompt-row__title h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-subdued);
+}
+
+.compare-status-line {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.compare-status-line__item {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+  display: grid;
+  gap: 6px;
+}
+
+.compare-status-line__detail {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-subdued);
+}
+
+.compare-column {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.compare-column__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.compare-column__header h4 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.compare-column__header h5 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-subdued);
+}
+
+.compare-entry-list {
+  display: grid;
+  gap: 10px;
+}
+
+.compare-entry-card {
+  border: 1px solid color-mix(in srgb, var(--sentence-accent, #6366f1) 20%, var(--color-border));
+  border-radius: var(--radius-md);
+  padding: 14px;
+  background: color-mix(in srgb, var(--sentence-tint, #eef2ff) 38%, var(--color-surface));
+  display: grid;
+  gap: 8px;
+}
+
+.compare-entry-card.is-analysis {
+  background: color-mix(in srgb, var(--sentence-tint, #eef2ff) 24%, var(--color-surface));
+}
+
+.compare-entry-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compare-entry-card__head strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.compare-entry-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sentence-accent, #6366f1) 12%, var(--color-surface));
+  color: color-mix(in srgb, var(--sentence-accent, #6366f1) 72%, #1f2937);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.compare-entry-anchor {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-subdued);
+}
+
+.compare-entry-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.compare-empty {
+  min-height: 120px;
+  padding: 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+  color: var(--color-text-subdued);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.compare-row.tone-amber {
+  --sentence-accent: #d97706;
+  --sentence-tint: #fef3c7;
+}
+
+.compare-row.tone-blue {
+  --sentence-accent: #2563eb;
+  --sentence-tint: #dbeafe;
+}
+
+.compare-row.tone-green {
+  --sentence-accent: #059669;
+  --sentence-tint: #d1fae5;
+}
+
+.compare-row.tone-violet {
+  --sentence-accent: #7c3aed;
+  --sentence-tint: #ede9fe;
+}
+
+.compare-row.tone-rose {
+  --sentence-accent: #e11d48;
+  --sentence-tint: #ffe4e6;
+}
+
+.compare-row.tone-slate {
+  --sentence-accent: #475569;
+  --sentence-tint: #e2e8f0;
+}
 
 .packet-list { display: flex; flex-direction: column; gap: 12px; }
 .packet-item { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
@@ -2810,6 +3557,11 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
   .result-shell { position: static; }
   .sessions-workspace { grid-template-columns: 1fr; }
   .timeline-container { grid-template-columns: 1fr; }
+  .compare-overview,
+  .compare-status-line,
+  .compare-row__body {
+    grid-template-columns: 1fr;
+  }
 }
 
 .list-row {
