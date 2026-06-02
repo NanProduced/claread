@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,8 +10,11 @@ import {
   buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
+  buildWorkflowLabCompareReport,
   cancelJudgeRunRequest,
+  createWorkflowLabCompare,
   isSafeFileId,
+  inferRunTopologyMode,
   isJudgeRunRequestCancelable,
   isJudgeRunRequestRetryable,
   isWorkflowRunRequestCancelable,
@@ -26,6 +29,14 @@ import {
   workflowRequestRow,
   workflowRunRequestSummary,
 } from "./index.js";
+import {
+  attachStandaloneCompareTrialToSession,
+  assertNoDuplicateSessionCompareTrial,
+  buildNodeLabJudgeWorkerDatabaseUrl,
+  buildNodeLabJudgeWorkerLaunch,
+  dispatchNodeLabJudgeWorker,
+  findDuplicateRunHistoryTrial,
+} from "./node-lab.js";
 
 function createWorkflowRequestDb(initialRows) {
   const rows = initialRows.map((row) => ({ ...row }));
@@ -135,6 +146,95 @@ function createJudgeRequestDb(initialRows) {
   return database;
 }
 
+function createNodeLabTrialsDb(initialRows) {
+  const rows = initialRows.map((row) => ({ ...row }));
+
+  function database(tableName) {
+    assert.equal(tableName, "eval_node_lab_trials");
+    const state = { where: {} };
+    const builder = {
+      where(criteria) {
+        Object.assign(state.where, criteria);
+        return builder;
+      },
+      select() {
+        return Promise.resolve(rows.filter((row) => matches(row, state)));
+      },
+    };
+    return builder;
+  }
+
+  return database;
+}
+
+function createNodeLabRunHistoryDb(initialTables) {
+  const tables = {
+    eval_node_lab_trials: [],
+    eval_node_lab_sessions: [],
+    eval_node_lab_judge_requests: [],
+    ...Object.fromEntries(
+      Object.entries(initialTables).map(([tableName, rows]) => [
+        tableName,
+        rows.map((row) => ({ ...row })),
+      ]),
+    ),
+  };
+
+  function database(tableName) {
+    const rows = tables[tableName];
+    assert.ok(rows, `Unexpected table: ${tableName}`);
+    const state = { where: {}, orderBy: null };
+    const apply = () => {
+      let result = rows.filter((row) => matches(row, state));
+      if (state.orderBy) {
+        const { field, direction } = state.orderBy;
+        result = result.slice().sort((left, right) => {
+          const compare = String(left[field] || "").localeCompare(String(right[field] || ""));
+          return direction === "desc" ? -compare : compare;
+        });
+      }
+      return result;
+    };
+    const builder = {
+      where(criteria) {
+        Object.assign(state.where, criteria);
+        return builder;
+      },
+      select() {
+        return Promise.resolve(apply());
+      },
+      first() {
+        return Promise.resolve(apply()[0] || null);
+      },
+      orderBy(field, direction = "asc") {
+        state.orderBy = { field, direction };
+        return builder;
+      },
+      update(patch) {
+        let count = 0;
+        for (const row of rows) {
+          if (!matches(row, state)) continue;
+          Object.assign(row, patch);
+          count += 1;
+        }
+        return Promise.resolve(count);
+      },
+      insert(row) {
+        rows.push({ ...row });
+        return Promise.resolve(1);
+      },
+      then(resolve, reject) {
+        return Promise.resolve(apply()).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+
+  database.transaction = async (callback) => callback(database);
+  database.tables = tables;
+  return database;
+}
+
 function matches(row, state) {
   const whereMatches = Object.entries(state.where).every(([key, value]) => row[key] === value);
   if (!whereMatches) return false;
@@ -157,6 +257,117 @@ function createResponseProbe() {
       return this;
     },
   };
+}
+
+function workflowCaseArtifact({
+  runId,
+  caseId = "case-1",
+  topology = "learning",
+  hardFailures = 0,
+  softFailures = 0,
+  promptVariantId = "baseline",
+  modelName = "fake-model",
+} = {}) {
+  return {
+    case_id: caseId,
+    run_id: runId,
+    adapter_status: "succeeded",
+    workflow_identity: {
+      workflow_name: "article_analysis",
+      workflow_version: "3.0.0",
+      topology_mode: topology,
+    },
+    schema_identity: {
+      schema_version: "3.0.0",
+      topology_mode: topology,
+    },
+    prompt_identity: {
+      prompt_version: null,
+      prompt_snapshot_hash: promptVariantId,
+      prompt_variant_id: promptVariantId,
+    },
+    model_identity: {
+      route: "annotation_generation",
+      model_name: modelName,
+    },
+    translations: [],
+    inline_marks: [],
+    sentence_entries: [],
+    warnings: [],
+    drop_log: [],
+    usage_summary: { total_tokens: 0 },
+    grader_results: [
+      ...Array.from({ length: hardFailures }, (_, index) => ({
+        grader_name: `hard-${index}`,
+        verdict: "fail",
+        severity: "hard",
+      })),
+      ...Array.from({ length: softFailures }, (_, index) => ({
+        grader_name: `soft-${index}`,
+        verdict: "fail",
+        severity: "soft",
+      })),
+    ],
+  };
+}
+
+function writeWorkflowRun(root, {
+  runId,
+  datasetId = "article-analysis-v1",
+  topology = "learning",
+  artifacts = [workflowCaseArtifact({ runId, topology })],
+  reportTotalCases = artifacts.length,
+} = {}) {
+  const runPath = join(root, runId);
+  mkdirSync(join(runPath, "cases"), { recursive: true });
+  writeFileSync(
+    join(runPath, "run.json"),
+    JSON.stringify({
+      run_id: runId,
+      dataset_id: datasetId,
+      mode: "workflow",
+      eval_purpose: "prompt_experiment",
+      rag_mode: "off",
+      trace_scope: "off",
+      created_at: "2026-06-03T00:00:00.000Z",
+    }),
+  );
+  writeFileSync(
+    join(runPath, "report.json"),
+    JSON.stringify({
+      run_id: runId,
+      dataset_id: datasetId,
+      total_cases: reportTotalCases,
+      passed: reportTotalCases,
+      failed: 0,
+      errored: 0,
+      created_at: "2026-06-03T00:00:00.000Z",
+    }),
+  );
+  for (const artifact of artifacts) {
+    writeFileSync(
+      join(runPath, "cases", `${artifact.case_id}.json`),
+      JSON.stringify(artifact),
+    );
+  }
+  writeFileSync(
+    join(runPath, "case-index.json"),
+    JSON.stringify({
+      schema_version: "eval-case-index-v1",
+      run_id: runId,
+      dataset_id: datasetId,
+      total_cases: artifacts.length,
+      cases: artifacts.map((artifact) => ({
+        case_id: artifact.case_id,
+        run_id: artifact.run_id,
+        workflow_identity: artifact.workflow_identity,
+        schema_identity: artifact.schema_identity,
+        prompt_identity: artifact.prompt_identity,
+        model_identity: artifact.model_identity,
+      })),
+    }),
+  );
+  return runPath;
 }
 
 test("buildAuthGuard requires a Directus admin user", () => {
@@ -191,6 +402,138 @@ test("isSafeFileId rejects traversal-looking values", () => {
   assert.equal(isSafeFileId("run..backup"), false);
   assert.equal(isSafeFileId(".env"), false);
   assert.equal(isSafeFileId("run/child"), false);
+});
+
+test("inferRunTopologyMode returns a stable learning topology", () => {
+  assert.equal(
+    inferRunTopologyMode([
+      workflowCaseArtifact({ runId: "run-a", caseId: "case-1", topology: "learning" }),
+      workflowCaseArtifact({ runId: "run-a", caseId: "case-2", topology: "learning" }),
+    ]),
+    "learning",
+  );
+  assert.equal(
+    inferRunTopologyMode([
+      workflowCaseArtifact({ runId: "run-a", caseId: "case-1", topology: "learning" }),
+      workflowCaseArtifact({ runId: "run-a", caseId: "case-2", topology: "academic" }),
+    ]),
+    "mixed",
+  );
+});
+
+test("buildWorkflowLabCompareReport compares shared learning cases", () => {
+  const report = buildWorkflowLabCompareReport(
+    {
+      run_id: "baseline",
+      dataset_id: "article-analysis-v1",
+      report: { total_cases: 2 },
+      artifacts: [
+        workflowCaseArtifact({ runId: "baseline", caseId: "case-1" }),
+        workflowCaseArtifact({ runId: "baseline", caseId: "case-2", hardFailures: 1 }),
+      ],
+    },
+    {
+      run_id: "candidate",
+      dataset_id: "article-analysis-v1",
+      report: { total_cases: 2 },
+      artifacts: [
+        workflowCaseArtifact({ runId: "candidate", caseId: "case-1", hardFailures: 1, promptVariantId: "candidate-v1" }),
+        workflowCaseArtifact({ runId: "candidate", caseId: "case-2", promptVariantId: "candidate-v1" }),
+      ],
+    },
+    new Date("2026-06-03T00:00:00.000Z"),
+  );
+
+  assert.equal(report.total_cases, 2);
+  assert.equal(report.wins, 1);
+  assert.equal(report.losses, 1);
+  assert.deepEqual(report.regression_case_ids, ["case-1"]);
+  assert.ok(report.comparisons[0].identity_delta.prompt_identity);
+});
+
+test("createWorkflowLabCompare writes immutable json and markdown reports", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
+  try {
+    writeWorkflowRun(root, {
+      runId: "baseline",
+      artifacts: [workflowCaseArtifact({ runId: "baseline", caseId: "case-1" })],
+    });
+    writeWorkflowRun(root, {
+      runId: "candidate",
+      artifacts: [workflowCaseArtifact({ runId: "candidate", caseId: "case-1", hardFailures: 1, promptVariantId: "candidate-v1" })],
+    });
+
+    const created = await createWorkflowLabCompare(root, {
+      baseline_run_id: "baseline",
+      candidate_run_id: "candidate",
+    });
+    assert.equal(created.created, true);
+    assert.equal(created.report_id, "vs-baseline");
+    assert.equal(created.report.losses, 1);
+    assert.equal(existsSync(join(root, "candidate", "ab", "vs-baseline.json")), true);
+    assert.equal(existsSync(join(root, "candidate", "ab", "vs-baseline.md")), true);
+
+    const existing = await createWorkflowLabCompare(root, {
+      baseline_run_id: "baseline",
+      candidate_run_id: "candidate",
+    });
+    assert.equal(existing.created, false);
+    assert.equal(existing.report.losses, 1);
+    const raw = JSON.parse(readFileSync(join(root, "candidate", "ab", "vs-baseline.json"), "utf8"));
+    assert.equal(raw.candidate_run_id, "candidate");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createWorkflowLabCompare rejects non-learning runs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
+  try {
+    writeWorkflowRun(root, {
+      runId: "baseline",
+      topology: "learning",
+      artifacts: [workflowCaseArtifact({ runId: "baseline", caseId: "case-1", topology: "learning" })],
+    });
+    writeWorkflowRun(root, {
+      runId: "candidate",
+      topology: "academic",
+      artifacts: [workflowCaseArtifact({ runId: "candidate", caseId: "case-1", topology: "academic" })],
+    });
+
+    await assert.rejects(
+      () => createWorkflowLabCompare(root, {
+        baseline_run_id: "baseline",
+        candidate_run_id: "candidate",
+      }),
+      /only supports learning/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createWorkflowLabCompare rejects runs without shared cases", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
+  try {
+    writeWorkflowRun(root, {
+      runId: "baseline",
+      artifacts: [workflowCaseArtifact({ runId: "baseline", caseId: "case-a" })],
+    });
+    writeWorkflowRun(root, {
+      runId: "candidate",
+      artifacts: [workflowCaseArtifact({ runId: "candidate", caseId: "case-b", promptVariantId: "candidate-v1" })],
+    });
+
+    await assert.rejects(
+      () => createWorkflowLabCompare(root, {
+        baseline_run_id: "baseline",
+        candidate_run_id: "candidate",
+      }),
+      /No shared case ids/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("validateWorkflowRunRequest rejects unsafe dataset ids", () => {
@@ -655,5 +998,239 @@ test("retryJudgeRunRequest clones a failed judge request as a new queued request
     assert.equal(database.rows.length, 2);
   } finally {
     rmSync(runsRoot, { recursive: true, force: true });
+  }
+});
+
+test("buildNodeLabJudgeWorkerDatabaseUrl derives postgres url from Directus DB env", () => {
+  const env = {
+    DB_CLIENT: "pg",
+    DB_HOST: "postgres",
+    DB_PORT: "5432",
+    DB_DATABASE: "claread",
+    DB_USER: "directus user",
+    DB_PASSWORD: "p@ss word",
+  };
+
+  const url = buildNodeLabJudgeWorkerDatabaseUrl(env, (source, key) => source[key]);
+
+  assert.equal(url, "postgresql://directus%20user:p%40ss%20word@postgres:5432/claread");
+});
+
+test("buildNodeLabJudgeWorkerLaunch targets one request and node-lab artifact parent", () => {
+  const env = {
+    DATABASE_URL: "postgresql://claread:secret@postgres:5432/claread",
+    CLAREAD_API_BASE_URL: "http://host.docker.internal:8000",
+    CLAREAD_API_ADMIN_KEY: "admin-key",
+    CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND: "uv run python -m claread_eval.node_lab_judge.worker",
+  };
+
+  const launch = buildNodeLabJudgeWorkerLaunch({
+    env,
+    readEnv: (source, key) => source[key],
+    resolveEvalsRoot: () => "/directus/evals",
+    resolveNodeLabArtifactsRoot: () => "/directus/runtime-evals/node-lab",
+    judgeRequestId: "judge-001",
+  });
+
+  assert.equal(launch.command, "uv");
+  assert.deepEqual(launch.args.slice(0, 4), ["run", "python", "-m", "claread_eval.node_lab_judge.worker"]);
+  assert.equal(launch.args.includes("--once"), true);
+  assert.equal(launch.args.includes("--request-id"), true);
+  assert.equal(launch.args[launch.args.indexOf("--request-id") + 1], "judge-001");
+  assert.equal(launch.args[launch.args.indexOf("--evals-root") + 1], "/directus/runtime-evals");
+  assert.equal(launch.env.DATABASE_URL, env.DATABASE_URL);
+  assert.equal(launch.env.CLAREAD_API_ADMIN_KEY, "admin-key");
+  assert.match(launch.env.PYTHONPATH, /\/directus\/evals/);
+});
+
+test("dispatchNodeLabJudgeWorker starts detached one-shot worker", () => {
+  const calls = [];
+  const result = dispatchNodeLabJudgeWorker({
+    env: {
+      DATABASE_URL: "postgresql://claread:secret@postgres:5432/claread",
+      CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND: "python -m claread_eval.node_lab_judge.worker",
+    },
+    readEnv: (source, key) => source[key],
+    resolveEvalsRoot: () => "/directus/evals",
+    resolveNodeLabArtifactsRoot: () => "/directus/runtime-evals/node-lab",
+    judgeRequestId: "judge-002",
+    spawnProcess(command, args, options) {
+      calls.push({ command, args, options });
+      return {
+        on(eventName, handler) {
+          calls[0].errorListener = { eventName, handler };
+        },
+        unref() {},
+      };
+    },
+  });
+
+  assert.equal(result.status, "dispatched");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "python");
+  assert.equal(calls[0].args.includes("--once"), true);
+  assert.equal(calls[0].args[calls[0].args.indexOf("--request-id") + 1], "judge-002");
+  assert.equal(calls[0].options.detached, true);
+  assert.equal(calls[0].options.stdio, "ignore");
+  assert.equal(calls[0].errorListener.eventName, "error");
+  assert.equal(typeof calls[0].errorListener.handler, "function");
+});
+
+test("assertNoDuplicateSessionCompareTrial rejects same compare in one session", async () => {
+  const database = createNodeLabTrialsDb([
+    {
+      trial_id: "trial-existing",
+      session_id: "session-001",
+      workspace_type: "baseline_compare",
+      result_kind: "compare_result",
+      input_text_hash: "input-a",
+      baseline_snapshot_hash: "baseline-a",
+      candidate_snapshot_hashes_json: ["candidate-a"],
+    },
+  ]);
+
+  await assert.rejects(
+    () => assertNoDuplicateSessionCompareTrial(database, {
+      sessionId: "session-001",
+      inputTextHash: "input-a",
+      baselineSnapshotHash: "baseline-a",
+      candidateHashes: ["candidate-a"],
+    }),
+    (error) => {
+      assert.equal(error.code, "NODE_LAB_SESSION_DUPLICATE_COMPARE");
+      assert.equal(error.existing_trial_id, "trial-existing");
+      return true;
+    },
+  );
+});
+
+test("assertNoDuplicateSessionCompareTrial allows same compare in another session", async () => {
+  const database = createNodeLabTrialsDb([
+    {
+      trial_id: "trial-existing",
+      session_id: "session-001",
+      workspace_type: "baseline_compare",
+      result_kind: "compare_result",
+      input_text_hash: "input-a",
+      baseline_snapshot_hash: "baseline-a",
+      candidate_snapshot_hashes_json: ["candidate-a"],
+    },
+  ]);
+
+  await assertNoDuplicateSessionCompareTrial(database, {
+    sessionId: "session-002",
+    inputTextHash: "input-a",
+    baselineSnapshotHash: "baseline-a",
+    candidateHashes: ["candidate-a"],
+  });
+});
+
+test("findDuplicateRunHistoryTrial finds existing standalone single run", async () => {
+  const database = createNodeLabTrialsDb([
+    {
+      trial_id: "single-existing",
+      session_id: null,
+      node_name: "grammar",
+      workspace_type: "single_run",
+      result_kind: "single_run_result",
+      input_text_hash: "input-a",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      baseline_snapshot_hash: "prompt-a",
+      candidate_snapshot_hashes_json: ["prompt-a"],
+    },
+  ]);
+
+  const duplicate = await findDuplicateRunHistoryTrial(database, {
+    nodeName: "grammar",
+    workspaceType: "single_run",
+    resultKind: "single_run_result",
+    inputTextHash: "input-a",
+    readingGoal: "daily_reading",
+    readingVariant: "intermediate_reading",
+    baselineSnapshotHash: "prompt-a",
+    candidateHashes: ["prompt-a"],
+  });
+
+  assert.equal(duplicate.trial_id, "single-existing");
+});
+
+test("attachStandaloneCompareTrialToSession migrates standalone compare instead of duplicating", async () => {
+  const database = createNodeLabRunHistoryDb({
+    eval_node_lab_trials: [
+      {
+        trial_id: "compare-standalone",
+        session_id: null,
+        node_name: "grammar",
+        workspace_type: "baseline_compare",
+        result_kind: "compare_result",
+        input_text_hash: "input-a",
+        input_excerpt: "Sentence.",
+        reading_goal: "daily_reading",
+        reading_variant: "intermediate_reading",
+        baseline_snapshot_hash: "baseline-a",
+        candidate_snapshot_hashes_json: ["candidate-a"],
+        result_summary_json: {},
+        date_created: "2026-06-03T01:00:00.000Z",
+      },
+    ],
+    eval_node_lab_sessions: [
+      {
+        session_id: "session-002",
+        node_name: "grammar",
+        title: "Grammar session",
+        goal: "Review grammar",
+        status: "active",
+        allowed_workspace_types_json: ["baseline_compare"],
+        baseline_snapshot_json: {},
+        candidate_registry_json: [],
+        aggregate_summary_json: {},
+        decision_summary_json: {},
+        tags_json: [],
+      },
+    ],
+    eval_node_lab_judge_requests: [
+      {
+        judge_request_id: "judge-001",
+        trial_id: "compare-standalone",
+        session_id: null,
+      },
+    ],
+  });
+  const artifactsRoot = mkdtempSync(join(tmpdir(), "node-lab-run-history-"));
+  try {
+    const migrated = await attachStandaloneCompareTrialToSession({
+      database,
+      req: { accountability: { user: "user-001" } },
+      resolveNodeLabArtifactsRoot: () => artifactsRoot,
+      env: {},
+      sessionRow: database.tables.eval_node_lab_sessions[0],
+      identity: {
+        nodeName: "grammar",
+        workspaceType: "baseline_compare",
+        resultKind: "compare_result",
+        inputTextHash: "input-a",
+        readingGoal: "daily_reading",
+        readingVariant: "intermediate_reading",
+        baselineSnapshotHash: "baseline-a",
+        candidateHashes: ["candidate-a"],
+      },
+    });
+
+    assert.equal(migrated.trial_id, "compare-standalone");
+    assert.equal(database.tables.eval_node_lab_trials.length, 1);
+    assert.equal(database.tables.eval_node_lab_trials[0].session_id, "session-002");
+    assert.equal(database.tables.eval_node_lab_judge_requests[0].session_id, "session-002");
+    assert.deepEqual(
+      JSON.parse(database.tables.eval_node_lab_sessions[0].aggregate_summary_json),
+      {
+        trial_count: 1,
+        workspace_counts: { single_run: 0, baseline_compare: 1 },
+        last_trial_id: "compare-standalone",
+        last_trial_at: "2026-06-03T01:00:00.000Z",
+      },
+    );
+  } finally {
+    rmSync(artifactsRoot, { recursive: true, force: true });
   }
 });

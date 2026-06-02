@@ -25,7 +25,7 @@ class NodeLabJudgeRequest:
     error_json: dict[str, Any] | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> "NodeLabJudgeRequest":
+    def from_row(cls, row: Any) -> NodeLabJudgeRequest:
         data = dict(row)
         config = data.get("judge_config_snapshot_json") or {}
         if isinstance(config, str):
@@ -52,6 +52,15 @@ class NodeLabJudgeRequest:
 
 class NodeLabJudgeRequestStore(Protocol):
     async def claim_next_request(self, *, worker_id: str, lease_seconds: int) -> NodeLabJudgeRequest | None:
+        ...
+
+    async def claim_request(
+        self,
+        *,
+        judge_request_id: str,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> NodeLabJudgeRequest | None:
         ...
 
     async def touch_heartbeat(
@@ -88,7 +97,7 @@ class AsyncpgNodeLabJudgeRequestStore:
         self._pool = pool
 
     @classmethod
-    async def connect(cls, database_url: str) -> "AsyncpgNodeLabJudgeRequestStore":
+    async def connect(cls, database_url: str) -> AsyncpgNodeLabJudgeRequestStore:
         try:
             import asyncpg
         except ImportError as exc:
@@ -122,6 +131,33 @@ class AsyncpgNodeLabJudgeRequestStore:
             WHERE r.judge_request_id = next.judge_request_id
             RETURNING r.*
             """,
+            worker_id,
+            lease_seconds,
+        )
+        return NodeLabJudgeRequest.from_row(row) if row else None
+
+    async def claim_request(
+        self,
+        *,
+        judge_request_id: str,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> NodeLabJudgeRequest | None:
+        row = await self._pool.fetchrow(
+            """
+            UPDATE eval_node_lab_judge_requests
+            SET status = 'running',
+                lease_owner = $2,
+                lease_until = now() + ($3 * interval '1 second'),
+                heartbeat_at = now(),
+                started_at = COALESCE(started_at, now()),
+                date_updated = now(),
+                error_json = NULL
+            WHERE judge_request_id = $1
+              AND status = 'queued'
+            RETURNING *
+            """,
+            judge_request_id,
             worker_id,
             lease_seconds,
         )
@@ -286,6 +322,25 @@ class InMemoryNodeLabJudgeRequestStore:
             request.error_json = None
             return copy.deepcopy(request)
         return None
+
+    async def claim_request(
+        self,
+        *,
+        judge_request_id: str,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> NodeLabJudgeRequest | None:
+        now = datetime.now(UTC)
+        request = self._find(judge_request_id)
+        if request is None or request.status != "queued":
+            return None
+        request.status = "running"
+        request.lease_owner = worker_id
+        request.lease_until = now + timedelta(seconds=lease_seconds)
+        request.heartbeat_at = now
+        request.started_at = request.started_at or now
+        request.error_json = None
+        return copy.deepcopy(request)
 
     async def touch_heartbeat(self, *, judge_request_id: str, worker_id: str, lease_seconds: int) -> bool:
         request = self._find(judge_request_id)

@@ -445,3 +445,64 @@ async def test_node_lab_judge_worker_preserves_rubric_result_when_pairwise_fails
     assert payload["step_runs"]["pairwise"]["status"] == "failed"
     assert payload["step_runs"]["pairwise"]["error"]["message"] == "pairwise llm timeout"
     assert payload["pairwise_error"]["message"] == "pairwise llm timeout"
+
+
+@pytest.mark.asyncio
+async def test_node_lab_judge_worker_once_can_claim_specific_request(tmp_path: Path) -> None:
+    evals_root = tmp_path / "evals"
+    _write_compare_artifact(evals_root, session_id="session-5", trial_id="trial-5a")
+    _write_compare_artifact(evals_root, session_id="session-5", trial_id="trial-5b")
+    store = InMemoryNodeLabJudgeRequestStore()
+    store.add_request(
+        judge_request_id="judge-old",
+        session_id="session-5",
+        trial_id="trial-5a",
+        node_name="grammar",
+        judge_config_snapshot_json={
+            "preset_id": "grammar-default-v1",
+            "judger_models_json": [{"profile_name": "eval-profile"}],
+            "parameters_json": {"temperature": 0},
+        },
+    )
+    store.add_request(
+        judge_request_id="judge-target",
+        session_id="session-5",
+        trial_id="trial-5b",
+        node_name="grammar",
+        judge_config_snapshot_json={
+            "preset_id": "grammar-default-v1",
+            "judger_models_json": [{"profile_name": "eval-profile"}],
+            "parameters_json": {"temperature": 0},
+        },
+    )
+    worker = NodeLabJudgeWorker(
+        store=store,
+        evals_root=evals_root,
+        worker_id="test-worker",
+        poll_interval=0.01,
+        lease_seconds=60,
+        heartbeat_interval=60.0,
+    )
+
+    async def fake_run_node_lab_judge(*args, **kwargs):
+        return await run_node_lab_judge(
+            *args,
+            **kwargs,
+            catalog=load_node_lab_judge_catalog(),
+            client=FakeJudgeClient(),
+        )
+
+    from claread_eval.node_lab_judge import worker as worker_module
+
+    original = worker_module.run_node_lab_judge
+    worker_module.run_node_lab_judge = fake_run_node_lab_judge
+    try:
+        claimed = await worker.run_once(judge_request_id="judge-target")
+    finally:
+        worker_module.run_node_lab_judge = original
+
+    assert claimed is True
+    assert store.requests[0].judge_request_id == "judge-old"
+    assert store.requests[0].status == "queued"
+    assert store.requests[1].judge_request_id == "judge-target"
+    assert store.requests[1].status == "succeeded"

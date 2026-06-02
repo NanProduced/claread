@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { registerNodeLabRoutes } from "./node-lab.js";
 
@@ -98,6 +98,16 @@ function abReportPath(root, candidateRunId, reportId) {
   return path.join(runDir(root, candidateRunId), "ab", `${reportId}.json`);
 }
 
+function abReportMarkdownPath(root, candidateRunId, reportId) {
+  if (!isSafeFileId(reportId)) {
+    const error = new Error("Invalid A/B report id.");
+    error.status = 400;
+    error.code = "INVALID_AB_REPORT_ID";
+    throw error;
+  }
+  return path.join(runDir(root, candidateRunId), "ab", `${reportId}.md`);
+}
+
 function judgeArtifactDir(root, runId, judgeRunId) {
   if (!isSafeFileId(judgeRunId)) {
     const error = new Error("Invalid judge run id.");
@@ -176,6 +186,7 @@ function summarizeRun(run, report, counts) {
     workflow_version: run.workflow_version || null,
     rag_mode: run.rag_mode || null,
     trace_scope: run.trace_scope || null,
+    topology_mode: counts.topology_mode || null,
     has_report: Boolean(report),
     total_cases: report?.total_cases ?? counts.case_artifact_count,
     passed: report?.passed ?? null,
@@ -194,6 +205,31 @@ function summarizeRun(run, report, counts) {
     ab_report_count: counts.ab_report_count,
     judge_report_count: counts.judge_report_count ?? 0,
   };
+}
+
+function topologyFromIdentity(identity) {
+  const topologyMode = identity?.topology_mode;
+  return typeof topologyMode === "string" && topologyMode ? topologyMode : null;
+}
+
+function topologyFromCaseArtifact(artifact) {
+  return (
+    topologyFromIdentity(artifact?.workflow_identity)
+    || topologyFromIdentity(artifact?.schema_identity)
+    || null
+  );
+}
+
+function inferRunTopologyMode(caseArtifacts) {
+  if (!Array.isArray(caseArtifacts) || caseArtifacts.length === 0) return null;
+  const topologies = new Set(
+    caseArtifacts
+      .map((artifact) => topologyFromCaseArtifact(artifact))
+      .filter(Boolean),
+  );
+  if (topologies.size === 1) return Array.from(topologies)[0];
+  if (topologies.size > 1) return "mixed";
+  return null;
 }
 
 function summarizeCaseArtifact(artifact) {
@@ -245,10 +281,12 @@ async function loadRunSummary(root, runId) {
   const reportPath = path.join(dir, "report.json");
   const report = (await fileExists(reportPath)) ? await readJsonFile(reportPath) : null;
   const caseIndex = await loadCaseIndex(root, runId);
+  const caseSummaries = caseIndex?.cases || [];
   return summarizeRun(run, report, {
     case_artifact_count: caseIndex?.total_cases ?? await countJsonFiles(path.join(dir, "cases")),
     ab_report_count: await countJsonFiles(path.join(dir, "ab")),
     judge_report_count: await countJudgeArtifactDirs(path.join(dir, "judge")),
+    topology_mode: inferRunTopologyMode(caseSummaries),
   });
 }
 
@@ -291,6 +329,7 @@ async function loadRunDetail(root, runId) {
       case_artifact_count: caseSummaries.length,
       ab_report_count: abReportIds.length,
       judge_report_count: judgeReports.length,
+      topology_mode: inferRunTopologyMode(caseSummaries),
     }),
     run,
     report,
@@ -307,6 +346,357 @@ async function loadRunDetail(root, runId) {
       href: `/eval-center/runs/${encodeURIComponent(runId)}/ab/${encodeURIComponent(id)}`,
     })),
     judge_reports: judgeReports,
+  };
+}
+
+async function loadRunCaseArtifacts(root, runId) {
+  const dir = runDir(root, runId);
+  const caseIds = await listJsonIds(path.join(dir, "cases"));
+  if (caseIds.length === 0) {
+    const error = new Error(`Run "${runId}" has no case artifacts.`);
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+    throw error;
+  }
+
+  const artifacts = [];
+  const seen = new Set();
+  for (const caseId of caseIds) {
+    const artifact = await readJsonFile(caseArtifactPath(root, runId, caseId));
+    if (artifact.case_id !== caseId) {
+      const error = new Error(`Case artifact filename mismatch: ${caseId} != ${artifact.case_id || "<missing>"}.`);
+      error.status = 422;
+      error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+      throw error;
+    }
+    if (artifact.run_id !== runId) {
+      const error = new Error(`Case artifact run_id mismatch: ${artifact.run_id || "<missing>"} != ${runId}.`);
+      error.status = 422;
+      error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+      throw error;
+    }
+    if (seen.has(caseId)) {
+      const error = new Error(`Duplicate case artifact: ${caseId}.`);
+      error.status = 422;
+      error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+      throw error;
+    }
+    seen.add(caseId);
+    artifacts.push(artifact);
+  }
+  return artifacts;
+}
+
+async function loadRunForWorkflowLabCompare(root, runId) {
+  const dir = runDir(root, runId);
+  const run = await readJsonFile(path.join(dir, "run.json"));
+  const reportPath = path.join(dir, "report.json");
+  if (!(await fileExists(reportPath))) {
+    const error = new Error(`Run "${runId}" is missing report.json.`);
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+    throw error;
+  }
+  const report = await readJsonFile(reportPath);
+  const artifacts = await loadRunCaseArtifacts(root, runId);
+  const topologyMode = inferRunTopologyMode(artifacts);
+  if (topologyMode !== "learning") {
+    const error = new Error(`Workflow Lab compare only supports learning runs. "${runId}" topology is ${topologyMode || "unknown"}.`);
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_TOPOLOGY_UNSUPPORTED";
+    throw error;
+  }
+  return {
+    dir,
+    run_id: run.run_id || runId,
+    dataset_id: run.dataset_id || report.dataset_id || null,
+    run,
+    report,
+    artifacts,
+    topology_mode: topologyMode,
+  };
+}
+
+function workflowLabFailureCounts(artifact) {
+  const failed = Array.isArray(artifact?.grader_results)
+    ? artifact.grader_results.filter((result) => result?.verdict === "fail")
+    : [];
+  return {
+    hard: failed.filter((result) => result?.severity === "hard").length,
+    soft: failed.filter((result) => result?.severity === "soft").length,
+  };
+}
+
+function workflowLabIdentitySnapshot(artifact) {
+  return {
+    workflow_identity: artifact?.workflow_identity || {},
+    schema_identity: artifact?.schema_identity || {},
+    prompt_identity: artifact?.prompt_identity || {},
+    model_identity: artifact?.model_identity || {},
+  };
+}
+
+function stableCompareJson(value) {
+  return JSON.stringify(value ?? null);
+}
+
+function workflowLabIdentityDelta(baselineArtifact, candidateArtifact) {
+  const baseline = workflowLabIdentitySnapshot(baselineArtifact);
+  const candidate = workflowLabIdentitySnapshot(candidateArtifact);
+  const delta = {};
+  for (const key of Object.keys(baseline)) {
+    if (stableCompareJson(baseline[key]) !== stableCompareJson(candidate[key])) {
+      delta[key] = {
+        baseline: baseline[key],
+        candidate: candidate[key],
+      };
+    }
+  }
+  return Object.keys(delta).length ? delta : null;
+}
+
+function compareWorkflowLabCaseArtifacts(baselineArtifact, candidateArtifact) {
+  const baselineFailures = workflowLabFailureCounts(baselineArtifact);
+  const candidateFailures = workflowLabFailureCounts(candidateArtifact);
+  const reasons = [];
+
+  if (candidateArtifact.adapter_status !== baselineArtifact.adapter_status) {
+    reasons.push(`adapter_status changed: ${baselineArtifact.adapter_status} -> ${candidateArtifact.adapter_status}`);
+  }
+
+  let verdict = "tie";
+  if (candidateFailures.hard > baselineFailures.hard) {
+    verdict = "loss";
+    reasons.push(`hard failures increased: ${baselineFailures.hard} -> ${candidateFailures.hard}`);
+  } else if (candidateFailures.hard < baselineFailures.hard) {
+    verdict = "win";
+    reasons.push(`hard failures decreased: ${baselineFailures.hard} -> ${candidateFailures.hard}`);
+  } else if (candidateFailures.soft > baselineFailures.soft) {
+    verdict = "loss";
+    reasons.push(`soft failures increased: ${baselineFailures.soft} -> ${candidateFailures.soft}`);
+  } else if (candidateFailures.soft < baselineFailures.soft) {
+    verdict = "win";
+    reasons.push(`soft failures decreased: ${baselineFailures.soft} -> ${candidateFailures.soft}`);
+  } else if (candidateArtifact.error && !baselineArtifact.error) {
+    verdict = "loss";
+    reasons.push("candidate introduced adapter error");
+  } else if (baselineArtifact.error && !candidateArtifact.error) {
+    verdict = "win";
+    reasons.push("candidate fixed adapter error");
+  } else if (candidateArtifact.adapter_status === "timeout" && baselineArtifact.adapter_status !== "timeout") {
+    verdict = "loss";
+    reasons.push("candidate introduced timeout");
+  }
+
+  if (reasons.length === 0) reasons.push("no deterministic delta");
+
+  return {
+    case_id: baselineArtifact.case_id,
+    verdict,
+    baseline_hard_failures: baselineFailures.hard,
+    candidate_hard_failures: candidateFailures.hard,
+    baseline_soft_failures: baselineFailures.soft,
+    candidate_soft_failures: candidateFailures.soft,
+    baseline_status: baselineArtifact.adapter_status || null,
+    candidate_status: candidateArtifact.adapter_status || null,
+    identity_delta: workflowLabIdentityDelta(baselineArtifact, candidateArtifact),
+    reasons,
+  };
+}
+
+function appendWorkflowLabInternalIdentityWarnings(warnings, side, artifacts) {
+  if (!artifacts.length) return;
+  const first = workflowLabIdentitySnapshot(artifacts[0]);
+  if (artifacts.slice(1).some((artifact) => stableCompareJson(workflowLabIdentitySnapshot(artifact)) !== stableCompareJson(first))) {
+    warnings.push(`${side} identity varies across shared cases`);
+  }
+}
+
+function workflowLabIdentityWarnings(baseline, candidate, sharedCaseIds, baselineById, candidateById) {
+  const warnings = [];
+  if (baseline.dataset_id !== candidate.dataset_id) {
+    warnings.push(`hard warning: dataset_id differs: ${baseline.dataset_id || "<missing>"} -> ${candidate.dataset_id || "<missing>"}`);
+  }
+  if (baseline.report?.total_cases !== undefined && baseline.report.total_cases !== baseline.artifacts.length) {
+    warnings.push(`baseline report total_cases differs from artifacts: ${baseline.report.total_cases} != ${baseline.artifacts.length}`);
+  }
+  if (candidate.report?.total_cases !== undefined && candidate.report.total_cases !== candidate.artifacts.length) {
+    warnings.push(`candidate report total_cases differs from artifacts: ${candidate.report.total_cases} != ${candidate.artifacts.length}`);
+  }
+
+  const baselineOnly = baseline.artifacts.map((artifact) => artifact.case_id).filter((caseId) => !candidateById.has(caseId)).sort();
+  const candidateOnly = candidate.artifacts.map((artifact) => artifact.case_id).filter((caseId) => !baselineById.has(caseId)).sort();
+  if (baselineOnly.length) warnings.push(`baseline-only cases ignored: ${baselineOnly.join(", ")}`);
+  if (candidateOnly.length) warnings.push(`candidate-only cases ignored: ${candidateOnly.join(", ")}`);
+
+  appendWorkflowLabInternalIdentityWarnings(
+    warnings,
+    "baseline",
+    sharedCaseIds.map((caseId) => baselineById.get(caseId)),
+  );
+  appendWorkflowLabInternalIdentityWarnings(
+    warnings,
+    "candidate",
+    sharedCaseIds.map((caseId) => candidateById.get(caseId)),
+  );
+
+  for (const key of ["workflow_identity", "schema_identity"]) {
+    if (sharedCaseIds.some((caseId) => {
+      const baselineSnapshot = workflowLabIdentitySnapshot(baselineById.get(caseId));
+      const candidateSnapshot = workflowLabIdentitySnapshot(candidateById.get(caseId));
+      return stableCompareJson(baselineSnapshot[key]) !== stableCompareJson(candidateSnapshot[key]);
+    })) {
+      warnings.push(`${key} differs between baseline and candidate`);
+    }
+  }
+  if (sharedCaseIds.every((caseId) => {
+    const baselineSnapshot = workflowLabIdentitySnapshot(baselineById.get(caseId));
+    const candidateSnapshot = workflowLabIdentitySnapshot(candidateById.get(caseId));
+    return stableCompareJson(baselineSnapshot.prompt_identity) === stableCompareJson(candidateSnapshot.prompt_identity);
+  })) {
+    warnings.push("prompt_identity is identical; comparison may be replay/model/RAG delta");
+  }
+  if (sharedCaseIds.some((caseId) => {
+    const baselineSnapshot = workflowLabIdentitySnapshot(baselineById.get(caseId));
+    const candidateSnapshot = workflowLabIdentitySnapshot(candidateById.get(caseId));
+    return stableCompareJson(baselineSnapshot.model_identity) !== stableCompareJson(candidateSnapshot.model_identity);
+  })) {
+    warnings.push("model_identity differs between baseline and candidate");
+  }
+  return warnings;
+}
+
+function buildWorkflowLabCompareReport(baseline, candidate, now = new Date()) {
+  const baselineById = new Map(baseline.artifacts.map((artifact) => [artifact.case_id, artifact]));
+  const candidateById = new Map(candidate.artifacts.map((artifact) => [artifact.case_id, artifact]));
+  const sharedCaseIds = Array.from(baselineById.keys())
+    .filter((caseId) => candidateById.has(caseId))
+    .sort();
+  if (sharedCaseIds.length === 0) {
+    const error = new Error("No shared case ids to compare.");
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+    throw error;
+  }
+  const comparisons = sharedCaseIds.map((caseId) => (
+    compareWorkflowLabCaseArtifacts(baselineById.get(caseId), candidateById.get(caseId))
+  ));
+  return {
+    baseline_run_id: baseline.run_id,
+    candidate_run_id: candidate.run_id,
+    baseline_dataset_id: baseline.dataset_id,
+    candidate_dataset_id: candidate.dataset_id,
+    created_at: now instanceof Date ? now.toISOString() : new Date(now).toISOString(),
+    total_cases: comparisons.length,
+    wins: comparisons.filter((item) => item.verdict === "win").length,
+    losses: comparisons.filter((item) => item.verdict === "loss").length,
+    ties: comparisons.filter((item) => item.verdict === "tie").length,
+    manual_review: comparisons.filter((item) => item.verdict === "manual_review").length,
+    regression_case_ids: comparisons.filter((item) => item.verdict === "loss").map((item) => item.case_id),
+    identity_warnings: workflowLabIdentityWarnings(baseline, candidate, sharedCaseIds, baselineById, candidateById),
+    comparisons,
+  };
+}
+
+function renderWorkflowLabCompareMarkdown(report) {
+  const lines = [
+    `# A/B Report: ${report.baseline_run_id} vs ${report.candidate_run_id}`,
+    "",
+    `- Created: ${report.created_at}`,
+    `- Baseline dataset: \`${report.baseline_dataset_id || "<missing>"}\``,
+    `- Candidate dataset: \`${report.candidate_dataset_id || "<missing>"}\``,
+    `- Total paired cases: ${report.total_cases}`,
+    `- Wins: ${report.wins}`,
+    `- Losses: ${report.losses}`,
+    `- Ties: ${report.ties}`,
+    `- Manual review: ${report.manual_review}`,
+    "",
+  ];
+  if (report.identity_warnings?.length) {
+    lines.push("## Identity Warnings", "");
+    for (const warning of report.identity_warnings) lines.push(`- ${warning}`);
+    lines.push("");
+  }
+  if (report.regression_case_ids?.length) {
+    lines.push("## Regression Cases", "");
+    for (const caseId of report.regression_case_ids) lines.push(`- \`${caseId}\``);
+    lines.push("");
+  }
+  lines.push("## Case Comparisons", "");
+  lines.push("| Case ID | Verdict | Baseline Hard/Soft | Candidate Hard/Soft | Reasons |");
+  lines.push("|---------|---------|--------------------|---------------------|---------|");
+  for (const comparison of report.comparisons || []) {
+    lines.push(
+      `| \`${comparison.case_id}\` | ${comparison.verdict} | `
+      + `${comparison.baseline_hard_failures}/${comparison.baseline_soft_failures} | `
+      + `${comparison.candidate_hard_failures}/${comparison.candidate_soft_failures} | `
+      + `${(comparison.reasons || []).join("<br>")} |`,
+    );
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function createWorkflowLabCompare(root, body) {
+  const baselineRunId = String(body?.baseline_run_id || "");
+  const candidateRunId = String(body?.candidate_run_id || "");
+  if (!isSafeFileId(baselineRunId) || !isSafeFileId(candidateRunId)) {
+    const error = new Error("baseline_run_id and candidate_run_id are required safe ids.");
+    error.status = 400;
+    error.code = "BAD_REQUEST";
+    throw error;
+  }
+  if (baselineRunId === candidateRunId) {
+    const error = new Error("baseline_run_id and candidate_run_id must be different.");
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+    throw error;
+  }
+
+  const reportId = `vs-${baselineRunId}`;
+  const jsonPath = abReportPath(root, candidateRunId, reportId);
+  const baseline = await loadRunForWorkflowLabCompare(root, baselineRunId);
+  const candidate = await loadRunForWorkflowLabCompare(root, candidateRunId);
+  if (await fileExists(jsonPath)) {
+    return {
+      created: false,
+      report_id: reportId,
+      report: await readJsonFile(jsonPath),
+      paths: {
+        json: path.join("evals/runs", candidateRunId, "ab", `${reportId}.json`),
+        markdown: path.join("evals/runs", candidateRunId, "ab", `${reportId}.md`),
+      },
+    };
+  }
+
+  const report = buildWorkflowLabCompareReport(baseline, candidate);
+  const mdPath = abReportMarkdownPath(root, candidateRunId, reportId);
+  await mkdir(path.dirname(jsonPath), { recursive: true });
+  try {
+    await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    await writeFile(mdPath, renderWorkflowLabCompareMarkdown(report), { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if (error?.code === "EEXIST" && await fileExists(jsonPath)) {
+      return {
+        created: false,
+        report_id: reportId,
+        report: await readJsonFile(jsonPath),
+        paths: {
+          json: path.join("evals/runs", candidateRunId, "ab", `${reportId}.json`),
+          markdown: path.join("evals/runs", candidateRunId, "ab", `${reportId}.md`),
+        },
+      };
+    }
+    throw error;
+  }
+  return {
+    created: true,
+    report_id: reportId,
+    report,
+    paths: {
+      json: path.join("evals/runs", candidateRunId, "ab", `${reportId}.json`),
+      markdown: path.join("evals/runs", candidateRunId, "ab", `${reportId}.md`),
+    },
   };
 }
 
@@ -1701,8 +2091,11 @@ export {
   buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
+  buildWorkflowLabCompareReport,
   cancelJudgeRunRequest,
+  createWorkflowLabCompare,
   createJudgeRunRequest,
+  inferRunTopologyMode,
   isSafeFileId,
   isJudgeRunRequestCancelable,
   isJudgeRunRequestRetryable,
@@ -2190,6 +2583,32 @@ export default (router, context) => {
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
+    }
+  });
+
+  router.post("/workflow-lab/compare", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const root = resolveRunsRoot(env);
+      const result = await createWorkflowLabCompare(root, req.body || {});
+      res.status(result.created ? 201 : 200).json({ data: result });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_LAB_COMPARE_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
     }
   });
 

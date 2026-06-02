@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -197,6 +198,230 @@ function sanitizeError(errorPayload) {
   return typeof errorPayload === "object"
     ? errorPayload
     : { message: String(errorPayload) };
+}
+
+function splitCommandLine(commandText) {
+  const parts = [];
+  const pattern = /"([^"]*)"|'([^']*)'|[^\s]+/g;
+  let match;
+  while ((match = pattern.exec(String(commandText || "")))) {
+    parts.push(match[1] ?? match[2] ?? match[0]);
+  }
+  return parts;
+}
+
+export function buildNodeLabJudgeWorkerDatabaseUrl(env, readEnv) {
+  const configured = readEnv(env, "DATABASE_URL");
+  if (configured) return configured;
+  if (readEnv(env, "DB_CLIENT") && readEnv(env, "DB_CLIENT") !== "pg") return "";
+  const host = readEnv(env, "DB_HOST");
+  const database = readEnv(env, "DB_DATABASE");
+  const user = readEnv(env, "DB_USER");
+  const password = readEnv(env, "DB_PASSWORD");
+  if (!host || !database || !user) return "";
+  const port = readEnv(env, "DB_PORT") || "5432";
+  const encodedUser = encodeURIComponent(user);
+  const encodedPassword = password ? `:${encodeURIComponent(password)}` : "";
+  return `postgresql://${encodedUser}${encodedPassword}@${host}:${port}/${encodeURIComponent(database)}`;
+}
+
+export function buildNodeLabJudgeWorkerLaunch({
+  env,
+  readEnv,
+  resolveEvalsRoot,
+  resolveNodeLabArtifactsRoot,
+  judgeRequestId,
+}) {
+  const commandText = readEnv(env, "CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND")
+    || "python -m claread_eval.node_lab_judge.worker";
+  const commandParts = splitCommandLine(commandText);
+  if (!commandParts.length) {
+    const error = new Error("CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND is empty.");
+    error.status = 503;
+    error.code = "NODE_LAB_JUDGE_WORKER_NOT_CONFIGURED";
+    throw error;
+  }
+  const databaseUrl = buildNodeLabJudgeWorkerDatabaseUrl(env, readEnv);
+  if (!databaseUrl) {
+    const error = new Error("Node Lab Judge worker needs DATABASE_URL or Directus DB_* env.");
+    error.status = 503;
+    error.code = "NODE_LAB_JUDGE_WORKER_DATABASE_URL_MISSING";
+    throw error;
+  }
+  const evalsRoot = resolveEvalsRoot(env);
+  const artifactEvalsRoot = path.dirname(resolveNodeLabArtifactsRoot(env));
+  const workerId = `directus-node-lab-judge-${judgeRequestId}-${randomUUID()}`;
+  return {
+    command: commandParts[0],
+    args: [
+      ...commandParts.slice(1),
+      "--once",
+      "--request-id",
+      judgeRequestId,
+      "--database-url",
+      databaseUrl,
+      "--evals-root",
+      artifactEvalsRoot,
+      "--worker-id",
+      workerId,
+    ],
+    cwd: evalsRoot,
+    env: {
+      ...process.env,
+      DATABASE_URL: databaseUrl,
+      CLAREAD_API_BASE_URL: readEnv(env, "CLAREAD_API_BASE_URL") || process.env.CLAREAD_API_BASE_URL || "",
+      CLAREAD_API_ADMIN_KEY: readEnv(env, "CLAREAD_API_ADMIN_KEY") || process.env.CLAREAD_API_ADMIN_KEY || "",
+      CLAREAD_EVAL_JUDGE_API_KEY: readEnv(env, "CLAREAD_EVAL_JUDGE_API_KEY") || process.env.CLAREAD_EVAL_JUDGE_API_KEY || "",
+      CLAREAD_EVAL_JUDGE_TIMEOUT_SECONDS: readEnv(env, "CLAREAD_EVAL_JUDGE_TIMEOUT_SECONDS") || process.env.CLAREAD_EVAL_JUDGE_TIMEOUT_SECONDS || "120",
+      PYTHONPATH: [evalsRoot, process.env.PYTHONPATH || ""].filter(Boolean).join(path.delimiter),
+    },
+    workerId,
+    artifactEvalsRoot,
+  };
+}
+
+export function dispatchNodeLabJudgeWorker(options) {
+  const launch = buildNodeLabJudgeWorkerLaunch(options);
+  const spawnProcess = options.spawnProcess || spawn;
+  const child = spawnProcess(launch.command, launch.args, {
+    cwd: launch.cwd,
+    env: launch.env,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  if (typeof child.on === "function") {
+    child.on("error", () => {});
+  }
+  if (typeof child.unref === "function") child.unref();
+  return {
+    status: "dispatched",
+    worker_id: launch.workerId,
+    command: launch.command,
+    cwd: launch.cwd,
+    artifact_evals_root: launch.artifactEvalsRoot,
+  };
+}
+
+function nodeLabJudgeDispatchMode(env, readEnv) {
+  const mode = String(readEnv(env, "CLAREAD_NODE_LAB_JUDGE_DISPATCH_MODE") || "directus_async").trim();
+  return mode === "worker_command" ? "worker_command" : "directus_async";
+}
+
+async function markDirectusAsyncJudgeFailed({
+  database,
+  requestId,
+  bridgeId,
+  userId,
+  error,
+  artifactPath = null,
+}) {
+  const patch = {
+    status: "failed",
+    finished_at: nowIso(),
+    error_json: JSON.stringify(sanitizeError({
+      code: error?.code || error?.name || "NODE_LAB_JUDGE_ASYNC_ERROR",
+      message: error?.message || String(error),
+    })),
+    user_updated: userId,
+    date_updated: nowIso(),
+  };
+  if (artifactPath) patch.artifact_path = artifactPath;
+  await database("eval_node_lab_judge_requests")
+    .where({ judge_request_id: requestId, status: "running", lease_owner: bridgeId })
+    .update(patch);
+}
+
+async function runNodeLabJudgeDirectusAsync({
+  database,
+  env,
+  readEnv,
+  joinUrl,
+  parseUpstreamError,
+  resolveRequestTimeoutMs,
+  resolveNodeLabArtifactsRoot,
+  requestId,
+  bridgeId,
+  userId,
+}) {
+  let current = null;
+  try {
+    current = await database("eval_node_lab_judge_requests")
+      .where({ judge_request_id: requestId, status: "running", lease_owner: bridgeId })
+      .first();
+    if (!current) return;
+
+    const configSnapshot = normalizeRowJson(current, "judge_config_snapshot_json") || {};
+    const trialRow = await database("eval_node_lab_trials")
+      .where({ trial_id: current.trial_id })
+      .first();
+    if (!trialRow) throw Object.assign(new Error("Associated trial was not found."), { code: "NODE_LAB_TRIAL_NOT_FOUND" });
+    const trialArtifactPath = trialRow.artifact_path
+      ? absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, trialRow.artifact_path)
+      : null;
+    const compareResult = trialArtifactPath && await fileExists(trialArtifactPath)
+      ? await readJsonFile(trialArtifactPath)
+      : null;
+    if (!compareResult) throw Object.assign(new Error("Compare result artifact not found."), { code: "NODE_LAB_COMPARE_ARTIFACT_NOT_FOUND" });
+
+    const judgeRequestBody = {
+      node_name: current.node_name,
+      trial_id: current.trial_id,
+      session_id: current.session_id || null,
+      judge_request_id: current.judge_request_id,
+      judge_config_snapshot: configSnapshot,
+      compare_result: compareResult,
+      participants: normalizeRowJson(current, "participants_json") || {},
+      timeout_seconds: Number(configSnapshot?.parameters_json?.timeout_seconds) > 0
+        ? Number(configSnapshot.parameters_json.timeout_seconds)
+        : 300,
+    };
+
+    const judgeResult = await callUpstreamJson({
+      env,
+      readEnv,
+      joinUrl,
+      parseUpstreamError,
+      resolveRequestTimeoutMs,
+      reqBody: judgeRequestBody,
+      upstreamPath: "/eval/article-analysis/node-lab/judge-run",
+    });
+
+    const effectiveSessionId = current.session_id || "_standalone";
+    const judgeDir = judgeArtifactDir(resolveNodeLabArtifactsRoot, env, effectiveSessionId, current.trial_id, requestId);
+    await writeJsonFile(path.join(judgeDir, "result.json"), judgeResult);
+
+    const stepRuns = judgeResult?.step_runs && typeof judgeResult.step_runs === "object"
+      ? Object.values(judgeResult.step_runs)
+      : [];
+    const hasFailedStep = stepRuns.some((step) => step && step.status === "failed");
+    const nextStatus = hasFailedStep ? "failed" : "succeeded";
+    const errorJson = hasFailedStep
+      ? JSON.stringify(sanitizeError({
+        code: "NODE_LAB_JUDGE_PARTIAL_FAILURE",
+        message: judgeResult?.pairwise_error?.message || "Judge partially failed. See result.step_runs for details.",
+      }))
+      : null;
+
+    await database("eval_node_lab_judge_requests")
+      .where({ judge_request_id: requestId, status: "running", lease_owner: bridgeId })
+      .update({
+        status: nextStatus,
+        finished_at: nowIso(),
+        error_json: errorJson,
+        user_updated: userId,
+        date_updated: nowIso(),
+      });
+  } catch (error) {
+    await markDirectusAsyncJudgeFailed({
+      database,
+      requestId,
+      bridgeId,
+      userId,
+      error,
+      artifactPath: current?.artifact_path || null,
+    });
+  }
 }
 
 function buildNodeLabAuthConfig(readEnv, env) {
@@ -637,6 +862,164 @@ async function writeSessionArtifact(resolveNodeLabArtifactsRoot, env, sessionRow
   await writeJsonFile(filePath, summary);
 }
 
+export async function assertNoDuplicateSessionCompareTrial(database, {
+  sessionId,
+  inputTextHash,
+  baselineSnapshotHash,
+  candidateHashes,
+}) {
+  if (!sessionId) return;
+  const rows = await database("eval_node_lab_trials")
+    .where({
+      session_id: sessionId,
+      workspace_type: "baseline_compare",
+      result_kind: "compare_result",
+      input_text_hash: inputTextHash,
+      baseline_snapshot_hash: baselineSnapshotHash,
+    })
+    .select("*");
+  const candidateKey = JSON.stringify(stableJson(candidateHashes || []));
+  const duplicate = rows.find((row) => {
+    const rowCandidateHashes = normalizeRowJson(row, "candidate_snapshot_hashes_json") || [];
+    return JSON.stringify(stableJson(rowCandidateHashes)) === candidateKey;
+  });
+  if (!duplicate) return;
+  const error = new Error(
+    `This compare result is already in the selected Session as trial ${duplicate.trial_id}.`
+  );
+  error.status = 409;
+  error.code = "NODE_LAB_SESSION_DUPLICATE_COMPARE";
+  error.field = "session_id";
+  error.existing_trial_id = duplicate.trial_id;
+  throw error;
+}
+
+function trialIdentityForPayload(workspaceType, requestPayload, resultPayload) {
+  const baselineSnapshotHash = resultPayload?.baseline?.prompt_identity?.prompt_snapshot_hash
+    || resultPayload?.run?.prompt_identity?.prompt_snapshot_hash
+    || requestPayload?.baseline_snapshot_hash
+    || null;
+  const candidateHashes = resultPayload?.candidate
+    ? [resultPayload.candidate.prompt_identity?.prompt_snapshot_hash].filter(Boolean)
+    : [resultPayload?.run?.prompt_identity?.prompt_snapshot_hash].filter(Boolean);
+  const inputText = String(requestPayload.request?.text || "");
+  const providedSourceTextHash = String(requestPayload.request?.source_text_hash || "").trim();
+  const inputTextHash = providedSourceTextHash || hashText(inputText);
+  return {
+    nodeName: String(requestPayload.request?.node_name || resultPayload?.node_name || "").trim(),
+    workspaceType,
+    resultKind: workspaceType === "baseline_compare" ? "compare_result" : "single_run_result",
+    inputTextHash,
+    readingGoal: String(requestPayload.request?.reading_goal || "").trim(),
+    readingVariant: String(requestPayload.request?.reading_variant || "").trim(),
+    baselineSnapshotHash,
+    candidateHashes,
+  };
+}
+
+export async function findDuplicateRunHistoryTrial(database, identity, { standaloneOnly = true } = {}) {
+  const rows = await database("eval_node_lab_trials")
+    .where({
+      node_name: identity.nodeName,
+      workspace_type: identity.workspaceType,
+      result_kind: identity.resultKind,
+      input_text_hash: identity.inputTextHash,
+      reading_goal: identity.readingGoal,
+      reading_variant: identity.readingVariant,
+      baseline_snapshot_hash: identity.baselineSnapshotHash,
+    })
+    .select("*");
+  const candidateKey = JSON.stringify(stableJson(identity.candidateHashes || []));
+  return rows.find((row) => {
+    if (standaloneOnly && row.session_id) return false;
+    const rowCandidateHashes = normalizeRowJson(row, "candidate_snapshot_hashes_json") || [];
+    return JSON.stringify(stableJson(rowCandidateHashes)) === candidateKey;
+  }) || null;
+}
+
+function canonicalSingleRunHistoryBody(body) {
+  const resultPayload = body?.result;
+  if (!resultPayload?.run) {
+    const error = new Error("single-run history save requires result.run.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "result.run";
+    throw error;
+  }
+  const snapshot = resultPayload.request_snapshot || body.request_snapshot || {};
+  const request = body.request || {};
+  const nodeName = String(request.node_name || snapshot.node_name || resultPayload.node_name || "").trim();
+  const readingGoal = String(request.reading_goal || snapshot.reading_goal || "").trim();
+  const readingVariant = String(request.reading_variant || snapshot.reading_variant || "").trim();
+  if (!nodeName || !readingGoal || !readingVariant) {
+    const error = new Error("single-run history save requires node_name / reading_goal / reading_variant.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "request";
+    throw error;
+  }
+  return {
+    workspace_type: "single_run",
+    trial_id: body.trial_id || request.trial_id || undefined,
+    request: {
+      ...request,
+      node_name: nodeName,
+      reading_goal: readingGoal,
+      reading_variant: readingVariant,
+      source_type: request.source_type || snapshot.source_type || "user_input",
+      source_text_hash: request.source_text_hash || snapshot.source_text_hash || "",
+      text: request.text || body.text || "",
+      request_id: request.request_id || snapshot.request_id || null,
+      char_count: request.char_count || snapshot.source_char_count || null,
+    },
+    baseline_snapshot_hash: resultPayload.run?.prompt_identity?.prompt_snapshot_hash || null,
+  };
+}
+
+export async function attachStandaloneCompareTrialToSession({
+  database,
+  req,
+  resolveNodeLabArtifactsRoot,
+  env,
+  sessionRow,
+  identity,
+}) {
+  await assertNoDuplicateSessionCompareTrial(database, {
+    sessionId: sessionRow.session_id,
+    inputTextHash: identity.inputTextHash,
+    baselineSnapshotHash: identity.baselineSnapshotHash,
+    candidateHashes: identity.candidateHashes,
+  });
+  const standaloneTrial = await findDuplicateRunHistoryTrial(database, identity, { standaloneOnly: true });
+  if (!standaloneTrial) return null;
+  await database.transaction(async (trx) => {
+    await trx("eval_node_lab_trials")
+      .where({ trial_id: standaloneTrial.trial_id })
+      .update({
+        session_id: sessionRow.session_id,
+        user_updated: requestUserId(req),
+        date_updated: nowIso(),
+      });
+    await trx("eval_node_lab_judge_requests")
+      .where({ trial_id: standaloneTrial.trial_id })
+      .update({
+        session_id: sessionRow.session_id,
+        user_updated: requestUserId(req),
+        date_updated: nowIso(),
+      });
+    await updateSessionAggregate(trx, sessionRow.session_id);
+  });
+  const storedTrial = await database("eval_node_lab_trials")
+    .where({ trial_id: standaloneTrial.trial_id })
+    .first();
+  await writeSessionArtifact(
+    resolveNodeLabArtifactsRoot,
+    env,
+    await database("eval_node_lab_sessions").where({ session_id: sessionRow.session_id }).first(),
+  );
+  return storedTrial;
+}
+
 async function persistTrial({
   database,
   req,
@@ -648,7 +1031,14 @@ async function persistTrial({
   resultPayload,
   sessionRow,
 }) {
-  if (workspaceType !== "baseline_compare") {
+  if (!VALID_WORKSPACES.includes(workspaceType)) {
+    const error = new Error(`workspace_type must be one of: ${VALID_WORKSPACES.join(", ")}.`);
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "workspace_type";
+    throw error;
+  }
+  if (sessionRow && workspaceType !== "baseline_compare") {
     const error = new Error(
       `Session 不再接收 ${workspaceType || "未知类型"} 试验。` +
       "Session 是固定实验上下文的 compare 记录本，Single Run 请走未来 Run History 入口。"
@@ -675,19 +1065,16 @@ async function persistTrial({
   const artifactDir = trialArtifactDir(resolveNodeLabArtifactsRoot, env, sessionId, trialId);
   const effectiveSessionId = sessionId || "_standalone";
   const artifactPath = `evals/node-lab/sessions/${effectiveSessionId}/trials/${trialId}/result.json`;
-  const baselineSnapshotHash = resultPayload?.baseline?.prompt_identity?.prompt_snapshot_hash
-    || resultPayload?.run?.prompt_identity?.prompt_snapshot_hash
-    || requestPayload?.baseline_snapshot_hash
-    || null;
-  const candidateHashes = resultPayload?.candidate
-    ? [resultPayload.candidate.prompt_identity?.prompt_snapshot_hash].filter(Boolean)
-    : [resultPayload?.run?.prompt_identity?.prompt_snapshot_hash].filter(Boolean);
+  const identity = trialIdentityForPayload(workspaceType, requestPayload, resultPayload);
+  const baselineSnapshotHash = identity.baselineSnapshotHash;
+  const candidateHashes = identity.candidateHashes;
   const inputText = String(requestPayload.request?.text || "");
   const providedSourceTextHash = String(requestPayload.request?.source_text_hash || "").trim();
-  const inputTextHash = providedSourceTextHash || hashText(inputText);
+  const inputTextHash = identity.inputTextHash;
   const inputExcerpt = providedSourceTextHash
     ? (inputText ? inputText.slice(0, 280) : `[attached compare · hash=${providedSourceTextHash.slice(0, 16)}]`)
-    : inputText.slice(0, 280);  const resultStatus = workspaceType === "baseline_compare"
+    : inputText.slice(0, 280);
+  const resultStatus = workspaceType === "baseline_compare"
     ? trialResultStatusForCompare(resultPayload)
     : {
         run_status: resultPayload?.run?.status || "unknown",
@@ -704,6 +1091,15 @@ async function persistTrial({
         result_status: resultStatus,
         participant_label: resultPayload?.run?.participant_label || "baseline",
       };
+
+  if (workspaceType === "baseline_compare" && sessionId) {
+    await assertNoDuplicateSessionCompareTrial(database, {
+      sessionId,
+      inputTextHash,
+      baselineSnapshotHash,
+      candidateHashes,
+    });
+  }
 
   const row = {
     trial_id: trialId,
@@ -1551,22 +1947,141 @@ export function registerNodeLabRoutes(router, context, deps) {
         });
       } else {
         session = await ensureSessionForPersist(database, req, canonicalBody, isSafeFileId);
-        persisted = await persistTrial({
+        const identity = trialIdentityForPayload("baseline_compare", canonicalBody, resultPayload);
+        persisted = await attachStandaloneCompareTrialToSession({
           database,
           req,
-          env,
           resolveNodeLabArtifactsRoot,
-          isSafeFileId,
-          workspaceType: "baseline_compare",
-          requestPayload: canonicalBody,
-          resultPayload,
+          env,
           sessionRow: session,
+          identity,
         });
+        if (!persisted) {
+          persisted = await persistTrial({
+            database,
+            req,
+            env,
+            resolveNodeLabArtifactsRoot,
+            isSafeFileId,
+            workspaceType: "baseline_compare",
+            requestPayload: canonicalBody,
+            resultPayload,
+            sessionRow: session,
+          });
+        }
       }
       res.status(201).json({
         data: {
           session: session ? sessionSummary(session) : null,
           trial: persisted ? trialSummary(persisted) : null,
+        },
+      });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [{ message: error.message, extensions: { code: error.code, field: error.field } }],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.get("/node-lab/run-history", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+    try {
+      const builder = database("eval_node_lab_trials").orderBy("date_created", "desc");
+      const workspaceType = String(req.query?.workspace_type || "all");
+      const resultKind = String(req.query?.result_kind || "all");
+      const sessionScope = String(req.query?.session_scope || "all");
+      if (workspaceType !== "all") builder.where({ workspace_type: workspaceType });
+      if (resultKind !== "all") builder.where({ result_kind: resultKind });
+      if (req.query?.node_name) builder.where({ node_name: String(req.query.node_name) });
+      if (req.query?.reading_goal) builder.where({ reading_goal: String(req.query.reading_goal) });
+      if (req.query?.reading_variant) builder.where({ reading_variant: String(req.query.reading_variant) });
+      if (req.query?.session_id) builder.where({ session_id: String(req.query.session_id) });
+      if (sessionScope === "standalone") builder.whereNull("session_id");
+      if (sessionScope === "session") builder.whereNotNull("session_id");
+      const rows = await builder.limit(clampLimit(req.query?.limit));
+      const enrichedRows = await enrichTrialRows(database, rows);
+      res.json({ data: { records: enrichedRows.map(trialSummary) } });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/node-lab/run-history/single-run", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+    try {
+      const body = req.body || {};
+      const canonicalBody = canonicalSingleRunHistoryBody(body);
+      validateNodeName(canonicalBody.request.node_name);
+      const identity = trialIdentityForPayload("single_run", canonicalBody, body.result);
+      const duplicate = await findDuplicateRunHistoryTrial(database, identity, { standaloneOnly: true });
+      if (duplicate) {
+        const [enrichedDuplicate] = await enrichTrialRows(database, [duplicate]);
+        res.json({ data: { trial: trialSummary(enrichedDuplicate), duplicate: true } });
+        return;
+      }
+      const persisted = await persistTrial({
+        database,
+        req,
+        env,
+        resolveNodeLabArtifactsRoot,
+        isSafeFileId,
+        workspaceType: "single_run",
+        requestPayload: canonicalBody,
+        resultPayload: body.result,
+        sessionRow: null,
+      });
+      const [enrichedRow] = await enrichTrialRows(database, [persisted]);
+      res.status(201).json({ data: { trial: trialSummary(enrichedRow), duplicate: false } });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [{ message: error.message, extensions: { code: error.code, field: error.field } }],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.get("/node-lab/run-history/:trialId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+    try {
+      validateIdentifier(req.params.trialId, "trial_id", isSafeFileId);
+      const row = await database("eval_node_lab_trials").where({ trial_id: req.params.trialId }).first();
+      if (!row) throw Object.assign(new Error("Trial was not found."), { status: 404, code: "NODE_LAB_TRIAL_NOT_FOUND" });
+      const [enrichedRow] = await enrichTrialRows(database, [row]);
+      const absoluteArtifactPath = row.artifact_path
+        ? absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, row.artifact_path)
+        : null;
+      const result = absoluteArtifactPath && await fileExists(absoluteArtifactPath)
+        ? await readJsonFile(absoluteArtifactPath)
+        : null;
+      const judgeRows = await database("eval_node_lab_judge_requests")
+        .where({ trial_id: row.trial_id })
+        .orderBy("date_created", "desc")
+        .select("*");
+      const judgeRequests = [];
+      for (const judgeRow of judgeRows) {
+        const artifacts = await loadJudgeRequestArtifacts(resolveNodeLabArtifactsRoot, env, judgeRow);
+        judgeRequests.push({
+          ...judgeRequestSummary(judgeRow),
+          result: artifacts.result,
+          artifacts: artifacts.artifacts,
+        });
+      }
+      const session = row.session_id
+        ? await database("eval_node_lab_sessions").where({ session_id: row.session_id }).first()
+        : null;
+      res.json({
+        data: {
+          trial: trialSummary(enrichedRow),
+          result,
+          session: session ? sessionSummary(session) : null,
+          judge_requests: judgeRequests,
         },
       });
     } catch (error) {
@@ -1951,104 +2466,68 @@ export function registerNodeLabRoutes(router, context, deps) {
       if (!["queued"].includes(current.status)) {
         throw Object.assign(new Error("Only queued requests can be executed."), { status: 409, code: "NODE_LAB_JUDGE_REQUEST_NOT_EXECUTABLE" });
       }
-      const configSnapshot = normalizeRowJson(current, "judge_config_snapshot_json") || {};
-      const trialRow = await database("eval_node_lab_trials")
-        .where({ trial_id: current.trial_id })
-        .first();
-      if (!trialRow) throw Object.assign(new Error("Associated trial was not found."), { status: 404, code: "NODE_LAB_TRIAL_NOT_FOUND" });
-      const trialArtifactPath = trialRow.artifact_path
-        ? absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, trialRow.artifact_path)
-        : null;
-      const compareResult = trialArtifactPath && await fileExists(trialArtifactPath)
-        ? await readJsonFile(trialArtifactPath)
-        : null;
-      if (!compareResult) throw Object.assign(new Error("Compare result artifact not found."), { status: 404, code: "NODE_LAB_COMPARE_ARTIFACT_NOT_FOUND" });
-
-      await database("eval_node_lab_judge_requests")
-        .where({ judge_request_id: req.params.requestId })
-        .update({
-          status: "running",
-          started_at: nowIso(),
-          user_updated: requestUserId(req),
-          date_updated: nowIso(),
-        });
-
-      const judgeRequestBody = {
-        node_name: current.node_name,
-        trial_id: current.trial_id,
-        session_id: current.session_id || null,
-        judge_request_id: current.judge_request_id,
-        judge_config_snapshot: configSnapshot,
-        compare_result: compareResult,
-        participants: normalizeRowJson(current, "participants_json") || {},
-        timeout_seconds: Number(configSnapshot?.parameters_json?.timeout_seconds) > 0
-          ? Number(configSnapshot.parameters_json.timeout_seconds)
-          : 300,
-      };
-
-      let judgeResult;
-      try {
-        judgeResult = await callUpstreamJson({
-          env,
-          readEnv,
-          joinUrl,
-          parseUpstreamError,
-          resolveRequestTimeoutMs,
-          reqBody: judgeRequestBody,
-          upstreamPath: "/eval/article-analysis/node-lab/judge-run",
-        });
-      } catch (upstreamError) {
-        await database("eval_node_lab_judge_requests")
-          .where({ judge_request_id: req.params.requestId })
+      const dispatchMode = nodeLabJudgeDispatchMode(env, readEnv);
+      let dispatch;
+      if (dispatchMode === "worker_command") {
+        dispatch = {
+          mode: dispatchMode,
+          ...dispatchNodeLabJudgeWorker({
+            env,
+            readEnv,
+            resolveEvalsRoot,
+            resolveNodeLabArtifactsRoot,
+            judgeRequestId: req.params.requestId,
+          }),
+        };
+      } else {
+        const bridgeId = `directus-node-lab-judge-${req.params.requestId}-${randomUUID()}`;
+        const updatedCount = await database("eval_node_lab_judge_requests")
+          .where({ judge_request_id: req.params.requestId, status: "queued" })
           .update({
-            status: "failed",
-            finished_at: nowIso(),
-            error_json: JSON.stringify(sanitizeError({
-              code: upstreamError.code || "UPSTREAM_JUDGE_ERROR",
-              message: upstreamError.message,
-            })),
+            status: "running",
+            lease_owner: bridgeId,
+            lease_until: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+            heartbeat_at: nowIso(),
+            started_at: nowIso(),
+            error_json: null,
             user_updated: requestUserId(req),
             date_updated: nowIso(),
           });
-        const failedRow = await database("eval_node_lab_judge_requests")
-          .where({ judge_request_id: req.params.requestId })
-          .first();
-        const failedDetail = await loadJudgeRequestArtifacts(resolveNodeLabArtifactsRoot, env, failedRow);
-        res.json({ data: { request: judgeRequestSummary(failedRow), result: failedDetail.result, artifacts: failedDetail.artifacts } });
-        return;
-      }
-
-      const effectiveSessionId = current.session_id || "_standalone";
-      const judgeDir = judgeArtifactDir(resolveNodeLabArtifactsRoot, env, effectiveSessionId, current.trial_id, req.params.requestId);
-      await writeJsonFile(path.join(judgeDir, "result.json"), judgeResult);
-
-      const stepRuns = judgeResult?.step_runs && typeof judgeResult.step_runs === "object"
-        ? Object.values(judgeResult.step_runs)
-        : [];
-      const hasFailedStep = stepRuns.some((step) => step && step.status === "failed");
-      const nextStatus = hasFailedStep ? "failed" : "succeeded";
-      const errorJson = hasFailedStep
-        ? JSON.stringify(sanitizeError({
-          code: "NODE_LAB_JUDGE_PARTIAL_FAILURE",
-          message: judgeResult?.pairwise_error?.message || "Judge partially failed. See result.step_runs for details.",
-        }))
-        : null;
-
-      await database("eval_node_lab_judge_requests")
-        .where({ judge_request_id: req.params.requestId })
-        .update({
-          status: nextStatus,
-          finished_at: nowIso(),
-          error_json: errorJson,
-          user_updated: requestUserId(req),
-          date_updated: nowIso(),
+        if (updatedCount !== 1) {
+          throw Object.assign(new Error("Judge request changed before it could be dispatched."), { status: 409, code: "NODE_LAB_JUDGE_REQUEST_CHANGED" });
+        }
+        setImmediate(() => {
+          runNodeLabJudgeDirectusAsync({
+            database,
+            env,
+            readEnv,
+            joinUrl,
+            parseUpstreamError,
+            resolveRequestTimeoutMs,
+            resolveNodeLabArtifactsRoot,
+            requestId: req.params.requestId,
+            bridgeId,
+            userId: requestUserId(req),
+          }).catch(() => {});
         });
-
+        dispatch = {
+          status: "dispatched",
+          mode: dispatchMode,
+          worker_id: bridgeId,
+        };
+      }
       const updatedRow = await database("eval_node_lab_judge_requests")
         .where({ judge_request_id: req.params.requestId })
         .first();
       const detail = await loadJudgeRequestArtifacts(resolveNodeLabArtifactsRoot, env, updatedRow);
-      res.json({ data: { request: judgeRequestSummary(updatedRow), result: detail.result, artifacts: detail.artifacts } });
+      res.status(202).json({
+        data: {
+          request: judgeRequestSummary(updatedRow),
+          result: detail.result,
+          artifacts: detail.artifacts,
+          dispatch,
+        },
+      });
     } catch (error) {
       if (error?.status) {
         res.status(error.status).json({

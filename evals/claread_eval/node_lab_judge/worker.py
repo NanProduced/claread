@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -40,11 +39,18 @@ class NodeLabJudgeWorker:
             if not claimed:
                 await asyncio.sleep(self.poll_interval)
 
-    async def run_once(self) -> bool:
-        request = await self.store.claim_next_request(
-            worker_id=self.worker_id,
-            lease_seconds=self.lease_seconds,
-        )
+    async def run_once(self, *, judge_request_id: str | None = None) -> bool:
+        if judge_request_id:
+            request = await self.store.claim_request(
+                judge_request_id=judge_request_id,
+                worker_id=self.worker_id,
+                lease_seconds=self.lease_seconds,
+            )
+        else:
+            request = await self.store.claim_next_request(
+                worker_id=self.worker_id,
+                lease_seconds=self.lease_seconds,
+            )
         if request is None:
             return False
         await self._execute_claimed_request(request)
@@ -148,6 +154,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evals-root", default=Path.cwd())
     parser.add_argument("--worker-id", default=f"node-lab-judge-worker-{uuid4()}")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--request-id", help="When used with --once, claim this queued request only.")
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument("--lease-seconds", type=int, default=300)
     parser.add_argument("--heartbeat-interval", type=float, default=30.0)
@@ -171,7 +178,7 @@ async def async_main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.once:
             await worker.recover_stale_requests()
-            claimed = await worker.run_once()
+            claimed = await worker.run_once(judge_request_id=args.request_id)
             return 0 if claimed else 1
         await worker.run_forever()
     finally:
