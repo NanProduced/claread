@@ -30,7 +30,7 @@ function joinUrl(baseUrl, path) {
 function resolveTimeoutMs(env) {
   const parsed = Number.parseInt(readEnv(env, "CLAREAD_EVAL_PROXY_TIMEOUT_MS") || "60000", 10);
   if (!Number.isFinite(parsed) || parsed < 1000) return 60000;
-  return Math.min(parsed, 180000);
+  return Math.min(parsed, 600000);
 }
 
 function resolveRequestTimeoutMs(env, body) {
@@ -39,7 +39,7 @@ function resolveRequestTimeoutMs(env, body) {
   if (!Number.isFinite(requestTimeoutSeconds) || requestTimeoutSeconds <= 0) {
     return proxyTimeoutMs;
   }
-  return Math.min(Math.max(proxyTimeoutMs, requestTimeoutSeconds * 1000 + 10000), 180000);
+  return Math.min(Math.max(proxyTimeoutMs, requestTimeoutSeconds * 1000 + 10000), 600000);
 }
 
 function clampLimit(value) {
@@ -437,11 +437,21 @@ function summarizeJudgeArtifact(runId, judgeRunId, report) {
 
 function summarizePayload(payload) {
   if (!payload || typeof payload !== "object") return payload;
-  return {
-    detail: payload.detail,
-    message: payload.message,
-    errors: Array.isArray(payload.errors)
-      ? payload.errors.slice(0, 3).map((error) => ({
+  const detail =
+    Array.isArray(payload.detail)
+      ? payload.detail
+        .slice(0, 5)
+        .map((entry) => {
+          if (!entry || typeof entry !== "object") return String(entry);
+          const location = Array.isArray(entry.loc) ? entry.loc.join(".") : undefined;
+          return [location, entry.msg || entry.type].filter(Boolean).join(": ");
+        })
+        .filter(Boolean)
+        .join(" | ")
+      : payload.detail;
+  const errors =
+    Array.isArray(payload.errors)
+      ? payload.errors.slice(0, 5).map((error) => ({
           message: error?.message,
           extensions: error?.extensions
             ? {
@@ -450,7 +460,15 @@ function summarizePayload(payload) {
               }
             : undefined,
         }))
-      : undefined,
+      : undefined;
+  const messageFromErrors =
+    Array.isArray(errors) && errors.length > 0
+      ? errors.map((item) => item.message).filter(Boolean).join(" | ")
+      : undefined;
+  return {
+    detail,
+    message: payload.message || messageFromErrors,
+    errors,
   };
 }
 
@@ -531,6 +549,10 @@ function resolveEvalsRoot(env) {
   if (configured) return configured;
   const runsRoot = resolveRunsRoot(env);
   return path.dirname(runsRoot);
+}
+
+function resolveNodeLabArtifactsRoot(env) {
+  return readEnv(env, "CLAREAD_NODE_LAB_ARTIFACTS_ROOT") || "/directus/runtime-evals/node-lab";
 }
 
 function datasetsDir(evalsRoot) {
@@ -1905,6 +1927,7 @@ export default (router, context) => {
     parseUpstreamError,
     readEnv,
     resolveEvalsRoot,
+    resolveNodeLabArtifactsRoot,
     resolveRequestTimeoutMs,
   });
 

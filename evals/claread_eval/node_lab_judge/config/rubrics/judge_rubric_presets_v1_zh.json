@@ -1,0 +1,138 @@
+{
+  "version": "v1",
+  "rules": [
+    "每条 criterion 只能打 0 或 1。",
+    "每条 criterion 必须返回 reason。",
+    "evidence 为可选，但能提供时应尽量提供。",
+    "Grammar / Vocabulary 走 item-level。",
+    "Translation 走 output-level。"
+  ],
+  "grammar": {
+    "strategy": "grammar_item_review",
+    "item_types": {
+      "grammar_note": {
+        "criteria": [
+          {
+            "id": "GN1",
+            "label": "结构判断准确",
+            "assertion": "这条 grammar_note 对当前句子中的结构或语法功能判断正确。",
+            "pass_when": "没有明显结构误判、术语误用或功能误读。",
+            "fail_when": "结构名称、结构作用或句中关系判断明显错误。"
+          },
+          {
+            "id": "GN2",
+            "label": "解释针对当前句子",
+            "assertion": "这条 grammar_note 的解释针对的是当前句子的具体结构，而不是泛泛语法知识。",
+            "pass_when": "解释中出现了当前句子特有的结构特征或句内作用，不只是报通用语法名称。",
+            "fail_when": "解释像通用语法课件，缺少当前句子的具体结构特征或句内作用。"
+          },
+          {
+            "id": "GN3",
+            "label": "证据锚点一致",
+            "assertion": "这条 grammar_note 的锚点/原句证据与解释内容一致。",
+            "pass_when": "从锚点能看出这条解释为何成立。",
+            "fail_when": "锚点与解释错位，或解释无法由当前证据支撑。"
+          }
+        ]
+      },
+      "sentence_analysis": {
+        "criteria": [
+          {
+            "id": "GS1",
+            "label": "主干提取正确",
+            "assertion": "这条 sentence_analysis 抽取出的句子主干没有明显错误。",
+            "pass_when": "主语、谓语、宾语或核心结构关系判断正确。",
+            "fail_when": "主干识别明显错误，导致整体理解方向偏了。"
+          },
+          {
+            "id": "GS2",
+            "label": "关键层级已拆出",
+            "assertion": "这条 sentence_analysis 至少正确拆出了句子主干和一层关键从属关系。",
+            "pass_when": "主干正确，且至少一层关键从属关系被正确拆出。",
+            "fail_when": "主干虽存在，但关键从属关系缺失、错位或拆解错误。"
+          },
+          {
+            "id": "GS3",
+            "label": "拆解证据与原句一致",
+            "assertion": "这条 sentence_analysis 的 chunks / 层级证据与原句结构一致。",
+            "pass_when": "关键 chunks 与原句对应关系清楚，没有明显错位。",
+            "fail_when": "chunks 与原句错位，或拆解证据无法支持当前分析。"
+          }
+        ]
+      }
+    }
+  },
+  "vocabulary": {
+    "strategy": "vocabulary_item_review",
+    "item_types": {
+      "vocab_highlight": {
+        "criteria": [
+          {
+            "id": "VH1",
+            "label": "当前场景下值得重点关注",
+            "assertion": "这条 vocab_highlight 标出的词或短语，确实是当前 reading_variant 下应提醒用户重点关注的词项。",
+            "pass_when": "对象边界正确，且该词项属于当前场景的高相关关注点，例如基础理解障碍词、考试高相关词汇、易误解关键词或需要特别掌握的表达。",
+            "fail_when": "对象边界错误，或该词项并非当前场景的重点关注对象。"
+          }
+        ]
+      },
+      "phrase_gloss": {
+        "criteria": [
+          {
+            "id": "PG1",
+            "label": "短语解释准确",
+            "assertion": "这条 phrase_gloss 对当前短语或搭配的解释准确。",
+            "pass_when": "中文释义和功能说明没有明显错误。",
+            "fail_when": "解释错义、漏义或混淆功能。"
+          },
+          {
+            "id": "PG2",
+            "label": "短语边界与锚点一致",
+            "assertion": "这条 phrase_gloss 的短语边界和原句锚点一致。",
+            "pass_when": "judge 能明确看出解释对应的是原句中的哪一段。",
+            "fail_when": "解释对象边界模糊、错位或超出原句锚点。"
+          }
+        ]
+      },
+      "context_gloss": {
+        "criteria": [
+          {
+            "id": "CG1",
+            "label": "语境义判断准确",
+            "assertion": "这条 context_gloss 对当前语境义的判断准确。",
+            "pass_when": "这里为什么是这个意思的判断没有明显错误。",
+            "fail_when": "语境义本身判断错了。"
+          },
+          {
+            "id": "CG2",
+            "label": "reason 真正解释了偏差点",
+            "assertion": "这条 context_gloss 的 reason 真正解释了为什么这里不能按常见义理解。",
+            "pass_when": "reason 指向了具体语境限制或语义偏移。",
+            "fail_when": "reason 只是重复释义，没有解释为什么。"
+          }
+        ]
+      }
+    }
+  },
+  "translation": {
+    "strategy": "translation_output_review",
+    "output_level": {
+      "criteria": [
+        {
+          "id": "TT1",
+          "label": "核心意思与关键信息准确",
+          "assertion": "这版翻译准确传达了原句核心意思，并保留了关键逻辑、限定或语气信息。",
+          "pass_when": "没有明显误译、漏译、方向性错误或关键限定丢失。",
+          "fail_when": "核心意思传达错误，或关键逻辑/限定/语气被明显改写或省略。"
+        },
+        {
+          "id": "TT2",
+          "label": "句内逻辑关系保留",
+          "assertion": "这版翻译保留了原句中对理解重要的句内逻辑关系。",
+          "pass_when": "因果、让步、转折、限定等关系未被误处理。",
+          "fail_when": "逻辑关系被抹平、反转或误导。"
+        }
+      ]
+    }
+  }
+}

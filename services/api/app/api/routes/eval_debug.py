@@ -11,6 +11,7 @@ from app.eval_adapter.node_lab import (
     get_node_lab_baseline_config,
     run_article_analysis_node_lab,
 )
+from app.eval_adapter.node_lab_judge import execute_node_lab_judge, run_node_lab_judge
 from app.eval_adapter.node_probe import run_article_analysis_node_probe
 from app.eval_adapter.shared import list_model_profile_summaries
 from app.eval_adapter.schemas import (
@@ -25,6 +26,10 @@ from app.eval_adapter.schemas import (
     ModelProfileSummary,
     NodeLabBaselineConfig,
     NodeLabBaselineConfigRequest,
+    NodeLabJudgeExecuteRequest,
+    NodeLabJudgeExecuteResult,
+    NodeLabJudgeRunRequest,
+    NodeLabJudgeRunResult,
 )
 
 router = APIRouter(prefix="/eval", tags=["eval"])
@@ -109,3 +114,27 @@ async def article_analysis_node_lab_compare(
     _auth: str = Depends(verify_eval_api_key),
 ) -> ArticleAnalysisNodeLabCompareResult:
     return await compare_article_analysis_node_lab(request)
+
+
+@router.post(
+    "/article-analysis/node-lab/judge-execute",
+    response_model=NodeLabJudgeExecuteResult,
+    summary="Execute eval-only Node Lab judge call",
+)
+async def article_analysis_node_lab_judge_execute(
+    request: NodeLabJudgeExecuteRequest,
+    _auth: str = Depends(verify_eval_api_key),
+) -> NodeLabJudgeExecuteResult:
+    return await execute_node_lab_judge(request)
+
+
+@router.post(
+    "/article-analysis/node-lab/judge-run",
+    response_model=NodeLabJudgeRunResult,
+    summary="Run eval-only Node Lab judge flow from compare result evidence",
+)
+async def article_analysis_node_lab_judge_run(
+    request: NodeLabJudgeRunRequest,
+    _auth: str = Depends(verify_eval_api_key),
+) -> NodeLabJudgeRunResult:
+    return await run_node_lab_judge(request)

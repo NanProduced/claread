@@ -20,12 +20,23 @@ from app.services.analysis.prompting.runtime_context import PromptRuntimeOverrid
 EVAL_ADAPTER_SCHEMA_VERSION = "article-analysis-eval-v1"
 NODE_PROBE_SCHEMA_VERSION = "article-analysis-node-probe-v1"
 NODE_LAB_SCHEMA_VERSION = "article-analysis-node-lab-v1"
+NODE_LAB_JUDGE_SCHEMA_VERSION = "article-analysis-node-lab-judge-v1"
 
 EvalStatus = Literal["succeeded", "failed", "timeout"]
 RagMode = Literal["off", "baseline", "rag", "rag_fallback", "settings"]
 TraceScope = Literal["off", "isolated", "inherit"]
 NodeProbeName = Literal["grammar", "vocabulary", "translation"]
 NodeLabWorkspace = Literal["single_run", "baseline_compare"]
+JudgeStrategy = Literal["grammar_item_review", "vocabulary_item_review", "translation_output_review"]
+JudgeMethod = Literal["rubric_only", "rubric_plus_pairwise", "anti_template_probe"]
+JudgeOutputMode = Literal["rubric_scoring", "pairwise", "probe_appendix"]
+JudgeOutputSchemaKind = Literal[
+    "grammar_item_scoring",
+    "vocabulary_item_scoring",
+    "translation_output_scoring",
+    "pairwise_review",
+    "probe_appendix",
+]
 
 
 class RequestSnapshot(BaseModel):
@@ -104,6 +115,14 @@ class NodeLabBaselineConfigRequest(BaseModel):
     reading_goal: ReadingGoal = "daily_reading"
     reading_variant: ReadingVariant = "intermediate_reading"
 
+    @model_validator(mode="after")
+    def _validate_node_lab_goal(self) -> NodeLabBaselineConfigRequest:
+        if self.reading_goal == "academic":
+            raise ValueError(
+                "node_lab v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+            )
+        return self
+
 
 class NodeLabBaselineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -165,6 +184,10 @@ class ArticleAnalysisNodeLabRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_candidate_node(self) -> ArticleAnalysisNodeLabRunRequest:
+        if self.reading_goal == "academic":
+            raise ValueError(
+                "node_lab v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+            )
         if self.candidate_override is not None and self.candidate_override.node_name != self.node_name:
             raise ValueError("candidate_override.node_name must match node_name")
         if (
@@ -208,6 +231,10 @@ class ArticleAnalysisNodeLabCompareRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_candidate_node(self) -> ArticleAnalysisNodeLabCompareRequest:
+        if self.reading_goal == "academic":
+            raise ValueError(
+                "node_lab v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+            )
         if self.candidate_override.node_name != self.node_name:
             raise ValueError("candidate_override.node_name must match node_name")
         if (
@@ -229,6 +256,205 @@ class ArticleAnalysisNodeLabCompareResult(BaseModel):
     baseline: NodeLabResultEntry
     candidate: NodeLabResultEntry
     compare_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class NodeLabJudgeCriterionScore(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    criterion_id: str
+    score: Literal[0, 1]
+    reason: str = Field(min_length=1)
+    evidence: str | None = None
+
+
+class NodeLabJudgeItemSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    passed: int = Field(ge=0, default=0)
+    failed: int = Field(ge=0, default=0)
+
+
+class NodeLabJudgeAggregate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_count: int | None = Field(default=None, ge=0)
+    criteria_count: int = Field(ge=0)
+    passed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    pass_rate: float = Field(ge=0.0, le=1.0)
+
+
+class NodeLabJudgeItemResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    item_type: str
+    sentence_id: str | None = None
+    label: str | None = None
+    source_excerpt: str | None = None
+    criteria: list[NodeLabJudgeCriterionScore] = Field(default_factory=list)
+    item_summary: NodeLabJudgeItemSummary
+
+
+class NodeLabJudgeSideResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[NodeLabJudgeItemResult] = Field(default_factory=list)
+    output_level_scores: list[NodeLabJudgeCriterionScore] = Field(default_factory=list)
+    aggregate: NodeLabJudgeAggregate
+
+
+class NodeLabRubricScoringResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: JudgeStrategy
+    method: JudgeMethod
+    baseline: NodeLabJudgeSideResult
+    candidate: NodeLabJudgeSideResult
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class NodeLabPairwiseReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preferred_side: Literal["baseline", "candidate", "mixed", "inconclusive"]
+    overall_judgment: str = Field(min_length=1)
+    baseline_strengths: list[str] = Field(default_factory=list)
+    candidate_strengths: list[str] = Field(default_factory=list)
+    baseline_risks: list[str] = Field(default_factory=list)
+    candidate_risks: list[str] = Field(default_factory=list)
+    manual_check_points: list[str] = Field(default_factory=list)
+
+
+class NodeLabPairwiseResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: JudgeStrategy
+    method: JudgeMethod
+    pairwise_review: NodeLabPairwiseReview
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class NodeLabProbeQuestionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str
+    detected: bool
+    description: str = Field(min_length=1)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class NodeLabProbeAppendixResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    probe_type: str
+    questions: list[NodeLabProbeQuestionResult] = Field(default_factory=list)
+    summary: str | None = None
+
+
+class NodeLabJudgeExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    request_id: str | None = None
+    node_name: NodeProbeName
+    judge_strategy: JudgeStrategy
+    judge_method: JudgeMethod
+    reading_goal: ReadingGoal
+    reading_variant: ReadingVariant
+    judger_model_profile: str = Field(min_length=1)
+    judger_model_settings: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = Field(min_length=1)
+    user_prompt: str = Field(min_length=1)
+    output_mode: JudgeOutputMode
+    output_schema_kind: JudgeOutputSchemaKind
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float | None = Field(default=None, gt=0.0)
+
+    @model_validator(mode="after")
+    def _validate_request(self) -> "NodeLabJudgeExecuteRequest":
+        if self.reading_goal == "academic":
+            raise ValueError(
+                "node_lab judge v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+            )
+        allowed_by_node: dict[str, set[str]] = {
+            "grammar": {"grammar_item_review"},
+            "vocabulary": {"vocabulary_item_review"},
+            "translation": {"translation_output_review"},
+        }
+        if self.judge_strategy not in allowed_by_node[self.node_name]:
+            raise ValueError("judge_strategy is not compatible with node_name")
+        if self.output_mode == "probe_appendix" and self.judge_method != "anti_template_probe":
+            raise ValueError("probe_appendix output_mode requires judge_method='anti_template_probe'")
+        if self.judge_method == "anti_template_probe" and self.node_name != "grammar":
+            raise ValueError("anti_template_probe is only supported for grammar in node_lab judge v1")
+        expected_schema: dict[tuple[str, str], str] = {
+            ("grammar_item_review", "rubric_scoring"): "grammar_item_scoring",
+            ("vocabulary_item_review", "rubric_scoring"): "vocabulary_item_scoring",
+            ("translation_output_review", "rubric_scoring"): "translation_output_scoring",
+            ("grammar_item_review", "pairwise"): "pairwise_review",
+            ("vocabulary_item_review", "pairwise"): "pairwise_review",
+            ("translation_output_review", "pairwise"): "pairwise_review",
+            ("grammar_item_review", "probe_appendix"): "probe_appendix",
+        }
+        expected = expected_schema.get((self.judge_strategy, self.output_mode))
+        if expected is None or self.output_schema_kind != expected:
+            raise ValueError("output_schema_kind is not compatible with strategy/output_mode")
+        return self
+
+
+class NodeLabJudgeExecuteResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    request_id: str
+    node_name: NodeProbeName
+    judge_strategy: JudgeStrategy
+    judge_method: JudgeMethod
+    output_mode: JudgeOutputMode
+    output_schema_kind: JudgeOutputSchemaKind
+    status: EvalStatus
+    error: EvalError | None = None
+    model_identity: ModelIdentity | None = None
+    runtime_summary: dict[str, Any] | None = None
+    trace_refs: dict[str, Any] | None = None
+    rubric_scoring_result: NodeLabRubricScoringResult | None = None
+    pairwise_result: NodeLabPairwiseResult | None = None
+    probe_appendix_result: NodeLabProbeAppendixResult | None = None
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class NodeLabJudgeRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    request_id: str | None = None
+    judge_request_id: str | None = None
+    node_name: NodeProbeName
+    trial_id: str = Field(min_length=1)
+    session_id: str | None = None
+    judge_config_snapshot: dict[str, Any] = Field(default_factory=dict)
+    compare_result: ArticleAnalysisNodeLabCompareResult
+    participants: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float | None = Field(default=None, gt=0.0)
+
+
+class NodeLabJudgeRunResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    judge_request_id: str
+    trial_id: str
+    session_id: str | None = None
+    preset_id: str
+    node_name: NodeProbeName
+    judge_method: JudgeMethod
+    judge_strategy: JudgeStrategy
+    step_runs: dict[str, Any] = Field(default_factory=dict)
+    rubric_scoring_result: NodeLabRubricScoringResult | None = None
+    pairwise_result: NodeLabPairwiseResult | None = None
+    pairwise_error: EvalError | None = None
+    probe_appendix_result: NodeLabProbeAppendixResult | None = None
 
 
 class ArticleAnalysisEvalRequest(BaseModel):

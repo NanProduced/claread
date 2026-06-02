@@ -28,8 +28,10 @@ services:
       CLAREAD_API_ADMIN_KEY: ${CLAREAD_API_ADMIN_KEY}
       CLAREAD_EVAL_PROXY_TIMEOUT_MS: ${CLAREAD_EVAL_PROXY_TIMEOUT_MS}
       CLAREAD_EVAL_RUNS_ROOT: ${CLAREAD_EVAL_RUNS_ROOT}
+      CLAREAD_NODE_LAB_ARTIFACTS_ROOT: ${CLAREAD_NODE_LAB_ARTIFACTS_ROOT}
     volumes:
       - ../../apps/directus/.runtime/uploads:/directus/uploads
+      - ../../apps/directus/.runtime/evals:/directus/runtime-evals
       - ../../evals:/directus/evals:ro
       - ../../apps/directus/extensions/modules-bundle:/directus/extensions/directus-extension-claread-modules
       - ../../apps/directus/extensions/panels-bundle:/directus/extensions/directus-extension-claread-panels

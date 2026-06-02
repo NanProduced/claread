@@ -7,14 +7,29 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.api.routes import eval_debug
 from app.config.settings import Settings
 from app.eval_adapter import node_lab
 from app.eval_adapter.schemas import (
     ArticleAnalysisNodeLabCompareResult,
+    ArticleAnalysisNodeLabCompareRequest,
+    ArticleAnalysisNodeLabRunRequest,
     ArticleAnalysisNodeLabRunResult,
     ModelIdentity,
+    NodeLabJudgeAggregate,
+    NodeLabJudgeCriterionScore,
+    NodeLabJudgeExecuteRequest,
+    NodeLabJudgeExecuteResult,
+    NodeLabJudgeRunResult,
+    NodeLabJudgeItemResult,
+    NodeLabJudgeItemSummary,
+    NodeLabJudgeSideResult,
+    NodeLabPairwiseResult,
+    NodeLabPairwiseReview,
+    NodeLabRubricScoringResult,
+    NodeLabBaselineConfigRequest,
     NodeLabResultEntry,
     PromptIdentity,
     RequestSnapshot,
@@ -23,6 +38,7 @@ from app.eval_adapter.schemas import (
 )
 from app.schemas.internal.analysis import GrammarNote, SpanRef
 from app.schemas.internal.drafts import GrammarDraft
+from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 
 
 def _settings() -> Settings:
@@ -113,6 +129,127 @@ def _compare_result() -> ArticleAnalysisNodeLabCompareResult:
         candidate=entry.model_copy(update={"participant_label": "candidate"}),
         compare_summary={},
     )
+
+
+def _judge_execute_result() -> NodeLabJudgeExecuteResult:
+    side = NodeLabJudgeSideResult(
+        items=[
+            NodeLabJudgeItemResult(
+                item_id="grammar_note:s1:focus",
+                item_type="grammar_note",
+                sentence_id="s1",
+                label="focus",
+                source_excerpt="Source sentence.",
+                criteria=[
+                    NodeLabJudgeCriterionScore(
+                        criterion_id="GN1",
+                        score=1,
+                        reason="解释准确。",
+                        evidence="命中原句结构。",
+                    )
+                ],
+                item_summary=NodeLabJudgeItemSummary(passed=1, failed=0),
+            )
+        ],
+        aggregate=NodeLabJudgeAggregate(
+            item_count=1,
+            criteria_count=1,
+            passed=1,
+            failed=0,
+            pass_rate=1.0,
+        ),
+    )
+    return NodeLabJudgeExecuteResult(
+        request_id="judge-req-1",
+        node_name="grammar",
+        judge_strategy="grammar_item_review",
+        judge_method="rubric_plus_pairwise",
+        output_mode="rubric_scoring",
+        output_schema_kind="grammar_item_scoring",
+        status="succeeded",
+        model_identity=ModelIdentity(
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            provider="fake",
+            model_name="judge-model",
+        ),
+        rubric_scoring_result=NodeLabRubricScoringResult(
+            strategy="grammar_item_review",
+            method="rubric_plus_pairwise",
+            baseline=side,
+            candidate=side,
+            meta={"preset_id": "grammar-default-v1"},
+        ),
+        runtime_summary={"latency_ms": 12},
+    )
+
+
+def _pairwise_result() -> NodeLabPairwiseResult:
+    return NodeLabPairwiseResult(
+        strategy="grammar_item_review",
+        method="rubric_plus_pairwise",
+        pairwise_review=NodeLabPairwiseReview(
+            preferred_side="candidate",
+            overall_judgment="Candidate 整体更适合当前场景。",
+            baseline_strengths=["结构判断基本正确。"],
+            candidate_strengths=["结构说明更聚焦。"],
+            baseline_risks=["覆盖较弱。"],
+            candidate_risks=[],
+            manual_check_points=["复看复杂句的 few-shot 风格是否过度统一。"],
+        ),
+    )
+
+
+def _judge_run_result() -> NodeLabJudgeRunResult:
+    execute_result = _judge_execute_result()
+    return NodeLabJudgeRunResult(
+        judge_request_id="judge-req-1",
+        trial_id="node-lab-trial-1",
+        session_id=None,
+        preset_id="grammar-default-v1",
+        node_name="grammar",
+        judge_method="rubric_plus_pairwise",
+        judge_strategy="grammar_item_review",
+        step_runs={
+            "rubric": {"status": "succeeded", "runtime_summary": {"latency_ms": 12}},
+            "pairwise": {"status": "succeeded", "runtime_summary": {"latency_ms": 9}},
+            "probe": None,
+        },
+        rubric_scoring_result=execute_result.rubric_scoring_result,
+        pairwise_result=_pairwise_result(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("factory", "kwargs"),
+    [
+        (
+            NodeLabBaselineConfigRequest,
+            {"node_name": "grammar", "reading_goal": "academic", "reading_variant": "academic_general"},
+        ),
+        (
+            ArticleAnalysisNodeLabRunRequest,
+            {
+                "node_name": "grammar",
+                "text": "Academic input.",
+                "reading_goal": "academic",
+                "reading_variant": "academic_general",
+            },
+        ),
+        (
+            ArticleAnalysisNodeLabCompareRequest,
+            {
+                "node_name": "grammar",
+                "text": "Academic input.",
+                "reading_goal": "academic",
+                "reading_variant": "academic_general",
+                "candidate_override": {"candidate_id": "cand-a", "node_name": "grammar"},
+            },
+        ),
+    ],
+)
+def test_node_lab_rejects_academic_goal(factory, kwargs) -> None:
+    with pytest.raises(ValidationError, match="node_lab v1 only supports daily_reading and exam"):
+        factory(**kwargs)
 
 
 @pytest.mark.anyio
@@ -376,7 +513,7 @@ def test_node_lab_routes_are_eval_admin_protected(
 ) -> None:
     monkeypatch.setattr(eval_debug, "get_settings", _eval_admin_settings)
     run_mock = AsyncMock(return_value=_run_result())
-    compare_mock = AsyncMock(return_value=_compare_result())
+    compare_mock = AsyncMock(return_value=_compare_result().model_dump(mode="json"))
     monkeypatch.setattr(eval_debug, "run_article_analysis_node_lab", run_mock)
     monkeypatch.setattr(eval_debug, "compare_article_analysis_node_lab", compare_mock)
 
@@ -407,3 +544,155 @@ def test_node_lab_routes_are_eval_admin_protected(
     assert denied.status_code == 401
     assert allowed.status_code == 200
     assert compare_allowed.status_code == 200
+
+
+def test_node_lab_judge_execute_route_is_eval_admin_protected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(eval_debug, "get_settings", _eval_admin_settings)
+    judge_mock = AsyncMock(return_value=_judge_execute_result())
+    monkeypatch.setattr(eval_debug, "execute_node_lab_judge", judge_mock)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    payload = {
+        "node_name": "grammar",
+        "judge_strategy": "grammar_item_review",
+        "judge_method": "rubric_plus_pairwise",
+        "reading_goal": "daily_reading",
+        "reading_variant": "intermediate_reading",
+        "judger_model_profile": "eval-profile",
+        "system_prompt": "system",
+        "user_prompt": "user",
+        "output_mode": "rubric_scoring",
+        "output_schema_kind": "grammar_item_scoring",
+        "metadata": {"preset_id": "grammar-default-v1"},
+    }
+
+    denied = client.post(
+        "/eval/article-analysis/node-lab/judge-execute",
+        headers={"x-admin-api-key": "admin-key"},
+        json=payload,
+    )
+    allowed = client.post(
+        "/eval/article-analysis/node-lab/judge-execute",
+        headers={"x-admin-api-key": "eval-key"},
+        json=payload,
+    )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()["request_id"] == "judge-req-1"
+
+
+def test_node_lab_judge_run_route_is_eval_admin_protected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(eval_debug, "get_settings", _eval_admin_settings)
+    judge_run_mock = AsyncMock(return_value=_judge_run_result())
+    monkeypatch.setattr(eval_debug, "run_node_lab_judge", judge_run_mock)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    payload = {
+        "node_name": "grammar",
+        "trial_id": "node-lab-trial-1",
+        "judge_request_id": "judge-req-1",
+        "judge_config_snapshot": {
+            "preset_id": "grammar-default-v1",
+            "judger_models_json": [{"profile_name": "eval-profile"}],
+        },
+        "compare_result": _compare_result().model_dump(mode="json"),
+        "participants": {"baseline": "baseline", "candidate": "candidate"},
+    }
+
+    denied = client.post(
+        "/eval/article-analysis/node-lab/judge-run",
+        headers={"x-admin-api-key": "admin-key"},
+        json=payload,
+    )
+    allowed = client.post(
+        "/eval/article-analysis/node-lab/judge-run",
+        headers={"x-admin-api-key": "eval-key"},
+        json=payload,
+    )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()["judge_request_id"] == "judge-req-1"
+
+
+def test_node_lab_judge_execute_route_rejects_academic_goal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(eval_debug, "get_settings", _eval_admin_settings)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/eval/article-analysis/node-lab/judge-execute",
+        headers={"x-admin-api-key": "eval-key"},
+        json={
+            "node_name": "grammar",
+            "judge_strategy": "grammar_item_review",
+            "judge_method": "rubric_plus_pairwise",
+            "reading_goal": "academic",
+            "reading_variant": "academic_general",
+            "judger_model_profile": "eval-profile",
+            "system_prompt": "system",
+            "user_prompt": "user",
+            "output_mode": "rubric_scoring",
+            "output_schema_kind": "grammar_item_scoring",
+            "metadata": {},
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_message"),
+    [
+        (
+            {
+                "node_name": "translation",
+                "judge_strategy": "grammar_item_review",
+                "judge_method": "rubric_plus_pairwise",
+                "reading_goal": "exam",
+                "reading_variant": "cet",
+                "judger_model_profile": "eval-profile",
+                "system_prompt": "system",
+                "user_prompt": "user",
+                "output_mode": "rubric_scoring",
+                "output_schema_kind": "grammar_item_scoring",
+                "metadata": {},
+            },
+            "judge_strategy is not compatible with node_name",
+        ),
+        (
+            {
+                "node_name": "translation",
+                "judge_strategy": "translation_output_review",
+                "judge_method": "anti_template_probe",
+                "reading_goal": "exam",
+                "reading_variant": "cet",
+                "judger_model_profile": "eval-profile",
+                "system_prompt": "system",
+                "user_prompt": "user",
+                "output_mode": "probe_appendix",
+                "output_schema_kind": "probe_appendix",
+                "metadata": {},
+            },
+            "anti_template_probe is only supported for grammar",
+        ),
+    ],
+)
+def test_node_lab_judge_execute_request_validates_strategy_matrix(payload, expected_message) -> None:
+    with pytest.raises(ValidationError, match=expected_message):
+        NodeLabJudgeExecuteRequest.model_validate(payload)

@@ -13,8 +13,10 @@ const runEndpoint = "/eval-center/node-lab/run";
 const compareEndpoint = "/eval-center/node-lab/compare";
 const trialsEndpoint = "/eval-center/node-lab/trials";
 const judgeConfigsEndpoint = "/eval-center/node-lab/judge-configs";
+const judgePresetsEndpoint = "/eval-center/node-lab/judge-presets";
 const judgeRequestsEndpoint = "/eval-center/node-lab/judge-requests";
-const storageKey = "claread-eval-center:node-lab:v3";
+const storageKey = "claread-eval-center:node-lab:v4";
+const defaultNodeLabTimeoutSeconds = 150;
 
 const nodeOptions = [
   { id: "grammar", label: "Grammar", description: "语法与长难句拆解实验。" },
@@ -25,22 +27,25 @@ const nodeOptions = [
 const workspaceOptions = [
   { id: "single_run", label: "Single Run", description: "先看单次输出是否朝正确方向变化。" },
   { id: "baseline_compare", label: "Baseline Compare", description: "同一输入下比较 baseline 与 candidate。" },
-  { id: "judge_compare", label: "Judge Compare", description: "在 compare 结果上挂载 judge 配置和 request。" },
   { id: "sessions", label: "Sessions", description: "查看该 node 的实验历史与复盘。" },
 ];
 
 const judgeModes = [
-  { id: "rubric_score_only", label: "Rubric Score Only" },
-  { id: "rubric_plus_pairwise", label: "Rubric + Pairwise" },
-  { id: "persona_pairwise", label: "Persona Pairwise" },
-  { id: "anti_template_probe", label: "Anti-template Probe" },
-  { id: "raw", label: "Raw" },
+  { id: "rubric_score_only", label: "只按规则打分（逐项过线检查）" },
+  { id: "rubric_plus_pairwise", label: "规则打分 + 整体对比评估（先评分，再给整体意见）" },
+  { id: "anti_template_probe", label: "反模板化专项诊断（Grammar 专用）" },
+  { id: "raw", label: "完全自定义（自己写 Judge Prompt / Schema）" },
 ];
+
+const judgeModesByNode = {
+  grammar: ["rubric_score_only", "rubric_plus_pairwise", "anti_template_probe", "raw"],
+  vocabulary: ["rubric_score_only", "rubric_plus_pairwise", "raw"],
+  translation: ["rubric_score_only", "rubric_plus_pairwise", "raw"],
+};
 
 const readingGoalOptions = [
   { id: "daily_reading", label: "日常阅读", description: "用于新闻、通识文章和长期阅读训练。" },
   { id: "exam", label: "考试阅读", description: "用于 CET、考研、雅思托福等应试型场景。" },
-  { id: "academic", label: "学术阅读", description: "用于论文摘要、研究材料和学术句法。" },
 ];
 
 const readingVariantsByGoal = {
@@ -56,9 +61,6 @@ const readingVariantsByGoal = {
     { id: "tem", label: "专四专八" },
     { id: "ielts_toefl", label: "雅思 / 托福" },
   ],
-  academic: [
-    { id: "academic_general", label: "学术通用" },
-  ],
 };
 
 const helpText = {
@@ -70,15 +72,15 @@ const helpText = {
   few_shot_mode: "Few-shot 只控制当前 node 的示例来源。grammar 支持 RAG 观测，其他 node 仍只支持 baseline / off / candidate。",
   compare_status: "Compare Status 关注这次对比是否完整完成，而不是只看 candidate 一侧是否成功。",
   latency: "Single Run 看单次延迟。Compare 看 baseline 与 candidate 的各自延迟，以及两者差值。",
-  session_write: "写入 Session 后，这次结果会进入可追溯历史，可继续挂载 judge request 或做后续复盘。",
+  session_write: "Single Run 不再进入 Session。Session 仅在 Baseline Compare 中由 compare 结果加入，固定 node、阅读目标/变体与 baseline 参考系。",
   prompt_packet: "这里展示真正发给模型的关键信息，包括说明文本、示例输入和预处理后的句子。",
-  judge_prerequisite: "Judge Compare 必须基于一个已持久化的 compare trial。没有 compare trial 时，需要先运行并保存 Compare。",
+  judge_prerequisite: "Judge 不是重新跑 compare，而是基于一条已保存的 Compare 结果继续做评审。先人工看 compare 是否值得，再决定是否花 token 发起 judge。",
 };
 
 const sessionFlowSteps = [
-  { key: "start", title: "先开一个 Session", detail: "先固定这轮实验的阅读场景和 baseline 参考系。" },
-  { key: "record", title: "再把 Trial 写进去", detail: "Single Run 或 Compare 只有写入 Session，才会进入可追溯历史。" },
-  { key: "review", title: "最后回来复盘", detail: "在 Sessions 里看试验脉络、挑重点 Trial，再决定是否继续 judge。" },
+  { key: "start", title: "先跑出一条 Compare", detail: "Baseline Compare 是主工作台，先确认这次差异值不值得保存或评审。" },
+  { key: "record", title: "再决定是否加入 Session", detail: "Session 是固定上下文的 compare 记录本，只收 compare trial。" },
+  { key: "review", title: "最后回来复盘 / Judge", detail: "在 Sessions 里回看时间线，也可以回到 Compare 页继续做 Judge。" },
 ];
 
 const state = reactive({
@@ -104,17 +106,25 @@ const state = reactive({
   singleRunResultsByNode: {},
   singleRunUiStateByNode: {},
   compareResultsByNode: {},
+  activeCompareViewByNode: {},
   compareUiStateByNode: {},
+  comparePanelTabByNode: {},
   savedCandidatesByNode: {},
   savedJudgeConfigsByNode: {},
+  judgePresetsByNode: {},
   judgeDraftsByNode: {},
   judgeRequestsByNode: {},
+  judgeRequestDetailsById: {},
+  selectedJudgeRequestIdByNode: {},
+  pendingJudgeRequestIdByNode: {},
+  recentTrialsByNode: {},
   sessionsByNode: {},
   sessionDetailsById: {},
   selectedSessionIdByNode: {},
   selectedTrialDetailsById: {},
   selectedTrialIdBySession: {},
   latestPersistedCompareTrialByNode: {},
+  currentCompareTrialIdByNode: {},
 });
 
 const loading = reactive({
@@ -125,6 +135,7 @@ const loading = reactive({
   saveCandidate: false,
   saveJudgeConfig: false,
   queueJudge: false,
+  executeJudge: false,
   createSession: false,
   sessions: false,
 });
@@ -139,6 +150,10 @@ let persistTimer = null;
 
 function defaultVariantForGoal(goalId) {
   return readingVariantsByGoal[goalId]?.[0]?.id || "intermediate_reading";
+}
+
+function normalizeGoal(candidateGoal) {
+  return readingGoalOptions.some((item) => item.id === candidateGoal) ? candidateGoal : "daily_reading";
 }
 
 function normalizeVariantForGoal(goalId, candidateVariant) {
@@ -171,6 +186,14 @@ function shortId(value) {
   const normalized = String(value || "").trim();
   if (!normalized) return "—";
   return normalized.length <= 10 ? normalized : normalized.slice(-8);
+}
+
+function normalizePreviewText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function buildInputPreview(value, limit = 280) {
+  return normalizePreviewText(value).slice(0, limit);
 }
 
 function safeJsonParse(raw, fallback) {
@@ -313,6 +336,62 @@ function formatSignedDelta(value, suffix = "") {
   return `${value > 0 ? "+" : ""}${value}${suffix}`;
 }
 
+function compareTrialSourceLabel(trial) {
+  if (!trial) return "未记录";
+  return trial.source_kind === "session" || trial.session_id ? "Session" : "独立 Trial";
+}
+
+function compareViewSourceLabel(view, trial) {
+  if (view?.source === "live") return "当前结果";
+  if (view?.source === "session" || trial?.source_kind === "session" || trial?.session_id) return "Session 内结果";
+  if (view?.source === "standalone") return "独立 Trial";
+  if (view?.source === "recent") return "历史 Trial";
+  return trial?.session_id ? "Session 内结果" : "历史 Trial";
+}
+
+function compareViewSourceTone(view, trial, mismatch) {
+  if (mismatch) return "warning";
+  if (view?.source === "live") return "success";
+  if (view?.source === "session") return "active";
+  if (view?.source === "standalone") return "neutral";
+  return trial?.session_id ? "active" : "neutral";
+}
+
+function trialJudgeCount(trial) {
+  return Number(trial?.judge_request_count || 0);
+}
+
+function trialReadableTitle(trial, fallbackIndex = 0) {
+  if (!trial) return "未记录 Trial";
+  if (trial.session_title) return `${trial.session_title} · #${shortId(trial.trial_id)}`;
+  return `${compareTrialSourceLabel(trial)} · #${shortId(trial.trial_id || fallbackIndex)}`;
+}
+
+function trialReadableMeta(trial) {
+  if (!trial) return "未记录";
+  const parts = [
+    statusLabel(trial.result_summary_json?.result_status?.compare_status || trial.status),
+    readingVariantLabel(trial.reading_variant || ""),
+    trialJudgeCount(trial) > 0 ? `${trialJudgeCount(trial)} 条 Judge` : "未 Judge",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function sessionCompareCount(session) {
+  const aggregate = session?.aggregate_summary_json || {};
+  return Number(aggregate.workspace_counts?.baseline_compare || aggregate.trial_count || 0);
+}
+
+function sessionJudgeCount(session) {
+  const aggregate = session?.aggregate_summary_json || {};
+  const loaded = state.sessionDetailsById?.[session?.session_id]?.judge_requests?.length;
+  return Number(loaded || session?.judge_request_count || aggregate.judge_request_count || 0);
+}
+
+function sessionBaselineLabel(session) {
+  return session?.baseline_snapshot_json?.prompt_profile || "baseline";
+}
+
 function statusBadgeLabel(entry) {
   if (!entry) return "未运行";
   return statusLabel(entry.status);
@@ -370,6 +449,14 @@ function sentenceToneClass(index) {
   return tones[index % tones.length];
 }
 
+function defaultJudgeModeForNode(nodeName) {
+  return judgeModesByNode[nodeName]?.[0] || "rubric_plus_pairwise";
+}
+
+function judgeModeAllowedForNode(nodeName, modeId) {
+  return (judgeModesByNode[nodeName] || []).includes(modeId);
+}
+
 function defaultCandidateDraft(nodeName, baselineConfig = null) {
   return {
     candidate_id: "",
@@ -389,9 +476,16 @@ function defaultCandidateDraft(nodeName, baselineConfig = null) {
 function defaultJudgeDraft(nodeName) {
   return {
     judge_config_id: "",
+    preset_id: "",
+    judge_strategy: "",
+    judge_method: "",
     label: `${nodeName} judge setup`,
     description: "",
-    judge_mode: "rubric_plus_pairwise",
+    judge_mode: defaultJudgeModeForNode(nodeName),
+    preset_summary: "",
+    packet_policy_json: "{}",
+    rubric_bundle_json: "{}",
+    probe_appendix_json: "{}",
     persona_text: "",
     system_prompt: "",
     user_prompt: "",
@@ -443,12 +537,28 @@ const currentJudgeDraft = computed(() => {
 });
 const currentSavedCandidates = computed(() => state.savedCandidatesByNode[state.activeNode] || []);
 const currentSavedJudgeConfigs = computed(() => state.savedJudgeConfigsByNode[state.activeNode] || []);
+const currentJudgePresets = computed(() => state.judgePresetsByNode[state.activeNode] || []);
 const currentJudgeRequests = computed(() => state.judgeRequestsByNode[state.activeNode] || []);
 const currentSessions = computed(() => state.sessionsByNode[state.activeNode] || []);
+const availableJudgeModes = computed(() => {
+  const allowed = new Set(judgeModesByNode[state.activeNode] || []);
+  return judgeModes.filter((mode) => allowed.has(mode.id));
+});
 const singleRunResult = computed(() => state.singleRunResultsByNode[state.activeNode] || null);
 const singleRunUiState = computed(() => state.singleRunUiStateByNode[state.activeNode] || null);
-const compareResult = computed(() => state.compareResultsByNode[state.activeNode] || null);
+const compareResult = computed(() => state.activeCompareViewByNode[state.activeNode]?.result || state.compareResultsByNode[state.activeNode] || null);
 const compareUiState = computed(() => state.compareUiStateByNode[state.activeNode] || null);
+const activeCompareView = computed(() => state.activeCompareViewByNode[state.activeNode] || null);
+const activeCompareTrial = computed(() => activeCompareView.value?.trial || null);
+const comparePanelTab = computed({
+  get: () => state.comparePanelTabByNode[state.activeNode] || "compare",
+  set: (value) => { state.comparePanelTabByNode[state.activeNode] = value || "compare"; },
+});
+const pendingJudgeRequestId = computed({
+  get: () => state.pendingJudgeRequestIdByNode[state.activeNode] || "",
+  set: (value) => { state.pendingJudgeRequestIdByNode[state.activeNode] = value || ""; },
+});
+const recentTrials = computed(() => state.recentTrialsByNode[state.activeNode] || []);
 
 const selectedSessionId = computed({
   get: () => state.selectedSessionIdByNode[state.activeNode] || "",
@@ -463,27 +573,36 @@ const selectedSessionTrialId = computed({
 
 const selectedSessionTrialDetail = computed(() => state.selectedTrialDetailsById[selectedSessionTrialId.value] || null);
 const latestCompareTrialId = computed(() => state.latestPersistedCompareTrialByNode[state.activeNode] || "");
+const currentCompareTrialId = computed(() => state.currentCompareTrialIdByNode[state.activeNode] || "");
 const selectedSessionJudgeRequests = computed(() => selectedSessionDetail.value?.judge_requests || []);
+const selectedJudgeRequestId = computed({
+  get: () => state.selectedJudgeRequestIdByNode?.[state.activeNode] || "",
+  set: (value) => {
+    if (!state.selectedJudgeRequestIdByNode) state.selectedJudgeRequestIdByNode = {};
+    state.selectedJudgeRequestIdByNode[state.activeNode] = value || "";
+  },
+});
+const selectedJudgeRequestDetail = computed(() => state.judgeRequestDetailsById[selectedJudgeRequestId.value] || null);
 
 const sessionAttachmentState = computed(() => {
   const session = selectedSessionDetail.value?.session;
   if (!selectedSessionId.value || !session) {
     return {
       attached: false,
-      title: "当前未挂载 Session",
-      detail: "现在可以先在页面里试跑；如果想把这轮实验持续记下来，再显式创建或选择一个 Session。",
-      status: "未挂载",
+      title: "未选择 Session",
+      detail: "Session 是固定上下文的 compare 记录本。只有你显式加入时，当前 compare 才会被收进 notebook。",
+      status: "未选择",
       tone: "neutral",
-      actionLabel: "创建并进入 Session",
+      actionLabel: "前往 Sessions",
     };
   }
   return {
     attached: true,
     title: session.title || `Session ${shortId(session.session_id)}`,
-    detail: "后续“写入 Session”都会写到这里。你也可以切换到别的 Session，或暂停挂载。",
+    detail: "这是当前选中的 notebook。后续 compare 只有在你显式点击“加入 Session”时才会写入。",
     status: statusLabel(session.status),
     tone: statusTone(session.status),
-    actionLabel: "查看当前 Session",
+    actionLabel: "查看 Session",
   };
 });
 
@@ -498,7 +617,6 @@ const sessionWorkspaceSummary = computed(() => {
   return compactFactRows([
     ["Single Run", workspaceCounts.single_run ? `${workspaceCounts.single_run} 条` : "0 条"],
     ["Baseline Compare", workspaceCounts.baseline_compare ? `${workspaceCounts.baseline_compare} 条` : "0 条"],
-    ["Judge Compare", workspaceCounts.judge_compare ? `${workspaceCounts.judge_compare} 条` : "0 条"],
     ["Judge Requests", selectedSessionJudgeRequests.value.length ? `${selectedSessionJudgeRequests.value.length} 条` : "0 条"],
   ]);
 });
@@ -506,21 +624,260 @@ const sessionWorkspaceSummary = computed(() => {
 const sessionDecisionNarrative = computed(() => {
   const detail = selectedSessionDetail.value;
   if (!detail?.session) {
-    return "先创建或选择一个 Session，再把值得留下的 trial 写进去。";
+    return "请先在 Baseline Compare 跑出第一条 compare，再选择加入或新建 Session。";
   }
   const aggregate = detail.session.aggregate_summary_json || {};
   if (aggregate.decision_summary) return String(aggregate.decision_summary);
   if (detail.trials.length === 0) {
-    return "这个 Session 还没有 trial。先回到 Single Run 或 Baseline Compare，把一轮实验写进来。";
+    return "这个 Session 还没有 compare。请回到 Baseline Compare 跑出第一条结果并选择“新建 Session 并加入”。";
   }
-  return `当前已记录 ${detail.trials.length} 条 trial，可以先看列表里的差异摘要，再挑一条展开结构化证据。`;
+  return `当前已记录 ${detail.trials.length} 条 compare，可以先看左侧时间线，再挑一条展开结构化差异与所挂 judge 结果。`;
 });
 
 const sessionPersistActionLabel = computed(() => {
   if (selectedSessionDetail.value?.session?.title) {
-    return `写入当前 Session：${selectedSessionDetail.value.session.title}`;
+    return `加入当前 Session：${selectedSessionDetail.value.session.title}`;
   }
-  return "创建 Session 并写入";
+  return "新建 Session 并加入";
+});
+
+const compareRequestSnapshot = computed(() => {
+  return compareResult.value?.request_snapshot || null;
+});
+
+const activeCompareInputPreview = computed(() => {
+  return String(
+    activeCompareView.value?.inputPreview
+    || activeCompareTrial.value?.input_excerpt
+    || compareRequestSnapshot.value?.source_excerpt
+    || ""
+  ).trim();
+});
+
+const compareSnapshotContextMismatchReason = computed(() => {
+  const snapshot = compareRequestSnapshot.value;
+  if (!snapshot) return null;
+
+  const snapshotNode = String(snapshot.node_name || compareResult.value?.node_name || "").trim();
+  const snapshotGoal = String(snapshot.reading_goal || "").trim();
+  const snapshotVariant = String(snapshot.reading_variant || "").trim();
+
+  if (snapshotNode && snapshotNode !== state.activeNode) {
+    return `当前页面节点是 ${nodeLabel(state.activeNode)}，但右侧结果来自 ${nodeLabel(snapshotNode)}`;
+  }
+  if (snapshotGoal && snapshotGoal !== currentReadingGoal.value) {
+    return `当前页面阅读目标是 ${readingGoalLabel(currentReadingGoal.value)}，但右侧结果来自 ${readingGoalLabel(snapshotGoal)}`;
+  }
+  if (snapshotVariant && snapshotVariant !== currentReadingVariant.value) {
+    return `当前页面阅读变体是 ${readingVariantLabel(currentReadingVariant.value)}，但右侧结果来自 ${readingVariantLabel(snapshotVariant)}`;
+  }
+  const comparePreview = normalizePreviewText(activeCompareInputPreview.value);
+  const currentPreview = buildInputPreview(currentText.value);
+  if (comparePreview && currentPreview && !currentPreview.startsWith(comparePreview)) {
+    return "当前输入文本已变化，但右侧仍显示上一条 Compare 结果";
+  }
+  return null;
+});
+
+const canAttachCurrentCompare = computed(() => {
+  if (state.activeWorkspace !== "baseline_compare") return false;
+  if (!compareResult.value) return false;
+  if (!compareRequestSnapshot.value) return false;
+  return true;
+});
+
+const attachBlockReason = computed(() => {
+  if (state.activeWorkspace !== "baseline_compare") {
+    return "请先切换到 Baseline Compare";
+  }
+  if (!compareResult.value) {
+    return "请先运行 Compare";
+  }
+  if (!compareRequestSnapshot.value) {
+    return "当前 Compare 结果缺少 request_snapshot。请重新运行 Compare 以获得完整快照。";
+  }
+  return null;
+});
+
+const selectedSessionContextMatch = computed(() => {
+  if (!selectedSessionId.value) return null;
+  if (!compareRequestSnapshot.value) return null;
+  const session = selectedSessionDetail.value?.session;
+  if (!session) return null;
+  const snapshot = compareRequestSnapshot.value;
+
+  const sessionNode = String(session.node_name || "").trim();
+  const snapshotNode = String(snapshot.node_name || "").trim();
+  if (sessionNode && snapshotNode && sessionNode !== snapshotNode) {
+    return `当前 Session 是 ${nodeLabel(sessionNode)}，与本次 compare 的 ${nodeLabel(snapshotNode)} 不匹配`;
+  }
+
+  const sessionBaseline = session.baseline_snapshot_json || {};
+  const sessionGoal = String(sessionBaseline.reading_goal || "").trim();
+  const sessionVariant = String(sessionBaseline.reading_variant || "").trim();
+  const snapshotGoal = String(snapshot.reading_goal || "").trim();
+  const snapshotVariant = String(snapshot.reading_variant || "").trim();
+  if (sessionGoal && snapshotGoal && sessionGoal !== snapshotGoal) {
+    return `当前 Session 阅读目标是 ${readingGoalLabel(sessionGoal)}，与本次 compare 的 ${readingGoalLabel(snapshotGoal)} 不匹配`;
+  }
+  if (sessionVariant && snapshotVariant && sessionVariant !== snapshotVariant) {
+    return `当前 Session 阅读变体是 ${readingVariantLabel(sessionVariant)}，与本次 compare 的 ${readingVariantLabel(snapshotVariant)} 不匹配`;
+  }
+
+  const sessionBaselineHash = String(session.baseline_snapshot_hash || "").trim();
+  const resultBaselineHash = String(compareResult.value?.baseline?.prompt_identity?.prompt_snapshot_hash || "").trim();
+  if (sessionBaselineHash && resultBaselineHash && sessionBaselineHash !== resultBaselineHash) {
+    return `当前 Session 的 baseline snapshot 与本次 compare 的 baseline snapshot 不一致`;
+  }
+  return null;
+});
+
+const joinSessionBlockReason = computed(() => {
+  if (attachBlockReason.value) return attachBlockReason.value;
+  if (!selectedSessionId.value) {
+    return "请先选择一条 Session，或点击“新建 Session 并加入”";
+  }
+  if (selectedSessionContextMatch.value) return selectedSessionContextMatch.value;
+  return null;
+});
+
+const createSessionAndAddBlockReason = computed(() => {
+  if (attachBlockReason.value) return attachBlockReason.value;
+  return null;
+});
+
+const attachCurrentCompareTooltip = computed(() => {
+  if (joinSessionBlockReason.value) return joinSessionBlockReason.value;
+  return "把当前 Compare 结果直接加入已选 Session（不会重跑）";
+});
+
+const createSessionAndAddTooltip = computed(() => {
+  if (createSessionAndAddBlockReason.value) return createSessionAndAddBlockReason.value;
+  return "用当前 Compare 结果直接新建 Session 并加入（不会重跑）";
+});
+
+const compareTrialAvailability = computed(() => {
+  const mismatch = compareSnapshotContextMismatchReason.value;
+  if (currentCompareTrialId.value && !mismatch) {
+    return {
+      id: currentCompareTrialId.value,
+      detail: "当前 Compare 已持久化，可直接发起 Judge。",
+    };
+  }
+  if (compareResult.value && !mismatch) {
+    return {
+      id: "尚未持久化",
+      detail: "当前 Compare 结果尚未持久化，可通过 Judge 或加入 Session 自动持久化。",
+    };
+  }
+  if (compareResult.value && mismatch) {
+    return {
+      id: currentCompareTrialId.value || "尚未持久化",
+      detail: `${mismatch}。右侧仍显示上一条 Compare 结果；若继续 Judge，将评估这条结果，而不是当前表单内容。`,
+    };
+  }
+  if (latestCompareTrialId.value) {
+    return {
+      id: latestCompareTrialId.value,
+      detail: "这是历史持久化 Trial，非当前页面内容。",
+    };
+  }
+  return {
+    id: "尚未持久化",
+    detail: "运行 Compare 后，可通过 Judge 或加入 Session 自动持久化。",
+  };
+});
+
+const activeCompareRelation = computed(() => {
+  if (!compareResult.value) return null;
+  const trial = activeCompareTrial.value || null;
+  const staleReason = compareSnapshotContextMismatchReason.value;
+  const sourceLabel = compareViewSourceLabel(activeCompareView.value, trial);
+  const sourceTone = compareViewSourceTone(activeCompareView.value, trial, staleReason);
+  const sessionTitle = trial?.session_title
+    || (trial?.session_id ? `Session ${shortId(trial.session_id)}` : "");
+  const judgeCount = trialJudgeCount(trial) || activeCompareJudgeRequests.value.length || 0;
+  return {
+    compareId: shortId(trial?.trial_id || activeCompareView.value?.trialId || "live"),
+    sourceLabel,
+    sourceTone,
+    sessionTitle,
+    judgeCount,
+    staleReason,
+    isPersisted: Boolean(trial?.trial_id),
+    isLive: activeCompareView.value?.source === "live" && !trial?.trial_id,
+  };
+});
+
+const currentDisplayedCompareSummary = computed(() => {
+  const relation = activeCompareRelation.value;
+  if (!relation) {
+    return {
+      title: "未打开 Compare",
+      detail: "请先运行 Compare，或从 Sessions 打开一条历史结果。",
+      tone: "neutral",
+    };
+  }
+  if (relation.staleReason) {
+    return {
+      title: "正在查看旧 Compare",
+      detail: relation.staleReason,
+      tone: "warning",
+    };
+  }
+  if (relation.isPersisted) {
+    return {
+      title: `${relation.sourceLabel} · ${relation.compareId}`,
+      detail: relation.sessionTitle
+        ? `已挂到 ${relation.sessionTitle}，当前关联 ${relation.judgeCount} 条 Judge。`
+        : `已持久化为独立 Trial，当前关联 ${relation.judgeCount} 条 Judge。`,
+      tone: "success",
+    };
+  }
+  return {
+    title: "当前 Compare（未持久化）",
+    detail: "这是刚跑完的 live compare。你可以直接加入 Session，或创建并执行 Judge。",
+    tone: "success",
+  };
+});
+
+const sessionMetaLabel = computed(() => (
+  state.activeWorkspace === "sessions"
+    ? "当前浏览的 Session"
+    : "当前 Compare 将写入的 Session"
+));
+
+const currentSessionSummary = computed(() => {
+  const session = selectedSessionDetail.value?.session;
+  if (state.activeWorkspace === "sessions") {
+    if (!session) {
+      return {
+        title: "未打开 Session",
+        detail: "Session 只负责 notebook / 历史复盘。请先从左侧选择一本 compare 记录本。",
+        tone: "neutral",
+      };
+    }
+    return {
+      title: session.title || `Session ${shortId(session.session_id)}`,
+      detail: `固定上下文：${nodeLabel(session.node_name)} · ${readingGoalLabel(session.baseline_snapshot_json?.reading_goal)} · ${readingVariantLabel(session.baseline_snapshot_json?.reading_variant)}`,
+      tone: statusTone(session.status),
+    };
+  }
+
+  if (!session) {
+    return {
+      title: "未指定",
+      detail: "当前 Compare 尚未指定写入目标。Session 只在你点击“加入 Session”时才会接收这条结果。",
+      tone: "neutral",
+    };
+  }
+  return {
+    title: session.title || `Session ${shortId(session.session_id)}`,
+    detail: selectedSessionContextMatch.value
+      ? `${selectedSessionContextMatch.value}。如需写入，请先切回匹配的 compare。`
+      : `当前 Compare 可写入：${nodeLabel(session.node_name)} · ${readingGoalLabel(session.baseline_snapshot_json?.reading_goal)} · ${readingVariantLabel(session.baseline_snapshot_json?.reading_variant)}`,
+    tone: selectedSessionContextMatch.value ? "warning" : statusTone(session.status),
+  };
 });
 
 const contextFacts = computed(() => compactFactRows([
@@ -529,11 +886,11 @@ const contextFacts = computed(() => compactFactRows([
   ["阅读目标", readingGoalLabel(currentReadingGoal.value)],
   ["阅读变体", readingVariantLabel(currentReadingVariant.value)],
   ["当前 Candidate", currentDraft.value.label || "未命名 Candidate"],
-  ["当前 Session", selectedSessionDetail.value?.session?.title || "未挂载"],
+  ["当前 Session", selectedSessionDetail.value?.session?.title || "未加入"],
 ]));
 
 const latestRunSummary = computed(() => {
-  if (state.activeWorkspace === "baseline_compare" || state.activeWorkspace === "judge_compare") {
+  if (state.activeWorkspace === "baseline_compare") {
     const result = compareResult.value;
     if (!result) return { title: "最近结果", value: "尚未运行 Compare", tone: "neutral", detail: "先运行 Compare，才能看差异摘要与 judge 前置状态。" };
     const resultStatus = result.compare_summary?.result_status || {};
@@ -545,7 +902,7 @@ const latestRunSummary = computed(() => {
     };
   }
   const result = singleRunResult.value?.run;
-  if (!result) return { title: "最近 Single Run", value: "尚未运行", tone: "neutral", detail: "先运行 baseline 或 candidate，再决定是否写入 Session。" };
+  if (!result) return { title: "最近 Single Run", value: "尚未运行", tone: "neutral", detail: "先运行 baseline 或 candidate，结果保留在页面状态中，不进入 Session。" };
   const refreshedAt = singleRunUiState.value?.lastCompletedAt
     ? ` · ${formatClockTime(singleRunUiState.value.lastCompletedAt)}`
     : "";
@@ -835,18 +1192,61 @@ function scopedOutputForRow(rowSide, nodeName) {
 }
 
 const judgePrerequisite = computed(() => {
-  if (!latestCompareTrialId.value) {
+  const hasPreset = Boolean(currentJudgeDraft.value.preset_id);
+  const hasJudgerModel = currentJudgeDraft.value.judger_models.some((value) => String(value || "").trim());
+  const mismatch = compareSnapshotContextMismatchReason.value;
+  if (!hasPreset) {
     return {
       ready: false,
-      title: "还没有可用于 Judge 的 Compare Trial",
-      detail: "Judge Compare 需要先有一个已持久化的 compare trial。先运行并写入 Session，再排队 Judge Request。",
+      title: "请先选择一个 Judge 预设",
+      detail: "Judge 首版优先使用系统预设。先选定本节点的评测预设，再排队 Judge Request。",
+    };
+  }
+  if (!hasJudgerModel) {
+    return {
+      ready: false,
+      title: "请至少选择一个 Judger 模型",
+      detail: "Judge Request 需要至少一个 Judger 模型 profile，才能真正发起评审。",
+    };
+  }
+  if (currentCompareTrialId.value && !mismatch) {
+    return {
+      ready: true,
+      title: "当前 Compare 已持久化",
+      detail: `将基于当前 Compare 对应的 Trial ${currentCompareTrialId.value} 发起 Judge 评审。`,
+    };
+  }
+  if (compareResult.value && !mismatch) {
+    return {
+      ready: true,
+      title: "当前 Compare 结果可用于 Judge",
+      detail: "Compare 结果尚未持久化，排队 Judge 时会自动保存为独立 Trial（不绑定 Session）。",
+    };
+  }
+  if (compareResult.value && mismatch) {
+    return {
+      ready: true,
+      title: "当前页面上下文已变化",
+      detail: `${mismatch}。Judge 将评估右侧仍显示的上一条 Compare 结果；如需评当前表单，请先重新运行 Compare。`,
+    };
+  }
+  if (latestCompareTrialId.value) {
+    return {
+      ready: true,
+      title: "有历史持久化 Trial 可用",
+      detail: `当前无 Compare 结果，但有历史 Trial ${latestCompareTrialId.value}。注意：Judge 将评历史结果，非当前页面内容。`,
     };
   }
   return {
-    ready: true,
-    title: "已找到可用 Compare Trial",
-    detail: `当前将基于 ${latestCompareTrialId.value} 继续做 judge compare。`,
+    ready: false,
+    title: "还没有可用的 Compare 结果",
+    detail: "Judge 需要先运行一次 Compare。跑出结果后即可排队 Judge Request。",
   };
+});
+
+const activeCompareJudgeRequests = computed(() => {
+  if (!activeCompareTrial.value?.trial_id) return [];
+  return currentJudgeRequests.value || [];
 });
 
 const sessionSummaryFacts = computed(() => {
@@ -863,9 +1263,56 @@ const sessionSummaryFacts = computed(() => {
   ]);
 });
 
+const sessionNotebookFacts = computed(() => {
+  const detail = selectedSessionDetail.value;
+  if (!detail?.session) return [];
+  const aggregate = detail.session.aggregate_summary_json || {};
+  const compareCount = aggregate.workspace_counts?.baseline_compare ?? detail.trials.length;
+  const judgeCount = Array.isArray(detail.judge_requests) ? detail.judge_requests.length : 0;
+  return compactFactRows([
+    ["Compare 数量", `${compareCount} 条`],
+    ["已挂 Judge", judgeCount > 0 ? `${judgeCount} 条` : "尚未发起"],
+    ["Session 状态", statusLabel(detail.session.status)],
+    ["最后更新", formatClockTime(detail.session.date_updated)],
+  ]);
+});
+
+function judgeRequestsForTrial(trialId) {
+  if (!trialId) return [];
+  const list = selectedSessionJudgeRequests.value || [];
+  return list.filter((req) => req.trial_id === trialId);
+}
+
+function judgeRequestsForTrialCount(trialId) {
+  return judgeRequestsForTrial(trialId).length;
+}
+
 function setFeedback({ error = "", info = "" } = {}) {
   feedback.error = error;
   feedback.info = info;
+}
+
+function setActiveCompareView(nodeName, payload = null) {
+  if (!payload) {
+    state.activeCompareViewByNode[nodeName] = null;
+    return;
+  }
+  state.activeCompareViewByNode[nodeName] = {
+    trialId: payload.trialId || payload.trial?.trial_id || "",
+    sessionId: payload.sessionId || payload.trial?.session_id || "",
+    source: payload.source || "live",
+    trial: payload.trial || null,
+    result: payload.result || null,
+  };
+}
+
+function clearActiveCompareView(nodeName, { preserveLatestTrial = false } = {}) {
+  setActiveCompareView(nodeName, null);
+  state.compareResultsByNode[nodeName] = null;
+  if (!preserveLatestTrial) {
+    state.currentCompareTrialIdByNode[nodeName] = "";
+  }
+  state.comparePanelTabByNode[nodeName] = "compare";
 }
 
 function loadPersistedState() {
@@ -874,7 +1321,9 @@ function loadPersistedState() {
     if (!raw) return;
     const saved = JSON.parse(raw);
     if (saved?.activeNode) state.activeNode = saved.activeNode;
-    if (saved?.activeWorkspace) state.activeWorkspace = saved.activeWorkspace;
+    if (saved?.activeWorkspace) {
+      state.activeWorkspace = saved.activeWorkspace === "judge_compare" ? "baseline_compare" : saved.activeWorkspace;
+    }
     Object.assign(state.textsByNode, saved?.textsByNode || {});
     Object.assign(state.readingGoalByNode, saved?.readingGoalByNode || {});
     Object.assign(state.readingVariantByNode, saved?.readingVariantByNode || {});
@@ -882,9 +1331,19 @@ function loadPersistedState() {
     Object.assign(state.judgeDraftsByNode, saved?.judgeDraftsByNode || {});
     Object.assign(state.selectedSessionIdByNode, saved?.selectedSessionIdByNode || {});
     Object.assign(state.latestPersistedCompareTrialByNode, saved?.latestPersistedCompareTrialByNode || {});
+    Object.assign(state.currentCompareTrialIdByNode, saved?.currentCompareTrialIdByNode || {});
+    Object.assign(state.selectedJudgeRequestIdByNode, saved?.selectedJudgeRequestIdByNode || {});
+    Object.assign(state.pendingJudgeRequestIdByNode, saved?.pendingJudgeRequestIdByNode || {});
+    Object.assign(state.comparePanelTabByNode, saved?.comparePanelTabByNode || {});
+    Object.assign(state.activeCompareViewByNode, saved?.activeCompareViewByNode || {});
+    Object.assign(state.selectedTrialIdBySession, saved?.selectedTrialIdBySession || {});
     for (const nodeName of nodeOptions.map((item) => item.id)) {
-      const goal = state.readingGoalByNode[nodeName] || "daily_reading";
+      const goal = normalizeGoal(state.readingGoalByNode[nodeName] || "daily_reading");
+      state.readingGoalByNode[nodeName] = goal;
       state.readingVariantByNode[nodeName] = normalizeVariantForGoal(goal, state.readingVariantByNode[nodeName]);
+      if (state.judgeDraftsByNode[nodeName] && !judgeModeAllowedForNode(nodeName, state.judgeDraftsByNode[nodeName].judge_mode)) {
+        state.judgeDraftsByNode[nodeName].judge_mode = defaultJudgeModeForNode(nodeName);
+      }
     }
   } catch {
     // Ignore session cache corruption.
@@ -901,7 +1360,24 @@ function persistedStatePayload() {
     candidateDraftsByNode: state.candidateDraftsByNode,
     judgeDraftsByNode: state.judgeDraftsByNode,
     selectedSessionIdByNode: state.selectedSessionIdByNode,
+    selectedTrialIdBySession: state.selectedTrialIdBySession,
     latestPersistedCompareTrialByNode: state.latestPersistedCompareTrialByNode,
+    currentCompareTrialIdByNode: state.currentCompareTrialIdByNode,
+    selectedJudgeRequestIdByNode: state.selectedJudgeRequestIdByNode,
+    pendingJudgeRequestIdByNode: state.pendingJudgeRequestIdByNode,
+    comparePanelTabByNode: state.comparePanelTabByNode,
+    activeCompareViewByNode: Object.fromEntries(
+      Object.entries(state.activeCompareViewByNode || {}).map(([nodeName, view]) => [
+        nodeName,
+        view
+          ? {
+              trialId: view.trialId || "",
+              sessionId: view.sessionId || "",
+              source: view.source || "live",
+            }
+          : null,
+      ]),
+    ),
   };
 }
 
@@ -919,6 +1395,32 @@ watch(persistedStatePayload, persistState, { deep: true });
 watch(currentReadingGoal, (goal) => {
   currentReadingVariant.value = normalizeVariantForGoal(goal, currentReadingVariant.value);
 });
+
+watch(
+  () => state.activeNode,
+  (nodeName) => {
+    if (!judgeModeAllowedForNode(nodeName, currentJudgeDraft.value.judge_mode)) {
+      currentJudgeDraft.value.judge_mode = defaultJudgeModeForNode(nodeName);
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => state.activeNode,
+  async () => {
+    const restoredTrialId = state.activeCompareViewByNode[state.activeNode]?.trialId
+      || state.currentCompareTrialIdByNode[state.activeNode]
+      || "";
+    if (restoredTrialId) {
+      await openCompareTrialInWorkbench(restoredTrialId, {
+        source: state.activeCompareViewByNode[state.activeNode]?.source || "history",
+        switchWorkspace: false,
+        openJudge: state.comparePanelTabByNode[state.activeNode] === "judge",
+      });
+    }
+  },
+);
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
@@ -978,26 +1480,15 @@ function buildRunRequest({ dryRun = false, useCandidate = true } = {}) {
     reading_goal: currentReadingGoal.value,
     reading_variant: currentReadingVariant.value,
     source_type: "user_input",
+    timeout_seconds: defaultNodeLabTimeoutSeconds,
     dry_run: dryRun,
     candidate_override: useCandidate ? buildCandidateOverride() : null,
   };
 }
 
-function buildSessionSeed() {
-  return {
-    node_name: state.activeNode,
-    title: `${nodeLabel(state.activeNode)} · ${readingGoalLabel(currentReadingGoal.value)} · ${readingVariantLabel(currentReadingVariant.value)}`,
-    goal: `${readingGoalLabel(currentReadingGoal.value)} · ${readingVariantLabel(currentReadingVariant.value)}`,
-    baseline_snapshot_json: baselineConfig.value || {},
-    baseline_snapshot_hash: baselineConfig.value?.prompt_version || null,
-    candidate_registry_json: [buildCandidateOverride()].filter(Boolean),
-  };
-}
-
 function buildJudgeConfigSnapshot() {
   const draft = currentJudgeDraft.value;
-  const rubricSource = safeJsonParse(draft.rubric_json, { criteria: [] });
-  const outputSchema = safeJsonParse(draft.output_schema_json, {});
+  const preset = currentJudgePresets.value.find((item) => item.preset_id === draft.preset_id) || null;
   const parameters = safeJsonParse(draft.parameters_json, {});
   const judgerModels = draft.judger_models
     .map((profileName) => String(profileName || "").trim())
@@ -1006,13 +1497,19 @@ function buildJudgeConfigSnapshot() {
     .map((profileName) => ({ profile_name: profileName }));
   return {
     judge_mode: draft.judge_mode,
-    rubric_source_json: rubricSource,
+    preset_id: draft.preset_id || null,
+    judge_strategy: draft.judge_strategy || preset?.strategy || null,
+    judge_method: draft.judge_method || preset?.method || null,
+    packet_policy_json: safeJsonParse(draft.packet_policy_json || "{}", {}),
+    rubric_bundle_json: safeJsonParse(draft.rubric_bundle_json || "{}", {}),
+    probe_appendix_json: safeJsonParse(draft.probe_appendix_json || "{}", {}),
+    rubric_source_json: safeJsonParse(draft.rubric_json, { criteria: [] }),
     persona_json: draft.persona_text ? { description: draft.persona_text } : null,
     prompt_templates_json: {
       system_prompt: draft.system_prompt,
       user_prompt: draft.user_prompt,
     },
-    output_schema_json: outputSchema,
+    output_schema_json: safeJsonParse(draft.output_schema_json, {}),
     parameters_json: parameters,
     judger_models_json: judgerModels,
     label: draft.label,
@@ -1023,23 +1520,18 @@ function buildJudgeConfigSnapshot() {
 function applyJudgeModeTemplate(mode) {
   const templates = {
     rubric_score_only: {
-      system: "TODO: 只按 rubric 做逐项二元打分。",
-      user: "TODO: 分别评估 baseline 与 candidate，每项只给 0/1 和理由。",
+      system: "请严格按给定 rubric 做二元打分，每条只返回 0/1、简短理由和必要证据。",
+      user: "请分别评估 baseline 与 candidate，并输出结构化 rubric scoring 结果。",
       persona: "",
     },
     rubric_plus_pairwise: {
-      system: "TODO: 先做 rubric scoring，再给 pairwise judgement。",
-      user: "TODO: 先看各项是否过线，再总结哪一个更适合当前学习目标。",
+      system: "请先完成 rubric scoring，再基于原文与精选标注信息给出整体对比评估意见。",
+      user: "请不要复查锚点和结构 JSON，只比较两版整体讲解质量、帮助感和策略适配度。",
       persona: "",
     },
-    persona_pairwise: {
-      system: "TODO: 扮演目标学习者做 pairwise judgement。",
-      user: "TODO: 比较 baseline 与 candidate，回答哪个更有帮助、为什么。",
-      persona: "例如：备考四六级的大学生，需要快速抓住长难句结构。",
-    },
     anti_template_probe: {
-      system: "TODO: 重点检查模板化、机械化、同质化问题。",
-      user: "TODO: 观察 candidate 是否减少固定套路和单一标注模式。",
+      system: "请只回答给定的反模板化 probe 问题，重点检查机械重复、同质化与僵硬解释。",
+      user: "请观察 baseline 与 candidate 的样本，判断 candidate 是否减少了固定套路和单一标注模式。",
       persona: "",
     },
     raw: {
@@ -1049,9 +1541,37 @@ function applyJudgeModeTemplate(mode) {
     },
   };
   const preset = templates[mode] || templates.rubric_plus_pairwise;
+  currentJudgeDraft.value.judge_mode = mode;
+  currentJudgeDraft.value.judge_method = mode === "rubric_score_only"
+    ? "rubric_only"
+    : mode === "anti_template_probe"
+      ? "anti_template_probe"
+      : mode === "raw"
+        ? "raw"
+        : "rubric_plus_pairwise";
   currentJudgeDraft.value.system_prompt = preset.system;
   currentJudgeDraft.value.user_prompt = preset.user;
   currentJudgeDraft.value.persona_text = preset.persona;
+}
+
+function applyJudgePreset(presetId) {
+  const preset = currentJudgePresets.value.find((item) => item.preset_id === presetId);
+  if (!preset) return;
+  const draft = currentJudgeDraft.value;
+  draft.preset_id = preset.preset_id;
+  draft.judge_strategy = preset.strategy;
+  draft.judge_method = preset.method;
+  draft.judge_mode = preset.method === "anti_template_probe" ? "anti_template_probe" : "rubric_plus_pairwise";
+  draft.label = preset.title;
+  draft.description = `${nodeLabel(preset.node_name)} · ${preset.ui_label}`;
+  draft.preset_summary = preset.ui_label || "";
+  draft.packet_policy_json = JSON.stringify(preset.packet_policy || {}, null, 2);
+  draft.rubric_bundle_json = JSON.stringify(preset.rubric_bundle || {}, null, 2);
+  draft.probe_appendix_json = JSON.stringify(preset.probe_appendix || {}, null, 2);
+  applyJudgeModeTemplate(draft.judge_mode);
+  draft.persona_text = "";
+  draft.rubric_json = JSON.stringify(preset.rubric_bundle || {}, null, 2);
+  draft.output_schema_json = JSON.stringify(preset.output_schema || {}, null, 2);
 }
 
 async function loadModelProfiles() {
@@ -1115,6 +1635,76 @@ async function loadJudgeConfigs() {
   }
 }
 
+async function loadJudgePresets() {
+  try {
+    const rows = await fetchJson(`${judgePresetsEndpoint}?node_name=${encodeURIComponent(state.activeNode)}`, { method: "GET" });
+    state.judgePresetsByNode[state.activeNode] = rows;
+    if (!rows?.length) {
+      currentJudgeDraft.value.preset_id = "";
+      return;
+    }
+    if (
+      !currentJudgeDraft.value.preset_id
+      || !rows.some((item) => item.preset_id === currentJudgeDraft.value.preset_id)
+    ) {
+      applyJudgePreset(rows[0].preset_id);
+    }
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+}
+
+async function loadJudgeRequests({ trialId = activeCompareTrial.value?.trial_id || "" } = {}) {
+  try {
+    if (!trialId) {
+      state.judgeRequestsByNode[state.activeNode] = [];
+      selectedJudgeRequestId.value = "";
+      return [];
+    }
+    const query = new URLSearchParams({
+      node_name: state.activeNode,
+      trial_id: trialId,
+      limit: "20",
+    });
+    const rows = await fetchJson(`${judgeRequestsEndpoint}?${query.toString()}`, { method: "GET" });
+    state.judgeRequestsByNode[state.activeNode] = rows;
+    if (
+      selectedJudgeRequestId.value
+      && !rows.some((item) => item.judge_request_id === selectedJudgeRequestId.value)
+    ) {
+      selectedJudgeRequestId.value = "";
+    }
+    return rows || [];
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+  return [];
+}
+
+async function syncSelectedJudgeRequestForActiveCompare({ preferredId = "", autoLoadDetail = false } = {}) {
+  const rows = state.judgeRequestsByNode[state.activeNode] || [];
+  const nextId = (
+    (preferredId && rows.some((item) => item.judge_request_id === preferredId) && preferredId)
+    || (selectedJudgeRequestId.value && rows.some((item) => item.judge_request_id === selectedJudgeRequestId.value) && selectedJudgeRequestId.value)
+    || rows[0]?.judge_request_id
+    || ""
+  );
+  if (!nextId) {
+    selectedJudgeRequestId.value = "";
+    return null;
+  }
+  selectedJudgeRequestId.value = nextId;
+  if (
+    autoLoadDetail
+    && selectedJudgeRequestDetail.value?.request?.judge_request_id !== nextId
+  ) {
+    return await loadJudgeRequestDetail(nextId);
+  }
+  return selectedJudgeRequestDetail.value?.request?.judge_request_id === nextId
+    ? selectedJudgeRequestDetail.value
+    : null;
+}
+
 async function loadSessions() {
   loading.sessions = true;
   try {
@@ -1132,38 +1722,85 @@ async function loadSessions() {
   }
 }
 
+async function loadRecentTrials() {
+  try {
+    const query = new URLSearchParams({
+      node_name: state.activeNode,
+      workspace_type: "baseline_compare",
+      reading_goal: currentReadingGoal.value,
+      reading_variant: currentReadingVariant.value,
+      limit: "8",
+    });
+    const rows = await fetchJson(`${trialsEndpoint}?${query.toString()}`, { method: "GET" });
+    state.recentTrialsByNode[state.activeNode] = rows || [];
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+}
+
 async function loadSessionDetail(sessionId) {
   if (!sessionId) return;
   try {
     const detail = await fetchJson(`${sessionsEndpoint}/${encodeURIComponent(sessionId)}`, { method: "GET" });
     state.sessionDetailsById[sessionId] = detail;
-    state.judgeRequestsByNode[state.activeNode] = Array.isArray(detail?.judge_requests) ? detail.judge_requests : [];
-    if (!state.selectedTrialIdBySession[sessionId] && detail?.trials?.[0]?.trial_id) {
+    const preferredTrialId = state.selectedTrialIdBySession[sessionId];
+    if (preferredTrialId && detail?.trials?.some((trial) => trial.trial_id === preferredTrialId)) {
+      await loadTrialDetail(preferredTrialId, sessionId);
+    } else if (detail?.trials?.[0]?.trial_id) {
       state.selectedTrialIdBySession[sessionId] = detail.trials[0].trial_id;
+      await loadTrialDetail(detail.trials[0].trial_id, sessionId);
+    } else {
+      state.selectedTrialIdBySession[sessionId] = "";
     }
   } catch (error) {
     setFeedback({ error: error.message });
   }
 }
 
-async function loadTrialDetail(trialId, sessionId = selectedSessionId.value) {
+async function loadTrialDetail(trialId, sessionId = "") {
   try {
     const detail = await fetchJson(`${trialsEndpoint}/${encodeURIComponent(trialId)}`, { method: "GET" });
     state.selectedTrialDetailsById[trialId] = detail;
     if (sessionId) {
       state.selectedTrialIdBySession[sessionId] = trialId;
     }
+    return detail;
   } catch (error) {
     setFeedback({ error: error.message });
   }
+  return null;
 }
 
-async function createAndOpenSession() {
-  selectedSessionId.value = "";
-  const sessionId = await ensureCurrentSession();
-  if (!sessionId) return;
-  state.activeWorkspace = "sessions";
-  await loadSessionDetail(sessionId);
+async function openCompareTrialInWorkbench(trialId, { source = "recent", switchWorkspace = true, openJudge = false, judgeRequestId = "" } = {}) {
+  if (!trialId) return null;
+  const detail = await loadTrialDetail(trialId);
+  if (!detail?.trial || !detail?.result) return null;
+  state.compareResultsByNode[state.activeNode] = detail.result;
+  setActiveCompareView(state.activeNode, {
+    source,
+    trial: detail.trial,
+    result: detail.result,
+    trialId: detail.trial.trial_id,
+    sessionId: detail.trial.session_id || "",
+    inputPreview: detail.trial.input_excerpt || "",
+  });
+  state.currentCompareTrialIdByNode[state.activeNode] = detail.trial.trial_id;
+  state.latestPersistedCompareTrialByNode[state.activeNode] = detail.trial.trial_id;
+  if (switchWorkspace) state.activeWorkspace = "baseline_compare";
+  comparePanelTab.value = openJudge ? "judge" : "compare";
+  await loadJudgeRequests({ trialId: detail.trial.trial_id });
+  await syncSelectedJudgeRequestForActiveCompare({
+    preferredId: judgeRequestId,
+    autoLoadDetail: openJudge || Boolean(judgeRequestId),
+  });
+  return detail;
+}
+
+function goStartCompareFromEmpty() {
+  state.activeWorkspace = "baseline_compare";
+  setFeedback({
+    info: "请先跑一条 compare，再在结果区选择“新建 Session 并加入”。",
+  });
 }
 
 async function openCurrentSessionWorkspace() {
@@ -1277,23 +1914,13 @@ async function saveJudgeConfig() {
   }
 }
 
-async function ensureCurrentSession() {
-  if (selectedSessionId.value) return selectedSessionId.value;
-  loading.createSession = true;
-  try {
-    const session = await fetchJson(sessionsEndpoint, {
-      method: "POST",
-      body: JSON.stringify(buildSessionSeed()),
-    });
-    selectedSessionId.value = session.session_id;
-    await loadSessions();
-    return session.session_id;
-  } finally {
-    loading.createSession = false;
-  }
-}
-
 async function runSingle({ dryRun = false, useCandidate = true, persist = false } = {}) {
+  if (persist) {
+    setFeedback({
+      error: "Single Run 不再写入 Session。请前往 Baseline Compare 跑 compare 后再加入。",
+    });
+    return;
+  }
   const nodeName = state.activeNode;
   const requestLabel = dryRun
     ? "预览 Prompt"
@@ -1308,14 +1935,11 @@ async function runSingle({ dryRun = false, useCandidate = true, persist = false 
   loading.run = true;
   setFeedback();
   try {
-    const sessionId = persist ? await ensureCurrentSession() : "";
     const data = await fetchJson(runEndpoint, {
       method: "POST",
       body: JSON.stringify({
         request: buildRunRequest({ dryRun, useCandidate }),
-        persist_trial: persist,
-        session_id: sessionId || undefined,
-        session: persist ? buildSessionSeed() : undefined,
+        persist_trial: false,
       }),
     });
     state.singleRunResultsByNode[nodeName] = data.result;
@@ -1324,16 +1948,10 @@ async function runSingle({ dryRun = false, useCandidate = true, persist = false 
       requestLabel,
       lastCompletedAt: new Date().toISOString(),
     };
-    if (data.trial?.trial_id) {
-      await loadSessionDetail(data.trial.session_id || sessionId);
-      await loadTrialDetail(data.trial.trial_id, data.trial.session_id || sessionId);
-    }
     setFeedback({
       info: dryRun
         ? "Candidate Prompt 预览已更新。"
-        : persist
-          ? "Single Run 已完成并写入 Session。"
-          : "Single Run 已完成。",
+        : "Single Run 已完成。结果保留在页面状态中，不进入 Session。",
     });
   } catch (error) {
     setFeedback({ error: error.message });
@@ -1342,15 +1960,217 @@ async function runSingle({ dryRun = false, useCandidate = true, persist = false 
   }
 }
 
+function buildCandidateRegistryEntryFromResult(result, snapshot) {
+  if (!result || !snapshot) return null;
+  const candidatePromptIdentity = result?.candidate?.prompt_identity || {};
+  const candidateModelIdentity = result?.candidate?.model_identity || {};
+  const fallbackId = `attached-${shortId(
+    String(snapshot.request_id || snapshot.source_text_hash || Date.now().toString()).trim()
+    || Date.now().toString()
+  )}`;
+  const candidateId = String(candidatePromptIdentity.prompt_variant_id || "").trim() || fallbackId;
+  const snapshotHash = String(candidatePromptIdentity.prompt_snapshot_hash || "").trim();
+  const nodeName = String(snapshot.node_name || result?.node_name || "").trim();
+  return {
+    candidate_id: candidateId,
+    node_name: nodeName,
+    label: candidateId,
+    description: "从当前已运行的 compare result 派生的 candidate 痕迹",
+    source_kind: "attached_compare",
+    normalized_manifest_json: {
+      snapshot_hash: snapshotHash || null,
+      source: "attached_compare",
+      model_profile: candidateModelIdentity?.profile_name || null,
+      model_name: candidateModelIdentity?.model_name || null,
+      request_id: snapshot.request_id || null,
+      source_text_hash: snapshot.source_text_hash || null,
+    },
+  };
+}
+
+async function attachCurrentCompareToSession({ createNewSession = false } = {}) {
+  if (state.activeWorkspace !== "baseline_compare") {
+    setFeedback({ error: "请先切换到 Baseline Compare 再加入 Session。" });
+    return;
+  }
+  if (!compareResult.value) {
+    setFeedback({ error: "请先运行 Compare，再把这条结果加入 Session。" });
+    return;
+  }
+  const snapshot = compareRequestSnapshot.value;
+  if (!snapshot) {
+    setFeedback({
+      error: "当前 Compare 结果缺少 request_snapshot，请重新运行 Compare 后再加入 Session。",
+    });
+    return;
+  }
+  if (!createNewSession && !selectedSessionId.value) {
+    setFeedback({ error: "当前没有挂载的 Session。请先选择一条 Session，或新建 Session。" });
+    return;
+  }
+  try {
+    const compareRequestFromSnapshot = {
+      node_name: String(snapshot.node_name || compareResult.value?.node_name || "").trim(),
+      reading_goal: String(snapshot.reading_goal || "").trim(),
+      reading_variant: String(snapshot.reading_variant || "").trim(),
+      source_type: snapshot.source_type || "user_input",
+    };
+    const body = {
+      request: compareRequestFromSnapshot,
+      result: compareResult.value,
+    };
+    if (createNewSession) {
+      const candidateEntry = buildCandidateRegistryEntryFromResult(compareResult.value, snapshot);
+      body.session = {
+        node_name: compareRequestFromSnapshot.node_name,
+        title: `Compare 实验记录本 · ${compareRequestFromSnapshot.node_name} · ${compareRequestFromSnapshot.reading_goal} · ${compareRequestFromSnapshot.reading_variant}`,
+        goal: `Compare 实验记录本：${compareRequestFromSnapshot.reading_goal} · ${compareRequestFromSnapshot.reading_variant}`,
+        baseline_snapshot_json: {
+          reading_goal: compareRequestFromSnapshot.reading_goal,
+          reading_variant: compareRequestFromSnapshot.reading_variant,
+          source_text_hash: snapshot.source_text_hash || null,
+        },
+        candidate_registry_json: candidateEntry ? [candidateEntry] : [],
+      };
+    } else {
+      body.session_id = selectedSessionId.value;
+    }
+    const data = await fetchJson(`${compareEndpoint}/attach`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    if (data?.trial?.trial_id) {
+      state.latestPersistedCompareTrialByNode[state.activeNode] = data.trial.trial_id;
+      state.currentCompareTrialIdByNode[state.activeNode] = data.trial.trial_id;
+    }
+    if (data?.session?.session_id) {
+      selectedSessionId.value = data.session.session_id;
+      await loadSessions();
+      await loadSessionDetail(data.session.session_id);
+    }
+    if (data?.trial?.trial_id) {
+      await loadTrialDetail(data.trial.trial_id, data.trial.session_id);
+      setActiveCompareView(state.activeNode, {
+        source: "session",
+        trial: data.trial,
+        result: compareResult.value,
+        trialId: data.trial.trial_id,
+        sessionId: data.trial.session_id || "",
+        inputPreview: data.trial.input_excerpt || buildInputPreview(currentText.value),
+      });
+      comparePanelTab.value = "compare";
+    }
+    await loadRecentTrials();
+    setFeedback({
+      info: createNewSession
+        ? "已新建 Session，并把当前 Compare 结果加入。"
+        : "当前 Compare 结果已加入 Session（未重跑）。",
+    });
+    return data;
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+}
+
+async function addCurrentCompareToSession() {
+  return attachCurrentCompareToSession({ createNewSession: false });
+}
+
+async function createSessionAndAddCurrentCompare() {
+  return attachCurrentCompareToSession({ createNewSession: true });
+}
+
+async function loadJudgeRequestDetail(judgeRequestId) {
+  if (!judgeRequestId) return;
+  try {
+    const detail = await fetchJson(`${judgeRequestsEndpoint}/${encodeURIComponent(judgeRequestId)}`, { method: "GET" });
+    state.judgeRequestDetailsById[judgeRequestId] = detail;
+    selectedJudgeRequestId.value = judgeRequestId;
+    if (detail?.request?.trial_id && activeCompareTrial.value?.trial_id !== detail.request.trial_id) {
+      await openCompareTrialInWorkbench(detail.request.trial_id, {
+        source: detail.request.session_id ? "session" : "standalone",
+        switchWorkspace: false,
+        openJudge: true,
+      });
+      await loadJudgeRequests({ trialId: detail.request.trial_id });
+    }
+    comparePanelTab.value = "judge";
+    return detail;
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+  return null;
+}
+
+async function cancelJudgeRequest(judgeRequestId) {
+  if (!judgeRequestId) return;
+  try {
+    await fetchJson(`${judgeRequestsEndpoint}/${encodeURIComponent(judgeRequestId)}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    await loadJudgeRequests({ trialId: activeCompareTrial.value?.trial_id || "" });
+    await loadJudgeRequestDetail(judgeRequestId);
+    setFeedback({ info: `Judge request 已取消：${judgeRequestId}` });
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+}
+
+async function retryJudgeRequest(judgeRequestId) {
+  if (!judgeRequestId) return;
+  try {
+    const created = await fetchJson(`${judgeRequestsEndpoint}/${encodeURIComponent(judgeRequestId)}/retry`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    await loadJudgeRequests({ trialId: activeCompareTrial.value?.trial_id || "" });
+    await loadJudgeRequestDetail(created.judge_request_id);
+    setFeedback({ info: `Judge request 已重新排队：${created.judge_request_id}` });
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+}
+
+async function executeJudgeRequest(judgeRequestId) {
+  if (!judgeRequestId) return;
+  loading.executeJudge = true;
+  setFeedback();
+  try {
+    const result = await fetchJson(`${judgeRequestsEndpoint}/${encodeURIComponent(judgeRequestId)}/execute`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    await loadJudgeRequests({ trialId: activeCompareTrial.value?.trial_id || "" });
+    await loadJudgeRequestDetail(judgeRequestId);
+    if (selectedSessionId.value) {
+      await loadSessionDetail(selectedSessionId.value);
+    }
+    comparePanelTab.value = "judge";
+    setFeedback({ info: `Judge request 已执行完成：${judgeRequestId}，状态：${statusLabel(result.request?.status || "unknown")}` });
+  } catch (error) {
+    setFeedback({ error: error.message });
+  } finally {
+    loading.executeJudge = false;
+  }
+}
+
 async function runCompare({ persist = false } = {}) {
+  if (persist) {
+    const error = new Error(
+      "runCompare({ persist: true }) 已被禁用：旧路径会先建空 Session 再持久化 compare，" +
+      "与 Sessions 重构后的设计冲突。请改用 Baseline Compare 的“加入 Session” / “新建 Session 并加入”。"
+    );
+    setFeedback({ error: error.message });
+    throw error;
+  }
   loading.compare = true;
   setFeedback();
   try {
     state.compareUiStateByNode[state.activeNode] = {
       ...(state.compareUiStateByNode[state.activeNode] || {}),
-      requestLabel: persist ? "写入 Session 的 Compare" : "当前 Compare",
+      requestLabel: "当前 Compare",
     };
-    const sessionId = persist ? await ensureCurrentSession() : "";
     const data = await fetchJson(compareEndpoint, {
       method: "POST",
       body: JSON.stringify({
@@ -1360,25 +2180,31 @@ async function runCompare({ persist = false } = {}) {
           reading_goal: currentReadingGoal.value,
           reading_variant: currentReadingVariant.value,
           source_type: "user_input",
+          timeout_seconds: defaultNodeLabTimeoutSeconds,
           candidate_override: buildCandidateOverride(),
         },
-        persist_trial: persist,
-        session_id: sessionId || undefined,
-        session: persist ? buildSessionSeed() : undefined,
+        persist_trial: false,
       }),
     });
     state.compareResultsByNode[state.activeNode] = data.result;
+    state.currentCompareTrialIdByNode[state.activeNode] = "";
+    state.judgeRequestsByNode[state.activeNode] = [];
+    setActiveCompareView(state.activeNode, {
+      source: "live",
+      trial: null,
+      result: data.result,
+      inputPreview: buildInputPreview(currentText.value),
+    });
+    pendingJudgeRequestId.value = "";
+    selectedJudgeRequestId.value = "";
+    comparePanelTab.value = "compare";
     state.compareUiStateByNode[state.activeNode] = {
       ...(state.compareUiStateByNode[state.activeNode] || {}),
-      requestLabel: persist ? "写入 Session 的 Compare" : "当前 Compare",
+      requestLabel: "当前 Compare",
       lastCompletedAt: new Date().toISOString(),
     };
-    if (data.trial?.trial_id) {
-      state.latestPersistedCompareTrialByNode[state.activeNode] = data.trial.trial_id;
-      await loadSessionDetail(data.trial.session_id || sessionId);
-      await loadTrialDetail(data.trial.trial_id, data.trial.session_id || sessionId);
-    }
-    setFeedback({ info: persist ? "Compare 已完成并写入 Session。" : "Compare 已完成。" });
+    await loadRecentTrials();
+    setFeedback({ info: "Compare 已完成。" });
     return data;
   } catch (error) {
     setFeedback({ error: error.message });
@@ -1388,16 +2214,71 @@ async function runCompare({ persist = false } = {}) {
   }
 }
 
-async function queueJudgeCompare() {
+async function queueJudgeCompare({ autoExecute = false } = {}) {
   loading.queueJudge = true;
   setFeedback();
   try {
-    let trialId = latestCompareTrialId.value;
-    if (!trialId) {
-      const compareData = await runCompare({ persist: true });
-      trialId = compareData?.trial?.trial_id || "";
+    const mismatch = compareSnapshotContextMismatchReason.value;
+    let trialId = currentCompareTrialId.value && !mismatch ? currentCompareTrialId.value : "";
+    let trialSourceLabel = trialId ? "当前 Compare 对应的 Trial" : "";
+    if (!trialId && compareResult.value && !mismatch) {
+      const attachBody = {
+        result: compareResult.value,
+        persist_without_session: true,
+      };
+      const attachData = await fetchJson(`${compareEndpoint}/attach`, {
+        method: "POST",
+        body: JSON.stringify(attachBody),
+      });
+      trialId = attachData?.trial?.trial_id;
+      if (trialId) {
+        state.latestPersistedCompareTrialByNode[state.activeNode] = trialId;
+        state.currentCompareTrialIdByNode[state.activeNode] = trialId;
+        setActiveCompareView(state.activeNode, {
+          source: "standalone",
+          trial: attachData.trial,
+          result: compareResult.value,
+          trialId: attachData.trial?.trial_id,
+          sessionId: "",
+          inputPreview: attachData.trial?.input_excerpt || buildInputPreview(currentText.value),
+        });
+        trialSourceLabel = "当前 Compare 自动保存的独立 Trial";
+      }
     }
-    if (!trialId) throw new Error("无法生成可用于 Judge Compare 的 compare trial。");
+    if (!trialId && compareResult.value) {
+      if (currentCompareTrialId.value) {
+        trialId = currentCompareTrialId.value;
+        trialSourceLabel = "当前页面仍显示的上一条 Compare 对应 Trial";
+      } else {
+        const attachBody = {
+          result: compareResult.value,
+          persist_without_session: true,
+        };
+        const attachData = await fetchJson(`${compareEndpoint}/attach`, {
+          method: "POST",
+          body: JSON.stringify(attachBody),
+        });
+        trialId = attachData?.trial?.trial_id;
+        if (trialId) {
+          state.latestPersistedCompareTrialByNode[state.activeNode] = trialId;
+          state.currentCompareTrialIdByNode[state.activeNode] = trialId;
+          setActiveCompareView(state.activeNode, {
+            source: "standalone",
+            trial: attachData.trial,
+            result: compareResult.value,
+            trialId: attachData.trial?.trial_id,
+            sessionId: "",
+            inputPreview: attachData.trial?.input_excerpt || buildInputPreview(currentText.value),
+          });
+          trialSourceLabel = "上一条 Compare 自动保存的独立 Trial";
+        }
+      }
+    }
+    if (!trialId && latestCompareTrialId.value) {
+      trialId = latestCompareTrialId.value;
+      trialSourceLabel = "历史持久化 Trial";
+    }
+    if (!trialId) throw new Error("没有可用于 Judge 的 compare 结果。请先运行 Compare，再排队 Judge Request。");
     const request = await fetchJson(judgeRequestsEndpoint, {
       method: "POST",
       body: JSON.stringify({
@@ -1406,14 +2287,95 @@ async function queueJudgeCompare() {
         notes: currentJudgeDraft.value.notes,
       }),
     });
+    pendingJudgeRequestId.value = request.judge_request_id;
+    await loadJudgeRequests({ trialId });
+    if (!autoExecute) {
+      await syncSelectedJudgeRequestForActiveCompare({
+        preferredId: request.judge_request_id,
+        autoLoadDetail: true,
+      });
+    }
+    await loadRecentTrials();
     if (selectedSessionId.value) {
       await loadSessionDetail(selectedSessionId.value);
     }
-    setFeedback({ info: `Judge request 已排队：${request.judge_request_id}` });
+    comparePanelTab.value = "judge";
+    if (autoExecute) {
+      await executeJudgeRequest(request.judge_request_id);
+      return;
+    }
+    setFeedback({ info: `Judge request 已创建：${request.judge_request_id}（来源：${trialSourceLabel || trialId}）。点击"执行这条 Request"开始评审。` });
   } catch (error) {
     setFeedback({ error: error.message });
   } finally {
     loading.queueJudge = false;
+  }
+}
+
+async function openSessionTrialInCompare(trialId, { openJudge = false, judgeRequestId = "" } = {}) {
+  await openCompareTrialInWorkbench(trialId, {
+    source: "session",
+    switchWorkspace: true,
+    openJudge,
+    judgeRequestId,
+  });
+}
+
+async function deleteSession(sessionId) {
+  if (!sessionId) return;
+  const confirmed = window.confirm("删除整个 Session 会同时删除其下全部 compare 与 Judge 结果，且不可恢复。确认删除？");
+  if (!confirmed) return;
+  setFeedback();
+  try {
+    await fetchJson(`${sessionsEndpoint}/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    const deletedActiveCompare = activeCompareTrial.value?.session_id === sessionId;
+    delete state.sessionDetailsById[sessionId];
+    if (selectedSessionId.value === sessionId) {
+      selectedSessionId.value = "";
+    }
+    for (const [trialId, detail] of Object.entries(state.selectedTrialDetailsById)) {
+      if (detail?.trial?.session_id === sessionId) {
+        delete state.selectedTrialDetailsById[trialId];
+      }
+    }
+    if (deletedActiveCompare) {
+      clearActiveCompareView(state.activeNode, { preserveLatestTrial: false });
+      selectedJudgeRequestId.value = "";
+      pendingJudgeRequestId.value = "";
+    }
+    await loadSessions();
+    await loadJudgeRequests({ trialId: activeCompareTrial.value?.trial_id || "" });
+    await loadRecentTrials();
+    setFeedback({ info: "Session 已删除，对应 compare 与 Judge 结果已一并移除。" });
+  } catch (error) {
+    setFeedback({ error: error.message });
+  }
+}
+
+async function deleteTrial(trialId) {
+  if (!trialId) return;
+  const confirmed = window.confirm("删除这条 compare 会同时删除其挂载的 Judge 结果与 artifact，且不可恢复。确认删除？");
+  if (!confirmed) return;
+  setFeedback();
+  try {
+    await fetchJson(`${trialsEndpoint}/${encodeURIComponent(trialId)}`, { method: "DELETE" });
+    if (activeCompareTrial.value?.trial_id === trialId) {
+      clearActiveCompareView(state.activeNode, { preserveLatestTrial: false });
+      selectedJudgeRequestId.value = "";
+      pendingJudgeRequestId.value = "";
+    }
+    if (selectedSessionTrialId.value === trialId && selectedSessionId.value) {
+      state.selectedTrialIdBySession[selectedSessionId.value] = "";
+    }
+    delete state.selectedTrialDetailsById[trialId];
+    await loadJudgeRequests({ trialId: activeCompareTrial.value?.trial_id || "" });
+    await loadRecentTrials();
+    if (selectedSessionId.value) {
+      await loadSessionDetail(selectedSessionId.value);
+    }
+    setFeedback({ info: "这条 compare 已删除，所挂 Judge 结果也已一并移除。" });
+  } catch (error) {
+    setFeedback({ error: error.message });
   }
 }
 
@@ -1443,11 +2405,24 @@ function selectSavedCandidate(candidateId) {
 function selectSavedJudgeConfig(judgeConfigId) {
   const selected = currentSavedJudgeConfigs.value.find((item) => item.judge_config_id === judgeConfigId);
   if (!selected) return;
+  const normalized = selected.normalized_config_json || {};
+  if (normalized.preset_id && currentJudgePresets.value.some((item) => item.preset_id === normalized.preset_id)) {
+    applyJudgePreset(normalized.preset_id);
+  }
   const draft = currentJudgeDraft.value;
   draft.judge_config_id = selected.judge_config_id;
   draft.label = selected.label;
   draft.description = selected.description || "";
-  draft.judge_mode = selected.judge_mode;
+  draft.judge_mode = judgeModeAllowedForNode(state.activeNode, selected.judge_mode)
+    ? selected.judge_mode
+    : defaultJudgeModeForNode(state.activeNode);
+  draft.preset_id = normalized.preset_id || "";
+  draft.judge_strategy = normalized.judge_strategy || "";
+  draft.judge_method = normalized.judge_method || "";
+  draft.preset_summary = normalized.preset_summary || "";
+  draft.packet_policy_json = JSON.stringify(normalized.packet_policy_json || {}, null, 2);
+  draft.rubric_bundle_json = JSON.stringify(normalized.rubric_bundle_json || {}, null, 2);
+  draft.probe_appendix_json = JSON.stringify(normalized.probe_appendix_json || {}, null, 2);
   draft.persona_text = selected.persona_json?.description || "";
   draft.system_prompt = selected.prompt_templates_json?.system_prompt || "";
   draft.user_prompt = selected.prompt_templates_json?.user_prompt || "";
@@ -1475,7 +2450,8 @@ watch(
   async () => {
     setFeedback();
     await loadBaselineConfig();
-    await Promise.all([loadCandidates(), loadJudgeConfigs(), loadSessions()]);
+    await Promise.all([loadCandidates(), loadJudgePresets(), loadJudgeConfigs(), loadSessions(), loadRecentTrials()]);
+    await loadJudgeRequests({ trialId: activeCompareTrial.value?.trial_id || "" });
   },
   { immediate: false },
 );
@@ -1508,9 +2484,19 @@ onMounted(async () => {
   loadPersistedState();
   await loadModelProfiles();
   await loadBaselineConfig();
-  await Promise.all([loadCandidates(), loadJudgeConfigs(), loadSessions()]);
-  if (!currentJudgeDraft.value.system_prompt) {
-    applyJudgeModeTemplate(currentJudgeDraft.value.judge_mode);
+  await Promise.all([loadCandidates(), loadJudgePresets(), loadJudgeConfigs(), loadSessions(), loadRecentTrials()]);
+  const restoredTrialId = activeCompareView.value?.trialId || currentCompareTrialId.value || "";
+  if (restoredTrialId) {
+    await openCompareTrialInWorkbench(restoredTrialId, {
+      source: activeCompareView.value?.source || "history",
+      switchWorkspace: false,
+      openJudge: comparePanelTab.value === "judge",
+    });
+  } else {
+    await loadJudgeRequests({ trialId: "" });
+  }
+  if (selectedJudgeRequestId.value) {
+    await loadJudgeRequestDetail(selectedJudgeRequestId.value);
   }
 });
 
@@ -1579,7 +2565,7 @@ const fewShotModesMapped = computed(() => {
   }
   return modes;
 });
-const judgeModesMapped = computed(() => judgeModes.map((m) => ({ text: m.label, value: m.id })));
+const judgeModesMapped = computed(() => availableJudgeModes.value.map((m) => ({ text: m.label, value: m.id })));
 const exampleEditModesMapped = [
   { text: '结构化列表', value: 'structured' },
   { text: 'Raw JSON', value: 'raw' }
@@ -1600,10 +2586,77 @@ const judgerModelOptions = computed(() => [
   { text: '不启用', value: '' },
   ...(modelProfiles.value || []).map(p => ({ text: p.model_name, value: p.profile_name }))
 ]);
+const judgePresetOptions = computed(() => currentJudgePresets.value.map((preset) => ({
+  text: `${preset.ui_label || preset.title}`,
+  value: preset.preset_id,
+})));
 const savedJudgeConfigsMapped = computed(() => [
   { text: '载入已保存配置', value: '' },
   ...(currentSavedJudgeConfigs.value || []).map(c => ({ text: c.label, value: c.judge_config_id }))
 ]);
+
+const currentJudgePreset = computed(() => {
+  const presetId = currentJudgeDraft.value.preset_id;
+  return currentJudgePresets.value.find((item) => item.preset_id === presetId) || null;
+});
+
+const judgeRequestSummaryFacts = computed(() => {
+  const detail = selectedJudgeRequestDetail.value;
+  if (!detail?.request) return [];
+  const result = detail.result || {};
+  return compactFactRows([
+    ["请求状态", statusLabel(detail.request.status)],
+    ["Judge 方法", detail.request.judge_method || detail.request.judge_config_snapshot_json?.judge_method || "未记录"],
+    ["Preset", detail.request.judge_config_snapshot_json?.preset_id || "未记录"],
+    ["Trial", shortId(detail.request.trial_id)],
+    ["更新时间", formatClockTime(detail.request.date_updated || detail.request.finished_at || detail.request.started_at)],
+  ]);
+});
+
+function judgeRequestResultMode(detail) {
+  if (detail?.result?.probe_appendix_result && !detail?.result?.rubric_scoring_result) return "probe";
+  if (detail?.result?.rubric_scoring_result) return "rubric";
+  return "empty";
+}
+
+function judgeAggregatePassRateText(side) {
+  const passRate = side?.aggregate?.pass_rate;
+  if (!Number.isFinite(passRate)) return "未记录";
+  return `${Math.round(passRate * 100)}%`;
+}
+
+function judgeItemResultLabel(item) {
+  return item?.label || item?.item_type || item?.item_id || "未命名条目";
+}
+
+function judgeRequestIssue(detail) {
+  const error = detail?.request?.error_json;
+  if (!error) return null;
+  return {
+    code: error.code || "JudgeRequestError",
+    message: error.message || "Judge request 执行失败。",
+  };
+}
+
+const judgeStepRuns = computed(() => {
+  const stepRuns = selectedJudgeRequestDetail.value?.result?.step_runs || {};
+  const steps = [
+    { key: "rubric", label: "Rubric", value: stepRuns.rubric || null },
+    { key: "pairwise", label: "Pairwise", value: stepRuns.pairwise || null },
+    { key: "probe", label: "Probe", value: stepRuns.probe || null },
+  ];
+  return steps.filter((item) => item.value);
+});
+
+function judgeStepRunFacts(stepRun) {
+  if (!stepRun) return [];
+  return compactFactRows([
+    ["状态", statusLabel(stepRun.status)],
+    ["耗时", formatDurationMs(stepRun.runtime_summary?.latency_ms)],
+    ["Tokens", formatRuntimeTokens(stepRun.runtime_summary)],
+    ["模型", stepRun.model_identity?.model_name || "未记录"],
+  ]);
+}
 
 </script>
 
@@ -1620,17 +2673,18 @@ const savedJudgeConfigsMapped = computed(() => [
       </div>
       <div class="header-meta">
         <div class="meta-item">
-          <span class="meta-label">最近执行状态</span>
-          <span class="meta-value" :class="`text-${latestRunSummary.tone}`">{{ latestRunSummary.value }}</span>
+          <span class="meta-label">当前显示的 Compare</span>
+          <span class="meta-value" :class="`text-${currentDisplayedCompareSummary.tone}`">{{ currentDisplayedCompareSummary.title }}</span>
+          <span class="meta-hint">{{ currentDisplayedCompareSummary.detail }}</span>
         </div>
         <div class="meta-item">
-          <span class="meta-label">当前写入 Session</span>
-          <span class="meta-value" :class="`text-${sessionAttachmentState.tone}`">{{ sessionAttachmentState.title }}</span>
+          <span class="meta-label">{{ sessionMetaLabel }}</span>
+          <span class="meta-value" :class="`text-${currentSessionSummary.tone}`">{{ currentSessionSummary.title }}</span>
           <div class="meta-actions">
-            <button v-if="sessionAttachmentState.attached" class="btn-link" @click="clearSessionAttachment">暂停挂载</button>
-            <button v-else class="btn-link" :disabled="loading.createSession" @click="createAndOpenSession">新建 Session</button>
-            <button v-if="state.activeWorkspace !== 'sessions'" class="btn-link" @click="state.activeWorkspace = 'sessions'">查看历史</button>
+            <button v-if="state.activeWorkspace !== 'sessions' && selectedSessionId" class="btn-link" @click="state.activeWorkspace = 'sessions'">打开 Session</button>
+            <button v-if="selectedSessionId" class="btn-link" @click="clearSessionAttachment">清空选择</button>
           </div>
+          <span class="meta-hint">{{ currentSessionSummary.detail }}</span>
         </div>
       </div>
     </header>
@@ -1670,7 +2724,6 @@ const savedJudgeConfigsMapped = computed(() => [
       class="workbench"
       :class="{
         'is-compare': state.activeWorkspace === 'baseline_compare',
-        'is-judge': state.activeWorkspace === 'judge_compare',
       }"
     >
       <!-- Left Column: Inputs & Configuration -->
@@ -1831,64 +2884,6 @@ const savedJudgeConfigsMapped = computed(() => [
         </section>
 
 
-        <!-- Judge Settings -->
-        
-        <section v-if="state.activeWorkspace === 'judge_compare'" class="panel-section">
-          <div class="section-header">
-            <h3 class="section-title">Judge 设置</h3>
-            <div class="toolbar-actions" style="display: flex; gap: 8px; align-items: center;">
-              <v-select class="w-auto" style="min-width: 180px;" v-model="selectedJudgeConfigValue" :items="savedJudgeConfigsMapped" @update:modelValue="selectSavedJudgeConfig($event)" placeholder="载入已保存配置" />
-              <v-button secondary small :disabled="loading.saveJudgeConfig" @click="saveJudgeConfig">保存</v-button>
-            </div>
-          </div>
-          
-          <div class="form-row">
-            <div class="form-field">
-              <span class="field-label">Label</span>
-              <v-input v-model="currentJudgeDraft.label" />
-            </div>
-            <div class="form-field">
-              <span class="field-label">Judge Mode</span>
-              <v-select v-model="currentJudgeDraft.judge_mode" :items="judgeModesMapped" @update:modelValue="applyJudgeModeTemplate($event)" />
-            </div>
-          </div>
-
-          <div class="form-field mb-3">
-            <span class="field-label">Persona</span>
-            <v-textarea v-model="currentJudgeDraft.persona_text" :rows="2" />
-          </div>
-          <div class="form-field mb-3">
-            <span class="field-label">System Prompt</span>
-            <v-textarea v-model="currentJudgeDraft.system_prompt" :rows="3" />
-          </div>
-          <div class="form-field mb-3">
-            <span class="field-label">User Prompt</span>
-            <v-textarea v-model="currentJudgeDraft.user_prompt" :rows="3" />
-          </div>
-
-          <details class="detail-card mt-3">
-            <summary>高级配置 (Rubric, Schema, Params)</summary>
-            <div class="detail-content">
-              <div class="form-field">
-                <span class="field-label">Rubric Source JSON</span>
-                <v-textarea class="code-font" v-model="currentJudgeDraft.rubric_json" :rows="6" />
-              </div>
-              <div class="form-field mt-3">
-                <span class="field-label">Output Schema JSON</span>
-                <v-textarea class="code-font" v-model="currentJudgeDraft.output_schema_json" :rows="6" />
-              </div>
-            </div>
-          </details>
-
-          <div class="form-row triple mt-3">
-            <div class="form-field" v-for="slot in [0, 1, 2]" :key="`judger-${slot}`">
-              <span class="field-label">Judger {{ slot + 1 }}</span>
-              <v-select v-model="currentJudgeDraft.judger_models[slot]" :items="judgerModelOptions" />
-            </div>
-          </div>
-        </section>
-
-
         <!-- Execution Actions -->
         <section class="panel-section action-section">
           <template v-if="state.activeWorkspace === 'single_run'">
@@ -1896,12 +2891,11 @@ const savedJudgeConfigsMapped = computed(() => [
               <h3 class="section-title">执行操作</h3>
               <span class="help-icon" :title="helpText.session_write">?</span>
             </div>
-            <p class="section-hint mb-3">验证单次结果是否符合预期。确认有价值后再写入 Session 进行持久化。</p>
+            <p class="section-hint mb-3">单次快速试跑，不会进入 Session。需要固定上下文的多轮记录，请前往 Baseline Compare。</p>
             <div class="action-buttons">
               <v-button secondary :disabled="loading.run" @click="runSingle({ dryRun: true, useCandidate: true })">预览 Prompt</v-button>
               <v-button secondary :disabled="loading.run" @click="runSingle({ dryRun: false, useCandidate: false })">运行 Baseline</v-button>
               <v-button :disabled="loading.run" @click="runSingle({ dryRun: false, useCandidate: true })">运行 Candidate</v-button>
-              <v-button outlined :disabled="loading.run" @click="runSingle({ dryRun: false, useCandidate: true, persist: true })">{{ sessionPersistActionLabel }}</v-button>
             </div>
           </template>
           <template v-else-if="state.activeWorkspace === 'baseline_compare'">
@@ -1909,25 +2903,30 @@ const savedJudgeConfigsMapped = computed(() => [
               <h3 class="section-title">执行对比</h3>
               <span class="help-icon" :title="helpText.compare_status">?</span>
             </div>
-            <p class="section-hint mb-3">同时运行 Baseline 和 Candidate 以观察差异。</p>
+            <p class="section-hint mb-3">同时运行 Baseline 和 Candidate 以观察差异。完成后再决定是否把当前结果加入 Session。</p>
             <div class="action-buttons">
               <v-button :disabled="loading.compare" @click="runCompare({ persist: false })">运行 Compare</v-button>
-              <v-button outlined :disabled="loading.compare" @click="runCompare({ persist: true })">{{ sessionPersistActionLabel }}</v-button>
+              <v-button
+                :disabled="!!joinSessionBlockReason"
+                :title="attachCurrentCompareTooltip"
+                @click="addCurrentCompareToSession()"
+              >
+                加入 Session
+              </v-button>
+              <v-button
+                outlined
+                :disabled="!!createSessionAndAddBlockReason"
+                :title="createSessionAndAddTooltip"
+                @click="createSessionAndAddCurrentCompare()"
+              >
+                新建 Session 并加入
+              </v-button>
             </div>
-          </template>
-          <template v-else>
-            <div class="action-header">
-              <h3 class="section-title">前置检查与执行</h3>
-              <span class="help-icon" :title="helpText.judge_prerequisite">?</span>
-            </div>
-            <div class="status-banner" :class="judgePrerequisite.ready ? 'is-ready' : 'is-warning'">
-              <strong>{{ judgePrerequisite.title }}</strong>
-              <p class="text-sm mt-1">{{ judgePrerequisite.detail }}</p>
-            </div>
-            <div class="action-buttons mt-3">
-              <v-button secondary :disabled="loading.compare" @click="runCompare({ persist: true })">运行 Compare 并保存</v-button>
-              <v-button :disabled="loading.queueJudge || !judgePrerequisite.ready" @click="queueJudgeCompare">排队 Judge Request</v-button>
-            </div>
+            <p class="block-hint mt-3">
+              当前 Session 目标：
+              <strong>{{ selectedSessionDetail?.session?.title || "未选择" }}</strong>
+              <span v-if="selectedSessionDetail?.session">。只有点击“加入 Session”时，当前 compare 才会写入这本 notebook。</span>
+            </p>
           </template>
         </section>
 
@@ -1938,7 +2937,7 @@ const savedJudgeConfigsMapped = computed(() => [
         <section class="result-shell">
           <div class="result-header">
             <h3 class="result-title">
-              {{ state.activeWorkspace === 'single_run' ? '执行结果' : state.activeWorkspace === 'baseline_compare' ? '对比摘要' : 'Judge 概览' }}
+              {{ state.activeWorkspace === 'single_run' ? '执行结果' : '对比摘要' }}
             </h3>
             <span
               v-if="state.activeWorkspace === 'single_run' && singleRunRefreshState.active"
@@ -1946,6 +2945,13 @@ const savedJudgeConfigsMapped = computed(() => [
               :class="`is-${singleRunRefreshState.mode}`"
             >
               {{ singleRunRefreshState.title }}
+            </span>
+            <span
+              v-else-if="state.activeWorkspace === 'baseline_compare' && compareRefreshState.active"
+              class="result-status-pill"
+              :class="`is-${compareRefreshState.mode}`"
+            >
+              {{ compareRefreshState.title }}
             </span>
           </div>
 
@@ -2072,7 +3078,34 @@ const savedJudgeConfigsMapped = computed(() => [
               </div>
               <p>{{ compareRefreshState.detail }}</p>
             </div>
+            <div
+              v-if="compareSnapshotContextMismatchReason"
+              class="status-banner is-warning mb-4"
+            >
+              <strong>当前看到的是旧 Compare</strong>
+              <p class="text-sm mt-1">{{ compareSnapshotContextMismatchReason }}。如需评审当前表单，请先重新运行 Compare。</p>
+            </div>
+
+            <div v-if="compareResult || activeCompareTrial || selectedJudgeRequestDetail?.request" class="compare-panel-tabs">
+              <button
+                class="segment-btn"
+                :class="{ active: comparePanelTab === 'compare' }"
+                @click="comparePanelTab = 'compare'"
+              >
+                Compare
+              </button>
+              <button
+                class="segment-btn"
+                :class="{ active: comparePanelTab === 'judge' }"
+                @click="comparePanelTab = 'judge'"
+              >
+                Judge
+                <span v-if="activeCompareJudgeRequests.length" class="badge badge-sm badge-neutral ml-1">{{ activeCompareJudgeRequests.length }}</span>
+              </button>
+            </div>
+
             <div v-if="compareResult">
+              <template v-if="comparePanelTab === 'compare'">
               <div class="compare-overview">
                 <article
                   v-for="card in compareOverviewCards"
@@ -2150,11 +3183,59 @@ const savedJudgeConfigsMapped = computed(() => [
                   <span class="compare-status-line__detail">Baseline {{ statusLabel(compareResultStatus.baseline_status) }} / Candidate {{ statusLabel(compareResultStatus.candidate_status) }}</span>
                 </div>
                 <div class="compare-status-line__item">
-                  <span class="meta-label">最近持久化 Trial</span>
-                  <strong>{{ latestCompareTrialId || "未写入 Session" }}</strong>
-                  <span class="compare-status-line__detail">{{ latestCompareTrialId ? "可继续挂 judge request 或回看 Session" : "当前结果只保留在页面状态中" }}</span>
+                  <span class="meta-label">当前可用 Compare Trial</span>
+                  <strong>{{ compareTrialAvailability.id }}</strong>
+                  <span class="compare-status-line__detail">{{ compareTrialAvailability.detail }}</span>
                 </div>
               </div>
+
+              <div v-if="activeCompareRelation" class="compare-relation-strip mb-4">
+                <div class="relation-chip" :class="`is-${activeCompareRelation.sourceTone}`">
+                  <span class="relation-label">当前 Compare</span>
+                  <strong>#{{ activeCompareRelation.compareId }}</strong>
+                </div>
+                <div class="relation-chip">
+                  <span class="relation-label">来源</span>
+                  <strong>{{ activeCompareRelation.sourceLabel }}</strong>
+                </div>
+                <div class="relation-chip" v-if="activeCompareRelation.sessionTitle">
+                  <span class="relation-label">所属 Session</span>
+                  <strong>{{ activeCompareRelation.sessionTitle }}</strong>
+                </div>
+                <div class="relation-chip">
+                  <span class="relation-label">Judge</span>
+                  <strong>{{ activeCompareRelation.judgeCount }} 条</strong>
+                </div>
+                <div class="relation-chip is-warning" v-if="activeCompareRelation.staleReason">
+                  <span class="relation-label">状态</span>
+                  <strong>旧结果</strong>
+                </div>
+              </div>
+
+              <details v-if="recentTrials.length" class="detail-card detail-card--compact mb-4">
+                <summary>历史 Compare 入口（{{ recentTrials.length }}）</summary>
+                <div class="detail-content">
+                  <p class="block-hint mb-3">历史回看优先使用 Sessions。这里只保留当前节点下最近的 Compare Trial 快速入口。</p>
+                  <div class="request-list">
+                    <button
+                      v-for="trial in recentTrials"
+                      :key="trial.trial_id"
+                      class="request-item request-item--interactive request-item--verbose"
+                      :class="{ active: activeCompareTrial?.trial_id === trial.trial_id }"
+                      @click="openCompareTrialInWorkbench(trial.trial_id, { source: trial.session_id ? 'session' : 'recent', switchWorkspace: false, openJudge: false })"
+                    >
+                      <div class="request-main">
+                        <span class="request-id">{{ trialReadableTitle(trial) }}</span>
+                        <span class="request-meta">{{ trialReadableMeta(trial) }}</span>
+                        <span v-if="trial.display_excerpt" class="request-submeta">「{{ trial.display_excerpt }}」</span>
+                      </div>
+                      <div class="request-side">
+                        <span class="badge badge-sm" :class="trial.session_id ? 'badge-active' : 'badge-neutral'">{{ compareTrialSourceLabel(trial) }}</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </details>
 
               <div class="compare-canvas">
                 <div
@@ -2331,46 +3412,355 @@ const savedJudgeConfigsMapped = computed(() => [
                   <JsonTreeView :value="parseNestedJson(compareResult)" empty-text="暂无 Compare 结果 JSON。" />
                 </ResultBlock>
               </div>
+              </template>
+
+              <div v-if="comparePanelTab === 'judge'" class="judge-panel mt-4 judge-panel--expanded">
+                <div class="judge-panel__body">
+                  <div class="form-field">
+                    <span class="field-label">系统预设</span>
+                    <v-select
+                      v-model="currentJudgeDraft.preset_id"
+                      :items="judgePresetOptions"
+                      @update:modelValue="applyJudgePreset($event)"
+                    />
+                  </div>
+
+                  <div v-if="currentJudgePreset" class="status-banner is-ready mt-3">
+                    <strong>{{ currentJudgePreset.ui_label || currentJudgePreset.title }}</strong>
+                    <p class="text-sm mt-1">
+                      适用节点：{{ nodeLabel(currentJudgePreset.node_name) }}
+                      <span class="divider">/</span>
+                      Strategy：{{ currentJudgePreset.strategy }}
+                      <span class="divider">/</span>
+                      Method：{{ currentJudgePreset.method }}
+                    </p>
+                  </div>
+
+                  <div class="form-row triple mt-3">
+                    <div class="form-field" v-for="slot in [0, 1, 2]" :key="`judger-${slot}`">
+                      <span class="field-label">Judger {{ slot + 1 }}</span>
+                      <v-select v-model="currentJudgeDraft.judger_models[slot]" :items="judgerModelOptions" />
+                    </div>
+                  </div>
+
+                  <div class="status-banner mt-3" :class="judgePrerequisite.ready ? 'is-ready' : 'is-warning'">
+                    <strong>{{ judgePrerequisite.title }}</strong>
+                    <p class="text-sm mt-1">{{ judgePrerequisite.detail }}</p>
+                  </div>
+
+                  <div class="action-buttons mt-3">
+                    <v-button :disabled="loading.queueJudge || !judgePrerequisite.ready" @click="queueJudgeCompare({ autoExecute: true })">创建并执行 Judge</v-button>
+                  </div>
+
+                  <details class="detail-card detail-card--compact mt-3">
+                    <summary>调试操作</summary>
+                    <div class="detail-content">
+                      <div class="action-buttons mb-3">
+                        <v-button secondary :disabled="loading.queueJudge || !judgePrerequisite.ready" @click="queueJudgeCompare()">仅创建 Request</v-button>
+                        <v-button v-if="pendingJudgeRequestId" :disabled="loading.executeJudge" @click="executeJudgeRequest(pendingJudgeRequestId)">执行这条 Request</v-button>
+                      </div>
+                      <p class="block-hint mb-3">仅在调试 Judge 链路时使用。日常流程优先直接点“创建并执行 Judge”。</p>
+                      <div class="form-field mb-3">
+                        <span class="field-label">Judge 方式</span>
+                        <v-select v-model="currentJudgeDraft.judge_mode" :items="judgeModesMapped" @update:modelValue="applyJudgeModeTemplate($event)" />
+                      </div>
+                      <div class="form-field mb-3">
+                        <span class="field-label">Persona</span>
+                        <v-textarea v-model="currentJudgeDraft.persona_text" :rows="2" />
+                      </div>
+                      <div class="form-field mb-3">
+                        <span class="field-label">System Prompt</span>
+                        <v-textarea v-model="currentJudgeDraft.system_prompt" :rows="3" />
+                      </div>
+                      <div class="form-field mb-3">
+                        <span class="field-label">User Prompt</span>
+                        <v-textarea v-model="currentJudgeDraft.user_prompt" :rows="3" />
+                      </div>
+                      <div class="form-field">
+                        <span class="field-label">Rubric Bundle JSON</span>
+                        <v-textarea class="code-font" v-model="currentJudgeDraft.rubric_bundle_json" :rows="6" />
+                      </div>
+                      <div class="form-field mt-3">
+                        <span class="field-label">Packet Policy JSON</span>
+                        <v-textarea class="code-font" v-model="currentJudgeDraft.packet_policy_json" :rows="6" />
+                      </div>
+                      <div class="form-field mt-3">
+                        <span class="field-label">Probe Appendix JSON</span>
+                        <v-textarea class="code-font" v-model="currentJudgeDraft.probe_appendix_json" :rows="5" />
+                      </div>
+                      <div class="form-field mt-3">
+                        <span class="field-label">Rubric Source JSON</span>
+                        <v-textarea class="code-font" v-model="currentJudgeDraft.rubric_json" :rows="6" />
+                      </div>
+                      <div class="form-field mt-3">
+                        <span class="field-label">Output Schema JSON</span>
+                        <v-textarea class="code-font" v-model="currentJudgeDraft.output_schema_json" :rows="6" />
+                      </div>
+                    </div>
+                  </details>
+
+                  <div v-if="activeCompareJudgeRequests.length" class="output-block mt-4">
+                    <h4 class="block-title">Judge Requests</h4>
+                    <div class="request-list mt-3">
+                      <button
+                        class="request-item request-item--interactive"
+                        :class="{ active: selectedJudgeRequestId === item.judge_request_id }"
+                        v-for="item in activeCompareJudgeRequests"
+                        :key="item.judge_request_id"
+                        @click="loadJudgeRequestDetail(item.judge_request_id)"
+                      >
+                        <div class="request-main">
+                          <span class="request-id">{{ item.judge_request_id }}</span>
+                          <span class="request-meta">Trial {{ shortId(item.trial_id) }}</span>
+                        </div>
+                        <div class="request-side">
+                          <span class="badge">{{ statusLabel(item.status) }}</span>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                  <div v-else class="empty-state compact mt-4">
+                    <p>当前 Compare 还没有 Judge Request</p>
+                    <span class="empty-hint">Judge tab 只显示这条 Compare 的评审记录，不再混入当前 node 的历史 requests。</span>
+                  </div>
+
+                  <div v-if="selectedJudgeRequestDetail?.request" class="output-block mt-4">
+                    <h4 class="block-title">Judge 结果详情</h4>
+                    <div class="meta-grid mt-3">
+                      <div class="meta-item" v-for="[label, value] in judgeRequestSummaryFacts" :key="label">
+                        <span class="meta-label">{{ label }}</span>
+                        <span class="meta-value">{{ value }}</span>
+                      </div>
+                    </div>
+
+                    <div class="action-buttons mt-3">
+                      <v-button
+                        secondary
+                        small
+                        v-if="['queued', 'running'].includes(selectedJudgeRequestDetail.request.status)"
+                        @click="cancelJudgeRequest(selectedJudgeRequestDetail.request.judge_request_id)"
+                      >
+                        取消 Request
+                      </v-button>
+                      <v-button
+                        secondary
+                        small
+                        v-if="['queued'].includes(selectedJudgeRequestDetail.request.status)"
+                        :disabled="loading.executeJudge"
+                        @click="executeJudgeRequest(selectedJudgeRequestDetail.request.judge_request_id)"
+                      >
+                        执行这条 Request
+                      </v-button>
+                      <v-button
+                        secondary
+                        small
+                        v-if="['failed', 'cancelled'].includes(selectedJudgeRequestDetail.request.status)"
+                        @click="retryJudgeRequest(selectedJudgeRequestDetail.request.judge_request_id)"
+                      >
+                        重新排队
+                      </v-button>
+                    </div>
+
+                    <div v-if="judgeStepRuns.length" class="compare-overview mt-4">
+                      <article
+                        v-for="step in judgeStepRuns"
+                        :key="step.key"
+                        class="compare-status-card"
+                        :class="`is-${statusTone(step.value?.status)}`"
+                      >
+                        <div class="compare-status-card__header">
+                          <h4>{{ step.label }}</h4>
+                          <span class="badge" :class="`badge-${statusTone(step.value?.status)}`">{{ statusLabel(step.value?.status) }}</span>
+                        </div>
+                        <div class="compare-status-card__facts">
+                          <div class="status-fact" v-for="[label, value] in judgeStepRunFacts(step.value)" :key="`${step.key}-${label}`">
+                            <span class="meta-label">{{ label }}</span>
+                            <span class="meta-value">{{ value }}</span>
+                          </div>
+                        </div>
+                        <p v-if="step.value?.error?.message" class="text-sm mt-2 text-danger">
+                          {{ step.value.error.message }}
+                        </p>
+                      </article>
+                    </div>
+
+                    <div v-if="judgeRequestIssue(selectedJudgeRequestDetail)" class="execution-alert is-danger mt-4">
+                      <div class="execution-alert__header">
+                        <strong>Judge 执行失败</strong>
+                        <span class="badge badge-danger">{{ judgeRequestIssue(selectedJudgeRequestDetail).code }}</span>
+                      </div>
+                      <p>{{ judgeRequestIssue(selectedJudgeRequestDetail).message }}</p>
+                      <p class="text-sm mt-1">如果下面已有 rubric / pairwise / probe 结果，说明这是部分失败，可继续参考已成功部分。</p>
+                    </div>
+
+                    <div v-if="judgeRequestResultMode(selectedJudgeRequestDetail) === 'rubric'" class="compare-overview mt-4">
+                      <article
+                        v-for="side in [
+                          { key: 'baseline', title: 'Baseline', value: selectedJudgeRequestDetail.result.rubric_scoring_result?.baseline },
+                          { key: 'candidate', title: 'Candidate', value: selectedJudgeRequestDetail.result.rubric_scoring_result?.candidate },
+                        ]"
+                        :key="side.key"
+                        class="compare-status-card is-neutral"
+                      >
+                        <div class="compare-status-card__header">
+                          <h4>{{ side.title }}</h4>
+                          <span class="badge badge-neutral">Judge</span>
+                        </div>
+                        <div class="compare-status-card__facts">
+                          <div class="status-fact">
+                            <span class="meta-label">条目数</span>
+                            <span class="meta-value">{{ side.value?.aggregate?.item_count ?? 0 }}</span>
+                          </div>
+                          <div class="status-fact">
+                            <span class="meta-label">通过</span>
+                            <span class="meta-value">{{ side.value?.aggregate?.passed ?? 0 }}</span>
+                          </div>
+                          <div class="status-fact">
+                            <span class="meta-label">失败</span>
+                            <span class="meta-value">{{ side.value?.aggregate?.failed ?? 0 }}</span>
+                          </div>
+                          <div class="status-fact">
+                            <span class="meta-label">通过率</span>
+                            <span class="meta-value">{{ judgeAggregatePassRateText(side.value) }}</span>
+                          </div>
+                        </div>
+                      </article>
+                    </div>
+
+                    <div
+                      v-if="selectedJudgeRequestDetail.result?.pairwise_result?.pairwise_review"
+                      class="status-banner is-ready mt-4"
+                    >
+                      <strong>Pairwise 整体评估倾向：{{ selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.preferred_side }}</strong>
+                      <p class="text-sm mt-1">{{ selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.overall_judgment }}</p>
+                    </div>
+
+                    <div
+                      v-if="selectedJudgeRequestDetail.result?.probe_appendix_result"
+                      class="status-banner is-warning mt-4"
+                    >
+                      <strong>专项 Probe：{{ selectedJudgeRequestDetail.result.probe_appendix_result.probe_type }}</strong>
+                      <p class="text-sm mt-1">{{ selectedJudgeRequestDetail.result.probe_appendix_result.summary || "请展开下方问题列表查看细节。" }}</p>
+                    </div>
+
+                    <div class="details-group mt-4">
+                      <ResultBlock
+                        v-if="selectedJudgeRequestDetail.result?.rubric_scoring_result"
+                        title="Rubric 逐项结果"
+                        :open="true"
+                      >
+                        <div class="compare-split">
+                          <div class="compare-pane" v-for="side in [
+                            { key: 'baseline', title: 'Baseline', value: selectedJudgeRequestDetail.result.rubric_scoring_result.baseline },
+                            { key: 'candidate', title: 'Candidate', value: selectedJudgeRequestDetail.result.rubric_scoring_result.candidate },
+                          ]" :key="side.key">
+                            <div class="pane-header"><h4>{{ side.title }}</h4></div>
+                            <div v-if="side.value?.items?.length" class="packet-list">
+                              <div v-for="item in side.value.items" :key="item.item_id" class="packet-item">
+                                <div class="packet-title">{{ judgeItemResultLabel(item) }}</div>
+                                <ul class="insight-list">
+                                  <li v-for="criterion in item.criteria" :key="`${item.item_id}-${criterion.criterion_id}`">
+                                    <strong>{{ criterion.criterion_id }}</strong>
+                                    <span> · {{ criterion.score ? "通过" : "未通过" }}</span>
+                                    <span>：{{ criterion.reason }}</span>
+                                  </li>
+                                </ul>
+                              </div>
+                            </div>
+                            <div v-else class="empty-state compact mt-2">
+                              <p>暂无逐项结果</p>
+                            </div>
+                          </div>
+                        </div>
+                      </ResultBlock>
+
+                      <ResultBlock
+                        v-if="selectedJudgeRequestDetail.result?.pairwise_result?.pairwise_review"
+                        title="Pairwise 整体评估意见"
+                        :open="true"
+                      >
+                        <div class="compare-split">
+                          <div class="compare-pane">
+                            <div class="pane-header"><h4>Baseline</h4></div>
+                            <ul class="insight-list">
+                              <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.baseline_strengths || []" :key="`bs-${index}`">
+                                <strong>优点：</strong>{{ item }}
+                              </li>
+                              <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.baseline_risks || []" :key="`br-${index}`">
+                                <strong>风险：</strong>{{ item }}
+                              </li>
+                            </ul>
+                          </div>
+                          <div class="compare-pane">
+                            <div class="pane-header"><h4>Candidate</h4></div>
+                            <ul class="insight-list">
+                              <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.candidate_strengths || []" :key="`cs-${index}`">
+                                <strong>优点：</strong>{{ item }}
+                              </li>
+                              <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.candidate_risks || []" :key="`cr-${index}`">
+                                <strong>风险：</strong>{{ item }}
+                              </li>
+                            </ul>
+                          </div>
+                        </div>
+                        <div v-if="selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.manual_check_points?.length" class="mt-3">
+                          <h5>建议人工复看</h5>
+                          <ul class="insight-list mt-2">
+                            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.manual_check_points" :key="`mc-${index}`">
+                              {{ item }}
+                            </li>
+                          </ul>
+                        </div>
+                      </ResultBlock>
+
+                      <ResultBlock
+                        v-if="selectedJudgeRequestDetail.result?.probe_appendix_result"
+                        title="Probe Findings"
+                        :open="true"
+                      >
+                        <div class="packet-list">
+                          <div
+                            v-for="question in selectedJudgeRequestDetail.result.probe_appendix_result.questions || []"
+                            :key="question.question_id"
+                            class="packet-item"
+                          >
+                            <div class="packet-title">
+                              {{ question.question_id }}
+                              <span class="badge badge-sm" :class="question.detected ? 'badge-warning' : 'badge-success'">
+                                {{ question.detected ? "发现问题" : "未发现" }}
+                              </span>
+                            </div>
+                            <p class="packet-content">{{ question.description }}</p>
+                            <ul v-if="question.evidence?.length" class="insight-list mt-2">
+                              <li v-for="(evidence, index) in question.evidence" :key="`${question.question_id}-${index}`">{{ evidence }}</li>
+                            </ul>
+                          </div>
+                        </div>
+                      </ResultBlock>
+
+                      <ResultBlock title="Judge Artifact JSON" :open="false">
+                        <JsonTreeView :value="parseNestedJson(selectedJudgeRequestDetail)" empty-text="暂无 Judge 结果。" />
+                      </ResultBlock>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div v-else class="empty-state">
-              <p>暂无对比结果</p>
-              <span class="empty-hint">请在左侧运行 Compare 以查看差异。</span>
-            </div>
-          </template>
-
-          <template v-else>
-            <div class="output-block">
-              <h4 class="block-title">当前 Compare 摘要</h4>
-              <div v-if="compareResult" class="compare-status-line">
-                <div class="compare-status-line__item">
-                  <span class="meta-label">Compare 状态</span>
-                  <strong :class="`text-${statusTone(compareResultStatus.compare_status)}`">{{ statusLabel(compareResultStatus.compare_status) }}</strong>
-                  <span class="compare-status-line__detail">Baseline {{ statusLabel(compareResultStatus.baseline_status) }} / Candidate {{ statusLabel(compareResultStatus.candidate_status) }}</span>
-                </div>
-                <div class="compare-status-line__item">
-                  <span class="meta-label">最近持久化 Trial</span>
-                  <strong>{{ latestCompareTrialId || "未写入 Session" }}</strong>
-                  <span class="compare-status-line__detail">{{ latestCompareTrialId ? "可继续挂 judge request 或回看 Session" : "当前结果只保留在页面状态中" }}</span>
-                </div>
-              </div>
-              <div v-else class="text-muted mt-2 text-sm">暂无 Compare 摘要</div>
-            </div>
-
-            <div class="output-block mt-4">
-              <h4 class="block-title">Judge Requests 队列</h4>
-              <div v-if="currentJudgeRequests.length" class="request-list mt-3">
-                <div class="request-item" v-for="item in currentJudgeRequests" :key="item.judge_request_id">
+              <p>当前没有打开的 Compare</p>
+              <span class="empty-hint">先运行 Compare，或从 Sessions 里打开一条历史结果。</span>
+              <div v-if="recentTrials.length" class="request-list mt-3">
+                <button
+                  v-for="trial in recentTrials"
+                  :key="trial.trial_id"
+                  class="request-item request-item--interactive"
+                  @click="openCompareTrialInWorkbench(trial.trial_id, { source: trial.session_id ? 'session' : 'recent', switchWorkspace: false })"
+                >
                   <div class="request-main">
-                    <span class="request-id">{{ item.judge_request_id }}</span>
-                    <span class="request-meta">Trial {{ item.trial_id }}</span>
+                    <span class="request-id">{{ trialReadableTitle(trial) }}</span>
+                    <span class="request-meta">{{ trialReadableMeta(trial) }}</span>
                   </div>
-                  <div class="request-side">
-                    <span class="badge">{{ statusLabel(item.status) }}</span>
-                  </div>
-                </div>
-              </div>
-              <div v-else class="empty-state compact mt-3">
-                <p>暂无 Judge Request</p>
+                </button>
               </div>
             </div>
           </template>
@@ -2381,9 +3771,12 @@ const savedJudgeConfigsMapped = computed(() => [
     <div v-else class="sessions-workspace">
       <div class="sessions-sidebar">
         <div class="sidebar-header">
-          <h3 class="sidebar-title">Sessions</h3>
-          <button class="btn-ghost btn-sm" @click="createAndOpenSession">+ 新建</button>
+          <h3 class="sidebar-title">Compare 实验记录本</h3>
         </div>
+        <p class="sidebar-hint">
+          每个 Session 固定 node、阅读目标/变体与 baseline 参考系。
+          <button class="btn-link inline-hint" @click="goStartCompareFromEmpty">没有 Session？先去跑一条 compare</button>
+        </p>
         <div class="session-list">
           <button
             v-for="item in currentSessions"
@@ -2399,11 +3792,24 @@ const savedJudgeConfigsMapped = computed(() => [
             <div class="item-meta">
               <span>{{ statusLabel(item.status) }}</span>
               <span class="dot-separator">·</span>
-              <span>{{ item.aggregate_summary_json?.trial_count || 0 }} Trials</span>
+              <span>{{ sessionCompareCount(item) }} compare</span>
+              <span class="dot-separator">·</span>
+              <span>{{ sessionJudgeCount(item) }} judge</span>
+            </div>
+            <div class="item-meta">
+              <span>{{ nodeLabel(item.node_name) }}</span>
+              <span class="dot-separator">·</span>
+              <span>{{ readingGoalLabel(item.baseline_snapshot_json?.reading_goal) }}</span>
+              <span class="dot-separator">·</span>
+              <span>{{ readingVariantLabel(item.baseline_snapshot_json?.reading_variant) }}</span>
+            </div>
+            <div class="item-meta">
+              <span>Baseline {{ sessionBaselineLabel(item) }}</span>
             </div>
           </button>
           <div v-if="!currentSessions.length" class="empty-state compact">
-            <p>暂无记录</p>
+            <p>暂无记录本</p>
+            <span class="empty-hint">请在 Baseline Compare 跑出第一条 compare 后新建 Session。</span>
           </div>
         </div>
       </div>
@@ -2416,8 +3822,21 @@ const savedJudgeConfigsMapped = computed(() => [
               <span class="badge" :class="`badge-${statusTone(selectedSessionDetail.session.status)}`">{{ statusLabel(selectedSessionDetail.session.status) }}</span>
             </div>
             <p class="session-desc">{{ sessionDecisionNarrative }}</p>
+            <div class="action-buttons mt-3">
+              <v-button secondary @click="state.activeWorkspace = 'baseline_compare'">返回 Baseline Compare</v-button>
+              <v-button class="btn-danger-text" outlined @click="deleteSession(selectedSessionDetail.session.session_id)">删除整个 Session</v-button>
+            </div>
+
+            <div class="notebook-context mt-3">
+              <span class="badge badge-locked">固定上下文</span>
+              <span class="ctx-chip">Node：{{ nodeLabel(selectedSessionDetail.session.node_name) }}</span>
+              <span class="ctx-chip">阅读目标：{{ readingGoalLabel(selectedSessionDetail.session.baseline_snapshot_json?.reading_goal) }}</span>
+              <span class="ctx-chip">阅读变体：{{ readingVariantLabel(selectedSessionDetail.session.baseline_snapshot_json?.reading_variant) }}</span>
+              <span class="ctx-chip">Baseline：{{ selectedSessionDetail.session.baseline_snapshot_json?.prompt_profile || "未记录" }}</span>
+            </div>
+
             <div class="meta-row mt-3">
-              <div class="meta-badge" v-for="[label, value] in sessionSummaryFacts" :key="label">
+              <div class="meta-badge" v-for="[label, value] in sessionNotebookFacts" :key="label">
                 <span class="label">{{ label }}</span>
                 <span class="value">{{ value }}</span>
               </div>
@@ -2426,56 +3845,81 @@ const savedJudgeConfigsMapped = computed(() => [
 
           <div class="timeline-container">
             <div class="timeline-sidebar">
-              <h4 class="block-title mb-3">实验时间线</h4>
+              <h4 class="block-title mb-3">Compare 时间线</h4>
+              <p class="block-hint">这里是这本 notebook 的历史入口。点一条 compare，再决定回到 Baseline Compare 查看或重新 Judge。</p>
               <div v-if="selectedSessionDetail.trials.length" class="timeline-list">
                 <button
-                  v-for="trial in selectedSessionDetail.trials"
+                  v-for="(trial, index) in selectedSessionDetail.trials"
                   :key="trial.trial_id"
                   class="timeline-item"
                   :class="{ active: selectedSessionTrialId === trial.trial_id }"
                   @click="loadTrialDetail(trial.trial_id, selectedSessionId)"
                 >
                   <div class="item-header">
-                    <span class="item-type">{{ workspaceLabel(trial.workspace_type) }}</span>
-                    <span class="item-id">#{{ shortId(trial.trial_id) }}</span>
+                    <span class="item-idx">#{{ index + 1 }}</span>
+                    <span class="item-type">Compare</span>
+                    <span class="item-id">{{ shortId(trial.trial_id) }}</span>
                   </div>
                   <div class="item-status">
                     <span class="badge badge-sm" :class="`badge-${statusTone(trial.status)}`">{{ statusLabel(trial.status) }}</span>
-                    <span class="badge badge-sm badge-neutral">{{ statusLabel(trial.result_summary_json?.result_status?.compare_status || trial.result_summary_json?.result_status?.run_status) }}</span>
+                    <span class="badge badge-sm badge-neutral">{{ statusLabel(trial.result_summary_json?.result_status?.compare_status) }}</span>
+                    <span v-if="judgeRequestsForTrialCount(trial.trial_id) > 0" class="badge badge-sm badge-active">
+                      {{ judgeRequestsForTrialCount(trial.trial_id) }} judge
+                    </span>
                   </div>
+                  <p v-if="trial.display_excerpt || trial.input_excerpt" class="item-excerpt">「{{ trial.display_excerpt || trial.input_excerpt }}」</p>
                 </button>
               </div>
               <div v-else class="empty-state compact">
-                <p>暂无 Trial 记录</p>
+                <p>暂无 compare</p>
+                <span class="empty-hint">回到 Baseline Compare 跑出第一条结果并选择“加入 Session”。</span>
               </div>
             </div>
 
             <div class="timeline-detail">
-              <h4 class="block-title mb-3">Trial 详情 <span v-if="selectedSessionTrialId" class="text-muted font-normal text-sm ml-2">#{{ shortId(selectedSessionTrialId) }}</span></h4>
-              
+              <h4 class="block-title mb-3">
+                Compare 详情
+                <span v-if="selectedSessionTrialId" class="text-muted font-normal text-sm ml-2">#{{ shortId(selectedSessionTrialId) }}</span>
+              </h4>
+
               <template v-if="selectedSessionTrialDetail?.trial">
+                <div class="action-buttons mb-4">
+                  <v-button secondary @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id)">在 Baseline Compare 中打开</v-button>
+                  <v-button @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id, { openJudge: true })">重新 Judge</v-button>
+                  <v-button class="btn-danger-text" outlined @click="deleteTrial(selectedSessionTrialDetail.trial.trial_id)">删除这条 compare</v-button>
+                </div>
+
                 <div class="meta-grid mb-4">
                   <div class="meta-item">
-                    <span class="meta-label">实验类型</span>
-                    <span class="meta-value">{{ workspaceLabel(selectedSessionTrialDetail.trial.workspace_type) }}</span>
+                    <span class="meta-label">Compare 状态</span>
+                    <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.compare_status) }}</span>
                   </div>
                   <div class="meta-item">
-                    <span class="meta-label">执行状态</span>
-                    <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.status) }}</span>
+                    <span class="meta-label">Baseline 状态</span>
+                    <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.baseline_status) }}</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Candidate 状态</span>
+                    <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.candidate_status) }}</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">执行耗时</span>
+                    <span class="meta-value">
+                      <span v-if="selectedSessionTrialDetail.trial.started_at && selectedSessionTrialDetail.trial.finished_at">
+                        {{ formatClockTime(selectedSessionTrialDetail.trial.started_at) }} – {{ formatClockTime(selectedSessionTrialDetail.trial.finished_at) }}
+                      </span>
+                      <span v-else>未记录</span>
+                    </span>
                   </div>
                 </div>
 
-                <template v-if="selectedSessionTrialResult()?.run">
-                  <NodeProbeOutputView
-                    :node-name="state.activeNode"
-                    :output="selectedSessionTrialResult().run.node_output || null"
-                    :prepared-sentences="selectedSessionTrialResult().run.prepared_sentences || []"
-                    :quick-validation="selectedSessionTrialResult().run.quick_validation || null"
-                    empty-text="当前 trial 没有结构化输出。"
-                  />
-                </template>
-                <template v-else-if="selectedSessionTrialResult()?.baseline && selectedSessionTrialResult()?.candidate">
-                  <div class="compare-split mt-3">
+                <div v-if="selectedSessionTrialDetail.trial.input_excerpt" class="input-excerpt mb-3">
+                  <span class="meta-label">输入摘要</span>
+                  <p>{{ selectedSessionTrialDetail.trial.input_excerpt }}</p>
+                </div>
+
+                <template v-if="selectedSessionTrialResult()?.baseline && selectedSessionTrialResult()?.candidate">
+                  <div class="compare-split">
                     <div class="compare-pane">
                       <div class="pane-header"><h4>Baseline</h4></div>
                       <NodeProbeOutputView
@@ -2498,15 +3942,34 @@ const savedJudgeConfigsMapped = computed(() => [
                     </div>
                   </div>
                 </template>
+
+                <div v-if="judgeRequestsForTrial(selectedSessionTrialId).length" class="mt-4">
+                  <h5 class="block-title">所挂 Judge 结果</h5>
+                  <div class="judge-tile-list mt-2">
+                    <button
+                      v-for="req in judgeRequestsForTrial(selectedSessionTrialId)"
+                      :key="req.judge_request_id"
+                      class="judge-tile judge-tile--interactive"
+                      @click="openSessionTrialInCompare(selectedSessionTrialId, { openJudge: true, judgeRequestId: req.judge_request_id })"
+                    >
+                      <div class="judge-tile-head">
+                        <span class="judge-id">{{ req.judge_request_id }}</span>
+                        <span class="badge badge-sm" :class="`badge-${statusTone(req.status)}`">{{ statusLabel(req.status) }}</span>
+                      </div>
+                      <p class="text-sm text-muted">{{ req.notes || "暂无备注" }}</p>
+                    </button>
+                  </div>
+                </div>
               </template>
               <div v-else class="empty-state">
-                <p>请在左侧选择一条 Trial 以查看详情。</p>
+                <p>请在左侧选择一条 compare 以查看详情。</p>
               </div>
             </div>
           </div>
         </template>
         <div v-else class="empty-state">
-          <p>请从左侧选择一个 Session，或新建 Session 以开始记录。</p>
+          <p>请先在 Baseline Compare 跑出第一条 compare，再选择加入或新建 Session。</p>
+          <span class="empty-hint">Session 是固定实验上下文的 compare 记录本，Single Run 不再进入 Session。</span>
         </div>
       </div>
     </div>
@@ -2659,6 +4122,43 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
 
 .workbench.is-compare {
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+}
+
+.judge-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.judge-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  cursor: pointer;
+  user-select: none;
+  background: color-mix(in srgb, var(--color-primary) 3%, var(--color-surface));
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+
+.judge-panel__header:hover {
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+}
+
+.judge-panel.judge-panel--expanded .judge-panel__header {
+  border-bottom-color: var(--color-border);
+}
+
+.judge-panel__toggle {
+  font-size: 13px;
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+.judge-panel__body {
+  padding: 24px;
 }
 
 .panel-column {
@@ -2906,6 +4406,9 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued);
+}
+.detail-card--compact summary {
+  font-size: 12px;
 }
 .detail-content { padding: 16px; border-top: 1px solid var(--color-border); }
 pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; color: var(--color-text-subdued); }
@@ -3193,6 +4696,16 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
   gap: 16px;
 }
 
+.compare-panel-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+  margin-bottom: 16px;
+}
+
 .compare-row {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -3287,6 +4800,44 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
   font-size: 12px;
   line-height: 1.55;
   color: var(--color-text-subdued);
+}
+
+.compare-relation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.relation-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+}
+
+.relation-chip strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.relation-chip.is-success {
+  border-color: color-mix(in srgb, var(--theme--success, #10b981) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--theme--success, #10b981) 6%, var(--color-surface));
+}
+
+.relation-chip.is-active {
+  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+}
+
+.relation-chip.is-warning {
+  border-color: color-mix(in srgb, var(--theme--warning, #f59e0b) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 7%, var(--color-surface));
 }
 
 .compare-column {
@@ -3417,9 +4968,29 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
 
 .request-list { display: flex; flex-direction: column; gap: 8px; }
 .request-item { display: flex; justify-content: space-between; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.request-item--interactive {
+  text-align: left;
+  width: 100%;
+}
+.request-item--interactive:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface));
+}
+.request-item--interactive.active {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface));
+}
 .request-main { display: flex; flex-direction: column; gap: 4px; }
 .request-id { font-weight: 500; font-size: 14px; }
 .request-meta { font-size: 12px; color: var(--color-text-subdued); }
+.request-submeta {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text);
+}
+.request-item--verbose .request-main {
+  gap: 6px;
+}
 
 /* Empty States */
 .empty-state {
@@ -3461,6 +5032,140 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
 .sidebar-header { display: flex; justify-content: space-between; align-items: center; }
 .sidebar-title { font-size: 14px; font-weight: 600; }
 .session-list { display: flex; flex-direction: column; gap: 8px; }
+
+.sidebar-hint {
+  font-size: 12px;
+  color: var(--color-text-subdued);
+  line-height: 1.5;
+  margin: -8px 0 4px;
+}
+
+.block-hint {
+  font-size: 12px;
+  color: var(--color-text-subdued);
+  line-height: 1.5;
+  margin: -8px 0 8px;
+}
+
+.notebook-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+}
+
+.badge-locked {
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 12px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.input-excerpt {
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+}
+.input-excerpt p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+.item-idx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: var(--color-primary-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.item-excerpt {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-subdued);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.judge-tile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.judge-tile {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: var(--color-surface-subdued);
+}
+
+.judge-tile--interactive {
+  width: 100%;
+  text-align: left;
+}
+
+.judge-tile--interactive:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface));
+}
+
+.judge-tile-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.judge-id {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.meta-hint {
+  font-size: 11px;
+  color: var(--color-text-subdued);
+  margin-top: 2px;
+}
+
+.btn-link.inline-hint {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-primary);
+}
+
 .session-nav-item {
   display: flex;
   flex-direction: column;
@@ -3557,6 +5262,9 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
   .result-shell { position: static; }
   .sessions-workspace { grid-template-columns: 1fr; }
   .timeline-container { grid-template-columns: 1fr; }
+  .compare-relation-strip {
+    flex-direction: column;
+  }
   .compare-overview,
   .compare-status-line,
   .compare-row__body {

@@ -13,7 +13,7 @@ const modes = [
     id: "node-lab",
     label: "Node Lab",
     kicker: "Node Lab",
-    description: "单 node 的 prompt、few-shot、模型实验工作台，包含 Single Run、Baseline Compare、Judge Compare 和 Sessions。",
+    description: "单 node 的 prompt、few-shot、模型实验工作台：Single Run 先试跑，Baseline Compare 产出差异，Judge 与 Sessions 作为 Compare 后续动作与复盘入口。",
     ready: true,
     questions: ["当前 baseline 与 candidate 的差异是什么？", "这个 node 的 prompt、few-shot、模型调整是否更好？", "这轮 Session 下的 trial 和 judge 结论是否可追溯？"],
   },
