@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from "vue";
+import StatusPill from "./StatusPill.vue";
 
 const props = defineProps({
   nodeName: { type: String, required: true },
@@ -196,9 +197,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
             <strong>{{ dash(item.label) }}</strong>
             <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
           </div>
-          <span class="evidence-pill" :class="`is-${evidenceStatus(noteWarnings(item)).tone}`">
-            {{ evidenceStatus(noteWarnings(item)).label }}
-          </span>
+          <StatusPill :label="evidenceStatus(noteWarnings(item)).label" :tone="evidenceStatus(noteWarnings(item)).tone" />
         </div>
         <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
           <span class="context-label">原句</span>
@@ -241,9 +240,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
             <strong>{{ dash(item.label) }}</strong>
             <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
           </div>
-          <span class="evidence-pill" :class="`is-${evidenceStatus(analysisWarnings(item)).tone}`">
-            {{ evidenceStatus(analysisWarnings(item)).label }}
-          </span>
+          <StatusPill :label="evidenceStatus(analysisWarnings(item)).label" :tone="evidenceStatus(analysisWarnings(item)).tone" />
         </div>
         <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
           <span class="context-label">原句</span>
@@ -292,9 +289,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
             <strong>{{ dash(item.text) }}</strong>
             <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
           </div>
-          <span class="evidence-pill" :class="`is-${simpleAnchorStatus(item.sentence_id, [item.text]).tone}`">
-            {{ simpleAnchorStatus(item.sentence_id, [item.text]).label }}
-          </span>
+          <StatusPill :label="simpleAnchorStatus(item.sentence_id, [item.text]).label" :tone="simpleAnchorStatus(item.sentence_id, [item.text]).tone" />
         </div>
         <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
           <span class="context-label">原句</span>
@@ -328,9 +323,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
             <strong>{{ dash(item.text) }}</strong>
             <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
           </div>
-          <span class="evidence-pill" :class="`is-${simpleAnchorStatus(item.sentence_id, [item.text]).tone}`">
-            {{ simpleAnchorStatus(item.sentence_id, [item.text]).label }}
-          </span>
+          <StatusPill :label="simpleAnchorStatus(item.sentence_id, [item.text]).label" :tone="simpleAnchorStatus(item.sentence_id, [item.text]).tone" />
         </div>
         <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
           <span class="context-label">原句</span>
@@ -369,9 +362,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
             <strong>{{ dash(item.text) }}</strong>
             <span class="sentence-id">{{ dash(item.sentence_id) }}</span>
           </div>
-          <span class="evidence-pill" :class="`is-${simpleAnchorStatus(item.sentence_id, [item.text]).tone}`">
-            {{ simpleAnchorStatus(item.sentence_id, [item.text]).label }}
-          </span>
+          <StatusPill :label="simpleAnchorStatus(item.sentence_id, [item.text]).label" :tone="simpleAnchorStatus(item.sentence_id, [item.text]).tone" />
         </div>
         <div v-if="sentenceText(item.sentence_id)" class="sentence-context">
           <span class="context-label">原句</span>
@@ -533,34 +524,10 @@ function simpleAnchorStatus(sentenceId, fragments) {
 }
 
 .anchor-mark {
-  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 24%, transparent);
+  background: color-mix(in srgb, var(--theme--warning) 24%, transparent);
   color: inherit;
   border-radius: 4px;
   padding: 0 1px;
-}
-
-.evidence-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--theme--border-color);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.evidence-pill.is-success {
-  color: var(--theme--success, #10b981);
-  border-color: color-mix(in srgb, var(--theme--success, #10b981) 35%, var(--theme--border-color));
-  background: color-mix(in srgb, var(--theme--success, #10b981) 8%, var(--theme--background));
-}
-
-.evidence-pill.is-warning {
-  color: var(--theme--warning, #f59e0b);
-  border-color: color-mix(in srgb, var(--theme--warning, #f59e0b) 35%, var(--theme--border-color));
-  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 8%, var(--theme--background));
 }
 
 .evidence-row {
@@ -618,7 +585,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
 .warning-list {
   margin: 10px 0 0;
   padding-left: 18px;
-  color: var(--theme--warning, #f59e0b);
+  color: var(--theme--warning);
   font-size: 12px;
   line-height: 1.6;
 }

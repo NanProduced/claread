@@ -366,14 +366,13 @@ const currentStep = computed(() => {
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued, #f9fafb);
-  border-left: 3px solid var(--color-border, #e5e7eb);
-  transition: border-left-color 0.15s;
+  transition: background-color 0.15s;
 }
 .detail-card summary:hover {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued, #f3f4f6);
 }
 .detail-card[open] summary {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued, #f3f4f6);
 }
 .detail-card--compact summary {
   font-size: 12px;

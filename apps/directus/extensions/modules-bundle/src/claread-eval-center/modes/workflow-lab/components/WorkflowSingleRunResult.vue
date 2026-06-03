@@ -1,80 +1,81 @@
 <script setup>
 import { computed } from "vue";
+import ResultBlock from "../../../components/ResultBlock.vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
+import WorkflowArtifactScene from "./WorkflowArtifactScene.vue";
+import { dash, normalizeSingleRunPayload } from "../composables/workflowLabFormatting.js";
 
 const props = defineProps({
   result: { type: Object, default: null },
   loading: { type: Boolean, default: false },
 });
 
-const warnings = computed(() => Array.isArray(props.result?.warnings) ? props.result.warnings : []);
-
-function dash(value) {
-  return value === null || value === undefined || value === "" ? "-" : value;
-}
+const normalized = computed(() => normalizeSingleRunPayload(props.result));
+const warnings = computed(() => normalized.value.warnings || []);
 </script>
 
 <template>
   <section class="single-run-result">
-    <div v-if="loading" class="empty">Workflow 正在运行...</div>
-    <div v-else-if="!result" class="empty">运行一条文章后，这里会显示 workflow 输出、prompt identity 和 render scene。</div>
+    <div v-if="loading" class="empty">正在验证这篇文章...</div>
+    <div v-else-if="!result" class="empty">完成一次单篇验证后，这里会显示结构化结果。它只服务当前调试，不会进入队列或已完成列表。</div>
     <template v-else>
       <header>
         <div>
-          <p>Single Run Result</p>
-          <h2>{{ result.status || "unknown" }}</h2>
+          <p>单篇验证结果</p>
+          <h2>{{ normalized.status }}</h2>
         </div>
-        <span :class="result.status">{{ result.status }}</span>
+        <span :class="normalized.status">{{ normalized.status }}</span>
       </header>
 
-      <div class="meta-grid">
-        <div><dt>Prompt Variant</dt><dd>{{ dash(result.prompt_identity?.prompt_variant_id) }}</dd></div>
-        <div><dt>Snapshot</dt><dd>{{ dash(result.prompt_identity?.prompt_snapshot_hash) }}</dd></div>
-        <div><dt>Model</dt><dd>{{ dash(result.model_identity?.profile_name || result.model_identity?.model_name) }}</dd></div>
-        <div><dt>Latency</dt><dd>{{ dash(result.runtime_summary?.latency_ms) }} ms</dd></div>
+      <div class="notice">
+        这是临时调试结果，不进入运行队列，也不会出现在已完成 runs 列表。
       </div>
 
-      <section v-if="result.error" class="error-box">
-        <strong>{{ result.error.code }}</strong>
-        <p>{{ result.error.message }}</p>
+      <div class="meta-grid">
+        <div><dt>候选版本</dt><dd>{{ dash(normalized.promptIdentity?.prompt_variant_id, "baseline") }}</dd></div>
+        <div><dt>Snapshot</dt><dd>{{ dash(normalized.promptIdentity?.prompt_snapshot_hash) }}</dd></div>
+        <div><dt>模型方案</dt><dd>{{ dash(normalized.modelIdentity?.profile_name || normalized.modelIdentity?.model_name) }}</dd></div>
+        <div><dt>耗时</dt><dd>{{ dash(normalized.runtimeSummary?.latency_ms) }} ms</dd></div>
+        <div><dt>提醒</dt><dd>{{ warnings.length }}</dd></div>
+        <div><dt>输出状态</dt><dd>{{ dash(normalized.scene?.user_facing_state) }}</dd></div>
+      </div>
+
+      <section v-if="normalized.error" class="error-box">
+        <strong>{{ normalized.error.code || "workflow_error" }}</strong>
+        <p>{{ normalized.error.message || "单篇验证执行失败。" }}</p>
       </section>
 
-      <section v-if="warnings.length" class="warnings">
-        <h3>Warnings</h3>
-        <ul>
-          <li v-for="(warning, index) in warnings" :key="`warning-${index}`">
-            {{ warning.code || warning.level || "warning" }}: {{ warning.message || JSON.stringify(warning) }}
-          </li>
-        </ul>
-      </section>
+      <WorkflowArtifactScene
+        :payload="normalized.scene || normalized.raw"
+        title="Workflow 输出"
+        empty-text="当前没有可展示的 workflow 输出。"
+      />
 
-      <details open>
-        <summary>Render Scene JSON</summary>
-        <JsonTreeView :value="result.render_scene || {}" label="render_scene" />
-      </details>
-
-      <details>
-        <summary>完整结果</summary>
+      <ResultBlock title="完整响应 JSON" :open="false">
         <JsonTreeView :value="result" label="workflow_single_run" />
-      </details>
+      </ResultBlock>
     </template>
   </section>
 </template>
 
 <style scoped>
 .single-run-result {
+  container-type: inline-size;
+  display: grid;
+  gap: 14px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--theme--background);
-  margin-top: 14px;
   padding: 16px;
 }
+
 header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
+
 header p,
 dt,
 .empty {
@@ -83,70 +84,91 @@ dt,
   font-size: 12px;
   font-weight: 700;
 }
+
 header h2 {
   margin: 2px 0 0;
   font-size: 18px;
 }
+
+header > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 header span {
+  flex: 0 0 auto;
+  align-self: flex-start;
   border: 1px solid var(--theme--border-color);
   border-radius: 999px;
   padding: 4px 8px;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
 }
+
 header span.succeeded {
   border-color: var(--theme--success);
+  background: var(--theme--success-background);
 }
+
 header span.failed,
 header span.timeout {
   border-color: var(--theme--danger);
+  background: var(--theme--danger-background);
 }
+
+.notice {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .meta-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
-  margin-top: 14px;
+  border-radius: 8px;
   overflow: hidden;
 }
+
 .meta-grid div {
   min-width: 0;
   background: var(--theme--background-subdued);
-  padding: 9px;
+  padding: 10px;
 }
+
 dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
 }
-.error-box,
-.warnings {
-  border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
-  margin-top: 14px;
-  padding: 10px;
-}
+
 .error-box {
+  border: 1px solid var(--theme--danger);
+  border-radius: 8px;
+  padding: 12px;
   background: var(--theme--danger-background);
 }
-.warnings h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
+
+.error-box p {
+  margin: 6px 0 0;
 }
-ul {
-  margin: 0;
-  padding-left: 18px;
+
+@container (max-width: 760px) {
+  .meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
-details {
-  border-top: 1px solid var(--theme--border-color);
-  margin-top: 14px;
-  padding-top: 12px;
-}
-summary {
-  cursor: pointer;
-  font-weight: 700;
-}
-@media (max-width: 900px) {
+
+@container (max-width: 520px) {
+  header {
+    display: grid;
+  }
+
   .meta-grid {
     grid-template-columns: 1fr;
   }

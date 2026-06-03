@@ -7,6 +7,16 @@ import {
   READING_VARIANTS_BY_GOAL,
 } from "../composables/useNodeLabConstants";
 
+// 通用格式化工具已被抽到 eval-center 顶层 composable,这里 re-export 以保留旧 import 路径。
+export {
+  shortId,
+  statusLabel,
+  statusTone,
+  formatDateTime,
+  type StatusTone,
+  type ShortIdSide,
+} from "../../../composables/useEvalFormatting";
+
 export function defaultVariantForGoal(goalId) {
   return READING_VARIANTS_BY_GOAL[goalId]?.[0]?.id || "intermediate_reading";
 }
@@ -39,12 +49,6 @@ export function readingVariantLabel(variantId) {
     if (found) return found.label;
   }
   return variantId;
-}
-
-export function shortId(value) {
-  const normalized = String(value || "").trim();
-  if (!normalized) return "—";
-  return normalized.length <= 10 ? normalized : normalized.slice(-8);
 }
 
 export function normalizePreviewText(value) {
@@ -110,35 +114,6 @@ export function resultIssue(entry, participantLabel = "") {
       warnings: entry.warnings || [],
     },
   };
-}
-
-export function statusLabel(status) {
-  const map = {
-    succeeded: "成功",
-    failed: "失败",
-    timeout: "超时",
-    cancelled: "已取消",
-    queued: "排队中",
-    running: "运行中",
-    complete: "完整完成",
-    partial_failure: "部分失败",
-    total_failure: "全部失败",
-    drafting: "草稿中",
-    active: "进行中",
-    paused: "已暂停",
-    reviewed: "已复盘",
-    archived: "已归档",
-    unreviewed: "未评审",
-  };
-  return map[status] || status || "未记录";
-}
-
-export function statusTone(status) {
-  if (["succeeded", "complete", "active", "reviewed"].includes(status)) return "success";
-  if (["partial_failure", "paused", "queued", "running"].includes(status)) return "warning";
-  if (["failed", "total_failure", "cancelled"].includes(status)) return "danger";
-  if (["timeout"].includes(status)) return "attention";
-  return "neutral";
 }
 
 export function hasNodeActivity(nodeName, stateOrDeps) {

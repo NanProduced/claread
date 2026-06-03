@@ -202,6 +202,9 @@ function summarizeRun(run, report, counts) {
       ? report.regression_list.length
       : null,
     case_artifact_count: counts.case_artifact_count,
+    learning_case_count: counts.learning_case_count ?? null,
+    academic_case_count: counts.academic_case_count ?? null,
+    non_learning_case_count: counts.non_learning_case_count ?? null,
     ab_report_count: counts.ab_report_count,
     judge_report_count: counts.judge_report_count ?? 0,
   };
@@ -230,6 +233,30 @@ function inferRunTopologyMode(caseArtifacts) {
   if (topologies.size === 1) return Array.from(topologies)[0];
   if (topologies.size > 1) return "mixed";
   return null;
+}
+
+function countRunTopologies(caseArtifacts) {
+  const items = Array.isArray(caseArtifacts) ? caseArtifacts : [];
+  let learning = 0;
+  let academic = 0;
+  let unknown = 0;
+  for (const artifact of items) {
+    const topologyMode = topologyFromCaseArtifact(artifact);
+    if (topologyMode === "learning") learning += 1;
+    else if (topologyMode === "academic") academic += 1;
+    else unknown += 1;
+  }
+  return {
+    learning_case_count: learning,
+    academic_case_count: academic,
+    non_learning_case_count: academic + unknown,
+  };
+}
+
+function filterLearningArtifacts(caseArtifacts) {
+  return (Array.isArray(caseArtifacts) ? caseArtifacts : []).filter(
+    (artifact) => topologyFromCaseArtifact(artifact) === "learning",
+  );
 }
 
 function summarizeCaseArtifact(artifact) {
@@ -282,11 +309,13 @@ async function loadRunSummary(root, runId) {
   const report = (await fileExists(reportPath)) ? await readJsonFile(reportPath) : null;
   const caseIndex = await loadCaseIndex(root, runId);
   const caseSummaries = caseIndex?.cases || [];
+  const topologyCounts = countRunTopologies(caseSummaries);
   return summarizeRun(run, report, {
     case_artifact_count: caseIndex?.total_cases ?? await countJsonFiles(path.join(dir, "cases")),
     ab_report_count: await countJsonFiles(path.join(dir, "ab")),
     judge_report_count: await countJudgeArtifactDirs(path.join(dir, "judge")),
     topology_mode: inferRunTopologyMode(caseSummaries),
+    ...topologyCounts,
   });
 }
 
@@ -323,6 +352,7 @@ async function loadRunDetail(root, runId) {
   const caseSummaries = caseIndex?.cases ?? await loadCaseArtifactSummaries(root, runId, dir);
   const abReportIds = await listJsonIds(path.join(dir, "ab"));
   const judgeReports = await listJudgeArtifacts(root, runId);
+  const topologyCounts = countRunTopologies(caseSummaries);
 
   return {
     summary: summarizeRun(run, report, {
@@ -330,6 +360,7 @@ async function loadRunDetail(root, runId) {
       ab_report_count: abReportIds.length,
       judge_report_count: judgeReports.length,
       topology_mode: inferRunTopologyMode(caseSummaries),
+      ...topologyCounts,
     }),
     run,
     report,
@@ -399,9 +430,10 @@ async function loadRunForWorkflowLabCompare(root, runId) {
   }
   const report = await readJsonFile(reportPath);
   const artifacts = await loadRunCaseArtifacts(root, runId);
-  const topologyMode = inferRunTopologyMode(artifacts);
-  if (topologyMode !== "learning") {
-    const error = new Error(`Workflow Lab compare only supports learning runs. "${runId}" topology is ${topologyMode || "unknown"}.`);
+  const learningArtifacts = filterLearningArtifacts(artifacts);
+  if (learningArtifacts.length === 0) {
+    const topologyMode = inferRunTopologyMode(artifacts);
+    const error = new Error(`Workflow Lab compare only supports runs with learning cases. "${runId}" topology is ${topologyMode || "unknown"}.`);
     error.status = 422;
     error.code = "WORKFLOW_LAB_TOPOLOGY_UNSUPPORTED";
     throw error;
@@ -412,8 +444,8 @@ async function loadRunForWorkflowLabCompare(root, runId) {
     dataset_id: run.dataset_id || report.dataset_id || null,
     run,
     report,
-    artifacts,
-    topology_mode: topologyMode,
+    artifacts: learningArtifacts,
+    topology_mode: inferRunTopologyMode(artifacts),
   };
 }
 
@@ -1443,12 +1475,48 @@ async function createWorkflowLabSingleRun({
     prompt_override: config.prompt_override || null,
   };
 
-  return callUpstream({
+  const upstreamResult = await callUpstream({
     env,
     path: "/eval/article-analysis/workflow",
     body: upstreamBody,
     timeoutMs: resolveRequestTimeoutMs(env, upstreamBody),
   });
+
+  const renderScene = upstreamResult?.render_scene
+    && typeof upstreamResult.render_scene === "object"
+    && !Array.isArray(upstreamResult.render_scene)
+    ? upstreamResult.render_scene
+    : upstreamResult
+      && typeof upstreamResult === "object"
+      && !Array.isArray(upstreamResult)
+      && (
+        Array.isArray(upstreamResult.translations)
+        || Array.isArray(upstreamResult.inline_marks)
+        || Array.isArray(upstreamResult.sentence_entries)
+      )
+      ? upstreamResult
+      : {};
+  const rawStatus = upstreamResult?.status || (Object.keys(renderScene).length > 0 ? "succeeded" : "failed");
+  const status = ["succeeded", "failed", "timeout"].includes(rawStatus) ? rawStatus : "failed";
+  const promptSnapshotHash = config.prompt_variant_snapshot_hash
+    || config.prompt_override?.prompt_snapshot_hash
+    || upstreamResult?.prompt_identity?.prompt_snapshot_hash
+    || null;
+
+  return {
+    status,
+    prompt_identity: {
+      prompt_variant_id: upstreamResult?.prompt_identity?.prompt_variant_id || config.prompt_variant_id || null,
+      prompt_snapshot_hash: promptSnapshotHash,
+    },
+    model_identity: upstreamResult?.model_identity || null,
+    runtime_summary: upstreamResult?.runtime_summary || null,
+    workflow_identity: upstreamResult?.workflow_identity || null,
+    schema_identity: upstreamResult?.schema_identity || null,
+    render_scene: renderScene,
+    warnings: Array.isArray(renderScene?.warnings) ? renderScene.warnings : [],
+    error: upstreamResult?.error || null,
+  };
 }
 
 function simpleYamlValue(yamlContent, fieldName, fallback = null) {
@@ -1513,6 +1581,7 @@ function workflowRunRequestSummary(row) {
     attempt_no: row.attempt_no || 1,
     max_attempts: row.max_attempts || row.attempt_no || 1,
     retry_reason: row.retry_reason || null,
+    cancelable: isWorkflowRunRequestCancelable(row.status),
     retryable: isWorkflowRunRequestRetryable(row.status),
     max_concurrency: row.max_concurrency,
     lease_owner: row.lease_owner,

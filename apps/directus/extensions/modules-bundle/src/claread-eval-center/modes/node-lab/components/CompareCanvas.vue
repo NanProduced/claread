@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import NodeProbeOutputView from "../../../components/NodeProbeOutputView.vue";
 import { useNodeLabState } from "../composables/useNodeLabState";
 import {
@@ -10,9 +10,34 @@ import {
   compareSentenceModel,
   sentenceToneClass,
   groupEntriesBySentence,
+  judgeItemResultLabel,
 } from "../composables/useNodeLabFormatting";
 
-const { compareResult, compareSentenceRows, state, loading } = useNodeLabState();
+const { compareResult, compareSentenceRows, state, loading, selectedJudgeRequestDetail } = useNodeLabState();
+
+const showInlineJudge = ref(true);
+
+const rubricScoringItems = computed(() => {
+  const result = selectedJudgeRequestDetail.value?.result?.rubric_scoring_result;
+  if (!result) return { baseline: [], candidate: [] };
+  return {
+    baseline: result.baseline?.items || [],
+    candidate: result.candidate?.items || []
+  };
+});
+
+function getJudgeItemsForSentence(side, sentenceId) {
+  return rubricScoringItems.value[side].filter(item => String(item.sentence_id || item.item_id) === String(sentenceId));
+}
+
+function getDeltaBadge(baselineItems, candidateItems) {
+  if (!baselineItems?.length || !candidateItems?.length) return null;
+  const bPass = baselineItems.every(item => item.criteria.every(c => c.score));
+  const cPass = candidateItems.every(item => item.criteria.every(c => c.score));
+  if (!bPass && cPass) return { tone: 'success', label: '+ 修复' };
+  if (bPass && !cPass) return { tone: 'danger', label: '- 劣化' };
+  return null;
+}
 
 function scopedPreparedSentences(entry, sentenceId) {
   const sentences = Array.isArray(entry?.prepared_sentences) ? entry.prepared_sentences : [];
@@ -41,6 +66,16 @@ function scopedOutputForRow(rowSide, nodeName) {
 </script>
 
 <template>
+  <div class="compare-canvas-header" v-if="compareResult">
+    <div class="canvas-actions" v-if="selectedJudgeRequestDetail?.result?.rubric_scoring_result">
+      <label class="toggle-switch">
+        <input type="checkbox" v-model="showInlineJudge" />
+        <span class="toggle-slider"></span>
+        <span class="toggle-label">内联显示 Judge 评分</span>
+      </label>
+    </div>
+  </div>
+
   <div v-if="loading.compare && !compareResult" class="compare-loading">
     <div class="loading-spinner"></div>
     <span>正在运行 Compare，结果加载后将显示逐句对比...</span>
@@ -103,12 +138,37 @@ function scopedOutputForRow(rowSide, nodeName) {
             />
             <div v-else class="compare-empty">该句在 Baseline 中没有翻译输出。</div>
           </template>
+
+          <div v-if="showInlineJudge && getJudgeItemsForSentence('baseline', row.sentenceId).length" class="inline-judge-panel fade-in">
+            <div class="inline-judge-header">
+              <span class="inline-judge-title">Baseline 评分</span>
+            </div>
+            <div v-for="judgeItem in getJudgeItemsForSentence('baseline', row.sentenceId)" :key="judgeItem.item_id" class="judge-item-group mt-2">
+              <div class="judge-item-label">{{ judgeItemResultLabel(judgeItem) }}</div>
+              <ul class="insight-list">
+                <li v-for="criterion in judgeItem.criteria" :key="criterion.criterion_id">
+                  <span class="rubric-indicator" :class="criterion.score ? 'is-pass' : 'is-fail'">
+                    {{ criterion.score ? '✓' : '✗' }}
+                  </span>
+                  <strong>{{ criterion.criterion_id }}</strong>
+                  <span>：{{ criterion.reason }}</span>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
 
         <div class="compare-column" role="region" aria-label="Candidate">
           <div class="compare-column__header">
             <h4>Candidate</h4>
-            <span class="badge" :class="`badge-${statusTone(compareResult.candidate?.status)}`">{{ statusLabel(compareResult.candidate?.status) }}</span>
+            <div class="header-badges">
+              <span v-if="showInlineJudge && getDeltaBadge(getJudgeItemsForSentence('baseline', row.sentenceId), getJudgeItemsForSentence('candidate', row.sentenceId))" 
+                    class="badge badge-sm fade-in delta-badge" 
+                    :class="`badge-${getDeltaBadge(getJudgeItemsForSentence('baseline', row.sentenceId), getJudgeItemsForSentence('candidate', row.sentenceId)).tone}`">
+                {{ getDeltaBadge(getJudgeItemsForSentence('baseline', row.sentenceId), getJudgeItemsForSentence('candidate', row.sentenceId)).label }}
+              </span>
+              <span class="badge" :class="`badge-${statusTone(compareResult.candidate?.status)}`">{{ statusLabel(compareResult.candidate?.status) }}</span>
+            </div>
           </div>
           <div
             v-if="resultIssue(compareResult?.candidate, 'Candidate')"
@@ -151,6 +211,24 @@ function scopedOutputForRow(rowSide, nodeName) {
             />
             <div v-else class="compare-empty">该句在 Candidate 中没有翻译输出。</div>
           </template>
+          
+          <div v-if="showInlineJudge && getJudgeItemsForSentence('candidate', row.sentenceId).length" class="inline-judge-panel fade-in">
+            <div class="inline-judge-header">
+              <span class="inline-judge-title">Candidate 评分</span>
+            </div>
+            <div v-for="judgeItem in getJudgeItemsForSentence('candidate', row.sentenceId)" :key="judgeItem.item_id" class="judge-item-group mt-2">
+              <div class="judge-item-label">{{ judgeItemResultLabel(judgeItem) }}</div>
+              <ul class="insight-list">
+                <li v-for="criterion in judgeItem.criteria" :key="criterion.criterion_id">
+                  <span class="rubric-indicator" :class="criterion.score ? 'is-pass' : 'is-fail'">
+                    {{ criterion.score ? '✓' : '✗' }}
+                  </span>
+                  <strong>{{ criterion.criterion_id }}</strong>
+                  <span>：{{ criterion.reason }}</span>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>

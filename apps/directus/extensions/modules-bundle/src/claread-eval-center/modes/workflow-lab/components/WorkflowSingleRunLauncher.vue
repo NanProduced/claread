@@ -43,7 +43,7 @@ const candidateOptions = computed(() => props.candidates
   })));
 
 const modelOptions = computed(() => [
-  { value: "", label: "使用 Claread 默认模型" },
+  { value: "", label: "使用默认模型方案" },
   ...props.modelProfiles.map((profile) => ({
     value: profile.profile_name,
     label: `${profile.profile_name} · ${profile.model_name}`,
@@ -68,7 +68,7 @@ function submit() {
   error.value = "";
   const text = form.value.text.trim();
   if (!text) {
-    error.value = "请先输入要解析的文章文本。";
+    error.value = "请先粘贴一段要验证的英文文章。";
     return;
   }
 
@@ -76,10 +76,10 @@ function submit() {
   try {
     modelSelection = JSON.parse(form.value.model_selection_json || "{}");
     if (!modelSelection || typeof modelSelection !== "object" || Array.isArray(modelSelection)) {
-      throw new Error("模型选择 JSON 必须是对象。");
+      throw new Error("高级模型设置需要是 JSON 对象。");
     }
   } catch (err) {
-    error.value = err?.message || "模型选择 JSON 无效。";
+    error.value = err?.message || "高级模型设置无法解析。";
     return;
   }
   if (form.value.model_profile) {
@@ -107,80 +107,88 @@ function submit() {
   <section class="single-run-panel">
     <header>
       <div>
-        <p>单条调试</p>
-        <h2>粘贴一篇文章验证 Workflow Candidate</h2>
+        <p>单篇验证</p>
+        <h2>先跑一篇文章，确认候选版本是否值得继续批量回归</h2>
       </div>
-      <span title="同步调用 services/api workflow eval，不进入 dataset runner 队列。">Single Run</span>
+      <span title="立即同步运行完整 workflow，结果只用于当前页面验证。">不入队列</span>
     </header>
 
-    <p class="hint">先用单条调试验证 candidate；确认有效后再做数据集批跑。</p>
-    <p v-if="error" class="error">{{ error }}</p>
+    <p class="hint">
+      推荐路径：贴文章，选择一个已发布候选版本，点“开始验证”。
+      <span v-if="candidateOptions.length === 0">当前还没有已发布候选版本，先用 baseline 验证或到“候选版本”发布一个版本。</span>
+    </p>
+    <p v-if="error" class="error" aria-live="assertive">{{ error }}</p>
 
     <label class="source-field">
-      <span title="待解析的原文。这里会跑完整 learning workflow，而不是单个 node。">待解析文章</span>
-      <textarea v-model="form.text" rows="9" placeholder="粘贴英文文章或段落..." />
+      <span title="这里会跑完整 learning workflow。">待验证文章</span>
+      <textarea v-model="form.text" rows="10" placeholder="粘贴英文文章或段落..." />
     </label>
 
     <div class="form-grid">
       <label>
-        <span title="当前 Workflow Lab 只支持 learning；academic 不在本模块内。">阅读目标</span>
-        <select v-model="form.reading_goal">
-          <option value="daily_reading">日常阅读</option>
-          <option value="exam">考试阅读</option>
-        </select>
-      </label>
-      <label>
-        <span title="影响 baseline prompt policy focus 和输出密度。">阅读场景</span>
-        <select v-model="form.reading_variant">
-          <option v-for="option in variantOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
-      </label>
-      <label>
-        <span title="选择 ready_for_eval 的 workflow prompt bundle；不选则使用 baseline prompt。">Candidate</span>
+        <span title="不选时直接使用 baseline。">候选版本</span>
         <select v-model="form.prompt_variant_id">
-          <option value="">Baseline prompt</option>
+          <option value="">使用 baseline</option>
           <option v-for="candidate in candidateOptions" :key="candidate.value" :value="candidate.value">{{ candidate.label }}</option>
         </select>
       </label>
       <label>
-        <span title="像 Node Lab 一样选择模型 profile。留空表示使用 Claread 默认模型路由。">模型 Profile</span>
+        <span title="优先选择模型方案，只有少数排障场景才需要写高级 JSON。">模型方案</span>
         <select v-model="form.model_profile">
           <option v-for="option in modelOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </label>
-      <label>
-        <span title="Candidate 与 RAG 互斥；选择 Candidate 后固定为 off。">RAG 模式</span>
-        <select v-model="form.rag_mode" :disabled="Boolean(form.prompt_variant_id)">
-          <option value="off">off</option>
-          <option value="baseline">baseline</option>
-          <option value="rag">rag</option>
-          <option value="rag_fallback">rag_fallback</option>
-          <option value="settings">settings</option>
-        </select>
-      </label>
-      <label>
-        <span title="调试真实 workflow 时可使用 isolated；日常快速验证保持 off。">Trace</span>
-        <select v-model="form.trace_scope">
-          <option value="off">off</option>
-          <option value="isolated">isolated</option>
-          <option value="inherit">inherit</option>
-        </select>
-      </label>
-      <label>
-        <span title="单条 workflow 最大等待时间，单位秒。">超时时间（秒）</span>
-        <input v-model.number="form.timeout_seconds" type="number" min="1" />
-      </label>
     </div>
 
     <details class="advanced">
-      <summary>高级模型选择 JSON</summary>
-      <textarea v-model="form.model_selection_json" rows="4" spellcheck="false" />
+      <summary>更多设置</summary>
+      <div class="advanced-grid">
+        <label>
+          <span title="决定默认的阅读解释风格。">阅读目标</span>
+          <select v-model="form.reading_goal">
+            <option value="daily_reading">日常阅读</option>
+            <option value="exam">考试阅读</option>
+          </select>
+        </label>
+        <label>
+          <span title="细化当前阅读目标的输出密度。">阅读场景</span>
+          <select v-model="form.reading_variant">
+            <option v-for="option in variantOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label>
+          <span title="仅在排查检索相关问题时需要修改。">检索增强</span>
+          <select v-model="form.rag_mode" :disabled="Boolean(form.prompt_variant_id)">
+            <option value="off">关闭</option>
+            <option value="baseline">沿用 baseline</option>
+            <option value="rag">强制使用 RAG</option>
+            <option value="rag_fallback">RAG 失败时回退</option>
+            <option value="settings">沿用运行时设置</option>
+          </select>
+        </label>
+        <label>
+          <span title="只在排障时需要保留更详细的执行记录。">调试记录</span>
+          <select v-model="form.trace_scope">
+            <option value="off">关闭</option>
+            <option value="isolated">仅保留当前验证</option>
+            <option value="inherit">沿用上游设置</option>
+          </select>
+        </label>
+        <label>
+          <span title="单篇 workflow 最长等待时间。">超时（秒）</span>
+          <input v-model.number="form.timeout_seconds" type="number" min="1" />
+        </label>
+        <label class="span-2">
+          <span title="默认情况下不需要填写。只有在排查模型路由问题时再展开。">高级模型设置 JSON</span>
+          <textarea v-model="form.model_selection_json" rows="4" spellcheck="false" />
+        </label>
+      </div>
     </details>
 
     <footer>
-      <p>{{ form.prompt_variant_id ? "将使用 Candidate prompt snapshot 运行。" : "将使用 Claread baseline prompt 运行。" }}</p>
-      <button type="button" :disabled="submitting" title="立即同步运行完整 workflow。" @click="submit">
-        {{ submitting ? "运行中..." : "运行 Single Run" }}
+      <p>{{ form.prompt_variant_id ? "本次将使用已发布候选版本进行验证。" : "本次将使用 baseline 进行验证。" }}</p>
+      <button type="button" :disabled="submitting" title="立即验证这篇文章的完整 workflow 输出。" @click="submit">
+        {{ submitting ? "验证中..." : "开始验证" }}
       </button>
     </footer>
   </section>
@@ -188,11 +196,13 @@ function submit() {
 
 <style scoped>
 .single-run-panel {
+  container-type: inline-size;
   border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--theme--background);
   padding: 16px;
 }
+
 header,
 footer {
   display: flex;
@@ -200,6 +210,7 @@ footer {
   justify-content: space-between;
   gap: 16px;
 }
+
 header p,
 footer p,
 label span,
@@ -209,83 +220,148 @@ label span,
   font-size: 12px;
   font-weight: 700;
 }
+
 header h2 {
   margin: 2px 0 0;
   font-size: 18px;
+  line-height: 1.45;
 }
+
+header > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 header > span {
+  flex: 0 0 auto;
+  align-self: flex-start;
   border: 1px solid var(--theme--border-color);
   border-radius: 999px;
   color: var(--theme--foreground-subdued);
   font-size: 12px;
   padding: 4px 8px;
+  white-space: nowrap;
 }
+
 .hint {
   margin-top: 12px;
+  line-height: 1.6;
 }
+
+.hint span {
+  display: block;
+  margin-top: 4px;
+}
+
 .error {
-  color: var(--theme--danger);
   margin: 12px 0 0;
+  border: 1px solid var(--theme--danger);
+  border-radius: 8px;
+  background: var(--theme--danger-background);
+  color: var(--theme--foreground);
+  padding: 10px 12px;
 }
+
 label {
   display: grid;
   gap: 6px;
   min-width: 0;
 }
+
 .source-field {
   margin-top: 14px;
 }
-.form-grid {
+
+.form-grid,
+.advanced-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.form-grid {
   margin-top: 14px;
 }
+
 input,
 select,
 textarea,
 button {
   min-height: 36px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--theme--background);
   color: var(--theme--foreground);
   font: inherit;
   padding: 7px 9px;
 }
+
 textarea {
   resize: vertical;
   font-family: var(--theme--fonts--monospace--font-family, monospace);
   font-size: 12px;
   line-height: 1.45;
 }
+
 button {
   cursor: pointer;
   font-weight: 700;
+  white-space: nowrap;
 }
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
+
 .advanced {
   border-top: 1px solid var(--theme--border-color);
   margin-top: 14px;
   padding-top: 12px;
 }
-.advanced textarea {
-  margin-top: 8px;
-  width: 100%;
+
+.advanced summary {
+  cursor: pointer;
+  color: var(--theme--foreground-subdued);
+  font-size: 13px;
+  font-weight: 700;
 }
+
+.advanced-grid {
+  margin-top: 12px;
+}
+
+.span-2 {
+  grid-column: 1 / -1;
+}
+
 footer {
   margin-top: 14px;
 }
-@media (max-width: 760px) {
-  .form-grid {
+
+@container (max-width: 700px) {
+  .form-grid,
+  .advanced-grid {
     grid-template-columns: 1fr;
   }
+
   header,
   footer {
     display: grid;
+  }
+}
+
+@container (max-width: 560px) {
+  .single-run-panel {
+    padding: 14px;
+  }
+
+  header h2 {
+    font-size: 16px;
+  }
+
+  footer button {
+    width: 100%;
   }
 }
 </style>

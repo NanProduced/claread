@@ -205,7 +205,23 @@ const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
         </div>
       </div>
     </div>
-    <div v-else class="empty-state">
+    <div v-else-if="loading.run" class="skeleton-state">
+      <div class="skeleton-header">
+        <div class="skeleton-btn"></div>
+      </div>
+      <div class="skeleton-meta-grid">
+        <div class="skeleton-item" v-for="i in 4" :key="i"></div>
+      </div>
+      <div class="skeleton-block mt-4">
+        <div class="skeleton-title"></div>
+        <div class="skeleton-content"></div>
+      </div>
+      <div class="skeleton-block mt-4">
+        <div class="skeleton-title"></div>
+        <div class="skeleton-content"></div>
+      </div>
+    </div>
+    <div v-else class="empty-state fade-in">
       <p>暂无执行结果</p>
       <span class="empty-hint">请在左侧点击"运行"以查看输出。</span>
     </div>

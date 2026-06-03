@@ -185,14 +185,13 @@ const baselineSummaryFacts = computed(() => {
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued);
-  border-left: 3px solid var(--color-border);
-  transition: border-left-color 0.15s;
+  transition: background-color 0.15s;
 }
 .detail-card summary:hover {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued);
 }
 .detail-card[open] summary {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued);
 }
 
 .detail-content {

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from "vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
+import { groupCandidatesByStatus } from "../composables/workflowLabFormatting.js";
 
 const props = defineProps({
   drafts: { type: Array, default: () => [] },
@@ -21,7 +22,9 @@ const emit = defineEmits([
   "update:form",
   "create-from-baseline",
   "preview",
-  "save",
+  "save-draft",
+  "publish",
+  "unpublish",
 ]);
 
 const AGENTS = [
@@ -31,6 +34,7 @@ const AGENTS = [
   { key: "repair", label: "修复" },
 ];
 const activeAgent = ref("vocabulary");
+const examplesError = ref("");
 
 const goalOptions = [
   { value: "daily_reading", label: "日常阅读" },
@@ -61,6 +65,12 @@ const baselineLayer = computed(() => baselineFor(activeAgent.value));
 const hasBundle = computed(() => AGENTS.some((agent) => layerFor(agent.key).instructions.trim()));
 const canSave = computed(() => props.form.variant_id?.trim() && hasBundle.value && !props.saving);
 const changedAgents = computed(() => AGENTS.filter((agent) => isChanged(agent.key)).map((agent) => agent.label));
+const draftGroups = computed(() => groupCandidatesByStatus(props.drafts));
+const currentStatusLabel = computed(() => props.form.status === "ready_for_eval"
+  ? "已发布到运行入口"
+  : props.form.status === "archived"
+    ? "已归档"
+    : "草稿");
 
 function layerFor(agentName) {
   return props.form.agents?.[agentName] || {
@@ -93,6 +103,7 @@ function updateMeta(key, value) {
 }
 
 function updateAgent(agentName, patch) {
+  examplesError.value = "";
   updateForm({
     agents: {
       ...(props.form.agents || {}),
@@ -152,9 +163,10 @@ function updateExamplesRaw(value) {
   try {
     const parsed = JSON.parse(value || "[]");
     if (!Array.isArray(parsed)) throw new Error("Examples must be an array.");
+    examplesError.value = "";
     updateAgent(activeAgent.value, { examples: parsed });
   } catch (error) {
-    window.alert(error.message || "Examples JSON 无法解析。");
+    examplesError.value = error.message || "Examples JSON 无法解析。";
   }
 }
 
@@ -191,18 +203,43 @@ function draftSubtitle(draft) {
       </header>
 
       <div class="draft-scroll">
-        <button
-          v-for="draft in drafts"
-          :key="draft.id"
-          type="button"
-          class="draft-item"
-          :class="{ active: draft.id === selectedId }"
-          @click="emit('select', draft)"
-        >
-          <strong>{{ draft.variant_id }}</strong>
-          <small>{{ draftSubtitle(draft) }}</small>
-        </button>
-        <p v-if="!loading && drafts.length === 0" class="empty">暂无 Candidate draft。</p>
+        <section class="draft-group">
+          <div class="group-head">
+            <strong>已发布</strong>
+            <small>{{ draftGroups.published.length }}</small>
+          </div>
+          <button
+            v-for="draft in draftGroups.published"
+            :key="draft.id"
+            type="button"
+            class="draft-item"
+            :class="{ active: draft.id === selectedId }"
+            @click="emit('select', draft)"
+          >
+            <strong>{{ draft.variant_id }}</strong>
+            <small>{{ draftSubtitle(draft) }}</small>
+          </button>
+          <p v-if="!loading && draftGroups.published.length === 0" class="empty">暂无已发布 Candidate。</p>
+        </section>
+
+        <section class="draft-group">
+          <div class="group-head">
+            <strong>草稿</strong>
+            <small>{{ draftGroups.drafts.length }}</small>
+          </div>
+          <button
+            v-for="draft in draftGroups.drafts"
+            :key="draft.id"
+            type="button"
+            class="draft-item"
+            :class="{ active: draft.id === selectedId }"
+            @click="emit('select', draft)"
+          >
+            <strong>{{ draft.variant_id }}</strong>
+            <small>{{ draftSubtitle(draft) }}</small>
+          </button>
+          <p v-if="!loading && draftGroups.drafts.length === 0" class="empty">暂无草稿 Candidate。</p>
+        </section>
       </div>
 
       <button type="button" :disabled="loading" title="刷新 Directus 中的 workflow candidate draft。" @click="emit('refresh')">
@@ -211,47 +248,49 @@ function draftSubtitle(draft) {
     </aside>
 
     <main class="candidate-editor">
-      <div v-if="error" class="notice error">{{ error }}</div>
-      <div v-if="message" class="notice success">{{ message }}</div>
+      <div v-if="error" class="notice error" aria-live="assertive">{{ error }}</div>
+      <div v-if="message" class="notice success" aria-live="polite">{{ message }}</div>
 
       <section class="setup-strip">
         <label>
           <span title="Candidate 的稳定标识，只允许字母、数字、点、下划线和短横线。">Variant ID</span>
           <input :value="form.variant_id" @input="updateMeta('variant_id', $event.target.value)" />
         </label>
-        <label>
-          <span title="Workflow Lab 当前只允许 learning topology。">阅读目标</span>
-          <select :value="form.reading_goal" @change="updateMeta('reading_goal', $event.target.value)">
-            <option v-for="option in goalOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-        </label>
-        <label>
-          <span title="用于解析 baseline prompt policy focus 与 examples variant。">阅读场景</span>
-          <select :value="form.reading_variant" @change="updateMeta('reading_variant', $event.target.value)">
-            <option v-for="option in variantOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-        </label>
-        <label>
-          <span title="Candidate run 选择该草稿时会锁定 rag_mode=off。">Few-shot</span>
-          <select :value="form.few_shot_mode" @change="updateMeta('few_shot_mode', $event.target.value)">
-            <option v-for="option in fewShotOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-        </label>
-        <label>
-          <span title="只有 ready_for_eval 会出现在运行入口。">状态</span>
-          <select :value="form.status" @change="updateMeta('status', $event.target.value)">
-            <option value="draft">draft</option>
-            <option value="ready_for_eval">ready_for_eval</option>
-            <option value="archived">archived</option>
-          </select>
-        </label>
+        <div class="status-panel">
+          <span title="只有已发布到运行入口的 Candidate 才会出现在 Single Run / Dataset Run 选择器里。">当前状态</span>
+          <strong>{{ currentStatusLabel }}</strong>
+        </div>
         <button type="button" :disabled="loading" title="从 Claread 当前 baseline prompt 读取四个 workflow agent 的完整草稿。" @click="emit('create-from-baseline')">
           {{ loading ? "读取中" : "从 baseline 创建" }}
         </button>
       </section>
 
+      <details class="advanced-settings">
+        <summary>高级候选设置</summary>
+        <div class="advanced-settings-grid">
+          <label>
+            <span title="Workflow Lab 当前只允许 learning topology。">阅读目标</span>
+            <select :value="form.reading_goal" @change="updateMeta('reading_goal', $event.target.value)">
+              <option v-for="option in goalOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
+          <label>
+            <span title="用于解析 baseline prompt policy focus 与 examples variant。">阅读场景</span>
+            <select :value="form.reading_variant" @change="updateMeta('reading_variant', $event.target.value)">
+              <option v-for="option in variantOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
+          <label>
+            <span title="只有在想覆盖 baseline examples 时才需要改动。">Few-shot 方案</span>
+            <select :value="form.few_shot_mode" @change="updateMeta('few_shot_mode', $event.target.value)">
+              <option v-for="option in fewShotOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
+        </div>
+      </details>
+
       <div v-if="!hasBundle" class="empty-state">
-        先填写 Variant ID，并点击“从 baseline 创建”。Workflow Candidate 必须包含词汇、语法、翻译和修复四个 prompt layer。
+        先给候选版本命名，再点“从 baseline 创建”。这样会自动生成四个 workflow 节点，之后你只需要改真正想实验的部分。
       </div>
 
       <template v-else>
@@ -324,18 +363,19 @@ function draftSubtitle(draft) {
                   spellcheck="false"
                   @change="updateExamplesRaw($event.target.value)"
                 />
+                <p v-if="examplesError" class="inline-error" aria-live="assertive">{{ examplesError }}</p>
               </details>
             </section>
           </div>
 
           <aside class="baseline-reference">
             <section>
-              <p>变更摘要</p>
+              <p>当前差异</p>
               <strong>{{ changedAgents.length ? changedAgents.join(" / ") : "全部沿用 baseline" }}</strong>
-              <small>{{ readyCandidates.length }} 条 ready candidate 可用于 Workflow run。</small>
+              <small>{{ readyCandidates.length }} 条已发布候选版本可直接用于验证与回归。</small>
             </section>
             <section>
-              <p>Baseline {{ baselineLayer.label }}</p>
+              <p>Baseline 参考</p>
               <dl>
                 <div><dt>Prompt version</dt><dd>{{ form.prompt_version || "-" }}</dd></div>
                 <div><dt>Profile</dt><dd>{{ form.prompt_profile || "-" }}</dd></div>
@@ -366,8 +406,19 @@ function draftSubtitle(draft) {
           <button type="button" :disabled="previewing || !canSave" @click="emit('preview')">
             {{ previewing ? "预览中" : "预览 Snapshot" }}
           </button>
-          <button type="button" :disabled="!canSave" @click="emit('save')">
-            {{ saving ? "保存中" : "保存 Candidate" }}
+          <button type="button" :disabled="!canSave" @click="emit('save-draft')">
+            {{ saving && form.status !== 'ready_for_eval' ? "保存中" : "保存草稿" }}
+          </button>
+          <button type="button" :disabled="!canSave" @click="emit('publish')">
+            {{ saving && form.status === 'ready_for_eval' ? "发布中" : "发布到运行入口" }}
+          </button>
+          <button
+            v-if="selectedId && form.status === 'ready_for_eval'"
+            type="button"
+            :disabled="saving"
+            @click="emit('unpublish')"
+          >
+            {{ saving ? "撤回中" : "撤回发布" }}
           </button>
         </div>
       </footer>
@@ -460,9 +511,19 @@ textarea {
 }
 .draft-scroll {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   max-height: 420px;
   overflow: auto;
+}
+.draft-group {
+  display: grid;
+  gap: 8px;
+}
+.group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .draft-item {
   display: block;
@@ -491,9 +552,38 @@ textarea {
 }
 .setup-strip {
   display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) repeat(4, minmax(130px, 0.8fr)) auto;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(160px, 0.9fr) auto;
   gap: 10px;
   align-items: end;
+}
+.advanced-settings {
+  border-top: 1px solid var(--theme--border-color);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+.advanced-settings summary {
+  cursor: pointer;
+  color: var(--theme--foreground-subdued);
+  font-size: 13px;
+  font-weight: 700;
+}
+.advanced-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.status-panel {
+  display: grid;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
+  background: var(--theme--background-subdued);
+  padding: 8px;
+}
+.status-panel strong {
+  font-size: 13px;
 }
 label {
   display: grid;
@@ -563,6 +653,12 @@ label {
   border-top: 1px solid var(--theme--border-color);
   padding-top: 10px;
 }
+.inline-error {
+  margin: 8px 0 0;
+  color: var(--theme--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .baseline-reference {
   align-content: start;
 }
@@ -614,7 +710,8 @@ code {
 @media (max-width: 1180px) {
   .candidate-panel,
   .editor-layout,
-  .setup-strip {
+  .setup-strip,
+  .advanced-settings-grid {
     grid-template-columns: 1fr;
   }
 }

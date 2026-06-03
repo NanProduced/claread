@@ -19,7 +19,7 @@ function statusTone(status) {
     <header>
       <div>
         <p>运行队列</p>
-        <h2>Workflow 运行</h2>
+        <h2>等待中与进行中的回归任务</h2>
       </div>
       <button type="button" :disabled="loading" title="刷新后台 runner bridge 请求状态。" @click="emit('refresh')">
         {{ loading ? "刷新中" : "刷新" }}
@@ -37,11 +37,11 @@ function statusTone(status) {
       >
         <span>
           <strong>{{ row.run_id }}</strong>
-          <small>{{ row.dataset_id }} / {{ row.config_summary?.prompt_variant_id || "baseline" }}</small>
+          <small>{{ row.dataset_id }} / {{ row.prompt_variant_id || "baseline" }}</small>
         </span>
         <em :class="statusTone(row.status)">{{ row.status }}</em>
       </button>
-      <p v-if="!loading && requests.length === 0" class="empty">暂无 workflow 运行请求。</p>
+      <p v-if="!loading && requests.length === 0" class="empty">当前没有排队中的回归任务。</p>
     </div>
 
     <footer class="queue-actions">

@@ -506,8 +506,40 @@ test("createWorkflowLabCompare rejects non-learning runs", async () => {
         baseline_run_id: "baseline",
         candidate_run_id: "candidate",
       }),
-      /only supports learning/,
+      /learning cases/,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createWorkflowLabCompare keeps only shared learning cases from mixed runs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
+  try {
+    writeWorkflowRun(root, {
+      runId: "baseline",
+      topology: "learning",
+      artifacts: [
+        workflowCaseArtifact({ runId: "baseline", caseId: "learning-a", topology: "learning" }),
+        workflowCaseArtifact({ runId: "baseline", caseId: "academic-a", topology: "academic" }),
+      ],
+    });
+    writeWorkflowRun(root, {
+      runId: "candidate",
+      topology: "learning",
+      artifacts: [
+        workflowCaseArtifact({ runId: "candidate", caseId: "learning-a", topology: "learning", promptVariantId: "candidate-v1" }),
+        workflowCaseArtifact({ runId: "candidate", caseId: "academic-a", topology: "academic", promptVariantId: "candidate-v1" }),
+      ],
+    });
+
+    const result = await createWorkflowLabCompare(root, {
+      baseline_run_id: "baseline",
+      candidate_run_id: "candidate",
+    });
+
+    assert.equal(result.report.total_cases, 1);
+    assert.equal(result.report.comparisons[0].case_id, "learning-a");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -634,6 +666,7 @@ test("workflowRunRequestSummary exposes expected artifact path separately", () =
   assert.equal(summary.expected_artifact_path, "evals/runs/bridge-summary-run");
   assert.equal(summary.source_request_id, "req-parent");
   assert.equal(summary.attempt_no, 2);
+  assert.equal(summary.cancelable, true);
   assert.equal(summary.retryable, false);
   assert.equal(summary.config_summary.preset_id, "smoke-fake");
 });
@@ -947,7 +980,17 @@ test("createWorkflowLabSingleRun forwards baseline workflow request", async () =
     },
     callUpstream: async (payload) => {
       captured = payload;
-      return { status: "succeeded", prompt_identity: { prompt_variant_id: null } };
+      return {
+        workflow_identity: { workflow_name: "article_analysis" },
+        render_scene: {
+          schema_version: "3.0.0",
+          user_facing_state: "normal",
+          translations: [],
+          inline_marks: [],
+          sentence_entries: [],
+          warnings: [],
+        },
+      };
     },
   });
 
@@ -957,6 +1000,8 @@ test("createWorkflowLabSingleRun forwards baseline workflow request", async () =
   assert.equal(captured.body.prompt_variant_id, null);
   assert.equal(captured.body.prompt_override, null);
   assert.equal(result.status, "succeeded");
+  assert.equal(result.prompt_identity.prompt_variant_id, null);
+  assert.equal(result.render_scene.user_facing_state, "normal");
 });
 
 test("createWorkflowLabSingleRun attaches ready candidate snapshot", async () => {

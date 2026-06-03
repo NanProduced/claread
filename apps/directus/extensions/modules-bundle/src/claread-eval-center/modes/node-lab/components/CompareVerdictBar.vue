@@ -31,6 +31,7 @@ const {
   currentCompareTrialId, latestCompareTrialId,
   recentTrials,
   loading,
+  selectedJudgeRequestDetail,
 } = useNodeLabState();
 const { openCompareTrialInWorkbench } = useNodeLabApi();
 
@@ -182,6 +183,47 @@ const activeCompareRelation = computed(() => {
       <span>正在查看历史 Compare 结果</span>
       <v-button small secondary @click="clearActiveCompareView(state.activeNode, { preserveLatestTrial: true })">返回当前 Compare</v-button>
     </div>
+
+    <div v-if="selectedJudgeRequestDetail?.result?.pairwise_result?.pairwise_review" class="pairwise-verdict-panel mb-4 fade-in">
+      <div class="pairwise-verdict-header">
+        <h3 class="pairwise-title">Judge 综合评估：<span :class="selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.preferred_side === 'candidate' ? 'text-success' : (selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.preferred_side === 'baseline' ? 'text-warning' : 'text-neutral')">{{ selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.preferred_side.toUpperCase() }}</span> 胜出</h3>
+      </div>
+      <p class="pairwise-verdict-summary">{{ selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.overall_judgment }}</p>
+      
+      <div class="compare-split mt-3">
+        <div class="compare-pane">
+          <div class="pane-header"><h4>Baseline</h4></div>
+          <ul class="insight-list">
+            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.baseline_strengths || []" :key="`bs-${index}`">
+              <strong>优点：</strong>{{ item }}
+            </li>
+            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.baseline_risks || []" :key="`br-${index}`">
+              <strong>风险：</strong>{{ item }}
+            </li>
+          </ul>
+        </div>
+        <div class="compare-pane">
+          <div class="pane-header"><h4>Candidate</h4></div>
+          <ul class="insight-list">
+            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.candidate_strengths || []" :key="`cs-${index}`">
+              <strong>优点：</strong>{{ item }}
+            </li>
+            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.candidate_risks || []" :key="`cr-${index}`">
+              <strong>风险：</strong>{{ item }}
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div v-if="selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.manual_check_points?.length" class="mt-3">
+        <h5>建议人工复看</h5>
+        <ul class="insight-list mt-2">
+          <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.manual_check_points" :key="`mc-${index}`">
+            {{ item }}
+          </li>
+        </ul>
+      </div>
+    </div>
+
     <div class="compare-overview">
       <article
         v-for="card in compareOverviewCards"
@@ -334,6 +376,85 @@ const activeCompareRelation = computed(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
+}
+
+/* Pairwise Verdict Panel */
+.pairwise-verdict-panel {
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.pairwise-verdict-header {
+  margin-bottom: 12px;
+}
+
+.pairwise-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.pairwise-verdict-summary {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  margin-bottom: 16px;
+}
+
+.compare-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.compare-pane {
+  background: var(--color-surface-subdued);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.pane-header {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pane-header h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.insight-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.insight-list li {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-subdued);
+}
+
+.insight-list strong {
+  color: var(--color-text);
+}
+
+.fade-in {
+  animation: fade-in 0.2s ease-out forwards;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .compare-status-card {
@@ -506,14 +627,13 @@ const activeCompareRelation = computed(() => {
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued);
-  border-left: 3px solid var(--color-border);
-  transition: border-left-color 0.15s;
+  transition: background-color 0.15s;
 }
 .detail-card summary:hover {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued);
 }
 .detail-card[open] summary {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued);
 }
 
 .detail-card--compact summary {

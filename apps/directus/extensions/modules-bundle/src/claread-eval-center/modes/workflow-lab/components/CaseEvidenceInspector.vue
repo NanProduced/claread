@@ -1,118 +1,176 @@
 <script setup>
-import JsonTreeView from "../../../components/JsonTreeView.vue";
-import ResultBlock from "../../../components/ResultBlock.vue";
+import WorkflowArtifactScene from "./WorkflowArtifactScene.vue";
+import { dash } from "../composables/workflowLabFormatting.js";
 
 defineProps({
   artifact: { type: Object, default: null },
+  baselineArtifact: { type: Object, default: null },
+  candidateArtifact: { type: Object, default: null },
   compareCase: { type: Object, default: null },
   loading: { type: Boolean, default: false },
 });
-
-function list(value) {
-  return Array.isArray(value) ? value : [];
-}
 </script>
 
 <template>
   <aside class="inspector">
     <header>
-      <p>证据 Inspector</p>
-      <h2>{{ artifact?.case_id || compareCase?.case_id || "未选择 case" }}</h2>
+      <p>证据查看</p>
+      <h2>{{ artifact?.case_id || compareCase?.case_id || baselineArtifact?.case_id || candidateArtifact?.case_id || "未选择 case" }}</h2>
     </header>
 
     <div v-if="loading" class="empty">正在读取证据...</div>
-    <div v-else-if="!artifact && !compareCase" class="empty">从 run 或 compare report 中选择一个 case 查看 evidence。</div>
-    <template v-else>
-      <section v-if="compareCase" class="compare-evidence">
-        <strong>{{ compareCase.verdict }}</strong>
-        <p v-for="reason in compareCase.reasons || []" :key="reason">{{ reason }}</p>
+    <div v-else-if="!artifact && !baselineArtifact && !candidateArtifact && !compareCase" class="empty">选择 case 后，这里会展示单侧或双侧证据。</div>
+    <template v-else-if="baselineArtifact || candidateArtifact || compareCase">
+      <section class="compare-summary">
+        <div>
+          <dt>结论</dt>
+          <dd>{{ dash(compareCase?.verdict, "未生成差异报告") }}</dd>
+        </div>
+        <div>
+          <dt>Baseline 硬/软</dt>
+          <dd>{{ compareCase ? `${compareCase.baseline_hard_failures}/${compareCase.baseline_soft_failures}` : "-" }}</dd>
+        </div>
+        <div>
+          <dt>Candidate 硬/软</dt>
+          <dd>{{ compareCase ? `${compareCase.candidate_hard_failures}/${compareCase.candidate_soft_failures}` : "-" }}</dd>
+        </div>
       </section>
 
-      <template v-if="artifact">
-        <dl class="meta">
-          <div><dt title="adapter 返回状态。">状态</dt><dd>{{ artifact.adapter_status || "-" }}</dd></div>
-          <div><dt title="最终 render_scene 的用户可见状态。">输出状态</dt><dd>{{ artifact.user_facing_state || "-" }}</dd></div>
-          <div><dt title="workflow 或投影阶段记录的 warning 数量。">Warnings</dt><dd>{{ list(artifact.warnings).length }}</dd></div>
-          <div><dt title="normalize/ground 阶段丢弃的标注数量。">Drop log</dt><dd>{{ list(artifact.drop_log).length }}</dd></div>
-        </dl>
+      <section v-if="compareCase?.reasons?.length" class="reason-list">
+        <strong>为什么会得到这个结论</strong>
+        <ul>
+          <li v-for="reason in compareCase.reasons" :key="reason">{{ reason }}</li>
+        </ul>
+      </section>
 
-        <ResultBlock title="翻译输出" :open="true">
-          <JsonTreeView :value="list(artifact.translations).slice(0, 8)" label="translations" />
-        </ResultBlock>
-        <ResultBlock title="行内标注">
-          <JsonTreeView :value="list(artifact.inline_marks).slice(0, 12)" label="inline_marks" />
-        </ResultBlock>
-        <ResultBlock title="句子条目">
-          <JsonTreeView :value="list(artifact.sentence_entries).slice(0, 12)" label="sentence_entries" />
-        </ResultBlock>
-        <ResultBlock title="Warnings / Drop log">
-          <JsonTreeView :value="{ warnings: artifact.warnings || [], drop_log: artifact.drop_log || [] }" label="quality_signals" />
-        </ResultBlock>
-        <ResultBlock title="完整 artifact">
-          <JsonTreeView :value="artifact" label="case_artifact" />
-        </ResultBlock>
-      </template>
+      <div class="split-view">
+        <section class="split-pane">
+          <div class="pane-head">
+            <strong>Baseline</strong>
+            <span>{{ dash(baselineArtifact?.adapter_status, "缺失 artifact") }}</span>
+          </div>
+          <WorkflowArtifactScene
+            :payload="baselineArtifact"
+            title="Baseline 输出"
+            empty-text="Baseline 侧当前没有可展示 artifact。"
+            :compact="true"
+            :show-debug="false"
+          />
+        </section>
+
+        <section class="split-pane">
+          <div class="pane-head">
+            <strong>Candidate</strong>
+            <span>{{ dash(candidateArtifact?.adapter_status, "缺失 artifact") }}</span>
+          </div>
+          <WorkflowArtifactScene
+            :payload="candidateArtifact"
+            title="Candidate 输出"
+            empty-text="Candidate 侧当前没有可展示 artifact。"
+            :compact="true"
+            :show-debug="false"
+          />
+        </section>
+      </div>
+    </template>
+    <template v-else>
+      <WorkflowArtifactScene
+        :payload="artifact"
+        title="Case 证据"
+        empty-text="当前 case 没有可展示证据。"
+        :compact="true"
+        :show-debug="true"
+      />
     </template>
   </aside>
 </template>
 
 <style scoped>
 .inspector {
+  display: grid;
+  gap: 14px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--theme--background);
-  min-height: 520px;
-  max-height: calc(100vh - 190px);
-  overflow: auto;
+  min-height: 320px;
   padding: 14px;
 }
-header p {
+
+header p,
+dt,
+.empty,
+.reason-list li {
   margin: 0;
   color: var(--theme--foreground-subdued);
   font-size: 12px;
-  font-weight: 700;
 }
+
 header h2 {
-  margin: 2px 0 12px;
+  margin: 2px 0 0;
   font-size: 16px;
   overflow-wrap: anywhere;
 }
-.empty {
-  color: var(--theme--foreground-subdued);
-}
-.compare-evidence {
-  border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
-  margin-bottom: 12px;
-  padding: 10px;
-}
-.compare-evidence strong {
-  display: inline-block;
-  border-radius: 999px;
-  background: var(--theme--background-subdued);
-  padding: 3px 7px;
-}
-.compare-evidence p {
-  margin: 8px 0 0;
-}
-.meta {
+
+.compare-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
 }
-.meta div {
+
+.compare-summary div {
   background: var(--theme--background-subdued);
-  padding: 8px;
+  padding: 10px;
 }
-dt {
-  color: var(--theme--foreground-subdued);
-  font-size: 11px;
+
+dd {
+  margin: 4px 0 0;
+  font-size: 14px;
   font-weight: 700;
 }
-dd {
-  margin: 3px 0 0;
+
+.reason-list {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--theme--background-subdued);
+}
+
+.reason-list ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.split-view {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.split-pane {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pane-head span {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+}
+
+@media (max-width: 1200px) {
+  .compare-summary,
+  .split-view {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

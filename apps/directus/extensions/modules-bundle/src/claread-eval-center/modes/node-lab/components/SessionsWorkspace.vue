@@ -663,7 +663,8 @@ function confirmDelete() {
 .progress-fill {
   height: 100%;
   border-radius: 4px;
-  transition: width 0.3s ease;
+  transition: transform 0.3s ease;
+  transform-origin: left;
 }
 .progress-fill.is-primary { background: var(--color-primary, #2563eb); }
 .progress-fill.is-success { background: var(--theme--success, #10b981); }

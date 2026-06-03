@@ -182,15 +182,14 @@ async function copyJson() {
   font-family: var(--theme--fonts--sans, system-ui, -apple-system, sans-serif);
   font-size: 14px;
   line-height: 1.5;
-  color: var(--theme--foreground, #333);
+  color: var(--theme--foreground);
   min-width: 0;
 }
 
 .json-tree-container.is-root {
-  border: 1px solid var(--theme--border-color, #e0e0e0);
+  border: 1px solid var(--theme--border-color);
   border-radius: 8px;
-  background: var(--theme--background, #ffffff);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  background: var(--theme--background);
   overflow: hidden;
 }
 
@@ -200,8 +199,8 @@ async function copyJson() {
   justify-content: space-between;
   align-items: center;
   padding: 8px 16px;
-  background: var(--theme--background-page, #f8f9fa);
-  border-bottom: 1px solid var(--theme--border-color, #e0e0e0);
+  background: var(--theme--background-page);
+  border-bottom: 1px solid var(--theme--border-color);
 }
 
 .toolbar-title {
@@ -218,8 +217,8 @@ async function copyJson() {
 
 .action-group {
   display: flex;
-  background: var(--theme--background, #fff);
-  border: 1px solid var(--theme--border-color-subdued, #d0d0d0);
+  background: var(--theme--background);
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
   border-radius: 6px;
   overflow: hidden;
 }
@@ -228,16 +227,16 @@ async function copyJson() {
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
-  color: var(--theme--foreground-subdued, #666);
+  color: var(--theme--foreground-subdued);
   background: transparent;
   border: none;
   padding: 4px 10px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .action-group .action-btn {
-  border-right: 1px solid var(--theme--border-color-subdued, #d0d0d0);
+  border-right: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
 }
 
 .action-group .action-btn:last-child {
@@ -246,12 +245,12 @@ async function copyJson() {
 
 .action-btn:hover:not(:disabled) {
   color: var(--theme--foreground);
-  background: var(--theme--background-accent, rgba(0,0,0,0.04));
+  background: var(--theme--background-accent);
 }
 
 .action-btn.active {
-  color: var(--theme--primary, #007bff);
-  background: color-mix(in srgb, var(--theme--primary, #007bff) 10%, transparent);
+  color: var(--theme--primary);
+  background: color-mix(in srgb, var(--theme--primary) 10%, transparent);
   font-weight: 600;
 }
 
@@ -263,7 +262,7 @@ async function copyJson() {
 .action-divider {
   width: 1px;
   height: 16px;
-  background: var(--theme--border-color-subdued, #e0e0e0);
+  background: var(--theme--border-color-subdued, var(--theme--border-color));
   margin: 0 4px;
 }
 
@@ -314,7 +313,7 @@ async function copyJson() {
 }
 
 .json-summary:hover {
-  background-color: var(--theme--background-accent, rgba(0,0,0,0.03));
+  background-color: var(--theme--background-accent);
 }
 
 .summary-left {
@@ -341,12 +340,12 @@ async function copyJson() {
 
 /* Keys and Values */
 .json-key {
-  color: var(--theme--primary, #206bc4);
+  color: var(--theme--primary);
   font-weight: 600;
 }
 
 .json-key.is-index {
-  color: var(--theme--foreground-subdued, #888);
+  color: var(--theme--foreground-subdued);
   font-weight: 500;
 }
 
@@ -374,7 +373,7 @@ async function copyJson() {
 .json-children {
   padding-left: 15px; /* Indentation */
   margin-left: 7px; /* Align with center of icon */
-  border-left: 1px solid color-mix(in srgb, var(--theme--border-color, #e0e0e0) 60%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--theme--border-color) 60%, transparent);
   display: grid;
   gap: 2px;
 }
@@ -400,17 +399,17 @@ async function copyJson() {
 
 /* Value Types */
 .type-string {
-  color: var(--theme--success, #2fb344);
+  color: var(--theme--success);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .type-number {
-  color: var(--theme--warning, #f76707);
+  color: var(--theme--warning);
 }
 
 .type-boolean {
-  color: var(--theme--danger, #d63939);
+  color: var(--theme--danger);
   font-weight: 600;
 }
 

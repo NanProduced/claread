@@ -534,9 +534,10 @@ onBeforeUnmount(() => {
           <p class="section-hint">{{ state.activeNode === "grammar" ? "Grammar 支持 baseline、candidate 与 RAG 观测。" : "当前 node 仅支持 baseline / off / candidate 三种 few-shot 模式。" }}</p>
         </section>
 
-        <BaselineReference />
-
-        <CandidateEditor />
+        <div :class="{'compare-editor-grid': state.activeWorkspace === 'baseline_compare'}">
+          <BaselineReference />
+          <CandidateEditor />
+        </div>
 
         <!-- Execution Actions -->
         <section class="panel-section action-section">
@@ -1052,6 +1053,78 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   color: var(--color-text-subdued);
 }
 .empty-hint { font-size: 13px; margin-top: 4px; }
+
+/* Skeleton Loading State */
+.skeleton-state {
+  display: flex;
+  flex-direction: column;
+  animation: fade-in 0.3s ease-out;
+}
+
+.skeleton-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 24px;
+}
+
+.skeleton-btn {
+  width: 140px;
+  height: 32px;
+  background: var(--color-surface-subdued);
+  border-radius: var(--radius-md);
+  animation: nl-pulse 1.5s infinite;
+}
+
+.skeleton-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.skeleton-item {
+  height: 48px;
+  background: var(--color-surface-subdued);
+  border-radius: var(--radius-md);
+  animation: nl-pulse 1.5s infinite;
+}
+
+.skeleton-block {
+  padding: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.skeleton-title {
+  width: 120px;
+  height: 20px;
+  background: var(--color-surface-subdued);
+  border-radius: 4px;
+  margin-bottom: 16px;
+  animation: nl-pulse 1.5s infinite;
+}
+
+.skeleton-content {
+  height: 80px;
+  background: var(--color-surface-subdued);
+  border-radius: 4px;
+  animation: nl-pulse 1.5s infinite;
+}
+
+@keyframes nl-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.2; }
+}
+
+.fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
 .request-list { display: flex; flex-direction: column; gap: 8px; }
 .request-item { display: flex; justify-content: space-between; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }

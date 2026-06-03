@@ -61,14 +61,13 @@
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued);
-  border-left: 3px solid var(--color-border);
-  transition: border-left-color 0.15s;
+  transition: background-color 0.15s;
 }
 .nl-detail-card summary:hover {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued);
 }
 .nl-detail-card[open] summary {
-  border-left-color: var(--color-primary);
+  background: var(--theme--background-subdued);
 }
 .nl-detail-content { padding: 16px; border-top: 1px solid var(--color-border); }
 

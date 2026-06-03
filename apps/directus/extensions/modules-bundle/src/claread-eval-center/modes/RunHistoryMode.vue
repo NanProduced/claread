@@ -1,9 +1,16 @@
 <script setup>
 import { useApi } from "@directus/extensions-sdk";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import JsonTreeView from "../components/JsonTreeView.vue";
 import NodeProbeOutputView from "../components/NodeProbeOutputView.vue";
 import ResultBlock from "../components/ResultBlock.vue";
+import StatusPill from "../components/StatusPill.vue";
+import {
+  formatDateTime,
+  shortId,
+  statusLabel,
+  statusTone,
+} from "../composables/useEvalFormatting";
 
 const api = useApi();
 
@@ -14,6 +21,9 @@ const props = defineProps({
 });
 
 const endpoint = "/eval-center/node-lab/run-history";
+
+const POLL_INTERVAL_MS = 7000;
+const LIVE_STATUSES = new Set(["queued", "running"]);
 
 const loading = ref(false);
 const detailLoading = ref(false);
@@ -27,6 +37,9 @@ const filters = ref({
   session_scope: "all",
   node_name: "all",
 });
+const isPollingActive = ref(false);
+let pollHandle = null;
+let visibilityListenerBound = false;
 
 const filteredTitle = computed(() => {
   const workspace = filters.value.workspace_type === "single_run"
@@ -74,6 +87,13 @@ onMounted(async () => {
   } else if (!selectedTrialId.value && records.value.length) {
     await selectRecord(records.value[0].trial_id);
   }
+  startPolling();
+  bindVisibilityListener();
+});
+
+onBeforeUnmount(() => {
+  stopPolling();
+  unbindVisibilityListener();
 });
 
 async function fetchData(url) {
@@ -130,43 +150,73 @@ async function selectRecord(trialId) {
 
 function setFilter(key, value) {
   filters.value = { ...filters.value, [key]: value };
-  void loadRecords();
+  void loadRecords({ keepSelection: true });
 }
 
-function formatDateTime(value) {
-  if (!value) return "未记录";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+function retryLoadRecords() {
+  void loadRecords({ keepSelection: true });
 }
 
-function shortId(value, length = 10) {
-  const raw = value == null ? "" : String(value);
-  return raw.length > length ? raw.slice(0, length) : raw;
+function retrySelectRecord() {
+  if (selectedTrialId.value) {
+    void selectRecord(selectedTrialId.value);
+  }
 }
 
-function statusLabel(status) {
-  const labels = {
-    queued: "排队中",
-    running: "运行中",
-    succeeded: "成功",
-    failed: "失败",
-    cancelled: "已取消",
-  };
-  return labels[status] || status || "未知";
+function hasLiveRecords() {
+  return records.value.some((record) => LIVE_STATUSES.has(record.status));
 }
 
-function statusTone(status) {
-  if (status === "succeeded") return "success";
-  if (status === "failed" || status === "cancelled") return "danger";
-  if (status === "running" || status === "queued") return "warning";
-  return "neutral";
+async function pollOnce() {
+  if (!isPollingActive.value) return;
+  if (loading.value) return;
+  if (!hasLiveRecords()) return;
+  try {
+    const data = await fetchData(`${endpoint}?${buildQuery()}`);
+    const next = Array.isArray(data?.records) ? data.records : [];
+    records.value = next;
+  } catch {
+    // Polling 失败静默,下一次 interval 继续
+  }
+}
+
+function startPolling() {
+  if (pollHandle) return;
+  isPollingActive.value = true;
+  pollHandle = window.setInterval(() => {
+    void pollOnce();
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  isPollingActive.value = false;
+  if (pollHandle) {
+    window.clearInterval(pollHandle);
+    pollHandle = null;
+  }
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    startPolling();
+    void pollOnce();
+  }
+}
+
+function bindVisibilityListener() {
+  if (visibilityListenerBound) return;
+  if (typeof document === "undefined") return;
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  visibilityListenerBound = true;
+}
+
+function unbindVisibilityListener() {
+  if (!visibilityListenerBound) return;
+  if (typeof document === "undefined") return;
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+  visibilityListenerBound = false;
 }
 
 function workspaceLabel(record) {
@@ -207,7 +257,7 @@ function tokenSummary(runtime) {
           <p class="eyebrow">Run History</p>
           <h2>{{ filteredTitle }}</h2>
         </div>
-        <button class="icon-button" type="button" :disabled="loading" title="刷新" @click="loadRecords({ keepSelection: true })">
+        <button class="icon-button" type="button" :disabled="loading" aria-label="刷新历史记录" title="刷新" @click="loadRecords({ keepSelection: true })">
           <span aria-hidden="true">↻</span>
         </button>
       </div>
@@ -240,7 +290,10 @@ function tokenSummary(runtime) {
         </label>
       </div>
 
-      <div v-if="error" class="notice is-danger">{{ error }}</div>
+      <div v-if="error" class="notice is-danger" role="alert">
+        <span>{{ error }}</span>
+        <button type="button" class="notice-retry" @click="retryLoadRecords">重试</button>
+      </div>
       <div v-else-if="loading && !records.length" class="empty-state">正在读取历史记录...</div>
       <div v-else-if="!records.length" class="empty-state">暂无匹配记录。</div>
 
@@ -255,7 +308,7 @@ function tokenSummary(runtime) {
         >
           <span class="record-topline">
             <span class="record-type">{{ workspaceLabel(record) }}</span>
-            <span class="status-pill" :class="`is-${statusTone(record.status)}`">{{ statusLabel(record.status) }}</span>
+            <StatusPill :label="statusLabel(record.status)" :tone="statusTone(record.status)" />
           </span>
           <strong>{{ record.node_name }} · {{ record.reading_goal }} · {{ record.reading_variant }}</strong>
           <span class="record-excerpt">{{ record.display_excerpt || record.input_excerpt || record.input_text_hash }}</span>
@@ -269,7 +322,10 @@ function tokenSummary(runtime) {
 
     <main class="history-detail">
       <div v-if="detailLoading" class="empty-state">正在读取详情...</div>
-      <div v-else-if="detailError" class="notice is-danger">{{ detailError }}</div>
+      <div v-else-if="detailError" class="notice is-danger" role="alert">
+        <span>{{ detailError }}</span>
+        <button type="button" class="notice-retry" @click="retrySelectRecord">重试</button>
+      </div>
       <div v-else-if="!currentTrial" class="empty-state">请选择一条历史记录。</div>
       <template v-else>
         <header class="detail-header">
@@ -278,9 +334,7 @@ function tokenSummary(runtime) {
             <h2>{{ currentTrial.node_name }} · {{ currentTrial.reading_goal }} · {{ currentTrial.reading_variant }}</h2>
             <p>{{ currentTrial.display_excerpt || currentTrial.input_excerpt || currentTrial.input_text_hash }}</p>
           </div>
-          <span class="status-pill large" :class="`is-${statusTone(currentTrial.status)}`">
-            {{ statusLabel(currentTrial.status) }}
-          </span>
+          <StatusPill :label="statusLabel(currentTrial.status)" :tone="statusTone(currentTrial.status)" size="large" />
         </header>
 
         <dl class="meta-grid">
@@ -333,7 +387,7 @@ function tokenSummary(runtime) {
             <article v-for="side in compareSides(currentResult)" :key="side.key" class="compare-side">
               <div class="compare-side__header">
                 <strong>{{ side.label }}</strong>
-                <span class="status-pill" :class="`is-${statusTone(side.value.status)}`">{{ statusLabel(side.value.status) }}</span>
+                <StatusPill :label="statusLabel(side.value.status)" :tone="statusTone(side.value.status)" />
               </div>
               <p>{{ side.value.model_identity?.model_name || "未记录模型" }} · {{ tokenSummary(side.value.runtime_summary) }}</p>
               <NodeProbeOutputView
@@ -424,10 +478,8 @@ function tokenSummary(runtime) {
 .eyebrow {
   margin: 0 0 4px;
   color: var(--theme--foreground-subdued);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 h2,
@@ -528,36 +580,6 @@ h3 {
   white-space: nowrap;
 }
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--theme--border-color);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.status-pill.large {
-  min-height: 30px;
-  padding: 0 12px;
-}
-
-.status-pill.is-success {
-  color: var(--theme--success);
-  border-color: color-mix(in srgb, var(--theme--success) 45%, var(--theme--border-color));
-}
-
-.status-pill.is-warning {
-  color: var(--theme--warning);
-  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
-}
-
-.status-pill.is-danger {
-  color: var(--theme--danger);
-  border-color: color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
-}
-
 .history-detail {
   padding: 18px;
   overflow: auto;
@@ -575,7 +597,7 @@ h3 {
 .judge-meta div {
   min-width: 0;
   padding: 10px;
-  border: 1px solid var(--theme--border-color);
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
 }
 
 dt {
@@ -666,11 +688,29 @@ dd {
 }
 
 .empty-inline {
-  border: 1px dashed var(--theme--border-color);
+  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
 }
 
 .notice.is-danger {
   color: var(--theme--danger);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notice-retry {
+  border: 1px solid color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
+  background: var(--theme--background);
+  color: var(--theme--danger);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.notice-retry:hover {
+  background: color-mix(in srgb, var(--theme--danger) 12%, var(--theme--background));
 }
 
 @media (max-width: 1100px) {

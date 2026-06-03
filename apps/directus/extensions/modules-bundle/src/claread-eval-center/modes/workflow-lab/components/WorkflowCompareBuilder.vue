@@ -15,7 +15,7 @@ const localCandidate = ref(props.candidateRunId);
 watch(() => props.baselineRunId, (value) => { localBaseline.value = value; });
 watch(() => props.candidateRunId, (value) => { localCandidate.value = value; });
 
-const learningRuns = computed(() => props.runs.filter((run) => run.topology_mode === "learning" && run.has_report));
+const learningRuns = computed(() => props.runs.filter((run) => (run.learning_case_count || 0) > 0 && run.has_report));
 const canCompare = computed(() => (
   localBaseline.value
   && localCandidate.value
@@ -38,13 +38,15 @@ function setCandidate(value) {
   <section class="compare-builder">
     <header>
       <div>
-        <p>对比生成</p>
-        <h2>Baseline vs Candidate</h2>
+        <p>差异报告</p>
+        <h2>选择两条已完成 run，生成 baseline 与候选版本的对比</h2>
       </div>
-      <button type="button" :disabled="!canCompare" title="同步读取两个 run 的 artifact，生成 deterministic compare report。" @click="emit('compare')">
-        {{ loading ? "生成中..." : "生成对比" }}
+      <button type="button" :disabled="!canCompare" title="同步读取两侧 artifact，生成当前对比报告。" @click="emit('compare')">
+        {{ loading ? "生成中..." : "生成差异报告" }}
       </button>
     </header>
+
+    <p class="builder-hint">先选择 baseline，再选择要验证的候选 run。生成后可逐 case 查看双侧证据。</p>
 
     <div class="compare-grid">
       <label>
@@ -52,25 +54,25 @@ function setCandidate(value) {
         <select :value="localBaseline" @change="setBaseline($event.target.value)">
           <option value="">选择 baseline</option>
           <option v-for="run in learningRuns" :key="`b-${run.run_id}`" :value="run.run_id">
-            {{ run.run_id }} / {{ run.prompt_variant_id || "baseline" }}
+            {{ run.run_id }} / {{ run.prompt_variant_id || "baseline" }} / {{ run.learning_case_count || 0 }} learning
           </option>
         </select>
       </label>
       <label>
-        <span title="待验证的 candidate run，必须是已完成的 learning run。">Candidate run</span>
+        <span title="待验证的候选 run，必须是已完成的 learning run。">候选 run</span>
         <select :value="localCandidate" @change="setCandidate($event.target.value)">
-          <option value="">选择 candidate</option>
+          <option value="">选择候选 run</option>
           <option v-for="run in learningRuns" :key="`c-${run.run_id}`" :value="run.run_id">
-            {{ run.run_id }} / {{ run.prompt_variant_id || "baseline" }}
+            {{ run.run_id }} / {{ run.prompt_variant_id || "baseline" }} / {{ run.learning_case_count || 0 }} learning
           </option>
         </select>
       </label>
     </div>
 
     <div class="selected-runs">
-      <button v-if="localBaseline" type="button" @click="emit('select-run', localBaseline)">查看 baseline</button>
-      <button v-if="localCandidate" type="button" @click="emit('select-run', localCandidate)">查看 candidate</button>
-      <p v-if="learningRuns.length === 0">暂无可对比的 completed learning run。</p>
+      <button v-if="localBaseline" type="button" @click="emit('select-run', localBaseline)">查看 baseline 详情</button>
+      <button v-if="localCandidate" type="button" @click="emit('select-run', localCandidate)">查看候选 run 详情</button>
+      <p v-if="learningRuns.length === 0">暂无可用于 learning compare 的 completed run。</p>
     </div>
   </section>
 </template>
@@ -90,7 +92,8 @@ header {
 }
 header p,
 label span,
-.selected-runs p {
+.selected-runs p,
+.builder-hint {
   margin: 0;
   color: var(--theme--foreground-subdued);
   font-size: 12px;
@@ -99,6 +102,11 @@ label span,
 header h2 {
   margin: 2px 0 0;
   font-size: 18px;
+  line-height: 1.45;
+}
+.builder-hint {
+  margin-top: 12px;
+  line-height: 1.6;
 }
 .compare-grid {
   display: grid;
