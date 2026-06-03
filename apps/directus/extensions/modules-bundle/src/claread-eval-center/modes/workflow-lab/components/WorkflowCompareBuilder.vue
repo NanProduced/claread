@@ -38,28 +38,28 @@ function setCandidate(value) {
   <section class="compare-builder">
     <header>
       <div>
-        <p>Compare</p>
-        <h2>Baseline vs candidate</h2>
+        <p>对比生成</p>
+        <h2>Baseline vs Candidate</h2>
       </div>
-      <button type="button" :disabled="!canCompare" @click="emit('compare')">
-        {{ loading ? "Generating..." : "Generate compare" }}
+      <button type="button" :disabled="!canCompare" title="同步读取两个 run 的 artifact，生成 deterministic compare report。" @click="emit('compare')">
+        {{ loading ? "生成中..." : "生成对比" }}
       </button>
     </header>
 
     <div class="compare-grid">
       <label>
-        <span>Baseline run</span>
+        <span title="作为参照的 baseline run，必须是已完成的 learning run。">Baseline run</span>
         <select :value="localBaseline" @change="setBaseline($event.target.value)">
-          <option value="">Select baseline</option>
+          <option value="">选择 baseline</option>
           <option v-for="run in learningRuns" :key="`b-${run.run_id}`" :value="run.run_id">
             {{ run.run_id }} / {{ run.prompt_variant_id || "baseline" }}
           </option>
         </select>
       </label>
       <label>
-        <span>Candidate run</span>
+        <span title="待验证的 candidate run，必须是已完成的 learning run。">Candidate run</span>
         <select :value="localCandidate" @change="setCandidate($event.target.value)">
-          <option value="">Select candidate</option>
+          <option value="">选择 candidate</option>
           <option v-for="run in learningRuns" :key="`c-${run.run_id}`" :value="run.run_id">
             {{ run.run_id }} / {{ run.prompt_variant_id || "baseline" }}
           </option>
@@ -68,9 +68,9 @@ function setCandidate(value) {
     </div>
 
     <div class="selected-runs">
-      <button v-if="localBaseline" type="button" @click="emit('select-run', localBaseline)">Open baseline</button>
-      <button v-if="localCandidate" type="button" @click="emit('select-run', localCandidate)">Open candidate</button>
-      <p v-if="learningRuns.length === 0">No completed learning runs available for compare.</p>
+      <button v-if="localBaseline" type="button" @click="emit('select-run', localBaseline)">查看 baseline</button>
+      <button v-if="localCandidate" type="button" @click="emit('select-run', localCandidate)">查看 candidate</button>
+      <p v-if="learningRuns.length === 0">暂无可对比的 completed learning run。</p>
     </div>
   </section>
 </template>

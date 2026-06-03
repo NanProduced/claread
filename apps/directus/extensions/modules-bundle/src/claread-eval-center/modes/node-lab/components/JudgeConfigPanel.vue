@@ -42,6 +42,7 @@ const {
   latestCompareTrialId,
   pendingJudgeRequestId,
   loading,
+  feedback,
   currentText,
   currentReadingGoal,
   currentReadingVariant,
@@ -167,11 +168,52 @@ const currentJudgePreset = computed(() => {
   const presetId = currentJudgeDraft.value.preset_id;
   return currentJudgePresets.value.find((item) => item.preset_id === presetId) || null;
 });
+
+function jsonValidationError(value) {
+  if (!value || !value.trim()) return null;
+  try {
+    JSON.parse(value);
+    return null;
+  } catch (e) {
+    return e.message.replace(/^JSON\.parse:\s*/, '');
+  }
+}
+
+const currentStep = computed(() => {
+  if (!currentJudgeDraft.value.preset_id) return 1;
+  if (!currentJudgeDraft.value.judger_models.some(v => String(v || '').trim())) return 2;
+  return 3;
+});
 </script>
 
 <template>
   <div class="judge-config-panel">
     <div class="judge-panel__body">
+      <div class="step-indicator">
+        <div class="step" :class="{ 'is-active': currentStep === 1, 'is-done': currentStep > 1 }">
+          <span class="step-number">1</span>
+          <span class="step-label">选择预设</span>
+        </div>
+        <div class="step-connector" :class="{ 'is-done': currentStep > 1 }"></div>
+        <div class="step" :class="{ 'is-active': currentStep === 2, 'is-done': currentStep > 2 }">
+          <span class="step-number">2</span>
+          <span class="step-label">选择模型</span>
+        </div>
+        <div class="step-connector" :class="{ 'is-done': currentStep > 2 }"></div>
+        <div class="step" :class="{ 'is-active': currentStep === 3, 'is-done': currentStep > 3 }">
+          <span class="step-number">3</span>
+          <span class="step-label">执行 Judge</span>
+        </div>
+      </div>
+      <div v-if="feedback.info || feedback.error" class="feedback-banner" :class="feedback.error ? 'is-error' : 'is-success'" role="status">
+        {{ feedback.error || feedback.info }}
+      </div>
+      <div v-if="judgePrerequisite.ready" class="quick-action-bar">
+        <v-button :disabled="loading.queueJudge" @click="queueJudgeCompare({ autoExecute: true })">
+          {{ loading.queueJudge ? '执行中...' : '创建并执行 Judge' }}
+        </v-button>
+        <span class="quick-action-hint">快捷操作：预设和模型已就绪</span>
+      </div>
       <div class="form-field">
         <span class="field-label">系统预设</span>
         <v-select
@@ -181,7 +223,7 @@ const currentJudgePreset = computed(() => {
         />
       </div>
 
-      <div v-if="currentJudgePreset" class="status-banner is-ready mt-3">
+      <div v-if="currentJudgePreset" class="status-banner is-ready mt-3" role="status">
         <strong>{{ currentJudgePreset.ui_label || currentJudgePreset.title }}</strong>
         <p class="text-sm mt-1">
           适用节点：{{ nodeLabel(currentJudgePreset.node_name) }}
@@ -199,7 +241,7 @@ const currentJudgePreset = computed(() => {
         </div>
       </div>
 
-      <div class="status-banner mt-3" :class="judgePrerequisite.ready ? 'is-ready' : 'is-warning'">
+      <div class="status-banner mt-3" :class="judgePrerequisite.ready ? 'is-ready' : 'is-warning'" role="status">
         <strong>{{ judgePrerequisite.title }}</strong>
         <p class="text-sm mt-1">{{ judgePrerequisite.detail }}</p>
       </div>
@@ -234,23 +276,28 @@ const currentJudgePreset = computed(() => {
           </div>
           <div class="form-field">
             <span class="field-label">Rubric Bundle JSON</span>
-            <v-textarea class="code-font" v-model="currentJudgeDraft.rubric_bundle_json" :rows="6" />
+            <v-textarea class="code-font" :class="{ 'is-invalid': jsonValidationError(currentJudgeDraft.rubric_bundle_json) }" v-model="currentJudgeDraft.rubric_bundle_json" :rows="6" />
+            <p v-if="jsonValidationError(currentJudgeDraft.rubric_bundle_json)" class="validation-error">JSON 语法错误：{{ jsonValidationError(currentJudgeDraft.rubric_bundle_json) }}</p>
           </div>
           <div class="form-field mt-3">
             <span class="field-label">Packet Policy JSON</span>
-            <v-textarea class="code-font" v-model="currentJudgeDraft.packet_policy_json" :rows="6" />
+            <v-textarea class="code-font" :class="{ 'is-invalid': jsonValidationError(currentJudgeDraft.packet_policy_json) }" v-model="currentJudgeDraft.packet_policy_json" :rows="6" />
+            <p v-if="jsonValidationError(currentJudgeDraft.packet_policy_json)" class="validation-error">JSON 语法错误：{{ jsonValidationError(currentJudgeDraft.packet_policy_json) }}</p>
           </div>
           <div class="form-field mt-3">
             <span class="field-label">Probe Appendix JSON</span>
-            <v-textarea class="code-font" v-model="currentJudgeDraft.probe_appendix_json" :rows="5" />
+            <v-textarea class="code-font" :class="{ 'is-invalid': jsonValidationError(currentJudgeDraft.probe_appendix_json) }" v-model="currentJudgeDraft.probe_appendix_json" :rows="5" />
+            <p v-if="jsonValidationError(currentJudgeDraft.probe_appendix_json)" class="validation-error">JSON 语法错误：{{ jsonValidationError(currentJudgeDraft.probe_appendix_json) }}</p>
           </div>
           <div class="form-field mt-3">
             <span class="field-label">Rubric Source JSON</span>
-            <v-textarea class="code-font" v-model="currentJudgeDraft.rubric_json" :rows="6" />
+            <v-textarea class="code-font" :class="{ 'is-invalid': jsonValidationError(currentJudgeDraft.rubric_json) }" v-model="currentJudgeDraft.rubric_json" :rows="6" />
+            <p v-if="jsonValidationError(currentJudgeDraft.rubric_json)" class="validation-error">JSON 语法错误：{{ jsonValidationError(currentJudgeDraft.rubric_json) }}</p>
           </div>
           <div class="form-field mt-3">
             <span class="field-label">Output Schema JSON</span>
-            <v-textarea class="code-font" v-model="currentJudgeDraft.output_schema_json" :rows="6" />
+            <v-textarea class="code-font" :class="{ 'is-invalid': jsonValidationError(currentJudgeDraft.output_schema_json) }" v-model="currentJudgeDraft.output_schema_json" :rows="6" />
+            <p v-if="jsonValidationError(currentJudgeDraft.output_schema_json)" class="validation-error">JSON 语法错误：{{ jsonValidationError(currentJudgeDraft.output_schema_json) }}</p>
           </div>
         </div>
       </details>
@@ -315,10 +362,18 @@ const currentJudgePreset = computed(() => {
 }
 .detail-card summary {
   padding: 12px 16px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued, #f9fafb);
+  border-left: 3px solid var(--color-border, #e5e7eb);
+  transition: border-left-color 0.15s;
+}
+.detail-card summary:hover {
+  border-left-color: var(--color-primary);
+}
+.detail-card[open] summary {
+  border-left-color: var(--color-primary);
 }
 .detail-card--compact summary {
   font-size: 12px;
@@ -326,6 +381,17 @@ const currentJudgePreset = computed(() => {
 .detail-content { padding: 16px; border-top: 1px solid var(--color-border, #e5e7eb); }
 
 .code-font { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+
+.validation-error {
+  margin: -8px 0 8px;
+  font-size: 12px;
+  color: var(--theme--danger, #dc2626);
+  line-height: 1.45;
+}
+
+:deep(.is-invalid textarea) {
+  border-color: var(--theme--danger, #dc2626) !important;
+}
 
 .divider { margin: 0 6px; color: var(--color-border, #e5e7eb); }
 
@@ -340,4 +406,89 @@ const currentJudgePreset = computed(() => {
 .mt-3 { margin-top: 12px; }
 .mb-3 { margin-bottom: 12px; }
 .text-sm { font-size: 13px; }
+
+.feedback-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.feedback-banner.is-success {
+  background: color-mix(in srgb, var(--theme--success, #10b981) 8%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--theme--success, #10b981) 30%, var(--color-border));
+  color: var(--theme--success, #10b981);
+}
+.feedback-banner.is-error {
+  background: color-mix(in srgb, var(--theme--danger, #dc2626) 8%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--theme--danger, #dc2626) 30%, var(--color-border));
+  color: var(--theme--danger, #dc2626);
+}
+
+.quick-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--theme--success, #10b981) 5%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--theme--success, #10b981) 20%, var(--color-border));
+  margin-bottom: 16px;
+}
+.quick-action-hint {
+  font-size: 12px;
+  color: var(--color-text-subdued);
+}
+
+.step-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--color-surface-subdued);
+  border-radius: var(--radius-md);
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--color-border);
+  color: var(--color-text-subdued);
+}
+.step.is-active .step-number {
+  background: var(--color-primary);
+  color: var(--color-primary-text, #fff);
+}
+.step.is-done .step-number {
+  background: var(--theme--success, #10b981);
+  color: #fff;
+}
+.step-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-subdued);
+}
+.step.is-active .step-label {
+  color: var(--color-text);
+}
+.step-connector {
+  flex: 1;
+  height: 2px;
+  margin: 0 12px;
+  background: var(--color-border);
+}
+.step-connector.is-done {
+  background: var(--theme--success, #10b981);
+}
 </style>

@@ -34,6 +34,9 @@ export function useWorkflowLabApi() {
     async createRunRequest(payload) {
       return dataOf(await api.post("/eval-center/workflow-runs/requests", payload));
     },
+    async runSingleWorkflow(payload) {
+      return dataOf(await api.post("/eval-center/workflow-lab/single-run", payload));
+    },
     async cancelRunRequest(requestId) {
       return dataOf(await api.post(`/eval-center/workflow-runs/requests/${encodeURIComponent(requestId)}/cancel`));
     },
@@ -43,6 +46,9 @@ export function useWorkflowLabApi() {
     async listReadyCandidates() {
       return dataOf(await api.get("/eval-center/prompt-variants/ready")) || [];
     },
+    async listModelProfiles() {
+      return dataOf(await api.get("/eval-center/article-analysis/model-profiles")) || [];
+    },
     async listCandidateDrafts() {
       return dataOf(await api.get("/items/eval_prompt_variant_drafts", {
         params: { sort: "-date_updated,-date_created", limit: 100 },
@@ -50,6 +56,9 @@ export function useWorkflowLabApi() {
     },
     async previewCandidate(payload) {
       return dataOf(await api.post("/eval-center/prompt-variants/manifest-preview", payload));
+    },
+    async loadBaselineBundle(payload) {
+      return dataOf(await api.post("/eval-center/workflow-lab/baseline-bundle", payload));
     },
     async saveCandidateDraft(payload, id = "") {
       if (id) {

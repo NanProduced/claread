@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
 import XmlPromptViewer from "../../../components/XmlPromptViewer.vue";
 import ResultBlock from "../../../components/ResultBlock.vue";
@@ -41,6 +41,8 @@ const {
   comparePanelTab,
   loading,
 } = useNodeLabState();
+
+const debugTab = ref('summary');
 
 const {
   loadJudgeRequestDetail,
@@ -164,22 +166,27 @@ const judgeStepRuns = computed(() => {
     <ResultBlock
       v-if="resultIssue(compareResult?.baseline, 'Baseline') || resultIssue(compareResult?.candidate, 'Candidate')"
       title="Compare 调试信息"
-      :open="true"
+      :open="!!resultIssue(compareResult?.baseline, 'Baseline') || !!resultIssue(compareResult?.candidate, 'Candidate')"
     >
-      <div class="packet-list">
-        <div v-if="resultIssue(compareResult?.baseline, 'Baseline')" class="packet-item">
-          <div class="packet-title">Baseline 调试信息</div>
-          <JsonTreeView :value="parseNestedJson(resultIssue(compareResult?.baseline, 'Baseline').debug)" empty-text="暂无调试信息。" />
-        </div>
-        <div v-if="resultIssue(compareResult?.candidate, 'Candidate')" class="packet-item">
-          <div class="packet-title">Candidate 调试信息</div>
-          <JsonTreeView :value="parseNestedJson(resultIssue(compareResult?.candidate, 'Candidate').debug)" empty-text="暂无调试信息。" />
+      <div class="debug-tabs">
+        <button class="debug-tab" :class="{ active: debugTab === 'summary' }" @click="debugTab = 'summary'">摘要</button>
+        <button class="debug-tab" :class="{ active: debugTab === 'raw' }" @click="debugTab = 'raw'">完整 JSON</button>
+      </div>
+      <div v-if="debugTab === 'summary'">
+        <div class="packet-list">
+          <div v-if="resultIssue(compareResult?.baseline, 'Baseline')" class="packet-item">
+            <div class="packet-title">Baseline 调试信息</div>
+            <JsonTreeView :value="parseNestedJson(resultIssue(compareResult?.baseline, 'Baseline').debug)" empty-text="暂无调试信息。" />
+          </div>
+          <div v-if="resultIssue(compareResult?.candidate, 'Candidate')" class="packet-item">
+            <div class="packet-title">Candidate 调试信息</div>
+            <JsonTreeView :value="parseNestedJson(resultIssue(compareResult?.candidate, 'Candidate').debug)" empty-text="暂无调试信息。" />
+          </div>
         </div>
       </div>
-    </ResultBlock>
-
-    <ResultBlock title="Compare 原始结果 JSON" :open="false">
-      <JsonTreeView :value="parseNestedJson(compareResult)" empty-text="暂无 Compare 结果 JSON。" />
+      <div v-else>
+        <JsonTreeView :value="parseNestedJson(compareResult)" empty-text="暂无 Compare 结果 JSON。" />
+      </div>
     </ResultBlock>
 
     <!-- Judge Results Panel -->
@@ -208,6 +215,10 @@ const judgeStepRuns = computed(() => {
       <span class="empty-hint">Judge tab 只显示这条 Compare 的评审记录，不再混入当前 node 的历史 requests。</span>
     </div>
 
+    <div v-if="loading.executeJudge && !selectedJudgeRequestDetail" class="judge-loading" role="status">
+      <div class="loading-spinner-sm"></div>
+      <span>正在加载 Judge 请求...</span>
+    </div>
     <div v-if="selectedJudgeRequestDetail?.request" class="output-block mt-4">
       <h4 class="block-title">Judge 结果详情</h4>
       <div class="meta-grid mt-3">
@@ -344,6 +355,9 @@ const judgeStepRuns = computed(() => {
                   <div class="packet-title">{{ judgeItemResultLabel(item) }}</div>
                   <ul class="insight-list">
                     <li v-for="criterion in item.criteria" :key="`${item.item_id}-${criterion.criterion_id}`">
+                      <span class="rubric-indicator" :class="criterion.score ? 'is-pass' : 'is-fail'">
+                        {{ criterion.score ? '✓' : '✗' }}
+                      </span>
                       <strong>{{ criterion.criterion_id }}</strong>
                       <span> · {{ criterion.score ? "通过" : "未通过" }}</span>
                       <span>：{{ criterion.reason }}</span>
@@ -435,6 +449,29 @@ const judgeStepRuns = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.debug-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 8px;
+}
+.debug-tab {
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-subdued);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+}
+.debug-tab.active {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
 }
 
 .evidence-panel {
@@ -533,7 +570,7 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
   margin-bottom: 16px;
 }
 .meta-grid .meta-item { display: flex; flex-direction: column; gap: 4px; }
-.meta-label { font-size: 12px; color: var(--color-text-subdued, #6b7280); font-weight: 500; }
+.meta-label { font-size: 13px; color: var(--color-text-subdued, #6b7280); font-weight: 500; }
 .meta-value { font-size: 14px; font-weight: 500; }
 
 .compare-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -673,7 +710,28 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
 .empty-hint { font-size: 13px; margin-top: 4px; }
 
 .insight-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.insight-list li { font-size: 13px; line-height: 1.55; }
+.insight-list li { font-size: 13px; line-height: 1.55; display: flex; align-items: flex-start; gap: 8px; }
+
+.rubric-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.rubric-indicator.is-pass {
+  background: color-mix(in srgb, var(--theme--success, #10b981) 15%, var(--color-surface));
+  color: var(--theme--success, #10b981);
+}
+.rubric-indicator.is-fail {
+  background: color-mix(in srgb, var(--theme--danger, #dc2626) 15%, var(--color-surface));
+  color: var(--theme--danger, #dc2626);
+}
 
 .action-buttons { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
@@ -691,5 +749,27 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   padding: 16px;
+}
+
+.judge-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--color-text-subdued);
+  font-size: 13px;
+}
+
+.loading-spinner-sm {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: node-lab-spin 0.8s linear infinite;
+}
+
+@keyframes node-lab-spin {
+  to { transform: rotate(360deg); }
 }
 </style>

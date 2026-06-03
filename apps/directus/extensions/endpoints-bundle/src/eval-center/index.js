@@ -886,6 +886,45 @@ async function parseUpstreamError(response) {
   }
 }
 
+async function callEvalUpstreamJson({ env, path: upstreamPath, body, timeoutMs }) {
+  const baseUrl = readEnv(env, "CLAREAD_API_BASE_URL");
+  const adminKey =
+    readEnv(env, "CLAREAD_API_ADMIN_KEY") ||
+    readEnv(env, "DAILY_READER_ADMIN_API_KEY");
+  if (!baseUrl || !adminKey) {
+    const error = new Error("Eval proxy is not configured.");
+    error.status = 503;
+    error.code = "SERVICE_UNAVAILABLE";
+    throw error;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs || resolveTimeoutMs(env));
+  try {
+    const upstream = await fetch(joinUrl(baseUrl, upstreamPath), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "x-admin-api-key": adminKey,
+      },
+      body: JSON.stringify(body ?? {}),
+      signal: controller.signal,
+    });
+    if (!upstream.ok) {
+      const errorPayload = await parseUpstreamError(upstream);
+      const error = new Error(errorPayload?.detail || errorPayload?.message || "Upstream request failed.");
+      error.status = upstream.status;
+      error.code = "UPSTREAM_EVAL_ERROR";
+      error.upstream_status = upstream.status;
+      throw error;
+    }
+    return upstream.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const VALID_ADAPTER_KINDS = ["fake", "in_process", "http"];
 const VALID_EVAL_PURPOSES = ["dataset_regression", "prompt_experiment", "manual_debug"];
 const VALID_RAG_MODES = ["off", "baseline", "rag", "rag_fallback", "settings"];
@@ -1091,6 +1130,10 @@ function hasObjectKeys(value) {
 }
 
 function buildPromptVariantManifest(draft) {
+  const storedManifest = normalizeJsonObject(draft?.manifest_json);
+  if (storedManifest.schema_version === "workflow-prompt-bundle-v1") {
+    return promptVariantManifestFromBundle(storedManifest, draft);
+  }
   return {
     variant_id: draft.variant_id,
     target: draft.target || "article_analysis",
@@ -1113,9 +1156,122 @@ function renderPromptVariantYaml(manifest, snapshotHash) {
   return lines.join("\n") + "\n";
 }
 
+function normalizeWorkflowAgentLayer(agentName, rawLayer = {}) {
+  const layer = normalizeJsonObject(rawLayer);
+  const examples = Array.isArray(layer.examples)
+    ? layer.examples.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+  const policyLines = Array.isArray(layer.policy_lines)
+    ? layer.policy_lines.map((line) => String(line ?? "")).filter((line) => line.trim())
+    : [];
+  return {
+    agent_name: layer.agent_name || agentName,
+    label: layer.label || agentName,
+    instructions: String(layer.instructions || ""),
+    policy_name: layer.policy_name || null,
+    policy_focus: layer.policy_focus || null,
+    policy_variant: layer.policy_variant || null,
+    policy_lines: policyLines,
+    examples,
+    prompt_template: String(layer.prompt_template || ""),
+  };
+}
+
+function workflowBundleAgents(rawAgents) {
+  const agents = normalizeJsonObject(rawAgents);
+  return ["vocabulary", "grammar", "translation", "repair"].reduce((acc, agentName) => {
+    acc[agentName] = normalizeWorkflowAgentLayer(agentName, agents[agentName]);
+    return acc;
+  }, {});
+}
+
+function promptVariantManifestFromBundle(bundle, row = {}) {
+  const manifest = normalizeJsonObject(bundle);
+  const variantId = manifest.variant_id || row.variant_id;
+  const agents = workflowBundleAgents(manifest.agents);
+  return {
+    schema_version: "workflow-prompt-bundle-v1",
+    variant_id: variantId,
+    target: manifest.target || row.target || "article_analysis",
+    description: manifest.description || row.description || row.notes || "",
+    reading_goal: manifest.reading_goal || "daily_reading",
+    reading_variant: manifest.reading_variant || "intermediate_reading",
+    prompt_version: manifest.prompt_version || null,
+    prompt_profile: manifest.prompt_profile || null,
+    topology_mode: manifest.topology_mode || "learning",
+    few_shot_mode: manifest.few_shot_mode || row.few_shot_mode || "baseline",
+    agents,
+    baseline_agents: workflowBundleAgents(manifest.baseline_agents || manifest.agents),
+  };
+}
+
+function workflowBundlePromptOverride(manifest) {
+  const instructions = {};
+  const policies = {};
+  const examples = {};
+
+  for (const layer of Object.values(workflowBundleAgents(manifest.agents))) {
+    const agentName = layer.agent_name;
+    if (layer.instructions.trim()) {
+      instructions[agentName] = layer.instructions;
+    }
+    if (layer.policy_name && layer.policy_focus) {
+      const policyName = layer.policy_name;
+      const focus = layer.policy_focus;
+      const variant = layer.policy_variant || manifest.reading_variant || "default";
+      policies[policyName] = normalizeJsonObject(policies[policyName]);
+      policies[policyName][focus] = {
+        ...(normalizeJsonObject(policies[policyName][focus])),
+        [variant]: layer.policy_lines,
+        default: layer.policy_lines,
+      };
+    }
+    if (Array.isArray(layer.examples) && layer.examples.length > 0) {
+      examples[agentName] = normalizeJsonObject(examples[agentName]);
+      examples[agentName][layer.policy_variant || manifest.reading_variant || "default"] = layer.examples;
+      examples[agentName].default = layer.examples;
+    }
+  }
+
+  return {
+    variant_id: manifest.variant_id,
+    target: manifest.target || "article_analysis",
+    description: manifest.description || "",
+    few_shot_mode: manifest.few_shot_mode || "baseline",
+    instructions,
+    policies,
+    examples,
+  };
+}
+
+function workflowBundleSummary(manifest) {
+  if (manifest.schema_version !== "workflow-prompt-bundle-v1") return null;
+  const agents = workflowBundleAgents(manifest.agents);
+  return {
+    schema_version: manifest.schema_version,
+    reading_goal: manifest.reading_goal || null,
+    reading_variant: manifest.reading_variant || null,
+    topology_mode: manifest.topology_mode || null,
+    prompt_version: manifest.prompt_version || null,
+    prompt_profile: manifest.prompt_profile || null,
+    agents: Object.fromEntries(Object.entries(agents).map(([agentName, layer]) => ([
+      agentName,
+      {
+        label: layer.label,
+        instructions_chars: layer.instructions.length,
+        policy_lines_count: layer.policy_lines.length,
+        examples_count: layer.examples.length,
+      },
+    ]))),
+  };
+}
+
 function promptVariantManifestFromRow(row) {
   const storedManifest = normalizeJsonObject(row?.manifest_json);
   if (hasObjectKeys(storedManifest)) {
+    if (storedManifest.schema_version === "workflow-prompt-bundle-v1") {
+      return promptVariantManifestFromBundle(storedManifest, row);
+    }
     return {
       variant_id: storedManifest.variant_id || row.variant_id,
       target: storedManifest.target || row.target || "article_analysis",
@@ -1131,6 +1287,10 @@ function promptVariantManifestFromRow(row) {
 function promptVariantSnapshotFromRow(row, baselinePromptVersion = null) {
   const manifest = promptVariantManifestFromRow(row);
   const snapshotHash = promptVariantSnapshotHash(manifest, baselinePromptVersion);
+  const isWorkflowBundle = manifest.schema_version === "workflow-prompt-bundle-v1";
+  const promptOverride = isWorkflowBundle
+    ? workflowBundlePromptOverride(manifest)
+    : { ...manifest };
   return {
     draft_id: row.id,
     variant_id: manifest.variant_id,
@@ -1140,8 +1300,9 @@ function promptVariantSnapshotFromRow(row, baselinePromptVersion = null) {
     few_shot_mode: manifest.few_shot_mode,
     snapshot_hash: snapshotHash,
     manifest_json: manifest,
+    prompt_bundle_summary: workflowBundleSummary(manifest),
     prompt_override: {
-      ...manifest,
+      ...promptOverride,
       prompt_snapshot_hash: snapshotHash,
     },
     recommended_manifest_path: `evals/prompt-variants/article-analysis/${manifest.variant_id}/manifest.yaml`,
@@ -1208,6 +1369,86 @@ function validateWorkflowRunRequest(body) {
     errors.push({ field: "rag_mode", message: "Prompt variant snapshot v1 requires rag_mode=off." });
   }
   return errors;
+}
+
+function validateWorkflowSingleRunRequest(body) {
+  const errors = [];
+  const text = String(body?.text || "").trim();
+  if (!text) {
+    errors.push({ field: "text", message: "text is required." });
+  }
+  if (body.reading_goal === "academic") {
+    errors.push({ field: "reading_goal", message: "Workflow Lab v1 only supports learning workflow." });
+  }
+  if (body.rag_mode && !VALID_RAG_MODES.includes(body.rag_mode)) {
+    errors.push({ field: "rag_mode", message: `rag_mode must be one of: ${VALID_RAG_MODES.join(", ")}.` });
+  }
+  if (body.trace_scope && !VALID_TRACE_SCOPES.includes(body.trace_scope)) {
+    errors.push({ field: "trace_scope", message: `trace_scope must be one of: ${VALID_TRACE_SCOPES.join(", ")}.` });
+  }
+  if (body.model_selection && (typeof body.model_selection !== "object" || Array.isArray(body.model_selection))) {
+    errors.push({ field: "model_selection", message: "model_selection must be a JSON object." });
+  }
+  if (body.prompt_variant_id && !isSafeFileId(body.prompt_variant_id)) {
+    errors.push({ field: "prompt_variant_id", message: "prompt_variant_id contains unsafe characters." });
+  }
+  if (body.prompt_variant_id && body.rag_mode && body.rag_mode !== "off") {
+    errors.push({ field: "rag_mode", message: "Prompt variant snapshot v1 requires rag_mode=off." });
+  }
+  return errors;
+}
+
+async function createWorkflowLabSingleRun({
+  database,
+  env,
+  body,
+  callUpstream = callEvalUpstreamJson,
+}) {
+  const validationErrors = validateWorkflowSingleRunRequest(body || {});
+  if (validationErrors.length > 0) {
+    const error = new Error(validationErrors[0].message);
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = validationErrors[0].field;
+    error.validation_errors = validationErrors;
+    throw error;
+  }
+
+  const config = await attachPromptVariantSnapshot(database, {
+    text: String(body.text || "").trim(),
+    reading_goal: body.reading_goal || "daily_reading",
+    reading_variant: body.reading_variant || "intermediate_reading",
+    source_type: body.source_type || "user_input",
+    extended: Boolean(body.extended),
+    model_selection: normalizeJsonObject(body.model_selection),
+    rag_mode: body.rag_mode || "off",
+    trace_scope: body.trace_scope || "off",
+    trace_project: body.trace_project || "claread-eval",
+    timeout_seconds: body.timeout_seconds || 120,
+    prompt_variant_id: body.prompt_variant_id || null,
+  });
+
+  const upstreamBody = {
+    text: config.text,
+    reading_goal: config.reading_goal,
+    reading_variant: config.reading_variant,
+    source_type: config.source_type,
+    extended: config.extended,
+    model_selection: config.model_selection,
+    rag_mode: config.rag_mode,
+    trace_scope: config.trace_scope,
+    trace_project: config.trace_project,
+    timeout_seconds: config.timeout_seconds,
+    prompt_variant_id: config.prompt_variant_id,
+    prompt_override: config.prompt_override || null,
+  };
+
+  return callUpstream({
+    env,
+    path: "/eval/article-analysis/workflow",
+    body: upstreamBody,
+    timeoutMs: resolveRequestTimeoutMs(env, upstreamBody),
+  });
 }
 
 function simpleYamlValue(yamlContent, fieldName, fallback = null) {
@@ -2093,6 +2334,7 @@ export {
   buildRetryWorkflowRequestConfig,
   buildWorkflowLabCompareReport,
   cancelJudgeRunRequest,
+  createWorkflowLabSingleRun,
   createWorkflowLabCompare,
   createJudgeRunRequest,
   inferRunTopologyMode,
@@ -2594,6 +2836,17 @@ export default (router, context) => {
       const result = await createWorkflowLabCompare(root, req.body || {});
       res.status(result.created ? 201 : 200).json({ data: result });
     } catch (error) {
+      if (error?.name === "AbortError") {
+        res.status(504).json({
+          errors: [
+            {
+              message: "Workflow Lab single run timed out.",
+              extensions: { code: "UPSTREAM_TIMEOUT" },
+            },
+          ],
+        });
+        return;
+      }
       if (error?.status) {
         res.status(error.status).json({
           errors: [
@@ -2602,6 +2855,77 @@ export default (router, context) => {
               extensions: {
                 code: error.code || "WORKFLOW_LAB_COMPARE_ERROR",
                 field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/workflow-lab/baseline-bundle", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const payload = await callEvalUpstreamJson({
+        env,
+        path: "/eval/article-analysis/workflow-lab/baseline-bundle",
+        body: req.body || {},
+        timeoutMs: resolveRequestTimeoutMs(env, req.body),
+      });
+      res.json({ data: payload });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        res.status(504).json({
+          errors: [
+            {
+              message: "Workflow Lab baseline bundle request timed out.",
+              extensions: { code: "UPSTREAM_TIMEOUT" },
+            },
+          ],
+        });
+        return;
+      }
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_LAB_BASELINE_BUNDLE_ERROR",
+                upstream_status: error.upstream_status,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/workflow-lab/single-run", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const payload = await createWorkflowLabSingleRun({
+        database,
+        env,
+        body: req.body || {},
+      });
+      res.json({ data: payload });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_LAB_SINGLE_RUN_ERROR",
+                field: error.field,
+                upstream_status: error.upstream_status,
               },
             },
           ],
@@ -2709,6 +3033,7 @@ export default (router, context) => {
       res.json({
         data: {
           manifest_json: manifest,
+          prompt_bundle_summary: workflowBundleSummary(manifest),
           snapshot_hash: snapshotHash,
           yaml_content: renderPromptVariantYaml(manifest, snapshotHash),
           recommended_manifest_path: `evals/prompt-variants/article-analysis/${manifest.variant_id}/manifest.yaml`,

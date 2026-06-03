@@ -16,12 +16,12 @@ function list(value) {
 <template>
   <aside class="inspector">
     <header>
-      <p>Evidence</p>
-      <h2>{{ artifact?.case_id || compareCase?.case_id || "No case selected" }}</h2>
+      <p>证据 Inspector</p>
+      <h2>{{ artifact?.case_id || compareCase?.case_id || "未选择 case" }}</h2>
     </header>
 
-    <div v-if="loading" class="empty">Loading evidence...</div>
-    <div v-else-if="!artifact && !compareCase" class="empty">Select a case from a run or compare report.</div>
+    <div v-if="loading" class="empty">正在读取证据...</div>
+    <div v-else-if="!artifact && !compareCase" class="empty">从 run 或 compare report 中选择一个 case 查看 evidence。</div>
     <template v-else>
       <section v-if="compareCase" class="compare-evidence">
         <strong>{{ compareCase.verdict }}</strong>
@@ -30,25 +30,25 @@ function list(value) {
 
       <template v-if="artifact">
         <dl class="meta">
-          <div><dt>Status</dt><dd>{{ artifact.adapter_status || "-" }}</dd></div>
-          <div><dt>State</dt><dd>{{ artifact.user_facing_state || "-" }}</dd></div>
-          <div><dt>Warnings</dt><dd>{{ list(artifact.warnings).length }}</dd></div>
-          <div><dt>Drops</dt><dd>{{ list(artifact.drop_log).length }}</dd></div>
+          <div><dt title="adapter 返回状态。">状态</dt><dd>{{ artifact.adapter_status || "-" }}</dd></div>
+          <div><dt title="最终 render_scene 的用户可见状态。">输出状态</dt><dd>{{ artifact.user_facing_state || "-" }}</dd></div>
+          <div><dt title="workflow 或投影阶段记录的 warning 数量。">Warnings</dt><dd>{{ list(artifact.warnings).length }}</dd></div>
+          <div><dt title="normalize/ground 阶段丢弃的标注数量。">Drop log</dt><dd>{{ list(artifact.drop_log).length }}</dd></div>
         </dl>
 
-        <ResultBlock title="Translations" :open="true">
+        <ResultBlock title="翻译输出" :open="true">
           <JsonTreeView :value="list(artifact.translations).slice(0, 8)" label="translations" />
         </ResultBlock>
-        <ResultBlock title="Inline marks">
+        <ResultBlock title="行内标注">
           <JsonTreeView :value="list(artifact.inline_marks).slice(0, 12)" label="inline_marks" />
         </ResultBlock>
-        <ResultBlock title="Sentence entries">
+        <ResultBlock title="句子条目">
           <JsonTreeView :value="list(artifact.sentence_entries).slice(0, 12)" label="sentence_entries" />
         </ResultBlock>
-        <ResultBlock title="Warnings / drop log">
+        <ResultBlock title="Warnings / Drop log">
           <JsonTreeView :value="{ warnings: artifact.warnings || [], drop_log: artifact.drop_log || [] }" label="quality_signals" />
         </ResultBlock>
-        <ResultBlock title="Raw artifact">
+        <ResultBlock title="完整 artifact">
           <JsonTreeView :value="artifact" label="case_artifact" />
         </ResultBlock>
       </template>

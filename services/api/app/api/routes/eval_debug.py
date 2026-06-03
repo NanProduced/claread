@@ -14,6 +14,7 @@ from app.eval_adapter.node_lab import (
 from app.eval_adapter.node_lab_judge import execute_node_lab_judge, run_node_lab_judge
 from app.eval_adapter.node_probe import run_article_analysis_node_probe
 from app.eval_adapter.shared import list_model_profile_summaries
+from app.eval_adapter.workflow_lab import get_workflow_lab_baseline_bundle
 from app.eval_adapter.schemas import (
     ArticleAnalysisEvalRequest,
     ArticleAnalysisEvalResult,
@@ -30,6 +31,8 @@ from app.eval_adapter.schemas import (
     NodeLabJudgeExecuteResult,
     NodeLabJudgeRunRequest,
     NodeLabJudgeRunResult,
+    WorkflowLabBaselineBundle,
+    WorkflowLabBaselineBundleRequest,
 )
 
 router = APIRouter(prefix="/eval", tags=["eval"])
@@ -90,6 +93,18 @@ async def article_analysis_node_lab_baseline(
     _auth: str = Depends(verify_eval_api_key),
 ) -> NodeLabBaselineConfig:
     return get_node_lab_baseline_config(request)
+
+
+@router.post(
+    "/article-analysis/workflow-lab/baseline-bundle",
+    response_model=WorkflowLabBaselineBundle,
+    summary="Resolve baseline workflow prompt bundle for Workflow Lab",
+)
+async def article_analysis_workflow_lab_baseline_bundle(
+    request: WorkflowLabBaselineBundleRequest,
+    _auth: str = Depends(verify_eval_api_key),
+) -> WorkflowLabBaselineBundle:
+    return get_workflow_lab_baseline_bundle(request)
 
 
 @router.post(

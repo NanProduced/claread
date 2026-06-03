@@ -26,6 +26,7 @@ EvalStatus = Literal["succeeded", "failed", "timeout"]
 RagMode = Literal["off", "baseline", "rag", "rag_fallback", "settings"]
 TraceScope = Literal["off", "isolated", "inherit"]
 NodeProbeName = Literal["grammar", "vocabulary", "translation"]
+WorkflowLabPromptAgentName = Literal["vocabulary", "grammar", "translation", "repair"]
 NodeLabWorkspace = Literal["single_run", "baseline_compare"]
 JudgeStrategy = Literal["grammar_item_review", "vocabulary_item_review", "translation_output_review"]
 JudgeMethod = Literal["rubric_only", "rubric_plus_pairwise", "anti_template_probe"]
@@ -137,6 +138,49 @@ class NodeLabBaselineConfig(BaseModel):
     policy_lines: list[str] = Field(default_factory=list)
     baseline_examples: list[NodeLabExampleEntry] = Field(default_factory=list)
     baseline_model_profile: str | None = None
+
+
+class WorkflowLabBaselineBundleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reading_goal: ReadingGoal = "daily_reading"
+    reading_variant: ReadingVariant = "intermediate_reading"
+    few_shot_mode: Literal["off", "baseline", "variant", "settings"] = "baseline"
+    sample_sentences: list[dict[str, Any]] | None = None
+
+    @model_validator(mode="after")
+    def _validate_learning_only(self) -> WorkflowLabBaselineBundleRequest:
+        if self.reading_goal == "academic":
+            raise ValueError("workflow_lab v1 only supports learning topology")
+        return self
+
+
+class WorkflowLabPromptLayer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_name: WorkflowLabPromptAgentName
+    label: str
+    instructions: str
+    policy_name: str | None = None
+    policy_focus: str | None = None
+    policy_variant: str | None = None
+    policy_lines: list[str] = Field(default_factory=list)
+    examples: list[NodeLabExampleEntry] = Field(default_factory=list)
+    prompt_template: str = ""
+
+
+class WorkflowLabBaselineBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["workflow-prompt-bundle-v1"] = "workflow-prompt-bundle-v1"
+    target: Literal["article_analysis"] = "article_analysis"
+    reading_goal: ReadingGoal
+    reading_variant: ReadingVariant
+    prompt_version: str
+    prompt_profile: str
+    topology_mode: Literal["learning"]
+    few_shot_mode: Literal["off", "baseline", "variant", "settings"]
+    agents: dict[WorkflowLabPromptAgentName, WorkflowLabPromptLayer]
 
 
 class NodeLabResultEntry(BaseModel):

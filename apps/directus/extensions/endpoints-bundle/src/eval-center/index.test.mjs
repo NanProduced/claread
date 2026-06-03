@@ -12,6 +12,7 @@ import {
   buildRetryWorkflowRequestConfig,
   buildWorkflowLabCompareReport,
   cancelJudgeRunRequest,
+  createWorkflowLabSingleRun,
   createWorkflowLabCompare,
   isSafeFileId,
   inferRunTopologyMode,
@@ -792,6 +793,54 @@ test("promptVariantSnapshotFromRow builds immutable prompt override payload", ()
   assert.equal(snapshot.manifest_json.policies.grammar.default[0], "Prefer concise notes.");
 });
 
+test("promptVariantSnapshotFromRow expands workflow bundle manifests", () => {
+  const snapshot = promptVariantSnapshotFromRow({
+    id: "draft-bundle-1",
+    variant_id: "workflow-bundle-v1",
+    target: "article_analysis",
+    status: "ready_for_eval",
+    scope: "workflow_eval",
+    few_shot_mode: "variant",
+    manifest_json: {
+      schema_version: "workflow-prompt-bundle-v1",
+      variant_id: "workflow-bundle-v1",
+      target: "article_analysis",
+      description: "Bundle test",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      prompt_version: "prompts-v1",
+      prompt_profile: "daily_intermediate",
+      topology_mode: "learning",
+      few_shot_mode: "variant",
+      agents: {
+        grammar: {
+          agent_name: "grammar",
+          label: "语法",
+          instructions: "Grammar candidate instructions.",
+          policy_name: "grammar",
+          policy_focus: "balanced",
+          policy_variant: "intermediate_reading",
+          policy_lines: ["Prefer concise grammar notes."],
+          examples: [{
+            example_type: "grammar",
+            sentence_text: "Variant sentence.",
+            output_fragment: "{\"type\":\"grammar_note\"}",
+          }],
+        },
+      },
+    },
+  });
+
+  assert.equal(snapshot.prompt_bundle_summary.topology_mode, "learning");
+  assert.equal(snapshot.prompt_override.instructions.grammar, "Grammar candidate instructions.");
+  assert.deepEqual(
+    snapshot.prompt_override.policies.grammar.balanced.intermediate_reading,
+    ["Prefer concise grammar notes."],
+  );
+  assert.equal(snapshot.prompt_override.examples.grammar.intermediate_reading[0].sentence_text, "Variant sentence.");
+  assert.equal(snapshot.prompt_override.prompt_snapshot_hash, snapshot.snapshot_hash);
+});
+
 test("workflowConfigWithPromptVariantSnapshot embeds prompt override into workflow config", () => {
   const config = workflowConfigWithPromptVariantSnapshot(
     {
@@ -877,6 +926,101 @@ test("attachPromptVariantSnapshot rejects prompt variants with rag enabled", asy
       adapter_kind: "fake",
       rag_mode: "rag",
       prompt_variant_id: "ready-variant",
+    }),
+    /requires rag_mode=off/,
+  );
+});
+
+test("createWorkflowLabSingleRun forwards baseline workflow request", async () => {
+  let captured = null;
+  const result = await createWorkflowLabSingleRun({
+    database: createPromptVariantDb([]),
+    env: {},
+    body: {
+      text: "Sentence one.",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      rag_mode: "off",
+      trace_scope: "off",
+      model_selection: { default_profile: "profile-a" },
+      timeout_seconds: 90,
+    },
+    callUpstream: async (payload) => {
+      captured = payload;
+      return { status: "succeeded", prompt_identity: { prompt_variant_id: null } };
+    },
+  });
+
+  assert.equal(captured.path, "/eval/article-analysis/workflow");
+  assert.equal(captured.body.text, "Sentence one.");
+  assert.equal(captured.body.model_selection.default_profile, "profile-a");
+  assert.equal(captured.body.prompt_variant_id, null);
+  assert.equal(captured.body.prompt_override, null);
+  assert.equal(result.status, "succeeded");
+});
+
+test("createWorkflowLabSingleRun attaches ready candidate snapshot", async () => {
+  let upstreamBody = null;
+  await createWorkflowLabSingleRun({
+    database: createPromptVariantDb([
+      {
+        id: "draft-1",
+        variant_id: "ready-workflow",
+        target: "article_analysis",
+        status: "ready_for_eval",
+        scope: "workflow_eval",
+        few_shot_mode: "baseline",
+        manifest_json: {
+          schema_version: "workflow-prompt-bundle-v1",
+          variant_id: "ready-workflow",
+          target: "article_analysis",
+          reading_goal: "daily_reading",
+          reading_variant: "intermediate_reading",
+          topology_mode: "learning",
+          few_shot_mode: "baseline",
+          agents: {
+            grammar: {
+              agent_name: "grammar",
+              instructions: "Candidate grammar instructions.",
+              policy_name: "grammar",
+              policy_focus: "balanced",
+              policy_variant: "intermediate_reading",
+              policy_lines: ["Candidate policy."],
+              examples: [],
+            },
+          },
+        },
+      },
+    ]),
+    env: {},
+    body: {
+      text: "Sentence one.",
+      prompt_variant_id: "ready-workflow",
+      rag_mode: "off",
+    },
+    callUpstream: async ({ body }) => {
+      upstreamBody = body;
+      return { status: "succeeded" };
+    },
+  });
+
+  assert.equal(upstreamBody.prompt_variant_id, "ready-workflow");
+  assert.equal(upstreamBody.prompt_override.instructions.grammar, "Candidate grammar instructions.");
+  assert.equal(upstreamBody.prompt_override.policies.grammar.balanced.intermediate_reading[0], "Candidate policy.");
+  assert.ok(upstreamBody.prompt_override.prompt_snapshot_hash);
+});
+
+test("createWorkflowLabSingleRun rejects candidate with rag enabled", async () => {
+  await assert.rejects(
+    createWorkflowLabSingleRun({
+      database: createPromptVariantDb([]),
+      env: {},
+      body: {
+        text: "Sentence one.",
+        prompt_variant_id: "ready-workflow",
+        rag_mode: "rag",
+      },
+      callUpstream: async () => ({ status: "succeeded" }),
     }),
     /requires rag_mode=off/,
   );

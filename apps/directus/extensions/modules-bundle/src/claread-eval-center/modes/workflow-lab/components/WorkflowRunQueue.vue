@@ -18,11 +18,11 @@ function statusTone(status) {
   <section class="queue">
     <header>
       <div>
-        <p>Queue</p>
-        <h2>Workflow runs</h2>
+        <p>运行队列</p>
+        <h2>Workflow 运行</h2>
       </div>
-      <button type="button" :disabled="loading" @click="emit('refresh')">
-        {{ loading ? "Refreshing" : "Refresh" }}
+      <button type="button" :disabled="loading" title="刷新后台 runner bridge 请求状态。" @click="emit('refresh')">
+        {{ loading ? "刷新中" : "刷新" }}
       </button>
     </header>
 
@@ -41,7 +41,7 @@ function statusTone(status) {
         </span>
         <em :class="statusTone(row.status)">{{ row.status }}</em>
       </button>
-      <p v-if="!loading && requests.length === 0" class="empty">No workflow requests yet.</p>
+      <p v-if="!loading && requests.length === 0" class="empty">暂无 workflow 运行请求。</p>
     </div>
 
     <footer class="queue-actions">
@@ -51,7 +51,7 @@ function statusTone(status) {
         type="button"
         @click="row.cancelable ? emit('cancel', row) : emit('retry', row)"
       >
-        {{ row.cancelable ? "Cancel" : "Retry" }} {{ row.run_id }}
+        {{ row.cancelable ? "取消" : "重试" }} {{ row.run_id }}
       </button>
     </footer>
   </section>

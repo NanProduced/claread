@@ -12,7 +12,7 @@ import {
   groupEntriesBySentence,
 } from "../composables/useNodeLabFormatting";
 
-const { compareResult, compareSentenceRows, state } = useNodeLabState();
+const { compareResult, compareSentenceRows, state, loading } = useNodeLabState();
 
 function scopedPreparedSentences(entry, sentenceId) {
   const sentences = Array.isArray(entry?.prepared_sentences) ? entry.prepared_sentences : [];
@@ -41,7 +41,11 @@ function scopedOutputForRow(rowSide, nodeName) {
 </script>
 
 <template>
-  <div class="compare-canvas">
+  <div v-if="loading.compare && !compareResult" class="compare-loading">
+    <div class="loading-spinner"></div>
+    <span>正在运行 Compare，结果加载后将显示逐句对比...</span>
+  </div>
+  <div v-else-if="compareResult" class="compare-canvas">
     <div
       v-for="row in compareSentenceRows"
       :key="row.sentenceId"
@@ -53,7 +57,7 @@ function scopedOutputForRow(rowSide, nodeName) {
         <p class="compare-row__sentence">{{ row.sentenceText || '当前未返回原句。' }}</p>
       </div>
       <div class="compare-row__body">
-        <div class="compare-column">
+        <div class="compare-column" role="region" aria-label="Baseline">
           <div class="compare-column__header">
             <h4>Baseline</h4>
             <span class="badge" :class="`badge-${statusTone(compareResult.baseline?.status)}`">{{ statusLabel(compareResult.baseline?.status) }}</span>
@@ -101,7 +105,7 @@ function scopedOutputForRow(rowSide, nodeName) {
           </template>
         </div>
 
-        <div class="compare-column">
+        <div class="compare-column" role="region" aria-label="Candidate">
           <div class="compare-column__header">
             <h4>Candidate</h4>
             <span class="badge" :class="`badge-${statusTone(compareResult.candidate?.status)}`">{{ statusLabel(compareResult.candidate?.status) }}</span>
@@ -310,6 +314,29 @@ function scopedOutputForRow(rowSide, nodeName) {
 .compare-row.tone-slate {
   --sentence-accent: #475569;
   --sentence-tint: #e2e8f0;
+}
+
+.compare-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 32px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subdued);
+  color: var(--color-text-subdued);
+  font-size: 14px;
+}
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: node-lab-spin 0.8s linear infinite;
+}
+@keyframes node-lab-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 1200px) {

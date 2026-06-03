@@ -8,6 +8,7 @@ import yaml
 from cachetools import TTLCache
 
 from app.services.analysis.prompting.runtime_context import (
+    get_prompt_override_agent_instructions,
     get_prompt_override_policy_lines,
 )
 
@@ -49,6 +50,9 @@ def get_prompt_version() -> str:
 
 
 def load_agent_instructions(agent_name: str) -> str:
+    override_text = get_prompt_override_agent_instructions(agent_name)
+    if override_text is not None:
+        return override_text
     registry = _load_registry()
     agents = registry.get("agents", {})
     if agent_name not in agents:

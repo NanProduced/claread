@@ -483,7 +483,7 @@ onBeforeUnmount(() => {
           @click="state.activeNode = node.id"
         >
           {{ node.label }}
-          <span v-if="hasNodeActivity(node.id)" class="activity-dot"></span>
+          <span v-if="hasNodeActivity(node.id, state)" class="activity-dot"></span>
         </button>
       </div>
       <div class="nav-divider"></div>
@@ -576,6 +576,9 @@ onBeforeUnmount(() => {
                 新建 Session 并加入
               </v-button>
             </div>
+            <p v-if="joinSessionBlockReason || createSessionAndAddBlockReason" class="session-block-hint">
+              {{ joinSessionBlockReason || createSessionAndAddBlockReason }}
+            </p>
             <p class="block-hint mt-3">
               当前 Session 目标：
               <strong>{{ selectedSessionDetail?.session?.title || "未选择" }}</strong>
@@ -756,7 +759,7 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
 }
 
 .meta-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-subdued);
   font-weight: 500;
 }
@@ -1085,6 +1088,13 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   color: var(--color-text-subdued);
   line-height: 1.5;
   margin: -8px 0 8px;
+}
+
+.session-block-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-subdued);
 }
 
 /* Helpers */

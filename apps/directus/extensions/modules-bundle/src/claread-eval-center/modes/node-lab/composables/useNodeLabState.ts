@@ -14,6 +14,9 @@ import {
   defaultJudgeDraft,
   judgeModeAllowedForNode,
   defaultJudgeModeForNode,
+  compareSentenceModel,
+  sentenceOrderKey,
+  sentenceToneClass,
 } from "./useNodeLabFormatting";
 
 export type NodeLabState = ReturnType<typeof createNodeLabState>;
@@ -73,6 +76,7 @@ export function createNodeLabState() {
     compare: false,
     saveCandidate: false,
     saveJudgeConfig: false,
+    saveRunHistory: false,
     queueJudge: false,
     executeJudge: false,
     createSession: false,
@@ -190,6 +194,37 @@ export function createNodeLabState() {
   const currentCompareTrialId = computed(() => state.currentCompareTrialIdByNode[state.activeNode] || "");
   const selectedSessionJudgeRequests = computed(() => selectedSessionDetail.value?.judge_requests || []);
   const selectedJudgeRequestDetail = computed(() => state.judgeRequestDetailsById[selectedJudgeRequestId.value] || null);
+
+  const compareSentenceRows = computed(() => {
+    const result = compareResult.value;
+    if (!result) return [];
+    const baselineModel = compareSentenceModel(result.baseline, state.activeNode);
+    const candidateModel = compareSentenceModel(result.candidate, state.activeNode);
+    const sentenceIds = new Set([
+      ...baselineModel.sentenceMap.keys(),
+      ...candidateModel.sentenceMap.keys(),
+    ]);
+    return [...sentenceIds]
+      .sort((a, b) => sentenceOrderKey(a) - sentenceOrderKey(b))
+      .map((sentenceId, index) => ({
+        sentenceId,
+        sentenceText: baselineModel.sentenceMap.get(sentenceId) || candidateModel.sentenceMap.get(sentenceId) || "",
+        toneClass: sentenceToneClass(index),
+        baseline: extractRowSide(baselineModel, sentenceId),
+        candidate: extractRowSide(candidateModel, sentenceId),
+      }));
+  });
+
+  function extractRowSide(model, sentenceId) {
+    return {
+      notes: model.notes?.get(sentenceId) || [],
+      analyses: model.analyses?.get(sentenceId) || [],
+      vocabHighlights: model.vocabHighlights?.get(sentenceId) || [],
+      phraseGlosses: model.phraseGlosses?.get(sentenceId) || [],
+      contextGlosses: model.contextGlosses?.get(sentenceId) || [],
+      translations: model.translations?.get(sentenceId) || [],
+    };
+  }
 
   // State management functions
   function setFeedback({ error = "", info = "" } = {}) {
@@ -322,6 +357,7 @@ export function createNodeLabState() {
     selectedSessionTrialDetail, latestCompareTrialId,
     currentCompareTrialId, selectedSessionJudgeRequests,
     selectedJudgeRequestDetail, availableReadingVariants,
+    compareSentenceRows,
     // Functions
     setFeedback, setActiveCompareView, clearActiveCompareView,
     loadPersistedState, persistedStatePayload, persistState,

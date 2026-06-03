@@ -5,7 +5,7 @@ import { useNodeLabState } from "../composables/useNodeLabState";
 import { HELP_TEXT } from "../composables/useNodeLabConstants";
 import { compactFactRows, parseNestedJson } from "../composables/useNodeLabFormatting";
 
-const { baselineConfig } = useNodeLabState();
+const { baselineConfig, loading } = useNodeLabState();
 
 const baselineSummaryFacts = computed(() => {
   const baseline = baselineConfig.value;
@@ -25,16 +25,27 @@ const baselineSummaryFacts = computed(() => {
       <h3 class="section-title">Baseline 参考</h3>
       <div class="header-actions">
         <span class="badge badge-readonly">Read-only</span>
-        <span class="help-icon" :title="HELP_TEXT.baseline_snapshot">?</span>
+        <span class="help-icon" tabindex="0" :title="HELP_TEXT.baseline_snapshot">?</span>
       </div>
     </div>
-    <div v-if="baselineConfig" class="meta-grid">
+    <div v-if="loading.baseline" class="skeleton-grid">
+      <div class="skeleton-item" v-for="i in 4" :key="i">
+        <div class="skeleton-line skeleton-line--short"></div>
+        <div class="skeleton-line"></div>
+      </div>
+    </div>
+    <div v-else-if="!baselineConfig" class="empty-state" role="status">
+      <p>Baseline 配置尚未加载</p>
+      <span class="empty-hint">选择节点和阅读目标后将自动加载 Baseline 配置。</span>
+    </div>
+    <template v-else>
+    <div class="meta-grid">
       <div class="meta-item" v-for="[label, value] in baselineSummaryFacts" :key="label">
         <span class="meta-label">{{ label }}</span>
         <span class="meta-value">{{ value }}</span>
       </div>
     </div>
-    <div v-if="baselineConfig" class="details-group">
+    <div class="details-group">
       <details class="detail-card">
         <summary>Baseline 说明文本</summary>
         <div class="detail-content"><pre>{{ baselineConfig.agent_instructions }}</pre></div>
@@ -54,6 +65,7 @@ const baselineSummaryFacts = computed(() => {
         </div>
       </details>
     </div>
+    </template>
   </section>
 </template>
 
@@ -109,14 +121,21 @@ const baselineSummaryFacts = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   border: 1px solid var(--color-text-subdued);
   color: var(--color-text-subdued);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   cursor: help;
+  transition: border-color 0.15s, color 0.15s;
+}
+.help-icon:hover,
+.help-icon:focus-visible {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  outline: none;
 }
 
 .meta-grid {
@@ -137,7 +156,7 @@ const baselineSummaryFacts = computed(() => {
 }
 
 .meta-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-subdued);
   font-weight: 500;
 }
@@ -162,10 +181,18 @@ const baselineSummaryFacts = computed(() => {
 
 .detail-card summary {
   padding: 12px 16px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued);
+  border-left: 3px solid var(--color-border);
+  transition: border-left-color 0.15s;
+}
+.detail-card summary:hover {
+  border-left-color: var(--color-primary);
+}
+.detail-card[open] summary {
+  border-left-color: var(--color-primary);
 }
 
 .detail-content {
@@ -197,4 +224,48 @@ pre {
 .policy-list li:last-child {
   border-bottom: none;
 }
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+  padding: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+.skeleton-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skeleton-line {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--color-surface-subdued) 25%, color-mix(in srgb, var(--color-surface-subdued) 70%, var(--color-surface)) 50%, var(--color-surface-subdued) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+.skeleton-line--short {
+  height: 10px;
+  width: 60%;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  text-align: center;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+  color: var(--color-text-subdued);
+}
+.empty-hint { font-size: 13px; margin-top: 4px; }
 </style>

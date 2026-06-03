@@ -1,5 +1,5 @@
 import { inject, computed, type InjectionKey } from "vue";
-import { API_ENDPOINTS, DEFAULT_TIMEOUT_SECONDS } from "./useNodeLabConstants";
+import { API_ENDPOINTS, DEFAULT_TIMEOUT_SECONDS, TERMINAL_JUDGE_STATUSES } from "./useNodeLabConstants";
 import {
   safeJsonParse,
   buildInputPreview,
@@ -619,6 +619,40 @@ export function createNodeLabApi(deps: NodeLabState) {
     }
   }
 
+  async function saveSingleRunToHistory() {
+    const result = singleRunResult.value;
+    if (!result?.run) {
+      setFeedback({ error: "暂无可保存的 Single Run 结果。" });
+      return null;
+    }
+    const run = result.run;
+    const useCandidate = run.participant_label !== "baseline";
+    loading.saveRunHistory = true;
+    setFeedback();
+    try {
+      const data = await fetchJson(API_ENDPOINTS.runHistorySingleRun, {
+        method: "POST",
+        body: JSON.stringify({
+          request: buildRunRequest({ dryRun: false, useCandidate }),
+          request_snapshot: result.request_snapshot || null,
+          result,
+        }),
+      });
+      const trialId = data?.trial?.trial_id || "";
+      setFeedback({
+        info: data?.duplicate
+          ? `这条 Single Run 已在 Run History 中：${trialId}`
+          : `Single Run 已保存到 Run History：${trialId}`,
+      });
+      return data;
+    } catch (error) {
+      setFeedback({ error: error.message });
+      return null;
+    } finally {
+      loading.saveRunHistory = false;
+    }
+  }
+
   function buildCandidateRegistryEntryFromResult(result, snapshot) {
     if (!result || !snapshot) return null;
     const candidatePromptIdentity = result?.candidate?.prompt_identity || {};
@@ -740,11 +774,41 @@ export function createNodeLabApi(deps: NodeLabState) {
   }
 
   function stopJudgeRequestPolling() {
-    // No-op in original; polling not implemented
+    const timer = deps.getJudgePollTimer();
+    if (timer) {
+      window.clearInterval(timer);
+      deps.setJudgePollTimer(null);
+    }
   }
 
   function startJudgeRequestPolling() {
-    // No-op in original; polling not implemented
+    stopJudgeRequestPolling();
+    const pollInterval = window.setInterval(async () => {
+      const trialId = deps.currentCompareTrialId.value || deps.activeCompareTrial.value?.trial_id;
+      if (!trialId) return;
+
+      try {
+        await loadJudgeRequests({ trialId });
+
+        const selectedId = deps.selectedJudgeRequestId.value;
+        if (selectedId) {
+          const currentRequest = deps.state.judgeRequestsByNode[deps.state.activeNode]?.find(r => r.judge_request_id === selectedId);
+          if (currentRequest && !TERMINAL_JUDGE_STATUSES.has(currentRequest.status)) {
+            await loadJudgeRequestDetail(selectedId);
+          }
+        }
+
+        const requests = deps.state.judgeRequestsByNode[deps.state.activeNode] || [];
+        const hasActive = requests.some(r => !TERMINAL_JUDGE_STATUSES.has(r.status));
+        if (!hasActive) {
+          stopJudgeRequestPolling();
+        }
+      } catch {
+        // Silently continue polling on error
+      }
+    }, 4000);
+
+    deps.setJudgePollTimer(pollInterval);
   }
 
   async function loadJudgeRequestDetail(judgeRequestId) {
@@ -814,6 +878,7 @@ export function createNodeLabApi(deps: NodeLabState) {
         await loadSessionDetail(selectedSessionId.value);
       }
       comparePanelTab.value = "judge";
+      startJudgeRequestPolling();
       setFeedback({ info: `Judge request 已执行完成：${judgeRequestId}，状态：${statusLabel(result.request?.status || "unknown")}` });
     } catch (error) {
       setFeedback({ error: error.message });
@@ -969,8 +1034,10 @@ export function createNodeLabApi(deps: NodeLabState) {
       comparePanelTab.value = "judge";
       if (autoExecute) {
         await executeJudgeRequest(request.judge_request_id);
+        startJudgeRequestPolling();
         return;
       }
+      startJudgeRequestPolling();
       setFeedback({ info: `Judge request 已创建：${request.judge_request_id}（来源：${trialSourceLabel || trialId}）。点击"执行这条 Request"开始评审。` });
     } catch (error) {
       setFeedback({ error: error.message });
@@ -1121,7 +1188,7 @@ export function createNodeLabApi(deps: NodeLabState) {
     loadSessions, loadRecentTrials, loadSessionDetail, loadTrialDetail,
     openCompareTrialInWorkbench, goStartCompareFromEmpty,
     openCurrentSessionWorkspace, clearSessionAttachment, selectSession,
-    saveCandidateDraft, saveJudgeConfig, runSingle,
+    saveCandidateDraft, saveJudgeConfig, runSingle, saveSingleRunToHistory,
     buildCandidateRegistryEntryFromResult, attachCurrentCompareToSession,
     addCurrentCompareToSession, createSessionAndAddCurrentCompare,
     stopJudgeRequestPolling, startJudgeRequestPolling,

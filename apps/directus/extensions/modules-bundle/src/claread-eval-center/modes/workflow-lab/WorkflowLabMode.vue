@@ -7,6 +7,8 @@ import WorkflowCompareReport from "./components/WorkflowCompareReport.vue";
 import WorkflowRunDetail from "./components/WorkflowRunDetail.vue";
 import WorkflowRunLauncher from "./components/WorkflowRunLauncher.vue";
 import WorkflowRunQueue from "./components/WorkflowRunQueue.vue";
+import WorkflowSingleRunLauncher from "./components/WorkflowSingleRunLauncher.vue";
+import WorkflowSingleRunResult from "./components/WorkflowSingleRunResult.vue";
 import { useWorkflowLabApi } from "./composables/useWorkflowLabApi.js";
 
 const props = defineProps({
@@ -16,8 +18,17 @@ const props = defineProps({
 const emit = defineEmits(["open-run-history"]);
 
 const workflowApi = useWorkflowLabApi();
+const WORKFLOW_PROMPT_BUNDLE_SCHEMA = "workflow-prompt-bundle-v1";
+const WORKFLOW_AGENT_ORDER = ["vocabulary", "grammar", "translation", "repair"];
+const WORKFLOW_AGENT_LABELS = {
+  vocabulary: "词汇",
+  grammar: "语法",
+  translation: "翻译",
+  repair: "修复",
+};
 
 const activeView = ref("runs");
+const activeRunTool = ref("single");
 const error = ref("");
 const message = ref("");
 
@@ -29,6 +40,9 @@ const runDetailLoading = ref(false);
 const requests = ref([]);
 const requestsLoading = ref(false);
 const runSubmitting = ref(false);
+const singleRunSubmitting = ref(false);
+const singleRunResult = ref(null);
+const modelProfiles = ref([]);
 
 const selectedCaseId = ref("");
 const selectedCaseArtifact = ref(null);
@@ -81,6 +95,7 @@ onMounted(async () => {
     loadCandidates(),
     loadRubrics(),
     loadJudgeRequests(),
+    loadModelProfiles(),
   ]);
 });
 
@@ -89,11 +104,143 @@ function emptyCandidateForm() {
     variant_id: "",
     status: "draft",
     scope: "workflow_eval",
-    few_shot_mode: "off",
+    few_shot_mode: "baseline",
     notes: "",
-    policies_json: "{}",
-    examples_json: "{}",
+    reading_goal: "daily_reading",
+    reading_variant: "intermediate_reading",
+    topology_mode: "learning",
+    prompt_version: null,
+    prompt_profile: null,
+    agents: emptyAgentMap(),
+    baseline_agents: emptyAgentMap(),
   };
+}
+
+function emptyAgentMap() {
+  return Object.fromEntries(WORKFLOW_AGENT_ORDER.map((agentName) => [
+    agentName,
+    normalizeAgentLayer(agentName),
+  ]));
+}
+
+function normalizeAgentLayer(agentName, layer = {}) {
+  const value = layer && typeof layer === "object" && !Array.isArray(layer) ? layer : {};
+  return {
+    agent_name: value.agent_name || agentName,
+    label: value.label || WORKFLOW_AGENT_LABELS[agentName] || agentName,
+    instructions: String(value.instructions || ""),
+    policy_name: value.policy_name || (agentName === "repair" ? null : agentName),
+    policy_focus: value.policy_focus || null,
+    policy_variant: value.policy_variant || null,
+    policy_lines: Array.isArray(value.policy_lines) ? value.policy_lines.map((line) => String(line || "")) : [],
+    examples: Array.isArray(value.examples)
+      ? value.examples.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry)).map((entry) => ({
+        example_type: entry.example_type || "grammar",
+        sentence_text: entry.sentence_text || "",
+        output_fragment: entry.output_fragment || "",
+      }))
+      : [],
+    prompt_template: String(value.prompt_template || ""),
+  };
+}
+
+function normalizeAgentMap(agents) {
+  const raw = agents && typeof agents === "object" && !Array.isArray(agents) ? agents : {};
+  return Object.fromEntries(WORKFLOW_AGENT_ORDER.map((agentName) => [
+    agentName,
+    normalizeAgentLayer(agentName, raw[agentName]),
+  ]));
+}
+
+function candidateFormFromBundle(bundle, current = {}) {
+  const agents = normalizeAgentMap(bundle?.agents);
+  return {
+    ...emptyCandidateForm(),
+    variant_id: current.variant_id || "",
+    status: current.status || "draft",
+    scope: "workflow_eval",
+    few_shot_mode: bundle?.few_shot_mode || current.few_shot_mode || "baseline",
+    notes: current.notes || "",
+    reading_goal: bundle?.reading_goal || current.reading_goal || "daily_reading",
+    reading_variant: bundle?.reading_variant || current.reading_variant || "intermediate_reading",
+    topology_mode: bundle?.topology_mode || "learning",
+    prompt_version: bundle?.prompt_version || null,
+    prompt_profile: bundle?.prompt_profile || null,
+    agents,
+    baseline_agents: normalizeAgentMap(bundle?.baseline_agents || bundle?.agents),
+  };
+}
+
+function candidateFormFromDraft(draft) {
+  const manifest = draft?.manifest_json && typeof draft.manifest_json === "object" ? draft.manifest_json : {};
+  if (manifest.schema_version === WORKFLOW_PROMPT_BUNDLE_SCHEMA) {
+    return {
+      ...emptyCandidateForm(),
+      variant_id: draft.variant_id || manifest.variant_id || "",
+      status: draft.status || "draft",
+      scope: draft.scope || "workflow_eval",
+      few_shot_mode: manifest.few_shot_mode || draft.few_shot_mode || "baseline",
+      notes: draft.notes || manifest.description || "",
+      reading_goal: manifest.reading_goal || "daily_reading",
+      reading_variant: manifest.reading_variant || "intermediate_reading",
+      topology_mode: manifest.topology_mode || "learning",
+      prompt_version: manifest.prompt_version || null,
+      prompt_profile: manifest.prompt_profile || null,
+      agents: normalizeAgentMap(manifest.agents),
+      baseline_agents: normalizeAgentMap(manifest.baseline_agents || manifest.agents),
+    };
+  }
+  return {
+    ...emptyCandidateForm(),
+    variant_id: draft.variant_id || "",
+    status: draft.status || "draft",
+    scope: draft.scope || "workflow_eval",
+    few_shot_mode: draft.few_shot_mode || "baseline",
+    notes: draft.notes || "",
+  };
+}
+
+function workflowBundleManifest(form) {
+  return {
+    schema_version: WORKFLOW_PROMPT_BUNDLE_SCHEMA,
+    variant_id: form.variant_id.trim(),
+    target: "article_analysis",
+    description: form.notes || "",
+    reading_goal: form.reading_goal || "daily_reading",
+    reading_variant: form.reading_variant || "intermediate_reading",
+    prompt_version: form.prompt_version || null,
+    prompt_profile: form.prompt_profile || null,
+    topology_mode: "learning",
+    few_shot_mode: form.few_shot_mode || "baseline",
+    agents: normalizeAgentMap(form.agents),
+    baseline_agents: normalizeAgentMap(form.baseline_agents),
+  };
+}
+
+function policiesFromAgents(agents) {
+  const policies = {};
+  for (const layer of Object.values(normalizeAgentMap(agents))) {
+    if (!layer.policy_name || !layer.policy_focus) continue;
+    if (!policies[layer.policy_name]) policies[layer.policy_name] = {};
+    policies[layer.policy_name][layer.policy_focus] = {
+      [layer.policy_variant || "default"]: layer.policy_lines.filter((line) => line.trim()),
+      default: layer.policy_lines.filter((line) => line.trim()),
+    };
+  }
+  return policies;
+}
+
+function examplesFromAgents(agents, readingVariant) {
+  const examples = {};
+  for (const layer of Object.values(normalizeAgentMap(agents))) {
+    const cleanExamples = layer.examples.filter((entry) => entry.sentence_text && entry.output_fragment);
+    if (cleanExamples.length === 0) continue;
+    examples[layer.agent_name] = {
+      [layer.policy_variant || readingVariant || "default"]: cleanExamples,
+      default: cleanExamples,
+    };
+  }
+  return examples;
 }
 
 function setError(err, fallback) {
@@ -166,12 +313,29 @@ async function submitRun(payload) {
   message.value = "";
   try {
     const created = await workflowApi.createRunRequest(payload);
-    message.value = `Queued run ${created?.run_id || ""}`.trim();
+    message.value = `已加入运行队列：${created?.run_id || ""}`.trim();
     await Promise.all([loadRequests(), loadRuns({ keepSelection: true })]);
   } catch (err) {
     setError(err, "Failed to queue workflow run.");
   } finally {
     runSubmitting.value = false;
+  }
+}
+
+async function submitSingleRun(payload) {
+  singleRunSubmitting.value = true;
+  singleRunResult.value = null;
+  error.value = "";
+  message.value = "";
+  try {
+    singleRunResult.value = await workflowApi.runSingleWorkflow(payload);
+    message.value = singleRunResult.value?.prompt_identity?.prompt_variant_id
+      ? `Single Run 完成：${singleRunResult.value.prompt_identity.prompt_variant_id}`
+      : "Baseline Single Run 完成。";
+  } catch (err) {
+    setError(err, "Failed to run workflow single run.");
+  } finally {
+    singleRunSubmitting.value = false;
   }
 }
 
@@ -206,7 +370,7 @@ async function createCompare() {
       baseline_run_id: baselineRunId.value,
       candidate_run_id: candidateRunId.value,
     });
-    message.value = compareResult.value.created ? "Compare report generated." : "Existing compare report loaded.";
+    message.value = compareResult.value.created ? "对比报告已生成。" : "已读取已有对比报告。";
     activeView.value = "compare";
     const firstComparison = compareResult.value.report?.comparisons?.[0];
     if (firstComparison) await selectCompareCase(firstComparison);
@@ -257,37 +421,44 @@ function selectDraft(draft) {
   candidatePreview.value = null;
   candidateMessage.value = "";
   candidateError.value = "";
-  candidateForm.value = {
-    variant_id: draft.variant_id || "",
-    status: draft.status || "draft",
-    scope: draft.scope || "workflow_eval",
-    few_shot_mode: draft.few_shot_mode || "off",
-    notes: draft.notes || "",
-    policies_json: JSON.stringify(draft.policies_json || {}, null, 2),
-    examples_json: JSON.stringify(draft.examples_json || {}, null, 2),
-  };
-}
-
-function parseCandidateJson(text, field) {
-  const value = JSON.parse(text || "{}");
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${field} must be a JSON object.`);
-  }
-  return value;
+  candidateForm.value = candidateFormFromDraft(draft);
 }
 
 function candidatePayload(extra = {}) {
+  const manifest = workflowBundleManifest(candidateForm.value);
   return {
-    variant_id: candidateForm.value.variant_id.trim(),
+    variant_id: manifest.variant_id,
     target: "article_analysis",
     status: candidateForm.value.status,
     scope: "workflow_eval",
     few_shot_mode: candidateForm.value.few_shot_mode,
     notes: candidateForm.value.notes,
-    policies_json: parseCandidateJson(candidateForm.value.policies_json, "policies_json"),
-    examples_json: parseCandidateJson(candidateForm.value.examples_json, "examples_json"),
+    policies_json: policiesFromAgents(manifest.agents),
+    examples_json: examplesFromAgents(manifest.agents, manifest.reading_variant),
+    manifest_json: manifest,
     ...extra,
   };
+}
+
+async function createCandidateFromBaseline() {
+  candidateLoading.value = true;
+  candidateError.value = "";
+  candidateMessage.value = "";
+  candidatePreview.value = null;
+  selectedDraftId.value = "";
+  try {
+    const bundle = await workflowApi.loadBaselineBundle({
+      reading_goal: candidateForm.value.reading_goal || "daily_reading",
+      reading_variant: candidateForm.value.reading_variant || "intermediate_reading",
+      few_shot_mode: candidateForm.value.few_shot_mode || "baseline",
+    });
+    candidateForm.value = candidateFormFromBundle(bundle, candidateForm.value);
+    candidateMessage.value = "已从 baseline prompt 创建完整 Workflow Candidate 草稿。";
+  } catch (err) {
+    candidateError.value = workflowApi.directusError(err, "Failed to load baseline prompt bundle.");
+  } finally {
+    candidateLoading.value = false;
+  }
 }
 
 async function previewCandidate() {
@@ -318,7 +489,7 @@ async function saveCandidate() {
     });
     const saved = await workflowApi.saveCandidateDraft(payload, selectedDraftId.value);
     if (!selectedDraftId.value && saved?.id) selectedDraftId.value = saved.id;
-    candidateMessage.value = "Candidate saved.";
+    candidateMessage.value = "Candidate 已保存。";
     await loadCandidates();
   } catch (err) {
     candidateError.value = workflowApi.directusError(err, "Failed to save candidate.");
@@ -332,6 +503,14 @@ async function loadRubrics() {
     rubrics.value = await workflowApi.listRubrics();
   } catch (err) {
     setError(err, "Failed to load judge rubrics.");
+  }
+}
+
+async function loadModelProfiles() {
+  try {
+    modelProfiles.value = await workflowApi.listModelProfiles();
+  } catch (err) {
+    setError(err, "Failed to load model profiles.");
   }
 }
 
@@ -362,11 +541,11 @@ async function queueJudge(payload) {
     <header class="context-bar">
       <div>
         <p>Workflow Lab</p>
-        <h1>Learning workflow experiments</h1>
+        <h1>Learning Workflow 实验</h1>
       </div>
       <dl>
-        <div><dt>Dataset</dt><dd>{{ contextSummary.dataset }}</dd></div>
-        <div><dt>Topology</dt><dd>{{ contextSummary.topology }}</dd></div>
+        <div><dt title="当前工作台只支持 learning workflow。">数据集</dt><dd>{{ contextSummary.dataset }}</dd></div>
+        <div><dt title="Workflow Lab 暂不支持 academic topology。">拓扑</dt><dd>{{ contextSummary.topology }}</dd></div>
         <div><dt>Baseline</dt><dd>{{ contextSummary.baseline }}</dd></div>
         <div><dt>Candidate</dt><dd>{{ contextSummary.candidate }}</dd></div>
       </dl>
@@ -378,9 +557,9 @@ async function queueJudge(payload) {
     <div class="workbench">
       <aside class="sidebar">
         <nav>
-          <button type="button" :class="{ active: activeView === 'runs' }" @click="activeView = 'runs'">Runs</button>
-          <button type="button" :class="{ active: activeView === 'compare' }" @click="activeView = 'compare'">Compare</button>
-          <button type="button" :class="{ active: activeView === 'candidates' }" @click="activeView = 'candidates'">Candidates</button>
+          <button type="button" :class="{ active: activeView === 'runs' }" title="创建 run、查看队列和 case 结果。" @click="activeView = 'runs'">运行</button>
+          <button type="button" :class="{ active: activeView === 'compare' }" title="选择 baseline/candidate run 并同步生成对比报告。" @click="activeView = 'compare'">对比</button>
+          <button type="button" :class="{ active: activeView === 'candidates' }" title="编辑并保存可用于 workflow run 的 Candidate。" @click="activeView = 'candidates'">Candidate</button>
         </nav>
 
         <WorkflowRunQueue
@@ -395,8 +574,8 @@ async function queueJudge(payload) {
 
         <section class="run-list">
           <header>
-            <strong>Completed learning runs</strong>
-            <button type="button" :disabled="runsLoading" @click="loadRuns({ keepSelection: true })">Refresh</button>
+            <strong>已完成的 learning runs</strong>
+            <button type="button" :disabled="runsLoading" title="刷新本地 evals/runs artifact 列表。" @click="loadRuns({ keepSelection: true })">刷新</button>
           </header>
           <button
             v-for="run in learningRuns"
@@ -408,13 +587,41 @@ async function queueJudge(payload) {
             <span>{{ run.run_id }}</span>
             <small>{{ run.prompt_variant_id || "baseline" }} / {{ run.total_cases || 0 }} cases</small>
           </button>
-          <p v-if="!runsLoading && learningRuns.length === 0">No completed learning runs.</p>
+          <p v-if="!runsLoading && learningRuns.length === 0">暂无已完成的 learning run。</p>
         </section>
       </aside>
 
       <main class="main-pane">
         <template v-if="activeView === 'runs'">
+          <section class="run-tools">
+            <header>
+              <div>
+                <p>运行工作流</p>
+                <h2>先用单条调试验证 Candidate</h2>
+              </div>
+              <nav>
+                <button type="button" :class="{ active: activeRunTool === 'single' }" title="手动输入一篇文章，同步运行完整 workflow。" @click="activeRunTool = 'single'">单条调试</button>
+                <button type="button" :class="{ active: activeRunTool === 'dataset' }" title="对已有 eval dataset 批量运行，适合稳定后回归。" @click="activeRunTool = 'dataset'">数据集批跑</button>
+              </nav>
+            </header>
+            <p>先用单条调试确认 candidate 对完整 workflow 输出有改善；确认有效后再用数据集批跑做 regression。</p>
+          </section>
+
+          <template v-if="activeRunTool === 'single'">
+            <WorkflowSingleRunLauncher
+              :candidates="readyCandidates"
+              :model-profiles="modelProfiles"
+              :submitting="singleRunSubmitting"
+              @submit="submitSingleRun"
+            />
+            <WorkflowSingleRunResult
+              :result="singleRunResult"
+              :loading="singleRunSubmitting"
+            />
+          </template>
+
           <WorkflowRunLauncher
+            v-else
             :candidates="readyCandidates"
             :submitting="runSubmitting"
             @submit="submitRun"
@@ -462,6 +669,7 @@ async function queueJudge(payload) {
           :message="candidateMessage"
           @refresh="loadCandidates"
           @new="newCandidate"
+          @create-from-baseline="createCandidateFromBaseline"
           @select="selectDraft"
           @preview="previewCandidate"
           @save="saveCandidate"
@@ -564,6 +772,40 @@ button {
 button.active {
   border-color: var(--theme--primary);
   background: var(--theme--background-subdued);
+}
+.run-tools {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  background: var(--theme--background);
+  padding: 14px;
+}
+.run-tools header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.run-tools p,
+.run-tools header p {
+  margin: 0;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+.run-tools > p {
+  margin-top: 10px;
+}
+.run-tools h2 {
+  margin: 2px 0 0;
+  font-size: 17px;
+}
+.run-tools nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.run-tools nav button.active {
+  color: var(--theme--primary);
 }
 .run-list {
   border: 1px solid var(--theme--border-color);

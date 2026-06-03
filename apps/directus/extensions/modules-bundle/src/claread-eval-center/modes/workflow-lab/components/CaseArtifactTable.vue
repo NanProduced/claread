@@ -17,12 +17,12 @@ function tone(row) {
     <table>
       <thead>
         <tr>
-          <th>Case</th>
-          <th>Status</th>
-          <th>State</th>
-          <th>Hard</th>
-          <th>Soft</th>
-          <th>Output</th>
+          <th title="Dataset case id。点击后在右侧查看完整 evidence。">Case</th>
+          <th title="adapter 执行状态。">状态</th>
+          <th title="最终 render_scene 的用户可见状态。">输出状态</th>
+          <th title="硬失败数量，通常代表必须处理的问题。">硬失败</th>
+          <th title="软失败数量，通常代表需要复查的质量风险。">软失败</th>
+          <th title="translations / inline_marks / sentence_entries 数量。">输出数量</th>
         </tr>
       </thead>
       <tbody>
@@ -41,7 +41,7 @@ function tone(row) {
         </tr>
       </tbody>
     </table>
-    <p v-if="cases.length === 0" class="empty">No case artifacts available.</p>
+    <p v-if="cases.length === 0" class="empty">暂无 case artifact。</p>
   </div>
 </template>
 

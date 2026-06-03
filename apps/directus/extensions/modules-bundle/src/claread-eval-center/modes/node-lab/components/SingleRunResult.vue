@@ -1,10 +1,11 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
 import NodeProbeOutputView from "../../../components/NodeProbeOutputView.vue";
 import ResultBlock from "../../../components/ResultBlock.vue";
 import XmlPromptViewer from "../../../components/XmlPromptViewer.vue";
 import { useNodeLabState } from "../composables/useNodeLabState";
+import { useNodeLabApi } from "../composables/useNodeLabApi";
 import {
   statusLabel,
   formatDurationMs,
@@ -20,6 +21,9 @@ import {
 } from "../composables/useNodeLabFormatting";
 
 const { singleRunResult, singleRunUiState, state, loading } = useNodeLabState();
+const { saveSingleRunToHistory } = useNodeLabApi();
+
+const showRefreshBanner = ref(true);
 
 const singleRunRefreshState = computed(() => {
   const uiState = singleRunUiState.value || {};
@@ -56,6 +60,15 @@ const singleRunRefreshState = computed(() => {
   };
 });
 
+watch(() => singleRunRefreshState.value?.mode, (mode) => {
+  if (mode === 'updated') {
+    showRefreshBanner.value = true;
+    setTimeout(() => { showRefreshBanner.value = false; }, 4000);
+  } else if (mode) {
+    showRefreshBanner.value = true;
+  }
+});
+
 const singleRunSummaryFacts = computed(() => {
   const result = singleRunResult.value?.run;
   if (!result) return [];
@@ -82,9 +95,10 @@ const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
 <template>
   <template v-if="state.activeWorkspace === 'single_run'">
     <div
-      v-if="singleRunRefreshState.active"
+      v-if="singleRunRefreshState.active && showRefreshBanner"
       class="refresh-banner"
       :class="`is-${singleRunRefreshState.mode}`"
+      role="status"
     >
       <div class="refresh-banner__title">
         <span v-if="singleRunRefreshState.mode === 'refreshing' || singleRunRefreshState.mode === 'loading'" class="refresh-spinner" aria-hidden="true"></span>
@@ -97,6 +111,11 @@ const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
         class="single-run-surface"
         :class="{ 'is-stale': loading.run && singleRunResult?.run }"
       >
+        <div class="single-run-actions">
+          <v-button small secondary :disabled="loading.saveRunHistory" @click="saveSingleRunToHistory">
+            {{ loading.saveRunHistory ? "保存中..." : "保存到 Run History" }}
+          </v-button>
+        </div>
         <div class="meta-grid">
           <div class="meta-item" v-for="[label, value] in singleRunSummaryFacts" :key="label">
             <span class="meta-label">{{ label }}</span>
@@ -107,6 +126,7 @@ const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
           v-if="singleRunIssue"
           class="execution-alert mt-4"
           :class="`is-${singleRunIssue.tone}`"
+          role="alert"
         >
           <div class="execution-alert__header">
             <strong>{{ singleRunIssue.title }}</strong>
@@ -243,6 +263,12 @@ const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
 
 .single-run-surface.is-stale {
   opacity: 0.62;
+}
+
+.single-run-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .meta-grid {

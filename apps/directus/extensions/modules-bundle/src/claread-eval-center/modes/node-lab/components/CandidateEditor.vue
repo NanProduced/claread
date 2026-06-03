@@ -7,7 +7,7 @@ import { safeJsonParse, compactFactRows } from "../composables/useNodeLabFormatt
 
 const {
   baselineConfig, currentDraft, currentSavedCandidates, selectedCandidateValue,
-  modelProfiles, state, loading,
+  modelProfiles, state, loading, feedback,
 } = useNodeLabState();
 
 const { saveCandidateDraft, selectSavedCandidate, resetDraftToBaseline } = useNodeLabApi();
@@ -91,13 +91,31 @@ const exampleEditModesMapped = [
   { text: '结构化列表', value: 'structured' },
   { text: 'Raw JSON', value: 'raw' },
 ];
+
+const rawJsonError = computed(() => {
+  if (currentDraft.value.examples_edit_mode !== 'raw' || !currentDraft.value.examples_raw_text?.trim()) return null;
+  try {
+    const parsed = JSON.parse(currentDraft.value.examples_raw_text);
+    if (!Array.isArray(parsed)) return 'JSON 内容必须是数组格式';
+    return null;
+  } catch (e) {
+    return `JSON 语法错误：${e.message.replace(/^JSON\.parse:\s*/, '')}`;
+  }
+});
+
+function scrollToSection(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 </script>
 
 <template>
   <section class="panel-section">
     <div class="section-header">
       <h3 class="section-title">Candidate 编辑</h3>
-      <span class="help-icon" :title="HELP_TEXT.candidate_delta">?</span>
+      <span class="help-icon" tabindex="0" :title="HELP_TEXT.candidate_delta">?</span>
+    </div>
+    <div v-if="feedback.info || feedback.error" class="feedback-banner" :class="feedback.error ? 'is-error' : 'is-success'" role="status">
+      {{ feedback.error || feedback.info }}
     </div>
     <div class="toolbar mb-4">
       <v-select class="toolbar-select" v-model="selectedCandidateValue" :items="savedCandidatesMapped" @update:modelValue="selectSavedCandidate($event)" placeholder="载入已保存 Candidate" />
@@ -107,16 +125,24 @@ const exampleEditModesMapped = [
       </div>
     </div>
 
-    <div class="meta-grid highlight-changes mb-4">
+    <nav class="section-nav">
+      <button class="section-nav-item" @click="scrollToSection('diff-summary')">差异摘要</button>
+      <button class="section-nav-item" @click="scrollToSection('form-config')">配置</button>
+      <button class="section-nav-item" @click="scrollToSection('form-instructions')">说明文本</button>
+      <button class="section-nav-item" @click="scrollToSection('form-policy')">Policy</button>
+      <button v-if="currentDraft.few_shot_mode === 'candidate'" class="section-nav-item" @click="scrollToSection('form-examples')">Examples</button>
+    </nav>
+
+    <div id="diff-summary" class="meta-grid highlight-changes mb-4">
       <div class="meta-item" v-for="item in candidateDiffFacts" :key="item.key">
         <span class="meta-label">{{ item.label }}</span>
         <span class="meta-value" :class="{ 'text-changed': item.changed }">{{ item.value }}</span>
       </div>
     </div>
 
-    <div class="form-row">
+    <div id="form-config" class="form-row">
       <div class="form-field">
-        <span class="field-label">Few-shot 模式 <span class="help-icon inline" :title="HELP_TEXT.few_shot_mode">?</span></span>
+        <span class="field-label">Few-shot 模式 <span class="help-icon inline" tabindex="0" :title="HELP_TEXT.few_shot_mode">?</span></span>
         <v-select v-model="currentDraft.few_shot_mode" :items="fewShotModesMapped" />
       </div>
       <div class="form-field">
@@ -125,12 +151,12 @@ const exampleEditModesMapped = [
       </div>
     </div>
 
-    <div class="form-field mb-4">
+    <div id="form-instructions" class="form-field mb-4">
       <span class="field-label">Agent Instructions</span>
       <v-textarea v-model="currentDraft.instruction_text" :rows="6" />
     </div>
 
-    <div class="form-field mb-4">
+    <div id="form-policy" class="form-field mb-4">
       <span class="field-label">Policy Lines</span>
       <div class="list-editor">
         <div v-for="(line, index) in currentDraft.policy_lines" :key="`policy-${index}`" class="list-row">
@@ -143,7 +169,7 @@ const exampleEditModesMapped = [
       </div>
     </div>
 
-    <div v-if="currentDraft.few_shot_mode === 'candidate'" class="form-field mb-4">
+    <div v-if="currentDraft.few_shot_mode === 'candidate'" id="form-examples" class="form-field mb-4">
       <div class="field-header mb-2">
         <span class="field-label">Candidate Examples</span>
         <v-select class="w-auto" style="min-width: 140px;" v-model="currentDraft.examples_edit_mode" :items="exampleEditModesMapped" />
@@ -164,6 +190,7 @@ const exampleEditModesMapped = [
         </v-button>
       </div>
       <v-textarea v-else class="code-font" v-model="currentDraft.examples_raw_text" :rows="10" />
+      <p v-if="rawJsonError" class="validation-error">{{ rawJsonError }}</p>
     </div>
 
     <details class="detail-card mt-3">
@@ -213,14 +240,21 @@ const exampleEditModesMapped = [
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   border: 1px solid var(--color-text-subdued);
   color: var(--color-text-subdued);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   cursor: help;
+  transition: border-color 0.15s, color 0.15s;
+}
+.help-icon:hover,
+.help-icon:focus-visible {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  outline: none;
 }
 
 .help-icon.inline {
@@ -242,6 +276,33 @@ const exampleEditModesMapped = [
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.section-nav {
+  display: flex;
+  gap: 4px;
+  padding: 8px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-surface);
+}
+.section-nav-item {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-subdued);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+}
+.section-nav-item:hover {
+  color: var(--color-text);
+  background: var(--color-surface-subdued);
+  border-color: var(--color-border);
 }
 
 .meta-grid {
@@ -266,7 +327,7 @@ const exampleEditModesMapped = [
 }
 
 .meta-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-subdued);
   font-weight: 500;
 }
@@ -375,10 +436,18 @@ const exampleEditModesMapped = [
 
 .detail-card summary {
   padding: 12px 16px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued);
+  border-left: 3px solid var(--color-border);
+  transition: border-left-color 0.15s;
+}
+.detail-card summary:hover {
+  border-left-color: var(--color-primary);
+}
+.detail-card[open] summary {
+  border-left-color: var(--color-primary);
 }
 
 .detail-content {
@@ -389,4 +458,29 @@ const exampleEditModesMapped = [
 .mb-2 { margin-bottom: 8px; }
 .mb-4 { margin-bottom: 16px; }
 .mt-3 { margin-top: 12px; }
+
+.feedback-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.feedback-banner.is-success {
+  background: color-mix(in srgb, var(--theme--success, #10b981) 8%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--theme--success, #10b981) 30%, var(--color-border));
+  color: var(--theme--success, #10b981);
+}
+.feedback-banner.is-error {
+  background: color-mix(in srgb, var(--theme--danger, #dc2626) 8%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--theme--danger, #dc2626) 30%, var(--color-border));
+  color: var(--theme--danger, #dc2626);
+}
+
+.validation-error {
+  margin: -8px 0 8px;
+  font-size: 12px;
+  color: var(--theme--danger, #dc2626);
+  line-height: 1.45;
+}
 </style>

@@ -5,6 +5,7 @@ export const API_ENDPOINTS = {
   sessions: "/eval-center/node-lab/sessions",
   run: "/eval-center/node-lab/run",
   compare: "/eval-center/node-lab/compare",
+  runHistorySingleRun: "/eval-center/node-lab/run-history/single-run",
   trials: "/eval-center/node-lab/trials",
   judgeConfigs: "/eval-center/node-lab/judge-configs",
   judgePresets: "/eval-center/node-lab/judge-presets",

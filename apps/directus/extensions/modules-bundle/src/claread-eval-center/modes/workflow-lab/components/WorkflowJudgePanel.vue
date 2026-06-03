@@ -43,15 +43,15 @@ function queue() {
   <section class="judge-panel">
     <header>
       <div>
-        <p>Judge evidence</p>
-        <h3>Run-level judge</h3>
+        <p>Judge 证据</p>
+        <h3>Run 级评审</h3>
       </div>
-      <button type="button" @click="emit('refresh')">Refresh</button>
+      <button type="button" title="刷新当前 run 的 judge request 状态。" @click="emit('refresh')">刷新</button>
     </header>
 
     <div class="judge-form">
       <label>
-        <span>Rubric</span>
+        <span title="选择 run-level judge 使用的 rubric。Compare-level pairwise judge 后续单独设计。">Rubric</span>
         <select v-model="rubricId" :disabled="disabled">
           <option v-for="rubric in rubrics" :key="rubric.id" :value="rubric.id">
             {{ rubric.id }}
@@ -59,18 +59,18 @@ function queue() {
         </select>
       </label>
       <label>
-        <span>Adapter</span>
+        <span title="fake 用于验证链路，llm 会调用真实 judge 模型。">Judge 适配器</span>
         <select v-model="adapterKind" :disabled="disabled">
           <option value="fake">fake</option>
           <option value="llm">llm</option>
         </select>
       </label>
       <label>
-        <span>Max cases</span>
+        <span title="限制 judge 最多读取的 case 数，避免输入过大。">最大 case 数</span>
         <input v-model.number="maxCases" type="number" min="1" :disabled="disabled" />
       </label>
       <button type="button" :disabled="disabled || submitting || !runId || !rubricId" @click="queue">
-        {{ submitting ? "Queueing" : "Queue judge" }}
+        {{ submitting ? "入队中" : "发起 Judge" }}
       </button>
     </div>
 
@@ -80,7 +80,7 @@ function queue() {
         <span>{{ request.status }}</span>
         <small>{{ request.rubric_id }} / {{ request.judge_adapter_kind }}</small>
       </article>
-      <p v-if="runRequests.length === 0">No judge requests for this run.</p>
+      <p v-if="runRequests.length === 0">当前 run 暂无 judge request。</p>
     </div>
   </section>
 </template>

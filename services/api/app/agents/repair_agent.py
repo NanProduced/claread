@@ -25,6 +25,7 @@ from pydantic_ai import Agent
 
 from app.schemas.internal.normalized import NormalizedAnnotationResult
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+from app.services.analysis.prompting.runtime_context import is_prompt_override_active
 
 
 @dataclass
@@ -76,8 +77,7 @@ def build_repair_prompt(
     )
 
 
-@lru_cache(maxsize=1)
-def get_repair_agent() -> Agent[RepairAgentDeps, NormalizedAnnotationResult]:
+def _build_repair_agent() -> Agent[RepairAgentDeps, NormalizedAnnotationResult]:
     return Agent[RepairAgentDeps, NormalizedAnnotationResult](
         model=None,
         output_type=NormalizedAnnotationResult,
@@ -88,3 +88,14 @@ def get_repair_agent() -> Agent[RepairAgentDeps, NormalizedAnnotationResult]:
         output_retries=1,
         instrument=False,
     )
+
+
+@lru_cache(maxsize=1)
+def _get_cached_repair_agent() -> Agent[RepairAgentDeps, NormalizedAnnotationResult]:
+    return _build_repair_agent()
+
+
+def get_repair_agent() -> Agent[RepairAgentDeps, NormalizedAnnotationResult]:
+    if is_prompt_override_active():
+        return _build_repair_agent()
+    return _get_cached_repair_agent()

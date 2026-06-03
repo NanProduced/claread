@@ -141,7 +141,12 @@ export function statusTone(status) {
   return "neutral";
 }
 
-export function hasNodeActivity(nodeName, { singleRunResultsByNode, compareResultsByNode, sessionsByNode, latestPersistedCompareTrialByNode }) {
+export function hasNodeActivity(nodeName, stateOrDeps) {
+  const deps = stateOrDeps || {};
+  const singleRunResultsByNode = deps.singleRunResultsByNode || {};
+  const compareResultsByNode = deps.compareResultsByNode || {};
+  const sessionsByNode = deps.sessionsByNode || {};
+  const latestPersistedCompareTrialByNode = deps.latestPersistedCompareTrialByNode || {};
   return Boolean(
     singleRunResultsByNode[nodeName]
     || compareResultsByNode[nodeName]
@@ -425,4 +430,33 @@ export function judgeStepRunFacts(stepRun) {
     ["Tokens", formatRuntimeTokens(stepRun.runtime_summary)],
     ["模型", stepRun.model_identity?.model_name || "未记录"],
   ]);
+}
+
+export function computeCompareContextMismatch(
+  snapshot,
+  currentNode,
+  currentGoal,
+  currentVariant,
+  currentTextValue,
+  compareInputPreview,
+) {
+  if (!snapshot) return null;
+  const snapshotNode = String(snapshot.node_name || "").trim();
+  const snapshotGoal = String(snapshot.reading_goal || "").trim();
+  const snapshotVariant = String(snapshot.reading_variant || "").trim();
+  if (snapshotNode && snapshotNode !== currentNode) {
+    return `当前页面节点是 ${nodeLabel(currentNode)}，但右侧结果来自 ${nodeLabel(snapshotNode)}`;
+  }
+  if (snapshotGoal && snapshotGoal !== currentGoal) {
+    return `当前页面阅读目标是 ${readingGoalLabel(currentGoal)}，但右侧结果来自 ${readingGoalLabel(snapshotGoal)}`;
+  }
+  if (snapshotVariant && snapshotVariant !== currentVariant) {
+    return `当前页面阅读变体是 ${readingVariantLabel(currentVariant)}，但右侧结果来自 ${readingVariantLabel(snapshotVariant)}`;
+  }
+  const comparePreview = normalizePreviewText(compareInputPreview);
+  const currentPreview = buildInputPreview(currentTextValue);
+  if (comparePreview && currentPreview && !currentPreview.startsWith(comparePreview)) {
+    return "当前输入文本已变化，但右侧仍显示上一条 Compare 结果";
+  }
+  return null;
 }

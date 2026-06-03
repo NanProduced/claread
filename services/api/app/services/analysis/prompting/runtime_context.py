@@ -17,6 +17,7 @@ class PromptRuntimeOverride(BaseModel):
     target: Literal["article_analysis"] = "article_analysis"
     description: str = ""
     few_shot_mode: FewShotMode = "settings"
+    instructions: dict[str, str] = Field(default_factory=dict)
     policies: dict[str, Any] = Field(default_factory=dict)
     examples: dict[str, Any] = Field(default_factory=dict)
     prompt_snapshot_hash: str | None = None
@@ -68,6 +69,17 @@ def get_prompt_override_policy_lines(
     if focus_data is None:
         return None
     return _resolve_variant_lines(focus_data, variant)
+
+
+def get_prompt_override_agent_instructions(agent_name: str) -> str | None:
+    override = get_prompt_runtime_override()
+    if override is None:
+        return None
+    value = override.instructions.get(agent_name)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def get_prompt_override_examples(example_name: str, variant: str) -> list[dict[str, Any]]:

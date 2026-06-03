@@ -21,25 +21,25 @@ function tone(verdict) {
 
 <template>
   <section class="compare-report">
-    <div v-if="!result" class="empty">Generate or select a compare report to inspect deterministic deltas.</div>
+    <div v-if="!result" class="empty">生成或选择一条 compare report 后，可查看 deterministic delta。</div>
     <template v-else>
       <header>
         <div>
-          <p>{{ result.created ? "Created compare" : "Existing compare" }}</p>
+          <p>{{ result.created ? "新生成对比" : "已有对比" }}</p>
           <h2>{{ reportOf(result).baseline_run_id }} vs {{ reportOf(result).candidate_run_id }}</h2>
         </div>
         <span>{{ result.report_id || `vs-${reportOf(result).baseline_run_id}` }}</span>
       </header>
 
       <dl class="summary">
-        <div><dt>Total</dt><dd>{{ reportOf(result).total_cases }}</dd></div>
-        <div><dt>Wins</dt><dd>{{ reportOf(result).wins }}</dd></div>
-        <div><dt>Losses</dt><dd>{{ reportOf(result).losses }}</dd></div>
-        <div><dt>Ties</dt><dd>{{ reportOf(result).ties }}</dd></div>
+        <div><dt title="两侧共有 case 数。">总数</dt><dd>{{ reportOf(result).total_cases }}</dd></div>
+        <div><dt title="candidate deterministic 表现优于 baseline 的 case 数。">Win</dt><dd>{{ reportOf(result).wins }}</dd></div>
+        <div><dt title="candidate deterministic 表现差于 baseline 的 case 数。">Loss</dt><dd>{{ reportOf(result).losses }}</dd></div>
+        <div><dt title="deterministic 信号无明显差异的 case 数。">Tie</dt><dd>{{ reportOf(result).ties }}</dd></div>
       </dl>
 
       <div v-if="reportOf(result).identity_warnings?.length" class="warnings">
-        <strong>Identity warnings</strong>
+        <strong>身份差异提醒</strong>
         <p v-for="warning in reportOf(result).identity_warnings" :key="warning">{{ warning }}</p>
       </div>
 
@@ -48,10 +48,10 @@ function tone(verdict) {
           <thead>
             <tr>
               <th>Case</th>
-              <th>Verdict</th>
-              <th>Baseline H/S</th>
-              <th>Candidate H/S</th>
-              <th>Reasons</th>
+              <th title="deterministic compare 结论，不代表最终人工结论。">结论</th>
+              <th title="Baseline 的硬失败/软失败数量。">Baseline 硬/软</th>
+              <th title="Candidate 的硬失败/软失败数量。">Candidate 硬/软</th>
+              <th>原因</th>
             </tr>
           </thead>
           <tbody>

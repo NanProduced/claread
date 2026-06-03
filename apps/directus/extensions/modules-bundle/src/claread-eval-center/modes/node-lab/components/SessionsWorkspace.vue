@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import NodeProbeOutputView from "../../../components/NodeProbeOutputView.vue";
 import { useNodeLabState } from "../composables/useNodeLabState";
 import { useNodeLabApi } from "../composables/useNodeLabApi";
@@ -87,6 +87,22 @@ const sessionNotebookFacts = computed(() => {
     ["Session 状态", statusLabel(detail.session.status)],
     ["最后更新", formatClockTime(detail.session.date_updated)],
   ]);
+});
+
+const sessionProgressBars = computed(() => {
+  const detail = selectedSessionDetail.value;
+  if (!detail?.session) return [];
+  const aggregate = detail.session.aggregate_summary_json || {};
+  const trialCount = aggregate.trial_count ?? detail.trials.length;
+  const judgeCount = Array.isArray(detail.judge_requests) ? detail.judge_requests.length : 0;
+  const bars = [];
+  if (trialCount > 0) {
+    bars.push({ label: 'Compare 实验', count: trialCount, max: Math.max(trialCount, 5), color: 'primary' });
+  }
+  if (judgeCount > 0) {
+    bars.push({ label: 'Judge 评审', count: judgeCount, max: Math.max(judgeCount, 5), color: 'success' });
+  }
+  return bars;
 });
 
 const sessionMetaLabel = computed(() => (
@@ -256,6 +272,18 @@ function judgeRequestsForTrial(trialId) {
 function judgeRequestsForTrialCount(trialId) {
   return judgeRequestsForTrial(trialId).length;
 }
+
+const pendingDeleteTarget = ref(null); // { type: 'session' | 'trial', id: string, label: string }
+
+function confirmDelete() {
+  if (!pendingDeleteTarget.value) return;
+  if (pendingDeleteTarget.value.type === 'session') {
+    deleteSession(pendingDeleteTarget.value.id);
+  } else {
+    deleteTrial(pendingDeleteTarget.value.id);
+  }
+  pendingDeleteTarget.value = null;
+}
 </script>
 
 <template>
@@ -274,6 +302,7 @@ function judgeRequestsForTrialCount(trialId) {
           :key="item.session_id"
           class="session-nav-item"
           :class="{ active: selectedSessionId === item.session_id }"
+          :aria-current="selectedSessionId === item.session_id ? 'true' : undefined"
           @click="selectSession(item.session_id)"
         >
           <div class="item-header">
@@ -285,7 +314,7 @@ function judgeRequestsForTrialCount(trialId) {
             <span class="dot-separator">·</span>
             <span>{{ sessionCompareCount(item) }} compare</span>
             <span class="dot-separator">·</span>
-            <span>{{ sessionJudgeCount(item) }} judge</span>
+            <span>{{ sessionJudgeCount(item, state.sessionDetailsById) }} judge</span>
           </div>
           <div class="item-meta">
             <span>{{ nodeLabel(item.node_name) }}</span>
@@ -302,6 +331,10 @@ function judgeRequestsForTrialCount(trialId) {
           <p>暂无记录本</p>
           <span class="empty-hint">请在 Baseline Compare 跑出第一条 compare 后新建 Session。</span>
         </div>
+        <div v-if="loading.sessions && !currentSessions.length" class="session-loading">
+          <div class="loading-spinner-sm"></div>
+          <span>正在加载 Session 列表...</span>
+        </div>
       </div>
     </div>
 
@@ -315,7 +348,14 @@ function judgeRequestsForTrialCount(trialId) {
           <p class="session-desc">{{ sessionDecisionNarrative }}</p>
           <div class="action-buttons mt-3">
             <v-button secondary @click="state.activeWorkspace = 'baseline_compare'">返回 Baseline Compare</v-button>
-            <v-button class="btn-danger-text" outlined @click="deleteSession(selectedSessionDetail.session.session_id)">删除整个 Session</v-button>
+            <v-button class="btn-danger-text" outlined @click="pendingDeleteTarget = { type: 'session', id: selectedSessionDetail.session.session_id, label: selectedSessionDetail.session.title }">删除整个 Session</v-button>
+          </div>
+          <div v-if="pendingDeleteTarget" class="confirm-banner is-danger" role="alert">
+            <p>确认删除{{ pendingDeleteTarget.type === 'session' ? '整个 Session' : '这条 Compare' }}「{{ pendingDeleteTarget.label }}」？此操作不可撤销。</p>
+            <div class="confirm-actions">
+              <v-button small danger @click="confirmDelete">确认删除</v-button>
+              <v-button small secondary @click="pendingDeleteTarget = null">取消</v-button>
+            </div>
           </div>
 
           <div class="notebook-context mt-3">
@@ -330,6 +370,16 @@ function judgeRequestsForTrialCount(trialId) {
             <div class="meta-badge" v-for="[label, value] in sessionNotebookFacts" :key="label">
               <span class="label">{{ label }}</span>
               <span class="value">{{ value }}</span>
+            </div>
+          </div>
+
+          <div v-if="sessionProgressBars.length" class="progress-bars mt-3">
+            <div v-for="bar in sessionProgressBars" :key="bar.label" class="progress-bar-item">
+              <span class="progress-label">{{ bar.label }}</span>
+              <div class="progress-track">
+                <div class="progress-fill" :class="`is-${bar.color}`" :style="{ width: `${Math.min(100, (bar.count / bar.max) * 100)}%` }"></div>
+              </div>
+              <span class="progress-count">{{ bar.count }}</span>
             </div>
           </div>
         </div>
@@ -377,7 +427,7 @@ function judgeRequestsForTrialCount(trialId) {
               <div class="action-buttons mb-4">
                 <v-button secondary @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id)">在 Baseline Compare 中打开</v-button>
                 <v-button @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id, { openJudge: true })">重新 Judge</v-button>
-                <v-button class="btn-danger-text" outlined @click="deleteTrial(selectedSessionTrialDetail.trial.trial_id)">删除这条 compare</v-button>
+                <v-button class="btn-danger-text" outlined @click="pendingDeleteTarget = { type: 'trial', id: selectedSessionTrialDetail.trial.trial_id, label: shortId(selectedSessionTrialDetail.trial.trial_id) }">删除这条 compare</v-button>
               </div>
 
               <div class="meta-grid mb-4">
@@ -588,6 +638,42 @@ function judgeRequestsForTrialCount(trialId) {
 .meta-badge .label { font-size: 12px; color: var(--color-text-subdued, #6b7280); }
 .meta-badge .value { font-size: 14px; font-weight: 500; }
 
+.progress-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.progress-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.progress-label {
+  font-size: 13px;
+  color: var(--color-text-subdued, #6b7280);
+  min-width: 80px;
+}
+.progress-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-surface-subdued, #f9fafb);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.progress-fill.is-primary { background: var(--color-primary, #2563eb); }
+.progress-fill.is-success { background: var(--theme--success, #10b981); }
+.progress-count {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 24px;
+  text-align: right;
+}
+
 .timeline-container {
   display: grid;
   grid-template-columns: 280px 1fr;
@@ -687,7 +773,7 @@ function judgeRequestsForTrialCount(trialId) {
   margin-bottom: 16px;
 }
 .meta-grid .meta-item { display: flex; flex-direction: column; gap: 4px; }
-.meta-label { font-size: 12px; color: var(--color-text-subdued, #6b7280); font-weight: 500; }
+.meta-label { font-size: 13px; color: var(--color-text-subdued, #6b7280); font-weight: 500; }
 .meta-value { font-size: 14px; font-weight: 500; }
 
 .action-buttons { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -696,6 +782,26 @@ function judgeRequestsForTrialCount(trialId) {
 .btn-link:hover { text-decoration: underline; }
 .btn-link.inline-hint { display: inline; padding: 0; margin: 0; font-size: 12px; color: var(--color-primary, #2563eb); }
 .btn-danger-text { color: var(--theme--danger, #dc2626); font-size: 13px; padding: 4px 8px; }
+
+.confirm-banner {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid;
+  margin-top: 12px;
+}
+.confirm-banner.is-danger {
+  background: color-mix(in srgb, var(--theme--danger, #dc2626) 8%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--theme--danger, #dc2626) 30%, var(--color-border));
+}
+.confirm-banner p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+}
 
 .empty-state {
   display: flex;
@@ -727,5 +833,27 @@ function judgeRequestsForTrialCount(trialId) {
 @media (max-width: 1200px) {
   .sessions-workspace { grid-template-columns: 1fr; }
   .timeline-container { grid-template-columns: 1fr; }
+}
+
+.session-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--color-text-subdued, #6b7280);
+  font-size: 13px;
+}
+
+.loading-spinner-sm {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border, #e5e7eb);
+  border-top-color: var(--color-primary, #2563eb);
+  border-radius: 50%;
+  animation: node-lab-spin 0.8s linear infinite;
+}
+
+@keyframes node-lab-spin {
+  to { transform: rotate(360deg); }
 }
 </style>

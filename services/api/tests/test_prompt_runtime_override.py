@@ -4,12 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.eval_adapter.schemas import ArticleAnalysisEvalRequest
+from app.eval_adapter.schemas import ArticleAnalysisEvalRequest, WorkflowLabBaselineBundleRequest
+from app.eval_adapter.workflow_lab import get_workflow_lab_baseline_bundle
 from app.services.analysis.prompting.example_strategy import (
     get_grammar_example_strategy,
     get_translation_example_strategy,
 )
 from app.services.analysis.prompting.prompt_loader import (
+    load_agent_instructions,
     load_examples,
     load_policy_lines,
 )
@@ -57,6 +59,47 @@ def test_policy_override_falls_back_outside_scope() -> None:
 
     assert overridden == ["variant policy line"]
     assert load_policy_lines("grammar", "balanced", "intermediate_reading") == baseline
+
+
+def test_instruction_override_falls_back_outside_scope() -> None:
+    override = PromptRuntimeOverride(
+        variant_id="instruction-variant",
+        instructions={
+            "grammar": "Variant grammar instructions.",
+            "repair": "Variant repair instructions.",
+        },
+    )
+
+    baseline = load_agent_instructions("grammar")
+    with prompt_runtime_override(override):
+        assert load_agent_instructions("grammar") == "Variant grammar instructions."
+        assert load_agent_instructions("repair") == "Variant repair instructions."
+
+    assert load_agent_instructions("grammar") == baseline
+
+
+def test_workflow_lab_baseline_bundle_returns_learning_prompt_layers() -> None:
+    bundle = get_workflow_lab_baseline_bundle(
+        WorkflowLabBaselineBundleRequest(
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+        )
+    )
+
+    assert bundle.schema_version == "workflow-prompt-bundle-v1"
+    assert bundle.topology_mode == "learning"
+    assert set(bundle.agents) == {"vocabulary", "grammar", "translation", "repair"}
+    assert bundle.agents["grammar"].instructions
+    assert bundle.agents["grammar"].policy_lines
+    assert bundle.agents["repair"].policy_lines == []
+
+
+def test_workflow_lab_baseline_bundle_rejects_academic() -> None:
+    with pytest.raises(ValueError, match="learning topology"):
+        WorkflowLabBaselineBundleRequest(
+            reading_goal="academic",
+            reading_variant="academic_general",
+        )
 
 
 def test_few_shot_mode_off_returns_empty_examples() -> None:

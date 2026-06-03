@@ -12,6 +12,7 @@ from app.services.analysis.prompting.example_strategy import ExampleEntry
 from app.services.analysis.prompting.prompt_composer import build_agent_prompt
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
 from app.services.analysis.prompting.prompt_strategy import PromptStrategy, build_prompt_sections
+from app.services.analysis.prompting.runtime_context import is_prompt_override_active
 
 
 @dataclass
@@ -31,8 +32,7 @@ def build_vocabulary_prompt(deps: VocabularyAgentDeps) -> str:
     )
 
 
-@lru_cache(maxsize=1)
-def get_vocabulary_agent() -> Agent[VocabularyAgentDeps, VocabularyDraft]:
+def _build_vocabulary_agent() -> Agent[VocabularyAgentDeps, VocabularyDraft]:
     return Agent[VocabularyAgentDeps, VocabularyDraft](
         model=None,
         output_type=VocabularyDraft,
@@ -43,3 +43,14 @@ def get_vocabulary_agent() -> Agent[VocabularyAgentDeps, VocabularyDraft]:
         output_retries=3,
         instrument=False,
     )
+
+
+@lru_cache(maxsize=1)
+def _get_cached_vocabulary_agent() -> Agent[VocabularyAgentDeps, VocabularyDraft]:
+    return _build_vocabulary_agent()
+
+
+def get_vocabulary_agent() -> Agent[VocabularyAgentDeps, VocabularyDraft]:
+    if is_prompt_override_active():
+        return _build_vocabulary_agent()
+    return _get_cached_vocabulary_agent()

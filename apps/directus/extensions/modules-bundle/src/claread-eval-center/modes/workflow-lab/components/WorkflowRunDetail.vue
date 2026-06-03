@@ -20,12 +20,12 @@ function dash(value) {
 
 <template>
   <section class="run-detail">
-    <div v-if="loading" class="empty">Loading run detail...</div>
-    <div v-else-if="!detail" class="empty">Select a learning run to inspect cases and judge evidence.</div>
+    <div v-if="loading" class="empty">正在读取运行详情...</div>
+    <div v-else-if="!detail" class="empty">选择一条 learning run 后，可查看 case、evidence 和 judge 证据。</div>
     <template v-else>
       <header class="detail-header">
         <div>
-          <p>Run detail</p>
+          <p>运行详情</p>
           <h2>{{ detail.summary?.run_id }}</h2>
         </div>
         <span :class="{ blocked: detail.summary?.topology_mode !== 'learning' }">
@@ -34,12 +34,12 @@ function dash(value) {
       </header>
 
       <dl class="metrics">
-        <div><dt>Dataset</dt><dd>{{ dash(detail.summary?.dataset_id) }}</dd></div>
+        <div><dt title="本次运行使用的数据集。">数据集</dt><dd>{{ dash(detail.summary?.dataset_id) }}</dd></div>
         <div><dt>Cases</dt><dd>{{ detail.summary?.total_cases ?? 0 }}</dd></div>
-        <div><dt>Hard</dt><dd>{{ detail.summary?.hard_failure_count ?? "-" }}</dd></div>
-        <div><dt>Soft</dt><dd>{{ detail.summary?.soft_failure_count ?? "-" }}</dd></div>
-        <div><dt>Candidate</dt><dd>{{ dash(detail.summary?.prompt_variant_id) }}</dd></div>
-        <div><dt>RAG</dt><dd>{{ dash(detail.summary?.rag_mode) }}</dd></div>
+        <div><dt title="硬失败 case 数。">硬失败</dt><dd>{{ detail.summary?.hard_failure_count ?? "-" }}</dd></div>
+        <div><dt title="软失败 case 数。">软失败</dt><dd>{{ detail.summary?.soft_failure_count ?? "-" }}</dd></div>
+        <div><dt title="本次运行注入的 Candidate。">Candidate</dt><dd>{{ dash(detail.summary?.prompt_variant_id) }}</dd></div>
+        <div><dt title="本次运行的 RAG 模式。">RAG</dt><dd>{{ dash(detail.summary?.rag_mode) }}</dd></div>
       </dl>
 
       <CaseArtifactTable

@@ -30,6 +30,7 @@ const {
   activeCompareView, activeCompareTrial,
   currentCompareTrialId, latestCompareTrialId,
   recentTrials,
+  loading,
 } = useNodeLabState();
 const { openCompareTrialInWorkbench } = useNodeLabApi();
 
@@ -172,7 +173,15 @@ const activeCompareRelation = computed(() => {
 </script>
 
 <template>
-  <div v-if="compareResult">
+  <div v-if="loading.compare && !compareResult" class="compare-loading">
+    <div class="loading-spinner"></div>
+    <span>正在运行 Compare...</span>
+  </div>
+  <div v-else-if="compareResult">
+    <div v-if="activeCompareView?.source && activeCompareView.source !== 'live'" class="return-banner" role="status">
+      <span>正在查看历史 Compare 结果</span>
+      <v-button small secondary @click="clearActiveCompareView(state.activeNode, { preserveLatestTrial: true })">返回当前 Compare</v-button>
+    </div>
     <div class="compare-overview">
       <article
         v-for="card in compareOverviewCards"
@@ -187,11 +196,17 @@ const activeCompareRelation = computed(() => {
         <div class="compare-status-card__facts">
           <div class="status-fact">
             <span class="meta-label">模型</span>
-            <span class="meta-value">{{ card.model }}</span>
+            <span class="meta-value">
+              {{ card.model }}
+              <small v-if="card.key === 'candidate' && card.deltaModel" class="delta-inline text-warning">{{ card.deltaModel }}</small>
+            </span>
           </div>
           <div class="status-fact">
             <span class="meta-label">Few-shot</span>
-            <span class="meta-value">{{ card.fewShot }}</span>
+            <span class="meta-value">
+              {{ card.fewShot }}
+              <small v-if="card.key === 'candidate' && card.deltaFewShot" class="delta-inline text-warning">{{ card.deltaFewShot }}</small>
+            </span>
           </div>
           <div class="status-fact">
             <span class="meta-label">延迟</span>
@@ -231,14 +246,7 @@ const activeCompareRelation = computed(() => {
               </small>
             </span>
           </div>
-          <div class="status-fact">
-            <span class="meta-label">模型 / Few-shot</span>
-            <span class="meta-value">
-              {{ card.model }}
-              <small v-if="card.key === 'candidate' && card.deltaModel" class="delta-inline text-warning">{{ card.deltaModel }}</small>
-              <small v-if="card.key === 'candidate' && card.deltaFewShot" class="delta-inline text-warning">{{ card.deltaFewShot }}</small>
-            </span>
-          </div>
+
         </div>
       </article>
     </div>
@@ -289,6 +297,7 @@ const activeCompareRelation = computed(() => {
             :key="trial.trial_id"
             class="request-item request-item--interactive request-item--verbose"
             :class="{ active: activeCompareTrial?.trial_id === trial.trial_id }"
+            :aria-label="'打开历史 Compare: ' + trialReadableTitle(trial)"
             @click="openCompareTrialInWorkbench(trial.trial_id, { source: trial.session_id ? 'session' : 'recent', switchWorkspace: false, openJudge: false })"
           >
             <div class="request-main">
@@ -307,6 +316,19 @@ const activeCompareRelation = computed(() => {
 </template>
 
 <style scoped>
+.return-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 8%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--theme--warning, #f59e0b) 30%, var(--color-border));
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
 .compare-overview {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -358,12 +380,18 @@ const activeCompareRelation = computed(() => {
 }
 
 .delta-inline {
-  display: block;
+  display: inline-block;
   margin-top: 2px;
-  font-size: 11px;
+  padding: 1px 6px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-surface-subdued) 60%, transparent);
 }
+.delta-inline.text-success { background: color-mix(in srgb, var(--theme--success, #10b981) 10%, var(--color-surface)); }
+.delta-inline.text-warning { background: color-mix(in srgb, var(--theme--warning, #f59e0b) 10%, var(--color-surface)); }
+.delta-inline.text-danger { background: color-mix(in srgb, var(--theme--danger, #dc2626) 10%, var(--color-surface)); }
 
 .text-success { color: var(--theme--success, #10b981); }
 .text-warning { color: var(--theme--warning, #f59e0b); }
@@ -389,7 +417,7 @@ const activeCompareRelation = computed(() => {
 .badge-danger { border-color: color-mix(in srgb, var(--theme--danger, #dc2626) 45%, var(--color-border)); color: var(--theme--danger, #dc2626); }
 
 .meta-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-subdued);
   font-weight: 500;
 }
@@ -474,10 +502,18 @@ const activeCompareRelation = computed(() => {
 
 .detail-card summary {
   padding: 12px 16px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   background: var(--color-surface-subdued);
+  border-left: 3px solid var(--color-border);
+  transition: border-left-color 0.15s;
+}
+.detail-card summary:hover {
+  border-left-color: var(--color-primary);
+}
+.detail-card[open] summary {
+  border-left-color: var(--color-primary);
 }
 
 .detail-card--compact summary {
@@ -553,6 +589,29 @@ const activeCompareRelation = computed(() => {
 
 .mb-3 { margin-bottom: 12px; }
 .mb-4 { margin-bottom: 16px; }
+
+.compare-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 32px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subdued);
+  color: var(--color-text-subdued);
+  font-size: 14px;
+}
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: node-lab-spin 0.8s linear infinite;
+}
+@keyframes node-lab-spin {
+  to { transform: rotate(360deg); }
+}
 
 @media (max-width: 1200px) {
   .compare-overview,
