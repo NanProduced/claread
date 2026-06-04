@@ -16,7 +16,7 @@ const modes = [
     id: "workflow-lab",
     label: "Workflow Lab",
     kicker: "Learning Workflow",
-    description: "从候选版本、单篇验证到批量回归、对比和 judge 的完整工作台。",
+    description: "候选版本 → 单篇 baseline / candidate compare → 对比与证据;compare 历史回看走 Run History。",
     ready: true,
   },
   {

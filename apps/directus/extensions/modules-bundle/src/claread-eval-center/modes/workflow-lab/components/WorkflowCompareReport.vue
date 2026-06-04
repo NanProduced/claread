@@ -5,6 +5,7 @@ import SentenceCompareDiffView from "./SentenceCompareDiffView.vue";
 
 const props = defineProps({
   result: { type: Object, default: null },
+  compareId: { type: String, default: "" },
   selectedCaseId: { type: String, default: "" },
   baselineArtifact: { type: Object, default: null },
   candidateArtifact: { type: Object, default: null },
@@ -62,8 +63,8 @@ function deltaSummary(comparison) {
   const hardDelta = cHard - bHard;
   const softDelta = cSoft - bSoft;
   const parts = [];
-  if (hardDelta !== 0) parts.push(`硬失败 ${hardDelta > 0 ? "+" : ""}${hardDelta}`);
-  if (softDelta !== 0) parts.push(`软失败 ${softDelta > 0 ? "+" : ""}${softDelta}`);
+  if (hardDelta !== 0) parts.push(`结构失败 ${hardDelta > 0 ? "+" : ""}${hardDelta}`);
+  if (softDelta !== 0) parts.push(`轻微信号 ${softDelta > 0 ? "+" : ""}${softDelta}`);
   return parts.length ? parts.join(" / ") : "无明显 delta";
 }
 </script>
@@ -81,7 +82,9 @@ function deltaSummary(comparison) {
       </header>
 
       <p class="disclaimer">
-        当前展示的对比基于 deterministic 信号（硬/软失败 + adapter 状态 + warnings）。
+        当前展示的对比基于 deterministic 信号。
+        这里的<strong>结构失败</strong>指 error / timeout / schema 缺失等硬性异常；
+        <strong>轻微信号</strong>指 degraded_light、warning、drop 等弱异常。
         <strong>这只是信号，不等同于质量判断</strong>。结论性判断以 judge 评审和人工 review 为准。
       </p>
 
@@ -121,8 +124,8 @@ function deltaSummary(comparison) {
             <tr>
               <th>Case</th>
               <th title="deterministic 结论，仅供参考。">状态/结论</th>
-              <th>Baseline 硬/软</th>
-              <th>候选 硬/软</th>
+              <th title="结构失败 = error / timeout / schema 缺失等硬异常。">Baseline 结构/轻微</th>
+              <th title="轻微信号 = warning / drop / degraded_light 等弱异常。">候选 结构/轻微</th>
               <th>Delta / 原因</th>
             </tr>
           </thead>
@@ -161,19 +164,6 @@ function deltaSummary(comparison) {
         </div>
       </section>
 
-      <section class="auxiliary">
-        <header>
-          <strong>Deterministic 概览</strong>
-          <small>辅助参考，不作为结论。</small>
-        </header>
-        <dl class="summary">
-          <div><dt>总 case</dt><dd>{{ report.total_cases ?? "—" }}</dd></div>
-          <div><dt>更好</dt><dd>{{ report.wins ?? 0 }}</dd></div>
-          <div><dt>变差</dt><dd>{{ report.losses ?? 0 }}</dd></div>
-          <div><dt>持平</dt><dd>{{ report.ties ?? 0 }}</dd></div>
-        </dl>
-      </section>
-
       <section class="review-block">
         <header class="section-head">
           <div>
@@ -183,10 +173,10 @@ function deltaSummary(comparison) {
         </header>
         <ReviewNotesPanel
           target-type="workflow_compare"
-          :target-id="`${report.baseline_run_id}::${report.candidate_run_id}`"
+          :target-id="compareId || result?.compare_id || report.compare_id || ''"
           :run-id="report.candidate_run_id"
           title="Compare Review"
-          scope-note="这类 note 挂在 baseline_run_id::candidate_run_id 这组 run pair 上，表达 compare-scope 判断；不是 case review，也不绑定某个 compare artifact 版本。"
+          scope-note="这类 note 挂在 workflow_compare 记录上，表达 compare-scope 判断；不是 case review。"
         />
       </section>
     </template>
@@ -243,6 +233,13 @@ header span {
 
 .disclaimer strong {
   color: var(--theme--foreground);
+}
+
+.signal-explainer {
+  margin: 0;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .warnings {
@@ -312,47 +309,10 @@ header span {
   cursor: pointer;
 }
 
-.auxiliary {
-  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
-  border-radius: 8px;
-  background: var(--theme--background-subdued);
-  padding: 12px 14px;
-  display: grid;
-  gap: 10px;
-}
-
 .comparison-section,
 .review-block {
   display: grid;
   gap: 10px;
-}
-
-.auxiliary header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.summary div {
-  background: var(--theme--background);
-  padding: 10px;
-}
-
-.summary dd {
-  margin: 4px 0 0;
-  font-size: 16px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
 }
 
 .comparison-table {
@@ -461,12 +421,6 @@ tbody tr.active {
 
 .verdict-pill.is-neutral {
   color: var(--theme--foreground-subdued);
-}
-
-@media (max-width: 980px) {
-  .summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 900px) {

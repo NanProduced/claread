@@ -171,6 +171,95 @@ CREATE INDEX IF NOT EXISTS idx_eval_review_notes_run
 COMMENT ON TABLE eval_review_notes IS
     'Workflow / prompt compare human review notes. Control-plane only.';
 
+CREATE TABLE IF NOT EXISTS eval_workflow_compares (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    date_created TIMESTAMPTZ NOT NULL DEFAULT now(),
+    date_updated TIMESTAMPTZ,
+    user_created UUID,
+    user_updated UUID,
+
+    compare_id TEXT NOT NULL UNIQUE CHECK (compare_id ~ '^[A-Za-z0-9._-]+$'),
+    source_kind TEXT NOT NULL CHECK (
+        source_kind IN ('single_run_compare', 'history_compare')
+    ),
+    status TEXT NOT NULL DEFAULT 'complete' CHECK (
+        status IN ('complete', 'failed')
+    ),
+    baseline_run_id TEXT NOT NULL CHECK (baseline_run_id ~ '^[A-Za-z0-9._-]+$'),
+    candidate_run_id TEXT NOT NULL CHECK (candidate_run_id ~ '^[A-Za-z0-9._-]+$'),
+    input_hash TEXT,
+    reading_goal TEXT,
+    reading_variant TEXT,
+    source_type TEXT,
+    artifact_path TEXT NOT NULL,
+    report_id TEXT NOT NULL CHECK (report_id ~ '^[A-Za-z0-9._-]+$'),
+    case_count INTEGER NOT NULL DEFAULT 0 CHECK (case_count >= 0),
+    wins INTEGER NOT NULL DEFAULT 0 CHECK (wins >= 0),
+    losses INTEGER NOT NULL DEFAULT 0 CHECK (losses >= 0),
+    ties INTEGER NOT NULL DEFAULT 0 CHECK (ties >= 0),
+    identity_warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+    notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_eval_workflow_compares_created
+    ON eval_workflow_compares (date_created DESC);
+
+CREATE INDEX IF NOT EXISTS idx_eval_workflow_compares_candidate
+    ON eval_workflow_compares (candidate_run_id, date_created DESC);
+
+COMMENT ON TABLE eval_workflow_compares IS
+    'Workflow Lab compare control-plane records. This is the only user-facing Workflow history object.';
+
+CREATE TABLE IF NOT EXISTS eval_workflow_compare_judge_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    date_created TIMESTAMPTZ NOT NULL DEFAULT now(),
+    date_updated TIMESTAMPTZ,
+    user_created UUID,
+    user_updated UUID,
+
+    judge_run_id TEXT NOT NULL CHECK (judge_run_id ~ '^[A-Za-z0-9._-]+$'),
+    compare_id TEXT NOT NULL REFERENCES eval_workflow_compares(compare_id) ON DELETE CASCADE,
+    baseline_run_id TEXT NOT NULL CHECK (baseline_run_id ~ '^[A-Za-z0-9._-]+$'),
+    candidate_run_id TEXT NOT NULL CHECK (candidate_run_id ~ '^[A-Za-z0-9._-]+$'),
+    rubric_id TEXT NOT NULL CHECK (rubric_id ~ '^[A-Za-z0-9._-]+$'),
+    rubric_version TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (
+        status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')
+    ),
+    judge_adapter_kind TEXT NOT NULL DEFAULT 'llm' CHECK (
+        judge_adapter_kind IN ('fake', 'llm')
+    ),
+    config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    artifact_path TEXT,
+    source_request_id UUID REFERENCES eval_workflow_compare_judge_requests(id),
+    attempt_no INTEGER NOT NULL DEFAULT 1 CHECK (attempt_no >= 1),
+    max_attempts INTEGER NOT NULL DEFAULT 1 CHECK (max_attempts >= attempt_no),
+    retry_reason TEXT,
+    lease_owner TEXT,
+    lease_until TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    error_json JSONB,
+    notes TEXT,
+    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+    UNIQUE (compare_id, judge_run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_eval_workflow_compare_judge_requests_status_created
+    ON eval_workflow_compare_judge_requests (status, date_created ASC);
+
+CREATE INDEX IF NOT EXISTS idx_eval_workflow_compare_judge_requests_compare
+    ON eval_workflow_compare_judge_requests (compare_id, date_created DESC);
+
+CREATE INDEX IF NOT EXISTS idx_eval_workflow_compare_judge_requests_source_request
+    ON eval_workflow_compare_judge_requests (source_request_id)
+    WHERE source_request_id IS NOT NULL;
+
+COMMENT ON TABLE eval_workflow_compare_judge_requests IS
+    'Workflow Lab compare-level pairwise judge queue and immutable artifact index.';
+
 -- ------------------------------------------------------------
 -- Node Lab
 -- ------------------------------------------------------------

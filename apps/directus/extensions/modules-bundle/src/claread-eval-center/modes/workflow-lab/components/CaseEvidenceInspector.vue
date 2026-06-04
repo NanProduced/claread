@@ -1,6 +1,5 @@
 <script setup>
 import { computed } from "vue";
-import SentenceCompareDiffView from "./SentenceCompareDiffView.vue";
 import SentenceEvidenceView from "./SentenceEvidenceView.vue";
 import WorkflowArtifactScene from "./WorkflowArtifactScene.vue";
 import { dash, normalizeWorkflowScene } from "../composables/workflowLabFormatting.js";
@@ -79,6 +78,21 @@ const debugPanels = computed(() => [
     counts: sceneCounts(props.candidateArtifact),
   },
 ]);
+
+const compareSummaryCards = computed(() => {
+  if (!props.compareCase) return [];
+  return [
+    { label: "deterministic 结论", value: dash(props.compareCase?.verdict, "未生成") },
+    {
+      label: "Baseline 结构/轻微",
+      value: `${props.compareCase?.baseline_hard_failures ?? 0}/${props.compareCase?.baseline_soft_failures ?? 0}`,
+    },
+    {
+      label: "候选 结构/轻微",
+      value: `${props.compareCase?.candidate_hard_failures ?? 0}/${props.compareCase?.candidate_soft_failures ?? 0}`,
+    },
+  ];
+});
 </script>
 
 <template>
@@ -94,36 +108,36 @@ const debugPanels = computed(() => [
     <template v-else-if="hasCompare">
       <p v-if="compareMissingMessage" class="compare-missing">{{ compareMissingMessage }}</p>
 
-      <SentenceCompareDiffView
-        :baseline-artifact="baselineArtifact"
-        :candidate-artifact="candidateArtifact"
-        :prepared-sentences="preparedSentences"
-        :compare-case="compareCase"
-        empty-text="请先在左侧选择一条 baseline run 与候选 run，并打开具体 case 加载证据。"
-      />
-
       <section v-if="compareCase" class="auxiliary">
-        <header><strong>Deterministic 信号</strong><small>辅助参考</small></header>
+        <header><strong>证据摘要</strong><small>主视图负责完整句子差异；这里保留 case 元信息与原始 artifact 入口。</small></header>
+        <dl class="signal-grid">
+          <div v-for="card in compareSummaryCards" :key="card.label">
+            <dt>{{ card.label }}</dt>
+            <dd>{{ card.value }}</dd>
+          </div>
+        </dl>
+        <p class="reasons">结构失败 = error / timeout / schema 缺失；轻微信号 = warning / drop / degraded_light。这里只是排查线索，不是最终裁决。</p>
+        <header><strong>Deterministic 原因</strong><small>来自 compare report</small></header>
         <dl class="signal-grid">
           <div>
-            <dt>结论</dt>
-            <dd>{{ dash(compareCase?.verdict, "未生成对比") }}</dd>
+            <dt>当前 case</dt>
+            <dd>{{ headerCaseId }}</dd>
           </div>
           <div>
-            <dt>Baseline 硬/软</dt>
-            <dd>{{ `${compareCase.baseline_hard_failures ?? 0}/${compareCase.baseline_soft_failures ?? 0}` }}</dd>
+            <dt>Baseline 状态</dt>
+            <dd>{{ dash(compareCase?.baseline_status, "—") }}</dd>
           </div>
           <div>
-            <dt>候选 硬/软</dt>
-            <dd>{{ `${compareCase.candidate_hard_failures ?? 0}/${compareCase.candidate_soft_failures ?? 0}` }}</dd>
+            <dt>候选状态</dt>
+            <dd>{{ dash(compareCase?.candidate_status, "—") }}</dd>
           </div>
         </dl>
         <p v-if="compareCase?.reasons?.length" class="reasons">{{ compareCase.reasons.join("; ") }}</p>
       </section>
 
       <details class="legacy-split">
-        <summary>调试 / 原始结构查看（仅在需要排查 artifact shape 时展开）</summary>
-        <p class="debug-tip">主视图已经按句子显示差异；这里只保留原始 artifact 的结构入口，避免和主证据区重复。</p>
+        <summary>原始 artifact / 调试入口（仅在需要排查 shape 时展开）</summary>
+        <p class="debug-tip">左侧主视图已经负责完整句子差异；这里不再重复展示一遍同样内容，只保留原始 artifact 的结构入口。</p>
         <div class="split-view compact">
           <section v-for="panel in debugPanels" :key="panel.key" class="split-pane">
             <div class="pane-head">

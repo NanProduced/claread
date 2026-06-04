@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -13,9 +13,13 @@ import {
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
   buildWorkflowLabCompareReport,
+  buildSingleRunCaseArtifact,
+  syntheticSingleRunCompareRunId,
   cancelJudgeRunRequest,
+  createWorkflowCompareJudgeRequest,
   createWorkflowDataset,
   createWorkflowLabSingleRun,
+  createWorkflowLabSingleRunCompare,
   saveWorkflowLabSingleRunToHistory,
   createWorkflowLabCompare,
   isSafeFileId,
@@ -46,6 +50,11 @@ import {
   recoverStaleDirectusAsyncJudgeRequests,
   updateSessionAggregate,
 } from "./node-lab.js";
+
+const REPO_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..", "..", "..", "..", "..", "..",
+);
 
 function createWorkflowRequestDb(initialRows) {
   const rows = initialRows.map((row) => ({ ...row }));
@@ -276,6 +285,106 @@ function createNodeLabRunHistoryDb(initialTables) {
   return database;
 }
 
+function createEvalCenterDb(initialTables = {}) {
+  const tables = Object.fromEntries(
+    Object.entries({
+      eval_prompt_variant_drafts: [],
+      eval_workflow_compares: [],
+      eval_workflow_compare_judge_requests: [],
+      eval_review_notes: [],
+      eval_workflow_run_requests: [],
+      eval_judge_run_requests: [],
+      ...initialTables,
+    }).map(([tableName, rows]) => [
+      tableName,
+      Array.isArray(rows) ? rows.map((row) => ({ ...row })) : [],
+    ]),
+  );
+
+  function database(tableName) {
+    const rows = tables[tableName];
+    assert.ok(rows, `Unexpected table: ${tableName}`);
+    const state = { where: {}, whereIn: null, orderBy: null, limit: null };
+    const apply = () => {
+      let result = rows.filter((row) => matches(row, state));
+      if (state.orderBy) {
+        const { field, direction } = state.orderBy;
+        result = result.slice().sort((left, right) => {
+          const compare = String(left[field] || "").localeCompare(String(right[field] || ""));
+          return direction === "desc" ? -compare : compare;
+        });
+      }
+      if (state.limit != null) {
+        result = result.slice(0, state.limit);
+      }
+      return result;
+    };
+    const builder = {
+      select() {
+        return builder;
+      },
+      where(criteria) {
+        Object.assign(state.where, criteria);
+        return builder;
+      },
+      whereIn(field, values) {
+        state.whereIn = { field, values };
+        return builder;
+      },
+      first() {
+        return Promise.resolve(apply()[0] || null);
+      },
+      orderBy(field, direction = "asc") {
+        state.orderBy = { field, direction };
+        return builder;
+      },
+      limit(value) {
+        state.limit = value;
+        return builder;
+      },
+      update(patch) {
+        let count = 0;
+        for (const row of rows) {
+          if (!matches(row, state)) continue;
+          Object.assign(row, patch);
+          count += 1;
+        }
+        return Promise.resolve(count);
+      },
+      insert(row) {
+        rows.push({
+          id: row.id || `${tableName}-${rows.length + 1}`,
+          date_created: row.date_created || "2026-06-04T00:00:00.000Z",
+          date_updated: row.date_updated || row.date_created || "2026-06-04T00:00:00.000Z",
+          ...row,
+        });
+        return Promise.resolve(1);
+      },
+      del() {
+        let count = 0;
+        for (let index = rows.length - 1; index >= 0; index -= 1) {
+          if (!matches(rows[index], state)) continue;
+          rows.splice(index, 1);
+          count += 1;
+        }
+        return Promise.resolve(count);
+      },
+      then(resolve, reject) {
+        return Promise.resolve(apply()).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+
+  database.fn = {
+    now() {
+      return "NOW";
+    },
+  };
+  database.tables = tables;
+  return database;
+}
+
 function matches(row, state) {
   const whereMatches = Object.entries(state.where).every(([key, value]) => row[key] === value);
   if (!whereMatches) return false;
@@ -308,8 +417,9 @@ function workflowCaseArtifact({
   softFailures = 0,
   promptVariantId = "baseline",
   modelName = "fake-model",
+  inputSnapshot = null,
 } = {}) {
-  return {
+  const artifact = {
     case_id: caseId,
     run_id: runId,
     adapter_status: "succeeded",
@@ -350,6 +460,10 @@ function workflowCaseArtifact({
       })),
     ],
   };
+  if (inputSnapshot) {
+    artifact.input_snapshot = inputSnapshot;
+  }
+  return artifact;
 }
 
 function writeWorkflowRun(root, {
@@ -358,6 +472,10 @@ function writeWorkflowRun(root, {
   topology = "learning",
   artifacts = [workflowCaseArtifact({ runId, topology })],
   reportTotalCases = artifacts.length,
+  readingGoal = "daily_reading",
+  readingVariant = "intermediate_reading",
+  sourceType = "user_input",
+  mode = "workflow",
 } = {}) {
   const runPath = join(root, runId);
   mkdirSync(join(runPath, "cases"), { recursive: true });
@@ -366,10 +484,13 @@ function writeWorkflowRun(root, {
     JSON.stringify({
       run_id: runId,
       dataset_id: datasetId,
-      mode: "workflow",
+      mode,
       eval_purpose: "prompt_experiment",
       rag_mode: "off",
       trace_scope: "off",
+      reading_goal: readingGoal,
+      reading_variant: readingVariant,
+      source_type: sourceType,
       created_at: "2026-06-03T00:00:00.000Z",
     }),
   );
@@ -409,6 +530,15 @@ function writeWorkflowRun(root, {
     }),
   );
   return runPath;
+}
+
+function createWorkflowLabEnv(root) {
+  return {
+    CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT: root,
+    CLAREAD_EVAL_RUNS_ROOT: root,
+    CLAREAD_WORKFLOW_COMPARE_RUNTIME_ROOT: join(root, "workflow-compares"),
+    CLAREAD_EVALS_ROOT: join(REPO_ROOT, "evals"),
+  };
 }
 
 test("buildAuthGuard requires a Directus admin user", () => {
@@ -492,9 +622,71 @@ test("buildWorkflowLabCompareReport compares shared learning cases", () => {
   assert.ok(report.comparisons[0].identity_delta.prompt_identity);
 });
 
-test("createWorkflowLabCompare writes immutable json and markdown reports", async () => {
+test("buildWorkflowLabCompareReport promotes single-run compare to sentence-level cases when render_scene differs", () => {
+  const baselineArtifact = workflowCaseArtifact({ runId: "baseline", caseId: "single-run-case" });
+  baselineArtifact.render_scene = {
+    article: {
+      sentences: [
+        { sentence_id: "s1", text: "Sentence one." },
+        { sentence_id: "s2", text: "Sentence two." },
+      ],
+    },
+    translations: [
+      { sentence_id: "s1", translation_zh: "基线译文一" },
+      { sentence_id: "s2", translation_zh: "同样的译文" },
+    ],
+    inline_marks: [],
+    sentence_entries: [],
+    warnings: [],
+  };
+  const candidateArtifact = workflowCaseArtifact({ runId: "candidate", caseId: "single-run-case", promptVariantId: "candidate-v1" });
+  candidateArtifact.render_scene = {
+    article: {
+      sentences: [
+        { sentence_id: "s1", text: "Sentence one." },
+        { sentence_id: "s2", text: "Sentence two." },
+      ],
+    },
+    translations: [
+      { sentence_id: "s1", translation_zh: "候选译文一" },
+      { sentence_id: "s2", translation_zh: "同样的译文" },
+    ],
+    inline_marks: [],
+    sentence_entries: [
+      { sentence_id: "s1", label: "名词短语修饰层次", content: "针对 sentence one 的说明。" },
+    ],
+    warnings: [],
+  };
+
+  const report = buildWorkflowLabCompareReport(
+    {
+      run_id: "baseline",
+      dataset_id: "article-analysis-v1",
+      report: { total_cases: 1 },
+      artifacts: [baselineArtifact],
+    },
+    {
+      run_id: "candidate",
+      dataset_id: "article-analysis-v1",
+      report: { total_cases: 1 },
+      artifacts: [candidateArtifact],
+    },
+    new Date("2026-06-03T00:00:00.000Z"),
+  );
+
+  assert.equal(report.total_cases, 1);
+  assert.equal(report.comparisons.length, 1);
+  assert.equal(report.comparisons[0].comparison_kind, "sentence");
+  assert.equal(report.comparisons[0].sentence_id, "s1");
+  assert.equal(report.comparisons[0].case_id, "s1");
+  assert.equal(report.comparisons[0].source_case_id, "single-run-case");
+});
+
+test("createWorkflowLabCompare materializes a persisted workflow compare under workflow-compares root", async () => {
   const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
   try {
+    const database = createEvalCenterDb();
+    const env = createWorkflowLabEnv(root);
     writeWorkflowRun(root, {
       runId: "baseline",
       artifacts: [workflowCaseArtifact({ runId: "baseline", caseId: "case-1" })],
@@ -504,32 +696,37 @@ test("createWorkflowLabCompare writes immutable json and markdown reports", asyn
       artifacts: [workflowCaseArtifact({ runId: "candidate", caseId: "case-1", hardFailures: 1, promptVariantId: "candidate-v1" })],
     });
 
-    const created = await createWorkflowLabCompare(root, {
+    const created = await createWorkflowLabCompare(database, env, {
       baseline_run_id: "baseline",
       candidate_run_id: "candidate",
     });
     assert.equal(created.created, true);
-    assert.equal(created.report_id, "vs-baseline");
-    assert.equal(created.report.losses, 1);
-    assert.equal(existsSync(join(root, "candidate", "compare", "vs-baseline.json")), true);
-    assert.equal(existsSync(join(root, "candidate", "compare", "vs-baseline.md")), true);
+    assert.ok(created.compare_id.startsWith("workflow-compare-"));
+    assert.equal(created.detail.report.losses, 1);
+    assert.equal(existsSync(join(root, "workflow-compares", created.compare_id, "compare.json")), true);
+    assert.equal(existsSync(join(root, "workflow-compares", created.compare_id, "report.json")), true);
+    assert.equal(existsSync(join(root, "workflow-compares", created.compare_id, "report.md")), true);
+    assert.equal(existsSync(join(root, "workflow-compares", created.compare_id, "evidence-index.json")), true);
 
-    const existing = await createWorkflowLabCompare(root, {
+    const existing = await createWorkflowLabCompare(database, env, {
       baseline_run_id: "baseline",
       candidate_run_id: "candidate",
     });
     assert.equal(existing.created, false);
-    assert.equal(existing.report.losses, 1);
-    const raw = JSON.parse(readFileSync(join(root, "candidate", "compare", "vs-baseline.json"), "utf8"));
+    assert.equal(existing.compare_id, created.compare_id);
+    assert.equal(existing.detail.report.losses, 1);
+    const raw = JSON.parse(readFileSync(join(root, "workflow-compares", created.compare_id, "compare.json"), "utf8"));
     assert.equal(raw.candidate_run_id, "candidate");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("createWorkflowLabCompare reuses legacy ab compare artifacts without rewriting", async () => {
-  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-legacy-"));
+test("createWorkflowLabCompare reuses the same compare_id for an immutable run pair", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-reuse-"));
   try {
+    const database = createEvalCenterDb();
+    const env = createWorkflowLabEnv(root);
     writeWorkflowRun(root, {
       runId: "baseline",
       artifacts: [workflowCaseArtifact({ runId: "baseline", caseId: "case-1" })],
@@ -538,22 +735,20 @@ test("createWorkflowLabCompare reuses legacy ab compare artifacts without rewrit
       runId: "candidate",
       artifacts: [workflowCaseArtifact({ runId: "candidate", caseId: "case-1", hardFailures: 1, promptVariantId: "candidate-v1" })],
     });
-    mkdirSync(join(root, "candidate", "ab"), { recursive: true });
-    writeFileSync(join(root, "candidate", "ab", "vs-baseline.json"), JSON.stringify({
-      report_id: "vs-baseline",
+
+    const first = await createWorkflowLabCompare(database, env, {
       baseline_run_id: "baseline",
       candidate_run_id: "candidate",
-      losses: 1,
-    }, null, 2));
-
-    const existing = await createWorkflowLabCompare(root, {
+    });
+    const second = await createWorkflowLabCompare(database, env, {
       baseline_run_id: "baseline",
       candidate_run_id: "candidate",
     });
 
-    assert.equal(existing.created, false);
-    assert.equal(existing.report.losses, 1);
-    assert.equal(existsSync(join(root, "candidate", "compare", "vs-baseline.json")), false);
+    assert.equal(first.created, true);
+    assert.equal(second.created, false);
+    assert.equal(second.compare_id, first.compare_id);
+    assert.equal(database.tables.eval_workflow_compares.length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -562,6 +757,8 @@ test("createWorkflowLabCompare reuses legacy ab compare artifacts without rewrit
 test("createWorkflowLabCompare rejects non-learning runs", async () => {
   const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
   try {
+    const database = createEvalCenterDb();
+    const env = createWorkflowLabEnv(root);
     writeWorkflowRun(root, {
       runId: "baseline",
       topology: "learning",
@@ -574,7 +771,7 @@ test("createWorkflowLabCompare rejects non-learning runs", async () => {
     });
 
     await assert.rejects(
-      () => createWorkflowLabCompare(root, {
+      () => createWorkflowLabCompare(database, env, {
         baseline_run_id: "baseline",
         candidate_run_id: "candidate",
       }),
@@ -588,6 +785,8 @@ test("createWorkflowLabCompare rejects non-learning runs", async () => {
 test("createWorkflowLabCompare keeps only shared learning cases from mixed runs", async () => {
   const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
   try {
+    const database = createEvalCenterDb();
+    const env = createWorkflowLabEnv(root);
     writeWorkflowRun(root, {
       runId: "baseline",
       topology: "learning",
@@ -605,13 +804,13 @@ test("createWorkflowLabCompare keeps only shared learning cases from mixed runs"
       ],
     });
 
-    const result = await createWorkflowLabCompare(root, {
+    const result = await createWorkflowLabCompare(database, env, {
       baseline_run_id: "baseline",
       candidate_run_id: "candidate",
     });
 
-    assert.equal(result.report.total_cases, 1);
-    assert.equal(result.report.comparisons[0].case_id, "learning-a");
+    assert.equal(result.detail.report.total_cases, 1);
+    assert.equal(result.detail.report.comparisons[0].case_id, "learning-a");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -620,6 +819,8 @@ test("createWorkflowLabCompare keeps only shared learning cases from mixed runs"
 test("createWorkflowLabCompare rejects runs without shared cases", async () => {
   const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-"));
   try {
+    const database = createEvalCenterDb();
+    const env = createWorkflowLabEnv(root);
     writeWorkflowRun(root, {
       runId: "baseline",
       artifacts: [workflowCaseArtifact({ runId: "baseline", caseId: "case-a" })],
@@ -630,12 +831,119 @@ test("createWorkflowLabCompare rejects runs without shared cases", async () => {
     });
 
     await assert.rejects(
-      () => createWorkflowLabCompare(root, {
+      () => createWorkflowLabCompare(database, env, {
         baseline_run_id: "baseline",
         candidate_run_id: "candidate",
       }),
       /No shared case ids/,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// P1.1 回归:两条不同输入的 workflow single run 仍带字面量 case_id "single-run",
+// 旧 compare engine 会假命中 shared case_id 并产出伪 compare 报告;
+// case_id 已绑定 input / reading 上下文,且 compare 前加 input_hash 一致性校验,
+// 这里两条不同 text 的 single run 应该被 422 拒绝
+test("createWorkflowLabCompare rejects single runs whose input_snapshot does not match", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-single-input-"));
+  try {
+    const database = createEvalCenterDb();
+    const env = createWorkflowLabEnv(root);
+    writeWorkflowRun(root, {
+      runId: "single-baseline-article-a",
+      mode: "workflow_single_run",
+      artifacts: [
+        workflowCaseArtifact({
+          runId: "single-baseline-article-a",
+          caseId: "single-run-aaaa1111",
+          promptVariantId: "workflow-ready",
+          inputSnapshot: {
+            text: "Article A full text body used by single run.",
+            reading_goal: "daily_reading",
+            reading_variant: "intermediate_reading",
+            source_type: "user_input",
+          },
+        }),
+      ],
+    });
+    writeWorkflowRun(root, {
+      runId: "single-candidate-article-b",
+      mode: "workflow_single_run",
+      artifacts: [
+        workflowCaseArtifact({
+          runId: "single-candidate-article-b",
+          caseId: "single-run-bbbb2222",
+          promptVariantId: "workflow-ready",
+          inputSnapshot: {
+            text: "Article B different full text body used by single run.",
+            reading_goal: "daily_reading",
+            reading_variant: "intermediate_reading",
+            source_type: "user_input",
+          },
+        }),
+      ],
+    });
+
+    await assert.rejects(
+      () => createWorkflowLabCompare(database, env, {
+        baseline_run_id: "single-baseline-article-a",
+        candidate_run_id: "single-candidate-article-b",
+      }),
+      (err) => {
+        assert.equal(err.code, "WORKFLOW_LAB_COMPARE_INPUT_MISMATCH");
+        assert.match(err.message, /input contexts/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createWorkflowLabCompare allows two single runs over the same input", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-single-same-"));
+  try {
+    const database = createEvalCenterDb();
+    const env = createWorkflowLabEnv(root);
+    const sharedSnapshot = {
+      text: "Shared article body that both single runs feed in.",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      source_type: "user_input",
+    };
+    writeWorkflowRun(root, {
+      runId: "single-baseline-same",
+      mode: "workflow_single_run",
+      artifacts: [
+        workflowCaseArtifact({
+          runId: "single-baseline-same",
+          caseId: "single-run-cccc3333",
+          promptVariantId: "workflow-baseline",
+          inputSnapshot: sharedSnapshot,
+        }),
+      ],
+    });
+    writeWorkflowRun(root, {
+      runId: "single-candidate-same",
+      mode: "workflow_single_run",
+      artifacts: [
+        workflowCaseArtifact({
+          runId: "single-candidate-same",
+          caseId: "single-run-cccc3333",
+          promptVariantId: "workflow-candidate",
+          inputSnapshot: sharedSnapshot,
+        }),
+      ],
+    });
+
+    const result = await createWorkflowLabCompare(database, env, {
+      baseline_run_id: "single-baseline-same",
+      candidate_run_id: "single-candidate-same",
+    });
+    assert.equal(result.created, true);
+    assert.equal(result.detail.report.total_cases, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -671,6 +979,106 @@ test("workflowRequestRow does not prefill artifact fields before execution", () 
   assert.equal(row.max_attempts, 1);
   assert.equal(row.source_request_id, null);
   assert.equal(row.config_json.run_id, "bridge-test-run");
+});
+
+// Batch 3:Workflow Lab 主链是 compare-only；历史 run compare / 手动 archive / run-level judge 都必须退出主路径
+test("WorkflowSingleRunLauncher submits a dual-run compare payload (baseline + candidate)", () => {
+  const modulesRoot = resolve(fileURLToPath(import.meta.url), "../../../../modules-bundle/src/claread-eval-center/modes/workflow-lab");
+  const launcherPath = join(modulesRoot, "components/WorkflowSingleRunLauncher.vue");
+  const labModePath = join(modulesRoot, "WorkflowLabMode.vue");
+  const resultPath = join(modulesRoot, "components/WorkflowSingleRunResult.vue");
+  const judgePanelPath = join(modulesRoot, "components/WorkflowJudgePanel.vue");
+  const launcher = readFileSync(launcherPath, "utf8");
+  const labMode = readFileSync(labModePath, "utf8");
+  const result = readFileSync(resultPath, "utf8");
+  const judgePanel = readFileSync(judgePanelPath, "utf8");
+
+  // launcher submit() emit 的 payload 形如 { ..., baseline, candidate }
+  const submitFnMatch = launcher.match(/function\s+submit\s*\(\s*\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(submitFnMatch, "submit function not found in WorkflowSingleRunLauncher.vue");
+  const submitFnBody = submitFnMatch[1];
+  assert.match(
+    submitFnBody,
+    /emit\(\s*["']submit["']\s*,[\s\S]*?baseline\s*:[\s\S]*?candidate\s*:/,
+    "submit must emit a payload containing both baseline and candidate keys (dual-run compare)",
+  );
+  assert.match(
+    submitFnBody,
+    /prompt_variant_id:\s*form\.value\.candidate_prompt_variant_id/,
+    "submit must include candidate_prompt_variant_id in payload (the form exposes it for dual-run)",
+  );
+
+  // 表单里 candidate_prompt_variant_id 必填
+  assert.match(
+    launcher,
+    /!form\.value\.candidate_prompt_variant_id/,
+    "submit must disable when candidate_prompt_variant_id is empty (single-run compare needs a candidate)",
+  );
+
+  // launcher 文案必须把"双跑"语义摆出来
+  assert.match(
+    launcher,
+    /双跑|baseline \/ candidate/i,
+    "WorkflowSingleRunLauncher header / button copy must reflect dual-run semantics",
+  );
+
+  // WorkflowLabMode: single-run workspace 描述必须明示并发跑两侧
+  const singleRunMatch = labMode.match(/id:\s*["']single_run["']\s*,\s*label:[^,]+,\s*desc:\s*["']([^"']+)["']/);
+  assert.ok(singleRunMatch, "single_run workspace descriptor not found in WorkflowLabMode.vue");
+  const singleRunDesc = singleRunMatch[1];
+  assert.match(
+    singleRunDesc,
+    /baseline.*candidate|candidate.*baseline|双跑/,
+    `single_run workspace desc must mention baseline / candidate or dual-run semantics; got: ${singleRunDesc}`,
+  );
+
+  // WorkflowLabMode: compare-only,不再暴露 history-compare / archive-side / WorkflowCompareBuilder
+  assert.doesNotMatch(
+    labMode,
+    /history-compare|archiveSideToHistory|ensureBothSidesArchived|WorkflowCompareBuilder/,
+    "WorkflowLabMode must not keep history-compare or archive-side branches in compare-only mode",
+  );
+
+  // 结果组件不再暴露 Run History 归档按钮
+  assert.match(
+    result,
+    /Compare Workspace|单篇 baseline \/ candidate compare/,
+    "WorkflowSingleRunResult must rebrand to compare workspace view",
+  );
+  assert.match(
+    result,
+    /Compare id|workflow compare|唯一公开历史对象/,
+    "WorkflowSingleRunResult must describe compare as the only public history object",
+  );
+
+  assert.match(
+    labMode,
+    /@click="requestWorkspaceChange\(workspace\.id\)"/,
+    "workspace nav buttons must route through requestWorkspaceChange instead of mutating activeWorkspace directly",
+  );
+
+  const nextFn = labMode.match(/async\s+function\s+goToNextWorkspace\s*\(\s*\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(nextFn, "goToNextWorkspace function not found in WorkflowLabMode.vue");
+  assert.match(
+    nextFn[1],
+    /requestWorkspaceChange\(nextWorkspaceMeta\.value\.id\)/,
+    "goToNextWorkspace must delegate compare_judge transitions through requestWorkspaceChange",
+  );
+  assert.match(
+    judgePanel,
+    /compareId|workflow-lab\/compares\/.+judge-requests|Compare 级评审|pairwise/,
+    "WorkflowJudgePanel must pivot to compareId and compare-level judge routes/copy",
+  );
+  assert.doesNotMatch(
+    judgePanel,
+    /最大 case 数/,
+    "WorkflowJudgePanel should not expose max case controls in the simplified single-article compare flow",
+  );
+  assert.match(
+    judgePanel,
+    /llm，调用真实 Judge|Judge 模型/,
+    "WorkflowJudgePanel should expose a real llm judge path and model selector for compare validation",
+  );
 });
 
 test("workflowRequestRow records retry lineage without artifact fields", () => {
@@ -1143,6 +1551,283 @@ test("createWorkflowLabSingleRun rejects candidate with rag enabled", async () =
   );
 });
 
+// Batch 2 主路径入口:同一篇文章并发跑 baseline + candidate,直接产出 compare workspace
+test("createWorkflowLabSingleRunCompare runs both sides concurrently and emits a compare workspace", async () => {
+  const callOrder = [];
+  const capturedBodies = [];
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-single-run-compare-"));
+  const database = createEvalCenterDb({
+    eval_prompt_variant_drafts: [
+      {
+        id: "draft-ready-workflow",
+        variant_id: "ready-workflow",
+        target: "article_analysis",
+        status: "ready_for_eval",
+        scope: "workflow_lab",
+        few_shot_mode: "baseline",
+        manifest_json: {
+          schema_version: "workflow-prompt-bundle-v1",
+          variant_id: "ready-workflow",
+          target: "article_analysis",
+          description: "Candidate bundle",
+          reading_goal: "daily_reading",
+          reading_variant: "intermediate_reading",
+          few_shot_mode: "baseline",
+          topology_mode: "learning",
+          agents: {
+            grammar: {
+              agent_name: "grammar",
+              label: "语法",
+              instructions: "Candidate grammar instructions.",
+              policy_name: "grammar",
+              policy_focus: "balanced",
+              policy_variant: "intermediate_reading",
+              policy_lines: ["Candidate policy."],
+              examples: [],
+            },
+          },
+          baseline_agents: {
+            grammar: {
+              agent_name: "grammar",
+              label: "语法",
+              instructions: "",
+              policy_name: "grammar",
+              policy_focus: "balanced",
+              policy_variant: "intermediate_reading",
+              policy_lines: [],
+              examples: [],
+            },
+          },
+        },
+      },
+    ],
+  });
+  const result = await createWorkflowLabSingleRunCompare({
+    database,
+    env: createWorkflowLabEnv(root),
+    body: {
+      text: "Concurrent dual-run article body for batch-2 single-run compare.",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      source_type: "user_input",
+      rag_mode: "off",
+      trace_scope: "off",
+      timeout_seconds: 120,
+      baseline: {},
+      candidate: { prompt_variant_id: "ready-workflow" },
+    },
+    callUpstream: async ({ body, path }) => {
+      callOrder.push(path);
+      capturedBodies.push(body);
+      return {
+        status: "succeeded",
+        prompt_identity: { prompt_variant_id: body.prompt_variant_id || null, prompt_snapshot_hash: "snap-stub" },
+        model_identity: { profile_name: "qwen35-plus", model_name: "qwen35-plus" },
+        render_scene: {
+          schema_version: "3.0.0",
+          user_facing_state: "normal",
+          translations: [],
+          inline_marks: [],
+          sentence_entries: [],
+          warnings: [],
+        },
+      };
+    },
+  });
+  try {
+    assert.equal(callOrder.length, 2);
+    assert.ok(callOrder.every((path) => path === "/eval/article-analysis/workflow"));
+    assert.ok(capturedBodies.every((body) => body.text.startsWith("Concurrent dual-run")));
+    assert.ok(capturedBodies.every((body) => body.reading_goal === "daily_reading"));
+    assert.equal(result.source, "persisted-compare");
+    assert.ok(result.compare_id);
+    assert.ok(result.baseline?.run_id);
+    assert.ok(result.candidate?.run_id);
+    assert.ok(result.compare?.report);
+    assert.equal(result.compare.report.total_cases, 1);
+    assert.ok(Array.isArray(result.compare.report.comparisons));
+    assert.equal(result.compare.report.comparisons.length, 1);
+    assert.ok(result.compare.input_hash);
+    assert.equal(
+      result.compare.baseline_artifact.case_id,
+      result.compare.candidate_artifact.case_id,
+    );
+    assert.ok(result.compare.baseline_artifact.case_id.startsWith("single-run-"));
+    assert.equal(result.input_snapshot.text, capturedBodies[0].text);
+    assert.equal(database.tables.eval_workflow_compares.length, 1);
+    assert.equal(existsSync(join(root, "workflow-compares", result.compare_id, "report.json")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createWorkflowLabSingleRunCompare rejects when both sides resolve to the same prompt", async () => {
+  await assert.rejects(
+    createWorkflowLabSingleRunCompare({
+      database: createPromptVariantDb([]),
+      env: {},
+      body: {
+        text: "Same prompt on both sides should be rejected.",
+        baseline: { prompt_variant_id: "ready-workflow" },
+        candidate: { prompt_variant_id: "ready-workflow" },
+        rag_mode: "off",
+      },
+      callUpstream: async () => ({ status: "succeeded" }),
+    }),
+    /must differ/,
+  );
+});
+
+test("createWorkflowLabSingleRunCompare rejects when text is missing", async () => {
+  await assert.rejects(
+    createWorkflowLabSingleRunCompare({
+      database: createPromptVariantDb([]),
+      env: {},
+      body: {
+        text: "   ",
+        baseline: {},
+        candidate: { prompt_variant_id: "ready-workflow" },
+        rag_mode: "off",
+      },
+      callUpstream: async () => ({ status: "succeeded" }),
+    }),
+    /text is required/,
+  );
+});
+
+test("createWorkflowCompareJudgeRequest executes fake compare judge immediately and writes artifacts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-compare-judge-"));
+  const database = createEvalCenterDb({
+    eval_prompt_variant_drafts: [
+      {
+        id: "draft-ready-workflow",
+        variant_id: "ready-workflow",
+        target: "article_analysis",
+        status: "ready_for_eval",
+        scope: "workflow_lab",
+        manifest_json: {
+          schema_version: "workflow-prompt-bundle-v1",
+          variant_id: "ready-workflow",
+          reading_goal: "daily_reading",
+          reading_variant: "intermediate_reading",
+          topology_mode: "learning",
+          agents: {
+            grammar: {
+              agent_name: "grammar",
+              label: "语法",
+              instructions: "Candidate grammar instructions.",
+              policy_name: "grammar",
+              policy_focus: "balanced",
+              policy_variant: "intermediate_reading",
+              policy_lines: ["Candidate policy."],
+              examples: [],
+            },
+          },
+          baseline_agents: {
+            grammar: {
+              agent_name: "grammar",
+              label: "语法",
+              instructions: "",
+              policy_name: "grammar",
+              policy_focus: "balanced",
+              policy_variant: "intermediate_reading",
+              policy_lines: [],
+              examples: [],
+            },
+          },
+        },
+      },
+    ],
+  });
+
+  const compareResult = await createWorkflowLabSingleRunCompare({
+    database,
+    env: createWorkflowLabEnv(root),
+    body: {
+      text: "Judge compare test article body.",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      source_type: "user_input",
+      rag_mode: "off",
+      trace_scope: "off",
+      timeout_seconds: 120,
+      baseline: {},
+      candidate: { prompt_variant_id: "ready-workflow" },
+    },
+    callUpstream: async ({ body }) => ({
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: body.prompt_variant_id || null, prompt_snapshot_hash: "snap-stub" },
+      model_identity: { profile_name: "qwen35-plus", model_name: "qwen35-plus" },
+      render_scene: {
+        schema_version: "3.0.0",
+        user_facing_state: "normal",
+        article: {
+          sentences: [{ sentence_id: "s1", text: "Judge compare test article body." }],
+        },
+        translations: [{ sentence_id: "s1", translation_zh: body.prompt_variant_id ? "候选译文" : "基线译文" }],
+        inline_marks: [],
+        sentence_entries: [],
+        warnings: [],
+      },
+    }),
+  });
+
+  const request = await createWorkflowCompareJudgeRequest(
+    database,
+    { accountability: { user: "00000000-0000-0000-0000-000000000001" } },
+    createWorkflowLabEnv(root),
+    compareResult.compare_id,
+    {
+      rubric_id: "article-analysis-language-quality-v1",
+      judge_adapter_kind: "fake",
+      config_json: { max_cases: 1 },
+    },
+  );
+
+  try {
+    assert.equal(request.status, "succeeded");
+    const judgeDir = join(root, "workflow-compares", compareResult.compare_id, "judge", request.judge_run_id);
+    assert.equal(existsSync(join(judgeDir, "judge-run.json")), true);
+    assert.equal(existsSync(join(judgeDir, "case-results.json")), true);
+    assert.equal(existsSync(join(judgeDir, "report.json")), true);
+    const report = JSON.parse(readFileSync(join(judgeDir, "report.json"), "utf8"));
+    assert.equal(report.total_cases, 1);
+    assert.equal(
+      report.candidate_preferred + report.baseline_preferred + report.tie + report.needs_review,
+      1,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("syntheticSingleRunCompareRunId differs by side and by prompt context", () => {
+  const body = { text: "Article", reading_goal: "daily_reading", reading_variant: "intermediate_reading" };
+  const baselineId = syntheticSingleRunCompareRunId({ body, side: "baseline", promptVariantId: null });
+  const candidateId = syntheticSingleRunCompareRunId({ body, side: "candidate", promptVariantId: "v1" });
+  assert.notEqual(baselineId, candidateId);
+  assert.ok(baselineId.startsWith("single-compare-baseline-"));
+  assert.ok(candidateId.startsWith("single-compare-candidate-"));
+});
+
+test("buildSingleRunCaseArtifact binds case_id to input context", () => {
+  const artifact = buildSingleRunCaseArtifact({
+    body: {
+      text: "Stable article body",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      source_type: "user_input",
+    },
+    result: { status: "succeeded", render_scene: { translations: [] } },
+    runId: "synthetic-run",
+  });
+  assert.equal(artifact.case_id, "single-run-" + artifact.case_id.slice("single-run-".length));
+  assert.ok(artifact.case_id.startsWith("single-run-"));
+  assert.equal(artifact.run_id, "synthetic-run");
+  assert.equal(artifact.adapter_status, "succeeded");
+  assert.equal(artifact.input_snapshot.text, "Stable article body");
+});
+
 test("saveWorkflowLabSingleRunToHistory persists a standalone workflow run artifact", async () => {
   const runsRoot = mkdtempSync(join(tmpdir(), "workflow-single-history-"));
   const result = await saveWorkflowLabSingleRunToHistory({
@@ -1196,7 +1881,11 @@ test("saveWorkflowLabSingleRunToHistory persists a standalone workflow run artif
   assert.ok(existsSync(join(runsRoot, result.record.run_id, "run.json")));
   assert.ok(existsSync(join(runsRoot, result.record.run_id, "report.json")));
   assert.ok(existsSync(join(runsRoot, result.record.run_id, "case-index.json")));
-  assert.ok(existsSync(join(runsRoot, result.record.run_id, "cases", "single-run.json")));
+  // case_id 必须随 input / reading 上下文绑定,文件名也用绑定后的 case_id
+  const caseDir = join(runsRoot, result.record.run_id, "cases");
+  const caseFiles = readdirSync(caseDir);
+  assert.equal(caseFiles.length, 1);
+  assert.ok(caseFiles[0].startsWith("single-run-") && caseFiles[0].endsWith(".json"));
 });
 
 test("saveWorkflowLabSingleRunToHistory deduplicates the same single run payload", async () => {

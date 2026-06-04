@@ -13,6 +13,7 @@ $resetSqlPath = Join-Path $PSScriptRoot "reset_eval_center_tables.sql"
 $containerResetSqlPath = "/tmp/reset_eval_center_tables.sql"
 $nodeLabRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\node-lab"
 $workflowRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-runs"
+$workflowCompareRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-compares"
 $staticRuns = Join-Path $RepoRoot "evals\\runs"
 
 Write-Host "[eval-center] truncating eval-only tables in $PostgresContainer ..."
@@ -25,7 +26,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "[eval-center] failed to truncate eval-only tables."
 }
 
-foreach ($path in @($nodeLabRuntime, $workflowRuntime)) {
+foreach ($path in @($nodeLabRuntime, $workflowRuntime, $workflowCompareRuntime)) {
   if (Test-Path $path) {
     Write-Host "[eval-center] removing runtime artifacts: $path"
     Remove-Item -LiteralPath $path -Recurse -Force

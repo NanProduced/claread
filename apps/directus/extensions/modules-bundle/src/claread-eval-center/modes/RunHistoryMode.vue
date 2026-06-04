@@ -6,7 +6,8 @@ import NodeProbeOutputView from "../components/NodeProbeOutputView.vue";
 import ResultBlock from "../components/ResultBlock.vue";
 import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";
 import StatusPill from "../components/StatusPill.vue";
-import WorkflowSentenceNotebook from "./workflow-lab/components/WorkflowSentenceNotebook.vue";
+import WorkflowCompareReport from "./workflow-lab/components/WorkflowCompareReport.vue";
+import WorkflowJudgePanel from "./workflow-lab/components/WorkflowJudgePanel.vue";
 import {
   formatDateTime,
   shortId,
@@ -28,7 +29,7 @@ const WORKFLOW_ENDPOINT = "/eval-center/workflow-lab/run-history";
 const POLL_INTERVAL_MS = 7000;
 const LIVE_STATUSES = new Set(["queued", "running"]);
 const SOURCE_VALUES = new Set(["all", "node_lab", "workflow"]);
-const WORKFLOW_WORKSPACE_VALUES = new Set(["all", "workflow_single_run", "workflow_dataset_run"]);
+const WORKFLOW_WORKSPACE_VALUES = new Set(["all", "workflow_compare"]);
 
 const loading = ref(false);
 const detailLoading = ref(false);
@@ -68,11 +69,9 @@ const filteredTitle = computed(() => {
     : nodeFilters.value.session_scope === "session"
       ? "Session"
       : "全部来源";
-  const workflowScope = workflowFilters.value.workspace_type === "workflow_single_run"
-    ? "Workflow Single Run"
-    : workflowFilters.value.workspace_type === "workflow_dataset_run"
-      ? "Workflow Dataset Run"
-      : "Workflow 全部类型";
+  const workflowScope = workflowFilters.value.workspace_type === "workflow_compare"
+    ? "Workflow Compare"
+    : "Workflow 全部类型";
   if (sourceFilter.value === "workflow") {
     return `${sourceLabel} / ${workflowScope}`;
   }
@@ -114,34 +113,22 @@ const currentWorkflowRecord = computed(() => (
 ));
 const workflowSummary = computed(() => (
   currentSource.value === "workflow"
-    ? detail.value?.summary || null
+    ? detail.value?.report || null
     : null
 ));
 const workflowCaseArtifacts = computed(() => (
-  currentSource.value === "workflow" && Array.isArray(detail.value?.case_artifacts)
-    ? detail.value.case_artifacts
+  currentSource.value === "workflow" && Array.isArray(detail.value?.report?.comparisons)
+    ? detail.value.report.comparisons
     : []
 ));
 const workflowJudgeReports = computed(() => (
-  currentSource.value === "workflow" && Array.isArray(detail.value?.judge_reports)
-    ? detail.value.judge_reports
+  currentSource.value === "workflow" && Array.isArray(detail.value?.compare_judge_requests)
+    ? detail.value.compare_judge_requests
     : []
 ));
-const workflowFullCaseArtifacts = computed(() => (
-  currentSource.value === "workflow" && Array.isArray(detail.value?.full_case_artifacts)
-    ? detail.value.full_case_artifacts
-    : []
-));
-const workflowSingleRunArtifact = computed(() => (
-  currentWorkflowRecord.value?.workspace_type === "workflow_single_run"
-    ? workflowFullCaseArtifacts.value[0] || null
-    : null
-));
-const workflowCompareReports = computed(() => (
-  currentSource.value === "workflow" && Array.isArray(detail.value?.compare_reports)
-    ? detail.value.compare_reports
-    : []
-));
+const workflowFullCaseArtifacts = computed(() => []);
+const workflowSingleRunArtifact = computed(() => null);
+const workflowCompareReports = computed(() => []);
 
 const resultKindLabel = computed(() => {
   if (currentSource.value === "workflow") return workflowWorkspaceLabel(currentWorkflowRecord.value);
@@ -212,7 +199,7 @@ function buildNodeQuery() {
 function recordId(record) {
   if (!record) return "";
   return record.source === "workflow"
-    ? String(record.run_id || record.record_id || "")
+    ? String(record.compare_id || record.record_id || "")
     : String(record.trial_id || record.record_id || "");
 }
 
@@ -323,8 +310,8 @@ async function selectRecord(recordOrKey) {
 
 function deleteTargetKey() {
   if (currentSource.value === "workflow") {
-    return currentWorkflowRecord.value?.run_id
-      ? `workflow:${currentWorkflowRecord.value.run_id}`
+    return currentWorkflowRecord.value?.compare_id
+      ? `workflow:${currentWorkflowRecord.value.compare_id}`
       : "";
   }
   return currentTrial.value?.trial_id ? `node_lab:${currentTrial.value.trial_id}` : "";
@@ -342,13 +329,13 @@ async function deleteSelectedRecord() {
   const source = currentSource.value;
   const key = deleteTargetKey();
   if (!key || pendingDeleteKey.value !== key) return;
-  const workflowRunId = currentWorkflowRecord.value?.run_id;
+  const workflowCompareId = currentWorkflowRecord.value?.compare_id;
   const nodeTrialId = currentTrial.value?.trial_id;
   deleting.value = true;
   detailError.value = "";
   try {
-    if (source === "workflow" && workflowRunId) {
-      await api.delete(`${WORKFLOW_ENDPOINT}/${encodeURIComponent(workflowRunId)}`);
+    if (source === "workflow" && workflowCompareId) {
+      await api.delete(`${WORKFLOW_ENDPOINT}/${encodeURIComponent(workflowCompareId)}`);
     } else if (source === "node_lab" && nodeTrialId) {
       await api.delete(`/eval-center/node-lab/trials/${encodeURIComponent(nodeTrialId)}`);
     } else {
@@ -459,19 +446,13 @@ function workflowWorkspaceLabel(recordOrType) {
   const workspaceType = typeof recordOrType === "string"
     ? recordOrType
     : recordOrType?.workspace_type;
-  if (workspaceType === "workflow_single_run") return "Workflow Single Run";
-  if (workspaceType === "workflow_dataset_run") return "Workflow Dataset Run";
-  return "Workflow Run";
+  if (workspaceType === "workflow_compare") return "Workflow Compare";
+  return "Workflow Compare";
 }
 
 function sourceLabel(record) {
   if (record?.source === "workflow") {
-    const scope = record.workspace_type === "workflow_single_run"
-      ? "Single Validation"
-      : record.workspace_type === "workflow_dataset_run"
-        ? "Dataset Validation"
-        : "Workflow Lab";
-    return `Workflow Lab · ${scope}`;
+    return "Workflow Lab · Compare";
   }
   if (record?.session_id) return record.session_title || record.session_id;
   return "Standalone";
@@ -479,9 +460,7 @@ function sourceLabel(record) {
 
 function recordTitle(record) {
   if (record?.source === "workflow") {
-    const variant = record.prompt_variant_id || "baseline";
-    const dataset = record.dataset_id || "未知数据集";
-    return record.display_title || `${variant} · ${dataset}`;
+    return record.display_title || `${record.prompt_variant_id || "baseline"} · compare`;
   }
   return `${record.node_name} · ${record.reading_goal} · ${record.reading_variant}`;
 }
@@ -494,8 +473,7 @@ function recordExcerpt(record) {
 }
 
 function workflowDatasetValue(record) {
-  if (record?.workspace_type === "workflow_single_run") return "single-run artifact";
-  return record?.dataset_id || "未记录";
+  return record?.compare_id || "未记录";
 }
 
 function runOutput(result) {
@@ -594,8 +572,7 @@ function judgePassRate(summary) {
           <span>Workflow 类型</span>
           <select :value="workflowFilters.workspace_type" @change="setWorkflowFilter('workspace_type', $event.target.value)">
             <option value="all">全部</option>
-            <option value="workflow_single_run">Workflow Single Run</option>
-            <option value="workflow_dataset_run">Workflow Dataset Run</option>
+            <option value="workflow_compare">Workflow Compare</option>
           </select>
         </label>
       </div>
@@ -641,8 +618,8 @@ function judgePassRate(summary) {
         <header class="detail-header">
           <div>
             <p class="eyebrow">{{ resultKindLabel }}</p>
-            <h2>{{ currentWorkflowRecord.display_title || currentWorkflowRecord.run_id }}</h2>
-            <p>{{ currentWorkflowRecord.display_excerpt || currentWorkflowRecord.run_id }}</p>
+            <h2>{{ currentWorkflowRecord.display_title || currentWorkflowRecord.compare_id }}</h2>
+            <p>{{ currentWorkflowRecord.display_excerpt || currentWorkflowRecord.compare_id }}</p>
           </div>
           <div class="detail-actions">
             <StatusPill :label="statusLabel(currentWorkflowRecord.status)" :tone="statusTone(currentWorkflowRecord.status)" size="large" />
@@ -655,7 +632,7 @@ function judgePassRate(summary) {
           class="notice is-warning"
           role="alert"
         >
-          <span>删除后会移除这条 run 对应的 artifact、本地 compare / judge 文件，以及关联的 workflow request / judge request / review notes。</span>
+          <span>删除后会移除这条 compare 对应的 artifact、compare judge 文件、compare review notes，以及它私有依赖的底层双跑 run artifact。</span>
           <div class="notice-actions">
             <button type="button" class="notice-retry" @click="cancelDeleteSelectedRecord">取消</button>
             <button type="button" class="danger-button" :disabled="deleting" @click="deleteSelectedRecord">
@@ -666,35 +643,35 @@ function judgePassRate(summary) {
 
         <dl class="meta-grid">
           <div>
-            <dt>Run</dt>
-            <dd>{{ currentWorkflowRecord.run_id }}</dd>
+            <dt>Compare</dt>
+            <dd>{{ currentWorkflowRecord.compare_id }}</dd>
           </div>
           <div>
             <dt>类型</dt>
             <dd>{{ workflowWorkspaceLabel(currentWorkflowRecord) }}</dd>
           </div>
           <div>
-            <dt>{{ currentWorkflowRecord.workspace_type === "workflow_single_run" ? "Artifact" : "Dataset" }}</dt>
-            <dd>{{ workflowDatasetValue(currentWorkflowRecord) }}</dd>
-          </div>
-          <div>
             <dt>Prompt Variant</dt>
             <dd>{{ currentWorkflowRecord.prompt_variant_id || "baseline" }}</dd>
           </div>
           <div>
-            <dt>Topology</dt>
-            <dd>{{ currentWorkflowRecord.topology_mode || "未记录" }}</dd>
+            <dt>Input Hash</dt>
+            <dd>{{ currentWorkflowRecord.input_hash || "未记录" }}</dd>
           </div>
           <div>
-            <dt>创建时间</dt>
-            <dd>{{ formatDateTime(currentWorkflowRecord.created_at || currentWorkflowRecord.date_created) }}</dd>
+            <dt>Baseline Run</dt>
+            <dd>{{ currentWorkflowRecord.baseline_run_id || "未记录" }}</dd>
+          </div>
+          <div>
+            <dt>Candidate Run</dt>
+            <dd>{{ currentWorkflowRecord.candidate_run_id || "未记录" }}</dd>
           </div>
         </dl>
 
         <section class="result-section">
           <div class="section-heading">
-            <h3>运行摘要</h3>
-            <span>{{ workflowSummary?.judge_report_count || 0 }} 条 Judge</span>
+            <h3>Compare 摘要</h3>
+            <span>{{ workflowJudgeReports.length }} 条 Judge</span>
           </div>
           <dl class="meta-grid workflow-summary-grid">
             <div>
@@ -702,151 +679,70 @@ function judgePassRate(summary) {
               <dd>{{ workflowSummary?.total_cases ?? 0 }}</dd>
             </div>
             <div>
-              <dt>Learning</dt>
-              <dd>{{ workflowSummary?.learning_case_count ?? 0 }}</dd>
+              <dt>更好</dt>
+              <dd>{{ workflowSummary?.wins ?? 0 }}</dd>
             </div>
             <div>
-              <dt>硬失败</dt>
-              <dd>{{ workflowSummary?.hard_failure_count ?? 0 }}</dd>
+              <dt>变差</dt>
+              <dd>{{ workflowSummary?.losses ?? 0 }}</dd>
             </div>
             <div>
-              <dt>软失败</dt>
-              <dd>{{ workflowSummary?.soft_failure_count ?? 0 }}</dd>
+              <dt>持平</dt>
+              <dd>{{ workflowSummary?.ties ?? 0 }}</dd>
             </div>
             <div>
-              <dt>Regression</dt>
-              <dd>{{ workflowSummary?.regression_count ?? 0 }}</dd>
+              <dt>来源</dt>
+              <dd>{{ currentWorkflowRecord.source_kind || "未记录" }}</dd>
             </div>
           </dl>
         </section>
 
-        <section v-if="workflowSingleRunArtifact" class="result-section">
+        <section class="result-section">
           <div class="section-heading">
-            <h3>Single Run 标注视图</h3>
-            <span>
-              {{ workflowSingleRunArtifact.model_identity?.model_name || "未记录模型" }}
-              · {{ workflowSingleRunArtifact.usage_summary?.total_tokens ?? "—" }} tokens
-              · {{ workflowSingleRunArtifact.latency_seconds != null ? `${Number(workflowSingleRunArtifact.latency_seconds).toFixed(2)} s` : "未记录耗时" }}
-            </span>
+            <h3>Compare 报告</h3>
+            <span>{{ workflowCaseRows.length }} 条 Case</span>
           </div>
-          <WorkflowSentenceNotebook
-            :payload="workflowSingleRunArtifact"
-            :prepared-sentences="workflowSingleRunArtifact.render_scene?.article?.sentences || []"
-            empty-text="这条 Workflow Single Run 没有可展示的标注。"
+          <WorkflowCompareReport
+            :compare-id="currentWorkflowRecord.compare_id"
+            :result="{ compare_id: currentWorkflowRecord.compare_id, report: workflowSummary, report_id: currentWorkflowRecord.report_id, created: false }"
+            :selected-case-id="''"
+            :baseline-artifact="null"
+            :candidate-artifact="null"
           />
         </section>
 
-        <section v-if="workflowCompareReports.length" class="result-section">
-          <div class="section-heading">
-            <h3>已保存 Compare</h3>
-            <span>{{ workflowCompareReports.length }} 条</span>
-          </div>
-          <div class="workflow-compare-list">
-            <button
-              v-for="report in workflowCompareReports"
-              :key="report.report_id"
-              type="button"
-              class="workflow-compare-item"
-              @click="openWorkflowCompare(report)"
-            >
-              <strong>{{ report.baseline_run_id }} vs {{ report.candidate_run_id }}</strong>
-              <span>
-                {{ report.wins ?? 0 }} 胜 · {{ report.losses ?? 0 }} 负 · {{ report.ties ?? 0 }} 平 · {{ formatDateTime(report.created_at) }}
-              </span>
-            </button>
-          </div>
-        </section>
-
         <section class="result-section">
           <div class="section-heading">
-            <h3>Case 列表</h3>
-            <span>{{ workflowCaseRows.length }} 条</span>
+            <h3>Compare Judge</h3>
+            <span>{{ workflowJudgeReports.length ? "compare-level" : "暂无 Judge" }}</span>
           </div>
-          <div class="workflow-case-table-wrap">
-            <table class="workflow-case-table">
-              <thead>
-                <tr>
-                  <th>Case</th>
-                  <th>状态</th>
-                  <th>Warnings</th>
-                  <th>Drop</th>
-                  <th>硬失败</th>
-                  <th>软失败</th>
-                  <th>翻译</th>
-                  <th>标注</th>
-                  <th>条目</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in workflowCaseRows" :key="item.case_id">
-                  <td>{{ item.case_id }}</td>
-                  <td>{{ statusLabel(item.adapter_status || item.user_facing_state || "complete") }}</td>
-                  <td>{{ item.warning_count ?? 0 }}</td>
-                  <td>{{ item.drop_count ?? 0 }}</td>
-                  <td>{{ item.hard_failures ?? 0 }}</td>
-                  <td>{{ item.soft_failures ?? 0 }}</td>
-                  <td>{{ item.translation_count ?? 0 }}</td>
-                  <td>{{ item.inline_mark_count ?? 0 }}</td>
-                  <td>{{ item.sentence_entry_count ?? 0 }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <WorkflowJudgePanel
+            :compare-id="currentWorkflowRecord.compare_id"
+            :requests="workflowJudgeReports"
+            :rubrics="[]"
+            :disabled="true"
+            :submitting="false"
+            @refresh="retrySelectRecord"
+          />
         </section>
 
-        <section class="result-section">
-          <div class="section-heading">
-            <h3>Judge 结果</h3>
-            <span>{{ workflowJudgeReports.length ? "只读" : "暂无 Judge" }}</span>
-          </div>
-          <div v-if="!workflowJudgeReports.length" class="empty-inline">这条 Workflow Run 还没有 Judge artifact。</div>
-          <div v-else class="judge-list">
-            <ResultBlock
-              v-for="judge in workflowJudgeReports"
-              :key="judge.summary?.judge_run_id || judge.summary?.id"
-              :title="`${judge.summary?.judge_run_id || judge.summary?.id} · ${judge.summary?.rubric_id || '未记录 rubric'}`"
-              :open="judge.summary?.average_score != null"
-            >
-              <dl class="judge-meta">
-                <div>
-                  <dt>Adapter</dt>
-                  <dd>{{ judge.summary?.judge_adapter_kind || "未记录" }}</dd>
-                </div>
-                <div>
-                  <dt>Score</dt>
-                  <dd>{{ judge.summary?.average_score ?? "未记录" }}</dd>
-                </div>
-                <div>
-                  <dt>通过率</dt>
-                  <dd>{{ judgePassRate(judge.summary) }}</dd>
-                </div>
-                <div>
-                  <dt>时间</dt>
-                  <dd>{{ formatDateTime(judge.summary?.created_at) }}</dd>
-                </div>
-              </dl>
-              <JsonTreeView :value="{ report: judge.report, case_results: judge.case_results }" empty-text="暂无 Judge artifact。" />
-            </ResultBlock>
-          </div>
-        </section>
-
-        <section v-if="currentWorkflowRecord.run_id" class="result-section">
+        <section v-if="currentWorkflowRecord.compare_id" class="result-section">
           <div class="section-heading">
             <h3>人工 Review</h3>
             <span>只读 / 补充</span>
           </div>
           <ReviewNotesPanel
-            title="Workflow Run Review"
-            target-type="workflow_run"
-            :target-id="currentWorkflowRecord.run_id"
-            :run-id="currentWorkflowRecord.run_id"
-            scope-note="这类 note 挂在整条 workflow_run 上，用于回看阶段补充人工结论；不会自动下钻到 compare / judge / case。"
+            title="Workflow Compare Review"
+            target-type="workflow_compare"
+            :target-id="currentWorkflowRecord.compare_id"
+            :run-id="currentWorkflowRecord.candidate_run_id"
+            scope-note="这类 note 挂在 workflow_compare 上，用于回看阶段补充 compare-scope 人工结论。"
           />
         </section>
 
         <ResultBlock title="完整结果 JSON" :open="false">
           <JsonTreeView
-            :value="{ summary: workflowSummary, run: detail?.run, report: detail?.report, case_index: detail?.case_index }"
+            :value="{ compare: detail?.compare, report: workflowSummary, evidence_index: detail?.evidence_index, baseline_run_summary: detail?.baseline_run_summary, candidate_run_summary: detail?.candidate_run_summary }"
             empty-text="暂无 result artifact。"
           />
         </ResultBlock>

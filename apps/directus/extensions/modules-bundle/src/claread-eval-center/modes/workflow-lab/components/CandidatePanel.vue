@@ -262,7 +262,7 @@ function goToSingleRun() {
   emit("go-to-single-run", props.form.variant_id);
 }
 
-const publishTitle = "发布到验证入口后,本版本会出现在「单篇验证」「数据集验证」的候选选择器中";
+const publishTitle = "发布到验证入口后,本版本会出现在「单篇验证」候选选择器中;双跑完成后会直接物化 compare 记录。";
 </script>
 
 <template>
@@ -367,7 +367,7 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
       <section v-if="isPublished && form.variant_id" class="published-cta" role="region" aria-label="已发布 CTA">
         <div>
           <strong>已发布到验证入口</strong>
-          <small>本版本现在会出现在「单篇验证」「数据集验证」的候选选择器中</small>
+          <small>本版本现在会出现在「单篇验证」候选选择器中;双跑完成后会直接进入 compare 结果与证据视图。</small>
         </div>
         <div class="published-cta-actions">
           <button type="button" class="primary-cta" @click="goToSingleRun">去单篇验证</button>
@@ -381,7 +381,7 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
           <input :value="form.variant_id" @input="updateMeta('variant_id', $event.target.value)" />
         </label>
         <div class="status-panel">
-          <span title="只有已发布到运行入口的 Candidate 才会出现在 Single Run / Dataset Run 选择器里。">当前状态</span>
+          <span title="只有已发布到运行入口的 Candidate 才会出现在「单篇验证」候选选择器中。">当前状态</span>
           <strong>{{ currentStatusLabel }}</strong>
         </div>
         <button type="button" :disabled="loading" title="从 Claread 当前 baseline prompt 读取四个 workflow agent 的完整草稿。" @click="emit('create-from-baseline')">

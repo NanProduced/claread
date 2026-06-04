@@ -18,6 +18,29 @@ const props = defineProps({
 const baselineScene = computed(() => normalizeWorkflowScene(props.baselineArtifact));
 const candidateScene = computed(() => normalizeWorkflowScene(props.candidateArtifact));
 
+function sceneSentenceTextMap(artifact, scene) {
+  const map = new Map();
+  const candidates = [
+    scene?.article?.sentences,
+    artifact?.output?.article?.sentences,
+    artifact?.render_scene?.article?.sentences,
+    artifact?.input_snapshot?.article?.sentences,
+    artifact?.input_snapshot?.prepared_sentences,
+    artifact?.prepared_sentences,
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    for (const item of candidate) {
+      const sid = item?.sentence_id;
+      const text = item?.text || item?.source_text || item?.original_text || "";
+      if (sid != null && text && !map.has(String(sid))) {
+        map.set(String(sid), String(text));
+      }
+    }
+  }
+  return map;
+}
+
 const preparedMap = computed(() => {
   const map = new Map();
   for (const item of props.preparedSentences || []) {
@@ -27,6 +50,9 @@ const preparedMap = computed(() => {
   }
   return map;
 });
+
+const baselineSentenceMap = computed(() => sceneSentenceTextMap(props.baselineArtifact, baselineScene.value));
+const candidateSentenceMap = computed(() => sceneSentenceTextMap(props.candidateArtifact, candidateScene.value));
 
 function orderKey(sentenceId) {
   const raw = String(sentenceId || "");
@@ -159,7 +185,10 @@ function makeRow(sid) {
   const cE = entriesFor(candidateBySid.value, sid);
   return {
     sid,
-    text: preparedMap.value.get(sid) || "—",
+    text: preparedMap.value.get(sid)
+      || baselineSentenceMap.value.get(sid)
+      || candidateSentenceMap.value.get(sid)
+      || "—",
     translation: {
       baseline: bT,
       candidate: cT,
@@ -187,14 +216,14 @@ const sharedRows = computed(() => sharedSids.value.map((sid) => {
 }));
 const baselineOnlyRows = computed(() => baselineOnlySids.value.map((sid) => ({
   sid,
-  text: preparedMap.value.get(sid) || "—",
+  text: preparedMap.value.get(sid) || baselineSentenceMap.value.get(sid) || candidateSentenceMap.value.get(sid) || "—",
   translation: translationFor(baselineBySid.value, sid),
   marks: marksFor(baselineBySid.value, sid),
   entries: entriesFor(baselineBySid.value, sid),
 })));
 const candidateOnlyRows = computed(() => candidateOnlySids.value.map((sid) => ({
   sid,
-  text: preparedMap.value.get(sid) || "—",
+  text: preparedMap.value.get(sid) || candidateSentenceMap.value.get(sid) || baselineSentenceMap.value.get(sid) || "—",
   translation: translationFor(candidateBySid.value, sid),
   marks: marksFor(candidateBySid.value, sid),
   entries: entriesFor(candidateBySid.value, sid),
@@ -236,7 +265,10 @@ const overviewCards = computed(() => ([
               <span v-if="row.changed" class="changed-badge">发生变化</span>
               <span v-else class="stable-badge">无变化</span>
             </div>
-            <p class="sentence-text">{{ row.text }}</p>
+            <div class="sentence-block">
+              <span class="sentence-label">原句</span>
+              <p class="sentence-text">{{ row.text }}</p>
+            </div>
             <div class="changed-fields" :class="{ empty: !row.changedFields.length }">
               <template v-if="row.changedFields.length">
                 <span v-for="label in row.changedFields" :key="`${row.sid}-${label}`" class="field-badge">{{ label }}</span>
@@ -316,7 +348,10 @@ const overviewCards = computed(() => ([
                 <span class="sid-text">{{ row.sid }}</span>
                 <span class="stable-badge">无变化</span>
               </div>
-              <p class="sentence-text">{{ row.text }}</p>
+              <div class="sentence-block">
+                <span class="sentence-label">原句</span>
+                <p class="sentence-text">{{ row.text }}</p>
+              </div>
               <div class="changed-fields empty">
                 <span>该句两侧输出一致。</span>
               </div>
@@ -386,7 +421,10 @@ const overviewCards = computed(() => ([
           <li v-for="row in baselineOnlyRows" :key="`b-${row.sid}`" class="diff-card removed">
             <header class="diff-head">
               <span class="sid-text">{{ row.sid }}</span>
-              <p class="sentence-text">{{ row.text }}</p>
+              <div class="sentence-block">
+                <span class="sentence-label">原句</span>
+                <p class="sentence-text">{{ row.text }}</p>
+              </div>
               <span class="removed-badge">仅 baseline</span>
             </header>
             <div class="only-fields">
@@ -430,7 +468,10 @@ const overviewCards = computed(() => ([
           <li v-for="row in candidateOnlyRows" :key="`c-${row.sid}`" class="diff-card added">
             <header class="diff-head">
               <span class="sid-text">{{ row.sid }}</span>
-              <p class="sentence-text">{{ row.text }}</p>
+              <div class="sentence-block">
+                <span class="sentence-label">原句</span>
+                <p class="sentence-text">{{ row.text }}</p>
+              </div>
               <span class="added-badge">仅 candidate</span>
             </header>
             <div class="only-fields">
@@ -570,6 +611,15 @@ const overviewCards = computed(() => ([
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.sentence-block {
+  display: grid;
+  gap: 4px;
+}
+.sentence-label {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-weight: 700;
 }
 .sid-text {
   font-family: var(--theme--fonts--monospace--font-family, monospace);

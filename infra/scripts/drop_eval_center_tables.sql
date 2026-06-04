@@ -5,6 +5,8 @@ DROP TABLE IF EXISTS eval_node_lab_trials CASCADE;
 DROP TABLE IF EXISTS eval_node_lab_sessions CASCADE;
 DROP TABLE IF EXISTS eval_node_lab_candidate_drafts CASCADE;
 DROP TABLE IF EXISTS eval_example_lab_entries CASCADE;
+DROP TABLE IF EXISTS eval_workflow_compare_judge_requests CASCADE;
+DROP TABLE IF EXISTS eval_workflow_compares CASCADE;
 DROP TABLE IF EXISTS eval_review_notes CASCADE;
 DROP TABLE IF EXISTS eval_judge_run_requests CASCADE;
 DROP TABLE IF EXISTS eval_workflow_run_requests CASCADE;

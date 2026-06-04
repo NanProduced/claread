@@ -72,6 +72,13 @@ function resolveWorkflowRuntimeRunsRoot(env) {
   return path.join(path.dirname(nodeLabRoot), "workflow-runs");
 }
 
+function resolveWorkflowCompareRuntimeRoot(env) {
+  const explicit = readEnv(env, "CLAREAD_WORKFLOW_COMPARE_RUNTIME_ROOT");
+  if (explicit) return explicit;
+  const workflowRunsRoot = resolveWorkflowRuntimeRunsRoot(env);
+  return path.join(path.dirname(workflowRunsRoot), "workflow-compares");
+}
+
 function uniquePaths(items) {
   return [...new Set(items.filter(Boolean).map((item) => path.resolve(item)))];
 }
@@ -90,6 +97,15 @@ function workflowRunArtifactPrefix(root, runtimeRoot) {
     return "runtime-evals/workflow-runs";
   }
   return "evals/runs";
+}
+
+function workflowCompareArtifactPrefix(root, runtimeRoot) {
+  const resolvedRuntimeRoot = path.resolve(runtimeRoot);
+  const candidateRoot = path.resolve(root);
+  if (candidateRoot === resolvedRuntimeRoot) {
+    return "runtime-evals/workflow-compares";
+  }
+  return "runtime-evals/workflow-compares";
 }
 
 function runDir(root, runId) {
@@ -114,6 +130,30 @@ function caseArtifactPath(root, runId, caseId) {
 
 function caseIndexPath(root, runId) {
   return path.join(runDir(root, runId), "case-index.json");
+}
+
+function compareDir(root, compareId) {
+  if (!isSafeFileId(compareId)) {
+    const error = new Error("Invalid compare id.");
+    error.status = 400;
+    error.code = "INVALID_COMPARE_ID";
+    throw error;
+  }
+  return path.join(root, compareId);
+}
+
+function compareArtifactPath(root, compareId, filename) {
+  return path.join(compareDir(root, compareId), filename);
+}
+
+function compareJudgeArtifactDir(root, compareId, judgeRunId) {
+  if (!isSafeFileId(judgeRunId)) {
+    const error = new Error("Invalid workflow compare judge_run_id.");
+    error.status = 400;
+    error.code = "INVALID_WORKFLOW_COMPARE_JUDGE_RUN_ID";
+    throw error;
+  }
+  return path.join(compareDir(root, compareId), "judge", judgeRunId);
 }
 
 function workflowCompareReportDir(root, candidateRunId) {
@@ -219,6 +259,11 @@ async function removePathIfExists(targetPath) {
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
+}
+
+async function writeJsonFile(filePath, payload) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 async function countJsonFiles(dirPath) {
@@ -778,6 +823,8 @@ function compareWorkflowLabCaseArtifacts(baselineArtifact, candidateArtifact) {
 
   return {
     case_id: baselineArtifact.case_id,
+    comparison_kind: "artifact",
+    source_case_id: baselineArtifact.case_id,
     verdict,
     baseline_hard_failures: baselineFailures.hard,
     candidate_hard_failures: candidateFailures.hard,
@@ -788,6 +835,199 @@ function compareWorkflowLabCaseArtifacts(baselineArtifact, candidateArtifact) {
     identity_delta: workflowLabIdentityDelta(baselineArtifact, candidateArtifact),
     reasons,
   };
+}
+
+function workflowSceneFromArtifact(artifact) {
+  if (artifact?.render_scene && typeof artifact.render_scene === "object") return artifact.render_scene;
+  return artifact && typeof artifact === "object" ? artifact : {};
+}
+
+function artifactSentenceTextMap(artifact) {
+  const map = new Map();
+  const scene = workflowSceneFromArtifact(artifact);
+  const candidates = [
+    scene?.article?.sentences,
+    artifact?.output?.article?.sentences,
+    artifact?.input_snapshot?.article?.sentences,
+    artifact?.prepared_sentences,
+    artifact?.input_snapshot?.prepared_sentences,
+  ];
+  for (const items of candidates) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      const sid = item?.sentence_id;
+      const text = item?.text || item?.source_text || item?.original_text || "";
+      if (sid != null && text && !map.has(String(sid))) {
+        map.set(String(sid), String(text));
+      }
+    }
+  }
+  return map;
+}
+
+function artifactTranslationMap(artifact) {
+  const map = new Map();
+  const scene = workflowSceneFromArtifact(artifact);
+  const items = Array.isArray(scene?.translations) ? scene.translations : Array.isArray(artifact?.translations) ? artifact.translations : [];
+  for (const item of items) {
+    const sid = item?.sentence_id;
+    const text = item?.translation_zh || item?.text || "";
+    if (sid != null && text && !map.has(String(sid))) {
+      map.set(String(sid), String(text));
+    }
+  }
+  return map;
+}
+
+function normalizeSentenceMark(mark) {
+  return {
+    anchor: String(mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || ""),
+    type: String(mark?.annotation_type || mark?.visual_tone || ""),
+    extra: String(mark?.zh || mark?.gloss || mark?.phrase_type || ""),
+  };
+}
+
+function artifactMarkMap(artifact) {
+  const map = new Map();
+  const scene = workflowSceneFromArtifact(artifact);
+  const items = Array.isArray(scene?.inline_marks) ? scene.inline_marks : Array.isArray(artifact?.inline_marks) ? artifact.inline_marks : [];
+  for (const item of items) {
+    const sid = item?.sentence_id;
+    if (sid == null) continue;
+    const key = String(sid);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(normalizeSentenceMark(item));
+  }
+  return map;
+}
+
+function normalizeSentenceEntry(entry) {
+  return {
+    label: String(entry?.label || entry?.entry_type || ""),
+    content: String(entry?.content || entry?.title || entry?.note_zh || entry?.analysis_zh || ""),
+  };
+}
+
+function artifactEntryMap(artifact) {
+  const map = new Map();
+  const scene = workflowSceneFromArtifact(artifact);
+  const items = Array.isArray(scene?.sentence_entries) ? scene.sentence_entries : Array.isArray(artifact?.sentence_entries) ? artifact.sentence_entries : [];
+  for (const item of items) {
+    const sid = item?.sentence_id;
+    if (sid == null) continue;
+    const key = String(sid);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(normalizeSentenceEntry(item));
+  }
+  return map;
+}
+
+function sentenceIdsFromArtifact(artifact) {
+  const ids = new Set();
+  for (const map of [
+    artifactSentenceTextMap(artifact),
+    artifactTranslationMap(artifact),
+    artifactMarkMap(artifact),
+    artifactEntryMap(artifact),
+  ]) {
+    for (const sid of map.keys()) ids.add(sid);
+  }
+  return [...ids].sort();
+}
+
+function sentenceCaseId(sourceCaseId, sentenceId, singleSourceCase = false) {
+  if (singleSourceCase) return String(sentenceId);
+  return `${sourceCaseId}__${sentenceId}`;
+}
+
+function hasSentenceOutput(sentence) {
+  return Boolean(
+    sentence.translation
+    || (Array.isArray(sentence.marks) && sentence.marks.length)
+    || (Array.isArray(sentence.entries) && sentence.entries.length),
+  );
+}
+
+function buildSentenceComparisonReasons(baselineSentence, candidateSentence) {
+  const reasons = [];
+  if (baselineSentence.translation !== candidateSentence.translation) reasons.push("translation changed");
+  if (stableCompareJson(baselineSentence.marks) !== stableCompareJson(candidateSentence.marks)) reasons.push("inline marks changed");
+  if (stableCompareJson(baselineSentence.entries) !== stableCompareJson(candidateSentence.entries)) reasons.push("sentence entries changed");
+  return reasons;
+}
+
+function compareWorkflowLabSentenceOutputs(
+  baselineArtifact,
+  candidateArtifact,
+  {
+    sourceCaseId,
+    singleSourceCase,
+  } = {},
+) {
+  const baselineTexts = artifactSentenceTextMap(baselineArtifact);
+  const candidateTexts = artifactSentenceTextMap(candidateArtifact);
+  const baselineTranslations = artifactTranslationMap(baselineArtifact);
+  const candidateTranslations = artifactTranslationMap(candidateArtifact);
+  const baselineMarks = artifactMarkMap(baselineArtifact);
+  const candidateMarks = artifactMarkMap(candidateArtifact);
+  const baselineEntries = artifactEntryMap(baselineArtifact);
+  const candidateEntries = artifactEntryMap(candidateArtifact);
+  const sentenceIds = new Set([
+    ...baselineTexts.keys(),
+    ...candidateTexts.keys(),
+    ...baselineTranslations.keys(),
+    ...candidateTranslations.keys(),
+    ...baselineMarks.keys(),
+    ...candidateMarks.keys(),
+    ...baselineEntries.keys(),
+    ...candidateEntries.keys(),
+  ]);
+  const comparisons = [];
+  for (const sid of [...sentenceIds].sort()) {
+    const baselineSentence = {
+      sentence_id: sid,
+      sentence_text: baselineTexts.get(sid) || candidateTexts.get(sid) || "",
+      translation: baselineTranslations.get(sid) || null,
+      marks: baselineMarks.get(sid) || [],
+      entries: baselineEntries.get(sid) || [],
+    };
+    const candidateSentence = {
+      sentence_id: sid,
+      sentence_text: candidateTexts.get(sid) || baselineTexts.get(sid) || "",
+      translation: candidateTranslations.get(sid) || null,
+      marks: candidateMarks.get(sid) || [],
+      entries: candidateEntries.get(sid) || [],
+    };
+    const reasons = buildSentenceComparisonReasons(baselineSentence, candidateSentence);
+    if (!reasons.length) continue;
+    const baselineHasOutput = hasSentenceOutput(baselineSentence);
+    const candidateHasOutput = hasSentenceOutput(candidateSentence);
+    let verdict = "manual_review";
+    if (candidateHasOutput && !baselineHasOutput) {
+      verdict = "win";
+      reasons.unshift("candidate added sentence-level output");
+    } else if (!candidateHasOutput && baselineHasOutput) {
+      verdict = "loss";
+      reasons.unshift("candidate removed sentence-level output");
+    }
+    comparisons.push({
+      case_id: sentenceCaseId(sourceCaseId, sid, singleSourceCase),
+      comparison_kind: "sentence",
+      source_case_id: sourceCaseId,
+      sentence_id: sid,
+      sentence_text: candidateSentence.sentence_text || baselineSentence.sentence_text || null,
+      verdict,
+      baseline_hard_failures: 0,
+      candidate_hard_failures: 0,
+      baseline_soft_failures: 0,
+      candidate_soft_failures: 0,
+      baseline_status: baselineArtifact.adapter_status || null,
+      candidate_status: candidateArtifact.adapter_status || null,
+      identity_delta: workflowLabIdentityDelta(baselineArtifact, candidateArtifact),
+      reasons,
+    });
+  }
+  return comparisons;
 }
 
 function appendWorkflowLabInternalIdentityWarnings(warnings, side, artifacts) {
@@ -852,6 +1092,83 @@ function workflowLabIdentityWarnings(baseline, candidate, sharedCaseIds, baselin
   return warnings;
 }
 
+function assertWorkflowLabCompareInputConsistency(baseline, candidate) {
+  // 两侧 run 都必须有 reading_goal / reading_variant / source_type;任一缺失就拒绝,
+  // 避免 case_id 一致但上下文不一致的伪 compare
+  const fields = ["reading_goal", "reading_variant", "source_type"];
+  for (const side of ["baseline", "candidate"]) {
+    const run = side === "baseline" ? baseline.run : candidate.run;
+    for (const field of fields) {
+      if (!run || !run[field]) {
+        const error = new Error(
+          `Run "${side === "baseline" ? baseline.run_id : candidate.run_id}" is missing required compare input field "${field}".`,
+        );
+        error.status = 422;
+        error.code = "WORKFLOW_LAB_COMPARE_INPUT_MISSING";
+        throw error;
+      }
+    }
+  }
+  // input_hash 必须一致:用 (text + reading_goal + reading_variant + source_type) 的稳定哈希校验,
+  // 防止不同文章的 single run 共享 "single-run" 形式的 case_id 而被错误允许 compare
+  const baselineInput = baselineArtifactsInputSnapshot(baseline);
+  const candidateInput = candidateArtifactsInputSnapshot(candidate);
+  if (!baselineInput || !candidateInput) {
+    const error = new Error("Both runs must expose input_snapshot for run-driven compare.");
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_INPUT_MISSING";
+    throw error;
+  }
+  if (baselineInput.input_hash !== candidateInput.input_hash) {
+    const error = new Error(
+      `Baseline and candidate have different input contexts (input_hash ${baselineInput.input_hash} != ${candidateInput.input_hash}).`,
+    );
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_INPUT_MISMATCH";
+    throw error;
+  }
+}
+
+function baselineArtifactsInputSnapshot(loadedRun) {
+  const artifact = Array.isArray(loadedRun?.artifacts) ? loadedRun.artifacts[0] : null;
+  return artifactInputSnapshot(artifact, loadedRun?.run || {});
+}
+
+function candidateArtifactsInputSnapshot(loadedRun) {
+  return baselineArtifactsInputSnapshot(loadedRun);
+}
+
+function artifactInputSnapshot(artifact, run = {}) {
+  if (artifact?.input_snapshot && typeof artifact.input_snapshot === "object") {
+    return computeInputHash(artifact.input_snapshot);
+  }
+  const fallback = {
+    text: String(run?.source_text || run?.text || "").trim(),
+    reading_goal: run?.reading_goal || "daily_reading",
+    reading_variant: run?.reading_variant || "intermediate_reading",
+    source_type: run?.source_type || "user_input",
+  };
+  return computeInputHash(fallback);
+}
+
+function computeInputHash(inputSnapshot) {
+  const text = String(inputSnapshot?.text || "").trim();
+  const readingGoal = inputSnapshot?.reading_goal || "daily_reading";
+  const readingVariant = inputSnapshot?.reading_variant || "intermediate_reading";
+  const sourceType = inputSnapshot?.source_type || "user_input";
+  const digest = createHash("sha1")
+    .update(stableJson({ text, reading_goal: readingGoal, reading_variant: readingVariant, source_type: sourceType }))
+    .digest("hex")
+    .slice(0, 16);
+  return {
+    text_length: text.length,
+    reading_goal: readingGoal,
+    reading_variant: readingVariant,
+    source_type: sourceType,
+    input_hash: digest,
+  };
+}
+
 function buildWorkflowLabCompareReport(baseline, candidate, now = new Date()) {
   const baselineById = new Map(baseline.artifacts.map((artifact) => [artifact.case_id, artifact]));
   const candidateById = new Map(candidate.artifacts.map((artifact) => [artifact.case_id, artifact]));
@@ -864,9 +1181,19 @@ function buildWorkflowLabCompareReport(baseline, candidate, now = new Date()) {
     error.code = "WORKFLOW_LAB_COMPARE_ERROR";
     throw error;
   }
-  const comparisons = sharedCaseIds.map((caseId) => (
-    compareWorkflowLabCaseArtifacts(baselineById.get(caseId), candidateById.get(caseId))
+  const singleSourceCase = sharedCaseIds.length === 1;
+  let comparisons = sharedCaseIds.flatMap((caseId) => (
+    compareWorkflowLabSentenceOutputs(
+      baselineById.get(caseId),
+      candidateById.get(caseId),
+      { sourceCaseId: caseId, singleSourceCase },
+    )
   ));
+  if (comparisons.length === 0) {
+    comparisons = sharedCaseIds.map((caseId) => (
+      compareWorkflowLabCaseArtifacts(baselineById.get(caseId), candidateById.get(caseId))
+    ));
+  }
   return {
     baseline_run_id: baseline.run_id,
     candidate_run_id: candidate.run_id,
@@ -923,7 +1250,1036 @@ function renderWorkflowLabCompareMarkdown(report) {
   return lines.join("\n");
 }
 
-async function createWorkflowLabCompare(roots, body) {
+function workflowCompareIdForRunPair(baselineRunId, candidateRunId) {
+  const digest = createHash("sha1")
+    .update(stableJson({ baseline_run_id: baselineRunId, candidate_run_id: candidateRunId }))
+    .digest("hex")
+    .slice(0, 12);
+  return `workflow-compare-${digest}`;
+}
+
+function buildWorkflowCompareEvidenceIndex(report, baselineRunId, candidateRunId, inputHash = null) {
+  return {
+    schema_version: "workflow-compare-evidence-index-v1",
+    baseline_run_id: baselineRunId,
+    candidate_run_id: candidateRunId,
+    input_hash: inputHash,
+    case_ids: Array.isArray(report?.comparisons) ? report.comparisons.map((item) => item.case_id) : [],
+    comparisons: Array.isArray(report?.comparisons)
+        ? report.comparisons.map((item) => ({
+            case_id: item.case_id,
+            comparison_kind: item.comparison_kind || "artifact",
+            source_case_id: item.source_case_id || item.case_id,
+            sentence_id: item.sentence_id || null,
+            verdict: item.verdict,
+            baseline_run_id: baselineRunId,
+            candidate_run_id: candidateRunId,
+          }))
+      : [],
+  };
+}
+
+function workflowCompareSummaryFromRow(row, detail = {}) {
+  const compareMeta = detail.compare_json && typeof detail.compare_json === "object"
+    ? detail.compare_json
+    : {};
+  const report = detail.report && typeof detail.report === "object"
+    ? detail.report
+    : {};
+  const candidatePromptVariantId = compareMeta.candidate_prompt_variant_id
+    || detail.candidate_run_summary?.prompt_variant_id
+    || null;
+  const status = row?.status || compareMeta.status || "complete";
+  return {
+    source: "workflow",
+    workspace_type: "workflow_compare",
+    compare_id: row.compare_id,
+    record_id: row.compare_id,
+    status,
+    source_kind: row.source_kind,
+    baseline_run_id: row.baseline_run_id,
+    candidate_run_id: row.candidate_run_id,
+    input_hash: row.input_hash || compareMeta.input_hash || null,
+    reading_goal: row.reading_goal || compareMeta.reading_goal || null,
+    reading_variant: row.reading_variant || compareMeta.reading_variant || null,
+    source_type: row.source_type || compareMeta.source_type || null,
+    artifact_path: row.artifact_path,
+    report_id: row.report_id,
+    case_count: Number(row.case_count || report.total_cases || 0),
+    wins: Number(row.wins || report.wins || 0),
+    losses: Number(row.losses || report.losses || 0),
+    ties: Number(row.ties || report.ties || 0),
+    prompt_variant_id: candidatePromptVariantId,
+    created_at: row.date_created || compareMeta.created_at || null,
+    date_created: row.date_created || compareMeta.created_at || null,
+    date_updated: row.date_updated || compareMeta.updated_at || null,
+    display_title: `${candidatePromptVariantId || "baseline"} · compare`,
+    display_excerpt: `${row.baseline_run_id} vs ${row.candidate_run_id}`,
+  };
+}
+
+async function loadWorkflowCompareArtifactPayload(env, compareId) {
+  const root = resolveWorkflowCompareRuntimeRoot(env);
+  const compareJson = await readJsonFile(compareArtifactPath(root, compareId, "compare.json"));
+  const report = await readJsonFile(compareArtifactPath(root, compareId, "report.json"));
+  const evidenceIndex = await readJsonFile(compareArtifactPath(root, compareId, "evidence-index.json"));
+  return {
+    root,
+    compare_json: compareJson,
+    report,
+    evidence_index: evidenceIndex,
+  };
+}
+
+async function loadWorkflowCompareUnderlyingRunSummary(env, runId) {
+  if (!runId) return null;
+  try {
+    return await loadRunSummary(resolveWorkflowRunRoots(env), runId);
+  } catch {
+    return null;
+  }
+}
+
+async function createOrReuseWorkflowCompare({ database, env, baselineRunId, candidateRunId, sourceKind = "single_run_compare", reqUser = null }) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "WORKFLOW_COMPARE_DB_UNAVAILABLE";
+    throw error;
+  }
+  if (!isSafeFileId(baselineRunId) || !isSafeFileId(candidateRunId)) {
+    const error = new Error("baseline_run_id and candidate_run_id must be safe ids.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    throw error;
+  }
+  if (baselineRunId === candidateRunId) {
+    const error = new Error("baseline_run_id and candidate_run_id must differ.");
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_ERROR";
+    throw error;
+  }
+
+  const compareId = workflowCompareIdForRunPair(baselineRunId, candidateRunId);
+  const existing = await database("eval_workflow_compares")
+    .where({ compare_id: compareId })
+    .first();
+  if (existing) {
+    return {
+      created: false,
+      compare_id: compareId,
+      detail: await loadWorkflowCompareHistoryDetail(database, env, compareId),
+    };
+  }
+
+  const roots = resolveWorkflowRunRoots(env);
+  const baseline = await loadRunForWorkflowLabCompare(roots, baselineRunId);
+  const candidate = await loadRunForWorkflowLabCompare(roots, candidateRunId);
+  assertWorkflowLabCompareInputConsistency(baseline, candidate);
+  const report = buildWorkflowLabCompareReport(baseline, candidate);
+  const inputHash = computeInputHash(artifactInputSnapshot(baseline.artifacts[0], baseline.run)).input_hash;
+  const compareRoot = resolveWorkflowCompareRuntimeRoot(env);
+  const comparePath = compareDir(compareRoot, compareId);
+  const compareMeta = {
+    schema_version: "workflow-compare-v1",
+    compare_id: compareId,
+    source_kind: sourceKind,
+    status: "complete",
+    baseline_run_id: baselineRunId,
+    candidate_run_id: candidateRunId,
+    input_hash: inputHash,
+    reading_goal: baseline.run?.reading_goal || null,
+    reading_variant: baseline.run?.reading_variant || null,
+    source_type: baseline.run?.source_type || null,
+    artifact_path: `${workflowCompareArtifactPrefix(compareRoot, compareRoot)}/${compareId}`,
+    report_id: compareId,
+    case_count: report.total_cases || 0,
+    wins: report.wins || 0,
+    losses: report.losses || 0,
+    ties: report.ties || 0,
+    identity_warnings: Array.isArray(report.identity_warnings) ? report.identity_warnings : [],
+    candidate_prompt_variant_id:
+      candidate.artifacts?.[0]?.prompt_identity?.prompt_variant_id
+      || candidate.run?.prompt_variant_id
+      || null,
+    created_at: new Date().toISOString(),
+  };
+  const evidenceIndex = buildWorkflowCompareEvidenceIndex(report, baselineRunId, candidateRunId, inputHash);
+  await mkdir(comparePath, { recursive: true });
+  await writeJsonFile(compareArtifactPath(compareRoot, compareId, "compare.json"), compareMeta);
+  await writeJsonFile(compareArtifactPath(compareRoot, compareId, "report.json"), report);
+  await writeFile(compareArtifactPath(compareRoot, compareId, "report.md"), renderWorkflowLabCompareMarkdown(report), "utf8");
+  await writeJsonFile(compareArtifactPath(compareRoot, compareId, "evidence-index.json"), evidenceIndex);
+  await database("eval_workflow_compares").insert({
+    compare_id: compareId,
+    source_kind: sourceKind,
+    baseline_run_id: baselineRunId,
+    candidate_run_id: candidateRunId,
+    status: "complete",
+    input_hash: inputHash,
+    reading_goal: baseline.run?.reading_goal || null,
+    reading_variant: baseline.run?.reading_variant || null,
+    source_type: baseline.run?.source_type || null,
+    artifact_path: compareMeta.artifact_path,
+    report_id: compareId,
+    case_count: report.total_cases || 0,
+    wins: report.wins || 0,
+    losses: report.losses || 0,
+    ties: report.ties || 0,
+    identity_warnings: Array.isArray(report.identity_warnings) ? report.identity_warnings : [],
+    user_created: reqUser || null,
+  });
+  return {
+    created: true,
+    compare_id: compareId,
+    detail: await loadWorkflowCompareHistoryDetail(database, env, compareId),
+  };
+}
+
+async function listWorkflowCompareHistoryRecords(database, env, limit = 30) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "WORKFLOW_COMPARE_DB_UNAVAILABLE";
+    throw error;
+  }
+  const rows = await database("eval_workflow_compares")
+    .select([
+      "compare_id",
+      "source_kind",
+      "baseline_run_id",
+      "candidate_run_id",
+      "status",
+      "input_hash",
+      "reading_goal",
+      "reading_variant",
+      "source_type",
+      "artifact_path",
+      "report_id",
+      "case_count",
+      "wins",
+      "losses",
+      "ties",
+      "identity_warnings",
+      "date_created",
+      "date_updated",
+    ])
+    .orderBy("date_created", "desc")
+    .limit(limit);
+  const records = [];
+  for (const row of rows) {
+    let detail = {};
+    try {
+      const artifact = await loadWorkflowCompareArtifactPayload(env, row.compare_id);
+      detail = {
+        compare_json: artifact.compare_json,
+        report: artifact.report,
+        candidate_run_summary: await loadWorkflowCompareUnderlyingRunSummary(env, row.candidate_run_id),
+      };
+    } catch {
+      detail = {};
+    }
+    records.push(workflowCompareSummaryFromRow(row, detail));
+  }
+  return records;
+}
+
+async function loadWorkflowCompareHistoryDetail(database, env, compareId) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "WORKFLOW_COMPARE_DB_UNAVAILABLE";
+    throw error;
+  }
+  if (!isSafeFileId(compareId)) {
+    const error = new Error("Invalid compare id.");
+    error.status = 400;
+    error.code = "INVALID_COMPARE_ID";
+    throw error;
+  }
+  const row = await database("eval_workflow_compares")
+    .where({ compare_id: compareId })
+    .first();
+  if (!row) {
+    const error = new Error("Workflow compare record not found.");
+    error.status = 404;
+    error.code = "WORKFLOW_COMPARE_NOT_FOUND";
+    throw error;
+  }
+  const artifact = await loadWorkflowCompareArtifactPayload(env, compareId);
+  const [baselineRunSummary, candidateRunSummary] = await Promise.all([
+    loadWorkflowCompareUnderlyingRunSummary(env, row.baseline_run_id),
+    loadWorkflowCompareUnderlyingRunSummary(env, row.candidate_run_id),
+  ]);
+  const judgeRows = await listWorkflowCompareJudgeRequests(database, compareId, { status: "all", limit: 50 });
+  return {
+    source: "workflow",
+    record: workflowCompareSummaryFromRow(row, {
+      compare_json: artifact.compare_json,
+      report: artifact.report,
+      candidate_run_summary: candidateRunSummary,
+    }),
+    compare: {
+      ...artifact.compare_json,
+      compare_id: compareId,
+      status: row.status,
+      baseline_run_id: row.baseline_run_id,
+      candidate_run_id: row.candidate_run_id,
+      source_kind: row.source_kind,
+      artifact_path: row.artifact_path,
+      report_id: row.report_id,
+    },
+    report: artifact.report,
+    evidence_index: artifact.evidence_index,
+    compare_judge_requests: judgeRows.map((item) => workflowCompareJudgeRequestSummary(item)),
+    baseline_run_summary: baselineRunSummary?.summary || baselineRunSummary || null,
+    candidate_run_summary: candidateRunSummary?.summary || candidateRunSummary || null,
+  };
+}
+
+async function loadWorkflowCompareCaseEvidence(database, env, compareId, caseId) {
+  const detail = await loadWorkflowCompareHistoryDetail(database, env, compareId);
+  const comparison = Array.isArray(detail.report?.comparisons)
+    ? detail.report.comparisons.find((item) => item.case_id === caseId)
+    : null;
+  if (!comparison) {
+    const error = new Error(`Case "${caseId}" was not found in compare "${compareId}".`);
+    error.status = 404;
+    error.code = "WORKFLOW_COMPARE_CASE_NOT_FOUND";
+    throw error;
+  }
+  const roots = resolveWorkflowRunRoots(env);
+  const baselineRoot = await resolveRunRootOrThrow(roots, detail.compare.baseline_run_id);
+  const candidateRoot = await resolveRunRootOrThrow(roots, detail.compare.candidate_run_id);
+  const sourceCaseId = comparison.source_case_id || caseId;
+  return {
+    compare_id: compareId,
+    case_id: caseId,
+    comparison,
+    baseline_artifact: await readJsonFile(caseArtifactPath(baselineRoot, detail.compare.baseline_run_id, sourceCaseId)),
+    candidate_artifact: await readJsonFile(caseArtifactPath(candidateRoot, detail.compare.candidate_run_id, sourceCaseId)),
+  };
+}
+
+async function deleteWorkflowCompareCascade(database, env, compareId) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "WORKFLOW_COMPARE_DB_UNAVAILABLE";
+    throw error;
+  }
+  const row = await database("eval_workflow_compares")
+    .where({ compare_id: compareId })
+    .first();
+  if (!row) {
+    const error = new Error("Workflow compare record not found.");
+    error.status = 404;
+    error.code = "WORKFLOW_COMPARE_NOT_FOUND";
+    throw error;
+  }
+  const compareRoot = resolveWorkflowCompareRuntimeRoot(env);
+  const artifactDir = compareDir(compareRoot, compareId);
+  const roots = resolveWorkflowRunRoots(env);
+  const deletedRuns = [];
+  for (const runId of [row.baseline_run_id, row.candidate_run_id]) {
+    if (!runId || deletedRuns.includes(runId)) continue;
+    if (await findExistingRunRoot(roots, runId)) {
+      await deleteWorkflowRunCascade(database, roots, runId);
+      deletedRuns.push(runId);
+    }
+  }
+  await database("eval_review_notes")
+    .where({ target_type: "workflow_compare", target_id: compareId })
+    .del();
+  await database("eval_workflow_compare_judge_requests")
+    .where({ compare_id: compareId })
+    .del();
+  await database("eval_workflow_compares")
+    .where({ compare_id: compareId })
+    .del();
+  await removePathIfExists(artifactDir);
+  return {
+    deleted: true,
+    compare_id: compareId,
+    removed_runs: deletedRuns,
+    removed_artifact_path: artifactDir,
+  };
+}
+
+function workflowCompareJudgeRequestRow(req, config, options = {}) {
+  const attemptNo = Number.parseInt(String(options.attempt_no || 1), 10);
+  const safeAttemptNo = Number.isFinite(attemptNo) && attemptNo > 0 ? attemptNo : 1;
+  const maxAttempts = Number.parseInt(String(options.max_attempts || safeAttemptNo), 10);
+  return {
+    judge_run_id: config.judge_run_id,
+    compare_id: config.compare_id,
+    baseline_run_id: config.baseline_run_id,
+    candidate_run_id: config.candidate_run_id,
+    rubric_id: config.rubric_id,
+    rubric_version: config.rubric_version,
+    status: "queued",
+    judge_adapter_kind: config.judge_adapter_kind || "fake",
+    config_json: config.config_json || {},
+    artifact_path: null,
+    source_request_id: options.source_request_id || null,
+    attempt_no: safeAttemptNo,
+    max_attempts: Number.isFinite(maxAttempts) && maxAttempts >= safeAttemptNo
+      ? maxAttempts
+      : safeAttemptNo,
+    retry_reason: options.retry_reason || null,
+    user_created: req.accountability?.user || null,
+  };
+}
+
+function workflowCompareJudgeRequestSummary(row) {
+  const config = row?.config_json && typeof row.config_json === "object" ? row.config_json : {};
+  const errorJson = row?.error_json && typeof row.error_json === "object" ? row.error_json : null;
+  return {
+    id: row.id,
+    judge_run_id: row.judge_run_id,
+    compare_id: row.compare_id,
+    baseline_run_id: row.baseline_run_id,
+    candidate_run_id: row.candidate_run_id,
+    rubric_id: row.rubric_id,
+    rubric_version: row.rubric_version,
+    status: row.status,
+    judge_adapter_kind: row.judge_adapter_kind,
+    artifact_path: row.artifact_path,
+    expected_artifact_path: row.compare_id && row.judge_run_id
+      ? `runtime-evals/workflow-compares/${row.compare_id}/judge/${row.judge_run_id}`
+      : null,
+    source_request_id: row.source_request_id || null,
+    attempt_no: row.attempt_no || 1,
+    max_attempts: row.max_attempts || row.attempt_no || 1,
+    retry_reason: row.retry_reason || null,
+    cancelable: isJudgeRunRequestCancelable(row.status),
+    retryable: isJudgeRunRequestRetryable(row.status),
+    lease_owner: row.lease_owner,
+    lease_until: row.lease_until,
+    heartbeat_at: row.heartbeat_at,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    date_created: row.date_created,
+    date_updated: row.date_updated,
+    error: errorJson
+      ? { code: errorJson.code || null, message: errorJson.message || null }
+      : null,
+    config_summary: {
+      source: config.source || null,
+      max_concurrency: config.max_concurrency || 1,
+      max_cases: config.max_cases || null,
+      source_text_char_limit: config.source_text_char_limit || null,
+      output_item_limit: config.output_item_limit || null,
+    },
+  };
+}
+
+function compareJudgeCaseVerdict(comparison) {
+  if (comparison?.verdict === "win") return "candidate_preferred";
+  if (comparison?.verdict === "loss") return "baseline_preferred";
+  if (comparison?.verdict === "tie") return "tie";
+  return "needs_review";
+}
+
+function compareJudgeCaseScore(verdict) {
+  if (verdict === "candidate_preferred") return 1;
+  if (verdict === "tie") return 0.5;
+  if (verdict === "baseline_preferred") return 0;
+  return null;
+}
+
+function buildWorkflowCompareJudgeArtifacts({ requestRow, compare, caseResults }) {
+  const results = Array.isArray(caseResults) ? caseResults : [];
+  const summary = {
+    total_cases: results.length,
+    candidate_preferred: results.filter((item) => item.verdict === "candidate_preferred").length,
+    baseline_preferred: results.filter((item) => item.verdict === "baseline_preferred").length,
+    tie: results.filter((item) => item.verdict === "tie").length,
+    needs_review: results.filter((item) => item.verdict === "needs_review" && item.status !== "error").length,
+    errored: results.filter((item) => item.status === "error" || item.verdict === "error").length,
+  };
+  const judgeRun = {
+    schema_version: "workflow-compare-judge-run-v1",
+    judge_run_id: requestRow.judge_run_id,
+    compare_id: requestRow.compare_id,
+    baseline_run_id: requestRow.baseline_run_id,
+    candidate_run_id: requestRow.candidate_run_id,
+    rubric_id: requestRow.rubric_id,
+    rubric_version: requestRow.rubric_version,
+    judge_adapter_kind: requestRow.judge_adapter_kind,
+    created_at: new Date().toISOString(),
+    config_json: requestRow.config_json || {},
+    attempt_no: requestRow.attempt_no || 1,
+    max_attempts: requestRow.max_attempts || 1,
+    retry_reason: requestRow.retry_reason || null,
+  };
+  const caseResultsPayload = {
+    schema_version: "workflow-compare-judge-case-results-v1",
+    judge_run_id: requestRow.judge_run_id,
+    compare_id: requestRow.compare_id,
+    generated_at: new Date().toISOString(),
+    cases: results,
+  };
+  const judgeReport = {
+    schema_version: "workflow-compare-judge-report-v1",
+    judge_run_id: requestRow.judge_run_id,
+    compare_id: requestRow.compare_id,
+    baseline_run_id: compare.baseline_run_id,
+    candidate_run_id: compare.candidate_run_id,
+    rubric_id: requestRow.rubric_id,
+    rubric_version: requestRow.rubric_version,
+    judge_adapter_kind: requestRow.judge_adapter_kind,
+    created_at: new Date().toISOString(),
+    ...summary,
+    notes: [
+      "Workflow compare judge evaluates sentence-level compare cases anchored to the persisted compare_id.",
+      "Use it as review evidence; final promotion decisions still require human verification.",
+    ],
+    case_summaries: results.map((item) => ({
+      case_id: item.case_id,
+      status: item.status,
+      verdict: item.verdict,
+      preferred_side: item.preferred_side,
+      overall_score: item.overall_score,
+    })),
+  };
+  const reportMd = [
+    `# Workflow Compare Judge: ${compare.compare_id}`,
+    "",
+    `- Judge Run: ${requestRow.judge_run_id}`,
+    `- Rubric: ${requestRow.rubric_id}@${requestRow.rubric_version}`,
+    `- Adapter: ${requestRow.judge_adapter_kind}`,
+    `- Total Cases: ${summary.total_cases}`,
+    `- Candidate Preferred: ${summary.candidate_preferred}`,
+    `- Baseline Preferred: ${summary.baseline_preferred}`,
+    `- Tie: ${summary.tie}`,
+    `- Needs Review: ${summary.needs_review}`,
+    "",
+  ].join("\n");
+  return { judgeRun, caseResultsPayload, judgeReport, reportMd };
+}
+
+function buildWorkflowCompareFakeJudgeCaseResults(report) {
+  const comparisons = Array.isArray(report?.comparisons) ? report.comparisons : [];
+  return comparisons.map((comparison) => {
+    const verdict = compareJudgeCaseVerdict(comparison);
+    const score = compareJudgeCaseScore(verdict);
+    return {
+      case_id: comparison.case_id,
+      status: "succeeded",
+      verdict,
+      preferred_side: verdict === "candidate_preferred"
+        ? "candidate"
+        : verdict === "baseline_preferred"
+          ? "baseline"
+          : null,
+      overall_score: score,
+      summary: (comparison.reasons || []).join("; ") || "No additional deterministic reason.",
+      baseline_hard_failures: comparison.baseline_hard_failures ?? 0,
+      baseline_soft_failures: comparison.baseline_soft_failures ?? 0,
+      candidate_hard_failures: comparison.candidate_hard_failures ?? 0,
+      candidate_soft_failures: comparison.candidate_soft_failures ?? 0,
+      reasons: Array.isArray(comparison.reasons) ? comparison.reasons : [],
+    };
+  });
+}
+
+function summarizeCompareJudgeSentenceOutput(artifact, comparison) {
+  const scene = workflowSceneFromArtifact(artifact);
+  const sentenceId = comparison?.sentence_id || comparison?.case_id;
+  const sentenceText = artifactSentenceTextMap(artifact).get(String(sentenceId)) || comparison?.sentence_text || "";
+  const translation = artifactTranslationMap(artifact).get(String(sentenceId)) || null;
+  const marks = artifactMarkMap(artifact).get(String(sentenceId)) || [];
+  const entries = artifactEntryMap(artifact).get(String(sentenceId)) || [];
+  return {
+    user_facing_state: scene?.user_facing_state || artifact?.user_facing_state || null,
+    sentence_id: sentenceId,
+    sentence_text: sentenceText,
+    translation,
+    inline_marks: marks,
+    sentence_entries: entries,
+    warnings: Array.isArray(scene?.warnings) ? scene.warnings : Array.isArray(artifact?.warnings) ? artifact.warnings : [],
+    drop_log: Array.isArray(artifact?.drop_log) ? artifact.drop_log : [],
+  };
+}
+
+async function requestOpenAICompatibleJudge({ env, model, packet }) {
+  const baseUrl = readEnv(env, "CLAREAD_EVAL_JUDGE_BASE_URL").trim();
+  const apiKey = readEnv(env, "CLAREAD_EVAL_JUDGE_API_KEY").trim();
+  const resolvedModel = String(model || readEnv(env, "CLAREAD_EVAL_JUDGE_MODEL") || "").trim();
+  if (!baseUrl || !apiKey || !resolvedModel) {
+    const error = new Error("Compare-level LLM judge is missing CLAREAD_EVAL_JUDGE_BASE_URL / API_KEY / MODEL.");
+    error.status = 503;
+    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED";
+    throw error;
+  }
+  const response = await fetch(joinUrl(baseUrl, "/chat/completions"), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: resolvedModel,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a pairwise evaluator for Claread workflow compare outputs. Return strict JSON only.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            instructions: {
+              verdict: "candidate_preferred|baseline_preferred|tie|needs_review",
+              summary: "one concise Chinese sentence",
+              reasons: ["short reasons"],
+              overall_score: "0~1 where 1 means candidate clearly preferred, 0 means baseline clearly preferred, 0.5 means tie",
+            },
+            packet,
+          }),
+        },
+      ],
+    }),
+  });
+  if (!response.ok) {
+    const payload = await parseUpstreamError(response);
+    const error = new Error(payload?.detail || payload?.message || `Judge LLM HTTP ${response.status}`);
+    error.status = response.status;
+    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_ERROR";
+    throw error;
+  }
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    const error = new Error("Judge LLM response content was empty.");
+    error.status = 502;
+    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_EMPTY";
+    throw error;
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(content.trim().replace(/^```json\s*/i, "").replace(/```$/, "").trim());
+  } catch {
+    const error = new Error("Judge LLM response was not valid JSON.");
+    error.status = 502;
+    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_INVALID_JSON";
+    throw error;
+  }
+  return parsed;
+}
+
+async function buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail) {
+  const roots = resolveWorkflowRunRoots(env);
+  const modelName = requestRow?.config_json?.judger_model_name || requestRow?.config_json?.judger_model_profile || null;
+  const comparisons = Array.isArray(compareDetail?.report?.comparisons) ? compareDetail.report.comparisons : [];
+  const results = [];
+  for (const comparison of comparisons) {
+    const sourceCaseId = comparison.source_case_id || comparison.case_id;
+    const baselineRoot = await resolveRunRootOrThrow(roots, compareDetail.compare.baseline_run_id);
+    const candidateRoot = await resolveRunRootOrThrow(roots, compareDetail.compare.candidate_run_id);
+    const baselineArtifact = await readJsonFile(caseArtifactPath(baselineRoot, compareDetail.compare.baseline_run_id, sourceCaseId));
+    const candidateArtifact = await readJsonFile(caseArtifactPath(candidateRoot, compareDetail.compare.candidate_run_id, sourceCaseId));
+    const packet = {
+      compare_id: compareDetail.compare.compare_id,
+      case_id: comparison.case_id,
+      sentence_id: comparison.sentence_id || null,
+      sentence_text: comparison.sentence_text || "",
+      reading_goal: compareDetail.compare.reading_goal || null,
+      reading_variant: compareDetail.compare.reading_variant || null,
+      baseline: summarizeCompareJudgeSentenceOutput(baselineArtifact, comparison),
+      candidate: summarizeCompareJudgeSentenceOutput(candidateArtifact, comparison),
+    };
+    try {
+      const judged = await requestOpenAICompatibleJudge({ env, model: modelName, packet });
+      const verdict = ["candidate_preferred", "baseline_preferred", "tie", "needs_review"].includes(judged?.verdict)
+        ? judged.verdict
+        : "needs_review";
+      const rawScore = Number(judged?.overall_score);
+      results.push({
+        case_id: comparison.case_id,
+        status: "succeeded",
+        verdict,
+        preferred_side: verdict === "candidate_preferred" ? "candidate" : verdict === "baseline_preferred" ? "baseline" : null,
+        overall_score: Number.isFinite(rawScore) ? Math.max(0, Math.min(1, rawScore)) : compareJudgeCaseScore(verdict),
+        summary: String(judged?.summary || "").slice(0, 1000) || "LLM judge returned no summary.",
+        baseline_hard_failures: comparison.baseline_hard_failures ?? 0,
+        baseline_soft_failures: comparison.baseline_soft_failures ?? 0,
+        candidate_hard_failures: comparison.candidate_hard_failures ?? 0,
+        candidate_soft_failures: comparison.candidate_soft_failures ?? 0,
+        reasons: Array.isArray(judged?.reasons) ? judged.reasons.map((item) => String(item).slice(0, 300)) : [],
+      });
+    } catch (error) {
+      results.push({
+        case_id: comparison.case_id,
+        status: "error",
+        verdict: "needs_review",
+        preferred_side: null,
+        overall_score: null,
+        summary: "LLM judge execution failed.",
+        baseline_hard_failures: comparison.baseline_hard_failures ?? 0,
+        baseline_soft_failures: comparison.baseline_soft_failures ?? 0,
+        candidate_hard_failures: comparison.candidate_hard_failures ?? 0,
+        candidate_soft_failures: comparison.candidate_soft_failures ?? 0,
+        reasons: [String(error?.message || error)],
+        error: { code: error?.code || "WORKFLOW_COMPARE_JUDGE_LLM_ERROR", message: String(error?.message || error).slice(0, 500) },
+      });
+    }
+  }
+  return results;
+}
+
+async function executeWorkflowCompareJudgeDirect(database, env, requestRow, compareDetail) {
+  const judgeDir = compareJudgeArtifactDir(resolveWorkflowCompareRuntimeRoot(env), requestRow.compare_id, requestRow.judge_run_id);
+  await database("eval_workflow_compare_judge_requests")
+    .where({ id: requestRow.id })
+    .update({
+      status: "running",
+      started_at: database.fn.now(),
+      date_updated: database.fn.now(),
+      lease_owner: "directus_inline",
+      heartbeat_at: database.fn.now(),
+      error_json: null,
+    });
+  try {
+    const caseResults = requestRow.judge_adapter_kind === "llm"
+      ? await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail)
+      : buildWorkflowCompareFakeJudgeCaseResults(compareDetail.report);
+    const artifacts = buildWorkflowCompareJudgeArtifacts({
+      requestRow,
+      compare: compareDetail.compare,
+      caseResults,
+    });
+    await writeJsonFile(path.join(judgeDir, "judge-run.json"), artifacts.judgeRun);
+    await writeJsonFile(path.join(judgeDir, "case-results.json"), artifacts.caseResultsPayload);
+    await writeJsonFile(path.join(judgeDir, "report.json"), artifacts.judgeReport);
+    await writeFile(path.join(judgeDir, "report.md"), `${artifacts.reportMd}\n`, "utf8");
+    const artifactPath = `runtime-evals/workflow-compares/${requestRow.compare_id}/judge/${requestRow.judge_run_id}`;
+    await database("eval_workflow_compare_judge_requests")
+      .where({ id: requestRow.id })
+      .update({
+        status: "succeeded",
+        artifact_path: artifactPath,
+        finished_at: database.fn.now(),
+        date_updated: database.fn.now(),
+        heartbeat_at: database.fn.now(),
+        error_json: null,
+      });
+  } catch (error) {
+    await database("eval_workflow_compare_judge_requests")
+      .where({ id: requestRow.id })
+      .update({
+        status: "failed",
+        finished_at: database.fn.now(),
+        date_updated: database.fn.now(),
+        error_json: workflowRunRequestErrorJson(error),
+      });
+    throw error;
+  }
+  return database("eval_workflow_compare_judge_requests")
+    .where({ id: requestRow.id })
+    .first();
+}
+
+function validateWorkflowCompareJudgeRequest(body) {
+  const errors = [];
+  if (!body.compare_id || !isSafeFileId(body.compare_id)) {
+    errors.push({ field: "compare_id", message: "compare_id is required and must be safe." });
+  }
+  if (!body.rubric_id || !isSafeFileId(body.rubric_id)) {
+    errors.push({ field: "rubric_id", message: "rubric_id is required and must be safe." });
+  }
+  if (body.judge_run_id && !isSafeFileId(body.judge_run_id)) {
+    errors.push({ field: "judge_run_id", message: "judge_run_id contains unsafe characters." });
+  }
+  if (body.judge_adapter_kind && !VALID_JUDGE_ADAPTER_KINDS.includes(body.judge_adapter_kind)) {
+    errors.push({
+      field: "judge_adapter_kind",
+      message: `judge_adapter_kind must be one of: ${VALID_JUDGE_ADAPTER_KINDS.join(", ")}.`,
+    });
+  }
+  if (body.config_json && (typeof body.config_json !== "object" || Array.isArray(body.config_json))) {
+    errors.push({ field: "config_json", message: "config_json must be a JSON object." });
+  }
+  return errors;
+}
+
+async function listWorkflowCompareJudgeRequests(database, compareId, query = {}) {
+  const limit = clampLimit(query?.limit);
+  const status = String(query?.status || "all");
+  if (status !== "all" && !VALID_JUDGE_REQUEST_STATUSES.includes(status)) {
+    const error = new Error(`status must be one of: all, ${VALID_JUDGE_REQUEST_STATUSES.join(", ")}.`);
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    throw error;
+  }
+  const builder = database("eval_workflow_compare_judge_requests")
+    .select([
+      "id",
+      "date_created",
+      "date_updated",
+      "judge_run_id",
+      "compare_id",
+      "baseline_run_id",
+      "candidate_run_id",
+      "rubric_id",
+      "rubric_version",
+      "status",
+      "judge_adapter_kind",
+      "config_json",
+      "artifact_path",
+      "source_request_id",
+      "attempt_no",
+      "max_attempts",
+      "retry_reason",
+      "lease_owner",
+      "lease_until",
+      "heartbeat_at",
+      "started_at",
+      "finished_at",
+      "error_json",
+    ])
+    .orderBy("date_created", "desc")
+    .limit(limit);
+  if (compareId) builder.where({ compare_id: compareId });
+  if (status !== "all") builder.where({ status });
+  return builder;
+}
+
+async function createWorkflowCompareJudgeRequest(database, req, env, compareId, body = {}) {
+  if (!database) {
+    const error = new Error("Directus database handle is unavailable.");
+    error.status = 503;
+    error.code = "EVAL_JUDGE_QUEUE_UNAVAILABLE";
+    throw error;
+  }
+  const payload = { ...body, compare_id: compareId };
+  const validationErrors = validateWorkflowCompareJudgeRequest(payload);
+  if (validationErrors.length > 0) {
+    const error = new Error(validationErrors[0].message);
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = validationErrors[0].field;
+    error.validationErrors = validationErrors;
+    throw error;
+  }
+  const compare = await database("eval_workflow_compares")
+    .where({ compare_id: compareId })
+    .first();
+  if (!compare) {
+    const error = new Error(`Compare "${compareId}" was not found.`);
+    error.status = 404;
+    error.code = "WORKFLOW_COMPARE_NOT_FOUND";
+    throw error;
+  }
+  if (!(await fileExists(compareArtifactPath(resolveWorkflowCompareRuntimeRoot(env), compareId, "report.json")))) {
+    const error = new Error(`Compare "${compareId}" does not have a complete report artifact.`);
+    error.status = 422;
+    error.code = "WORKFLOW_COMPARE_INCOMPLETE";
+    throw error;
+  }
+  const rubric = await findRubricSummary(env, payload.rubric_id);
+  if (!rubric) {
+    const error = new Error(`Rubric "${payload.rubric_id}" was not found.`);
+    error.status = 422;
+    error.code = "JUDGE_RUBRIC_NOT_FOUND";
+    error.field = "rubric_id";
+    throw error;
+  }
+  const judgeRunId = payload.judge_run_id || generateRunId("workflow-compare-judge");
+  const existing = await database("eval_workflow_compare_judge_requests")
+    .where({ compare_id: compareId, judge_run_id: judgeRunId })
+    .first();
+  if (existing) {
+    const error = new Error(`Judge request "${judgeRunId}" already exists for compare "${compareId}".`);
+    error.status = 409;
+    error.code = "JUDGE_REQUEST_CONFLICT";
+    throw error;
+  }
+  const artifactDir = compareJudgeArtifactDir(resolveWorkflowCompareRuntimeRoot(env), compareId, judgeRunId);
+  if (await fileExists(artifactDir)) {
+    const error = new Error(`Judge artifact directory "${judgeRunId}" already exists for compare "${compareId}".`);
+    error.status = 409;
+    error.code = "JUDGE_ARTIFACT_CONFLICT";
+    throw error;
+  }
+  const row = workflowCompareJudgeRequestRow(req, {
+    judge_run_id: judgeRunId,
+    compare_id: compareId,
+    baseline_run_id: compare.baseline_run_id,
+    candidate_run_id: compare.candidate_run_id,
+    rubric_id: rubric.id,
+    rubric_version: rubric.version,
+    judge_adapter_kind: payload.judge_adapter_kind || "fake",
+    config_json: {
+      source: "workflow_compare",
+      max_concurrency: 1,
+      ...(payload.config_json || {}),
+    },
+  });
+  await database("eval_workflow_compare_judge_requests").insert(row);
+  const inserted = await database("eval_workflow_compare_judge_requests")
+    .where({ compare_id: compareId, judge_run_id: judgeRunId })
+    .first();
+  const compareDetail = await loadWorkflowCompareHistoryDetail(database, env, compareId);
+  return executeWorkflowCompareJudgeDirect(database, env, inserted, compareDetail);
+}
+
+async function cancelWorkflowCompareJudgeRequest(database, req, compareId, requestId) {
+  const current = await database("eval_workflow_compare_judge_requests")
+    .select(["id", "status"])
+    .where({ id: requestId, compare_id: compareId })
+    .first();
+  if (!current) {
+    const error = new Error("Workflow compare judge request not found.");
+    error.status = 404;
+    error.code = "WORKFLOW_COMPARE_JUDGE_REQUEST_NOT_FOUND";
+    throw error;
+  }
+  if (!isJudgeRunRequestCancelable(current.status)) {
+    const error = new Error("Only queued or running compare judge requests can be cancelled.");
+    error.status = 409;
+    error.code = "WORKFLOW_COMPARE_JUDGE_REQUEST_NOT_CANCELABLE";
+    throw error;
+  }
+  const updatedCount = await database("eval_workflow_compare_judge_requests")
+    .where({ id: requestId, compare_id: compareId })
+    .whereIn("status", ["queued", "running"])
+    .update({
+      status: "cancelled",
+      finished_at: database.fn.now(),
+      date_updated: database.fn.now(),
+      user_updated: req.accountability?.user || null,
+      error_json: null,
+    });
+  if (!updatedCount) {
+    const error = new Error("Workflow compare judge request changed before it could be cancelled.");
+    error.status = 409;
+    error.code = "WORKFLOW_COMPARE_JUDGE_REQUEST_NOT_CANCELABLE";
+    throw error;
+  }
+  return database("eval_workflow_compare_judge_requests").where({ id: requestId }).first();
+}
+
+async function retryWorkflowCompareJudgeRequest(database, req, env, compareId, requestId, body = {}) {
+  const current = await database("eval_workflow_compare_judge_requests")
+    .where({ id: requestId, compare_id: compareId })
+    .first();
+  if (!current) {
+    const error = new Error("Workflow compare judge request not found.");
+    error.status = 404;
+    error.code = "WORKFLOW_COMPARE_JUDGE_REQUEST_NOT_FOUND";
+    throw error;
+  }
+  if (!isJudgeRunRequestRetryable(current.status)) {
+    const error = new Error("Only failed or cancelled compare judge requests can be retried.");
+    error.status = 409;
+    error.code = "WORKFLOW_COMPARE_JUDGE_REQUEST_NOT_RETRYABLE";
+    throw error;
+  }
+  let judgeRunId = String(body?.judge_run_id || "").trim();
+  if (!judgeRunId) {
+    judgeRunId = buildRetryJudgeRunId(current.judge_run_id);
+  }
+  if (!isSafeFileId(judgeRunId)) {
+    const error = new Error("judge_run_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "judge_run_id";
+    throw error;
+  }
+  const existing = await database("eval_workflow_compare_judge_requests")
+    .where({ compare_id: compareId, judge_run_id: judgeRunId })
+    .first();
+  if (existing) {
+    const error = new Error(`Judge request "${judgeRunId}" already exists for compare "${compareId}".`);
+    error.status = 409;
+    error.code = "JUDGE_REQUEST_CONFLICT";
+    throw error;
+  }
+  const artifactDir = compareJudgeArtifactDir(resolveWorkflowCompareRuntimeRoot(env), compareId, judgeRunId);
+  if (await fileExists(artifactDir)) {
+    const error = new Error(`Judge artifact directory "${judgeRunId}" already exists for compare "${compareId}".`);
+    error.status = 409;
+    error.code = "JUDGE_ARTIFACT_CONFLICT";
+    throw error;
+  }
+  const previousAttemptNo = Number.parseInt(String(current.attempt_no || 1), 10);
+  const attemptNo = (Number.isFinite(previousAttemptNo) && previousAttemptNo > 0 ? previousAttemptNo : 1) + 1;
+  const previousMaxAttempts = Number.parseInt(String(current.max_attempts || 1), 10);
+  const maxAttempts = Number.isFinite(previousMaxAttempts) ? Math.max(previousMaxAttempts, attemptNo) : attemptNo;
+  const retryReason = String(body?.retry_reason || body?.reason || "").trim().slice(0, 1000) || null;
+  const row = workflowCompareJudgeRequestRow(req, {
+    judge_run_id: judgeRunId,
+    compare_id: compareId,
+    baseline_run_id: current.baseline_run_id,
+    candidate_run_id: current.candidate_run_id,
+    rubric_id: current.rubric_id,
+    rubric_version: current.rubric_version,
+    judge_adapter_kind: current.judge_adapter_kind || "fake",
+    config_json: {
+      ...normalizeConfigJson(current.config_json),
+      source: "workflow_compare",
+      max_concurrency: 1,
+      retry_of_judge_run_id: current.judge_run_id,
+      retry_reason: retryReason,
+    },
+  }, {
+    source_request_id: current.id,
+    attempt_no: attemptNo,
+    max_attempts: maxAttempts,
+    retry_reason: retryReason,
+  });
+  await database("eval_workflow_compare_judge_requests").insert(row);
+  return database("eval_workflow_compare_judge_requests")
+    .where({ compare_id: compareId, judge_run_id: judgeRunId })
+    .first();
+}
+
+async function loadWorkflowCompareJudgeArtifact(env, compareId, judgeRunId) {
+  const dir = compareJudgeArtifactDir(resolveWorkflowCompareRuntimeRoot(env), compareId, judgeRunId);
+  const report = await readJsonFile(path.join(dir, "report.json"));
+  const caseResults = await readJsonFile(path.join(dir, "case-results.json"));
+  const judgeRun = await readJsonFile(path.join(dir, "judge-run.json"));
+  const packetIds = await listJsonIds(path.join(dir, "packets"));
+  return {
+    summary: {
+      ...workflowCompareJudgeRequestSummary({
+        id: judgeRun?.request_id || judgeRunId,
+        judge_run_id: judgeRun?.judge_run_id || judgeRunId,
+        compare_id: compareId,
+        baseline_run_id: judgeRun?.baseline_run_id || report?.baseline_run_id || null,
+        candidate_run_id: judgeRun?.candidate_run_id || report?.candidate_run_id || null,
+        rubric_id: report?.rubric_id || null,
+        rubric_version: report?.rubric_version || null,
+        status: report?.status || "succeeded",
+        judge_adapter_kind: report?.judge_adapter_kind || null,
+        artifact_path: `runtime-evals/workflow-compares/${compareId}/judge/${judgeRunId}`,
+        config_json: judgeRun?.config_json || {},
+        attempt_no: judgeRun?.attempt_no || 1,
+        max_attempts: judgeRun?.max_attempts || 1,
+        retry_reason: judgeRun?.retry_reason || null,
+        date_created: report?.created_at || null,
+        date_updated: report?.created_at || null,
+        error_json: null,
+      }),
+      total_cases: report?.total_cases ?? null,
+      candidate_preferred: report?.candidate_preferred ?? null,
+      baseline_preferred: report?.baseline_preferred ?? null,
+      tie: report?.tie ?? null,
+      needs_review: report?.needs_review ?? null,
+      errored: report?.errored ?? null,
+    },
+    judge_run: judgeRun,
+    report,
+    case_results: caseResults,
+    packets: packetIds.map((id) => ({ id, href: `packets/${id}.json` })),
+  };
+}
+
+async function createWorkflowLabCompare(database, env, body) {
   const baselineRunId = String(body?.baseline_run_id || "");
   const candidateRunId = String(body?.candidate_run_id || "");
   if (!isSafeFileId(baselineRunId) || !isSafeFileId(candidateRunId)) {
@@ -938,54 +2294,17 @@ async function createWorkflowLabCompare(roots, body) {
     error.code = "WORKFLOW_LAB_COMPARE_ERROR";
     throw error;
   }
-  const rootCandidates = Array.isArray(roots) ? roots : [roots];
-  const writeRoot = await findExistingRunRoot(rootCandidates, candidateRunId) || rootCandidates[0];
-  const artifactPrefix = workflowRunArtifactPrefix(writeRoot, rootCandidates[0]);
-  const reportId = `vs-${baselineRunId}`;
-  const jsonPath = workflowCompareReportPath(writeRoot, candidateRunId, reportId);
-  const existingJsonPath = await resolveWorkflowCompareReportJsonPath(writeRoot, candidateRunId, reportId);
-  const baseline = await loadRunForWorkflowLabCompare(rootCandidates, baselineRunId);
-  const candidate = await loadRunForWorkflowLabCompare(rootCandidates, candidateRunId);
-  if (await fileExists(existingJsonPath)) {
-    return {
-      created: false,
-      report_id: reportId,
-        report: await readJsonFile(existingJsonPath),
-      paths: {
-        json: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.json`),
-        markdown: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.md`),
-      },
-    };
-  }
-
-  const report = buildWorkflowLabCompareReport(baseline, candidate);
-  const mdPath = workflowCompareReportMarkdownPath(writeRoot, candidateRunId, reportId);
-  await mkdir(path.dirname(jsonPath), { recursive: true });
-  try {
-    await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-    await writeFile(mdPath, renderWorkflowLabCompareMarkdown(report), { encoding: "utf8", flag: "wx" });
-  } catch (error) {
-    if (error?.code === "EEXIST" && await fileExists(jsonPath)) {
-      return {
-        created: false,
-        report_id: reportId,
-        report: await readJsonFile(jsonPath),
-        paths: {
-          json: path.join("evals/runs", candidateRunId, "compare", `${reportId}.json`),
-          markdown: path.join("evals/runs", candidateRunId, "compare", `${reportId}.md`),
-        },
-      };
-    }
-    throw error;
-  }
+  const created = await createOrReuseWorkflowCompare({
+    database,
+    env,
+    baselineRunId,
+    candidateRunId,
+    sourceKind: "history_compare",
+  });
   return {
-    created: true,
-    report_id: reportId,
-    report,
-    paths: {
-      json: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.json`),
-      markdown: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.md`),
-    },
+    created: created.created,
+    compare_id: created.compare_id,
+    detail: created.detail,
   };
 }
 
@@ -2028,6 +3347,226 @@ function workflowSingleRunHistoryRunId(body = {}, result = {}) {
   return `workflow-single-${digest}`;
 }
 
+// single run case_id 必须随 input / reading 上下文绑定;
+// 不能用 "single-run" 字面量,否则 compare engine 会对所有 single run 共享同一 case_id,
+// 产出一份毫无意义的伪 compare 报告
+function workflowSingleRunCaseId(body = {}) {
+  const text = String(body?.text || "").trim();
+  const readingGoal = body?.reading_goal || "daily_reading";
+  const readingVariant = body?.reading_variant || "intermediate_reading";
+  const sourceType = body?.source_type || "user_input";
+  const raw = stableJson({ text, reading_goal: readingGoal, reading_variant: readingVariant, source_type: sourceType });
+  const digest = createHash("sha1").update(raw).digest("hex").slice(0, 12);
+  return `single-run-${digest}`;
+}
+
+// 把一次 single-run 执行结果包装成 case artifact,供 in-memory compare 复用;
+// 形状与 buildWorkflowSingleRunHistoryArtifact 内部 caseArtifact 一致,
+// 区别是 run_id 在比较时尚未落盘,使用 synthetic id;落盘时由 history 路径替换
+function buildSingleRunCaseArtifact({ body, result, runId }) {
+  const renderScene = result?.render_scene && typeof result.render_scene === "object" && !Array.isArray(result.render_scene)
+    ? result.render_scene
+    : {};
+  const workflowIdentity = result?.workflow_identity && typeof result.workflow_identity === "object"
+    ? { topology_mode: "learning", ...result.workflow_identity }
+    : { topology_mode: "learning" };
+  const schemaIdentity = result?.schema_identity && typeof result.schema_identity === "object"
+    ? { topology_mode: "learning", ...result.schema_identity }
+    : { topology_mode: "learning" };
+  const runtimeSummary = result?.runtime_summary && typeof result.runtime_summary === "object"
+    ? result.runtime_summary
+    : {};
+  const aggregate = runtimeSummary?.aggregate && typeof runtimeSummary.aggregate === "object"
+    ? runtimeSummary.aggregate
+    : {};
+  return {
+    case_id: workflowSingleRunCaseId(body),
+    run_id: runId,
+    adapter_status: result?.status || "failed",
+    user_facing_state: renderScene?.user_facing_state || null,
+    error: result?.error || null,
+    warnings: Array.isArray(result?.warnings) ? result.warnings : (Array.isArray(renderScene.warnings) ? renderScene.warnings : []),
+    drop_log: Array.isArray(renderScene.drop_log) ? renderScene.drop_log : [],
+    drop_log_summary: renderScene?.drop_log_summary || { total_drop_count: Array.isArray(renderScene.drop_log) ? renderScene.drop_log.length : 0 },
+    grader_results: [],
+    translations: Array.isArray(renderScene.translations) ? renderScene.translations : [],
+    inline_marks: Array.isArray(renderScene.inline_marks) ? renderScene.inline_marks : [],
+    sentence_entries: Array.isArray(renderScene.sentence_entries) ? renderScene.sentence_entries : [],
+    latency_seconds: Number(runtimeSummary?.latency_ms || 0) / 1000,
+    usage_summary: {
+      total_tokens: aggregate?.total_tokens ?? runtimeSummary?.total_tokens ?? null,
+      input_tokens: aggregate?.input_tokens ?? runtimeSummary?.input_tokens ?? null,
+      output_tokens: aggregate?.output_tokens ?? runtimeSummary?.output_tokens ?? null,
+    },
+    workflow_identity: workflowIdentity,
+    schema_identity: schemaIdentity,
+    prompt_identity: result?.prompt_identity || null,
+    model_identity: result?.model_identity || null,
+    runtime_summary: runtimeSummary,
+    render_scene: renderScene,
+    input_snapshot: {
+      text: String(body?.text || "").trim(),
+      reading_goal: body?.reading_goal || "daily_reading",
+      reading_variant: body?.reading_variant || "intermediate_reading",
+      source_type: body?.source_type || "user_input",
+    },
+  };
+}
+
+// 在 in-memory single-run compare 上下文中,baseline 与 candidate 各自需要一个
+// 临时 run_id 让 compare engine 接受;这里基于 input + prompt context 生成
+function syntheticSingleRunCompareRunId({ body, side, promptVariantId }) {
+  const raw = stableJson({
+    text: String(body?.text || "").trim(),
+    reading_goal: body?.reading_goal || "daily_reading",
+    reading_variant: body?.reading_variant || "intermediate_reading",
+    source_type: body?.source_type || "user_input",
+    side,
+    prompt_variant_id: promptVariantId || null,
+  });
+  const digest = createHash("sha1").update(raw).digest("hex").slice(0, 8);
+  return `single-compare-${side}-${digest}`;
+}
+
+// 双跑 single-run compare:同一篇文章并发跑 baseline + candidate,
+// 直接物化成 compare-first workspace;底层 run artifact 私有化,UI 只消费 persisted compare。
+async function createWorkflowLabSingleRunCompare({
+  database,
+  env,
+  body,
+  callUpstream = callEvalUpstreamJson,
+}) {
+  // 共享输入参数
+  const sharedFields = {
+    text: String(body?.text || "").trim(),
+    reading_goal: body?.reading_goal || "daily_reading",
+    reading_variant: body?.reading_variant || "intermediate_reading",
+    source_type: body?.source_type || "user_input",
+    model_selection: normalizeJsonObject(body?.model_selection),
+    rag_mode: body?.rag_mode || "off",
+    trace_scope: body?.trace_scope || "off",
+    timeout_seconds: body?.timeout_seconds || 120,
+  };
+  // 校验:必填 text
+  if (!sharedFields.text) {
+    const error = new Error("text is required for single-run compare.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "text";
+    throw error;
+  }
+  // 校验:baseline / candidate prompt_variant_id(任一可空,空时走 baseline)
+  const baselinePromptId = body?.baseline?.prompt_variant_id || null;
+  const candidatePromptId = body?.candidate?.prompt_variant_id || null;
+  if (baselinePromptId && !isSafeFileId(baselinePromptId)) {
+    const error = new Error("baseline.prompt_variant_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "baseline.prompt_variant_id";
+    throw error;
+  }
+  if (candidatePromptId && !isSafeFileId(candidatePromptId)) {
+    const error = new Error("candidate.prompt_variant_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "candidate.prompt_variant_id";
+    throw error;
+  }
+  if (baselinePromptId && candidatePromptId && baselinePromptId === candidatePromptId) {
+    // 同一个 prompt variant 不构成 compare
+    const error = new Error("baseline.prompt_variant_id and candidate.prompt_variant_id must differ when both are provided.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    throw error;
+  }
+
+  // 构造两侧 payload
+  const baselineBody = {
+    ...sharedFields,
+    prompt_variant_id: baselinePromptId,
+  };
+  const candidateBody = {
+    ...sharedFields,
+    prompt_variant_id: candidatePromptId,
+  };
+
+  // 并发跑两侧;任一失败整体回滚
+  let baselineResult;
+  let candidateResult;
+  try {
+    [baselineResult, candidateResult] = await Promise.all([
+      createWorkflowLabSingleRun({ database, env, body: baselineBody, callUpstream }),
+      createWorkflowLabSingleRun({ database, env, body: candidateBody, callUpstream }),
+    ]);
+  } catch (error) {
+    // 已经有 status / code 透传
+    throw error;
+  }
+
+  const savedBaseline = await saveWorkflowLabSingleRunToHistory({
+    env,
+    body: {
+      request: baselineBody,
+      result: baselineResult,
+    },
+  });
+  const savedCandidate = await saveWorkflowLabSingleRunToHistory({
+    env,
+    body: {
+      request: candidateBody,
+      result: candidateResult,
+    },
+  });
+  const compareCreate = await createOrReuseWorkflowCompare({
+    database,
+    env,
+    baselineRunId: savedBaseline.record.run_id,
+    candidateRunId: savedCandidate.record.run_id,
+    sourceKind: "single_run_compare",
+  });
+  const detail = compareCreate.detail;
+  const firstCaseId = detail?.report?.comparisons?.[0]?.case_id || null;
+  const firstEvidence = firstCaseId
+    ? await loadWorkflowCompareCaseEvidence(database, env, compareCreate.compare_id, firstCaseId)
+    : null;
+  const inputHash = computeInputHash({
+    text: sharedFields.text,
+    reading_goal: sharedFields.reading_goal,
+    reading_variant: sharedFields.reading_variant,
+    source_type: sharedFields.source_type,
+  });
+
+  return {
+    source: "persisted-compare",
+    compare_id: compareCreate.compare_id,
+    baseline: {
+      result: baselineResult,
+      case_artifact: firstEvidence?.baseline_artifact || null,
+      run_id: savedBaseline.record.run_id,
+    },
+    candidate: {
+      result: candidateResult,
+      case_artifact: firstEvidence?.candidate_artifact || null,
+      run_id: savedCandidate.record.run_id,
+    },
+    compare: {
+      ...detail.compare,
+      report: detail.report,
+      evidence_index: detail.evidence_index,
+      baseline_artifact: firstEvidence?.baseline_artifact || null,
+      candidate_artifact: firstEvidence?.candidate_artifact || null,
+      created: compareCreate.created,
+    },
+    input_snapshot: {
+      text: sharedFields.text,
+      reading_goal: sharedFields.reading_goal,
+      reading_variant: sharedFields.reading_variant,
+      source_type: sharedFields.source_type,
+      input_hash: inputHash.input_hash,
+    },
+  };
+}
+
 function buildWorkflowSingleRunHistoryArtifact({ body, result, runId }) {
   const now = new Date().toISOString();
   const runtimeSummary = result?.runtime_summary && typeof result.runtime_summary === "object"
@@ -2054,8 +3593,10 @@ function buildWorkflowSingleRunHistoryArtifact({ body, result, runId }) {
       ? renderScene.warnings
       : [];
   const dropLog = Array.isArray(renderScene.drop_log) ? renderScene.drop_log : [];
+  // case_id 必须随 input / reading 上下文绑定,否则所有 single run 共享 "single-run" 字面量,
+  // compare engine 会把两条不同输入的 single run 误判为有共享 case;这里用 (text + reading context) 的稳定哈希
   const caseArtifact = {
-    case_id: "single-run",
+    case_id: workflowSingleRunCaseId(body),
     run_id: runId,
     adapter_status: result?.status || "failed",
     user_facing_state: renderScene?.user_facing_state || null,
@@ -2149,7 +3690,9 @@ async function saveWorkflowLabSingleRunToHistory({ env, body = {} }) {
   await writeFile(path.join(dir, "run.json"), `${JSON.stringify(artifact.run, null, 2)}\n`, "utf8");
   await writeFile(path.join(dir, "report.json"), `${JSON.stringify(artifact.report, null, 2)}\n`, "utf8");
   await writeFile(path.join(dir, "case-index.json"), `${JSON.stringify(artifact.caseIndex, null, 2)}\n`, "utf8");
-  await writeFile(path.join(dir, "cases", "single-run.json"), `${JSON.stringify(artifact.caseArtifact, null, 2)}\n`, "utf8");
+  // 文件名也用 case_id(已绑定 input / context),不再写死 "single-run.json"
+  const singleRunCaseFile = `${isSafeFileId(artifact.caseArtifact.case_id) ? artifact.caseArtifact.case_id : "single-run"}.json`;
+  await writeFile(path.join(dir, "cases", singleRunCaseFile), `${JSON.stringify(artifact.caseArtifact, null, 2)}\n`, "utf8");
   const summary = await loadRunSummary(roots, runId);
   return { record: workflowHistoryRecord(summary), duplicate: false };
 }
@@ -3631,8 +5174,19 @@ export {
   buildRetryWorkflowRequestConfig,
   createWorkflowDataset,
   buildWorkflowLabCompareReport,
+  buildSingleRunCaseArtifact,
+  createOrReuseWorkflowCompare,
+  createWorkflowCompareJudgeRequest,
+  deleteWorkflowCompareCascade,
+  loadWorkflowCompareCaseEvidence,
+  loadWorkflowCompareHistoryDetail,
+  listWorkflowCompareHistoryRecords,
+  listWorkflowCompareJudgeRequests,
+  syntheticSingleRunCompareRunId,
   cancelJudgeRunRequest,
+  cancelWorkflowCompareJudgeRequest,
   createWorkflowLabSingleRun,
+  createWorkflowLabSingleRunCompare,
   saveWorkflowLabSingleRunToHistory,
   createWorkflowLabCompare,
   createJudgeRunRequest,
@@ -3644,13 +5198,18 @@ export {
   isWorkflowRunRequestRetryable,
   judgeRequestRow,
   judgeRunRequestSummary,
+  workflowCompareIdForRunPair,
+  workflowCompareJudgeRequestRow,
+  workflowCompareJudgeRequestSummary,
   listJudgeRunRequests,
   listJudgeRubrics,
   listReadyPromptVariantSnapshots,
+  loadWorkflowCompareJudgeArtifact,
   patchYamlRunId,
   promptVariantSnapshotFromRow,
   readWorkflowDatasetSummary,
   retryJudgeRunRequest,
+  retryWorkflowCompareJudgeRequest,
   retryWorkflowRunRequest,
   listWorkflowDatasets,
   validateWorkflowRunRequest,
@@ -4036,8 +5595,7 @@ export default (router, context) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const roots = resolveWorkflowRunRoots(env);
-      const records = await loadWorkflowRunHistoryRecords(roots, clampLimit(req.query?.limit));
+      const records = await listWorkflowCompareHistoryRecords(database, env, clampLimit(req.query?.limit));
       res.json({ data: { records } });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
@@ -4045,31 +5603,67 @@ export default (router, context) => {
     }
   });
 
-  router.get("/workflow-lab/run-history/:runId", async (req, res, next) => {
+  router.get("/workflow-lab/run-history/:compareId", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const roots = resolveWorkflowRunRoots(env);
-      res.json({ data: await loadWorkflowRunHistoryDetail(roots, req.params.runId) });
+      res.json({ data: await loadWorkflowCompareHistoryDetail(database, env, req.params.compareId) });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
     }
   });
 
-  router.delete("/workflow-lab/run-history/:runId", async (req, res, next) => {
+  router.delete("/workflow-lab/run-history/:compareId", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const runId = String(req.params.runId || "");
-      if (!isSafeFileId(runId)) {
-        const error = new Error("Invalid run id.");
-        error.status = 400;
-        error.code = "INVALID_RUN_ID";
-        throw error;
-      }
-      const roots = resolveWorkflowRunRoots(env);
-      res.json({ data: await deleteWorkflowRunCascade(database, roots, runId) });
+      res.json({ data: await deleteWorkflowCompareCascade(database, env, req.params.compareId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  router.get("/workflow-lab/compares", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const records = await listWorkflowCompareHistoryRecords(database, env, clampLimit(req.query?.limit));
+      res.json({ data: { records } });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  router.get("/workflow-lab/compares/:compareId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      res.json({ data: await loadWorkflowCompareHistoryDetail(database, env, req.params.compareId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  router.get("/workflow-lab/compares/:compareId/cases/:caseId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      res.json({ data: await loadWorkflowCompareCaseEvidence(database, env, req.params.compareId, req.params.caseId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  router.delete("/workflow-lab/compares/:compareId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      res.json({ data: await deleteWorkflowCompareCascade(database, env, req.params.compareId) });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
@@ -4117,8 +5711,7 @@ export default (router, context) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const roots = resolveWorkflowRunRoots(env);
-      const result = await createWorkflowLabCompare(roots, req.body || {});
+      const result = await createWorkflowLabCompare(database, env, req.body || {});
       res.status(result.created ? 201 : 200).json({ data: result });
     } catch (error) {
       if (error?.name === "AbortError") {
@@ -4218,6 +5811,153 @@ export default (router, context) => {
       } else {
         next(error);
       }
+    }
+  });
+
+  // 双跑单篇验证 compare:同一篇文章并发跑 baseline + candidate,直接产出 compare workspace;
+  // 主链入口;自动物化双侧 run artifact 与 compare record
+  router.post("/workflow-lab/single-run-compare", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const payload = await createWorkflowLabSingleRunCompare({
+        database,
+        env,
+        body: req.body || {},
+      });
+      res.json({ data: payload });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_LAB_SINGLE_RUN_COMPARE_ERROR",
+                field: error.field,
+                upstream_status: error.upstream_status,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.get("/workflow-lab/compares/:compareId/judge-requests", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const rows = await listWorkflowCompareJudgeRequests(database, req.params.compareId, req.query || {});
+      res.json({ data: rows.map((row) => workflowCompareJudgeRequestSummary(row)) });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_COMPARE_JUDGE_REQUEST_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/workflow-lab/compares/:compareId/judge-requests", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const row = await createWorkflowCompareJudgeRequest(database, req, env, req.params.compareId, req.body || {});
+      res.status(201).json({ data: workflowCompareJudgeRequestSummary(row) });
+    } catch (error) {
+      if (error?.status) {
+        const errors = Array.isArray(error.validationErrors)
+          ? error.validationErrors.map((item) => ({
+              message: item.message,
+              extensions: { code: error.code || "VALIDATION_ERROR", field: item.field },
+            }))
+          : [
+              {
+                message: error.message,
+                extensions: {
+                  code: error.code || "WORKFLOW_COMPARE_JUDGE_REQUEST_ERROR",
+                  field: error.field,
+                },
+              },
+            ];
+        res.status(error.status).json({ errors });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/workflow-lab/compares/:compareId/judge-requests/:requestId/cancel", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const row = await cancelWorkflowCompareJudgeRequest(database, req, req.params.compareId, req.params.requestId);
+      res.json({ data: workflowCompareJudgeRequestSummary(row) });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_COMPARE_JUDGE_REQUEST_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/workflow-lab/compares/:compareId/judge-requests/:requestId/retry", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const row = await retryWorkflowCompareJudgeRequest(database, req, env, req.params.compareId, req.params.requestId, req.body || {});
+      res.status(201).json({ data: workflowCompareJudgeRequestSummary(row) });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_COMPARE_JUDGE_REQUEST_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.get("/workflow-lab/compares/:compareId/judge/:judgeRunId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      res.json({ data: await loadWorkflowCompareJudgeArtifact(env, req.params.compareId, req.params.judgeRunId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
     }
   });
 

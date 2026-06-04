@@ -3,172 +3,291 @@ import { computed } from "vue";
 import ResultBlock from "../../../components/ResultBlock.vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
 import WorkflowSentenceNotebook from "./WorkflowSentenceNotebook.vue";
-import { dash, normalizeSingleRunPayload } from "../composables/workflowLabFormatting.js";
+import SentenceCompareDiffView from "./SentenceCompareDiffView.vue";
+import { dash } from "../composables/workflowLabFormatting.js";
 
+// 接收单跑 compare 产物
+// compareResult = { baseline, candidate, compare, input_snapshot }
+// compare = { report, baseline_artifact, candidate_artifact, baseline_run_id, candidate_run_id, input_hash }
 const props = defineProps({
-  result: { type: Object, default: null },
+  compareResult: { type: Object, default: null },
   loading: { type: Boolean, default: false },
-  savingHistory: { type: Boolean, default: false },
 });
-const emit = defineEmits(["go-to-dataset-runs", "save-run-history", "open-run-history"]);
+const emit = defineEmits([
+  "open-compare",
+]);
 
-const normalized = computed(() => normalizeSingleRunPayload(props.result));
-const warnings = computed(() => normalized.value.warnings || []);
-const runtimeSummary = computed(() => (
-  normalized.value.runtimeSummary && typeof normalized.value.runtimeSummary === "object"
-    ? normalized.value.runtimeSummary
-    : {}
-));
-const usageAggregate = computed(() => (
-  runtimeSummary.value?.aggregate && typeof runtimeSummary.value.aggregate === "object"
-    ? runtimeSummary.value.aggregate
-    : runtimeSummary.value
-));
+const compare = computed(() => props.compareResult?.compare || null);
+const baseline = computed(() => props.compareResult?.baseline || null);
+const candidate = computed(() => props.compareResult?.candidate || null);
+const report = computed(() => compare.value?.report || null);
 
-const succeeded = computed(() => normalized.value.status === "succeeded" || normalized.value.status === "complete");
-const savedHistoryRunId = computed(() => normalized.value.savedHistoryRunId || "");
+const inputSnapshot = computed(() => props.compareResult?.input_snapshot || {});
+
+const baselineArtifact = computed(() => compare.value?.baseline_artifact || baseline.value?.case_artifact || null);
+const candidateArtifact = computed(() => compare.value?.candidate_artifact || candidate.value?.case_artifact || null);
+
+const verdict = computed(() => {
+  const wins = report.value?.wins || 0;
+  const losses = report.value?.losses || 0;
+  const ties = report.value?.ties || 0;
+  if (wins > losses) return "win";
+  if (losses > wins) return "loss";
+  if (wins || losses) return "tie";
+  return "no_delta";
+});
+
+const verdictTone = computed(() => {
+  if (verdict.value === "win") return "success";
+  if (verdict.value === "loss") return "danger";
+  if (verdict.value === "tie") return "warning";
+  return "neutral";
+});
+
+const verdictLabel = computed(() => {
+  if (verdict.value === "win") return "候选更优";
+  if (verdict.value === "loss") return "候选更差";
+  if (verdict.value === "tie") return "持平";
+  return "无 deterministic delta";
+});
+
+const comparisons = computed(() => Array.isArray(report.value?.comparisons) ? report.value.comparisons : []);
+const firstComparison = computed(() => comparisons.value[0] || null);
+
+const identityWarnings = computed(() => Array.isArray(report.value?.identity_warnings) ? report.value.identity_warnings : []);
+
+function summarizeRun(side) {
+  const artifact = side === "baseline" ? baselineArtifact.value : candidateArtifact.value;
+  if (!artifact) return null;
+  const adapterStatus = artifact.adapter_status || "unknown";
+  const latency = Number(artifact.latency_seconds || 0);
+  const tokens = artifact.usage_summary?.total_tokens ?? null;
+  return {
+    adapter_status: adapterStatus,
+    latency_seconds: Number.isFinite(latency) ? latency : 0,
+    total_tokens: tokens,
+    prompt_variant_id: artifact.prompt_identity?.prompt_variant_id || null,
+    prompt_snapshot_hash: artifact.prompt_identity?.prompt_snapshot_hash || null,
+    profile_name: artifact.model_identity?.profile_name || null,
+    model_name: artifact.model_identity?.model_name || null,
+    translation_count: Array.isArray(artifact.translations) ? artifact.translations.length : 0,
+    inline_mark_count: Array.isArray(artifact.inline_marks) ? artifact.inline_marks.length : 0,
+    sentence_entry_count: Array.isArray(artifact.sentence_entries) ? artifact.sentence_entries.length : 0,
+  };
+}
+
+const baselineSummary = computed(() => summarizeRun("baseline"));
+const candidateSummary = computed(() => summarizeRun("candidate"));
 
 const preparedSentences = computed(() => {
-  const raw = props.result;
-  if (!raw) return [];
   const candidates = [
-    raw.prepared_sentences,
-    raw.run?.prepared_sentences,
-    raw.output?.article?.sentences,
-    raw.scene?.prepared_sentences,
+    baselineArtifact.value?.prepared_sentences,
+    baselineArtifact.value?.input_snapshot?.prepared_sentences,
+    candidateArtifact.value?.prepared_sentences,
+    candidateArtifact.value?.input_snapshot?.prepared_sentences,
   ];
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate) && candidate.length) return candidate;
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length) return c;
   }
   return [];
 });
 
-const sentenceCount = computed(() => preparedSentences.value.length || normalized.value.scene?.article?.sentences?.length || 0);
-const lexicalAnnotationCount = computed(() => (
-  Array.isArray(normalized.value.scene?.inline_marks)
-    ? normalized.value.scene.inline_marks.filter((item) => item?.annotation_type !== "grammar_note").length
-    : 0
-));
-const grammarAnnotationCount = computed(() => {
-  const marks = Array.isArray(normalized.value.scene?.inline_marks)
-    ? normalized.value.scene.inline_marks.filter((item) => item?.annotation_type === "grammar_note").length
-    : 0;
-  const entries = Array.isArray(normalized.value.scene?.sentence_entries)
-    ? normalized.value.scene.sentence_entries.filter((item) => item?.entry_type === "grammar_note" || item?.entry_type === "sentence_analysis").length
-    : 0;
-  return marks + entries;
-});
+function sideStatus(side) {
+  return side === "baseline"
+    ? (baseline.value?.result?.status || baselineArtifact.value?.adapter_status || "unknown")
+    : (candidate.value?.result?.status || candidateArtifact.value?.adapter_status || "unknown");
+}
 
-const latencySeconds = computed(() => {
-  const raw = Number(runtimeSummary.value?.latency_ms);
-  if (!Number.isFinite(raw) || raw <= 0) return "—";
-  return `${(raw / 1000).toFixed(raw >= 10000 ? 1 : 2)} s`;
-});
+function readingGoalLabel(value) {
+  return value === "exam" ? "考试阅读" : value === "daily_reading" ? "日常阅读" : value || "—";
+}
+
+function readingVariantLabel(value) {
+  const map = {
+    gaokao: "高考",
+    cet: "CET",
+    kaoyan: "考研",
+    tem: "TEM",
+    ielts_toefl: "IELTS / TOEFL",
+    beginner_reading: "入门阅读",
+    intermediate_reading: "进阶阅读",
+    intensive_reading: "精读",
+  };
+  return map[value] || value || "—";
+}
+
 </script>
 
 <template>
-  <section class="single-run-result">
-    <div v-if="loading" class="empty">正在验证这篇文章...</div>
-    <div v-else-if="!result" class="empty">完成一次单篇验证后，这里会显示结构化结果。它只服务当前调试，不会进入队列或已完成列表。</div>
+  <section class="compare-workspace-result">
+    <div v-if="loading" class="empty">正在并发执行 baseline 与 candidate 两次 workflow execution...</div>
+    <div v-else-if="!compareResult" class="empty">完成一次单篇双跑后,这里会显示 baseline / candidate 完整执行结果和 deterministic compare 摘要。Workflow Lab 默认会直接物化 compare 记录，不再要求先手动保存 run 历史。</div>
     <template v-else>
-      <header>
+      <header class="cw-header">
         <div>
-          <p>单篇验证结果</p>
-          <h2>{{ normalized.status }}</h2>
+          <p>Compare Workspace</p>
+          <h2>单篇 baseline / candidate compare</h2>
         </div>
-        <span :class="normalized.status">{{ normalized.status }}</span>
+        <span :class="`verdict-pill is-${verdictTone}`">{{ verdictLabel }}</span>
       </header>
 
-      <div class="notice">
-        这是临时验证结果，<strong>不进入运行队列</strong>，也不会出现在已完成 runs 列表。
-        如果需要保留这次结果，请手动保存到 <strong>Run History</strong>。通过后建议到「数据集验证」批量跑；失败则回「候选版本」调整。
-      </div>
-
-      <div class="history-actions">
-        <button type="button" class="ghost-cta" :disabled="savingHistory" @click="emit('save-run-history')">
-          {{ savingHistory ? "保存中..." : (savedHistoryRunId ? "已保存到 Run History" : "保存到 Run History") }}
-        </button>
-        <button
-          v-if="savedHistoryRunId"
-          type="button"
-          class="ghost-cta"
-          @click="emit('open-run-history', savedHistoryRunId)"
-        >
-          在 Run History 中打开
-        </button>
-      </div>
-
-      <section class="overview-panel">
-        <div class="overview-facts">
-          <article>
-            <dt>候选版本</dt>
-            <dd>{{ dash(normalized.promptIdentity?.prompt_variant_id, "baseline") }}</dd>
-          </article>
-          <article>
-            <dt>Snapshot</dt>
-            <dd>{{ dash(normalized.promptIdentity?.prompt_snapshot_hash) }}</dd>
-          </article>
-          <article>
-            <dt>模型方案</dt>
-            <dd>{{ dash(normalized.modelIdentity?.profile_name || normalized.modelIdentity?.model_name) }}</dd>
-          </article>
-          <article>
-            <dt>耗时</dt>
-            <dd>{{ latencySeconds }}</dd>
-          </article>
-          <article>
-            <dt>Tokens</dt>
-            <dd>
-              {{ dash(usageAggregate?.total_tokens, "—") }}
-              <span class="inline-detail">
-                Input {{ dash(usageAggregate?.input_tokens, "—") }} / Output {{ dash(usageAggregate?.output_tokens, "—") }}
-              </span>
-            </dd>
-          </article>
-          <article>
-            <dt>输出状态</dt>
-            <dd>{{ dash(normalized.scene?.user_facing_state) }}</dd>
-          </article>
+      <section class="input-context">
+        <header>
+          <strong>输入文章(双跑共享)</strong>
+          <small>input_hash {{ compare?.input_hash || "—" }}</small>
+        </header>
+        <div class="input-grid">
+          <div>
+            <dt>阅读目标</dt>
+            <dd>{{ readingGoalLabel(inputSnapshot.reading_goal) }}</dd>
+          </div>
+          <div>
+            <dt>阅读场景</dt>
+            <dd>{{ readingVariantLabel(inputSnapshot.reading_variant) }}</dd>
+          </div>
+          <div>
+            <dt>Case 数</dt>
+            <dd>{{ dash(report?.total_cases, "—") }}</dd>
+          </div>
         </div>
-
-        <div class="summary-strip">
-          <span>句子 {{ sentenceCount }}</span>
-          <span>词汇标注 {{ lexicalAnnotationCount }}</span>
-          <span>语法标注 {{ grammarAnnotationCount }}</span>
-          <span>提醒 {{ warnings.length }}</span>
-        </div>
+        <details v-if="inputSnapshot.text" class="text-preview">
+          <summary>查看输入文本(共 {{ inputSnapshot.text.length }} 字符)</summary>
+          <pre>{{ inputSnapshot.text }}</pre>
+        </details>
       </section>
 
-      <section v-if="normalized.error" class="error-box">
-        <strong>{{ normalized.error.code || "workflow_error" }}</strong>
-        <p>{{ normalized.error.message || "单篇验证执行失败。" }}</p>
+      <section v-if="identityWarnings.length" class="warnings">
+        <strong>运行身份提醒</strong>
+        <ul>
+          <li v-for="(warning, index) in identityWarnings" :key="index">{{ warning }}</li>
+        </ul>
       </section>
 
-      <WorkflowSentenceNotebook
-        :payload="normalized.scene || normalized.raw"
-        :prepared-sentences="preparedSentences"
-        empty-text="本次单篇验证没有可用的句子级证据。"
-      />
+      <section class="run-grid">
+        <article class="run-pane">
+          <header>
+            <strong>Baseline</strong>
+            <span :class="`status-pill is-${sideStatus('baseline') === 'succeeded' ? 'success' : sideStatus('baseline') === 'failed' ? 'danger' : 'neutral'}`">{{ sideStatus("baseline") }}</span>
+          </header>
+          <dl>
+            <div><dt>候选版本</dt><dd>{{ dash(baselineSummary?.prompt_variant_id, "baseline default") }}</dd></div>
+            <div><dt>Snapshot</dt><dd>{{ dash(baselineSummary?.prompt_snapshot_hash) }}</dd></div>
+            <div><dt>模型</dt><dd>{{ dash(baselineSummary?.profile_name || baselineSummary?.model_name) }}</dd></div>
+            <div><dt>耗时</dt><dd>{{ baselineSummary ? `${baselineSummary.latency_seconds.toFixed(2)} s` : "—" }}</dd></div>
+            <div><dt>Tokens</dt><dd>{{ dash(baselineSummary?.total_tokens, "—") }}</dd></div>
+            <div><dt>句子标注</dt><dd>{{ baselineSummary ? `${baselineSummary.sentence_entry_count} 条` : "—" }}</dd></div>
+          </dl>
+          <p v-if="baselineSummary?.inline_mark_count || baselineSummary?.translation_count" class="aux-line">
+            词汇标注 {{ baselineSummary.inline_mark_count }} · 翻译 {{ baselineSummary.translation_count }}
+          </p>
+        </article>
 
-      <ResultBlock title="完整响应 JSON" :open="false">
-        <JsonTreeView :value="result" label="workflow_single_run" />
+        <article class="run-pane">
+          <header>
+            <strong>Candidate</strong>
+            <span :class="`status-pill is-${sideStatus('candidate') === 'succeeded' ? 'success' : sideStatus('candidate') === 'failed' ? 'danger' : 'neutral'}`">{{ sideStatus("candidate") }}</span>
+          </header>
+          <dl>
+            <div><dt>候选版本</dt><dd>{{ dash(candidateSummary?.prompt_variant_id, "baseline") }}</dd></div>
+            <div><dt>Snapshot</dt><dd>{{ dash(candidateSummary?.prompt_snapshot_hash) }}</dd></div>
+            <div><dt>模型</dt><dd>{{ dash(candidateSummary?.profile_name || candidateSummary?.model_name) }}</dd></div>
+            <div><dt>耗时</dt><dd>{{ candidateSummary ? `${candidateSummary.latency_seconds.toFixed(2)} s` : "—" }}</dd></div>
+            <div><dt>Tokens</dt><dd>{{ dash(candidateSummary?.total_tokens, "—") }}</dd></div>
+            <div><dt>句子标注</dt><dd>{{ candidateSummary ? `${candidateSummary.sentence_entry_count} 条` : "—" }}</dd></div>
+          </dl>
+          <p v-if="candidateSummary?.inline_mark_count || candidateSummary?.translation_count" class="aux-line">
+            词汇标注 {{ candidateSummary.inline_mark_count }} · 翻译 {{ candidateSummary.translation_count }}
+          </p>
+        </article>
+      </section>
+
+      <section class="delta-summary">
+        <header>
+          <strong>Deterministic 概览</strong>
+          <small>辅助参考,不等同于质量判断</small>
+        </header>
+        <dl>
+          <div><dt>更好</dt><dd>{{ report?.wins ?? 0 }}</dd></div>
+          <div><dt>变差</dt><dd>{{ report?.losses ?? 0 }}</dd></div>
+          <div><dt>持平</dt><dd>{{ report?.ties ?? 0 }}</dd></div>
+          <div><dt>总 case</dt><dd>{{ report?.total_cases ?? 0 }}</dd></div>
+        </dl>
+      </section>
+
+      <section v-if="baselineArtifact || candidateArtifact" class="sentence-diff">
+        <header>
+          <strong>句子级差异</strong>
+          <small>主视图,与 CaseEvidenceInspector 同源</small>
+        </header>
+        <SentenceCompareDiffView
+          :baseline-artifact="baselineArtifact"
+          :candidate-artifact="candidateArtifact"
+          :prepared-sentences="preparedSentences"
+          :compare-case="firstComparison"
+          empty-text="本次 compare 暂无可比较 case。"
+        />
+        <p v-if="firstComparison" class="case-delta-note">
+          <span :class="`verdict-pill is-${firstComparison.verdict === 'win' ? 'success' : firstComparison.verdict === 'loss' ? 'danger' : 'neutral'}`">{{ firstComparison.verdict || "—" }}</span>
+          <span v-if="firstComparison.reasons?.length">{{ firstComparison.reasons.join("; ") }}</span>
+        </p>
+      </section>
+
+      <section v-if="baselineArtifact || candidateArtifact" class="notebook">
+        <header>
+          <strong>句子级证据</strong>
+          <small>候选侧完整标注,主视图</small>
+        </header>
+        <WorkflowSentenceNotebook
+          :payload="candidateArtifact?.render_scene || candidateArtifact || null"
+          :prepared-sentences="preparedSentences"
+          empty-text="本次候选侧没有可用的句子级证据。"
+        />
+      </section>
+
+      <section class="archive-actions">
+        <header>
+          <strong>继续</strong>
+          <small>这次双跑已经自动物化成 workflow compare；下一个工作区直接消费 compare_id 级别的证据、judge 和 review。</small>
+        </header>
+        <div class="action-row">
+          <button
+            type="button"
+            class="primary-cta"
+            :disabled="!compareResult"
+            @click="emit('open-compare')"
+          >
+            进入 Compare 结果
+          </button>
+        </div>
+        <p class="archive-note">
+          Workflow Lab 现在默认以 compare 为唯一公开历史对象。底层 baseline / candidate run artifact 仍会生成，
+          但只作为 compare 证据依赖，不再作为用户可见的 Run History 顶层记录。
+        </p>
+        <dl v-if="compareResult?.compare" class="run-id-grid">
+          <div>
+            <dt>Compare id</dt>
+            <dd>{{ compareResult.compare.compare_id || compareResult.compare_id || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Baseline run id</dt>
+            <dd>{{ compareResult.compare.baseline_run_id || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Candidate run id</dt>
+            <dd>{{ compareResult.compare.candidate_run_id || "—" }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <ResultBlock title="完整 compare workspace JSON" :open="false">
+        <JsonTreeView :value="compareResult" label="workflow_compare_workspace" />
       </ResultBlock>
-
-      <section v-if="succeeded" class="next-step-cta" role="region" aria-label="下一步 CTA">
-        <div>
-          <strong>验证通过?</strong>
-          <small>下一步可去「数据集验证」批量跑,得到逐 case 证据;或继续调「候选版本」迭代。</small>
-        </div>
-        <div class="next-step-cta-actions">
-          <button type="button" class="primary-cta" @click="emit('go-to-dataset-runs')">去数据集验证</button>
-        </div>
-      </section>
     </template>
   </section>
 </template>
 
 <style scoped>
-.single-run-result {
+.compare-workspace-result {
   container-type: inline-size;
   display: grid;
   gap: 14px;
@@ -178,174 +297,189 @@ const latencySeconds = computed(() => {
   padding: 16px;
 }
 
-header {
+.cw-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
 
+.cw-header p,
 header p,
-dt,
-.empty {
+header small,
+.empty,
+.warnings ul,
+.archive-note {
   margin: 0;
   color: var(--theme--foreground-subdued);
   font-size: 12px;
   font-weight: 700;
 }
 
-header h2 {
+.cw-header h2 {
   margin: 2px 0 0;
   font-size: 18px;
 }
 
-header > div {
+.cw-header > div {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-header > span {
-  flex: 0 0 auto;
-  align-self: flex-start;
-  border: 1px solid var(--theme--border-color);
-  border-radius: 999px;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-header span.succeeded {
-  border-color: var(--theme--success);
-  background: var(--theme--success-background);
-}
-
-header span.failed,
-header span.timeout {
-  border-color: var(--theme--danger);
-  background: var(--theme--danger-background);
-}
-
-.notice {
+.input-context,
+.run-grid,
+.delta-summary,
+.sentence-diff,
+.notebook,
+.archive-actions,
+.warnings {
   border: 1px solid var(--theme--border-color);
   border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--theme--background-subdued);
-  color: var(--theme--foreground-subdued);
+  background: var(--theme--background);
+  padding: 12px 14px;
+}
+
+.input-context header,
+.run-pane header,
+.delta-summary header,
+.sentence-diff header,
+.notebook header,
+.archive-actions header,
+.warnings {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.input-context header strong,
+.run-pane header strong,
+.delta-summary header strong,
+.sentence-diff header strong,
+.notebook header strong,
+.archive-actions header strong {
   font-size: 13px;
-  line-height: 1.55;
+  color: var(--theme--foreground);
 }
 
-.history-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.overview-panel {
-  display: grid;
-  gap: 12px;
-}
-
-.overview-facts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  border: 1px solid var(--theme--border-color);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.overview-facts article {
-  min-width: 0;
-  background: var(--theme--background-subdued);
-  padding: 12px;
-}
-
-.summary-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.summary-strip span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--theme--border-color);
-  border-radius: 999px;
-  background: var(--theme--background-subdued);
+dt {
   color: var(--theme--foreground-subdued);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 dd {
   margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
-.inline-detail {
-  display: block;
-  margin-top: 4px;
-  color: var(--theme--foreground-subdued);
-  font-size: 11px;
-  font-weight: 400;
+.input-grid,
+.delta-summary dl,
+.run-pane dl {
+  display: grid;
+  gap: 1px;
 }
 
-.error-box {
-  border: 1px solid var(--theme--danger);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--theme--danger-background);
+.input-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.error-box p {
-  margin: 6px 0 0;
+.delta-summary dl {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.next-step-cta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.run-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--theme--primary) 45%, var(--theme--border-color));
+  background: var(--theme--background-subdued);
+  border: 0;
+  padding: 0;
+}
+
+.run-pane {
+  background: var(--theme--background);
+  border: 1px solid var(--theme--border-color);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--theme--primary) 4%, var(--theme--background));
-  padding: 10px 14px;
-  position: relative;
-}
-.next-step-cta::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 12px;
-  transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--theme--primary);
-}
-.next-step-cta {
-  padding-left: 28px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
 }
 
-.next-step-cta strong {
-  color: var(--theme--foreground);
+.run-pane dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  overflow: hidden;
 }
 
-.next-step-cta small {
-  display: block;
-  margin-top: 4px;
+.run-pane dl > div,
+.input-grid > div,
+.delta-summary dl > div {
+  background: var(--theme--background-subdued);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.aux-line {
+  margin: 0;
   color: var(--theme--foreground-subdued);
   font-size: 11px;
+}
+
+.text-preview pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 11px;
+  background: var(--theme--background-subdued);
+  padding: 8px 10px;
+  border-radius: 6px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.warnings {
+  border-color: var(--theme--warning);
+  background: var(--theme--warning-background);
+}
+
+.warnings ul {
+  list-style: none;
+  padding: 0;
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
   font-weight: 400;
 }
 
-.next-step-cta-actions {
+.case-delta-note {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  margin: 8px 0 0;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+}
+
+.archive-actions {
+  background: var(--theme--background-subdued);
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .primary-cta {
@@ -370,18 +504,91 @@ dd {
   cursor: pointer;
 }
 
-@container (max-width: 760px) {
-  .overview-facts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
-@container (max-width: 520px) {
-  header {
-    display: grid;
-  }
+.archive-note {
+  margin-top: 8px;
+  font-weight: 400;
+  line-height: 1.55;
+}
 
-  .overview-facts {
+.run-id-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 8px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.run-id-grid > div {
+  background: var(--theme--background-subdued);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.run-id-grid dt {
+  color: var(--theme--foreground-subdued);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-id-grid dd {
+  margin: 4px 0 0;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.status-pill,
+.verdict-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--theme--border-color);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--theme--background);
+}
+
+.status-pill.is-success,
+.verdict-pill.is-success {
+  color: var(--theme--success);
+  border-color: color-mix(in srgb, var(--theme--success) 45%, var(--theme--border-color));
+}
+
+.status-pill.is-danger,
+.verdict-pill.is-danger {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
+}
+
+.status-pill.is-warning,
+.verdict-pill.is-warning {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+}
+
+.status-pill.is-neutral,
+.verdict-pill.is-neutral {
+  color: var(--theme--foreground-subdued);
+}
+
+@container (max-width: 760px) {
+  .run-grid,
+  .input-grid,
+  .delta-summary dl {
+    grid-template-columns: 1fr;
+  }
+  .run-pane dl {
     grid-template-columns: 1fr;
   }
 }

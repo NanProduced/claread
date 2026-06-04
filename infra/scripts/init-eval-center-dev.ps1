@@ -15,6 +15,7 @@ $resetScript = Join-Path $PSScriptRoot "reset-eval-center-data.ps1"
 $directusEnvPath = Join-Path $RepoRoot "apps\\directus\\.env"
 $nodeLabRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\node-lab"
 $workflowRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-runs"
+$workflowCompareRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-compares"
 $staticRunsRoot = Join-Path $RepoRoot "evals\\runs"
 $datasetRoot = Join-Path $RepoRoot "evals\\datasets"
 $rubricRoot = Join-Path $RepoRoot "evals\\rubrics"
@@ -106,16 +107,21 @@ $nodeWorkspaceConstraint = Invoke-PostgresScalar "SELECT pg_get_constraintdef(oi
 $nodeResultKindConstraint = Invoke-PostgresScalar "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'eval_node_lab_trials_result_kind_check';"
 $promptVariantDraftCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_prompt_variant_drafts;"
 $workflowRequestCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_workflow_run_requests;"
+$workflowCompareCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_workflow_compares;"
+$workflowCompareJudgeCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_workflow_compare_judge_requests;"
 $reviewNoteCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_review_notes;"
 $nodeSessionCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_node_lab_sessions;"
 $nodeTrialCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_node_lab_trials;"
 $exampleEntryCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_example_lab_entries;"
 $nodeLabRuntimeEntries = Get-PathEntryCount $nodeLabRuntime
 $workflowRuntimeEntries = Get-PathEntryCount $workflowRuntime
+$workflowCompareRuntimeEntries = Get-PathEntryCount $workflowCompareRuntime
 $staticRunEntries = Get-PathEntryCount $staticRunsRoot
 $resetCountChecks = @(
   @{ Name = "prompt_variant_drafts"; Value = $promptVariantDraftCount }
   @{ Name = "workflow_requests"; Value = $workflowRequestCount }
+  @{ Name = "workflow_compares"; Value = $workflowCompareCount }
+  @{ Name = "workflow_compare_judges"; Value = $workflowCompareJudgeCount }
   @{ Name = "review_notes"; Value = $reviewNoteCount }
   @{ Name = "node_sessions"; Value = $nodeSessionCount }
   @{ Name = "node_trials"; Value = $nodeTrialCount }
@@ -150,8 +156,9 @@ Write-Host ("  metadata: rag_eligible removed from directus_fields")
 Write-Host ("  node-lab default: " + $nodeWorkspaceDefault)
 Write-Host ("  node-lab workspace_type check: " + $nodeWorkspaceConstraint)
 Write-Host ("  node-lab result_kind check: " + $nodeResultKindConstraint)
-Write-Host ("  reset counts: prompt_variant_drafts=0 workflow_requests=0 review_notes=0 node_sessions=0 node_trials=0 example_entries=0")
+Write-Host ("  reset counts: prompt_variant_drafts=0 workflow_requests=0 workflow_compares=0 workflow_compare_judges=0 review_notes=0 node_sessions=0 node_trials=0 example_entries=0")
 Write-Host ("  node-lab runtime entries: " + $nodeLabRuntimeEntries)
 Write-Host ("  workflow runtime entries: " + $workflowRuntimeEntries)
+Write-Host ("  workflow compare runtime entries: " + $workflowCompareRuntimeEntries)
 Write-Host ("  static evals/runs entries: " + $staticRunEntries)
 Write-Host "[eval-center] init complete."
