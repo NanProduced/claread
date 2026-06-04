@@ -2,19 +2,25 @@
 
 Provides rule-based generation by default, with optional LLM enhancement for
 grammar_tags, structure_signals, teaching_goal, and retrieval_text.
+
+The LLM path is delegated to
+:func:`app.llm.structured_completion.run_structured_completion`, which is the
+shared OpenAI-compatible structured JSON helper used by Workflow compare judge
+and any other eval surface that needs the same model_profile -> base_url /
+api_key / model_name resolution.
 """
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
 
-import httpx
-
 from app.config.settings import get_settings
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
-from app.llm.router import resolve_model_config
+from app.llm.structured_completion import (
+    StructuredCompletionError,
+    run_structured_completion,
+)
 from app.llm.types import ModelSelection, RouteModelSelection
 
 VALID_GRAMMAR_TAGS = [
@@ -130,18 +136,18 @@ You must return a JSON object with these fields:
 )
 
 
-def _resolve_profile(model_profile: str, *, settings=None) -> tuple[str, str, str]:
-    """Resolve a model profile name to (base_url, api_key, model_name)."""
-    settings = settings or get_settings()
+def _resolve_profile(model_profile: str, *, settings=None) -> ModelSelection:
+    """Build a ``ModelSelection`` that pins the annotation route to a profile.
+
+    ``run_structured_completion`` is the single place that turns the selection
+    into a base_url / api_key / model_name triple, so this helper only has to
+    express intent ("use this profile") without re-implementing resolution.
+    """
     route_selection = RouteModelSelection(profile=model_profile)
-    selection = ModelSelection(
+    return ModelSelection(
         default_profile=model_profile,
         routes={MODEL_ROUTE_ANNOTATION_GENERATION: route_selection},
     )
-    config = resolve_model_config(settings, MODEL_ROUTE_ANNOTATION_GENERATION, selection)
-    if config is None:
-        raise ValueError(f"Model profile '{model_profile}' is not configured or not available for annotation route.")
-    return config.base_url, config.api_key, config.model_name
 
 
 def _build_user_prompt(
@@ -167,29 +173,6 @@ def _build_user_prompt(
         lines.append(f"analysis_zh: {analysis_zh}")
 
     return "\n".join(lines)
-
-
-def _parse_llm_json(content: str) -> dict[str, Any]:
-    """Parse JSON from LLM response content."""
-    # Try markdown fence first
-    import re
-    fence_match = re.search(r"```(?:json)?\s*\n?([\s\S]*?)\n?\s*```", content)
-    if fence_match:
-        return json.loads(fence_match.group(1).strip())
-
-    # Find balanced braces
-    first_brace = content.index("{") if "{" in content else -1
-    if first_brace != -1:
-        depth = 0
-        for i in range(first_brace, len(content)):
-            if content[i] == "{":
-                depth += 1
-            elif content[i] == "}":
-                depth -= 1
-            if depth == 0:
-                return json.loads(content[first_brace : i + 1])
-
-    raise ValueError("LLM response does not contain valid JSON")
 
 
 def _validate_and_normalize(result: dict[str, Any]) -> dict[str, Any]:
@@ -416,44 +399,30 @@ async def generate_rag_fields(
             "latency_ms": latency_ms,
         }
 
-    base_url, api_key, model_name = _resolve_profile(effective_model_profile)
+    selection = _resolve_profile(effective_model_profile)
     user_prompt = _build_user_prompt(sentence_text, output_fragment, reading_variant)
 
-    body = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": LLM_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 1024,
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
-            response = await client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                json=body,
-            )
-            response.raise_for_status()
-
-        result_json = response.json()
-        content = result_json.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        if content:
-            parsed = _parse_llm_json(content)
-            validated = _validate_and_normalize(parsed)
-            latency_ms = int(time.time() * 1000) - start_ms
-            return {
-                **validated,
-                "generated_by": "llm",
-                "latency_ms": latency_ms,
-            }
-    except Exception:  # noqa: BLE001 - any LLM error → fall back
+        result = await run_structured_completion(
+            settings=get_settings(),
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            selection=selection,
+            system_prompt=LLM_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            timeout_seconds=timeout_seconds,
+            temperature=0.2,
+            max_tokens=1024,
+        )
+        validated = _validate_and_normalize(result.parsed)
+        latency_ms = int(time.time() * 1000) - start_ms
+        return {
+            **validated,
+            "generated_by": "llm",
+            "latency_ms": latency_ms,
+        }
+    except StructuredCompletionError:
+        # Surface only LLM-layer failures. Validation errors from the rule
+        # path are caught by the rule-based fallback below.
         pass
 
     # Fallback path: rule-based extraction

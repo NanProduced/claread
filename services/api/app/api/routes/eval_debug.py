@@ -16,6 +16,7 @@ from app.eval_adapter.node_probe import run_article_analysis_node_probe
 from app.eval_adapter.shared import list_model_profile_summaries
 from app.eval_adapter.workflow_lab import get_workflow_lab_baseline_bundle
 from app.eval_adapter.example_lab import generate_rag_fields
+from app.eval_adapter.workflow_lab_compare_judge import run_workflow_lab_compare_judge
 from app.eval_adapter.schemas import (
     ArticleAnalysisEvalRequest,
     ArticleAnalysisEvalResult,
@@ -36,6 +37,8 @@ from app.eval_adapter.schemas import (
     NodeLabJudgeRunResult,
     WorkflowLabBaselineBundle,
     WorkflowLabBaselineBundleRequest,
+    WorkflowLabCompareJudgeRequest,
+    WorkflowLabCompareJudgeResult,
 )
 
 router = APIRouter(prefix="/eval", tags=["eval"])
@@ -174,3 +177,15 @@ async def example_lab_generate_rag_fields(
         model_profile=request.model_profile,
         timeout_seconds=request.timeout_seconds or 30.0,
     )
+
+
+@router.post(
+    "/article-analysis/workflow-lab/compare-judge",
+    response_model=WorkflowLabCompareJudgeResult,
+    summary="Run API-side Workflow compare LLM judge",
+)
+async def article_analysis_workflow_lab_compare_judge(
+    request: WorkflowLabCompareJudgeRequest,
+    _auth: str = Depends(verify_eval_api_key),
+) -> WorkflowLabCompareJudgeResult:
+    return await run_workflow_lab_compare_judge(request, settings=get_settings())

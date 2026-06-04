@@ -12,7 +12,10 @@ import {
   buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
+  buildWorkflowCompareJudgeRequestErrorJson,
   buildWorkflowLabCompareReport,
+  classifyWorkflowCompareJudgeRequestStatus,
+  resolveWorkflowCompareJudgeTotalTimeoutMs,
   buildSingleRunCaseArtifact,
   syntheticSingleRunCompareRunId,
   cancelJudgeRunRequest,
@@ -2640,4 +2643,408 @@ test("cross-layer: FE JUDGE_MODES_BY_NODE.grammar exposes 'raw' (BE VALID_JUDGE_
     byNode.grammar?.includes("raw"),
     "FE JUDGE_MODES_BY_NODE.grammar must include 'raw' so users can pick the mode BE accepts",
   );
+});
+
+// ---------------------------------------------------------------------------
+// Workflow compare LLM judge (now proxied to services/api)
+// ---------------------------------------------------------------------------
+
+import { buildWorkflowCompareLlmJudgeCaseResults } from "./index.js";
+
+function makeCompareArtifact() {
+  return {
+    schema_version: "render-scene-v1",
+    user_facing_state: "normal",
+    article: { sentences: [{ sentence_id: "s1", text: "Hello world." }] },
+    translations: [{ sentence_id: "s1", translation_zh: "你好世界。" }],
+    inline_marks: [],
+    sentence_entries: [],
+  };
+}
+
+function writeCaseArtifacts(root, runId, artifact) {
+  // Directus resolves case artifacts at <root>/<runId>/cases/<caseId>.json
+  const casesDir = join(root, runId, "cases");
+  mkdirSync(casesDir, { recursive: true });
+  writeFileSync(join(casesDir, "case-1.json"), JSON.stringify(artifact));
+}
+
+function makeCompareReport() {
+  return {
+    schema_version: "workflow-compare-report-v1",
+    compare_id: "cmp-1",
+    baseline_run_id: "run-b",
+    candidate_run_id: "run-c",
+    comparisons: [
+      {
+        case_id: "case-1",
+        source_case_id: "case-1",
+        sentence_id: "s1",
+        sentence_text: "Hello world.",
+        baseline_hard_failures: 0,
+        baseline_soft_failures: 0,
+        candidate_hard_failures: 0,
+        candidate_soft_failures: 0,
+        reasons: ["seed reason"],
+      },
+    ],
+  };
+}
+
+test("buildWorkflowCompareLlmJudgeCaseResults surfaces LLM_NOT_CONFIGURED when no model_profile", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-llm-cfg-"));
+  const artifact = makeCompareArtifact();
+  writeCaseArtifacts(root, "run-b", artifact);
+  writeCaseArtifacts(root, "run-c", artifact);
+
+  const env = { CLAREAD_EVAL_RUNS_ROOT: root };
+  const requestRow = {
+    judge_run_id: "judge-1",
+    compare_id: "cmp-1",
+    rubric_id: "rubric-x",
+    rubric_version: "v1",
+    config_json: { judger_model_name: "ignored-debug-name" },
+  };
+  const compareDetail = {
+    compare: { compare_id: "cmp-1", baseline_run_id: "run-b", candidate_run_id: "run-c" },
+    report: makeCompareReport(),
+  };
+
+  try {
+    const results = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].status, "error");
+    assert.equal(results[0].error.code, "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED");
+    assert.match(results[0].error.message, /judger_model_profile/);
+    assert.equal(results[0].verdict, "needs_review");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildWorkflowCompareLlmJudgeCaseResults maps API results back into case_results shape", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-llm-ok-"));
+  const artifact = makeCompareArtifact();
+  writeCaseArtifacts(root, "run-b", artifact);
+  writeCaseArtifacts(root, "run-c", artifact);
+
+  const env = {
+    CLAREAD_EVAL_RUNS_ROOT: root,
+    CLAREAD_API_BASE_URL: "http://api.invalid",
+    CLAREAD_API_ADMIN_KEY: "admin-key",
+  };
+  const requestRow = {
+    judge_run_id: "judge-1",
+    compare_id: "cmp-1",
+    rubric_id: "rubric-x",
+    rubric_version: "v1",
+    config_json: { judger_model_profile: "eval-judge", judger_model_name: "ignored-debug" },
+  };
+  const compareDetail = {
+    compare: { compare_id: "cmp-1", baseline_run_id: "run-b", candidate_run_id: "run-c" },
+    report: makeCompareReport(),
+  };
+
+  const originalFetch = globalThis.fetch;
+  const fetchCalls = [];
+  globalThis.fetch = async (url, options) => {
+    fetchCalls.push({ url, options });
+    return new Response(
+      JSON.stringify({
+        schema_version: "workflow-compare-judge-v1",
+        judge_run_id: "judge-1",
+        compare_id: "cmp-1",
+        rubric_id: "rubric-x",
+        judge_model_profile: "eval-judge",
+        model_name: "judge-model",
+        profile_name: "eval-judge",
+        results: [
+          {
+            case_id: "case-1",
+            status: "succeeded",
+            verdict: "candidate_preferred",
+            preferred_side: "candidate",
+            overall_score: 0.85,
+            summary: "候选更清晰",
+            reasons: ["结构更明确", "翻译更准确"],
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const results = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    assert.equal(results.length, 1);
+    const [r] = results;
+    assert.equal(r.case_id, "case-1");
+    assert.equal(r.status, "succeeded");
+    assert.equal(r.verdict, "candidate_preferred");
+    assert.equal(r.preferred_side, "candidate");
+    assert.equal(r.overall_score, 0.85);
+    assert.equal(r.summary, "候选更清晰");
+    assert.deepEqual(r.reasons, ["结构更明确", "翻译更准确"]);
+    assert.equal(r.error, undefined);
+
+    // Verify we called the right URL with the right body.
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(
+      fetchCalls[0].url,
+      "http://api.invalid/eval/article-analysis/workflow-lab/compare-judge",
+    );
+    const sentBody = JSON.parse(fetchCalls[0].options.body);
+    assert.equal(sentBody.judge_model_profile, "eval-judge");
+    assert.equal(sentBody.compare_id, "cmp-1");
+    assert.equal(sentBody.rubric_id, "rubric-x");
+    assert.equal(sentBody.packets.length, 1);
+    assert.equal(sentBody.packets[0].case_id, "case-1");
+    // Both per-packet and total timeout must be sent so the API can self
+    // short-circuit before the Directus proxy cuts the connection.
+    assert.equal(sentBody.timeout_seconds, 30);
+    assert.equal(sentBody.total_timeout_seconds, 60);
+    // model_name must NOT be used to short-circuit the API call.
+    assert.equal(sentBody.judger_model_name, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildWorkflowCompareLlmJudgeCaseResults marks every case errored when the API call fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-llm-fail-"));
+  const artifact = makeCompareArtifact();
+  writeCaseArtifacts(root, "run-b", artifact);
+  writeCaseArtifacts(root, "run-c", artifact);
+
+  const env = {
+    CLAREAD_EVAL_RUNS_ROOT: root,
+    CLAREAD_API_BASE_URL: "http://api.invalid",
+    CLAREAD_API_ADMIN_KEY: "admin-key",
+  };
+  const requestRow = {
+    judge_run_id: "judge-1",
+    compare_id: "cmp-1",
+    rubric_id: "rubric-x",
+    rubric_version: "v1",
+    config_json: { judger_model_profile: "eval-judge" },
+  };
+  const compareDetail = {
+    compare: { compare_id: "cmp-1", baseline_run_id: "run-b", candidate_run_id: "run-c" },
+    report: makeCompareReport(),
+  };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ detail: "model profile is not configured" }), { status: 503 });
+
+  try {
+    const results = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].status, "error");
+    assert.equal(results[0].verdict, "needs_review");
+    assert.match(results[0].error.code, /UPSTREAM_EVAL_ERROR|WORKFLOW_COMPARE_JUDGE_LLM_ERROR/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Workflow compare judge request status + timeout helpers
+// ---------------------------------------------------------------------------
+
+test("classifyWorkflowCompareJudgeRequestStatus returns succeeded for all-OK results", () => {
+  const results = [
+    { case_id: "c1", status: "succeeded", verdict: "candidate_preferred" },
+    { case_id: "c2", status: "succeeded", verdict: "tie" },
+  ];
+  assert.equal(classifyWorkflowCompareJudgeRequestStatus(results), "succeeded");
+});
+
+test("classifyWorkflowCompareJudgeRequestStatus returns partial_failure for mixed results", () => {
+  const results = [
+    { case_id: "c1", status: "succeeded", verdict: "candidate_preferred" },
+    {
+      case_id: "c2",
+      status: "error",
+      verdict: "needs_review",
+      error: { code: "WORKFLOW_COMPARE_JUDGE_LLM_ERROR", message: "bad gateway" },
+    },
+  ];
+  assert.equal(classifyWorkflowCompareJudgeRequestStatus(results), "partial_failure");
+});
+
+test("classifyWorkflowCompareJudgeRequestStatus returns failed when all cases errored", () => {
+  const results = [
+    {
+      case_id: "c1",
+      status: "error",
+      verdict: "needs_review",
+      error: { code: "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED", message: "missing profile" },
+    },
+    {
+      case_id: "c2",
+      status: "error",
+      verdict: "needs_review",
+      error: { code: "WORKFLOW_COMPARE_JUDGE_LLM_ERROR", message: "upstream 502" },
+    },
+  ];
+  assert.equal(classifyWorkflowCompareJudgeRequestStatus(results), "failed");
+});
+
+test("classifyWorkflowCompareJudgeRequestStatus returns succeeded for empty results", () => {
+  assert.equal(classifyWorkflowCompareJudgeRequestStatus([]), "succeeded");
+});
+
+test("buildWorkflowCompareJudgeRequestErrorJson aggregates error codes", () => {
+  const results = [
+    { case_id: "c1", status: "succeeded", verdict: "candidate_preferred" },
+    {
+      case_id: "c2",
+      status: "error",
+      verdict: "needs_review",
+      error: { code: "WORKFLOW_COMPARE_JUDGE_TOTAL_TIMEOUT", message: "budget exhausted" },
+    },
+    {
+      case_id: "c3",
+      status: "error",
+      verdict: "needs_review",
+      error: { code: "WORKFLOW_COMPARE_JUDGE_TOTAL_TIMEOUT", message: "budget exhausted" },
+    },
+  ];
+  const err = buildWorkflowCompareJudgeRequestErrorJson(results);
+  assert.ok(err, "expected error_json for partial failure");
+  assert.equal(err.code, "WORKFLOW_COMPARE_JUDGE_PARTIAL_FAILURE");
+  assert.equal(err.errored_cases, 2);
+  assert.equal(err.total_cases, 3);
+  assert.deepEqual(err.error_codes, ["WORKFLOW_COMPARE_JUDGE_TOTAL_TIMEOUT"]);
+});
+
+test("buildWorkflowCompareJudgeRequestErrorJson returns all-failed code when every case errored", () => {
+  const results = [
+    {
+      case_id: "c1",
+      status: "error",
+      verdict: "needs_review",
+      error: { code: "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED", message: "x" },
+    },
+    {
+      case_id: "c2",
+      status: "error",
+      verdict: "needs_review",
+      error: { code: "WORKFLOW_COMPARE_JUDGE_LLM_ERROR", message: "y" },
+    },
+  ];
+  const err = buildWorkflowCompareJudgeRequestErrorJson(results);
+  assert.equal(err.code, "WORKFLOW_COMPARE_JUDGE_ALL_CASES_FAILED");
+  assert.equal(err.errored_cases, 2);
+});
+
+test("buildWorkflowCompareJudgeRequestErrorJson returns null when no cases errored", () => {
+  const results = [
+    { case_id: "c1", status: "succeeded", verdict: "candidate_preferred" },
+  ];
+  assert.equal(buildWorkflowCompareJudgeRequestErrorJson(results), null);
+});
+
+test("resolveWorkflowCompareJudgeTotalTimeoutMs scales with packet count", () => {
+  // Base 30s + 15s per packet, clamped to [60s, 600s].
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(0), 60_000); // floor
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(1), 60_000); // floor
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(2), 60_000); // floor (30 + 30)
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(3), 75_000);
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(5), 105_000);
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(10), 180_000);
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(20), 330_000);
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(38), 600_000); // cap (30 + 570)
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(100), 600_000); // still cap
+  assert.equal(resolveWorkflowCompareJudgeTotalTimeoutMs(undefined), 60_000);
+});
+
+test("buildWorkflowCompareLlmJudgeCaseResults sends per-packet + total timeout aligned with packet count", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-llm-timeout-"));
+  // Build a report with 6 cases so per-packet timeout shrinks below 30s.
+  const artifact = makeCompareArtifact();
+  for (const runId of ["run-b", "run-c"]) {
+    const casesDir = join(root, runId, "cases");
+    mkdirSync(casesDir, { recursive: true });
+  }
+  // Write 6 case artifacts on both sides.
+  for (let i = 1; i <= 6; i++) {
+    writeFileSync(join(root, "run-b", "cases", `case-${i}.json`), JSON.stringify(artifact));
+    writeFileSync(join(root, "run-c", "cases", `case-${i}.json`), JSON.stringify(artifact));
+  }
+  const compareReport = {
+    schema_version: "workflow-compare-report-v1",
+    compare_id: "cmp-1",
+    baseline_run_id: "run-b",
+    candidate_run_id: "run-c",
+    comparisons: Array.from({ length: 6 }, (_, i) => ({
+      case_id: `case-${i + 1}`,
+      source_case_id: `case-${i + 1}`,
+      sentence_id: "s1",
+      sentence_text: "Hello world.",
+      baseline_hard_failures: 0,
+      baseline_soft_failures: 0,
+      candidate_hard_failures: 0,
+      candidate_soft_failures: 0,
+      reasons: ["seed"],
+    })),
+  };
+  const env = {
+    CLAREAD_EVAL_RUNS_ROOT: root,
+    CLAREAD_API_BASE_URL: "http://api.invalid",
+    CLAREAD_API_ADMIN_KEY: "admin-key",
+  };
+  const requestRow = {
+    judge_run_id: "judge-1",
+    compare_id: "cmp-1",
+    rubric_id: "rubric-x",
+    rubric_version: "v1",
+    config_json: { judger_model_profile: "eval-judge" },
+  };
+  const compareDetail = {
+    compare: { compare_id: "cmp-1", baseline_run_id: "run-b", candidate_run_id: "run-c" },
+    report: compareReport,
+  };
+
+  const originalFetch = globalThis.fetch;
+  const fetchCalls = [];
+  globalThis.fetch = async (url, options) => {
+    fetchCalls.push({ url, options });
+    return new Response(
+      JSON.stringify({
+        schema_version: "workflow-compare-judge-v1",
+        judge_run_id: "judge-1",
+        compare_id: "cmp-1",
+        rubric_id: "rubric-x",
+        judge_model_profile: "eval-judge",
+        results: compareReport.comparisons.map((c) => ({
+          case_id: c.case_id,
+          status: "succeeded",
+          verdict: "tie",
+          preferred_side: null,
+          overall_score: 0.5,
+          summary: "ok",
+          reasons: [],
+        })),
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    assert.equal(fetchCalls.length, 1);
+    const sentBody = JSON.parse(fetchCalls[0].options.body);
+    // 6 packets → total = 30 + 15*6 = 120s; per-packet = floor(120/6) = 20s.
+    assert.equal(sentBody.total_timeout_seconds, 120);
+    assert.equal(sentBody.timeout_seconds, 20);
+    // callEvalUpstreamJson sets up an AbortController; we only need the
+    // request body to prove the budgets are aligned end-to-end.
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
 });

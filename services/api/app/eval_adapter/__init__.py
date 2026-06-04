@@ -12,7 +12,10 @@ from app.eval_adapter.schemas import (
     RequestSnapshot,
     SchemaIdentity,
     WorkflowIdentity,
+    WorkflowLabCompareJudgeRequest,
+    WorkflowLabCompareJudgeResult,
 )
+from app.eval_adapter.workflow_lab_compare_judge import run_workflow_lab_compare_judge
 
 __all__ = [
     "ArticleAnalysisEvalRequest",
@@ -26,6 +29,9 @@ __all__ = [
     "RequestSnapshot",
     "SchemaIdentity",
     "WorkflowIdentity",
+    "WorkflowLabCompareJudgeRequest",
+    "WorkflowLabCompareJudgeResult",
     "run_article_analysis_eval",
     "run_article_analysis_node_probe",
+    "run_workflow_lab_compare_judge",
 ]

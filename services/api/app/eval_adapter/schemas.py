@@ -646,3 +646,115 @@ class ExampleLabGenerateRagFieldsResult(BaseModel):
     retrieval_text: str = ""
     generated_by: str = "rule"
     latency_ms: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Workflow Lab compare-level LLM judge
+# ---------------------------------------------------------------------------
+
+WORKFLOW_LAB_COMPARE_JUDGE_SCHEMA_VERSION = "workflow-compare-judge-v1"
+VALID_COMPARE_JUDGE_VERDICTS = (
+    "candidate_preferred",
+    "baseline_preferred",
+    "tie",
+    "needs_review",
+)
+
+
+class WorkflowLabCompareJudgeSidePayload(BaseModel):
+    """Per-side sentence evidence supplied to the compare LLM judge."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_facing_state: str | None = None
+    sentence_id: str | None = None
+    sentence_text: str = ""
+    translation: Any | None = None
+    inline_marks: list[dict[str, Any]] = Field(default_factory=list)
+    sentence_entries: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    drop_log: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkflowLabCompareJudgePacket(BaseModel):
+    """One sentence-level compare packet for the LLM judge."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    compare_id: str = Field(min_length=1)
+    case_id: str = Field(min_length=1)
+    sentence_id: str | None = None
+    sentence_text: str = ""
+    reading_goal: str | None = None
+    reading_variant: str | None = None
+    baseline: WorkflowLabCompareJudgeSidePayload
+    candidate: WorkflowLabCompareJudgeSidePayload
+
+
+class WorkflowLabCompareJudgeRequest(BaseModel):
+    """Request body for the API-side Workflow compare LLM judge.
+
+    Attributes:
+        timeout_seconds: Per-packet LLM call timeout (passed straight to the
+            shared structured-completion helper). Bounded by 600s by the
+            adapter.
+        total_timeout_seconds: Optional overall budget for the whole request.
+            Once the budget is exhausted, the API stops scheduling new
+            packets and short-circuits the remaining ones with a
+            ``WORKFLOW_COMPARE_JUDGE_TOTAL_TIMEOUT`` case error.
+        concurrency: Maximum number of in-flight packet LLM calls. Defaults
+            to 1 (serial) for backward compatibility; callers can raise it
+            when the chosen model profile tolerates parallel traffic.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["workflow-compare-judge-v1"] = WORKFLOW_LAB_COMPARE_JUDGE_SCHEMA_VERSION
+    judge_run_id: str = Field(min_length=1)
+    compare_id: str = Field(min_length=1)
+    rubric_id: str = Field(min_length=1)
+    rubric_version: str | None = None
+    judge_model_profile: str = Field(min_length=1)
+    packets: list[WorkflowLabCompareJudgePacket] = Field(default_factory=list)
+    timeout_seconds: float | None = Field(default=None, gt=0.0)
+    total_timeout_seconds: float | None = Field(default=None, gt=0.0)
+    concurrency: int | None = Field(default=None, ge=1, le=8)
+
+
+class WorkflowLabCompareJudgeCaseError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+
+
+class WorkflowLabCompareJudgeCaseResult(BaseModel):
+    """One LLM-judged case result, shaped to match Directus artifact fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+    status: Literal["succeeded", "error"]
+    verdict: Literal["candidate_preferred", "baseline_preferred", "tie", "needs_review"]
+    preferred_side: Literal["baseline", "candidate"] | None = None
+    overall_score: float | None = None
+    summary: str = ""
+    reasons: list[str] = Field(default_factory=list)
+    error: WorkflowLabCompareJudgeCaseError | None = None
+
+
+class WorkflowLabCompareJudgeResult(BaseModel):
+    """Response body for the API-side Workflow compare LLM judge."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["workflow-compare-judge-v1"] = WORKFLOW_LAB_COMPARE_JUDGE_SCHEMA_VERSION
+    judge_run_id: str
+    compare_id: str
+    rubric_id: str
+    judge_model_profile: str
+    model_name: str | None = None
+    profile_name: str | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    results: list[WorkflowLabCompareJudgeCaseResult] = Field(default_factory=list)

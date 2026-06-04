@@ -1804,131 +1804,193 @@ function summarizeCompareJudgeSentenceOutput(artifact, comparison) {
 }
 
 async function requestOpenAICompatibleJudge({ env, model, packet }) {
-  const baseUrl = readEnv(env, "CLAREAD_EVAL_JUDGE_BASE_URL").trim();
-  const apiKey = readEnv(env, "CLAREAD_EVAL_JUDGE_API_KEY").trim();
-  const resolvedModel = String(model || readEnv(env, "CLAREAD_EVAL_JUDGE_MODEL") || "").trim();
-  if (!baseUrl || !apiKey || !resolvedModel) {
-    const error = new Error("Compare-level LLM judge is missing CLAREAD_EVAL_JUDGE_BASE_URL / API_KEY / MODEL.");
-    error.status = 503;
-    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED";
-    throw error;
-  }
-  const response = await fetch(joinUrl(baseUrl, "/chat/completions"), {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+  // DEPRECATED: This helper used to call /chat/completions directly from
+  // Directus. Compare-level LLM judging now lives in services/api
+  // (app.eval_adapter.workflow_lab_compare_judge + the
+  // /eval/article-analysis/workflow-lab/compare-judge route). Directus only
+  // proxies to the API; it must not read CLAREAD_EVAL_JUDGE_* env vars
+  // or issue /chat/completions directly. Kept as a non-functional stub so
+  // any external import does not crash; the body raises if it is reached.
+  const error = new Error(
+    "requestOpenAICompatibleJudge is no longer used. Compare LLM judge goes through services/api."
+  );
+  error.status = 501;
+  error.code = "WORKFLOW_COMPARE_JUDGE_LEGACY_CLIENT_REMOVED";
+  throw error;
+}
+
+function _summarizeCompareJudgeFailure(comparison, error) {
+  return {
+    case_id: comparison.case_id,
+    status: "error",
+    verdict: "needs_review",
+    preferred_side: null,
+    overall_score: null,
+    summary: "LLM judge execution failed.",
+    baseline_hard_failures: comparison.baseline_hard_failures ?? 0,
+    baseline_soft_failures: comparison.baseline_soft_failures ?? 0,
+    candidate_hard_failures: comparison.candidate_hard_failures ?? 0,
+    candidate_soft_failures: comparison.candidate_soft_failures ?? 0,
+    reasons: [String(error?.message || error)],
+    error: {
+      code: error?.code || "WORKFLOW_COMPARE_JUDGE_LLM_ERROR",
+      message: String(error?.message || error).slice(0, 500),
     },
-    body: JSON.stringify({
-      model: resolvedModel,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "You are a pairwise evaluator for Claread workflow compare outputs. Return strict JSON only.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            instructions: {
-              verdict: "candidate_preferred|baseline_preferred|tie|needs_review",
-              summary: "one concise Chinese sentence",
-              reasons: ["short reasons"],
-              overall_score: "0~1 where 1 means candidate clearly preferred, 0 means baseline clearly preferred, 0.5 means tie",
-            },
-            packet,
-          }),
-        },
-      ],
-    }),
-  });
-  if (!response.ok) {
-    const payload = await parseUpstreamError(response);
-    const error = new Error(payload?.detail || payload?.message || `Judge LLM HTTP ${response.status}`);
-    error.status = response.status;
-    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_ERROR";
-    throw error;
-  }
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
-    const error = new Error("Judge LLM response content was empty.");
-    error.status = 502;
-    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_EMPTY";
-    throw error;
-  }
-  let parsed = null;
-  try {
-    parsed = JSON.parse(content.trim().replace(/^```json\s*/i, "").replace(/```$/, "").trim());
-  } catch {
-    const error = new Error("Judge LLM response was not valid JSON.");
-    error.status = 502;
-    error.code = "WORKFLOW_COMPARE_JUDGE_LLM_INVALID_JSON";
-    throw error;
-  }
-  return parsed;
+  };
 }
 
 async function buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail) {
+  // judge_model_profile is the primary control-plane source. judger_model_name
+  // is retained as debug-only metadata in the request row but is no longer
+  // used to short-circuit or override the model_profile-driven API call.
+  const judgeModelProfile = String(
+    requestRow?.config_json?.judger_model_profile || ""
+  ).trim();
+  const debugModelName = String(
+    requestRow?.config_json?.judger_model_name || ""
+  ).trim();
+  const comparisons = Array.isArray(compareDetail?.report?.comparisons)
+    ? compareDetail.report.comparisons
+    : [];
+
+  // No model_profile → API cannot resolve a model. Surface this for every
+  // case so the artifact + run row record a clear configuration error.
+  if (!judgeModelProfile) {
+    const message = "judger_model_profile is required for LLM judge.";
+    return comparisons.map((comparison) =>
+      _summarizeCompareJudgeFailure(comparison, {
+        code: "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED",
+        message,
+      })
+    );
+  }
+
+  // Build all sentence-level compare packets up-front, then hand them to the
+  // API in a single request. The API owns model resolution + LLM execution.
+  const packetEntries = [];
   const roots = resolveWorkflowRunRoots(env);
-  const modelName = requestRow?.config_json?.judger_model_name || requestRow?.config_json?.judger_model_profile || null;
-  const comparisons = Array.isArray(compareDetail?.report?.comparisons) ? compareDetail.report.comparisons : [];
-  const results = [];
   for (const comparison of comparisons) {
     const sourceCaseId = comparison.source_case_id || comparison.case_id;
-    const baselineRoot = await resolveRunRootOrThrow(roots, compareDetail.compare.baseline_run_id);
-    const candidateRoot = await resolveRunRootOrThrow(roots, compareDetail.compare.candidate_run_id);
-    const baselineArtifact = await readJsonFile(caseArtifactPath(baselineRoot, compareDetail.compare.baseline_run_id, sourceCaseId));
-    const candidateArtifact = await readJsonFile(caseArtifactPath(candidateRoot, compareDetail.compare.candidate_run_id, sourceCaseId));
-    const packet = {
-      compare_id: compareDetail.compare.compare_id,
-      case_id: comparison.case_id,
-      sentence_id: comparison.sentence_id || null,
-      sentence_text: comparison.sentence_text || "",
-      reading_goal: compareDetail.compare.reading_goal || null,
-      reading_variant: compareDetail.compare.reading_variant || null,
-      baseline: summarizeCompareJudgeSentenceOutput(baselineArtifact, comparison),
-      candidate: summarizeCompareJudgeSentenceOutput(candidateArtifact, comparison),
-    };
-    try {
-      const judged = await requestOpenAICompatibleJudge({ env, model: modelName, packet });
-      const verdict = ["candidate_preferred", "baseline_preferred", "tie", "needs_review"].includes(judged?.verdict)
-        ? judged.verdict
-        : "needs_review";
-      const rawScore = Number(judged?.overall_score);
-      results.push({
+    const baselineRoot = await resolveRunRootOrThrow(
+      roots,
+      compareDetail.compare.baseline_run_id
+    );
+    const candidateRoot = await resolveRunRootOrThrow(
+      roots,
+      compareDetail.compare.candidate_run_id
+    );
+    const baselineArtifact = await readJsonFile(
+      caseArtifactPath(baselineRoot, compareDetail.compare.baseline_run_id, sourceCaseId)
+    );
+    const candidateArtifact = await readJsonFile(
+      caseArtifactPath(candidateRoot, compareDetail.compare.candidate_run_id, sourceCaseId)
+    );
+    packetEntries.push({
+      comparison,
+      packet: {
+        compare_id: compareDetail.compare.compare_id,
         case_id: comparison.case_id,
-        status: "succeeded",
-        verdict,
-        preferred_side: verdict === "candidate_preferred" ? "candidate" : verdict === "baseline_preferred" ? "baseline" : null,
-        overall_score: Number.isFinite(rawScore) ? Math.max(0, Math.min(1, rawScore)) : compareJudgeCaseScore(verdict),
-        summary: String(judged?.summary || "").slice(0, 1000) || "LLM judge returned no summary.",
-        baseline_hard_failures: comparison.baseline_hard_failures ?? 0,
-        baseline_soft_failures: comparison.baseline_soft_failures ?? 0,
-        candidate_hard_failures: comparison.candidate_hard_failures ?? 0,
-        candidate_soft_failures: comparison.candidate_soft_failures ?? 0,
-        reasons: Array.isArray(judged?.reasons) ? judged.reasons.map((item) => String(item).slice(0, 300)) : [],
-      });
-    } catch (error) {
-      results.push({
-        case_id: comparison.case_id,
-        status: "error",
-        verdict: "needs_review",
-        preferred_side: null,
-        overall_score: null,
-        summary: "LLM judge execution failed.",
-        baseline_hard_failures: comparison.baseline_hard_failures ?? 0,
-        baseline_soft_failures: comparison.baseline_soft_failures ?? 0,
-        candidate_hard_failures: comparison.candidate_hard_failures ?? 0,
-        candidate_soft_failures: comparison.candidate_soft_failures ?? 0,
-        reasons: [String(error?.message || error)],
-        error: { code: error?.code || "WORKFLOW_COMPARE_JUDGE_LLM_ERROR", message: String(error?.message || error).slice(0, 500) },
-      });
+        sentence_id: comparison.sentence_id || null,
+        sentence_text: comparison.sentence_text || "",
+        reading_goal: compareDetail.compare.reading_goal || null,
+        reading_variant: compareDetail.compare.reading_variant || null,
+        baseline: summarizeCompareJudgeSentenceOutput(baselineArtifact, comparison),
+        candidate: summarizeCompareJudgeSentenceOutput(candidateArtifact, comparison),
+      },
+    });
+  }
+
+  let apiPayload;
+  try {
+    // Scale the Directus -> API judge request timeout with the number of
+    // packets the API will iterate through. A flat 60s would overrun for any
+    // sentence-level compare with more than a handful of cases.
+    const totalTimeoutMs = resolveWorkflowCompareJudgeTotalTimeoutMs(packetEntries.length);
+    // Per-packet LLM call timeout: bounded by the total budget so a single
+    // slow case cannot eat the entire request. With many packets we shrink it
+    // proportionally; with few packets we let the API default (30s) handle it.
+    const perPacketTimeoutSeconds = Math.min(
+      30,
+      Math.max(5, Math.floor((totalTimeoutMs / 1000) / Math.max(1, packetEntries.length))),
+    );
+    // Add a small safety margin so the API can finish cleanly and return a
+    // partial_failure result instead of being cut off by the Directus proxy
+    // at the exact same moment it tries to respond.
+    const directusProxyTimeoutMs = totalTimeoutMs + 5000;
+    apiPayload = await callEvalUpstreamJson({
+      env,
+      path: "/eval/article-analysis/workflow-lab/compare-judge",
+      body: {
+        schema_version: "workflow-compare-judge-v1",
+        judge_run_id: requestRow.judge_run_id,
+        compare_id: requestRow.compare_id,
+        rubric_id: requestRow.rubric_id,
+        rubric_version: requestRow.rubric_version || null,
+        judge_model_profile: judgeModelProfile,
+        // per-packet LLM call timeout (clamped to total budget server-side)
+        timeout_seconds: perPacketTimeoutSeconds,
+        // overall wall-clock budget for the entire request — the API uses
+        // this to self-short-circuit and return a clean partial_failure
+        // before the Directus proxy cuts the connection.
+        total_timeout_seconds: totalTimeoutMs / 1000,
+        packets: packetEntries.map((entry) => entry.packet),
+      },
+      timeoutMs: directusProxyTimeoutMs,
+    });
+  } catch (error) {
+    return packetEntries.map(({ comparison }) =>
+      _summarizeCompareJudgeFailure(comparison, error)
+    );
+  }
+
+  const resultsByCaseId = new Map();
+  for (const item of apiPayload?.results || []) {
+    if (item && typeof item.case_id === "string") {
+      resultsByCaseId.set(item.case_id, item);
     }
   }
-  return results;
+
+  return packetEntries.map(({ comparison }) => {
+    const judged = resultsByCaseId.get(comparison.case_id);
+    if (!judged) {
+      return _summarizeCompareJudgeFailure(comparison, {
+        code: "WORKFLOW_COMPARE_JUDGE_RESULT_MISSING",
+        message: "Compare judge API did not return a result for this case.",
+      });
+    }
+    if (judged.status === "error") {
+      return _summarizeCompareJudgeFailure(comparison, {
+        code: judged.error?.code || "WORKFLOW_COMPARE_JUDGE_LLM_ERROR",
+        message: judged.error?.message || "LLM judge execution failed.",
+      });
+    }
+    const verdict = ["candidate_preferred", "baseline_preferred", "tie", "needs_review"].includes(judged.verdict)
+      ? judged.verdict
+      : "needs_review";
+    const rawScore = Number(judged.overall_score);
+    return {
+      case_id: comparison.case_id,
+      status: "succeeded",
+      verdict,
+      preferred_side:
+        verdict === "candidate_preferred"
+          ? "candidate"
+          : verdict === "baseline_preferred"
+            ? "baseline"
+            : null,
+      overall_score: Number.isFinite(rawScore)
+        ? Math.max(0, Math.min(1, rawScore))
+        : compareJudgeCaseScore(verdict),
+      summary: String(judged.summary || "").slice(0, 1000) || "LLM judge returned no summary.",
+      baseline_hard_failures: comparison.baseline_hard_failures ?? 0,
+      baseline_soft_failures: comparison.baseline_soft_failures ?? 0,
+      candidate_hard_failures: comparison.candidate_hard_failures ?? 0,
+      candidate_soft_failures: comparison.candidate_soft_failures ?? 0,
+      reasons: Array.isArray(judged.reasons)
+        ? judged.reasons.map((item) => String(item).slice(0, 300))
+        : [],
+    };
+  });
 }
 
 async function executeWorkflowCompareJudgeDirect(database, env, requestRow, compareDetail) {
@@ -1957,15 +2019,19 @@ async function executeWorkflowCompareJudgeDirect(database, env, requestRow, comp
     await writeJsonFile(path.join(judgeDir, "report.json"), artifacts.judgeReport);
     await writeFile(path.join(judgeDir, "report.md"), `${artifacts.reportMd}\n`, "utf8");
     const artifactPath = `runtime-evals/workflow-compares/${requestRow.compare_id}/judge/${requestRow.judge_run_id}`;
+    const requestStatus = classifyWorkflowCompareJudgeRequestStatus(caseResults);
+    const requestErrorJson = requestStatus === "succeeded"
+      ? null
+      : buildWorkflowCompareJudgeRequestErrorJson(caseResults);
     await database("eval_workflow_compare_judge_requests")
       .where({ id: requestRow.id })
       .update({
-        status: "succeeded",
+        status: requestStatus,
         artifact_path: artifactPath,
         finished_at: database.fn.now(),
         date_updated: database.fn.now(),
         heartbeat_at: database.fn.now(),
-        error_json: null,
+        error_json: requestErrorJson,
       });
   } catch (error) {
     await database("eval_workflow_compare_judge_requests")
@@ -2542,7 +2608,7 @@ const VALID_TRACE_SCOPES = ["off", "isolated", "inherit"];
 const VALID_EXECUTION_MODES = ["manual", "runner_bridge", "directus_async"];
 const VALID_WORKFLOW_REQUEST_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
 const VALID_JUDGE_ADAPTER_KINDS = ["fake", "llm"];
-const VALID_JUDGE_REQUEST_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
+const VALID_JUDGE_REQUEST_STATUSES = ["queued", "running", "succeeded", "partial_failure", "failed", "cancelled"];
 
 const CONFIG_PRESETS = [
   {
@@ -4402,6 +4468,47 @@ function workflowRunRequestErrorJson(error) {
   };
 }
 
+// Workflow compare judge request status is derived from the per-case results:
+// every case errored -> failed, some -> partial_failure, none -> succeeded.
+// We deliberately do NOT collapse "partial_failure" into "succeeded" so the UI
+// does not show a green check when individual cases failed.
+function classifyWorkflowCompareJudgeRequestStatus(caseResults) {
+  const results = Array.isArray(caseResults) ? caseResults : [];
+  if (results.length === 0) return "succeeded";
+  const errored = results.filter((item) => item && item.status === "error").length;
+  if (errored === results.length) return "failed";
+  if (errored > 0) return "partial_failure";
+  return "succeeded";
+}
+
+function buildWorkflowCompareJudgeRequestErrorJson(caseResults) {
+  const results = Array.isArray(caseResults) ? caseResults : [];
+  const errored = results.filter((item) => item && item.status === "error");
+  if (errored.length === 0) return null;
+  const codes = Array.from(new Set(errored.map((item) => item.error?.code || "WORKFLOW_COMPARE_JUDGE_CASE_ERROR")));
+  const sample = errored.slice(0, 3).map((item) => item.error?.message || "case failed").join(" | ");
+  return {
+    code: errored.length === results.length ? "WORKFLOW_COMPARE_JUDGE_ALL_CASES_FAILED" : "WORKFLOW_COMPARE_JUDGE_PARTIAL_FAILURE",
+    message: `${errored.length}/${results.length} cases failed. Codes: ${codes.join(", ")}. Sample: ${sample}`.slice(0, 1000),
+    errored_cases: errored.length,
+    total_cases: results.length,
+    error_codes: codes,
+  };
+}
+
+// Scale the Directus -> API compare judge timeout with packet count. A flat
+// 60s for a sentence-level compare with a moderately slow model will overrun.
+// Base 30s for warmup + first packet, +15s per additional packet, capped at
+// 600s so the Directus proxy timeout (CLAREAD_EVAL_PROXY_TIMEOUT_MS, default
+// 60s) does not get in the way — callers are expected to raise the proxy
+// timeout when packet counts get large.
+function resolveWorkflowCompareJudgeTotalTimeoutMs(packetCount) {
+  const packets = Math.max(0, Number(packetCount) || 0);
+  const totalSeconds = 30 + 15 * packets;
+  const capped = Math.min(Math.max(totalSeconds, 60), 600);
+  return Math.round(capped * 1000);
+}
+
 async function loadWorkflowDatasetCases(env, datasetId) {
   const dir = path.join(datasetsDir(resolveEvalsRoot(env)), datasetId, "cases");
   let entries;
@@ -5170,6 +5277,10 @@ export {
   appendWorkflowDatasetCase,
   buildAuthGuard,
   buildRetryJudgeRunId,
+  buildWorkflowCompareLlmJudgeCaseResults,
+  buildWorkflowCompareJudgeRequestErrorJson,
+  classifyWorkflowCompareJudgeRequestStatus,
+  resolveWorkflowCompareJudgeTotalTimeoutMs,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
   createWorkflowDataset,
