@@ -84,6 +84,16 @@
       },
       {
         "type": "interface",
+        "name": "claread-ai-rag-generator-interface",
+        "source": "src/claread-ai-rag-generator-interface/index.js"
+      },
+      {
+        "type": "interface",
+        "name": "claread-output-fragment-editor",
+        "source": "src/claread-output-fragment-editor/index.js"
+      },
+      {
+        "type": "interface",
         "name": "claread-relational-events-display",
         "source": "src/claread-relational-events-display/index.js"
       },

@@ -4,7 +4,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import JsonTreeView from "../components/JsonTreeView.vue";
 import NodeProbeOutputView from "../components/NodeProbeOutputView.vue";
 import ResultBlock from "../components/ResultBlock.vue";
+import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";
 import StatusPill from "../components/StatusPill.vue";
+import WorkflowSentenceNotebook from "./workflow-lab/components/WorkflowSentenceNotebook.vue";
 import {
   formatDateTime,
   shortId,
@@ -13,79 +15,168 @@ import {
 } from "../composables/useEvalFormatting";
 
 const api = useApi();
+const emit = defineEmits(["compare-run"]);
 
 const props = defineProps({
   initialRunId: { type: String, default: "" },
-  initialSource: { type: String, default: "workflow" },
-  initialNodeProbeRunId: { type: String, default: "" },
+  initialSource: { type: String, default: "all" },
 });
 
-const endpoint = "/eval-center/node-lab/run-history";
+const NODE_ENDPOINT = "/eval-center/node-lab/run-history";
+const WORKFLOW_ENDPOINT = "/eval-center/workflow-lab/run-history";
 
 const POLL_INTERVAL_MS = 7000;
 const LIVE_STATUSES = new Set(["queued", "running"]);
+const SOURCE_VALUES = new Set(["all", "node_lab", "workflow"]);
+const WORKFLOW_WORKSPACE_VALUES = new Set(["all", "workflow_single_run", "workflow_dataset_run"]);
 
 const loading = ref(false);
 const detailLoading = ref(false);
+const deleting = ref(false);
 const error = ref("");
 const detailError = ref("");
 const records = ref([]);
-const selectedTrialId = ref("");
+const selectedRecordKey = ref("");
+const pendingDeleteKey = ref("");
 const detail = ref(null);
-const filters = ref({
+const sourceFilter = ref("all");
+const nodeFilters = ref({
   workspace_type: "all",
   session_scope: "all",
   node_name: "all",
+});
+const workflowFilters = ref({
+  workspace_type: "all",
 });
 const isPollingActive = ref(false);
 let pollHandle = null;
 let visibilityListenerBound = false;
 
 const filteredTitle = computed(() => {
-  const workspace = filters.value.workspace_type === "single_run"
+  const sourceLabel = sourceFilter.value === "workflow"
+    ? "Workflow"
+    : sourceFilter.value === "node_lab"
+      ? "Node Lab"
+      : "全部来源";
+  const workspace = nodeFilters.value.workspace_type === "single_run"
     ? "Single Run"
-    : filters.value.workspace_type === "baseline_compare"
+    : nodeFilters.value.workspace_type === "baseline_compare"
       ? "Baseline Compare"
       : "全部类型";
-  const scope = filters.value.session_scope === "standalone"
+  const scope = nodeFilters.value.session_scope === "standalone"
     ? "Standalone"
-    : filters.value.session_scope === "session"
+    : nodeFilters.value.session_scope === "session"
       ? "Session"
       : "全部来源";
-  return `${workspace} / ${scope}`;
+  const workflowScope = workflowFilters.value.workspace_type === "workflow_single_run"
+    ? "Workflow Single Run"
+    : workflowFilters.value.workspace_type === "workflow_dataset_run"
+      ? "Workflow Dataset Run"
+      : "Workflow 全部类型";
+  if (sourceFilter.value === "workflow") {
+    return `${sourceLabel} / ${workflowScope}`;
+  }
+  if (sourceFilter.value === "node_lab") {
+    return `${sourceLabel} / ${workspace} / ${scope}`;
+  }
+  return `${sourceLabel} / ${workspace} / ${scope} / ${workflowScope}`;
 });
 
 const selectedRecord = computed(() => (
-  records.value.find((record) => record.trial_id === selectedTrialId.value) || null
+  records.value.find((record) => recordKeyOf(record) === selectedRecordKey.value) || null
 ));
 
-const currentTrial = computed(() => detail.value?.trial || selectedRecord.value || null);
-const currentResult = computed(() => detail.value?.result || null);
-const judgeRequests = computed(() => detail.value?.judge_requests || []);
-const currentSession = computed(() => detail.value?.session || null);
+const currentSource = computed(() => detail.value?.source || selectedRecord.value?.source || sourceFilter.value);
+const currentTrial = computed(() => (
+  currentSource.value === "node_lab"
+    ? detail.value?.trial || selectedRecord.value || null
+    : null
+));
+const currentResult = computed(() => (
+  currentSource.value === "node_lab"
+    ? detail.value?.result || null
+    : null
+));
+const judgeRequests = computed(() => (
+  currentSource.value === "node_lab"
+    ? detail.value?.judge_requests || []
+    : []
+));
+const currentSession = computed(() => (
+  currentSource.value === "node_lab"
+    ? detail.value?.session || null
+    : null
+));
+const currentWorkflowRecord = computed(() => (
+  currentSource.value === "workflow"
+    ? detail.value?.record || selectedRecord.value || null
+    : null
+));
+const workflowSummary = computed(() => (
+  currentSource.value === "workflow"
+    ? detail.value?.summary || null
+    : null
+));
+const workflowCaseArtifacts = computed(() => (
+  currentSource.value === "workflow" && Array.isArray(detail.value?.case_artifacts)
+    ? detail.value.case_artifacts
+    : []
+));
+const workflowJudgeReports = computed(() => (
+  currentSource.value === "workflow" && Array.isArray(detail.value?.judge_reports)
+    ? detail.value.judge_reports
+    : []
+));
+const workflowFullCaseArtifacts = computed(() => (
+  currentSource.value === "workflow" && Array.isArray(detail.value?.full_case_artifacts)
+    ? detail.value.full_case_artifacts
+    : []
+));
+const workflowSingleRunArtifact = computed(() => (
+  currentWorkflowRecord.value?.workspace_type === "workflow_single_run"
+    ? workflowFullCaseArtifacts.value[0] || null
+    : null
+));
+const workflowCompareReports = computed(() => (
+  currentSource.value === "workflow" && Array.isArray(detail.value?.compare_reports)
+    ? detail.value.compare_reports
+    : []
+));
 
 const resultKindLabel = computed(() => {
+  if (currentSource.value === "workflow") return workflowWorkspaceLabel(currentWorkflowRecord.value);
   const kind = currentTrial.value?.result_kind;
   if (kind === "single_run_result") return "Single Run";
   if (kind === "compare_result") return "Baseline Compare";
   return "Result";
 });
 
+const workflowCaseRows = computed(() => [...workflowCaseArtifacts.value].sort((a, b) => {
+  const severityDelta = workflowCaseSeverityRank(b) - workflowCaseSeverityRank(a);
+  if (severityDelta !== 0) return severityDelta;
+  return String(a.case_id || "").localeCompare(String(b.case_id || ""));
+}));
+
 watch(
-  () => [props.initialSource, props.initialRunId, props.initialNodeProbeRunId],
+  () => [props.initialSource, props.initialRunId],
   ([source, runId]) => {
-    if (source === "node_lab" && runId) {
-      void selectRecord(runId);
+    const normalizedSource = normalizeSource(source);
+    if (normalizedSource) {
+      sourceFilter.value = normalizedSource;
+    }
+    if (runId) {
+      void selectRecordBySource(normalizedSource === "all" ? "workflow" : normalizedSource, runId);
     }
   },
 );
 
 onMounted(async () => {
+  sourceFilter.value = normalizeSource(props.initialSource);
   await loadRecords();
-  if (props.initialSource === "node_lab" && props.initialRunId) {
-    await selectRecord(props.initialRunId);
-  } else if (!selectedTrialId.value && records.value.length) {
-    await selectRecord(records.value[0].trial_id);
+  if (props.initialRunId) {
+    await selectRecordBySource(sourceFilter.value === "all" ? "workflow" : sourceFilter.value, props.initialRunId);
+  } else if (!selectedRecordKey.value && records.value.length) {
+    await selectRecord(records.value[0]);
   }
   startPolling();
   bindVisibilityListener();
@@ -101,31 +192,81 @@ async function fetchData(url) {
   return response?.data?.data ?? response?.data;
 }
 
-function buildQuery() {
+function normalizeSource(value) {
+  return SOURCE_VALUES.has(String(value || "")) ? String(value || "") : "all";
+}
+
+function normalizeWorkflowWorkspace(value) {
+  return WORKFLOW_WORKSPACE_VALUES.has(String(value || "")) ? String(value || "") : "all";
+}
+
+function buildNodeQuery() {
   const params = new URLSearchParams();
   params.set("limit", "80");
-  for (const [key, value] of Object.entries(filters.value)) {
+  for (const [key, value] of Object.entries(nodeFilters.value)) {
     if (value && value !== "all") params.set(key, value);
   }
   return params.toString();
+}
+
+function recordId(record) {
+  if (!record) return "";
+  return record.source === "workflow"
+    ? String(record.run_id || record.record_id || "")
+    : String(record.trial_id || record.record_id || "");
+}
+
+function recordKeyOf(record) {
+  return `${record?.source || "unknown"}:${recordId(record)}`;
+}
+
+async function fetchNodeRecords() {
+  const data = await fetchData(`${NODE_ENDPOINT}?${buildNodeQuery()}`);
+  const items = Array.isArray(data?.records) ? data.records : [];
+  return items.map((record) => ({ ...record, source: "node_lab" }));
+}
+
+async function fetchWorkflowRecords() {
+  const data = await fetchData(`${WORKFLOW_ENDPOINT}?limit=80`);
+  const items = Array.isArray(data?.records) ? data.records : [];
+  return items.map((record) => ({ ...record, source: "workflow" }));
+}
+
+function applyRecordFilters(items) {
+  return items.filter((record) => {
+    if (record?.source === "workflow") {
+      return workflowFilters.value.workspace_type === "all"
+        || record.workspace_type === workflowFilters.value.workspace_type;
+    }
+    return true;
+  });
 }
 
 async function loadRecords(options = {}) {
   loading.value = true;
   error.value = "";
   try {
-    const data = await fetchData(`${endpoint}?${buildQuery()}`);
-    records.value = Array.isArray(data?.records) ? data.records : [];
+    const loaders = [];
+    if (sourceFilter.value !== "workflow") loaders.push(fetchNodeRecords());
+    if (sourceFilter.value !== "node_lab") loaders.push(fetchWorkflowRecords());
+    const loadedGroups = await Promise.all(loaders);
+    records.value = applyRecordFilters(loadedGroups
+      .flat()
+      .sort((a, b) => {
+        const aTime = new Date(a.date_created || a.created_at || 0).getTime();
+        const bTime = new Date(b.date_created || b.created_at || 0).getTime();
+        return bTime - aTime;
+      }));
     if (!options.keepSelection) {
-      selectedTrialId.value = "";
+      selectedRecordKey.value = "";
       detail.value = null;
     }
-    if (selectedTrialId.value && !records.value.some((record) => record.trial_id === selectedTrialId.value)) {
-      selectedTrialId.value = "";
+    if (selectedRecordKey.value && !records.value.some((record) => recordKeyOf(record) === selectedRecordKey.value)) {
+      selectedRecordKey.value = "";
       detail.value = null;
     }
-    if (!selectedTrialId.value && records.value.length) {
-      await selectRecord(records.value[0].trial_id);
+    if (!selectedRecordKey.value && records.value.length) {
+      await selectRecord(records.value[0]);
     }
   } catch (err) {
     error.value = err?.response?.data?.errors?.[0]?.message || err?.message || "读取 Run History 失败。";
@@ -134,13 +275,25 @@ async function loadRecords(options = {}) {
   }
 }
 
-async function selectRecord(trialId) {
-  if (!trialId) return;
-  selectedTrialId.value = trialId;
+async function selectRecordBySource(source, recordIdValue) {
+  const normalizedSource = normalizeSource(source);
+  if (!recordIdValue) return;
+  const searchSources = normalizedSource === "all" ? ["node_lab", "workflow"] : [normalizedSource];
+  for (const src of searchSources) {
+    const existing = records.value.find((item) => item.source === src && recordId(item) === recordIdValue);
+    if (existing) {
+      await selectRecord(existing);
+      return;
+    }
+  }
   detailLoading.value = true;
   detailError.value = "";
+  const fetchSource = normalizedSource === "all" ? "workflow" : normalizedSource;
   try {
-    detail.value = await fetchData(`${endpoint}/${encodeURIComponent(trialId)}`);
+    detail.value = await fetchData(
+      `${fetchSource === "workflow" ? WORKFLOW_ENDPOINT : NODE_ENDPOINT}/${encodeURIComponent(recordIdValue)}`,
+    );
+    selectedRecordKey.value = `${fetchSource}:${recordIdValue}`;
   } catch (err) {
     detailError.value = err?.response?.data?.errors?.[0]?.message || err?.message || "读取详情失败。";
   } finally {
@@ -148,8 +301,86 @@ async function selectRecord(trialId) {
   }
 }
 
-function setFilter(key, value) {
-  filters.value = { ...filters.value, [key]: value };
+async function selectRecord(recordOrKey) {
+  const record = typeof recordOrKey === "string"
+    ? records.value.find((item) => recordKeyOf(item) === recordOrKey) || null
+    : recordOrKey;
+  if (!record) return;
+  pendingDeleteKey.value = "";
+  selectedRecordKey.value = recordKeyOf(record);
+  detailLoading.value = true;
+  detailError.value = "";
+  try {
+    detail.value = await fetchData(
+      `${record.source === "workflow" ? WORKFLOW_ENDPOINT : NODE_ENDPOINT}/${encodeURIComponent(recordId(record))}`,
+    );
+  } catch (err) {
+    detailError.value = err?.response?.data?.errors?.[0]?.message || err?.message || "读取详情失败。";
+  } finally {
+    detailLoading.value = false;
+  }
+}
+
+function deleteTargetKey() {
+  if (currentSource.value === "workflow") {
+    return currentWorkflowRecord.value?.run_id
+      ? `workflow:${currentWorkflowRecord.value.run_id}`
+      : "";
+  }
+  return currentTrial.value?.trial_id ? `node_lab:${currentTrial.value.trial_id}` : "";
+}
+
+function promptDeleteSelectedRecord() {
+  pendingDeleteKey.value = deleteTargetKey();
+}
+
+function cancelDeleteSelectedRecord() {
+  pendingDeleteKey.value = "";
+}
+
+async function deleteSelectedRecord() {
+  const source = currentSource.value;
+  const key = deleteTargetKey();
+  if (!key || pendingDeleteKey.value !== key) return;
+  const workflowRunId = currentWorkflowRecord.value?.run_id;
+  const nodeTrialId = currentTrial.value?.trial_id;
+  deleting.value = true;
+  detailError.value = "";
+  try {
+    if (source === "workflow" && workflowRunId) {
+      await api.delete(`${WORKFLOW_ENDPOINT}/${encodeURIComponent(workflowRunId)}`);
+    } else if (source === "node_lab" && nodeTrialId) {
+      await api.delete(`/eval-center/node-lab/trials/${encodeURIComponent(nodeTrialId)}`);
+    } else {
+      throw new Error("当前记录不支持删除。");
+    }
+    pendingDeleteKey.value = "";
+    selectedRecordKey.value = "";
+    detail.value = null;
+    await loadRecords({ keepSelection: false });
+  } catch (err) {
+    detailError.value = err?.response?.data?.errors?.[0]?.message || err?.message || "删除历史记录失败。";
+  } finally {
+    deleting.value = false;
+  }
+}
+
+function setSource(value) {
+  sourceFilter.value = normalizeSource(value);
+  pendingDeleteKey.value = "";
+  void loadRecords({ keepSelection: false });
+}
+
+function setNodeFilter(key, value) {
+  nodeFilters.value = { ...nodeFilters.value, [key]: value };
+  void loadRecords({ keepSelection: true });
+}
+
+function setWorkflowFilter(key, value) {
+  workflowFilters.value = {
+    ...workflowFilters.value,
+    [key]: key === "workspace_type" ? normalizeWorkflowWorkspace(value) : value,
+  };
   void loadRecords({ keepSelection: true });
 }
 
@@ -158,8 +389,8 @@ function retryLoadRecords() {
 }
 
 function retrySelectRecord() {
-  if (selectedTrialId.value) {
-    void selectRecord(selectedTrialId.value);
+  if (selectedRecordKey.value) {
+    void selectRecord(selectedRecordKey.value);
   }
 }
 
@@ -172,9 +403,7 @@ async function pollOnce() {
   if (loading.value) return;
   if (!hasLiveRecords()) return;
   try {
-    const data = await fetchData(`${endpoint}?${buildQuery()}`);
-    const next = Array.isArray(data?.records) ? data.records : [];
-    records.value = next;
+    await loadRecords({ keepSelection: true });
   } catch {
     // Polling 失败静默,下一次 interval 继续
   }
@@ -220,14 +449,53 @@ function unbindVisibilityListener() {
 }
 
 function workspaceLabel(record) {
+  if (record?.source === "workflow") return workflowWorkspaceLabel(record);
   if (record?.result_kind === "single_run_result") return "Single Run";
   if (record?.workspace_type === "baseline_compare") return "Compare";
   return record?.workspace_type || "Result";
 }
 
+function workflowWorkspaceLabel(recordOrType) {
+  const workspaceType = typeof recordOrType === "string"
+    ? recordOrType
+    : recordOrType?.workspace_type;
+  if (workspaceType === "workflow_single_run") return "Workflow Single Run";
+  if (workspaceType === "workflow_dataset_run") return "Workflow Dataset Run";
+  return "Workflow Run";
+}
+
 function sourceLabel(record) {
+  if (record?.source === "workflow") {
+    const scope = record.workspace_type === "workflow_single_run"
+      ? "Single Validation"
+      : record.workspace_type === "workflow_dataset_run"
+        ? "Dataset Validation"
+        : "Workflow Lab";
+    return `Workflow Lab · ${scope}`;
+  }
   if (record?.session_id) return record.session_title || record.session_id;
   return "Standalone";
+}
+
+function recordTitle(record) {
+  if (record?.source === "workflow") {
+    const variant = record.prompt_variant_id || "baseline";
+    const dataset = record.dataset_id || "未知数据集";
+    return record.display_title || `${variant} · ${dataset}`;
+  }
+  return `${record.node_name} · ${record.reading_goal} · ${record.reading_variant}`;
+}
+
+function recordExcerpt(record) {
+  if (record?.source === "workflow") {
+    return record.display_excerpt || record.run_id || "";
+  }
+  return record.display_excerpt || record.input_excerpt || record.input_text_hash || "";
+}
+
+function workflowDatasetValue(record) {
+  if (record?.workspace_type === "workflow_single_run") return "single-run artifact";
+  return record?.dataset_id || "未记录";
 }
 
 function runOutput(result) {
@@ -247,6 +515,32 @@ function tokenSummary(runtime) {
   if (total == null) return "未记录";
   return `${total} tokens`;
 }
+
+function workflowCaseSeverityRank(item) {
+  if (!item) return 0;
+  if (item.error) return 5;
+  if ((item.hard_failures || 0) > 0) return 4;
+  if ((item.soft_failures || 0) > 0) return 3;
+  if ((item.warning_count || 0) > 0) return 2;
+  if ((item.drop_count || 0) > 0) return 1;
+  return 0;
+}
+
+function openWorkflowCompare(report) {
+  if (!report?.baseline_run_id || !report?.candidate_run_id) return;
+  emit("compare-run", {
+    baseline_run_id: report.baseline_run_id,
+    candidate_run_id: report.candidate_run_id,
+  });
+}
+
+function judgePassRate(summary) {
+  if (!summary) return "—";
+  const total = Number(summary.total_cases ?? 0);
+  if (total === 0) return "—";
+  const passed = Number(summary.passed ?? 0);
+  return `${Math.round((passed / total) * 100)}%`;
+}
 </script>
 
 <template>
@@ -264,28 +558,44 @@ function tokenSummary(runtime) {
 
       <div class="filters">
         <label>
+          <span>数据源</span>
+          <select :value="sourceFilter" @change="setSource($event.target.value)">
+            <option value="all">全部</option>
+            <option value="node_lab">Node Lab</option>
+            <option value="workflow">Workflow Lab</option>
+          </select>
+        </label>
+        <label v-if="sourceFilter !== 'workflow'">
           <span>类型</span>
-          <select :value="filters.workspace_type" @change="setFilter('workspace_type', $event.target.value)">
+          <select :value="nodeFilters.workspace_type" @change="setNodeFilter('workspace_type', $event.target.value)">
             <option value="all">全部</option>
             <option value="single_run">Single Run</option>
             <option value="baseline_compare">Baseline Compare</option>
           </select>
         </label>
-        <label>
+        <label v-if="sourceFilter !== 'workflow'">
           <span>来源</span>
-          <select :value="filters.session_scope" @change="setFilter('session_scope', $event.target.value)">
+          <select :value="nodeFilters.session_scope" @change="setNodeFilter('session_scope', $event.target.value)">
             <option value="all">全部</option>
             <option value="standalone">Standalone</option>
             <option value="session">Session</option>
           </select>
         </label>
-        <label>
+        <label v-if="sourceFilter !== 'workflow'">
           <span>Node</span>
-          <select :value="filters.node_name" @change="setFilter('node_name', $event.target.value)">
+          <select :value="nodeFilters.node_name" @change="setNodeFilter('node_name', $event.target.value)">
             <option value="all">全部</option>
             <option value="grammar">Grammar</option>
             <option value="vocabulary">Vocabulary</option>
             <option value="translation">Translation</option>
+          </select>
+        </label>
+        <label v-if="sourceFilter !== 'node_lab'">
+          <span>Workflow 类型</span>
+          <select :value="workflowFilters.workspace_type" @change="setWorkflowFilter('workspace_type', $event.target.value)">
+            <option value="all">全部</option>
+            <option value="workflow_single_run">Workflow Single Run</option>
+            <option value="workflow_dataset_run">Workflow Dataset Run</option>
           </select>
         </label>
       </div>
@@ -300,21 +610,21 @@ function tokenSummary(runtime) {
       <div class="record-list">
         <button
           v-for="record in records"
-          :key="record.trial_id"
+          :key="recordKeyOf(record)"
           type="button"
           class="record-row"
-          :class="{ active: record.trial_id === selectedTrialId }"
-          @click="selectRecord(record.trial_id)"
+          :class="{ active: recordKeyOf(record) === selectedRecordKey }"
+          @click="selectRecord(record)"
         >
           <span class="record-topline">
             <span class="record-type">{{ workspaceLabel(record) }}</span>
             <StatusPill :label="statusLabel(record.status)" :tone="statusTone(record.status)" />
           </span>
-          <strong>{{ record.node_name }} · {{ record.reading_goal }} · {{ record.reading_variant }}</strong>
-          <span class="record-excerpt">{{ record.display_excerpt || record.input_excerpt || record.input_text_hash }}</span>
+          <strong>{{ recordTitle(record) }}</strong>
+          <span class="record-excerpt">{{ recordExcerpt(record) }}</span>
           <span class="record-meta">
             <span>{{ sourceLabel(record) }}</span>
-            <span>{{ formatDateTime(record.date_created) }}</span>
+            <span>{{ formatDateTime(record.date_created || record.created_at) }}</span>
           </span>
         </button>
       </div>
@@ -326,7 +636,221 @@ function tokenSummary(runtime) {
         <span>{{ detailError }}</span>
         <button type="button" class="notice-retry" @click="retrySelectRecord">重试</button>
       </div>
-      <div v-else-if="!currentTrial" class="empty-state">请选择一条历史记录。</div>
+      <div v-else-if="!currentTrial && !currentWorkflowRecord" class="empty-state">请选择一条历史记录。</div>
+      <template v-else-if="currentSource === 'workflow' && currentWorkflowRecord">
+        <header class="detail-header">
+          <div>
+            <p class="eyebrow">{{ resultKindLabel }}</p>
+            <h2>{{ currentWorkflowRecord.display_title || currentWorkflowRecord.run_id }}</h2>
+            <p>{{ currentWorkflowRecord.display_excerpt || currentWorkflowRecord.run_id }}</p>
+          </div>
+          <div class="detail-actions">
+            <StatusPill :label="statusLabel(currentWorkflowRecord.status)" :tone="statusTone(currentWorkflowRecord.status)" size="large" />
+            <button type="button" class="danger-button" :disabled="deleting" @click="promptDeleteSelectedRecord">删除记录</button>
+          </div>
+        </header>
+
+        <div
+          v-if="pendingDeleteKey === deleteTargetKey()"
+          class="notice is-warning"
+          role="alert"
+        >
+          <span>删除后会移除这条 run 对应的 artifact、本地 compare / judge 文件，以及关联的 workflow request / judge request / review notes。</span>
+          <div class="notice-actions">
+            <button type="button" class="notice-retry" @click="cancelDeleteSelectedRecord">取消</button>
+            <button type="button" class="danger-button" :disabled="deleting" @click="deleteSelectedRecord">
+              {{ deleting ? "删除中..." : "确认删除" }}
+            </button>
+          </div>
+        </div>
+
+        <dl class="meta-grid">
+          <div>
+            <dt>Run</dt>
+            <dd>{{ currentWorkflowRecord.run_id }}</dd>
+          </div>
+          <div>
+            <dt>类型</dt>
+            <dd>{{ workflowWorkspaceLabel(currentWorkflowRecord) }}</dd>
+          </div>
+          <div>
+            <dt>{{ currentWorkflowRecord.workspace_type === "workflow_single_run" ? "Artifact" : "Dataset" }}</dt>
+            <dd>{{ workflowDatasetValue(currentWorkflowRecord) }}</dd>
+          </div>
+          <div>
+            <dt>Prompt Variant</dt>
+            <dd>{{ currentWorkflowRecord.prompt_variant_id || "baseline" }}</dd>
+          </div>
+          <div>
+            <dt>Topology</dt>
+            <dd>{{ currentWorkflowRecord.topology_mode || "未记录" }}</dd>
+          </div>
+          <div>
+            <dt>创建时间</dt>
+            <dd>{{ formatDateTime(currentWorkflowRecord.created_at || currentWorkflowRecord.date_created) }}</dd>
+          </div>
+        </dl>
+
+        <section class="result-section">
+          <div class="section-heading">
+            <h3>运行摘要</h3>
+            <span>{{ workflowSummary?.judge_report_count || 0 }} 条 Judge</span>
+          </div>
+          <dl class="meta-grid workflow-summary-grid">
+            <div>
+              <dt>总 Cases</dt>
+              <dd>{{ workflowSummary?.total_cases ?? 0 }}</dd>
+            </div>
+            <div>
+              <dt>Learning</dt>
+              <dd>{{ workflowSummary?.learning_case_count ?? 0 }}</dd>
+            </div>
+            <div>
+              <dt>硬失败</dt>
+              <dd>{{ workflowSummary?.hard_failure_count ?? 0 }}</dd>
+            </div>
+            <div>
+              <dt>软失败</dt>
+              <dd>{{ workflowSummary?.soft_failure_count ?? 0 }}</dd>
+            </div>
+            <div>
+              <dt>Regression</dt>
+              <dd>{{ workflowSummary?.regression_count ?? 0 }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section v-if="workflowSingleRunArtifact" class="result-section">
+          <div class="section-heading">
+            <h3>Single Run 标注视图</h3>
+            <span>
+              {{ workflowSingleRunArtifact.model_identity?.model_name || "未记录模型" }}
+              · {{ workflowSingleRunArtifact.usage_summary?.total_tokens ?? "—" }} tokens
+              · {{ workflowSingleRunArtifact.latency_seconds != null ? `${Number(workflowSingleRunArtifact.latency_seconds).toFixed(2)} s` : "未记录耗时" }}
+            </span>
+          </div>
+          <WorkflowSentenceNotebook
+            :payload="workflowSingleRunArtifact"
+            :prepared-sentences="workflowSingleRunArtifact.render_scene?.article?.sentences || []"
+            empty-text="这条 Workflow Single Run 没有可展示的标注。"
+          />
+        </section>
+
+        <section v-if="workflowCompareReports.length" class="result-section">
+          <div class="section-heading">
+            <h3>已保存 Compare</h3>
+            <span>{{ workflowCompareReports.length }} 条</span>
+          </div>
+          <div class="workflow-compare-list">
+            <button
+              v-for="report in workflowCompareReports"
+              :key="report.report_id"
+              type="button"
+              class="workflow-compare-item"
+              @click="openWorkflowCompare(report)"
+            >
+              <strong>{{ report.baseline_run_id }} vs {{ report.candidate_run_id }}</strong>
+              <span>
+                {{ report.wins ?? 0 }} 胜 · {{ report.losses ?? 0 }} 负 · {{ report.ties ?? 0 }} 平 · {{ formatDateTime(report.created_at) }}
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <section class="result-section">
+          <div class="section-heading">
+            <h3>Case 列表</h3>
+            <span>{{ workflowCaseRows.length }} 条</span>
+          </div>
+          <div class="workflow-case-table-wrap">
+            <table class="workflow-case-table">
+              <thead>
+                <tr>
+                  <th>Case</th>
+                  <th>状态</th>
+                  <th>Warnings</th>
+                  <th>Drop</th>
+                  <th>硬失败</th>
+                  <th>软失败</th>
+                  <th>翻译</th>
+                  <th>标注</th>
+                  <th>条目</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in workflowCaseRows" :key="item.case_id">
+                  <td>{{ item.case_id }}</td>
+                  <td>{{ statusLabel(item.adapter_status || item.user_facing_state || "complete") }}</td>
+                  <td>{{ item.warning_count ?? 0 }}</td>
+                  <td>{{ item.drop_count ?? 0 }}</td>
+                  <td>{{ item.hard_failures ?? 0 }}</td>
+                  <td>{{ item.soft_failures ?? 0 }}</td>
+                  <td>{{ item.translation_count ?? 0 }}</td>
+                  <td>{{ item.inline_mark_count ?? 0 }}</td>
+                  <td>{{ item.sentence_entry_count ?? 0 }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="result-section">
+          <div class="section-heading">
+            <h3>Judge 结果</h3>
+            <span>{{ workflowJudgeReports.length ? "只读" : "暂无 Judge" }}</span>
+          </div>
+          <div v-if="!workflowJudgeReports.length" class="empty-inline">这条 Workflow Run 还没有 Judge artifact。</div>
+          <div v-else class="judge-list">
+            <ResultBlock
+              v-for="judge in workflowJudgeReports"
+              :key="judge.summary?.judge_run_id || judge.summary?.id"
+              :title="`${judge.summary?.judge_run_id || judge.summary?.id} · ${judge.summary?.rubric_id || '未记录 rubric'}`"
+              :open="judge.summary?.average_score != null"
+            >
+              <dl class="judge-meta">
+                <div>
+                  <dt>Adapter</dt>
+                  <dd>{{ judge.summary?.judge_adapter_kind || "未记录" }}</dd>
+                </div>
+                <div>
+                  <dt>Score</dt>
+                  <dd>{{ judge.summary?.average_score ?? "未记录" }}</dd>
+                </div>
+                <div>
+                  <dt>通过率</dt>
+                  <dd>{{ judgePassRate(judge.summary) }}</dd>
+                </div>
+                <div>
+                  <dt>时间</dt>
+                  <dd>{{ formatDateTime(judge.summary?.created_at) }}</dd>
+                </div>
+              </dl>
+              <JsonTreeView :value="{ report: judge.report, case_results: judge.case_results }" empty-text="暂无 Judge artifact。" />
+            </ResultBlock>
+          </div>
+        </section>
+
+        <section v-if="currentWorkflowRecord.run_id" class="result-section">
+          <div class="section-heading">
+            <h3>人工 Review</h3>
+            <span>只读 / 补充</span>
+          </div>
+          <ReviewNotesPanel
+            title="Workflow Run Review"
+            target-type="workflow_run"
+            :target-id="currentWorkflowRecord.run_id"
+            :run-id="currentWorkflowRecord.run_id"
+            scope-note="这类 note 挂在整条 workflow_run 上，用于回看阶段补充人工结论；不会自动下钻到 compare / judge / case。"
+          />
+        </section>
+
+        <ResultBlock title="完整结果 JSON" :open="false">
+          <JsonTreeView
+            :value="{ summary: workflowSummary, run: detail?.run, report: detail?.report, case_index: detail?.case_index }"
+            empty-text="暂无 result artifact。"
+          />
+        </ResultBlock>
+      </template>
       <template v-else>
         <header class="detail-header">
           <div>
@@ -334,8 +858,25 @@ function tokenSummary(runtime) {
             <h2>{{ currentTrial.node_name }} · {{ currentTrial.reading_goal }} · {{ currentTrial.reading_variant }}</h2>
             <p>{{ currentTrial.display_excerpt || currentTrial.input_excerpt || currentTrial.input_text_hash }}</p>
           </div>
-          <StatusPill :label="statusLabel(currentTrial.status)" :tone="statusTone(currentTrial.status)" size="large" />
+          <div class="detail-actions">
+            <StatusPill :label="statusLabel(currentTrial.status)" :tone="statusTone(currentTrial.status)" size="large" />
+            <button type="button" class="danger-button" :disabled="deleting" @click="promptDeleteSelectedRecord">删除记录</button>
+          </div>
         </header>
+
+        <div
+          v-if="pendingDeleteKey === deleteTargetKey()"
+          class="notice is-warning"
+          role="alert"
+        >
+          <span>删除后会移除这条 trial 对应的 artifact、本地 judge 文件，以及关联的 Node Lab 数据库记录。</span>
+          <div class="notice-actions">
+            <button type="button" class="notice-retry" @click="cancelDeleteSelectedRecord">取消</button>
+            <button type="button" class="danger-button" :disabled="deleting" @click="deleteSelectedRecord">
+              {{ deleting ? "删除中..." : "确认删除" }}
+            </button>
+          </div>
+        </div>
 
         <dl class="meta-grid">
           <div>
@@ -500,6 +1041,13 @@ h3 {
   line-height: 1.5;
 }
 
+.detail-actions,
+.notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .icon-button {
   width: 34px;
   height: 34px;
@@ -656,6 +1204,58 @@ dd {
   gap: 12px;
 }
 
+.workflow-summary-grid {
+  margin-top: 0;
+}
+
+.workflow-compare-list {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-compare-item {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-compare-item span {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+}
+
+.workflow-case-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--theme--border-color);
+}
+
+.workflow-case-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+}
+
+.workflow-case-table th,
+.workflow-case-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--theme--border-color);
+  text-align: left;
+  vertical-align: top;
+}
+
+.workflow-case-table th {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--theme--background-subdued);
+}
+
 .compare-side {
   min-width: 0;
   padding: 12px;
@@ -699,6 +1299,17 @@ dd {
   gap: 12px;
 }
 
+.notice.is-warning {
+  margin-top: 14px;
+  border: 1px solid color-mix(in srgb, #d18d00 35%, var(--theme--border-color));
+  color: #8b5a00;
+  background: color-mix(in srgb, #d18d00 8%, var(--theme--background));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .notice-retry {
   border: 1px solid color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
   background: var(--theme--background);
@@ -713,12 +1324,39 @@ dd {
   background: color-mix(in srgb, var(--theme--danger) 12%, var(--theme--background));
 }
 
+.danger-button {
+  border: 1px solid color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
+  background: var(--theme--background);
+  color: var(--theme--danger);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--theme--danger) 10%, var(--theme--background));
+}
+
 @media (max-width: 1100px) {
   .run-history,
   .compare-grid,
   .meta-grid,
   .judge-meta {
     grid-template-columns: 1fr;
+  }
+
+  .detail-actions,
+  .notice-actions,
+  .notice.is-warning,
+  .notice.is-danger {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

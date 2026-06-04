@@ -1,58 +1,127 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useNodeLabState } from "../composables/useNodeLabState";
 import { useNodeLabApi } from "../composables/useNodeLabApi";
 import {
-  statusBadgeLabel,
+  statusTone,
+  statusLabel,
+  shortId,
+} from "../../../composables/useEvalFormatting";
+import {
   formatDurationMs,
   formatRuntimeTokens,
   compareDeltaTone,
   formatSignedDelta,
-  statusTone,
-  statusLabel,
-  shortId,
   nodeLabel,
   readingGoalLabel,
   readingVariantLabel,
   compareViewSourceLabel,
-  compareViewSourceTone,
+  trialJudgeCount,
   normalizePreviewText,
   buildInputPreview,
-  trialJudgeCount,
-  compareTrialSourceLabel,
-  trialReadableTitle,
-  trialReadableMeta,
 } from "../composables/useNodeLabFormatting";
 
 const {
   compareResult,
-  state, currentText, currentReadingGoal, currentReadingVariant,
-  activeCompareView, activeCompareTrial,
-  currentCompareTrialId, latestCompareTrialId,
-  recentTrials,
   loading,
+  state,
+  currentText,
+  currentReadingGoal,
+  currentReadingVariant,
+  activeCompareView,
+  activeCompareTrial,
+  currentCompareTrialId,
+  latestCompareTrialId,
   selectedJudgeRequestDetail,
 } = useNodeLabState();
-const { openCompareTrialInWorkbench } = useNodeLabApi();
+const { loadTrialDetail } = useNodeLabApi();
 
-const compareRequestSnapshot = computed(() => {
-  return compareResult.value?.request_snapshot || null;
-});
+const hydratedCompareResult = ref(null);
 
-const activeCompareInputPreview = computed(() => {
+const compareTrialIdForHydration = computed(() => {
   return String(
-    activeCompareView.value?.inputPreview
-    || activeCompareTrial.value?.input_excerpt
-    || compareRequestSnapshot.value?.source_excerpt
-    || ""
+    activeCompareTrial.value?.trial_id
+    || activeCompareView.value?.trialId
+    || currentCompareTrialId.value
+    || latestCompareTrialId.value
+    || "",
   ).trim();
 });
 
-const compareSnapshotContextMismatchReason = computed(() => {
-  const snapshot = compareRequestSnapshot.value;
-  if (!snapshot) return null;
+function hasRichSideMetadata(entry) {
+  if (!entry || typeof entry !== "object") return false;
+  const hasStatus = Boolean(entry.status);
+  const hasModel = Boolean(entry.model_identity?.model_name || entry.model_identity?.profile_name);
+  const hasRuntime = Boolean(entry.runtime_summary?.latency_ms || entry.runtime_summary?.aggregate?.total_tokens);
+  const hasPrompt = Boolean(entry.prompt_identity?.prompt_variant_id || entry.prompt_identity?.prompt_version || entry.prompt_identity?.prompt_snapshot_hash);
+  const hasExamples = Boolean(entry.example_summary?.selection_mode);
+  const hasOutput = Boolean(entry.node_output || (Array.isArray(entry.prepared_sentences) && entry.prepared_sentences.length));
+  return hasStatus && (hasModel || hasRuntime || hasPrompt || hasExamples || hasOutput);
+}
 
-  const snapshotNode = String(snapshot.node_name || compareResult.value?.node_name || "").trim();
+function compareSideStatus(entry, summary, side) {
+  return entry?.status || summary?.result_status?.[`${side}_status`] || null;
+}
+
+function compareSideModel(entry) {
+  return entry?.model_identity?.model_name || entry?.model_identity?.profile_name || "未记录";
+}
+
+function compareSideFewShot(entry, side) {
+  if (entry?.example_summary?.selection_mode) return entry.example_summary.selection_mode;
+  if (side === "baseline") return "baseline";
+  return entry?.candidate_id ? "candidate" : "未记录";
+}
+
+function compareSideLatency(entry, summary, side) {
+  const summaryValue = summary?.[`${side}_latency_ms`];
+  if (Number.isFinite(summaryValue)) return formatDurationMs(summaryValue);
+  return formatDurationMs(entry?.runtime_summary?.latency_ms);
+}
+
+function compareSidePrompt(entry, side) {
+  return entry?.prompt_identity?.prompt_snapshot_hash
+    || entry?.prompt_identity?.prompt_variant_id
+    || entry?.snapshot_hash
+    || (side === "baseline" ? "baseline" : entry?.candidate_id || "baseline");
+}
+
+const effectiveCompareResult = computed(() => {
+  const live = compareResult.value;
+  if (live && (hasRichSideMetadata(live.baseline) || hasRichSideMetadata(live.candidate))) {
+    return live;
+  }
+  return hydratedCompareResult.value || live || null;
+});
+
+watch(
+  compareTrialIdForHydration,
+  async (trialId) => {
+    hydratedCompareResult.value = null;
+    if (!trialId) return;
+    try {
+      const detail = await loadTrialDetail(trialId);
+      if (detail?.result?.baseline || detail?.result?.candidate) {
+        hydratedCompareResult.value = detail.result;
+      }
+    } catch {
+      // ignore hydration failures; UI will fall back to current compare payload
+    }
+  },
+  { immediate: true },
+);
+
+const compareRequestSnapshot = computed(() => effectiveCompareResult.value?.request_snapshot || null);
+
+const compareResultStatus = computed(() => {
+  return effectiveCompareResult.value?.compare_summary?.result_status || {};
+});
+
+const compareContextMismatch = computed(() => {
+  const snapshot = compareRequestSnapshot.value;
+  if (!snapshot || !effectiveCompareResult.value) return null;
+
+  const snapshotNode = String(snapshot.node_name || effectiveCompareResult.value?.node_name || "").trim();
   const snapshotGoal = String(snapshot.reading_goal || "").trim();
   const snapshotVariant = String(snapshot.reading_variant || "").trim();
 
@@ -65,7 +134,13 @@ const compareSnapshotContextMismatchReason = computed(() => {
   if (snapshotVariant && snapshotVariant !== currentReadingVariant.value) {
     return `当前页面阅读变体是 ${readingVariantLabel(currentReadingVariant.value)}，但右侧结果来自 ${readingVariantLabel(snapshotVariant)}`;
   }
-  const comparePreview = normalizePreviewText(activeCompareInputPreview.value);
+
+  const comparePreview = normalizePreviewText(
+    activeCompareView.value?.inputPreview
+      || activeCompareTrial.value?.input_excerpt
+      || snapshot.source_excerpt
+      || "",
+  );
   const currentPreview = buildInputPreview(currentText.value);
   if (comparePreview && currentPreview && !currentPreview.startsWith(comparePreview)) {
     return "当前输入文本已变化，但右侧仍显示上一条 Compare 结果";
@@ -73,29 +148,63 @@ const compareSnapshotContextMismatchReason = computed(() => {
   return null;
 });
 
-const compareResultStatus = computed(() => {
-  const result = compareResult.value;
-  return result?.compare_summary?.result_status || {};
-});
-
 const compareOverviewCards = computed(() => {
-  const result = compareResult.value;
-  if (!result) return [];
-  const latencyDelta = Number.isFinite(result.compare_summary?.latency_delta_ms) ? result.compare_summary.latency_delta_ms : null;
-  const tokenDelta = Number.isFinite(result.compare_summary?.token_delta) ? result.compare_summary.token_delta : null;
-  const modelChanged = (result.baseline?.model_identity?.model_name || "") !== (result.candidate?.model_identity?.model_name || "");
-  const fewShotChanged = (result.baseline?.example_summary?.selection_mode || "未记录") !== (result.candidate?.example_summary?.selection_mode || "未记录");
+  const result = effectiveCompareResult.value;
+  if (!result) {
+    return [
+      {
+        key: "baseline",
+        title: "Baseline",
+        tone: "neutral",
+        status: "未记录",
+        model: "未记录",
+        fewShot: "未记录",
+        latency: "未记录",
+        tokens: "未记录",
+        prompt: "未记录",
+        deltaLatency: null,
+        deltaTokens: null,
+        deltaModel: null,
+        deltaFewShot: null,
+      },
+      {
+        key: "candidate",
+        title: "Candidate",
+        tone: "neutral",
+        status: "未记录",
+        model: "未记录",
+        fewShot: "未记录",
+        latency: "未记录",
+        tokens: "未记录",
+        prompt: "未记录",
+        deltaLatency: null,
+        deltaTokens: null,
+        deltaModel: null,
+        deltaFewShot: null,
+      },
+    ];
+  }
+
+  const baseline = result.baseline || {};
+  const candidate = result.candidate || {};
+  const summary = result.compare_summary || {};
+
+  const latencyDelta = Number.isFinite(summary.latency_delta_ms) ? summary.latency_delta_ms : null;
+  const tokenDelta = Number.isFinite(summary.token_delta) ? summary.token_delta : null;
+  const modelChanged = (baseline.model_identity?.model_name || "") !== (candidate.model_identity?.model_name || "");
+  const fewShotChanged = (baseline.example_summary?.selection_mode || "未记录") !== (candidate.example_summary?.selection_mode || "未记录");
+
   return [
     {
       key: "baseline",
       title: "Baseline",
-      status: statusBadgeLabel(result.baseline),
-      tone: statusTone(result.baseline?.status),
-      model: result.baseline?.model_identity?.model_name || "未记录",
-      fewShot: result.baseline?.example_summary?.selection_mode || "未记录",
-      latency: formatDurationMs(result.compare_summary?.baseline_latency_ms),
-      tokens: formatRuntimeTokens(result.baseline?.runtime_summary),
-      prompt: result.baseline?.prompt_identity?.prompt_snapshot_hash || "baseline",
+      tone: statusTone(compareSideStatus(baseline, summary, "baseline")),
+      status: statusLabel(compareSideStatus(baseline, summary, "baseline")),
+      model: compareSideModel(baseline),
+      fewShot: compareSideFewShot(baseline, "baseline"),
+      latency: compareSideLatency(baseline, summary, "baseline"),
+      tokens: formatRuntimeTokens(baseline.runtime_summary),
+      prompt: compareSidePrompt(baseline, "baseline"),
       deltaLatency: null,
       deltaTokens: null,
       deltaModel: modelChanged ? "参考基线" : null,
@@ -104,127 +213,68 @@ const compareOverviewCards = computed(() => {
     {
       key: "candidate",
       title: "Candidate",
-      status: statusBadgeLabel(result.candidate),
-      tone: statusTone(result.candidate?.status),
-      model: result.candidate?.model_identity?.model_name || "未记录",
-      fewShot: result.candidate?.example_summary?.selection_mode || "未记录",
-      latency: formatDurationMs(result.compare_summary?.candidate_latency_ms),
-      tokens: formatRuntimeTokens(result.candidate?.runtime_summary),
-      prompt: result.candidate?.prompt_identity?.prompt_snapshot_hash || "baseline",
+      tone: statusTone(compareSideStatus(candidate, summary, "candidate")),
+      status: statusLabel(compareSideStatus(candidate, summary, "candidate")),
+      model: compareSideModel(candidate),
+      fewShot: compareSideFewShot(candidate, "candidate"),
+      latency: compareSideLatency(candidate, summary, "candidate"),
+      tokens: formatRuntimeTokens(candidate.runtime_summary),
+      prompt: compareSidePrompt(candidate, "candidate"),
       deltaLatency: latencyDelta,
       deltaTokens: tokenDelta,
-      deltaModel: modelChanged ? `${result.baseline?.model_identity?.model_name || "默认"} → ${result.candidate?.model_identity?.model_name || "默认"}` : null,
-      deltaFewShot: fewShotChanged ? `${result.baseline?.example_summary?.selection_mode || "未记录"} → ${result.candidate?.example_summary?.selection_mode || "未记录"}` : null,
+      deltaModel: modelChanged
+        ? `${compareSideModel(baseline) || "默认"} → ${compareSideModel(candidate) || "默认"}`
+        : null,
+      deltaFewShot: fewShotChanged
+        ? `${compareSideFewShot(baseline, "baseline")} → ${compareSideFewShot(candidate, "candidate")}`
+        : null,
     },
   ];
 });
 
-const compareTrialAvailability = computed(() => {
-  const mismatch = compareSnapshotContextMismatchReason.value;
-  if (currentCompareTrialId.value && !mismatch) {
-    return {
-      id: currentCompareTrialId.value,
-      detail: "当前 Compare 已持久化，可直接发起 Judge。",
-    };
-  }
-  if (compareResult.value && !mismatch) {
-    return {
-      id: "尚未持久化",
-      detail: "当前 Compare 结果尚未持久化，可通过 Judge 或加入 Session 自动持久化。",
-    };
-  }
-  if (compareResult.value && mismatch) {
-    return {
-      id: currentCompareTrialId.value || "尚未持久化",
-      detail: `${mismatch}。右侧仍显示上一条 Compare 结果；若继续 Judge，将评估这条结果，而不是当前表单内容。`,
-    };
-  }
-  if (latestCompareTrialId.value) {
-    return {
-      id: latestCompareTrialId.value,
-      detail: "这是历史持久化 Trial，非当前页面内容。",
-    };
-  }
+const hasCompareOverviewCards = computed(() => compareOverviewCards.value.length > 0);
+
+const currentCompareSummary = computed(() => {
+  if (!effectiveCompareResult.value) return null;
+  const trial = activeCompareTrial.value || null;
   return {
-    id: "尚未持久化",
-    detail: "运行 Compare 后，可通过 Judge 或加入 Session 自动持久化。",
+    compareId: shortId(trial?.trial_id || activeCompareView.value?.trialId || currentCompareTrialId.value || latestCompareTrialId.value || "live"),
+    source: compareViewSourceLabel(activeCompareView.value, trial),
+    sessionTitle: trial?.session_title || "",
+    judgeCount: trialJudgeCount(trial) || 0,
+    staleReason: compareContextMismatch.value,
   };
 });
 
-const activeCompareRelation = computed(() => {
-  if (!compareResult.value) return null;
-  const trial = activeCompareTrial.value || null;
-  const staleReason = compareSnapshotContextMismatchReason.value;
-  const sourceLabel = compareViewSourceLabel(activeCompareView.value, trial);
-  const sourceTone = compareViewSourceTone(activeCompareView.value, trial, staleReason);
-  const sessionTitle = trial?.session_title
-    || (trial?.session_id ? `Session ${shortId(trial.session_id)}` : "");
-  const judgeCount = trialJudgeCount(trial) || 0;
-  return {
-    compareId: shortId(trial?.trial_id || activeCompareView.value?.trialId || "live"),
-    sourceLabel,
-    sourceTone,
-    sessionTitle,
-    judgeCount,
-    staleReason,
-    isPersisted: Boolean(trial?.trial_id),
-    isLive: activeCompareView.value?.source === "live" && !trial?.trial_id,
-  };
+const pairwiseReview = computed(() => {
+  return selectedJudgeRequestDetail.value?.result?.pairwise_result?.pairwise_review || null;
 });
 </script>
 
 <template>
   <div v-if="loading.compare && !compareResult" class="compare-loading">
     <div class="loading-spinner"></div>
-    <span>正在运行 Compare...</span>
+    <span>正在准备 Compare 概览...</span>
   </div>
-  <div v-else-if="compareResult">
-    <div v-if="activeCompareView?.source && activeCompareView.source !== 'live'" class="return-banner" role="status">
-      <span>正在查看历史 Compare 结果</span>
-      <v-button small secondary @click="clearActiveCompareView(state.activeNode, { preserveLatestTrial: true })">返回当前 Compare</v-button>
+  <div v-else-if="effectiveCompareResult" class="compare-verdict-bar">
+    <div v-if="pairwiseReview" class="pairwise-summary">
+      <div class="pairwise-summary__header">
+        <strong>Judge 综合倾向</strong>
+        <span
+          class="badge"
+          :class="pairwiseReview.preferred_side === 'candidate'
+            ? 'badge-success'
+            : pairwiseReview.preferred_side === 'baseline'
+              ? 'badge-warning'
+              : 'badge-neutral'"
+        >
+          {{ String(pairwiseReview.preferred_side || "unknown").toUpperCase() }}
+        </span>
+      </div>
+      <p>{{ pairwiseReview.overall_judgment }}</p>
     </div>
 
-    <div v-if="selectedJudgeRequestDetail?.result?.pairwise_result?.pairwise_review" class="pairwise-verdict-panel mb-4 fade-in">
-      <div class="pairwise-verdict-header">
-        <h3 class="pairwise-title">Judge 综合评估：<span :class="selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.preferred_side === 'candidate' ? 'text-success' : (selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.preferred_side === 'baseline' ? 'text-warning' : 'text-neutral')">{{ selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.preferred_side.toUpperCase() }}</span> 胜出</h3>
-      </div>
-      <p class="pairwise-verdict-summary">{{ selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.overall_judgment }}</p>
-      
-      <div class="compare-split mt-3">
-        <div class="compare-pane">
-          <div class="pane-header"><h4>Baseline</h4></div>
-          <ul class="insight-list">
-            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.baseline_strengths || []" :key="`bs-${index}`">
-              <strong>优点：</strong>{{ item }}
-            </li>
-            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.baseline_risks || []" :key="`br-${index}`">
-              <strong>风险：</strong>{{ item }}
-            </li>
-          </ul>
-        </div>
-        <div class="compare-pane">
-          <div class="pane-header"><h4>Candidate</h4></div>
-          <ul class="insight-list">
-            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.candidate_strengths || []" :key="`cs-${index}`">
-              <strong>优点：</strong>{{ item }}
-            </li>
-            <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.candidate_risks || []" :key="`cr-${index}`">
-              <strong>风险：</strong>{{ item }}
-            </li>
-          </ul>
-        </div>
-      </div>
-      <div v-if="selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.manual_check_points?.length" class="mt-3">
-        <h5>建议人工复看</h5>
-        <ul class="insight-list mt-2">
-          <li v-for="(item, index) in selectedJudgeRequestDetail.result.pairwise_result.pairwise_review.manual_check_points" :key="`mc-${index}`">
-            {{ item }}
-          </li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="compare-overview">
+    <div v-if="hasCompareOverviewCards" class="compare-overview">
       <article
         v-for="card in compareOverviewCards"
         :key="card.key"
@@ -276,19 +326,38 @@ const activeCompareRelation = computed(() => {
               </small>
             </span>
           </div>
-          <div class="status-fact">
+          <div class="status-fact fact-span-2">
             <span class="meta-label">Prompt</span>
-            <span class="meta-value">
-              {{ card.prompt }}
-              <small
-                v-if="card.key === 'candidate' && compareResult?.compare_summary?.prompt_changed"
-                class="delta-inline text-warning"
-              >
-                已变化
-              </small>
-            </span>
+            <span class="meta-value">{{ card.prompt }}</span>
           </div>
-
+        </div>
+      </article>
+    </div>
+    <div v-else class="compare-overview compare-overview--empty">
+      <article class="compare-status-card is-neutral">
+        <div class="compare-status-card__header">
+          <h4>Baseline</h4>
+          <span class="badge badge-neutral">未记录</span>
+        </div>
+        <div class="compare-status-card__facts">
+          <div class="status-fact"><span class="meta-label">模型</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact"><span class="meta-label">Few-shot</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact"><span class="meta-label">延迟</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact"><span class="meta-label">Tokens</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact fact-span-2"><span class="meta-label">Prompt</span><span class="meta-value">未记录</span></div>
+        </div>
+      </article>
+      <article class="compare-status-card is-neutral">
+        <div class="compare-status-card__header">
+          <h4>Candidate</h4>
+          <span class="badge badge-neutral">未记录</span>
+        </div>
+        <div class="compare-status-card__facts">
+          <div class="status-fact"><span class="meta-label">模型</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact"><span class="meta-label">Few-shot</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact"><span class="meta-label">延迟</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact"><span class="meta-label">Tokens</span><span class="meta-value">未记录</span></div>
+          <div class="status-fact fact-span-2"><span class="meta-label">Prompt</span><span class="meta-value">未记录</span></div>
         </div>
       </article>
     </div>
@@ -296,165 +365,86 @@ const activeCompareRelation = computed(() => {
     <div class="compare-status-line">
       <div class="compare-status-line__item">
         <span class="meta-label">Compare 状态</span>
-        <strong :class="`text-${statusTone(compareResultStatus.compare_status)}`">{{ statusLabel(compareResultStatus.compare_status) }}</strong>
-        <span class="compare-status-line__detail">Baseline {{ statusLabel(compareResultStatus.baseline_status) }} / Candidate {{ statusLabel(compareResultStatus.candidate_status) }}</span>
+        <strong :class="`text-${statusTone(compareResultStatus.compare_status)}`">
+          {{ statusLabel(compareResultStatus.compare_status) }}
+        </strong>
+        <span class="compare-status-line__detail">
+          Baseline {{ statusLabel(compareResultStatus.baseline_status) }} / Candidate {{ statusLabel(compareResultStatus.candidate_status) }}
+        </span>
       </div>
-      <div class="compare-status-line__item">
-        <span class="meta-label">当前可用 Compare Trial</span>
-        <strong>{{ compareTrialAvailability.id }}</strong>
-        <span class="compare-status-line__detail">{{ compareTrialAvailability.detail }}</span>
-      </div>
-    </div>
-
-    <div v-if="activeCompareRelation" class="compare-relation-strip mb-4">
-      <div class="relation-chip" :class="`is-${activeCompareRelation.sourceTone}`">
-        <span class="relation-label">当前 Compare</span>
-        <strong>#{{ activeCompareRelation.compareId }}</strong>
-      </div>
-      <div class="relation-chip">
-        <span class="relation-label">来源</span>
-        <strong>{{ activeCompareRelation.sourceLabel }}</strong>
-      </div>
-      <div class="relation-chip" v-if="activeCompareRelation.sessionTitle">
-        <span class="relation-label">所属 Session</span>
-        <strong>{{ activeCompareRelation.sessionTitle }}</strong>
-      </div>
-      <div class="relation-chip">
-        <span class="relation-label">Judge</span>
-        <strong>{{ activeCompareRelation.judgeCount }} 条</strong>
-      </div>
-      <div class="relation-chip is-warning" v-if="activeCompareRelation.staleReason">
-        <span class="relation-label">状态</span>
-        <strong>旧结果</strong>
+      <div class="compare-status-line__item" v-if="currentCompareSummary">
+        <span class="meta-label">当前 Compare</span>
+        <strong>#{{ currentCompareSummary.compareId }} · {{ currentCompareSummary.source }}</strong>
+        <span class="compare-status-line__detail">
+          {{ currentCompareSummary.sessionTitle || "未挂载 Session" }} · Judge {{ currentCompareSummary.judgeCount }} 条
+        </span>
       </div>
     </div>
 
-    <details v-if="recentTrials.length" class="detail-card detail-card--compact mb-4">
-      <summary>历史 Compare 入口（{{ recentTrials.length }}）</summary>
-      <div class="detail-content">
-        <p class="block-hint mb-3">历史回看优先使用 Sessions。这里只保留当前节点下最近的 Compare Trial 快速入口。</p>
-        <div class="request-list">
-          <button
-            v-for="trial in recentTrials"
-            :key="trial.trial_id"
-            class="request-item request-item--interactive request-item--verbose"
-            :class="{ active: activeCompareTrial?.trial_id === trial.trial_id }"
-            :aria-label="'打开历史 Compare: ' + trialReadableTitle(trial)"
-            @click="openCompareTrialInWorkbench(trial.trial_id, { source: trial.session_id ? 'session' : 'recent', switchWorkspace: false, openJudge: false })"
-          >
-            <div class="request-main">
-              <span class="request-id">{{ trialReadableTitle(trial) }}</span>
-              <span class="request-meta">{{ trialReadableMeta(trial) }}</span>
-              <span v-if="trial.display_excerpt" class="request-submeta">「{{ trial.display_excerpt }}」</span>
-            </div>
-            <div class="request-side">
-              <span class="badge badge-sm" :class="trial.session_id ? 'badge-active' : 'badge-neutral'">{{ compareTrialSourceLabel(trial) }}</span>
-            </div>
-          </button>
-        </div>
+    <div v-if="currentCompareSummary?.staleReason" class="compare-relation-strip">
+      <div class="relation-chip is-warning">
+        <span class="relation-label">旧结果提示</span>
+        <strong>{{ currentCompareSummary.staleReason }}</strong>
       </div>
-    </details>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.return-banner {
+.compare-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subdued);
+  color: var(--color-text-subdued);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: node-lab-spin 0.8s linear infinite;
+}
+
+.compare-verdict-bar {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.pairwise-summary {
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.pairwise-summary__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 8%, var(--color-surface));
-  border: 1px solid color-mix(in srgb, var(--theme--warning, #f59e0b) 30%, var(--color-border));
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.pairwise-summary p {
+  margin: 0;
   font-size: 13px;
-  color: var(--color-text);
+  line-height: 1.6;
+  color: var(--color-text-subdued);
 }
 
 .compare-overview {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
-  margin-bottom: 16px;
-}
-
-/* Pairwise Verdict Panel */
-.pairwise-verdict-panel {
-  padding: 24px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-}
-
-.pairwise-verdict-header {
-  margin-bottom: 12px;
-}
-
-.pairwise-title {
-  font-size: 18px;
-  font-weight: 700;
-  margin: 0;
-}
-
-.pairwise-verdict-summary {
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--color-text);
-  margin-bottom: 16px;
-}
-
-.compare-split {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
-.compare-pane {
-  background: var(--color-surface-subdued);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 16px;
-}
-
-.pane-header {
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.pane-header h4 {
-  font-size: 13px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.insight-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.insight-list li {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--color-text-subdued);
-}
-
-.insight-list strong {
-  color: var(--color-text);
-}
-
-.fade-in {
-  animation: fade-in 0.2s ease-out forwards;
-}
-
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 .compare-status-card {
@@ -462,30 +452,6 @@ const activeCompareRelation = computed(() => {
   border-radius: var(--radius-lg);
   padding: 18px 18px 16px;
   background: var(--color-surface);
-}
-
-.compare-status-card__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.compare-status-card__header h4 {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.compare-status-card__facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 18px;
-}
-
-.status-fact {
-  display: grid;
-  gap: 4px;
 }
 
 .compare-status-card.is-success {
@@ -500,59 +466,40 @@ const activeCompareRelation = computed(() => {
   border-color: color-mix(in srgb, var(--theme--danger, #dc2626) 24%, var(--color-border));
 }
 
-.delta-inline {
-  display: inline-block;
-  margin-top: 2px;
-  padding: 1px 6px;
-  font-size: 12px;
+.compare-status-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.compare-status-card__header h4 {
+  font-size: 15px;
   font-weight: 600;
-  line-height: 1.45;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--color-surface-subdued) 60%, transparent);
-}
-.delta-inline.text-success { background: color-mix(in srgb, var(--theme--success, #10b981) 10%, var(--color-surface)); }
-.delta-inline.text-warning { background: color-mix(in srgb, var(--theme--warning, #f59e0b) 10%, var(--color-surface)); }
-.delta-inline.text-danger { background: color-mix(in srgb, var(--theme--danger, #dc2626) 10%, var(--color-surface)); }
-
-.text-success { color: var(--theme--success, #10b981); }
-.text-warning { color: var(--theme--warning, #f59e0b); }
-.text-danger { color: var(--theme--danger, #dc2626); }
-.text-attention { color: var(--theme--warning, #f59e0b); }
-.text-neutral { color: var(--color-text-subdued); }
-
-.badge {
-  display: inline-flex;
-  padding: 2px 8px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 999px;
-  background: var(--color-surface-subdued);
-  border: 1px solid var(--color-border);
+  margin: 0;
 }
 
-.badge-sm { padding: 1px 6px; font-size: 11px; }
-.badge-active { background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface)); border-color: var(--color-primary); color: var(--color-primary); }
-.badge-neutral { color: var(--color-text-subdued); }
-.badge-success { border-color: color-mix(in srgb, var(--theme--success, #10b981) 45%, var(--color-border)); color: var(--theme--success, #10b981); }
-.badge-warning { border-color: color-mix(in srgb, #d97706 45%, var(--color-border)); color: #b45309; }
-.badge-danger { border-color: color-mix(in srgb, var(--theme--danger, #dc2626) 45%, var(--color-border)); color: var(--theme--danger, #dc2626); }
-
-.meta-label {
-  font-size: 13px;
-  color: var(--color-text-subdued);
-  font-weight: 500;
+.compare-status-card__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
 }
 
-.meta-value {
-  font-size: 14px;
-  font-weight: 500;
+.status-fact {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fact-span-2 {
+  grid-column: 1 / -1;
 }
 
 .compare-status-line {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  margin-bottom: 18px;
 }
 
 .compare-status-line__item {
@@ -580,7 +527,7 @@ const activeCompareRelation = computed(() => {
   display: inline-flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 120px;
+  min-width: 180px;
   padding: 10px 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -591,16 +538,6 @@ const activeCompareRelation = computed(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text);
-}
-
-.relation-chip.is-success {
-  border-color: color-mix(in srgb, var(--theme--success, #10b981) 30%, var(--color-border));
-  background: color-mix(in srgb, var(--theme--success, #10b981) 6%, var(--color-surface));
-}
-
-.relation-chip.is-active {
-  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
 }
 
 .relation-chip.is-warning {
@@ -614,121 +551,76 @@ const activeCompareRelation = computed(() => {
   font-weight: 500;
 }
 
-.detail-card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  overflow: hidden;
+.meta-label {
+  font-size: 13px;
+  color: var(--color-text-subdued);
+  font-weight: 500;
 }
 
-.detail-card summary {
-  padding: 12px 16px;
+.meta-value {
   font-size: 14px;
   font-weight: 500;
-  cursor: pointer;
-  background: var(--color-surface-subdued);
-  transition: background-color 0.15s;
-}
-.detail-card summary:hover {
-  background: var(--theme--background-subdued);
-}
-.detail-card[open] summary {
-  background: var(--theme--background-subdued);
+  min-width: 0;
+  word-break: break-word;
 }
 
-.detail-card--compact summary {
+.delta-inline {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 6px;
   font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-surface-subdued) 60%, transparent);
 }
 
-.detail-content {
-  padding: 16px;
-  border-top: 1px solid var(--color-border);
+.delta-inline.text-success {
+  background: color-mix(in srgb, var(--theme--success, #10b981) 10%, var(--color-surface));
 }
 
-.block-hint {
+.delta-inline.text-warning {
+  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 10%, var(--color-surface));
+}
+
+.delta-inline.text-danger {
+  background: color-mix(in srgb, var(--theme--danger, #dc2626) 10%, var(--color-surface));
+}
+
+.text-success { color: var(--theme--success, #10b981); }
+.text-warning { color: var(--theme--warning, #f59e0b); }
+.text-danger { color: var(--theme--danger, #dc2626); }
+.text-neutral { color: var(--color-text-subdued); }
+
+.badge {
+  display: inline-flex;
+  padding: 2px 8px;
   font-size: 12px;
-  color: var(--color-text-subdued);
-  line-height: 1.5;
-  margin: -8px 0 8px;
-}
-
-.request-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.request-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-}
-
-.request-item--interactive {
-  text-align: left;
-  width: 100%;
-}
-
-.request-item--interactive:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface));
-}
-
-.request-item--interactive.active {
-  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface));
-}
-
-.request-main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.request-id {
   font-weight: 500;
-  font-size: 14px;
-}
-
-.request-meta {
-  font-size: 12px;
-  color: var(--color-text-subdued);
-}
-
-.request-submeta {
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--color-text);
-}
-
-.request-item--verbose .request-main {
-  gap: 6px;
-}
-
-.mb-3 { margin-bottom: 12px; }
-.mb-4 { margin-bottom: 16px; }
-
-.compare-loading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 32px;
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: 999px;
   background: var(--color-surface-subdued);
+  border: 1px solid var(--color-border);
+}
+
+.badge-success {
+  border-color: color-mix(in srgb, var(--theme--success, #10b981) 45%, var(--color-border));
+  color: var(--theme--success, #10b981);
+}
+
+.badge-warning {
+  border-color: color-mix(in srgb, #d97706 45%, var(--color-border));
+  color: #b45309;
+}
+
+.badge-danger {
+  border-color: color-mix(in srgb, var(--theme--danger, #dc2626) 45%, var(--color-border));
+  color: var(--theme--danger, #dc2626);
+}
+
+.badge-neutral {
   color: var(--color-text-subdued);
-  font-size: 14px;
 }
-.loading-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  animation: node-lab-spin 0.8s linear infinite;
-}
+
 @keyframes node-lab-spin {
   to { transform: rotate(360deg); }
 }
@@ -737,9 +629,6 @@ const activeCompareRelation = computed(() => {
   .compare-overview,
   .compare-status-line {
     grid-template-columns: 1fr;
-  }
-  .compare-relation-strip {
-    flex-direction: column;
   }
 }
 </style>

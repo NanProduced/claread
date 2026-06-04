@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
   attachPromptVariantSnapshot,
+  appendWorkflowDatasetCase,
   buildAuthGuard,
   buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
   buildWorkflowLabCompareReport,
   cancelJudgeRunRequest,
+  createWorkflowDataset,
   createWorkflowLabSingleRun,
+  saveWorkflowLabSingleRunToHistory,
   createWorkflowLabCompare,
   isSafeFileId,
   inferRunTopologyMode,
@@ -22,7 +26,9 @@ import {
   isWorkflowRunRequestRetryable,
   judgeRequestRow,
   judgeRunRequestSummary,
+  listWorkflowDatasets,
   promptVariantSnapshotFromRow,
+  readWorkflowDatasetSummary,
   retryJudgeRunRequest,
   retryWorkflowRunRequest,
   validateWorkflowRunRequest,
@@ -37,6 +43,8 @@ import {
   buildNodeLabJudgeWorkerLaunch,
   dispatchNodeLabJudgeWorker,
   findDuplicateRunHistoryTrial,
+  recoverStaleDirectusAsyncJudgeRequests,
+  updateSessionAggregate,
 } from "./node-lab.js";
 
 function createWorkflowRequestDb(initialRows) {
@@ -168,11 +176,43 @@ function createNodeLabTrialsDb(initialRows) {
   return database;
 }
 
+function createNodeLabJudgeRequestsDb(initialRows) {
+  const rows = initialRows.map((row) => ({ ...row }));
+
+  function database(tableName) {
+    assert.equal(tableName, "eval_node_lab_judge_requests");
+    const state = { where: {} };
+    const builder = {
+      where(criteria) {
+        Object.assign(state.where, criteria);
+        return builder;
+      },
+      select() {
+        return Promise.resolve(rows.filter((row) => matches(row, state)));
+      },
+      update(patch) {
+        let count = 0;
+        for (const row of rows) {
+          if (!matches(row, state)) continue;
+          Object.assign(row, patch);
+          count += 1;
+        }
+        return Promise.resolve(count);
+      },
+    };
+    return builder;
+  }
+
+  database.rows = rows;
+  return database;
+}
+
 function createNodeLabRunHistoryDb(initialTables) {
   const tables = {
     eval_node_lab_trials: [],
     eval_node_lab_sessions: [],
     eval_node_lab_judge_requests: [],
+    eval_node_lab_review_notes: [],
     ...Object.fromEntries(
       Object.entries(initialTables).map(([tableName, rows]) => [
         tableName,
@@ -471,8 +511,8 @@ test("createWorkflowLabCompare writes immutable json and markdown reports", asyn
     assert.equal(created.created, true);
     assert.equal(created.report_id, "vs-baseline");
     assert.equal(created.report.losses, 1);
-    assert.equal(existsSync(join(root, "candidate", "ab", "vs-baseline.json")), true);
-    assert.equal(existsSync(join(root, "candidate", "ab", "vs-baseline.md")), true);
+    assert.equal(existsSync(join(root, "candidate", "compare", "vs-baseline.json")), true);
+    assert.equal(existsSync(join(root, "candidate", "compare", "vs-baseline.md")), true);
 
     const existing = await createWorkflowLabCompare(root, {
       baseline_run_id: "baseline",
@@ -480,8 +520,40 @@ test("createWorkflowLabCompare writes immutable json and markdown reports", asyn
     });
     assert.equal(existing.created, false);
     assert.equal(existing.report.losses, 1);
-    const raw = JSON.parse(readFileSync(join(root, "candidate", "ab", "vs-baseline.json"), "utf8"));
+    const raw = JSON.parse(readFileSync(join(root, "candidate", "compare", "vs-baseline.json"), "utf8"));
     assert.equal(raw.candidate_run_id, "candidate");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createWorkflowLabCompare reuses legacy ab compare artifacts without rewriting", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-legacy-"));
+  try {
+    writeWorkflowRun(root, {
+      runId: "baseline",
+      artifacts: [workflowCaseArtifact({ runId: "baseline", caseId: "case-1" })],
+    });
+    writeWorkflowRun(root, {
+      runId: "candidate",
+      artifacts: [workflowCaseArtifact({ runId: "candidate", caseId: "case-1", hardFailures: 1, promptVariantId: "candidate-v1" })],
+    });
+    mkdirSync(join(root, "candidate", "ab"), { recursive: true });
+    writeFileSync(join(root, "candidate", "ab", "vs-baseline.json"), JSON.stringify({
+      report_id: "vs-baseline",
+      baseline_run_id: "baseline",
+      candidate_run_id: "candidate",
+      losses: 1,
+    }, null, 2));
+
+    const existing = await createWorkflowLabCompare(root, {
+      baseline_run_id: "baseline",
+      candidate_run_id: "candidate",
+    });
+
+    assert.equal(existing.created, false);
+    assert.equal(existing.report.losses, 1);
+    assert.equal(existsSync(join(root, "candidate", "compare", "vs-baseline.json")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -807,7 +879,7 @@ test("promptVariantSnapshotFromRow builds immutable prompt override payload", ()
     variant_id: "minimal-diverse-v1",
     target: "article_analysis",
     status: "ready_for_eval",
-    scope: "workflow_eval",
+    scope: "workflow_lab",
     few_shot_mode: "off",
     manifest_json: {
       variant_id: "minimal-diverse-v1",
@@ -832,7 +904,7 @@ test("promptVariantSnapshotFromRow expands workflow bundle manifests", () => {
     variant_id: "workflow-bundle-v1",
     target: "article_analysis",
     status: "ready_for_eval",
-    scope: "workflow_eval",
+    scope: "workflow_lab",
     few_shot_mode: "variant",
     manifest_json: {
       schema_version: "workflow-prompt-bundle-v1",
@@ -889,7 +961,7 @@ test("workflowConfigWithPromptVariantSnapshot embeds prompt override into workfl
       variant_id: "minimal-diverse-v1",
       target: "article_analysis",
       status: "ready_for_eval",
-      scope: "workflow_eval",
+      scope: "workflow_lab",
       few_shot_mode: "off",
       policies_json: {},
       examples_json: {},
@@ -922,7 +994,7 @@ test("attachPromptVariantSnapshot loads only ready workflow variants", async () 
       variant_id: "ready-variant",
       target: "article_analysis",
       status: "ready_for_eval",
-      scope: "workflow_eval",
+      scope: "workflow_lab",
       few_shot_mode: "off",
       policies_json: {},
       examples_json: {},
@@ -1013,7 +1085,7 @@ test("createWorkflowLabSingleRun attaches ready candidate snapshot", async () =>
         variant_id: "ready-workflow",
         target: "article_analysis",
         status: "ready_for_eval",
-        scope: "workflow_eval",
+        scope: "workflow_lab",
         few_shot_mode: "baseline",
         manifest_json: {
           schema_version: "workflow-prompt-bundle-v1",
@@ -1069,6 +1141,202 @@ test("createWorkflowLabSingleRun rejects candidate with rag enabled", async () =
     }),
     /requires rag_mode=off/,
   );
+});
+
+test("saveWorkflowLabSingleRunToHistory persists a standalone workflow run artifact", async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), "workflow-single-history-"));
+  const result = await saveWorkflowLabSingleRunToHistory({
+    env: {
+      CLAREAD_EVAL_RUNS_ROOT: runsRoot,
+      CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT: runsRoot,
+    },
+    body: {
+      request: {
+        text: "Sentence one.",
+        reading_goal: "daily_reading",
+        reading_variant: "intermediate_reading",
+        source_type: "user_input",
+        rag_mode: "off",
+        trace_scope: "off",
+      },
+      result: {
+        status: "succeeded",
+        prompt_identity: {
+          prompt_variant_id: "workflow-ready",
+          prompt_snapshot_hash: "snap-123",
+        },
+        model_identity: {
+          profile_name: "qwen35-plus",
+          model_name: "qwen35-plus",
+        },
+        runtime_summary: {
+          latency_ms: 4321,
+          aggregate: {
+            total_tokens: 321,
+            input_tokens: 123,
+            output_tokens: 198,
+          },
+        },
+        workflow_identity: { workflow_name: "article_analysis" },
+        schema_identity: { schema_version: "workflow-artifact-v1" },
+        render_scene: {
+          user_facing_state: "normal",
+          translations: [{ sentence_id: "s1", text: "译文" }],
+          inline_marks: [],
+          sentence_entries: [],
+          warnings: [],
+        },
+      },
+    },
+  });
+
+  assert.equal(result.duplicate, false);
+  assert.equal(result.record.workspace_type, "workflow_single_run");
+  assert.equal(result.record.prompt_variant_id, "workflow-ready");
+  assert.ok(existsSync(join(runsRoot, result.record.run_id, "run.json")));
+  assert.ok(existsSync(join(runsRoot, result.record.run_id, "report.json")));
+  assert.ok(existsSync(join(runsRoot, result.record.run_id, "case-index.json")));
+  assert.ok(existsSync(join(runsRoot, result.record.run_id, "cases", "single-run.json")));
+});
+
+test("saveWorkflowLabSingleRunToHistory deduplicates the same single run payload", async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), "workflow-single-history-dup-"));
+  const payload = {
+    request: {
+      text: "Sentence one.",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      source_type: "user_input",
+      rag_mode: "off",
+      trace_scope: "off",
+    },
+    result: {
+      status: "succeeded",
+      prompt_identity: {
+        prompt_variant_id: "workflow-ready",
+        prompt_snapshot_hash: "snap-123",
+      },
+      model_identity: { profile_name: "qwen35-plus" },
+      runtime_summary: { latency_ms: 1111 },
+      workflow_identity: { workflow_name: "article_analysis" },
+      schema_identity: { schema_version: "workflow-artifact-v1" },
+      render_scene: {
+        user_facing_state: "normal",
+        translations: [{ sentence_id: "s1", text: "译文" }],
+        inline_marks: [],
+        sentence_entries: [],
+        warnings: [],
+      },
+    },
+  };
+
+  const first = await saveWorkflowLabSingleRunToHistory({
+    env: {
+      CLAREAD_EVAL_RUNS_ROOT: runsRoot,
+      CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT: runsRoot,
+    },
+    body: payload,
+  });
+  const second = await saveWorkflowLabSingleRunToHistory({
+    env: {
+      CLAREAD_EVAL_RUNS_ROOT: runsRoot,
+      CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT: runsRoot,
+    },
+    body: payload,
+  });
+
+  assert.equal(second.duplicate, true);
+  assert.equal(first.record.run_id, second.record.run_id);
+});
+
+test("createWorkflowDataset writes dataset yaml and optional initial case from single run", async () => {
+  const evalsRoot = mkdtempSync(join(tmpdir(), "workflow-datasets-create-"));
+  const result = await createWorkflowDataset({
+    env: { CLAREAD_EVALS_ROOT: evalsRoot },
+    body: {
+      dataset_id: "article-analysis-seeded",
+      description: "Seeded from workflow single run.",
+      tags: ["prompt", "learning-workflow"],
+      initial_case: {
+        request: {
+          text: "A workflow single run sentence.",
+          reading_goal: "daily_reading",
+          reading_variant: "intermediate_reading",
+          source_type: "user_input",
+        },
+        result: {
+          render_scene: {
+            request: {
+              reading_goal: "daily_reading",
+              reading_variant: "intermediate_reading",
+            },
+          },
+        },
+        case_id: "seed-case",
+        tags: ["daily_reading", "intermediate_reading"],
+        target_phenomena: ["phrase_gloss"],
+        reference_notes: "Seed note.",
+      },
+    },
+  });
+
+  assert.equal(result.dataset.id, "article-analysis-seeded");
+  assert.equal(result.dataset.case_count, 1);
+  assert.equal(result.case.case_id, "seed-case");
+  assert.ok(existsSync(join(evalsRoot, "datasets", "article-analysis-seeded", "dataset.yaml")));
+  assert.ok(existsSync(join(evalsRoot, "datasets", "article-analysis-seeded", "cases", "seed-case.json")));
+});
+
+test("appendWorkflowDatasetCase adds a new dataset case and listWorkflowDatasets returns summaries", async () => {
+  const evalsRoot = mkdtempSync(join(tmpdir(), "workflow-datasets-append-"));
+  mkdirSync(join(evalsRoot, "datasets", "article-analysis-v1", "cases"), { recursive: true });
+  writeFileSync(
+    join(evalsRoot, "datasets", "article-analysis-v1", "dataset.yaml"),
+    [
+      "id: article-analysis-v1",
+      "schema_version: eval-dataset-v1",
+      "target: article_analysis",
+      'description: "Existing dataset"',
+      "case_globs:",
+      "  - cases/*.json",
+      "tags:",
+      "  - prompt",
+      "  - learning-workflow",
+      "",
+    ].join("\n"),
+  );
+
+  const appended = await appendWorkflowDatasetCase({
+    env: { CLAREAD_EVALS_ROOT: evalsRoot },
+    datasetId: "article-analysis-v1",
+    body: {
+      request: {
+        text: "Another workflow sentence.",
+        reading_goal: "exam",
+        reading_variant: "kaoyan",
+        source_type: "user_input",
+      },
+      result: {
+        render_scene: {
+          request: {
+            reading_goal: "exam",
+            reading_variant: "kaoyan",
+          },
+        },
+      },
+      case_id: "kaoyan-case-1",
+      tags: ["exam", "kaoyan"],
+    },
+  });
+
+  assert.equal(appended.case.case_id, "kaoyan-case-1");
+  const summary = await readWorkflowDatasetSummary({ CLAREAD_EVALS_ROOT: evalsRoot }, "article-analysis-v1");
+  assert.equal(summary.case_count, 1);
+  assert.deepEqual(summary.tags, ["prompt", "learning-workflow"]);
+
+  const datasets = await listWorkflowDatasets({ CLAREAD_EVALS_ROOT: evalsRoot });
+  assert.equal(datasets.length, 1);
+  assert.equal(datasets[0].description, "Existing dataset");
 });
 
 test("retryWorkflowRunRequest clones a failed request as a new queued request", async () => {
@@ -1265,6 +1533,89 @@ test("dispatchNodeLabJudgeWorker starts detached one-shot worker", () => {
   assert.equal(typeof calls[0].errorListener.handler, "function");
 });
 
+test("recoverStaleDirectusAsyncJudgeRequests marks stale running request succeeded when artifact is complete", async () => {
+  const artifactsRoot = mkdtempSync(join(tmpdir(), "node-lab-stale-succeeded-"));
+  const judgeDir = join(
+    artifactsRoot,
+    "sessions",
+    "session-001",
+    "trials",
+    "trial-001",
+    "judge",
+    "judge-001",
+  );
+  mkdirSync(judgeDir, { recursive: true });
+  writeFileSync(join(judgeDir, "judge-run.json"), JSON.stringify({ status: "complete" }));
+  writeFileSync(join(judgeDir, "result.json"), JSON.stringify({ status: "succeeded" }));
+
+  const database = createNodeLabJudgeRequestsDb([
+    {
+      judge_request_id: "judge-001",
+      status: "running",
+      lease_until: "2026-06-03T10:00:00.000Z",
+      artifact_path: "evals/node-lab/sessions/session-001/trials/trial-001/judge/judge-001/result.json",
+    },
+  ]);
+
+  try {
+    const recovered = await recoverStaleDirectusAsyncJudgeRequests({
+      database,
+      env: {},
+      resolveNodeLabArtifactsRoot: () => artifactsRoot,
+      referenceTime: new Date("2026-06-03T11:00:00.000Z"),
+    });
+
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].to_status, "succeeded");
+    assert.equal(database.rows[0].status, "succeeded");
+    assert.equal(database.rows[0].error_json, null);
+    assert.ok(database.rows[0].finished_at);
+  } finally {
+    rmSync(artifactsRoot, { recursive: true, force: true });
+  }
+});
+
+test("recoverStaleDirectusAsyncJudgeRequests marks stale running request failed when artifact is incomplete", async () => {
+  const artifactsRoot = mkdtempSync(join(tmpdir(), "node-lab-stale-failed-"));
+  const judgeDir = join(
+    artifactsRoot,
+    "sessions",
+    "_standalone",
+    "trials",
+    "trial-002",
+    "judge",
+    "judge-002",
+  );
+  mkdirSync(judgeDir, { recursive: true });
+  writeFileSync(join(judgeDir, "judge-run.json"), JSON.stringify({ status: "partial" }));
+
+  const database = createNodeLabJudgeRequestsDb([
+    {
+      judge_request_id: "judge-002",
+      status: "running",
+      lease_until: null,
+      artifact_path: "evals/node-lab/sessions/_standalone/trials/trial-002/judge/judge-002/result.json",
+    },
+  ]);
+
+  try {
+    const recovered = await recoverStaleDirectusAsyncJudgeRequests({
+      database,
+      env: {},
+      resolveNodeLabArtifactsRoot: () => artifactsRoot,
+      referenceTime: new Date("2026-06-03T11:00:00.000Z"),
+    });
+
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].to_status, "failed");
+    assert.equal(database.rows[0].status, "failed");
+    assert.match(String(database.rows[0].error_json || ""), /StaleNodeLabJudgeRequest/);
+    assert.ok(database.rows[0].finished_at);
+  } finally {
+    rmSync(artifactsRoot, { recursive: true, force: true });
+  }
+});
+
 test("assertNoDuplicateSessionCompareTrial rejects same compare in one session", async () => {
   const database = createNodeLabTrialsDb([
     {
@@ -1414,12 +1765,190 @@ test("attachStandaloneCompareTrialToSession migrates standalone compare instead 
       JSON.parse(database.tables.eval_node_lab_sessions[0].aggregate_summary_json),
       {
         trial_count: 1,
+        review_note_count: 0,
         workspace_counts: { single_run: 0, baseline_compare: 1 },
         last_trial_id: "compare-standalone",
         last_trial_at: "2026-06-03T01:00:00.000Z",
+        last_review_at: null,
       },
     );
   } finally {
     rmSync(artifactsRoot, { recursive: true, force: true });
   }
+});
+
+test("updateSessionAggregate promotes session to reviewed when session review notes exist", async () => {
+  const database = createNodeLabRunHistoryDb({
+    eval_node_lab_sessions: [
+      {
+        session_id: "session-001",
+        status: "active",
+        aggregate_summary_json: "{}",
+      },
+    ],
+    eval_node_lab_trials: [
+      {
+        trial_id: "trial-001",
+        session_id: "session-001",
+        workspace_type: "baseline_compare",
+        date_created: "2026-06-03T11:20:00.000Z",
+      },
+    ],
+    eval_node_lab_review_notes: [
+      {
+        id: 1,
+        target_type: "session",
+        target_id: "session-001",
+        date_created: "2026-06-03T11:30:00.000Z",
+      },
+    ],
+  });
+
+  await updateSessionAggregate(database, "session-001");
+
+  assert.equal(database.tables.eval_node_lab_sessions[0].status, "reviewed");
+  assert.deepEqual(
+    JSON.parse(database.tables.eval_node_lab_sessions[0].aggregate_summary_json),
+    {
+      trial_count: 1,
+      review_note_count: 1,
+      workspace_counts: { single_run: 0, baseline_compare: 1 },
+      last_trial_id: "trial-001",
+      last_trial_at: "2026-06-03T11:20:00.000Z",
+      last_review_at: "2026-06-03T11:30:00.000Z",
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Cross-layer enum drift guards (BE <-> FE useNodeLabConstants.ts).
+//
+// These tests read the BE-side source and assert that the constants are aligned
+// with the FE-side expectations. If a BE constant changes, the test fails and
+// forces the FE side (useNodeLabConstants.ts) to be updated together.
+// FE file: apps/directus/extensions/modules-bundle/src/claread-eval-center/modes/node-lab/composables/useNodeLabConstants.ts
+// ---------------------------------------------------------------------------
+
+// endpoints-bundle/src/eval-center -> up 3 -> extensions/, then modules-bundle/...
+const NODE_LAB_FE_CONSTANTS_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..", "..", "..",
+  "modules-bundle", "src", "claread-eval-center", "modes", "node-lab", "composables", "useNodeLabConstants.ts",
+);
+
+function readFeConstantsSource() {
+  return readFileSync(NODE_LAB_FE_CONSTANTS_PATH, "utf8");
+}
+
+function extractFeNodeIds(source) {
+  // Matches `NODE_OPTIONS = [ { id: "grammar", ... }, ... ]` body
+  const match = source.match(/NODE_OPTIONS\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  if (!match) throw new Error("NODE_OPTIONS block not found in FE constants");
+  const ids = [];
+  const idRe = /id:\s*"([a-z_]+)"/g;
+  let m;
+  while ((m = idRe.exec(match[1])) !== null) ids.push(m[1]);
+  return ids;
+}
+
+function extractFeWorkspaceIds(source) {
+  const match = source.match(/WORKSPACE_OPTIONS\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  if (!match) throw new Error("WORKSPACE_OPTIONS block not found in FE constants");
+  const ids = [];
+  const idRe = /id:\s*"([a-z_]+)"/g;
+  let m;
+  while ((m = idRe.exec(match[1])) !== null) ids.push(m[1]);
+  return ids;
+}
+
+function extractFeJudgeModeIds(source) {
+  const match = source.match(/JUDGE_MODES\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  if (!match) throw new Error("JUDGE_MODES block not found in FE constants");
+  const ids = [];
+  const idRe = /id:\s*"([a-z_]+)"/g;
+  let m;
+  while ((m = idRe.exec(match[1])) !== null) ids.push(m[1]);
+  return ids;
+}
+
+function extractFeJudgeModeByNode(source) {
+  // Pulls the whole JUDGE_MODES_BY_NODE block and extracts the id arrays.
+  const match = source.match(/JUDGE_MODES_BY_NODE\s*=\s*\{([\s\S]*?)\}\s*as const/);
+  if (!match) throw new Error("JUDGE_MODES_BY_NODE block not found in FE constants");
+  const result = {};
+  const keyRe = /(\w+):\s*\[([^\]]+)\]/g;
+  let m;
+  while ((m = keyRe.exec(match[1])) !== null) {
+    const ids = [];
+    const idRe = /"([a-z_]+)"/g;
+    let im;
+    while ((im = idRe.exec(m[2])) !== null) ids.push(im[1]);
+    result[m[1]] = ids;
+  }
+  return result;
+}
+
+test("cross-layer: BE VALID_NODES is a subset of FE NODE_OPTIONS ids", () => {
+  const feSource = readFeConstantsSource();
+  const feIds = extractFeNodeIds(feSource);
+  // Mirror the BE definition (single source of truth for the test is the BE constant).
+  // If you change this array, also update modules-bundle/.../useNodeLabConstants.ts NODE_OPTIONS.
+  const beValidNodes = ["grammar", "vocabulary", "translation"];
+
+  for (const id of beValidNodes) {
+    assert.ok(feIds.includes(id), `FE NODE_OPTIONS missing node id "${id}" — update useNodeLabConstants.ts to keep BE/FE aligned.`);
+  }
+  assert.deepEqual(beValidNodes.sort(), feIds.slice().sort(), "BE/FE node id list must stay in sync");
+});
+
+test("cross-layer: BE VALID_WORKSPACES is a subset of FE WORKSPACE_OPTIONS ids", () => {
+  const feSource = readFeConstantsSource();
+  const feIds = extractFeWorkspaceIds(feSource);
+  // Mirror the BE definition. "sessions" is FE-only (UI entry) — see node-lab.js
+  // VALID_WORKSPACES comment. The two are NOT a strict 1:1 match; we just assert
+  // the BE list is fully present in the FE list.
+  const beValidWorkspaces = ["single_run", "baseline_compare"];
+
+  for (const id of beValidWorkspaces) {
+    assert.ok(feIds.includes(id), `FE WORKSPACE_OPTIONS missing workspace id "${id}"`);
+  }
+  // "sessions" must be FE-only (not in BE).
+  assert.ok(feIds.includes("sessions"), "FE WORKSPACE_OPTIONS must still expose 'sessions' as a UI entry");
+  for (const id of beValidWorkspaces) {
+    assert.ok(feIds.includes(id));
+  }
+});
+
+test("cross-layer: BE VALID_JUDGE_MODES is a subset of FE JUDGE_MODES", () => {
+  const feSource = readFeConstantsSource();
+  const feJudgeModes = extractFeJudgeModeIds(feSource);
+  // Mirror the BE definition. After 决策 1 (2026-06) persona_pairwise 已撤回，
+  // BE/FE 都只允许 4 项；如未来要加回，需同时更新 BE / FE / worker 端 Pydantic Literal。
+  const beValidJudgeModes = [
+    "rubric_score_only",
+    "rubric_plus_pairwise",
+    "anti_template_probe",
+    "raw",
+  ];
+
+  for (const id of beValidJudgeModes) {
+    assert.ok(
+      feJudgeModes.includes(id),
+      `FE JUDGE_MODES missing judge_mode id "${id}" — update useNodeLabConstants.ts to keep BE/FE aligned.`,
+    );
+  }
+  // persona_pairwise 应不在 BE / FE 任何一端（决策 1 已撤回）。
+  assert.ok(
+    !feJudgeModes.includes("persona_pairwise"),
+    "FE JUDGE_MODES should no longer contain 'persona_pairwise' (decision 1.A — rolled back)",
+  );
+});
+
+test("cross-layer: FE JUDGE_MODES_BY_NODE.grammar exposes 'raw' (BE VALID_JUDGE_MODES already allows it)", () => {
+  const feSource = readFeConstantsSource();
+  const byNode = extractFeJudgeModeByNode(feSource);
+  assert.ok(
+    byNode.grammar?.includes("raw"),
+    "FE JUDGE_MODES_BY_NODE.grammar must include 'raw' so users can pick the mode BE accepts",
+  );
 });

@@ -17,16 +17,18 @@ import {
   HELP_TEXT as helpText,
 } from "./node-lab/composables/useNodeLabConstants";
 import {
+  shortId,
+  statusTone,
+} from "../composables/useEvalFormatting";
+import {
   nodeLabel,
   workspaceLabel,
   readingGoalLabel,
   readingVariantLabel,
-  shortId,
   normalizePreviewText,
   buildInputPreview,
   safeJsonParse,
   formatClockTime,
-  statusTone,
   hasNodeActivity,
   compareViewSourceLabel,
   compareViewSourceTone,
@@ -365,6 +367,7 @@ watch(
 watch(
   () => state.activeNode,
   async () => {
+    stopJudgeRequestPolling();
     const restoredTrialId = state.activeCompareViewByNode[state.activeNode]?.trialId
       || state.currentCompareTrialIdByNode[state.activeNode]
       || "";
@@ -435,6 +438,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopJudgeRequestPolling();
   const timer = nodeLabState.getPersistTimer();
   if (timer) {
     window.clearTimeout(timer);
@@ -451,13 +455,13 @@ onBeforeUnmount(() => {
       <div class="header-main">
         <h2 class="header-title">Node Lab</h2>
         <p class="header-desc">
-          当前节点：<strong>{{ nodeLabel(state.activeNode) }}</strong> 
+          当前节点：<strong>{{ nodeLabel(state.activeNode) }}</strong>
           <span class="divider">/</span> 工作区：<strong>{{ workspaceLabel(state.activeWorkspace) }}</strong>
         </p>
       </div>
       <div class="header-meta">
-        <div class="meta-item">
-          <span class="meta-label">当前显示的 Compare</span>
+        <div class="meta-item meta-item--primary">
+          <span class="meta-label">当前 Compare</span>
           <span class="meta-value" :class="`text-${currentDisplayedCompareSummary.tone}`">{{ currentDisplayedCompareSummary.title }}</span>
           <span class="meta-hint">{{ currentDisplayedCompareSummary.detail }}</span>
         </div>
@@ -628,6 +632,7 @@ onBeforeUnmount(() => {
               </div>
               <p>{{ compareRefreshState.detail }}</p>
             </div>
+            <CompareVerdictBar v-if="compareResult" />
             <div
               v-if="compareSnapshotContextMismatchReason"
               class="status-banner is-warning mb-4"
@@ -656,7 +661,6 @@ onBeforeUnmount(() => {
 
             <div v-if="compareResult">
               <template v-if="comparePanelTab === 'compare'">
-                <CompareVerdictBar />
                 <CompareCanvas />
                 <EvidencePanels />
               </template>
@@ -668,7 +672,7 @@ onBeforeUnmount(() => {
             </div>
             <div v-else class="empty-state">
               <p>当前没有打开的 Compare</p>
-              <span class="empty-hint">先运行 Compare，或从 Sessions 里打开一条历史结果。</span>
+              <span class="empty-hint">Compare 是 baseline 与 candidate 的并排对比。先运行 Compare，或从 Sessions 里打开一条历史结果。</span>
               <div v-if="recentTrials.length" class="request-list mt-3">
                 <button
                   v-for="trial in recentTrials"
@@ -750,32 +754,41 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
 
 .header-meta {
   display: flex;
-  gap: 32px;
+  gap: 24px;
 }
 
 .meta-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  max-width: 280px;
+}
+
+.meta-item--primary {
+  padding-right: 24px;
+  border-right: 1px solid var(--color-border);
 }
 
 .meta-label {
-  font-size: 13px;
+  font-size: 11px;
   color: var(--color-text-subdued);
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .meta-value {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
+  line-height: 1.4;
 }
 .meta-actions {
   display: flex;
   gap: 8px;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 .meta-hint {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-text-subdued);
   line-height: 1.4;
 }
@@ -804,7 +817,7 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   font-weight: 500;
   color: var(--color-text-subdued);
   border-radius: var(--radius-sm);
-  transition: all 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .segment-btn:hover {
@@ -815,6 +828,11 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   color: var(--color-text);
   background: var(--color-surface);
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.segment-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .activity-dot {

@@ -5,12 +5,16 @@ import { useNodeLabState } from "../composables/useNodeLabState";
 import {
   statusLabel,
   statusTone,
+} from "../../../composables/useEvalFormatting";
+import {
   resultIssue,
   sentenceOrderKey,
   compareSentenceModel,
   sentenceToneClass,
   groupEntriesBySentence,
   judgeItemResultLabel,
+  judgeCriterionSymbol,
+  judgeCriterionTone,
 } from "../composables/useNodeLabFormatting";
 
 const { compareResult, compareSentenceRows, state, loading, selectedJudgeRequestDetail } = useNodeLabState();
@@ -32,10 +36,23 @@ function getJudgeItemsForSentence(side, sentenceId) {
 
 function getDeltaBadge(baselineItems, candidateItems) {
   if (!baselineItems?.length || !candidateItems?.length) return null;
-  const bPass = baselineItems.every(item => item.criteria.every(c => c.score));
-  const cPass = candidateItems.every(item => item.criteria.every(c => c.score));
-  if (!bPass && cPass) return { tone: 'success', label: '+ 修复' };
-  if (bPass && !cPass) return { tone: 'danger', label: '- 劣化' };
+  const summarize = (items) => {
+    const criteria = items.flatMap(item => item.criteria || []);
+    const maxScore = Math.max(2, ...criteria.map(c => c.score ?? 0));
+    const normalize = (score) => maxScore > 1 ? score : score * 2;
+    const total = criteria.reduce((sum, criterion) => sum + Number(normalize(criterion.score || 0)), 0);
+    const failed = criteria.filter(criterion => criterion.score === 0).length;
+    const partial = criteria.filter(criterion => criterion.score === 1).length;
+    return { total, failed, partial };
+  };
+  const baseline = summarize(baselineItems);
+  const candidate = summarize(candidateItems);
+  if (candidate.failed < baseline.failed) return { tone: 'success', label: '+ 修复' };
+  if (candidate.failed > baseline.failed) return { tone: 'danger', label: '- 劣化' };
+  if (candidate.total > baseline.total) return { tone: 'success', label: '+ 提升' };
+  if (candidate.total < baseline.total) return { tone: 'danger', label: '- 回落' };
+  if (candidate.partial < baseline.partial) return { tone: 'success', label: '+ 收敛' };
+  if (candidate.partial > baseline.partial) return { tone: 'warning', label: '± 待改进' };
   return null;
 }
 
@@ -147,8 +164,8 @@ function scopedOutputForRow(rowSide, nodeName) {
               <div class="judge-item-label">{{ judgeItemResultLabel(judgeItem) }}</div>
               <ul class="insight-list">
                 <li v-for="criterion in judgeItem.criteria" :key="criterion.criterion_id">
-                  <span class="rubric-indicator" :class="criterion.score ? 'is-pass' : 'is-fail'">
-                    {{ criterion.score ? '✓' : '✗' }}
+                  <span class="rubric-indicator" :class="`is-${judgeCriterionTone(criterion.score)}`">
+                    {{ judgeCriterionSymbol(criterion.score) }}
                   </span>
                   <strong>{{ criterion.criterion_id }}</strong>
                   <span>：{{ criterion.reason }}</span>
@@ -220,8 +237,8 @@ function scopedOutputForRow(rowSide, nodeName) {
               <div class="judge-item-label">{{ judgeItemResultLabel(judgeItem) }}</div>
               <ul class="insight-list">
                 <li v-for="criterion in judgeItem.criteria" :key="criterion.criterion_id">
-                  <span class="rubric-indicator" :class="criterion.score ? 'is-pass' : 'is-fail'">
-                    {{ criterion.score ? '✓' : '✗' }}
+                  <span class="rubric-indicator" :class="`is-${judgeCriterionTone(criterion.score)}`">
+                    {{ judgeCriterionSymbol(criterion.score) }}
                   </span>
                   <strong>{{ criterion.criterion_id }}</strong>
                   <span>：{{ criterion.reason }}</span>
@@ -362,6 +379,34 @@ function scopedOutputForRow(rowSide, nodeName) {
   color: var(--color-text-subdued);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.rubric-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.rubric-indicator.is-pass {
+  background: color-mix(in srgb, var(--theme--success, #10b981) 15%, var(--color-surface));
+  color: var(--theme--success, #10b981);
+}
+
+.rubric-indicator.is-partial {
+  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 16%, var(--color-surface));
+  color: #b45309;
+}
+
+.rubric-indicator.is-fail {
+  background: color-mix(in srgb, var(--theme--danger, #dc2626) 15%, var(--color-surface));
+  color: var(--theme--danger, #dc2626);
 }
 
 .compare-row.tone-amber {

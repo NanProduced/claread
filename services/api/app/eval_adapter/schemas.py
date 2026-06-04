@@ -306,7 +306,7 @@ class NodeLabJudgeCriterionScore(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     criterion_id: str
-    score: Literal[0, 1]
+    score: Literal[0, 1, 2]
     reason: str = Field(min_length=1)
     evidence: str | None = None
 
@@ -315,6 +315,7 @@ class NodeLabJudgeItemSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     passed: int = Field(ge=0, default=0)
+    partial: int = Field(ge=0, default=0)
     failed: int = Field(ge=0, default=0)
 
 
@@ -324,6 +325,7 @@ class NodeLabJudgeAggregate(BaseModel):
     item_count: int | None = Field(default=None, ge=0)
     criteria_count: int = Field(ge=0)
     passed: int = Field(ge=0)
+    partial: int = Field(ge=0)
     failed: int = Field(ge=0)
     pass_rate: float = Field(ge=0.0, le=1.0)
 
@@ -623,3 +625,24 @@ class ArticleAnalysisNodeProbeResult(BaseModel):
     rag_debug: dict[str, Any] | None = None
     trace_refs: dict[str, Any] | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ExampleLabGenerateRagFieldsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sentence_text: str = Field(min_length=1)
+    output_fragment: dict[str, Any] = Field(default_factory=dict)
+    reading_variant: str = "default"
+    model_profile: str | None = None
+    timeout_seconds: float | None = Field(default=None, gt=0.0)
+
+
+class ExampleLabGenerateRagFieldsResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    grammar_tags: list[str] = Field(default_factory=list)
+    structure_signals: list[str] = Field(default_factory=list)
+    teaching_goal: str = "balanced"
+    retrieval_text: str = ""
+    generated_by: str = "rule"
+    latency_ms: int = 0

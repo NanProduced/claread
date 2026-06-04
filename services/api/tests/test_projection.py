@@ -98,6 +98,18 @@ def test_sentence_analysis_projects_to_entry_only() -> None:
     assert len(outcome.result.inline_marks) == 0
     assert len(outcome.result.sentence_entries) == 1
     assert outcome.result.sentence_entries[0].entry_type == "sentence_analysis"
+    assert outcome.result.sentence_entries[0].analysis_text == "本句主句为 They recognize，后接 that 引导的宾语从句。"
+    assert outcome.result.sentence_entries[0].chunks == [
+        {"order": 1, "label": "主语", "text": "They", "occurrence": None},
+        {"order": 2, "label": "谓语", "text": "recognize", "occurrence": None},
+        {
+            "order": 3,
+            "label": "that 宾语从句",
+            "text": "that sustainable success requires a fundamental rethinking",
+            "occurrence": None,
+        },
+        {"order": 4, "label": "of 介词短语", "text": "of core business models", "occurrence": None},
+    ]
     assert "本句主句为 They recognize，后接 that 引导的宾语从句。" in outcome.result.sentence_entries[0].content
     assert "**1. 主语**" in outcome.result.sentence_entries[0].content
 

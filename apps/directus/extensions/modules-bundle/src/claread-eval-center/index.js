@@ -1,4 +1,4 @@
-import GrammarPromptLabModule from "./module.vue";
+import EvalCenterModule from "./module.vue";
 
 export default {
   id: "claread-eval-center",
@@ -7,7 +7,7 @@ export default {
   routes: [
     {
       path: "",
-      component: GrammarPromptLabModule,
+      component: EvalCenterModule,
     },
   ],
 };

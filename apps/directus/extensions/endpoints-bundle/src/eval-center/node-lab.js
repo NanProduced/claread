@@ -4,6 +4,9 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const VALID_NODES = ["grammar", "vocabulary", "translation"];
+// VALID_WORKSPACES 是 trial.workspace_type 的白名单。FE 的 WORKSPACE_OPTIONS 还含
+// "sessions"（sessions 列表入口），但 "sessions" 不是 trial 类型 —— trial 入 session
+// 走 baseline_compare path（见 ensureSessionForPersist / single_runTrial row）。
 const VALID_WORKSPACES = ["single_run", "baseline_compare"];
 const VALID_SESSION_STATUSES = ["drafting", "active", "paused", "reviewed", "archived"];
 const VALID_TRIAL_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
@@ -15,27 +18,13 @@ const VALID_JUDGE_MODES = [
   "raw",
 ];
 
-const JUDGE_MODE_ALIASES = {
-  rubric_only: "rubric_score_only",
-  rubric_score_only: "rubric_score_only",
-  rubric_plus_pairwise: "rubric_plus_pairwise",
-  anti_template_probe: "anti_template_probe",
-  raw: "raw",
-};
-
+// 唯一保留的向后兼容 alias：旧 DB 行 / 旧 FE 客户端可能用 "rubric_only"。
+// 其他 mode 在 FE 端 (PR 2.3) 已统一发送规范名，此处无需再 alias。
 function normalizeIncomingJudgeMode(mode) {
-  const normalized = JUDGE_MODE_ALIASES[String(mode || "").trim()];
-  if (!normalized) {
-    throw validationError(`judge_mode must be one of: ${VALID_JUDGE_MODES.join(", ")}.`, "judge_mode");
-  }
-  return normalized;
-}
-
-function judgeModeFromMethod(method) {
-  if (method === "anti_template_probe") return "anti_template_probe";
-  if (method === "raw") return "raw";
-  if (method === "rubric_only") return "rubric_score_only";
-  return "rubric_plus_pairwise";
+  const trimmed = String(mode || "").trim();
+  if (trimmed === "rubric_only") return "rubric_score_only";
+  if (VALID_JUDGE_MODES.includes(trimmed)) return trimmed;
+  throw validationError(`judge_mode must be one of: ${VALID_JUDGE_MODES.join(", ")}.`, "judge_mode");
 }
 
 function normalizeJudgeConfigSnapshot(configSnapshot, preset = null) {
@@ -48,7 +37,13 @@ function normalizeJudgeConfigSnapshot(configSnapshot, preset = null) {
     preset_id: presetId || null,
     judge_method: method || null,
     judge_strategy: strategy || null,
-    judge_mode: judgeModeFromMethod(method),
+    judge_mode: method === "anti_template_probe"
+      ? "anti_template_probe"
+      : method === "raw"
+        ? "raw"
+        : method === "rubric_only"
+          ? "rubric_score_only"
+          : "rubric_plus_pairwise",
   };
 }
 
@@ -140,6 +135,66 @@ async function removePathIfExists(targetPath) {
 async function writeJsonFile(filePath, payload) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+}
+
+function leaseExpired(leaseUntil, referenceTime = new Date()) {
+  if (!leaseUntil) return true;
+  const parsed = new Date(leaseUntil);
+  if (Number.isNaN(parsed.getTime())) return true;
+  return parsed.getTime() < referenceTime.getTime();
+}
+
+async function isNodeLabJudgeArtifactComplete(resolveNodeLabArtifactsRoot, env, row) {
+  if (!row?.artifact_path) return false;
+  const absoluteArtifactPath = absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, row.artifact_path);
+  const judgeDir = path.dirname(absoluteArtifactPath);
+  return (
+    await fileExists(path.join(judgeDir, "judge-run.json"))
+    && await fileExists(path.join(judgeDir, "result.json"))
+  );
+}
+
+export async function recoverStaleDirectusAsyncJudgeRequests({
+  database,
+  resolveNodeLabArtifactsRoot,
+  env,
+  referenceTime = new Date(),
+}) {
+  const runningRows = await database("eval_node_lab_judge_requests")
+    .where({ status: "running" })
+    .select("*");
+  const recovered = [];
+  for (const row of runningRows) {
+    if (!leaseExpired(row.lease_until, referenceTime)) continue;
+    const complete = await isNodeLabJudgeArtifactComplete(resolveNodeLabArtifactsRoot, env, row);
+    const patch = complete
+      ? {
+          status: "succeeded",
+          finished_at: row.finished_at || nowIso(),
+          date_updated: nowIso(),
+          error_json: null,
+        }
+      : {
+          status: "failed",
+          finished_at: row.finished_at || nowIso(),
+          date_updated: nowIso(),
+          error_json: JSON.stringify({
+            code: "StaleNodeLabJudgeRequest",
+            message: "Stale running node lab judge request has no complete artifact.",
+          }),
+        };
+    const updated = await database("eval_node_lab_judge_requests")
+      .where({ judge_request_id: row.judge_request_id, status: "running" })
+      .update(patch);
+    if (updated === 1) {
+      recovered.push({
+        judge_request_id: row.judge_request_id,
+        from_status: "running",
+        to_status: patch.status,
+      });
+    }
+  }
+  return recovered;
 }
 
 async function loadNodeLabJudgePresetCatalog(resolveEvalsRoot, env) {
@@ -733,22 +788,40 @@ async function createSessionFromPayload(database, req, body, isSafeFileId) {
   return database("eval_node_lab_sessions").where({ session_id: sessionId }).first();
 }
 
-async function updateSessionAggregate(database, sessionId) {
+export async function updateSessionAggregate(database, sessionId) {
+  const sessionRow = await database("eval_node_lab_sessions")
+    .where({ session_id: sessionId })
+    .first();
   const trials = await database("eval_node_lab_trials")
     .where({ session_id: sessionId })
     .orderBy("date_created", "desc");
+  const reviewNotes = await database("eval_node_lab_review_notes")
+    .where({ target_type: "session", target_id: sessionId })
+    .orderBy("date_created", "desc");
   const aggregate = {
     trial_count: trials.length,
+    review_note_count: reviewNotes.length,
     workspace_counts: VALID_WORKSPACES.reduce((acc, workspace) => {
       acc[workspace] = trials.filter((trial) => trial.workspace_type === workspace).length;
       return acc;
     }, {}),
     last_trial_id: trials[0]?.trial_id || null,
     last_trial_at: trials[0]?.date_created || null,
+    last_review_at: reviewNotes[0]?.date_created || null,
   };
+  const currentStatus = String(sessionRow?.status || "drafting");
+  let nextStatus = currentStatus;
+  if (currentStatus !== "paused" && currentStatus !== "archived") {
+    if (reviewNotes.length > 0) {
+      nextStatus = "reviewed";
+    } else {
+      nextStatus = trials.length > 0 ? "active" : "drafting";
+    }
+  }
   await database("eval_node_lab_sessions")
     .where({ session_id: sessionId })
     .update({
+      status: nextStatus,
       aggregate_summary_json: JSON.stringify(aggregate),
       date_updated: nowIso(),
     });
@@ -815,7 +888,7 @@ async function ensureSessionForPersist(database, req, payload, isSafeFileId) {
   if (payload.workspace_type && payload.workspace_type !== "baseline_compare") {
     const error = new Error(
       `Session 仅接收 Baseline Compare 试验，不接受 ${payload.workspace_type}。` +
-      "Single Run 不再写入 Session；若想保留单次结果，请使用未来 Run History 入口。"
+      "Single Run 不再写入 Session；若需留存，请改用 Baseline Compare + Session。"
     );
     error.status = 422;
     error.code = "NODE_LAB_SESSION_REJECTS_WORKSPACE";
@@ -1041,7 +1114,7 @@ async function persistTrial({
   if (sessionRow && workspaceType !== "baseline_compare") {
     const error = new Error(
       `Session 不再接收 ${workspaceType || "未知类型"} 试验。` +
-      "Session 是固定实验上下文的 compare 记录本，Single Run 请走未来 Run History 入口。"
+      "Session 是固定实验上下文的 compare 记录本；Single Run 若需留存，请改为保存到 Run History。"
     );
     error.status = 422;
     error.code = "NODE_LAB_SESSION_REJECTS_WORKSPACE";
@@ -1268,6 +1341,7 @@ async function createJudgeRequest(database, req, env, resolveNodeLabArtifactsRoo
 }
 
 async function loadSessionDetail(database, resolveNodeLabArtifactsRoot, env, sessionId) {
+  await recoverStaleDirectusAsyncJudgeRequests({ database, resolveNodeLabArtifactsRoot, env });
   const row = await database("eval_node_lab_sessions").where({ session_id: sessionId }).first();
   if (!row) {
     const error = new Error("Node Lab session was not found.");
@@ -1698,6 +1772,19 @@ export function registerNodeLabRoutes(router, context, deps) {
       const body = req.body || {};
       validateIdentifier(req.params.sessionId, "session_id", isSafeFileId);
       validateStatusValue(body.status, VALID_SESSION_STATUSES, "status");
+      const current = await database("eval_node_lab_sessions")
+        .where({ session_id: req.params.sessionId })
+        .first();
+      if (!current) {
+        throw Object.assign(new Error("Session was not found."), { status: 404, code: "NODE_LAB_SESSION_NOT_FOUND" });
+      }
+      const currentAllowedWorkspaceTypes = normalizeRowJson(current, "allowed_workspace_types_json") || VALID_WORKSPACES;
+      const currentBaselineSnapshot = normalizeRowJson(current, "baseline_snapshot_json") || {};
+      const currentCandidateRegistry = normalizeRowJson(current, "candidate_registry_json") || [];
+      const currentJudgeConfigSnapshot = normalizeRowJson(current, "judge_config_snapshot_json") || null;
+      const currentAggregateSummary = normalizeRowJson(current, "aggregate_summary_json") || {};
+      const currentDecisionSummary = normalizeRowJson(current, "decision_summary_json") || {};
+      const currentTags = normalizeRowJson(current, "tags_json") || [];
       const stored = await updateByKey(
         database,
         "eval_node_lab_sessions",
@@ -1707,22 +1794,39 @@ export function registerNodeLabRoutes(router, context, deps) {
           title: body.title,
           goal: body.goal,
           status: body.status,
-          allowed_workspace_types_json: JSON.stringify(body.allowed_workspace_types_json || VALID_WORKSPACES),
-          baseline_snapshot_json: JSON.stringify(stableJson(body.baseline_snapshot_json || {})),
-          baseline_snapshot_hash: body.baseline_snapshot_hash || null,
-          candidate_registry_json: JSON.stringify(stableJson(body.candidate_registry_json || [])),
-          judge_config_snapshot_json: body.judge_config_snapshot_json
-            ? JSON.stringify(stableJson(body.judge_config_snapshot_json))
-            : null,
-          judge_config_snapshot_hash: body.judge_config_snapshot_hash || null,
-          aggregate_summary_json: JSON.stringify(stableJson(body.aggregate_summary_json || {})),
-          decision_summary_json: JSON.stringify(stableJson(body.decision_summary_json || {})),
+          allowed_workspace_types_json: JSON.stringify(
+            stableJson(body.allowed_workspace_types_json ?? currentAllowedWorkspaceTypes),
+          ),
+          baseline_snapshot_json: JSON.stringify(
+            stableJson(body.baseline_snapshot_json ?? currentBaselineSnapshot),
+          ),
+          baseline_snapshot_hash: body.baseline_snapshot_hash ?? current.baseline_snapshot_hash ?? null,
+          candidate_registry_json: JSON.stringify(
+            stableJson(body.candidate_registry_json ?? currentCandidateRegistry),
+          ),
+          judge_config_snapshot_json: body.judge_config_snapshot_json !== undefined
+            ? (
+                body.judge_config_snapshot_json
+                  ? JSON.stringify(stableJson(body.judge_config_snapshot_json))
+                  : null
+              )
+            : (
+                currentJudgeConfigSnapshot
+                  ? JSON.stringify(stableJson(currentJudgeConfigSnapshot))
+                  : null
+              ),
+          judge_config_snapshot_hash: body.judge_config_snapshot_hash ?? current.judge_config_snapshot_hash ?? null,
+          aggregate_summary_json: JSON.stringify(
+            stableJson(body.aggregate_summary_json ?? currentAggregateSummary),
+          ),
+          decision_summary_json: JSON.stringify(
+            stableJson(body.decision_summary_json ?? currentDecisionSummary),
+          ),
           notes: body.notes,
-          tags_json: JSON.stringify(body.tags_json || []),
+          tags_json: JSON.stringify(stableJson(body.tags_json ?? currentTags)),
           user_updated: requestUserId(req),
         },
       );
-      if (!stored) throw Object.assign(new Error("Session was not found."), { status: 404, code: "NODE_LAB_SESSION_NOT_FOUND" });
       await writeSessionArtifact(resolveNodeLabArtifactsRoot, env, stored);
       res.json({ data: sessionSummary(stored) });
     } catch (error) {
@@ -1743,7 +1847,7 @@ export function registerNodeLabRoutes(router, context, deps) {
       if (body.persist_trial) {
         const error = new Error(
           "Single Run 不再写入 Session。Session 是固定实验上下文的 compare 记录本，" +
-          "单次结果请保留在页面状态中，或在 Baseline Compare 中跑完后再选择加入 Session。"
+          "单次结果可以保留在页面状态中，或另存到 Run History；若要进入 Session，请改用 Baseline Compare。"
         );
         error.status = 422;
         error.code = "NODE_LAB_SESSION_REJECTS_SINGLE_RUN";
@@ -2017,25 +2121,32 @@ export function registerNodeLabRoutes(router, context, deps) {
       const canonicalBody = canonicalSingleRunHistoryBody(body);
       validateNodeName(canonicalBody.request.node_name);
       const identity = trialIdentityForPayload("single_run", canonicalBody, body.result);
-      const duplicate = await findDuplicateRunHistoryTrial(database, identity, { standaloneOnly: true });
-      if (duplicate) {
-        const [enrichedDuplicate] = await enrichTrialRows(database, [duplicate]);
-        res.json({ data: { trial: trialSummary(enrichedDuplicate), duplicate: true } });
-        return;
+      let stored = await findDuplicateRunHistoryTrial(database, identity, { standaloneOnly: true });
+      const duplicate = Boolean(stored);
+      if (!stored) {
+        stored = await persistTrial({
+          database,
+          req,
+          env,
+          resolveNodeLabArtifactsRoot,
+          isSafeFileId,
+          workspaceType: "single_run",
+          requestPayload: canonicalBody,
+          resultPayload: body.result,
+          sessionRow: null,
+        });
       }
-      const persisted = await persistTrial({
-        database,
-        req,
-        env,
-        resolveNodeLabArtifactsRoot,
-        isSafeFileId,
-        workspaceType: "single_run",
-        requestPayload: canonicalBody,
-        resultPayload: body.result,
-        sessionRow: null,
+      const [enrichedRow] = stored ? await enrichTrialRows(database, [stored]) : [null];
+      res.json({
+        data: {
+          trial: enrichedRow ? trialSummary(enrichedRow) : null,
+          duplicate,
+          result: body.result || null,
+          note: duplicate
+            ? "Node Lab Single Run 已存在于 Run History，已复用现有 standalone trial。"
+            : "Node Lab Single Run 已保存到 Run History（standalone trial）。",
+        },
       });
-      const [enrichedRow] = await enrichTrialRows(database, [persisted]);
-      res.status(201).json({ data: { trial: trialSummary(enrichedRow), duplicate: false } });
     } catch (error) {
       if (error?.status) {
         res.status(error.status).json({
@@ -2050,6 +2161,7 @@ export function registerNodeLabRoutes(router, context, deps) {
   router.get("/node-lab/run-history/:trialId", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {
+      await recoverStaleDirectusAsyncJudgeRequests({ database, resolveNodeLabArtifactsRoot, env });
       validateIdentifier(req.params.trialId, "trial_id", isSafeFileId);
       const row = await database("eval_node_lab_trials").where({ trial_id: req.params.trialId }).first();
       if (!row) throw Object.assign(new Error("Trial was not found."), { status: 404, code: "NODE_LAB_TRIAL_NOT_FOUND" });
@@ -2314,6 +2426,7 @@ export function registerNodeLabRoutes(router, context, deps) {
   router.get("/node-lab/judge-requests", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {
+      await recoverStaleDirectusAsyncJudgeRequests({ database, resolveNodeLabArtifactsRoot, env });
       const builder = database("eval_node_lab_judge_requests").orderBy("date_created", "desc");
       if (req.query?.node_name) builder.where({ node_name: String(req.query.node_name) });
       if (req.query?.session_id) builder.where({ session_id: String(req.query.session_id) });
@@ -2352,6 +2465,7 @@ export function registerNodeLabRoutes(router, context, deps) {
   router.get("/node-lab/judge-requests/:requestId", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {
+      await recoverStaleDirectusAsyncJudgeRequests({ database, resolveNodeLabArtifactsRoot, env });
       validateIdentifier(req.params.requestId, "judge_request_id", isSafeFileId);
       const row = await database("eval_node_lab_judge_requests")
         .where({ judge_request_id: req.params.requestId })
@@ -2373,6 +2487,7 @@ export function registerNodeLabRoutes(router, context, deps) {
   router.post("/node-lab/judge-requests/:requestId/cancel", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {
+      await recoverStaleDirectusAsyncJudgeRequests({ database, resolveNodeLabArtifactsRoot, env });
       validateIdentifier(req.params.requestId, "judge_request_id", isSafeFileId);
       const current = await database("eval_node_lab_judge_requests")
         .where({ judge_request_id: req.params.requestId })
@@ -2407,6 +2522,7 @@ export function registerNodeLabRoutes(router, context, deps) {
   router.post("/node-lab/judge-requests/:requestId/retry", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {
+      await recoverStaleDirectusAsyncJudgeRequests({ database, resolveNodeLabArtifactsRoot, env });
       validateIdentifier(req.params.requestId, "judge_request_id", isSafeFileId);
       const current = await database("eval_node_lab_judge_requests")
         .where({ judge_request_id: req.params.requestId })
@@ -2458,6 +2574,7 @@ export function registerNodeLabRoutes(router, context, deps) {
   router.post("/node-lab/judge-requests/:requestId/execute", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {
+      await recoverStaleDirectusAsyncJudgeRequests({ database, resolveNodeLabArtifactsRoot, env });
       validateIdentifier(req.params.requestId, "judge_request_id", isSafeFileId);
       const current = await database("eval_node_lab_judge_requests")
         .where({ judge_request_id: req.params.requestId })

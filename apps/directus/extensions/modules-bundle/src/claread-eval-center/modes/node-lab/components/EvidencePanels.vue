@@ -7,13 +7,15 @@ import NodeProbeOutputView from "../../../components/NodeProbeOutputView.vue";
 import { useNodeLabState } from "../composables/useNodeLabState";
 import { useNodeLabApi } from "../composables/useNodeLabApi";
 import {
+  statusLabel,
+  statusTone,
+  shortId,
+} from "../../../composables/useEvalFormatting";
+import {
   formatDurationMs,
   formatRuntimeTokens,
   compareDeltaTone,
   formatSignedDelta,
-  statusLabel,
-  statusTone,
-  shortId,
   formatClockTime,
   safeJsonParse,
   isStructuredJsonValue,
@@ -202,7 +204,7 @@ const judgeStepRuns = computed(() => {
         >
           <div class="request-main">
             <span class="request-id">{{ item.judge_request_id }}</span>
-            <span class="request-meta">Trial {{ shortId(item.trial_id) }}</span>
+            <span class="request-meta">Trial {{ shortId(item.trial_id) }}<template v-if="item.preset_id"> · {{ item.preset_id }}</template></span>
           </div>
           <div class="request-side">
             <span class="badge">{{ statusLabel(item.status) }}</span>
@@ -311,12 +313,17 @@ const judgeStepRuns = computed(() => {
               <span class="meta-value">{{ side.value?.aggregate?.passed ?? 0 }}</span>
             </div>
             <div class="status-fact">
+              <span class="meta-label">部分通过</span>
+              <span class="meta-value">{{ side.value?.aggregate?.partial ?? 0 }}</span>
+            </div>
+            <div class="status-fact">
               <span class="meta-label">失败</span>
               <span class="meta-value">{{ side.value?.aggregate?.failed ?? 0 }}</span>
             </div>
             <div class="status-fact">
-              <span class="meta-label">通过率</span>
+              <span class="meta-label">得分率</span>
               <span class="meta-value">{{ judgeAggregatePassRateText(side.value) }}</span>
+              <span v-if="side.value?.aggregate?.partial > 0" class="meta-hint">三值加权</span>
             </div>
           </div>
         </article>
@@ -500,6 +507,7 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
 .meta-grid .meta-item { display: flex; flex-direction: column; gap: 4px; }
 .meta-label { font-size: 13px; color: var(--color-text-subdued, #6b7280); font-weight: 500; }
 .meta-value { font-size: 14px; font-weight: 500; }
+.meta-hint { font-size: 11px; color: var(--color-text-subdued, #6b7280); margin-left: 4px; font-weight: 400; }
 
 .compare-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .compare-pane { border: 1px solid var(--color-border, #e5e7eb); border-radius: var(--radius-md, 8px); padding: 16px; }
@@ -655,6 +663,10 @@ pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; fo
 .rubric-indicator.is-pass {
   background: color-mix(in srgb, var(--theme--success, #10b981) 15%, var(--color-surface));
   color: var(--theme--success, #10b981);
+}
+.rubric-indicator.is-partial {
+  background: color-mix(in srgb, var(--theme--warning, #f59e0b) 16%, var(--color-surface));
+  color: #b45309;
 }
 .rubric-indicator.is-fail {
   background: color-mix(in srgb, var(--theme--danger, #dc2626) 15%, var(--color-surface));

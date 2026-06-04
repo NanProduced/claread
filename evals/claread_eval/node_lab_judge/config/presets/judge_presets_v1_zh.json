@@ -1,5 +1,5 @@
 {
-  "version": "v1",
+  "version": "v2",
   "shared_defaults": {
     "call_granularity": {
       "rubric_only": 1,
@@ -19,15 +19,15 @@
       "node_name": "grammar",
       "strategy": "grammar_item_review",
       "method": "rubric_plus_pairwise",
-      "ui_label": "逐条打分 + 整体对比评估（默认）",
+      "ui_label": "逐条三档打分 + 整体对比评估（默认）",
       "packet_policy": {
         "priority_profile": "structure_first",
         "max_items_per_side": 6,
         "include_raw_appendix": false
       },
       "rubric_bundle": {
-        "grammar_note": ["GN1", "GN2", "GN3"],
-        "sentence_analysis": ["GS1", "GS2", "GS3"]
+        "grammar_note": ["GN1", "GN2", "GN3", "GN4"],
+        "sentence_analysis": ["GS1", "GS2", "GS3", "GS4"]
       },
       "pairwise": {
         "enabled": true,
@@ -66,7 +66,7 @@
       "node_name": "vocabulary",
       "strategy": "vocabulary_item_review",
       "method": "rubric_plus_pairwise",
-      "ui_label": "逐条打分 + 整体对比评估（默认）",
+      "ui_label": "逐条三档打分 + 整体对比评估（默认）",
       "packet_policy": {
         "max_items_per_side": 8,
         "include_raw_appendix": false,
@@ -76,7 +76,7 @@
         }
       },
       "rubric_bundle": {
-        "vocab_highlight": ["VH1"],
+        "vocab_highlight": ["VH1", "VH2"],
         "phrase_gloss": ["PG1", "PG2"],
         "context_gloss": ["CG1", "CG2"]
       },
@@ -91,14 +91,14 @@
       "node_name": "translation",
       "strategy": "translation_output_review",
       "method": "rubric_plus_pairwise",
-      "ui_label": "整体打分 + 整体对比评估（默认）",
+      "ui_label": "整体三档打分 + 整体对比评估（默认）",
       "packet_policy": {
         "max_sentences_per_side": 8,
         "include_raw_appendix": false,
         "sentence_sampling": "head_and_tail"
       },
       "rubric_bundle": {
-        "output_level": ["TT1", "TT2"]
+        "output_level": ["TT1", "TT2", "TT3", "TT4"]
       },
       "pairwise": {
         "enabled": true,

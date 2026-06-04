@@ -1,15 +1,17 @@
 import { inject, computed, type InjectionKey } from "vue";
 import { API_ENDPOINTS, DEFAULT_TIMEOUT_SECONDS, TERMINAL_JUDGE_STATUSES } from "./useNodeLabConstants";
 import {
+  shortId,
+  statusLabel,
+} from "../../../composables/useEvalFormatting";
+import {
   safeJsonParse,
   buildInputPreview,
   nodeLabel,
-  shortId,
   defaultCandidateDraft,
   defaultJudgeDraft,
   judgeModeAllowedForNode,
   defaultJudgeModeForNode,
-  statusLabel,
   readingGoalLabel,
   readingVariantLabel,
   normalizePreviewText,
@@ -128,7 +130,7 @@ export function createNodeLabApi(deps: NodeLabState) {
         examples: draft.few_shot_mode === "candidate" ? cleanExamples : [],
       },
       model_selection: modelSelection,
-      snapshot_hash: null,
+      snapshot_hash: compareResult.value?.candidate?.prompt_identity?.prompt_snapshot_hash || null,
     };
   }
 
@@ -176,10 +178,10 @@ export function createNodeLabApi(deps: NodeLabState) {
     };
   }
 
-  function applyJudgeModeTemplate(mode) {
+  function applyJudgeModeTemplate(mode, { preservePreset = false } = {}) {
     const templates = {
       rubric_score_only: {
-        system: "请严格按给定 rubric 做二元打分，每条只返回 0/1、简短理由和必要证据。",
+        system: "请严格按给定 rubric 做三档打分，每条只返回 0/1/2、简短理由和必要证据，不要自己汇总 aggregate。",
         user: "请分别评估 baseline 与 candidate，并输出结构化 rubric scoring 结果。",
         persona: "",
       },
@@ -201,13 +203,14 @@ export function createNodeLabApi(deps: NodeLabState) {
     };
     const preset = templates[mode] || templates.rubric_plus_pairwise;
     currentJudgeDraft.value.judge_mode = mode;
-    currentJudgeDraft.value.judge_method = mode === "rubric_score_only"
-      ? "rubric_only"
-      : mode === "anti_template_probe"
-        ? "anti_template_probe"
-        : mode === "raw"
-          ? "raw"
-          : "rubric_plus_pairwise";
+    currentJudgeDraft.value.judge_method = mode === "anti_template_probe"
+      ? "anti_template_probe"
+      : mode === "raw"
+        ? "raw"
+        : "rubric_plus_pairwise";
+    if (!preservePreset) {
+      currentJudgeDraft.value.preset_id = "";
+    }
     currentJudgeDraft.value.system_prompt = preset.system;
     currentJudgeDraft.value.user_prompt = preset.user;
     currentJudgeDraft.value.persona_text = preset.persona;
@@ -220,14 +223,14 @@ export function createNodeLabApi(deps: NodeLabState) {
     draft.preset_id = preset.preset_id;
     draft.judge_strategy = preset.strategy;
     draft.judge_method = preset.method;
-    draft.judge_mode = preset.method === "anti_template_probe" ? "anti_template_probe" : "rubric_plus_pairwise";
+    draft.judge_mode = preset.method === "anti_template_probe" ? "anti_template_probe" : preset.method === "raw" ? "raw" : "rubric_plus_pairwise";
     draft.label = preset.title;
     draft.description = `${nodeLabel(preset.node_name)} · ${preset.ui_label}`;
     draft.preset_summary = preset.ui_label || "";
     draft.packet_policy_json = JSON.stringify(preset.packet_policy || {}, null, 2);
     draft.rubric_bundle_json = JSON.stringify(preset.rubric_bundle || {}, null, 2);
     draft.probe_appendix_json = JSON.stringify(preset.probe_appendix || {}, null, 2);
-    applyJudgeModeTemplate(draft.judge_mode);
+    applyJudgeModeTemplate(draft.judge_mode, { preservePreset: true });
     draft.persona_text = "";
     draft.rubric_json = JSON.stringify(preset.rubric_bundle || {}, null, 2);
     draft.output_schema_json = JSON.stringify(preset.output_schema || {}, null, 2);
@@ -479,6 +482,27 @@ export function createNodeLabApi(deps: NodeLabState) {
     if (switchWorkspace) state.activeWorkspace = "sessions";
   }
 
+  async function updateSession(sessionId, patch = {}) {
+    if (!sessionId) {
+      setFeedback({ error: "缺少 session_id，无法更新 Session。" });
+      return null;
+    }
+    setFeedback();
+    try {
+      const data = await fetchJson(`${API_ENDPOINTS.sessions}/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      await loadSessions();
+      await loadSessionDetail(sessionId);
+      setFeedback({ info: `Session 已更新：${data.title || sessionId}` });
+      return data;
+    } catch (error) {
+      setFeedback({ error: error.message });
+    }
+    return null;
+  }
+
   async function saveCandidateDraft() {
     loading.saveCandidate = true;
     setFeedback();
@@ -586,10 +610,12 @@ export function createNodeLabApi(deps: NodeLabState) {
       : useCandidate
         ? "运行 Candidate"
         : "运行 Baseline";
+    const requestPayload = buildRunRequest({ dryRun, useCandidate });
     state.singleRunUiStateByNode[nodeName] = {
       ...(state.singleRunUiStateByNode[nodeName] || {}),
       requestLabel,
       lastStartedAt: new Date().toISOString(),
+      requestPayload,
     };
     loading.run = true;
     setFeedback();
@@ -597,7 +623,7 @@ export function createNodeLabApi(deps: NodeLabState) {
       const data = await fetchJson(API_ENDPOINTS.run, {
         method: "POST",
         body: JSON.stringify({
-          request: buildRunRequest({ dryRun, useCandidate }),
+          request: requestPayload,
           persist_trial: false,
         }),
       });
@@ -606,11 +632,12 @@ export function createNodeLabApi(deps: NodeLabState) {
         ...(state.singleRunUiStateByNode[nodeName] || {}),
         requestLabel,
         lastCompletedAt: new Date().toISOString(),
+        requestPayload,
       };
       setFeedback({
         info: dryRun
           ? "Candidate Prompt 预览已更新。"
-          : "Single Run 已完成。结果保留在页面状态中，不进入 Session。",
+          : "Single Run 已完成。结果会保留在当前页面；如需留存，可另存到 Run History。",
       });
     } catch (error) {
       setFeedback({ error: error.message });
@@ -625,32 +652,39 @@ export function createNodeLabApi(deps: NodeLabState) {
       setFeedback({ error: "暂无可保存的 Single Run 结果。" });
       return null;
     }
-    const run = result.run;
-    const useCandidate = run.participant_label !== "baseline";
+    const nodeName = state.activeNode;
+    const requestPayload = singleRunUiState.value?.requestPayload || buildRunRequest({
+      dryRun: false,
+      useCandidate: result.run.participant_label !== "baseline",
+    });
     loading.saveRunHistory = true;
     setFeedback();
     try {
       const data = await fetchJson(API_ENDPOINTS.runHistorySingleRun, {
         method: "POST",
         body: JSON.stringify({
-          request: buildRunRequest({ dryRun: false, useCandidate }),
-          request_snapshot: result.request_snapshot || null,
+          request: requestPayload,
           result,
         }),
       });
-      const trialId = data?.trial?.trial_id || "";
+      state.singleRunUiStateByNode[nodeName] = {
+        ...(state.singleRunUiStateByNode[nodeName] || {}),
+        requestPayload,
+        lastSavedAt: new Date().toISOString(),
+        savedTrialId: data?.trial?.trial_id || state.singleRunUiStateByNode[nodeName]?.savedTrialId || "",
+      };
       setFeedback({
         info: data?.duplicate
-          ? `这条 Single Run 已在 Run History 中：${trialId}`
-          : `Single Run 已保存到 Run History：${trialId}`,
+          ? `Single Run 已存在于 Run History：${data?.trial?.trial_id || "standalone trial"}`
+          : `Single Run 已保存到 Run History：${data?.trial?.trial_id || "standalone trial"}`,
       });
       return data;
     } catch (error) {
       setFeedback({ error: error.message });
-      return null;
     } finally {
       loading.saveRunHistory = false;
     }
+    return null;
   }
 
   function buildCandidateRegistryEntryFromResult(result, snapshot) {
@@ -722,6 +756,8 @@ export function createNodeLabApi(deps: NodeLabState) {
             reading_goal: compareRequestFromSnapshot.reading_goal,
             reading_variant: compareRequestFromSnapshot.reading_variant,
             source_text_hash: snapshot.source_text_hash || null,
+            prompt_snapshot_hash: compareResult.value?.baseline?.prompt_identity?.prompt_snapshot_hash || null,
+            prompt_profile: compareResult.value?.baseline?.prompt_identity?.prompt_variant_id || null,
           },
           candidate_registry_json: candidateEntry ? [candidateEntry] : [],
         };
@@ -1187,7 +1223,7 @@ export function createNodeLabApi(deps: NodeLabState) {
     syncSelectedJudgeRequestForActiveCompare,
     loadSessions, loadRecentTrials, loadSessionDetail, loadTrialDetail,
     openCompareTrialInWorkbench, goStartCompareFromEmpty,
-    openCurrentSessionWorkspace, clearSessionAttachment, selectSession,
+    openCurrentSessionWorkspace, clearSessionAttachment, selectSession, updateSession,
     saveCandidateDraft, saveJudgeConfig, runSingle, saveSingleRunToHistory,
     buildCandidateRegistryEntryFromResult, attachCurrentCompareToSession,
     addCurrentCompareToSession, createSessionAndAddCurrentCompare,

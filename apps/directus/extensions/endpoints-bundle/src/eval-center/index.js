@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { registerNodeLabRoutes } from "./node-lab.js";
+import { registerExampleLabRoutes } from "./example-lab.js";
 
 function buildAuthGuard(req, res) {
   const accountability = req.accountability;
@@ -64,6 +65,33 @@ function resolveRunsRoot(env) {
   return readEnv(env, "CLAREAD_EVAL_RUNS_ROOT") || "/directus/evals/runs";
 }
 
+function resolveWorkflowRuntimeRunsRoot(env) {
+  const explicit = readEnv(env, "CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT");
+  if (explicit) return explicit;
+  const nodeLabRoot = resolveNodeLabArtifactsRoot(env);
+  return path.join(path.dirname(nodeLabRoot), "workflow-runs");
+}
+
+function uniquePaths(items) {
+  return [...new Set(items.filter(Boolean).map((item) => path.resolve(item)))];
+}
+
+function resolveWorkflowRunRoots(env) {
+  return uniquePaths([
+    resolveWorkflowRuntimeRunsRoot(env),
+    resolveRunsRoot(env),
+  ]);
+}
+
+function workflowRunArtifactPrefix(root, runtimeRoot) {
+  const resolvedRuntimeRoot = path.resolve(runtimeRoot);
+  const candidateRoot = path.resolve(root);
+  if (candidateRoot === resolvedRuntimeRoot) {
+    return "runtime-evals/workflow-runs";
+  }
+  return "evals/runs";
+}
+
 function runDir(root, runId) {
   if (!isSafeFileId(runId)) {
     const error = new Error("Invalid run id.");
@@ -88,24 +116,58 @@ function caseIndexPath(root, runId) {
   return path.join(runDir(root, runId), "case-index.json");
 }
 
-function abReportPath(root, candidateRunId, reportId) {
-  if (!isSafeFileId(reportId)) {
-    const error = new Error("Invalid A/B report id.");
-    error.status = 400;
-    error.code = "INVALID_AB_REPORT_ID";
-    throw error;
-  }
-  return path.join(runDir(root, candidateRunId), "ab", `${reportId}.json`);
+function workflowCompareReportDir(root, candidateRunId) {
+  return path.join(runDir(root, candidateRunId), "compare");
 }
 
-function abReportMarkdownPath(root, candidateRunId, reportId) {
+function legacyWorkflowCompareReportDir(root, candidateRunId) {
+  return path.join(runDir(root, candidateRunId), "ab");
+}
+
+function workflowCompareReportPath(root, candidateRunId, reportId) {
   if (!isSafeFileId(reportId)) {
-    const error = new Error("Invalid A/B report id.");
+    const error = new Error("Invalid workflow compare report id.");
     error.status = 400;
-    error.code = "INVALID_AB_REPORT_ID";
+    error.code = "INVALID_WORKFLOW_COMPARE_REPORT_ID";
     throw error;
   }
-  return path.join(runDir(root, candidateRunId), "ab", `${reportId}.md`);
+  return path.join(workflowCompareReportDir(root, candidateRunId), `${reportId}.json`);
+}
+
+function legacyWorkflowCompareReportPath(root, candidateRunId, reportId) {
+  if (!isSafeFileId(reportId)) {
+    const error = new Error("Invalid workflow compare report id.");
+    error.status = 400;
+    error.code = "INVALID_WORKFLOW_COMPARE_REPORT_ID";
+    throw error;
+  }
+  return path.join(legacyWorkflowCompareReportDir(root, candidateRunId), `${reportId}.json`);
+}
+
+function workflowCompareReportMarkdownPath(root, candidateRunId, reportId) {
+  if (!isSafeFileId(reportId)) {
+    const error = new Error("Invalid workflow compare report id.");
+    error.status = 400;
+    error.code = "INVALID_WORKFLOW_COMPARE_REPORT_ID";
+    throw error;
+  }
+  return path.join(workflowCompareReportDir(root, candidateRunId), `${reportId}.md`);
+}
+
+async function resolveWorkflowCompareReportJsonPath(root, candidateRunId, reportId) {
+  const primaryPath = workflowCompareReportPath(root, candidateRunId, reportId);
+  if (await fileExists(primaryPath)) return primaryPath;
+  const legacyPath = legacyWorkflowCompareReportPath(root, candidateRunId, reportId);
+  if (await fileExists(legacyPath)) return legacyPath;
+  return primaryPath;
+}
+
+async function listWorkflowCompareReportIds(root, runId) {
+  const buckets = await Promise.all([
+    listJsonIds(workflowCompareReportDir(root, runId)),
+    listJsonIds(legacyWorkflowCompareReportDir(root, runId)),
+  ]);
+  return [...new Set(buckets.flat())].sort();
 }
 
 function judgeArtifactDir(root, runId, judgeRunId) {
@@ -150,6 +212,15 @@ async function fileExists(filePath) {
   }
 }
 
+async function removePathIfExists(targetPath) {
+  if (!targetPath) return;
+  try {
+    await rm(targetPath, { recursive: true, force: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
 async function countJsonFiles(dirPath) {
   try {
     const entries = await readdir(dirPath, { withFileTypes: true });
@@ -171,6 +242,26 @@ async function listJsonIds(dirPath) {
     if (error?.code === "ENOENT") return [];
     throw error;
   }
+}
+
+async function findExistingRunRoot(roots, runId) {
+  const candidates = Array.isArray(roots) ? roots : [roots];
+  for (const root of candidates) {
+    if (!root) continue;
+    if (await fileExists(runDir(root, runId))) {
+      return root;
+    }
+  }
+  return null;
+}
+
+async function resolveRunRootOrThrow(roots, runId) {
+  const root = await findExistingRunRoot(roots, runId);
+  if (root) return root;
+  const error = new Error("Eval artifact not found.");
+  error.status = 404;
+  error.code = "EVAL_ARTIFACT_NOT_FOUND";
+  throw error;
 }
 
 function summarizeRun(run, report, counts) {
@@ -205,8 +296,54 @@ function summarizeRun(run, report, counts) {
     learning_case_count: counts.learning_case_count ?? null,
     academic_case_count: counts.academic_case_count ?? null,
     non_learning_case_count: counts.non_learning_case_count ?? null,
-    ab_report_count: counts.ab_report_count,
+    compare_report_count: counts.compare_report_count,
+    mode: run.mode || "workflow",
     judge_report_count: counts.judge_report_count ?? 0,
+  };
+}
+
+function workflowHistoryStatus(summary) {
+  if (!summary?.has_report) return "failed";
+  const totalCases = Number(summary.total_cases || 0);
+  const errored = Number(summary.errored || 0);
+  const hardFailures = Number(summary.hard_failure_count || 0);
+  const softFailures = Number(summary.soft_failure_count || 0);
+  const regressions = Number(summary.regression_count || 0);
+  if (totalCases > 0 && errored >= totalCases) return "failed";
+  if (errored > 0 || hardFailures > 0 || softFailures > 0 || regressions > 0) return "partial_failure";
+  return "complete";
+}
+
+function workflowHistoryRecord(summary) {
+  const promptVariantId = summary?.prompt_variant_id || "";
+  return {
+    source: "workflow",
+    record_id: summary?.run_id || "",
+    run_id: summary?.run_id || "",
+    status: workflowHistoryStatus(summary),
+    workspace_type: summary?.mode === "workflow_single_run" ? "workflow_single_run" : "workflow_dataset_run",
+    result_kind: summary?.mode === "workflow_single_run" ? "workflow_single_run_result" : "workflow_run_result",
+    dataset_id: summary?.dataset_id || null,
+    prompt_variant_id: promptVariantId || null,
+    topology_mode: summary?.topology_mode || null,
+    total_cases: summary?.total_cases ?? 0,
+    learning_case_count: summary?.learning_case_count ?? 0,
+    hard_failure_count: summary?.hard_failure_count ?? 0,
+    soft_failure_count: summary?.soft_failure_count ?? 0,
+    regression_count: summary?.regression_count ?? 0,
+    judge_report_count: summary?.judge_report_count ?? 0,
+    compare_report_count: summary?.compare_report_count ?? 0,
+    created_at: summary?.created_at || null,
+    date_created: summary?.created_at || null,
+    display_title: summary?.mode === "workflow_single_run"
+      ? `${promptVariantId || "baseline"} · single run`
+      : `${promptVariantId || "baseline"} · ${summary?.dataset_id || "dataset"}`,
+    display_excerpt: [
+      summary?.mode === "workflow_single_run" ? "single run" : null,
+      summary?.topology_mode || null,
+      Number(summary?.learning_case_count || 0) > 0 ? `${summary.learning_case_count} learning` : null,
+      Number(summary?.judge_report_count || 0) > 0 ? `${summary.judge_report_count} judge` : null,
+    ].filter(Boolean).join(" · "),
   };
 }
 
@@ -302,7 +439,8 @@ function summarizeCaseArtifact(artifact) {
   };
 }
 
-async function loadRunSummary(root, runId) {
+async function loadRunSummary(roots, runId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
   const dir = runDir(root, runId);
   const run = await readJsonFile(path.join(dir, "run.json"));
   const reportPath = path.join(dir, "report.json");
@@ -312,29 +450,35 @@ async function loadRunSummary(root, runId) {
   const topologyCounts = countRunTopologies(caseSummaries);
   return summarizeRun(run, report, {
     case_artifact_count: caseIndex?.total_cases ?? await countJsonFiles(path.join(dir, "cases")),
-    ab_report_count: await countJsonFiles(path.join(dir, "ab")),
+    compare_report_count: (await listWorkflowCompareReportIds(root, runId)).length,
     judge_report_count: await countJudgeArtifactDirs(path.join(dir, "judge")),
     topology_mode: inferRunTopologyMode(caseSummaries),
     ...topologyCounts,
   });
 }
 
-async function listRuns(root, limit) {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
-
+async function listRuns(roots, limit) {
+  const candidates = Array.isArray(roots) ? roots : [roots];
   const summaries = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !isSafeFileId(entry.name)) continue;
+  const seen = new Set();
+
+  for (const root of candidates) {
+    let entries;
     try {
-      summaries.push(await loadRunSummary(root, entry.name));
-    } catch {
-      // Invalid or partial run directories are ignored in list view and can be inspected manually.
+      entries = await readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isSafeFileId(entry.name) || seen.has(entry.name)) continue;
+      try {
+        summaries.push(await loadRunSummary(root, entry.name));
+        seen.add(entry.name);
+      } catch {
+        // Invalid or partial run directories are ignored in list view and can be inspected manually.
+      }
     }
   }
 
@@ -343,21 +487,22 @@ async function listRuns(root, limit) {
     .slice(0, limit);
 }
 
-async function loadRunDetail(root, runId) {
+async function loadRunDetail(roots, runId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
   const dir = runDir(root, runId);
   const run = await readJsonFile(path.join(dir, "run.json"));
   const reportPath = path.join(dir, "report.json");
   const report = (await fileExists(reportPath)) ? await readJsonFile(reportPath) : null;
   const caseIndex = await loadCaseIndex(root, runId);
   const caseSummaries = caseIndex?.cases ?? await loadCaseArtifactSummaries(root, runId, dir);
-  const abReportIds = await listJsonIds(path.join(dir, "ab"));
+  const compareReportIds = await listWorkflowCompareReportIds(root, runId);
   const judgeReports = await listJudgeArtifacts(root, runId);
   const topologyCounts = countRunTopologies(caseSummaries);
 
   return {
     summary: summarizeRun(run, report, {
       case_artifact_count: caseSummaries.length,
-      ab_report_count: abReportIds.length,
+      compare_report_count: compareReportIds.length,
       judge_report_count: judgeReports.length,
       topology_mode: inferRunTopologyMode(caseSummaries),
       ...topologyCounts,
@@ -372,15 +517,123 @@ async function loadRunDetail(root, runId) {
         }
       : null,
     case_artifacts: caseSummaries,
-    ab_reports: abReportIds.map((id) => ({
+    compare_reports: compareReportIds.map((id) => ({
       id,
-      href: `/eval-center/runs/${encodeURIComponent(runId)}/ab/${encodeURIComponent(id)}`,
+      href: `/eval-center/runs/${encodeURIComponent(runId)}/compare/${encodeURIComponent(id)}`,
     })),
     judge_reports: judgeReports,
   };
 }
 
-async function loadRunCaseArtifacts(root, runId) {
+async function loadWorkflowCompareReportSummaries(root, runId) {
+  const reportIds = await listWorkflowCompareReportIds(root, runId);
+  const reports = [];
+  for (const reportId of reportIds) {
+    try {
+      const report = await readJsonFile(await resolveWorkflowCompareReportJsonPath(root, runId, reportId));
+      reports.push({
+        id: reportId,
+        report_id: reportId,
+        baseline_run_id: report?.baseline_run_id || null,
+        candidate_run_id: report?.candidate_run_id || runId,
+        created_at: report?.created_at || null,
+        total_cases: report?.total_cases ?? null,
+        wins: report?.wins ?? null,
+        losses: report?.losses ?? null,
+        ties: report?.ties ?? null,
+        manual_review: report?.manual_review ?? null,
+      });
+    } catch {
+      // Ignore malformed compare artifacts in list view.
+    }
+  }
+  return reports.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+}
+
+async function loadWorkflowRunHistoryRecords(roots, limit) {
+  const runs = await listRuns(roots, limit);
+  return runs.map((summary) => workflowHistoryRecord(summary));
+}
+
+async function loadWorkflowRunHistoryDetail(roots, runId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
+  const detail = await loadRunDetail(roots, runId);
+  const fullCaseArtifacts = detail.summary?.mode === "workflow_single_run"
+    ? await loadRunCaseArtifacts(roots, runId)
+    : [];
+  const judgeReports = [];
+  for (const judgeReport of detail.judge_reports || []) {
+    try {
+      judgeReports.push(await loadJudgeArtifact(roots, runId, judgeReport.judge_run_id || judgeReport.id));
+    } catch {
+      judgeReports.push({ summary: judgeReport, report: null, case_results: null, packets: [] });
+    }
+  }
+  return {
+    source: "workflow",
+    record: workflowHistoryRecord(detail.summary),
+    summary: detail.summary,
+    run: detail.run,
+    report: detail.report,
+    case_index: detail.case_index,
+    case_artifacts: detail.case_artifacts || [],
+    full_case_artifacts: fullCaseArtifacts,
+    judge_reports: judgeReports,
+    compare_reports: await loadWorkflowCompareReportSummaries(root, runId),
+  };
+}
+
+async function deleteWorkflowRunCascade(database, roots, runId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
+  const runPath = runDir(root, runId);
+
+  const workflowRequestRows = await database("eval_workflow_run_requests")
+    .where({ run_id: runId })
+    .orWhere({ artifact_run_id: runId })
+    .select("id", "run_id");
+  const workflowRequestIds = workflowRequestRows.map((row) => row.id).filter(Boolean);
+  if (workflowRequestIds.length) {
+    await database("eval_workflow_run_requests")
+      .whereIn("source_request_id", workflowRequestIds)
+      .update({ source_request_id: null });
+  }
+
+  const judgeRequestRows = await database("eval_judge_run_requests")
+    .where({ run_id: runId })
+    .select("id", "judge_run_id");
+  const judgeRequestIds = judgeRequestRows.map((row) => row.id).filter(Boolean);
+  if (judgeRequestIds.length) {
+    await database("eval_judge_run_requests")
+      .whereIn("source_request_id", judgeRequestIds)
+      .update({ source_request_id: null });
+  }
+
+  await database("eval_review_notes")
+    .where({ run_id: runId })
+    .orWhere((builder) => builder.where({ target_type: "workflow_run", target_id: runId }))
+    .del();
+
+  if (judgeRequestRows.length) {
+    await database("eval_judge_run_requests").where({ run_id: runId }).del();
+  }
+  if (workflowRequestRows.length) {
+    await database("eval_workflow_run_requests")
+      .where({ run_id: runId })
+      .orWhere({ artifact_run_id: runId })
+      .del();
+  }
+
+  await removePathIfExists(runPath);
+  return {
+    run_id: runId,
+    deleted_workflow_request_count: workflowRequestRows.length,
+    deleted_judge_request_count: judgeRequestRows.length,
+    deleted_artifact_path: path.basename(runPath),
+  };
+}
+
+async function loadRunCaseArtifacts(roots, runId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
   const dir = runDir(root, runId);
   const caseIds = await listJsonIds(path.join(dir, "cases"));
   if (caseIds.length === 0) {
@@ -418,7 +671,8 @@ async function loadRunCaseArtifacts(root, runId) {
   return artifacts;
 }
 
-async function loadRunForWorkflowLabCompare(root, runId) {
+async function loadRunForWorkflowLabCompare(roots, runId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
   const dir = runDir(root, runId);
   const run = await readJsonFile(path.join(dir, "run.json"));
   const reportPath = path.join(dir, "report.json");
@@ -669,7 +923,7 @@ function renderWorkflowLabCompareMarkdown(report) {
   return lines.join("\n");
 }
 
-async function createWorkflowLabCompare(root, body) {
+async function createWorkflowLabCompare(roots, body) {
   const baselineRunId = String(body?.baseline_run_id || "");
   const candidateRunId = String(body?.candidate_run_id || "");
   if (!isSafeFileId(baselineRunId) || !isSafeFileId(candidateRunId)) {
@@ -684,25 +938,28 @@ async function createWorkflowLabCompare(root, body) {
     error.code = "WORKFLOW_LAB_COMPARE_ERROR";
     throw error;
   }
-
+  const rootCandidates = Array.isArray(roots) ? roots : [roots];
+  const writeRoot = await findExistingRunRoot(rootCandidates, candidateRunId) || rootCandidates[0];
+  const artifactPrefix = workflowRunArtifactPrefix(writeRoot, rootCandidates[0]);
   const reportId = `vs-${baselineRunId}`;
-  const jsonPath = abReportPath(root, candidateRunId, reportId);
-  const baseline = await loadRunForWorkflowLabCompare(root, baselineRunId);
-  const candidate = await loadRunForWorkflowLabCompare(root, candidateRunId);
-  if (await fileExists(jsonPath)) {
+  const jsonPath = workflowCompareReportPath(writeRoot, candidateRunId, reportId);
+  const existingJsonPath = await resolveWorkflowCompareReportJsonPath(writeRoot, candidateRunId, reportId);
+  const baseline = await loadRunForWorkflowLabCompare(rootCandidates, baselineRunId);
+  const candidate = await loadRunForWorkflowLabCompare(rootCandidates, candidateRunId);
+  if (await fileExists(existingJsonPath)) {
     return {
       created: false,
       report_id: reportId,
-      report: await readJsonFile(jsonPath),
+        report: await readJsonFile(existingJsonPath),
       paths: {
-        json: path.join("evals/runs", candidateRunId, "ab", `${reportId}.json`),
-        markdown: path.join("evals/runs", candidateRunId, "ab", `${reportId}.md`),
+        json: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.json`),
+        markdown: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.md`),
       },
     };
   }
 
   const report = buildWorkflowLabCompareReport(baseline, candidate);
-  const mdPath = abReportMarkdownPath(root, candidateRunId, reportId);
+  const mdPath = workflowCompareReportMarkdownPath(writeRoot, candidateRunId, reportId);
   await mkdir(path.dirname(jsonPath), { recursive: true });
   try {
     await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
@@ -714,8 +971,8 @@ async function createWorkflowLabCompare(root, body) {
         report_id: reportId,
         report: await readJsonFile(jsonPath),
         paths: {
-          json: path.join("evals/runs", candidateRunId, "ab", `${reportId}.json`),
-          markdown: path.join("evals/runs", candidateRunId, "ab", `${reportId}.md`),
+          json: path.join("evals/runs", candidateRunId, "compare", `${reportId}.json`),
+          markdown: path.join("evals/runs", candidateRunId, "compare", `${reportId}.md`),
         },
       };
     }
@@ -726,13 +983,14 @@ async function createWorkflowLabCompare(root, body) {
     report_id: reportId,
     report,
     paths: {
-      json: path.join("evals/runs", candidateRunId, "ab", `${reportId}.json`),
-      markdown: path.join("evals/runs", candidateRunId, "ab", `${reportId}.md`),
+      json: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.json`),
+      markdown: path.join(artifactPrefix, candidateRunId, "compare", `${reportId}.md`),
     },
   };
 }
 
-async function loadCaseIndex(root, runId) {
+async function loadCaseIndex(roots, runId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
   const indexPath = caseIndexPath(root, runId);
   if (!(await fileExists(indexPath))) return null;
   const index = await readJsonFile(indexPath);
@@ -823,7 +1081,8 @@ async function listJudgeArtifacts(root, runId) {
   return reports.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
 
-async function loadJudgeArtifact(root, runId, judgeRunId) {
+async function loadJudgeArtifact(roots, runId, judgeRunId) {
+  const root = await resolveRunRootOrThrow(roots, runId);
   const dir = judgeArtifactDir(root, runId, judgeRunId);
   const report = await readJsonFile(path.join(dir, "report.json"));
   const caseResults = await readJsonFile(path.join(dir, "case-results.json"));
@@ -961,7 +1220,7 @@ const VALID_ADAPTER_KINDS = ["fake", "in_process", "http"];
 const VALID_EVAL_PURPOSES = ["dataset_regression", "prompt_experiment", "manual_debug"];
 const VALID_RAG_MODES = ["off", "baseline", "rag", "rag_fallback", "settings"];
 const VALID_TRACE_SCOPES = ["off", "isolated", "inherit"];
-const VALID_EXECUTION_MODES = ["manual", "runner_bridge"];
+const VALID_EXECUTION_MODES = ["manual", "runner_bridge", "directus_async"];
 const VALID_WORKFLOW_REQUEST_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
 const VALID_JUDGE_ADAPTER_KINDS = ["fake", "llm"];
 const VALID_JUDGE_REQUEST_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
@@ -1035,6 +1294,242 @@ async function listDirectories(dirPath) {
   } catch {
     return [];
   }
+}
+
+function yamlListValues(yamlContent, fieldName) {
+  const lines = String(yamlContent || "").split(/\r?\n/);
+  const values = [];
+  const fieldPattern = new RegExp(`^${fieldName}:\\s*$`);
+  let inField = false;
+  for (const line of lines) {
+    if (!inField) {
+      if (fieldPattern.test(line.trim())) {
+        inField = true;
+      }
+      continue;
+    }
+    const listMatch = line.match(/^\s*-\s*(.+?)\s*$/);
+    if (listMatch) {
+      values.push(listMatch[1].trim().replace(/^["']|["']$/g, ""));
+      continue;
+    }
+    if (!line.trim()) continue;
+    break;
+  }
+  return values;
+}
+
+async function readWorkflowDatasetSummary(env, datasetId) {
+  if (!isSafeFileId(datasetId)) return null;
+  const evalsRoot = resolveEvalsRoot(env);
+  const datasetPath = path.join(datasetsDir(evalsRoot), datasetId);
+  const yamlPath = path.join(datasetPath, "dataset.yaml");
+  const hasDatasetYaml = await fileExists(yamlPath);
+  const yamlContent = hasDatasetYaml ? await readFile(yamlPath, "utf-8") : "";
+  const caseIds = await listJsonIds(path.join(datasetPath, "cases"));
+  return {
+    id: datasetId,
+    has_dataset_yaml: hasDatasetYaml,
+    target: simpleYamlValue(yamlContent, "target", "article_analysis"),
+    description: simpleYamlValue(yamlContent, "description", ""),
+    tags: yamlListValues(yamlContent, "tags"),
+    case_count: caseIds.length,
+    case_ids: caseIds,
+  };
+}
+
+async function listWorkflowDatasets(env) {
+  const evalsRoot = resolveEvalsRoot(env);
+  const dsDir = datasetsDir(evalsRoot);
+  const datasetIds = await listDirectories(dsDir);
+  const datasets = [];
+  for (const id of datasetIds.sort()) {
+    const summary = await readWorkflowDatasetSummary(env, id);
+    if (summary) datasets.push(summary);
+  }
+  return datasets;
+}
+
+function normalizeTextList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function workflowDatasetYaml({ datasetId, description = "", tags = [] }) {
+  const rows = [
+    `id: ${datasetId}`,
+    "schema_version: eval-dataset-v1",
+    "target: article_analysis",
+    `description: ${JSON.stringify(String(description || ""))}`,
+    "case_globs:",
+    "  - cases/*.json",
+    "tags:",
+  ];
+  const cleanTags = normalizeTextList(tags);
+  if (cleanTags.length === 0) {
+    rows.push("  - prompt");
+    rows.push("  - learning-workflow");
+  } else {
+    for (const tag of cleanTags) {
+      rows.push(`  - ${JSON.stringify(tag)}`);
+    }
+  }
+  return `${rows.join("\n")}\n`;
+}
+
+function workflowDatasetCaseId({ caseId, text, readingVariant }) {
+  if (caseId && isSafeFileId(caseId)) return caseId;
+  const prefix = isSafeFileId(readingVariant || "") ? readingVariant : "case";
+  const digest = createHash("sha1").update(String(text || "").trim()).digest("hex").slice(0, 8);
+  return `${prefix}-${digest}`;
+}
+
+function buildWorkflowDatasetCase({ request = {}, result = {}, seed = {} }) {
+  const text = String(request?.text || "").trim();
+  if (!text) {
+    const error = new Error("Single run request text is required to create a dataset case.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "request.text";
+    throw error;
+  }
+  const sceneRequest = result?.render_scene?.request && typeof result.render_scene.request === "object"
+    ? result.render_scene.request
+    : {};
+  const readingGoal = String(request?.reading_goal || sceneRequest.reading_goal || "daily_reading");
+  const readingVariant = String(request?.reading_variant || sceneRequest.reading_variant || "intermediate_reading");
+  const caseId = workflowDatasetCaseId({
+    caseId: seed?.case_id || "",
+    text,
+    readingVariant,
+  });
+  if (!isSafeFileId(caseId)) {
+    const error = new Error("case_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "case_id";
+    throw error;
+  }
+  return {
+    id: caseId,
+    origin: "dataset",
+    text,
+    reading_goal: readingGoal,
+    reading_variant: readingVariant,
+    source_type: String(request?.source_type || "user_input"),
+    tags: normalizeTextList(seed?.tags),
+    difficulty: seed?.difficulty ? String(seed.difficulty).trim() : null,
+    target_phenomena: normalizeTextList(seed?.target_phenomena),
+    expected: {
+      min_translation_coverage: 0,
+      allowed_warning_codes: [],
+      tolerated_warning_codes: ["LOW_ENGLISH_RATIO", "TEXT_TYPE_NEEDS_CARE"],
+      max_warning_count: null,
+      max_drop_ratio: null,
+    },
+    reference_notes: seed?.reference_notes ? String(seed.reference_notes).trim() : null,
+    extended: Boolean(seed?.extended),
+  };
+}
+
+async function createWorkflowDataset({ env, body = {} }) {
+  const datasetId = String(body.dataset_id || "").trim();
+  if (!isSafeFileId(datasetId)) {
+    const error = new Error("dataset_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "dataset_id";
+    throw error;
+  }
+  const datasetPath = path.join(datasetsDir(resolveEvalsRoot(env)), datasetId);
+  const yamlPath = path.join(datasetPath, "dataset.yaml");
+  if (await fileExists(yamlPath)) {
+    const error = new Error(`Dataset "${datasetId}" already exists.`);
+    error.status = 409;
+    error.code = "CONFLICT";
+    error.field = "dataset_id";
+    throw error;
+  }
+  let caseRecord = null;
+  if (body.initial_case && typeof body.initial_case === "object") {
+    caseRecord = buildWorkflowDatasetCase({
+      request: body.initial_case.request || {},
+      result: body.initial_case.result || {},
+      seed: body.initial_case,
+    });
+  }
+  await mkdir(path.join(datasetPath, "cases"), { recursive: true });
+  await writeFile(
+    yamlPath,
+    workflowDatasetYaml({
+      datasetId,
+      description: body.description || "",
+      tags: body.tags || [],
+    }),
+    "utf8",
+  );
+
+  let caseInfo = null;
+  if (caseRecord) {
+    const casePath = path.join(datasetPath, "cases", `${caseRecord.id}.json`);
+    if (await fileExists(casePath)) {
+      const error = new Error(`Case "${caseRecord.id}" already exists in dataset "${datasetId}".`);
+      error.status = 409;
+      error.code = "CONFLICT";
+      error.field = "initial_case.case_id";
+      throw error;
+    }
+    await writeFile(casePath, `${JSON.stringify(caseRecord, null, 2)}\n`, "utf8");
+    caseInfo = { case_id: caseRecord.id };
+  }
+
+  return {
+    dataset: await readWorkflowDatasetSummary(env, datasetId),
+    ...(caseInfo ? { case: caseInfo, initial_case: caseInfo } : {}),
+  };
+}
+
+async function appendWorkflowDatasetCase({ env, datasetId, body = {} }) {
+  if (!isSafeFileId(datasetId)) {
+    const error = new Error("dataset_id contains unsafe characters.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    error.field = "dataset_id";
+    throw error;
+  }
+  const datasetPath = path.join(datasetsDir(resolveEvalsRoot(env)), datasetId);
+  const yamlPath = path.join(datasetPath, "dataset.yaml");
+  if (!(await fileExists(yamlPath))) {
+    const error = new Error(`Dataset "${datasetId}" was not found.`);
+    error.status = 404;
+    error.code = "NOT_FOUND";
+    error.field = "dataset_id";
+    throw error;
+  }
+  const caseRecord = buildWorkflowDatasetCase({
+    request: body.request || {},
+    result: body.result || {},
+    seed: body,
+  });
+  const casePath = path.join(datasetPath, "cases", `${caseRecord.id}.json`);
+  if (await fileExists(casePath)) {
+    const error = new Error(`Case "${caseRecord.id}" already exists in dataset "${datasetId}".`);
+    error.status = 409;
+    error.code = "CONFLICT";
+    error.field = "case_id";
+    throw error;
+  }
+  await mkdir(path.join(datasetPath, "cases"), { recursive: true });
+  await writeFile(casePath, `${JSON.stringify(caseRecord, null, 2)}\n`, "utf8");
+  return {
+    dataset: await readWorkflowDatasetSummary(env, datasetId),
+    case: { case_id: caseRecord.id },
+  };
 }
 
 async function listYamlIds(dirPath) {
@@ -1519,6 +2014,146 @@ async function createWorkflowLabSingleRun({
   };
 }
 
+function workflowSingleRunHistoryRunId(body = {}, result = {}) {
+  const raw = stableJson({
+    text: String(body?.text || "").trim(),
+    reading_goal: body?.reading_goal || "daily_reading",
+    reading_variant: body?.reading_variant || "intermediate_reading",
+    prompt_variant_id: result?.prompt_identity?.prompt_variant_id || body?.prompt_variant_id || null,
+    prompt_snapshot_hash: result?.prompt_identity?.prompt_snapshot_hash || null,
+    profile_name: result?.model_identity?.profile_name || null,
+    model_name: result?.model_identity?.model_name || null,
+  });
+  const digest = createHash("sha1").update(raw).digest("hex").slice(0, 8);
+  return `workflow-single-${digest}`;
+}
+
+function buildWorkflowSingleRunHistoryArtifact({ body, result, runId }) {
+  const now = new Date().toISOString();
+  const runtimeSummary = result?.runtime_summary && typeof result.runtime_summary === "object"
+    ? result.runtime_summary
+    : {};
+  const aggregate = runtimeSummary?.aggregate && typeof runtimeSummary.aggregate === "object"
+    ? runtimeSummary.aggregate
+    : {};
+  const renderScene = result?.render_scene && typeof result.render_scene === "object" && !Array.isArray(result.render_scene)
+    ? result.render_scene
+    : {};
+  const workflowIdentity = result?.workflow_identity && typeof result.workflow_identity === "object"
+    ? { topology_mode: "learning", ...result.workflow_identity }
+    : { topology_mode: "learning" };
+  const schemaIdentity = result?.schema_identity && typeof result.schema_identity === "object"
+    ? { topology_mode: "learning", ...result.schema_identity }
+    : { topology_mode: "learning" };
+  const translations = Array.isArray(renderScene.translations) ? renderScene.translations : [];
+  const inlineMarks = Array.isArray(renderScene.inline_marks) ? renderScene.inline_marks : [];
+  const sentenceEntries = Array.isArray(renderScene.sentence_entries) ? renderScene.sentence_entries : [];
+  const warnings = Array.isArray(result?.warnings)
+    ? result.warnings
+    : Array.isArray(renderScene.warnings)
+      ? renderScene.warnings
+      : [];
+  const dropLog = Array.isArray(renderScene.drop_log) ? renderScene.drop_log : [];
+  const caseArtifact = {
+    case_id: "single-run",
+    run_id: runId,
+    adapter_status: result?.status || "failed",
+    user_facing_state: renderScene?.user_facing_state || null,
+    error: result?.error || null,
+    warnings,
+    drop_log: dropLog,
+    drop_log_summary: renderScene?.drop_log_summary || {
+      total_drop_count: dropLog.length,
+    },
+    grader_results: [],
+    translations,
+    inline_marks: inlineMarks,
+    sentence_entries: sentenceEntries,
+    latency_seconds: Number(runtimeSummary?.latency_ms || 0) / 1000,
+    usage_summary: {
+      total_tokens: aggregate?.total_tokens ?? runtimeSummary?.total_tokens ?? null,
+      input_tokens: aggregate?.input_tokens ?? runtimeSummary?.input_tokens ?? null,
+      output_tokens: aggregate?.output_tokens ?? runtimeSummary?.output_tokens ?? null,
+    },
+    workflow_identity: workflowIdentity,
+    schema_identity: schemaIdentity,
+    prompt_identity: result?.prompt_identity || null,
+    model_identity: result?.model_identity || null,
+    runtime_summary: runtimeSummary,
+    render_scene: renderScene,
+    input_snapshot: {
+      text: String(body?.text || "").trim(),
+      reading_goal: body?.reading_goal || "daily_reading",
+      reading_variant: body?.reading_variant || "intermediate_reading",
+      source_type: body?.source_type || "user_input",
+    },
+    created_at: now,
+  };
+  const report = {
+    created_at: now,
+    total_cases: 1,
+    passed: result?.status === "succeeded" ? 1 : 0,
+    failed: result?.status === "succeeded" ? 0 : 1,
+    errored: result?.status === "succeeded" ? 0 : 1,
+    hard_failure_case_ids: [],
+    soft_failure_case_ids: [],
+    regression_list: [],
+  };
+  const run = {
+    run_id: runId,
+    created_at: now,
+    dataset_id: "workflow-single-run",
+    mode: "workflow_single_run",
+    prompt_variant_id: result?.prompt_identity?.prompt_variant_id || null,
+    prompt_snapshot_hash: result?.prompt_identity?.prompt_snapshot_hash || null,
+    workflow_version: workflowIdentity?.workflow_version || null,
+    rag_mode: body?.rag_mode || "off",
+    trace_scope: body?.trace_scope || "off",
+    reading_goal: body?.reading_goal || "daily_reading",
+    reading_variant: body?.reading_variant || "intermediate_reading",
+    source_type: body?.source_type || "user_input",
+  };
+  return {
+    run,
+    report,
+    caseIndex: {
+      schema_version: "1.0.0",
+      generated_at: now,
+      total_cases: 1,
+      cases: [summarizeWorkflowCaseForIndex(caseArtifact)],
+    },
+    caseArtifact,
+  };
+}
+
+async function saveWorkflowLabSingleRunToHistory({ env, body = {} }) {
+  const request = body?.request && typeof body.request === "object" ? body.request : null;
+  const result = body?.result && typeof body.result === "object" ? body.result : null;
+  if (!request || !result) {
+    const error = new Error("request and result are required.");
+    error.status = 422;
+    error.code = "VALIDATION_ERROR";
+    throw error;
+  }
+  const runId = body?.run_id && isSafeFileId(body.run_id) ? String(body.run_id) : workflowSingleRunHistoryRunId(request, result);
+  const roots = resolveWorkflowRunRoots(env);
+  const existingRoot = await findExistingRunRoot(roots, runId);
+  if (existingRoot) {
+    const summary = await loadRunSummary(roots, runId);
+    return { record: workflowHistoryRecord(summary), duplicate: true };
+  }
+  const artifact = buildWorkflowSingleRunHistoryArtifact({ body: request, result, runId });
+  const runsRoot = resolveWorkflowRuntimeRunsRoot(env);
+  const dir = runDir(runsRoot, runId);
+  await mkdir(path.join(dir, "cases"), { recursive: true });
+  await writeFile(path.join(dir, "run.json"), `${JSON.stringify(artifact.run, null, 2)}\n`, "utf8");
+  await writeFile(path.join(dir, "report.json"), `${JSON.stringify(artifact.report, null, 2)}\n`, "utf8");
+  await writeFile(path.join(dir, "case-index.json"), `${JSON.stringify(artifact.caseIndex, null, 2)}\n`, "utf8");
+  await writeFile(path.join(dir, "cases", "single-run.json"), `${JSON.stringify(artifact.caseArtifact, null, 2)}\n`, "utf8");
+  const summary = await loadRunSummary(roots, runId);
+  return { record: workflowHistoryRecord(summary), duplicate: false };
+}
+
 function simpleYamlValue(yamlContent, fieldName, fallback = null) {
   const pattern = new RegExp(`^${fieldName}:\\s*(.+?)\\s*$`, "m");
   const match = String(yamlContent || "").match(pattern);
@@ -1539,7 +2174,7 @@ function workflowRequestRow(req, config, options = {}) {
     mode: "workflow",
     eval_purpose: config.eval_purpose || "dataset_regression",
     adapter_kind: config.adapter_kind || "in_process",
-    runner_kind: "external_worker",
+    runner_kind: config.runner_kind || "external_worker",
     config_json: config,
     prompt_variant_id: config.prompt_variant_id || null,
     prompt_variant_snapshot_hash: config.prompt_variant_snapshot_hash || null,
@@ -1576,7 +2211,11 @@ function workflowRunRequestSummary(row) {
     prompt_variant_snapshot_hash: row.prompt_variant_snapshot_hash,
     artifact_run_id: row.artifact_run_id,
     artifact_path: row.artifact_path,
-    expected_artifact_path: row.run_id ? `evals/runs/${row.run_id}` : null,
+    expected_artifact_path: row.run_id
+      ? row.runner_kind === "directus_async"
+        ? `runtime-evals/workflow-runs/${row.run_id}`
+        : `evals/runs/${row.run_id}`
+      : null,
     source_request_id: row.source_request_id || null,
     attempt_no: row.attempt_no || 1,
     max_attempts: row.max_attempts || row.attempt_no || 1,
@@ -1598,6 +2237,7 @@ function workflowRunRequestSummary(row) {
         }
       : null,
     config_summary: {
+      execution_mode: config.execution_mode || "runner_bridge",
       preset_id: config.preset_id || null,
       rag_mode: config.rag_mode || null,
       trace_scope: config.trace_scope || null,
@@ -1734,8 +2374,9 @@ async function createJudgeRunRequest(database, req, env, body) {
     throw error;
   }
 
-  const runsRoot = resolveRunsRoot(env);
-  const runPath = runDir(runsRoot, body.run_id);
+  const readableRoots = resolveWorkflowRunRoots(env);
+  const sourceRoot = await findExistingRunRoot(readableRoots, body.run_id);
+  const runPath = runDir(sourceRoot || readableRoots[0], body.run_id);
   if (!(await fileExists(path.join(runPath, "report.json"))) || !(await fileExists(path.join(runPath, "case-index.json")))) {
     const error = new Error(`Run "${body.run_id}" does not have complete report.json and case-index.json artifacts.`);
     error.status = 422;
@@ -1761,7 +2402,8 @@ async function createJudgeRunRequest(database, req, env, body) {
   }
 
   const judgeRunId = body.judge_run_id || generateRunId("judge");
-  const artifactDir = judgeArtifactDir(runsRoot, body.run_id, judgeRunId);
+  const artifactRoot = sourceRoot || resolveWorkflowRuntimeRunsRoot(env);
+  const artifactDir = judgeArtifactDir(artifactRoot, body.run_id, judgeRunId);
   if (await fileExists(artifactDir)) {
     const error = new Error(`Judge artifact directory "${judgeRunId}" already exists for run "${body.run_id}".`);
     error.status = 409;
@@ -1884,7 +2526,9 @@ async function ensureJudgeRunIdAvailable(database, env, runId, judgeRunId) {
     throw error;
   }
 
-  const artifactDir = judgeArtifactDir(resolveRunsRoot(env), runId, judgeRunId);
+  const artifactRoot = (await findExistingRunRoot(resolveWorkflowRunRoots(env), runId))
+    || resolveWorkflowRuntimeRunsRoot(env);
+  const artifactDir = judgeArtifactDir(artifactRoot, runId, judgeRunId);
   if (await fileExists(artifactDir)) {
     const error = new Error(`Judge artifact directory "${judgeRunId}" already exists for run "${runId}".`);
     error.status = 409;
@@ -2045,7 +2689,9 @@ async function createWorkflowRunRequest(database, req, config) {
   }
   const row = workflowRequestRow(req, config);
   await database("eval_workflow_run_requests").insert(row);
-  return row;
+  return database("eval_workflow_run_requests")
+    .where({ run_id: config.run_id })
+    .first();
 }
 
 async function listReadyPromptVariantSnapshots(database) {
@@ -2071,7 +2717,7 @@ async function listReadyPromptVariantSnapshots(database) {
       "snapshot_hash",
       "notes",
     ])
-    .where({ status: "ready_for_eval", scope: "workflow_eval" })
+    .where({ status: "ready_for_eval", scope: "workflow_lab" })
     .orderBy("date_updated", "desc")
     .limit(100);
   return rows.map((row) => promptVariantSnapshotFromRow(row));
@@ -2111,13 +2757,13 @@ async function attachPromptVariantSnapshot(database, config) {
     .where({
       variant_id: config.prompt_variant_id,
       status: "ready_for_eval",
-      scope: "workflow_eval",
+      scope: "workflow_lab",
     })
     .first();
 
   if (!row) {
     const error = new Error(
-      `Prompt variant "${config.prompt_variant_id}" is not ready_for_eval for workflow_eval.`,
+      `Prompt variant "${config.prompt_variant_id}" is not ready_for_eval for workflow_lab.`,
     );
     error.status = 422;
     error.code = "VALIDATION_ERROR";
@@ -2203,6 +2849,576 @@ function normalizeConfigJson(value) {
   }
 }
 
+function workflowRunRequestErrorJson(error) {
+  if (error && typeof error === "object" && error.code && error.message) {
+    return { code: error.code, message: String(error.message).slice(0, 1000) };
+  }
+  return {
+    code: error?.name || "WorkflowRunError",
+    message: String(error?.message || "Workflow run failed.").slice(0, 1000),
+  };
+}
+
+async function loadWorkflowDatasetCases(env, datasetId) {
+  const dir = path.join(datasetsDir(resolveEvalsRoot(env)), datasetId, "cases");
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw workflowRequestError(
+        `Dataset "${datasetId}" cases directory was not found.`,
+        422,
+        "VALIDATION_ERROR",
+        "dataset_id",
+      );
+    }
+    throw error;
+  }
+
+  const cases = [];
+  for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith(".json")).sort((a, b) => a.name.localeCompare(b.name))) {
+    const casePayload = await readJsonFile(path.join(dir, entry.name));
+    cases.push(casePayload);
+  }
+  return cases;
+}
+
+function workflowCaseRequestBody(casePayload, config) {
+  return {
+    text: String(casePayload.text || ""),
+    reading_goal: String(casePayload.reading_goal || "daily_reading"),
+    reading_variant: String(casePayload.reading_variant || "intermediate_reading"),
+    source_type: String(casePayload.source_type || "user_input"),
+    extended: Boolean(casePayload.extended),
+    model_selection: normalizeJsonObject(config.model_selection),
+    rag_mode: config.rag_mode || "off",
+    prompt_variant_id: config.prompt_variant_id || null,
+    prompt_override: config.prompt_override || null,
+    trace_scope: config.trace_scope || "off",
+    timeout_seconds: config.timeout_seconds || 120,
+    source_metadata: {
+      dataset_id: config.dataset_id,
+      case_id: casePayload.id,
+      run_id: config.run_id,
+      dispatch_mode: "directus_async",
+      eval_purpose: config.eval_purpose || "dataset_regression",
+    },
+  };
+}
+
+async function executeWorkflowEvalCase({ env, config, casePayload }) {
+  try {
+    const result = await callEvalUpstreamJson({
+      env,
+      path: "/eval/article-analysis/workflow",
+      body: workflowCaseRequestBody(casePayload, config),
+      timeoutMs: resolveRequestTimeoutMs(env, config),
+    });
+    return { result, error: null };
+  } catch (error) {
+    return { result: null, error };
+  }
+}
+
+function buildWorkflowCaseArtifact(casePayload, config, evalResult, transportError = null) {
+  const renderScene = evalResult?.render_scene && typeof evalResult.render_scene === "object"
+    ? evalResult.render_scene
+    : {};
+  const runtimeSummary = evalResult?.runtime_summary && typeof evalResult.runtime_summary === "object"
+    ? evalResult.runtime_summary
+    : {};
+  const aggregate = runtimeSummary?.aggregate && typeof runtimeSummary.aggregate === "object"
+    ? runtimeSummary.aggregate
+    : {};
+  const error = transportError
+    ? workflowRunRequestErrorJson(transportError)
+    : (evalResult?.error && typeof evalResult.error === "object" ? evalResult.error : null);
+  const adapterStatus = transportError
+    ? "failed"
+    : (["succeeded", "failed", "timeout"].includes(evalResult?.status) ? evalResult.status : "failed");
+  return {
+    case_id: casePayload.id,
+    run_id: config.run_id,
+    adapter_status: adapterStatus,
+    input_snapshot: casePayload,
+    run_config_snapshot: config,
+    workflow_identity: evalResult?.workflow_identity || {},
+    schema_identity: evalResult?.schema_identity || {},
+    prompt_identity: {
+      ...(evalResult?.prompt_identity || {}),
+      prompt_variant_id: evalResult?.prompt_identity?.prompt_variant_id || config.prompt_variant_id || null,
+    },
+    output: renderScene,
+    user_facing_state: renderScene?.user_facing_state || null,
+    translations: Array.isArray(renderScene?.translations) ? renderScene.translations : [],
+    inline_marks: Array.isArray(renderScene?.inline_marks) ? renderScene.inline_marks : [],
+    sentence_entries: Array.isArray(renderScene?.sentence_entries) ? renderScene.sentence_entries : [],
+    warnings: Array.isArray(evalResult?.warnings)
+      ? evalResult.warnings
+      : (Array.isArray(renderScene?.warnings) ? renderScene.warnings : []),
+    drop_log: [],
+    preprocess_summary: evalResult?.preprocess_summary || null,
+    normalize_summary: evalResult?.normalize_summary || null,
+    drop_log_summary: evalResult?.drop_log_summary || null,
+    runtime_summary: runtimeSummary,
+    rag_debug: evalResult?.rag_debug || null,
+    trace_refs: evalResult?.trace_refs || null,
+    usage_summary: {
+      total_tokens: aggregate.total_tokens ?? 0,
+      input_tokens: aggregate.input_tokens ?? null,
+      output_tokens: aggregate.output_tokens ?? null,
+      per_agent: runtimeSummary?.per_agent && typeof runtimeSummary.per_agent === "object"
+        ? runtimeSummary.per_agent
+        : {},
+    },
+    model_identity: evalResult?.model_identity || {},
+    grader_results: [],
+    error,
+    timeout: adapterStatus === "timeout",
+    latency_seconds: Number.isFinite(runtimeSummary?.latency_ms)
+      ? Math.round((runtimeSummary.latency_ms / 1000) * 1000) / 1000
+      : null,
+  };
+}
+
+function buildWorkflowGraderResults(casePayload, artifact) {
+  const results = [];
+  const output = artifact.output && typeof artifact.output === "object" ? artifact.output : {};
+  const article = output.article && typeof output.article === "object" ? output.article : {};
+  const sentences = Array.isArray(article.sentences) ? article.sentences : [];
+  const warningCount = Array.isArray(artifact.warnings) ? artifact.warnings.length : 0;
+  const totalDropCount = Number(artifact.drop_log_summary?.total_drop_count || 0);
+  const allowedCodes = new Set(Array.isArray(casePayload?.expected?.allowed_warning_codes) ? casePayload.expected.allowed_warning_codes : []);
+  const toleratedCodes = new Set(Array.isArray(casePayload?.expected?.tolerated_warning_codes) ? casePayload.expected.tolerated_warning_codes : ["LOW_ENGLISH_RATIO", "TEXT_TYPE_NEEDS_CARE"]);
+  const disallowedWarnings = (Array.isArray(artifact.warnings) ? artifact.warnings : []).filter((warning) => !allowedCodes.has(warning?.code) && !toleratedCodes.has(warning?.code));
+  const totalSentences = sentences.length || artifact.translations.length;
+  const coverage = totalSentences > 0 ? artifact.translations.length / totalSentences : null;
+  const minCoverage = Number(casePayload?.expected?.min_translation_coverage ?? 0);
+  const maxWarningCount = casePayload?.expected?.max_warning_count;
+  const maxDropRatio = casePayload?.expected?.max_drop_ratio;
+
+  if (artifact.error) {
+    results.push({
+      grader_name: "schema_presence",
+      case_id: casePayload.id,
+      verdict: "fail",
+      severity: "hard",
+      metric: "output_present",
+      value: false,
+      expected: true,
+      evidence: `Adapter returned error: ${artifact.error.message || artifact.error.code || "unknown error"}`,
+    });
+  } else if (!output || Object.keys(output).length === 0) {
+    results.push({
+      grader_name: "schema_presence",
+      case_id: casePayload.id,
+      verdict: "fail",
+      severity: "hard",
+      metric: "output_present",
+      value: false,
+      expected: true,
+      evidence: "Output dict is empty",
+    });
+  } else {
+    const requiredKeys = ["schema_version", "request", "article", "user_facing_state"];
+    const missing = requiredKeys.filter((key) => !(key in output));
+    if (missing.length > 0) {
+      results.push({
+        grader_name: "schema_presence",
+        case_id: casePayload.id,
+        verdict: "fail",
+        severity: "hard",
+        metric: "required_fields_present",
+        value: false,
+        expected: true,
+        evidence: `Missing required fields: ${missing.join(", ")}`,
+      });
+    } else {
+      results.push({
+        grader_name: "schema_presence",
+        case_id: casePayload.id,
+        verdict: "pass",
+        severity: "hard",
+        metric: "schema_presence",
+        value: true,
+        expected: true,
+        evidence: "All required fields present",
+      });
+    }
+  }
+
+  if (artifact.error) {
+    results.push({
+      grader_name: "status_error",
+      case_id: casePayload.id,
+      verdict: "fail",
+      severity: "hard",
+      metric: "adapter_error",
+      value: artifact.error.message || artifact.error.code || "error",
+      expected: null,
+      evidence: `Adapter error: ${artifact.error.message || artifact.error.code || "error"}`,
+    });
+  } else if (artifact.timeout) {
+    results.push({
+      grader_name: "status_error",
+      case_id: casePayload.id,
+      verdict: "fail",
+      severity: "hard",
+      metric: "timeout",
+      value: true,
+      expected: false,
+      evidence: "Case timed out",
+    });
+  } else if (artifact.user_facing_state === "degraded_heavy") {
+    results.push({
+      grader_name: "status_error",
+      case_id: casePayload.id,
+      verdict: "fail",
+      severity: "hard",
+      metric: "user_facing_state",
+      value: artifact.user_facing_state,
+      expected: "normal",
+      evidence: "Heavy degraded state",
+    });
+  } else if (artifact.user_facing_state === "degraded_light") {
+    results.push({
+      grader_name: "status_error",
+      case_id: casePayload.id,
+      verdict: "fail",
+      severity: "soft",
+      metric: "user_facing_state",
+      value: artifact.user_facing_state,
+      expected: "normal",
+      evidence: "Light degraded state",
+    });
+  } else {
+    results.push({
+      grader_name: "status_error",
+      case_id: casePayload.id,
+      verdict: "pass",
+      severity: "hard",
+      metric: "user_facing_state",
+      value: artifact.user_facing_state,
+      expected: "normal",
+      evidence: "Normal state",
+    });
+  }
+
+  if (artifact.error) {
+    results.push({
+      grader_name: "translation_coverage",
+      case_id: casePayload.id,
+      verdict: "skip",
+      severity: "info",
+      metric: "translation_coverage",
+      value: null,
+      expected: null,
+      evidence: "Skipped due to adapter error",
+    });
+  } else if (!totalSentences) {
+    results.push({
+      grader_name: "translation_coverage",
+      case_id: casePayload.id,
+      verdict: "skip",
+      severity: "info",
+      metric: "translation_coverage",
+      value: null,
+      expected: null,
+      evidence: "No sentences found to measure coverage",
+    });
+  } else {
+    results.push({
+      grader_name: "translation_coverage",
+      case_id: casePayload.id,
+      verdict: coverage >= minCoverage ? "pass" : "fail",
+      severity: "hard",
+      metric: "translation_coverage",
+      value: Number(coverage.toFixed(4)),
+      expected: `>=${minCoverage}`,
+      evidence: `${artifact.translations.length}/${totalSentences} sentences translated (${(coverage * 100).toFixed(1)}%), threshold=${(minCoverage * 100).toFixed(1)}%`,
+    });
+  }
+
+  const issues = [];
+  if (disallowedWarnings.length > 0) {
+    issues.push(`Disallowed warning codes: ${disallowedWarnings.map((warning) => warning?.code).filter(Boolean).join(", ")}`);
+  }
+  if (Number.isFinite(maxWarningCount) && warningCount > maxWarningCount) {
+    issues.push(`Warning count ${warningCount} exceeds max ${maxWarningCount}`);
+  }
+  if (Number.isFinite(maxDropRatio) && totalSentences > 0 && totalDropCount / totalSentences > maxDropRatio) {
+    issues.push(`Drop ratio ${((totalDropCount / totalSentences) * 100).toFixed(1)}% exceeds max ${(maxDropRatio * 100).toFixed(1)}%`);
+  }
+  results.push({
+    grader_name: "warning_drop_summary",
+    case_id: casePayload.id,
+    verdict: issues.length > 0 ? "fail" : "pass",
+    severity: issues.length > 0 ? "soft" : "info",
+    metric: "warning_drop_summary",
+    value: { warnings: warningCount, drops: totalDropCount },
+    expected: {
+      allowed_codes: [...allowedCodes],
+      tolerated_codes: [...toleratedCodes],
+      max_warning_count: maxWarningCount ?? null,
+      max_drop_ratio: maxDropRatio ?? null,
+    },
+    evidence: issues.length > 0 ? issues.join("; ") : `Warnings: ${warningCount}, Drops: ${totalDropCount}`,
+  });
+
+  return results;
+}
+
+function summarizeWorkflowCaseForIndex(artifact) {
+  const graderResults = Array.isArray(artifact.grader_results) ? artifact.grader_results : [];
+  const failedGraders = graderResults.filter((result) => result?.verdict === "fail");
+  const hardFailures = failedGraders.filter((result) => result?.severity === "hard").length;
+  const softFailures = failedGraders.filter((result) => result?.severity === "soft").length;
+  const dropCount = Number(artifact.drop_log_summary?.total_drop_count || (Array.isArray(artifact.drop_log) ? artifact.drop_log.length : 0));
+  return {
+    case_id: artifact.case_id,
+    run_id: artifact.run_id,
+    artifact_href: `cases/${artifact.case_id}.json`,
+    adapter_status: artifact.adapter_status,
+    user_facing_state: artifact.user_facing_state ?? null,
+    error: artifact.error ? { code: artifact.error.code || null, message: artifact.error.message || null } : null,
+    warning_count: Array.isArray(artifact.warnings) ? artifact.warnings.length : 0,
+    drop_count: dropCount,
+    hard_failures: hardFailures,
+    soft_failures: softFailures,
+    grader_count: graderResults.length,
+    failed_grader_count: failedGraders.length,
+    grader_summaries: graderResults.map((result) => ({
+      grader_name: result?.grader_name ?? null,
+      verdict: result?.verdict ?? null,
+      severity: result?.severity ?? null,
+      metric: result?.metric ?? null,
+      evidence: result?.evidence ?? null,
+    })),
+    translation_count: Array.isArray(artifact.translations) ? artifact.translations.length : 0,
+    inline_mark_count: Array.isArray(artifact.inline_marks) ? artifact.inline_marks.length : 0,
+    sentence_entry_count: Array.isArray(artifact.sentence_entries) ? artifact.sentence_entries.length : 0,
+    latency_seconds: artifact.latency_seconds ?? null,
+    total_tokens: artifact.usage_summary?.total_tokens ?? null,
+    input_tokens: artifact.usage_summary?.input_tokens ?? null,
+    output_tokens: artifact.usage_summary?.output_tokens ?? null,
+    workflow_identity: artifact.workflow_identity ?? null,
+    schema_identity: artifact.schema_identity ?? null,
+    prompt_identity: artifact.prompt_identity ?? null,
+    model_identity: artifact.model_identity ?? null,
+  };
+}
+
+function buildWorkflowRunReport(config, artifacts) {
+  const caseSummaries = artifacts.map((artifact) => {
+    const graderResults = Array.isArray(artifact.grader_results) ? artifact.grader_results : [];
+    const hardFailures = graderResults.filter((result) => result?.verdict === "fail" && result?.severity === "hard").length;
+    const softFailures = graderResults.filter((result) => result?.verdict === "fail" && result?.severity === "soft").length;
+    const verdict = artifact.error
+      ? "error"
+      : hardFailures > 0
+        ? "fail"
+        : "pass";
+    return {
+      case_id: artifact.case_id,
+      verdict,
+      hard_failures: hardFailures,
+      soft_failures: softFailures,
+      error: artifact.error?.message || null,
+    };
+  });
+
+  return {
+    run_id: config.run_id,
+    dataset_id: config.dataset_id,
+    created_at: new Date().toISOString(),
+    total_cases: caseSummaries.length,
+    passed: caseSummaries.filter((item) => item.verdict === "pass").length,
+    failed: caseSummaries.filter((item) => item.verdict === "fail").length,
+    skipped: caseSummaries.filter((item) => item.verdict === "skip").length,
+    errored: caseSummaries.filter((item) => item.verdict === "error").length,
+    hard_failure_case_ids: caseSummaries.filter((item) => item.hard_failures > 0).map((item) => item.case_id),
+    soft_failure_case_ids: caseSummaries.filter((item) => item.soft_failures > 0 && item.hard_failures === 0).map((item) => item.case_id),
+    case_summaries: caseSummaries,
+    runtime_aggregates: {
+      total_warnings: artifacts.reduce((sum, artifact) => sum + (Array.isArray(artifact.warnings) ? artifact.warnings.length : 0), 0),
+      total_drops: artifacts.reduce((sum, artifact) => sum + Number(artifact.drop_log_summary?.total_drop_count || 0), 0),
+    },
+    regression_list: [],
+  };
+}
+
+function renderWorkflowRunReportMarkdown(report) {
+  const lines = [
+    `# Eval Report: ${report.run_id}`,
+    "",
+    `- Dataset: \`${report.dataset_id}\``,
+    `- Created: ${report.created_at}`,
+    `- Total cases: ${report.total_cases}`,
+    `- Passed: ${report.passed}`,
+    `- Failed: ${report.failed}`,
+    `- Skipped: ${report.skipped}`,
+    `- Errored: ${report.errored}`,
+    "",
+    "## Case Summaries",
+    "",
+    "| Case ID | Verdict | Hard | Soft | Error |",
+    "|---------|---------|------|------|-------|",
+  ];
+  for (const summary of report.case_summaries || []) {
+    lines.push(`| \`${summary.case_id}\` | ${summary.verdict} | ${summary.hard_failures} | ${summary.soft_failures} | ${summary.error || ""} |`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function writeWorkflowRunArtifacts({ env, config, artifacts, report }) {
+  const runsRoot = resolveWorkflowRuntimeRunsRoot(env);
+  const dir = runDir(runsRoot, config.run_id);
+  if (await fileExists(dir)) {
+    throw workflowRequestError(
+      `Run directory "${config.run_id}" already exists in runtime artifacts.`,
+      409,
+      "WORKFLOW_RUN_REQUEST_ARTIFACT_CONFLICT",
+      "run_id",
+    );
+  }
+
+  await mkdir(path.join(dir, "cases"), { recursive: true });
+  await writeJsonFile(path.join(dir, "run.json"), config);
+  for (const artifact of artifacts) {
+    await writeJsonFile(path.join(dir, "cases", `${artifact.case_id}.json`), artifact);
+  }
+  await writeJsonFile(path.join(dir, "case-index.json"), {
+    schema_version: "eval-case-index-v1",
+    run_id: config.run_id,
+    dataset_id: config.dataset_id,
+    generated_at: new Date().toISOString(),
+    total_cases: artifacts.length,
+    cases: artifacts.map((artifact) => summarizeWorkflowCaseForIndex(artifact)),
+  });
+  await writeJsonFile(path.join(dir, "report.json"), report);
+  await writeFile(path.join(dir, "report.md"), renderWorkflowRunReportMarkdown(report), "utf8");
+  return dir;
+}
+
+async function runWorkflowRequestDirectusAsync({
+  database,
+  env,
+  req,
+  requestId,
+  bridgeId,
+}) {
+  const current = await database("eval_workflow_run_requests")
+    .where({ id: requestId })
+    .first();
+  if (!current) return;
+
+  const config = {
+    ...normalizeConfigJson(current.config_json),
+    run_id: current.run_id,
+    dataset_id: current.dataset_id,
+    eval_purpose: current.eval_purpose || "dataset_regression",
+    adapter_kind: current.adapter_kind || "http",
+    prompt_variant_id: current.prompt_variant_id || null,
+    prompt_variant_snapshot_hash: current.prompt_variant_snapshot_hash || null,
+  };
+  const cases = await loadWorkflowDatasetCases(env, current.dataset_id);
+  const artifacts = [];
+  for (const casePayload of cases) {
+    const { result, error } = await executeWorkflowEvalCase({
+      env,
+      config,
+      casePayload,
+    });
+    const artifact = buildWorkflowCaseArtifact(casePayload, config, result, error);
+    artifact.grader_results = buildWorkflowGraderResults(casePayload, artifact);
+    artifacts.push(artifact);
+  }
+
+  const report = buildWorkflowRunReport(config, artifacts);
+  const runDirPath = await writeWorkflowRunArtifacts({
+    env,
+    config,
+    artifacts,
+    report,
+  });
+
+  await database("eval_workflow_run_requests")
+    .where({ id: requestId, lease_owner: bridgeId })
+    .whereIn("status", ["running"])
+    .update({
+      status: "succeeded",
+      artifact_run_id: config.run_id,
+      artifact_path: `runtime-evals/workflow-runs/${config.run_id}`,
+      finished_at: new Date().toISOString(),
+      heartbeat_at: new Date().toISOString(),
+      date_updated: new Date().toISOString(),
+      error_json: null,
+      user_updated: req.accountability?.user || null,
+      lease_until: null,
+    });
+
+  return runDirPath;
+}
+
+async function dispatchWorkflowRunDirectusAsync({
+  database,
+  env,
+  req,
+  requestId,
+}) {
+  const bridgeId = `directus-workflow-run-${requestId}-${randomUUID()}`;
+  const updatedCount = await database("eval_workflow_run_requests")
+    .where({ id: requestId, status: "queued" })
+    .update({
+      status: "running",
+      runner_kind: "directus_async",
+      lease_owner: bridgeId,
+      lease_until: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      heartbeat_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      error_json: null,
+      date_updated: new Date().toISOString(),
+      user_updated: req.accountability?.user || null,
+    });
+  if (!updatedCount) {
+    throw workflowRequestError(
+      "Workflow run request changed before it could be dispatched.",
+      409,
+      "WORKFLOW_RUN_REQUEST_CHANGED",
+    );
+  }
+
+  setImmediate(() => {
+    runWorkflowRequestDirectusAsync({
+      database,
+      env,
+      req,
+      requestId,
+      bridgeId,
+    }).catch(async (error) => {
+      await database("eval_workflow_run_requests")
+        .where({ id: requestId })
+        .whereIn("status", ["queued", "running"])
+        .update({
+          status: "failed",
+          runner_kind: "directus_async",
+          finished_at: new Date().toISOString(),
+          heartbeat_at: new Date().toISOString(),
+          date_updated: new Date().toISOString(),
+          user_updated: req.accountability?.user || null,
+          error_json: workflowRunRequestErrorJson(error),
+          lease_until: null,
+        })
+        .catch(() => {});
+    });
+  });
+
+  return database("eval_workflow_run_requests").where({ id: requestId }).first();
+}
+
 function buildRetryWorkflowRequestConfig(row, runId) {
   const originalConfig = normalizeConfigJson(row?.config_json);
   const baseConfig = {
@@ -2218,6 +3434,8 @@ function buildRetryWorkflowRequestConfig(row, runId) {
     rag_mode: originalConfig.rag_mode || "off",
     trace_scope: originalConfig.trace_scope || "off",
     timeout_seconds: originalConfig.timeout_seconds || 120,
+    execution_mode: originalConfig.execution_mode || "runner_bridge",
+    runner_kind: originalConfig.runner_kind || "external_worker",
     config_file: `evals/run-configs/ui-${runId}.yaml`,
   };
 
@@ -2252,8 +3470,8 @@ async function ensureWorkflowRetryRunIdAvailable(database, env, runId) {
     );
   }
 
-  const runDirPath = path.join(resolveRunsRoot(env), runId);
-  if (await fileExists(runDirPath)) {
+  const conflictingRoot = await findExistingRunRoot(resolveWorkflowRunRoots(env), runId);
+  if (conflictingRoot) {
     throw workflowRequestError(
       `Run directory "${runId}" already exists. Retry must use a new run_id.`,
       409,
@@ -2392,18 +3610,30 @@ async function retryWorkflowRunRequest(database, req, env, requestId, body = {})
   });
 
   await database("eval_workflow_run_requests").insert(row);
-  return database("eval_workflow_run_requests").where({ run_id: runId }).first();
+  const inserted = await database("eval_workflow_run_requests").where({ run_id: runId }).first();
+  if (retryConfig.execution_mode === "directus_async") {
+    return dispatchWorkflowRunDirectusAsync({
+      database,
+      env,
+      req,
+      requestId: inserted.id,
+    });
+  }
+  return inserted;
 }
 
 export {
   attachPromptVariantSnapshot,
+  appendWorkflowDatasetCase,
   buildAuthGuard,
   buildRetryJudgeRunId,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
+  createWorkflowDataset,
   buildWorkflowLabCompareReport,
   cancelJudgeRunRequest,
   createWorkflowLabSingleRun,
+  saveWorkflowLabSingleRunToHistory,
   createWorkflowLabCompare,
   createJudgeRunRequest,
   inferRunTopologyMode,
@@ -2419,8 +3649,10 @@ export {
   listReadyPromptVariantSnapshots,
   patchYamlRunId,
   promptVariantSnapshotFromRow,
+  readWorkflowDatasetSummary,
   retryJudgeRunRequest,
   retryWorkflowRunRequest,
+  listWorkflowDatasets,
   validateWorkflowRunRequest,
   workflowConfigWithPromptVariantSnapshot,
   workflowRequestRow,
@@ -2478,8 +3710,7 @@ async function sendWorkflowRequest(req, res, env, database) {
     }
 
     const runId = config.run_id || generateRunId("fake");
-    const runDirPath = path.join(resolveRunsRoot(env), runId);
-    const runDirExists = await fileExists(runDirPath);
+    const runDirExists = await findExistingRunRoot(resolveWorkflowRunRoots(env), runId);
     if (runDirExists) {
       res.status(409).json({
         errors: [{
@@ -2508,27 +3739,46 @@ async function sendWorkflowRequest(req, res, env, database) {
       config_file: `evals/run-configs/${configFileName}`,
       yaml_content: patchedYaml,
     };
-    const bridgeRequest = executionMode === "runner_bridge"
-      ? await createWorkflowRunRequest(database, req, requestConfig)
-      : null;
+    let requestRow = null;
+    if (executionMode === "runner_bridge" || executionMode === "directus_async") {
+      requestRow = await createWorkflowRunRequest(database, req, {
+        ...requestConfig,
+        execution_mode: executionMode,
+        runner_kind: executionMode === "directus_async" ? "directus_async" : "external_worker",
+      });
+      if (executionMode === "directus_async") {
+        requestRow = await dispatchWorkflowRunDirectusAsync({
+          database,
+          env,
+          req,
+          requestId: requestRow.id,
+        });
+      }
+    }
 
     res.status(201).json({
       data: {
-        status: bridgeRequest ? "queued_for_runner_bridge" : "pending_manual_execution",
+        status: requestRow
+          ? executionMode === "directus_async"
+            ? "running_directus_async"
+            : "queued_for_runner_bridge"
+          : "pending_manual_execution",
         run_id: runId,
         preset_id: config.preset_id,
         config: null,
         execution_mode: executionMode,
         prompt_variant_id: requestConfig.prompt_variant_id,
         prompt_variant_snapshot_hash: requestConfig.prompt_variant_snapshot_hash || null,
-        runner_bridge_request: bridgeRequest
-          ? { run_id: bridgeRequest.run_id, status: bridgeRequest.status }
+        runner_bridge_request: requestRow
+          ? { run_id: requestRow.run_id, status: requestRow.status }
           : null,
         yaml_content: patchedYaml,
         config_file: `evals/run-configs/${configFileName}`,
         recommended_cli_command: cliCommand,
-        message: bridgeRequest
-          ? "Runner bridge request queued. An external eval worker must execute it and write evals/runs artifacts."
+        message: executionMode === "directus_async"
+          ? "Workflow run has been dispatched inside Directus. Artifacts will be written to runtime eval storage."
+          : requestRow
+            ? "Runner bridge request queued. An external eval worker must execute it and write evals/runs artifacts."
           : "Config generated. Save the YAML content to the path below, then run the CLI command. This will NOT auto-execute.",
       },
     });
@@ -2561,9 +3811,8 @@ async function sendWorkflowRequest(req, res, env, database) {
     return;
   }
 
-  const runDirPath = path.join(resolveRunsRoot(env), runId);
-  const runDirExists = await fileExists(runDirPath);
-  if (runDirExists) {
+  const conflictingRoot = await findExistingRunRoot(resolveWorkflowRunRoots(env), runId);
+  if (conflictingRoot) {
     res.status(409).json({
       errors: [{
         message: `Run directory "${runId}" already exists. Choose a different run_id or let the system generate one.`,
@@ -2592,29 +3841,48 @@ async function sendWorkflowRequest(req, res, env, database) {
   const cliCommand = `cd evals && uv run python -m claread_eval.runner.entrypoint --config run-configs/${configFileName}`;
   const requestConfig = {
     ...fullConfig,
+    execution_mode: executionMode,
+    runner_kind: executionMode === "directus_async" ? "directus_async" : "external_worker",
     config_file: `evals/run-configs/${configFileName}`,
     yaml_content: yamlContent,
   };
-  const bridgeRequest = executionMode === "runner_bridge"
-    ? await createWorkflowRunRequest(database, req, requestConfig)
-    : null;
+  let requestRow = null;
+  if (executionMode === "runner_bridge" || executionMode === "directus_async") {
+    requestRow = await createWorkflowRunRequest(database, req, requestConfig);
+    if (executionMode === "directus_async") {
+      requestRow = await dispatchWorkflowRunDirectusAsync({
+        database,
+        env,
+        req,
+        requestId: requestRow.id,
+      });
+    }
+  }
 
   res.status(201).json({
     data: {
-      status: bridgeRequest ? "queued_for_runner_bridge" : "pending_manual_execution",
+      status: requestRow
+        ? executionMode === "directus_async"
+          ? "running_directus_async"
+          : "queued_for_runner_bridge"
+        : "pending_manual_execution",
       run_id: runId,
       preset_id: null,
       execution_mode: executionMode,
       prompt_variant_id: requestConfig.prompt_variant_id,
       prompt_variant_snapshot_hash: requestConfig.prompt_variant_snapshot_hash || null,
-      runner_bridge_request: bridgeRequest
-        ? { run_id: bridgeRequest.run_id, status: bridgeRequest.status }
+      runner_bridge_request: requestRow
+        ? { run_id: requestRow.run_id, status: requestRow.status }
         : null,
       config: fullConfig,
       yaml_content: yamlContent,
       config_file: `evals/run-configs/${configFileName}`,
       recommended_cli_command: cliCommand,
-      message: "Config generated. Save the YAML content to the path below, then run the CLI command. This will NOT auto-execute.",
+      message: executionMode === "directus_async"
+        ? "Workflow run has been dispatched inside Directus. Artifacts will be written to runtime eval storage."
+        : executionMode === "runner_bridge"
+          ? "Runner bridge request queued. An external eval worker must execute it and write evals/runs artifacts."
+          : "Config generated. Save the YAML content to the path below, then run the CLI command. This will NOT auto-execute.",
     },
   });
 }
@@ -2633,6 +3901,11 @@ export default (router, context) => {
     resolveEvalsRoot,
     resolveNodeLabArtifactsRoot,
     resolveRequestTimeoutMs,
+  });
+
+  registerExampleLabRoutes(router, context, {
+    buildAuthGuard,
+    readEnv,
   });
 
   router.get("/article-analysis/model-profiles", async (req, res, next) => {
@@ -2690,92 +3963,15 @@ export default (router, context) => {
     }
   });
 
-  router.post("/article-analysis/node-probe", async (req, res, next) => {
-    if (!buildAuthGuard(req, res)) return;
-
-    const baseUrl = readEnv(env, "CLAREAD_API_BASE_URL");
-    const adminKey =
-      readEnv(env, "CLAREAD_API_ADMIN_KEY") ||
-      readEnv(env, "DAILY_READER_ADMIN_API_KEY");
-
-    if (!baseUrl || !adminKey) {
-      res.status(503).json({
-        errors: [
-          {
-            message: "Eval proxy is not configured.",
-            extensions: { code: "SERVICE_UNAVAILABLE" },
-          },
-        ],
-      });
-      return;
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      resolveRequestTimeoutMs(env, req.body),
-    );
-
-    try {
-      const upstream = await fetch(
-        joinUrl(baseUrl, "/eval/article-analysis/node-probe"),
-        {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            "x-admin-api-key": adminKey,
-          },
-          body: JSON.stringify(req.body ?? {}),
-          signal: controller.signal,
-        },
-      );
-
-      if (!upstream.ok) {
-        const errorPayload = await parseUpstreamError(upstream);
-        res.status(upstream.status).json({
-          errors: [
-            {
-              message: errorPayload?.detail || errorPayload?.message || "Upstream request failed.",
-              extensions: {
-                code: "UPSTREAM_EVAL_ERROR",
-                upstream_status: upstream.status,
-              },
-            },
-          ],
-        });
-        return;
-      }
-
-      const payload = await upstream.json();
-      res.json({ data: payload });
-    } catch (error) {
-      if (error?.name === "AbortError") {
-        res.status(504).json({
-          errors: [
-            {
-              message: "Eval node probe timed out.",
-              extensions: { code: "UPSTREAM_TIMEOUT" },
-            },
-          ],
-        });
-        return;
-      }
-      next(error);
-    } finally {
-      clearTimeout(timeout);
-    }
-  });
-
   router.get("/runs", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
-      const runs = await listRuns(root, clampLimit(req.query?.limit));
+      const roots = resolveWorkflowRunRoots(env);
+      const runs = await listRuns(roots, clampLimit(req.query?.limit));
       res.json({
         data: {
-          runs_root_configured: Boolean(root),
+          runs_root_configured: roots.length > 0,
           runs,
         },
       });
@@ -2789,8 +3985,8 @@ export default (router, context) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
-      res.json({ data: await loadRunDetail(root, req.params.runId) });
+      const roots = resolveWorkflowRunRoots(env);
+      res.json({ data: await loadRunDetail(roots, req.params.runId) });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
@@ -2801,7 +3997,7 @@ export default (router, context) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
+      const root = await resolveRunRootOrThrow(resolveWorkflowRunRoots(env), req.params.runId);
       const artifact = await readJsonFile(
         caseArtifactPath(root, req.params.runId, req.params.caseId),
       );
@@ -2816,7 +4012,7 @@ export default (router, context) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
+      const root = await resolveRunRootOrThrow(resolveWorkflowRunRoots(env), req.params.runId);
       res.json({ data: await listJudgeArtifacts(root, req.params.runId) });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
@@ -2828,81 +4024,101 @@ export default (router, context) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
-      res.json({ data: await loadJudgeArtifact(root, req.params.runId, req.params.judgeRunId) });
+      const roots = resolveWorkflowRunRoots(env);
+      res.json({ data: await loadJudgeArtifact(roots, req.params.runId, req.params.judgeRunId) });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
     }
   });
 
-  router.get("/runs/:runId/ab", async (req, res, next) => {
+  router.get("/workflow-lab/run-history", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
-      const reportIds = await listJsonIds(path.join(runDir(root, req.params.runId), "ab"));
+      const roots = resolveWorkflowRunRoots(env);
+      const records = await loadWorkflowRunHistoryRecords(roots, clampLimit(req.query?.limit));
+      res.json({ data: { records } });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  router.get("/workflow-lab/run-history/:runId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const roots = resolveWorkflowRunRoots(env);
+      res.json({ data: await loadWorkflowRunHistoryDetail(roots, req.params.runId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  router.delete("/workflow-lab/run-history/:runId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const runId = String(req.params.runId || "");
+      if (!isSafeFileId(runId)) {
+        const error = new Error("Invalid run id.");
+        error.status = 400;
+        error.code = "INVALID_RUN_ID";
+        throw error;
+      }
+      const roots = resolveWorkflowRunRoots(env);
+      res.json({ data: await deleteWorkflowRunCascade(database, roots, runId) });
+    } catch (error) {
+      if (error?.status) sendArtifactError(res, error);
+      else next(error);
+    }
+  });
+
+  async function sendWorkflowCompareReportList(req, res, next) {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const root = await resolveRunRootOrThrow(resolveWorkflowRunRoots(env), req.params.runId);
+      const reportIds = await listWorkflowCompareReportIds(root, req.params.runId);
       res.json({
         data: reportIds.map((id) => ({
           id,
-          href: `/eval-center/runs/${encodeURIComponent(req.params.runId)}/ab/${encodeURIComponent(id)}`,
+          href: `/eval-center/runs/${encodeURIComponent(req.params.runId)}/compare/${encodeURIComponent(id)}`,
         })),
       });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
     }
-  });
+  }
 
-  router.get("/runs/:runId/ab/:reportId", async (req, res, next) => {
+  router.get("/runs/:runId/compare", sendWorkflowCompareReportList);
+
+  async function sendWorkflowCompareReportDetail(req, res, next) {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
+      const root = await resolveRunRootOrThrow(resolveWorkflowRunRoots(env), req.params.runId);
       const report = await readJsonFile(
-        abReportPath(root, req.params.runId, req.params.reportId),
+        await resolveWorkflowCompareReportJsonPath(root, req.params.runId, req.params.reportId),
       );
       res.json({ data: report });
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
     }
-  });
+  }
 
-  router.get("/ab/compare", async (req, res, next) => {
-    if (!buildAuthGuard(req, res)) return;
-
-    try {
-      const baselineRunId = String(req.query?.baseline_run_id || "");
-      const candidateRunId = String(req.query?.candidate_run_id || "");
-      if (!baselineRunId || !candidateRunId) {
-        res.status(400).json({
-          errors: [
-            {
-              message: "baseline_run_id and candidate_run_id are required.",
-              extensions: { code: "BAD_REQUEST" },
-            },
-          ],
-        });
-        return;
-      }
-
-      const root = resolveRunsRoot(env);
-      const reportId = `vs-${baselineRunId}`;
-      const report = await readJsonFile(abReportPath(root, candidateRunId, reportId));
-      res.json({ data: report });
-    } catch (error) {
-      if (error?.status) sendArtifactError(res, error);
-      else next(error);
-    }
-  });
+  router.get("/runs/:runId/compare/:reportId", sendWorkflowCompareReportDetail);
 
   router.post("/workflow-lab/compare", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const root = resolveRunsRoot(env);
-      const result = await createWorkflowLabCompare(root, req.body || {});
+      const roots = resolveWorkflowRunRoots(env);
+      const result = await createWorkflowLabCompare(roots, req.body || {});
       res.status(result.created ? 201 : 200).json({ data: result });
     } catch (error) {
       if (error?.name === "AbortError") {
@@ -3005,44 +4221,98 @@ export default (router, context) => {
     }
   });
 
+  router.post("/workflow-lab/run-history/single-run", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const result = await saveWorkflowLabSingleRunToHistory({
+        env,
+        body: req.body || {},
+      });
+      res.status(result.duplicate ? 200 : 201).json({ data: result });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_LAB_SINGLE_RUN_HISTORY_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
   router.get("/workflow-runs/datasets", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const evalsRoot = resolveEvalsRoot(env);
-      const dsDir = datasetsDir(evalsRoot);
-      const datasetIds = await listDirectories(dsDir);
-      const datasets = [];
-      for (const id of datasetIds) {
-        const yamlPath = path.join(dsDir, id, "dataset.yaml");
-        const exists = await fileExists(yamlPath);
-        datasets.push({ id, has_dataset_yaml: exists });
-      }
-      res.json({ data: datasets });
+      res.json({ data: await listWorkflowDatasets(env) });
     } catch (error) {
       next(error);
     }
   });
 
-  router.get("/workflow-runs/config-presets", async (req, res, next) => {
+  router.post("/workflow-runs/datasets", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
     try {
-      const evalsRoot = resolveEvalsRoot(env);
-      const configsDir = runConfigsDir(evalsRoot);
-      const configIds = await listYamlIds(configsDir);
-      const presets = [];
-      for (const id of configIds) {
-        const yamlPath = path.join(configsDir, `${id}.yaml`);
-        const ymlPath = path.join(configsDir, `${id}.yml`);
-        const exists = (await fileExists(yamlPath)) || (await fileExists(ymlPath));
-        if (exists) {
-          presets.push({ id, href: `/eval-center/workflow-runs/config-presets/${id}` });
-        }
-      }
-      res.json({ data: presets });
+      const result = await createWorkflowDataset({
+        env,
+        body: req.body || {},
+      });
+      res.status(201).json({ data: result });
     } catch (error) {
-      next(error);
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_DATASET_CREATE_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/workflow-runs/datasets/:datasetId/cases", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    try {
+      const result = await appendWorkflowDatasetCase({
+        env,
+        datasetId: req.params.datasetId,
+        body: req.body || {},
+      });
+      res.status(201).json({ data: result });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [
+            {
+              message: error.message,
+              extensions: {
+                code: error.code || "WORKFLOW_DATASET_CASE_ERROR",
+                field: error.field,
+              },
+            },
+          ],
+        });
+      } else {
+        next(error);
+      }
     }
   });
 

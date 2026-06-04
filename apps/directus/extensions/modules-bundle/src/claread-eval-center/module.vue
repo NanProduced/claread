@@ -1,6 +1,5 @@
 <script setup>
 import { computed, ref } from "vue";
-import PlaceholderPanel from "./components/PlaceholderPanel.vue";
 import NodeLabMode from "./modes/NodeLabMode.vue";
 import RunHistoryMode from "./modes/RunHistoryMode.vue";
 import WorkflowLabMode from "./modes/workflow-lab/WorkflowLabMode.vue";
@@ -27,19 +26,11 @@ const modes = [
     description: "浏览已保存的 eval 结果、artifact 和人工 review 记录。",
     ready: true,
   },
-  {
-    id: "example-lab",
-    label: "Example Lab",
-    kicker: "Few-shot Examples",
-    description: "人工维护 few-shot examples 的后续模块。本轮仅保留占位。",
-    ready: false,
-  },
 ];
 
 const activeMode = ref("node-lab");
 const runHistoryInitialRunId = ref("");
-const runHistoryInitialSource = ref("workflow");
-const runHistoryInitialNodeProbeRunId = ref("");
+const runHistoryInitialSource = ref("all");
 const workflowInitialBaselineRunId = ref("");
 const workflowInitialCandidateRunId = ref("");
 
@@ -50,21 +41,18 @@ function openRunHistory(selection) {
   if (typeof selection === "string") {
     runHistoryInitialSource.value = "workflow";
     runHistoryInitialRunId.value = selection;
-    runHistoryInitialNodeProbeRunId.value = "";
     activeMode.value = "run-history";
     return;
   }
-  if (selection.source === "node_probe" && selection.recordId) {
-    runHistoryInitialSource.value = "node_probe";
-    runHistoryInitialNodeProbeRunId.value = selection.recordId;
-    runHistoryInitialRunId.value = "";
+  if (selection.source === "node_lab" && selection.runId) {
+    runHistoryInitialSource.value = "node_lab";
+    runHistoryInitialRunId.value = selection.runId;
     activeMode.value = "run-history";
     return;
   }
   if (!selection.runId) return;
   runHistoryInitialSource.value = "workflow";
   runHistoryInitialRunId.value = selection.runId;
-  runHistoryInitialNodeProbeRunId.value = "";
   activeMode.value = "run-history";
 }
 
@@ -124,10 +112,11 @@ function openWorkflowCompare(selection) {
         v-else-if="activeMode === 'run-history'"
         :initial-run-id="runHistoryInitialRunId"
         :initial-source="runHistoryInitialSource"
-        :initial-node-probe-run-id="runHistoryInitialNodeProbeRunId"
         @compare-run="openWorkflowCompare"
       />
-      <PlaceholderPanel v-else :mode="currentMode" />
+      <div v-else class="placeholder-panel">
+        <p>未知模式</p>
+      </div>
     </main>
   </private-view>
 </template>

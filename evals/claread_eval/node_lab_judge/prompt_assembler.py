@@ -46,16 +46,21 @@ def _prompt_translation_unit(unit: TranslationOutputUnit) -> dict[str, Any]:
 def build_rubric_prompts(packet: RubricPacket) -> tuple[str, str]:
     system_prompt = (
         "你是 Claread Node Lab 的评审员。"
-        "请严格基于给定 rubric 和证据打分。"
-        "每条 criterion 只能返回 0 或 1，且必须给出简短中文理由。"
+        "请严格基于给定 rubric 和证据做三档评分。"
+        "每条 criterion 只能返回 0、1 或 2，且必须给出简短中文理由。"
+        "先检查是否符合 fail_when；如果符合则打 0。"
+        "否则检查是否符合 partial_when；如果符合则打 1。"
+        "只有在没有 fail_when 且没有 partial_when 时，才可打 2。"
+        "reason 必须说明你观察到的具体问题或具体成立依据。"
+        "只返回逐条 criterion 结果，不要自行汇总 item_summary、aggregate 或 pass_rate。"
         "不要补充未提供的背景，不要输出 schema 之外的内容。"
     )
     output_requirements = {
-        "每条 criterion": {"score": "0或1", "reason": "简短中文", "evidence": "可选"},
+        "每条 criterion": {"score": "0/1/2", "reason": "简短中文，必须点出依据或问题", "evidence": "可选"},
     }
     if packet.strategy == "translation_output_review":
-        output_requirements["baseline"] = "仅返回 output_level_scores，并给 aggregate"
-        output_requirements["candidate"] = "仅返回 output_level_scores，并给 aggregate"
+        output_requirements["baseline"] = "仅返回 output_level_scores"
+        output_requirements["candidate"] = "仅返回 output_level_scores"
         baseline_payload = {
             "participant": packet.baseline.participant,
             "translations": [_prompt_translation_unit(unit) for unit in packet.baseline.output_units],
@@ -65,8 +70,8 @@ def build_rubric_prompts(packet: RubricPacket) -> tuple[str, str]:
             "translations": [_prompt_translation_unit(unit) for unit in packet.candidate.output_units],
         }
     else:
-        output_requirements["baseline"] = "逐条返回 items，并给 aggregate"
-        output_requirements["candidate"] = "逐条返回 items，并给 aggregate"
+        output_requirements["baseline"] = "逐条返回 items，每个 item 仅返回 item_id/item_type/sentence_id/label/source_excerpt/criteria"
+        output_requirements["candidate"] = "逐条返回 items，每个 item 仅返回 item_id/item_type/sentence_id/label/source_excerpt/criteria"
         baseline_payload = {
             "participant": packet.baseline.participant,
             "item_count_by_type": packet.baseline.item_count_by_type,
@@ -123,6 +128,7 @@ def build_pairwise_prompts(packet: PairwisePacket) -> tuple[str, str]:
         "aggregate_watchouts": {
             "aggregate": packet.aggregate,
             "watchouts": packet.watchouts,
+            "representative_failed_items": [item.model_dump(mode="json") for item in packet.failed_items],
         },
         "任务": packet.question,
         "输出要求": {

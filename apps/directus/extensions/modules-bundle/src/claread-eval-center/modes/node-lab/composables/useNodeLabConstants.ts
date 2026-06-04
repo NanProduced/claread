@@ -22,6 +22,10 @@ export const NODE_OPTIONS = [
   { id: "translation", label: "Translation", description: "句级翻译与语气策略实验。" },
 ] as const;
 
+// "sessions" 不是 trial.workspace_type — BE VALID_WORKSPACES 不接受它作为 trial 提交
+// 的 workspace_type（见 apps/directus/extensions/endpoints-bundle/src/eval-center/node-lab.js
+// 的 VALID_WORKSPACES 注释）。这里 "sessions" 仅作为 UI 入口，对应 sessions 列表路由；
+// 用户点 "Sessions" 后直接走 /node-lab/sessions 列表接口，不会发起 trial 创建。
 export const WORKSPACE_OPTIONS = [
   { id: "single_run", label: "Single Run", description: "先看单次输出是否朝正确方向变化。" },
   { id: "baseline_compare", label: "Baseline Compare", description: "同一输入下比较 baseline 与 candidate。" },
@@ -29,13 +33,17 @@ export const WORKSPACE_OPTIONS = [
 ] as const;
 
 export const JUDGE_MODES = [
-  { id: "rubric_score_only", label: "只按规则打分（逐项过线检查）" },
+  { id: "rubric_score_only", label: "只按规则打分（逐项三档评分）" },
   { id: "rubric_plus_pairwise", label: "规则打分 + 整体对比评估（先评分，再给整体意见）" },
   { id: "anti_template_probe", label: "反模板化专项诊断（Grammar 专用）" },
+  { id: "raw", label: "原样返回（不评分）" },
 ] as const;
 
 export const JUDGE_MODES_BY_NODE = {
-  grammar: ["rubric_score_only", "rubric_plus_pairwise", "anti_template_probe"],
+  // raw 适用于所有 node，但当前仅 grammar 暴露 UI 选项（其余 node 的 raw path 仍可用直填表单）。
+  // persona_pairwise 在 DB + Directus BE 已合法，但 Python worker Pydantic Literal 暂不支持，
+  // 故不暴露在 FE 选项中，避免 dispatch 时 422。
+  grammar: ["rubric_score_only", "rubric_plus_pairwise", "anti_template_probe", "raw"],
   vocabulary: ["rubric_score_only", "rubric_plus_pairwise"],
   translation: ["rubric_score_only", "rubric_plus_pairwise"],
 } as const;
@@ -69,7 +77,7 @@ export const HELP_TEXT = {
   few_shot_mode: "Few-shot 只控制当前 node 的示例来源。grammar 支持 RAG 观测，其他 node 仍只支持 baseline / off / candidate。",
   compare_status: "Compare Status 关注这次对比是否完整完成，而不是只看 candidate 一侧是否成功。",
   latency: "Single Run 看单次延迟。Compare 看 baseline 与 candidate 的各自延迟，以及两者差值。",
-  session_write: "Single Run 不再进入 Session。Session 仅在 Baseline Compare 中由 compare 结果加入，固定 node、阅读目标/变体与 baseline 参考系。",
+  session_write: "Single Run 不进入 Session，但可以单独保存到 Run History。Session 仅在 Baseline Compare 中由 compare 结果加入，固定 node、阅读目标/变体与 baseline 参考系。",
   prompt_packet: "这里展示真正发给模型的关键信息，包括说明文本、示例输入和预处理后的句子。",
   judge_prerequisite: "Judge 不是重新跑 compare，而是基于一条已保存的 Compare 结果继续做评审。先人工看 compare 是否值得，再决定是否花 token 发起 judge。",
 } as const;

@@ -12,4 +12,6 @@ def test_node_lab_judge_catalog_loads_runtime_assets() -> None:
     assert "grammar-default-v1" in catalog.presets
     assert "translation-default-v1" in catalog.presets
     assert "probe_appendix" in catalog.output_schemas
-
+    grammar_note = catalog.rubrics["grammar"].item_types["grammar_note"].criteria
+    assert any(criterion.id == "GN4" for criterion in grammar_note)
+    assert all(criterion.partial_when for criterion in grammar_note)

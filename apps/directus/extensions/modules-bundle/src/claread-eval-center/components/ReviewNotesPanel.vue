@@ -7,8 +7,8 @@ const props = defineProps({
   targetId: { type: String, required: true },
   runId: { type: String, default: "" },
   caseId: { type: String, default: "" },
-  abReportId: { type: String, default: "" },
   promptVariantId: { type: String, default: "" },
+  scopeNote: { type: String, default: "" },
 });
 
 const notesEndpoint = "/items/eval_review_notes";
@@ -89,7 +89,6 @@ async function saveNote() {
         target_id: props.targetId,
         run_id: props.runId || null,
         case_id: props.caseId || null,
-        ab_report_id: props.abReportId || null,
         prompt_variant_id: props.promptVariantId || null,
         verdict: verdict.value || null,
         note: note.value.trim(),
@@ -125,6 +124,7 @@ function dash(value) {
     </div>
 
     <p v-if="error" class="review-error">{{ error }}</p>
+    <p v-if="scopeNote" class="scope-note">{{ scopeNote }}</p>
 
     <div class="review-form">
       <select v-model="verdict">
@@ -184,9 +184,18 @@ function dash(value) {
 .review-heading small,
 .empty-note,
 .note-item span,
-.note-item small {
+.note-item small,
+.scope-note {
   color: var(--theme--foreground-subdued);
   font-size: 12px;
+}
+
+.scope-note {
+  margin: 10px 0 0;
+  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 1.55;
 }
 
 .review-form {
@@ -245,8 +254,20 @@ function dash(value) {
 }
 
 .note-item {
-  border-left: 3px solid var(--theme--primary);
-  padding-left: 8px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--theme--background);
+}
+.note-item::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--theme--primary);
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 .note-item header {

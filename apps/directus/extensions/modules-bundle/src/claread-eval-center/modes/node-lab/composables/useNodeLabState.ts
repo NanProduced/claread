@@ -241,6 +241,7 @@ export function createNodeLabState() {
       trialId: payload.trialId || payload.trial?.trial_id || "",
       sessionId: payload.sessionId || payload.trial?.session_id || "",
       source: payload.source || "live",
+      inputPreview: payload.inputPreview || "",
       trial: payload.trial || null,
       result: payload.result || null,
     };
@@ -269,6 +270,10 @@ export function createNodeLabState() {
       Object.assign(state.readingVariantByNode, saved?.readingVariantByNode || {});
       Object.assign(state.candidateDraftsByNode, saved?.candidateDraftsByNode || {});
       Object.assign(state.judgeDraftsByNode, saved?.judgeDraftsByNode || {});
+      Object.assign(state.singleRunResultsByNode, saved?.singleRunResultsByNode || {});
+      Object.assign(state.singleRunUiStateByNode, saved?.singleRunUiStateByNode || {});
+      Object.assign(state.compareResultsByNode, saved?.compareResultsByNode || {});
+      Object.assign(state.compareUiStateByNode, saved?.compareUiStateByNode || {});
       Object.assign(state.selectedSessionIdByNode, saved?.selectedSessionIdByNode || {});
       Object.assign(state.latestPersistedCompareTrialByNode, saved?.latestPersistedCompareTrialByNode || {});
       Object.assign(state.currentCompareTrialIdByNode, saved?.currentCompareTrialIdByNode || {});
@@ -299,6 +304,10 @@ export function createNodeLabState() {
       readingVariantByNode: state.readingVariantByNode,
       candidateDraftsByNode: state.candidateDraftsByNode,
       judgeDraftsByNode: state.judgeDraftsByNode,
+      singleRunResultsByNode: state.singleRunResultsByNode,
+      singleRunUiStateByNode: state.singleRunUiStateByNode,
+      compareResultsByNode: state.compareResultsByNode,
+      compareUiStateByNode: state.compareUiStateByNode,
       selectedSessionIdByNode: state.selectedSessionIdByNode,
       selectedTrialIdBySession: state.selectedTrialIdBySession,
       latestPersistedCompareTrialByNode: state.latestPersistedCompareTrialByNode,
@@ -314,6 +323,7 @@ export function createNodeLabState() {
                 trialId: view.trialId || "",
                 sessionId: view.sessionId || "",
                 source: view.source || "live",
+                inputPreview: view.inputPreview || "",
               }
             : null,
         ]),

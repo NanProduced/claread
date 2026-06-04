@@ -38,6 +38,7 @@ class RubricCriterionSpec(BaseModel):
     label: str
     assertion: str
     pass_when: str
+    partial_when: str
     fail_when: str
 
 
@@ -169,6 +170,7 @@ class PairwiseFailedItem(BaseModel):
     item_id: str
     item_type: str
     criterion_id: str
+    severity: Literal["fail", "partial"]
     reason: str
     evidence: str | None = None
 
@@ -237,7 +239,7 @@ class JudgeCriterionScore(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     criterion_id: str
-    score: Literal[0, 1]
+    score: Literal[0, 1, 2]
     reason: str
     evidence: str | None = None
 
@@ -246,6 +248,7 @@ class JudgeItemSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     passed: int = Field(ge=0, default=0)
+    partial: int = Field(ge=0, default=0)
     failed: int = Field(ge=0, default=0)
 
 
@@ -255,6 +258,7 @@ class JudgeAggregate(BaseModel):
     item_count: int | None = Field(default=None, ge=0)
     criteria_count: int = Field(ge=0)
     passed: int = Field(ge=0)
+    partial: int = Field(ge=0)
     failed: int = Field(ge=0)
     pass_rate: float = Field(ge=0.0, le=1.0)
 

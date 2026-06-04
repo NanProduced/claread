@@ -8,6 +8,8 @@ import { useNodeLabState } from "../composables/useNodeLabState";
 import { useNodeLabApi } from "../composables/useNodeLabApi";
 import {
   statusLabel,
+} from "../../../composables/useEvalFormatting";
+import {
   formatDurationMs,
   formatRuntimeTokens,
   formatClockTime,
@@ -90,6 +92,8 @@ const singleRunGrammarValidation = computed(() => {
 });
 
 const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
+const savedSingleRunTrialId = computed(() => String(singleRunUiState.value?.savedTrialId || "").trim());
+const savedSingleRunAt = computed(() => singleRunUiState.value?.lastSavedAt || "");
 </script>
 
 <template>
@@ -112,8 +116,20 @@ const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
         :class="{ 'is-stale': loading.run && singleRunResult?.run }"
       >
         <div class="single-run-actions">
-          <v-button small secondary :disabled="loading.saveRunHistory" @click="saveSingleRunToHistory">
-            {{ loading.saveRunHistory ? "保存中..." : "保存到 Run History" }}
+          <div class="single-run-actions__meta">
+            <span class="single-run-note">Single Run 不进入 Session，但可以保存到 Run History。</span>
+            <span v-if="savedSingleRunTrialId" class="single-run-saved">
+              已保存：{{ savedSingleRunTrialId }}
+              <template v-if="savedSingleRunAt"> · {{ formatClockTime(savedSingleRunAt) }}</template>
+            </span>
+          </div>
+          <v-button
+            small
+            secondary
+            :loading="loading.saveRunHistory"
+            @click="saveSingleRunToHistory"
+          >
+            保存到 Run History
           </v-button>
         </div>
         <div class="meta-grid">
@@ -283,8 +299,28 @@ const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
 
 .single-run-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.single-run-actions__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.single-run-note {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.single-run-saved {
+  color: var(--color-text-subdued);
+  font-size: 12px;
 }
 
 .meta-grid {

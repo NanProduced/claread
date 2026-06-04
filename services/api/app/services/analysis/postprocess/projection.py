@@ -311,6 +311,8 @@ def _project_sentence_analysis(
         entry_type="sentence_analysis",
         label=annotation.label,
         title=annotation.label,
+        analysis_text=annotation.analysis_zh,
+        chunks=[chunk.model_dump() for chunk in (annotation.chunks or [])],
         content=content,
     )
     return None, sentence_entry, warnings

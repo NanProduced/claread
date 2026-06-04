@@ -7,15 +7,10 @@ import {
   READING_VARIANTS_BY_GOAL,
 } from "../composables/useNodeLabConstants";
 
-// 通用格式化工具已被抽到 eval-center 顶层 composable,这里 re-export 以保留旧 import 路径。
-export {
-  shortId,
-  statusLabel,
-  statusTone,
-  formatDateTime,
-  type StatusTone,
-  type ShortIdSide,
-} from "../../../composables/useEvalFormatting";
+// 通用格式化工具（shortId / statusLabel / statusTone / formatDateTime / StatusTone / ShortIdSide）
+// 已被抽到 eval-center 顶层 composable useEvalFormatting.ts。各 node-lab 调用方应从
+// useEvalFormatting 直接 import；本文件只承担 node-lab 特有的 domain helper
+//（defaultVariantForGoal、nodeLabel、compareSentenceModel、defaultCandidateDraft 等）。
 
 export function defaultVariantForGoal(goalId) {
   return READING_VARIANTS_BY_GOAL[goalId]?.[0]?.id || "intermediate_reading";
@@ -330,8 +325,8 @@ export function defaultJudgeDraft(nodeName) {
     user_prompt: "",
     rubric_json: JSON.stringify({
       criteria: [
-        { criterion_id: "instructional_value", label: "Instructional Value", score_type: "binary", description: "TODO" },
-        { criterion_id: "anti_template", label: "Anti-template", score_type: "binary", description: "TODO" },
+        { criterion_id: "instructional_value", label: "Instructional Value", score_type: "ternary", description: "TODO" },
+        { criterion_id: "anti_template", label: "Anti-template", score_type: "ternary", description: "TODO" },
       ],
     }, null, 2),
     output_schema_json: JSON.stringify({
@@ -382,6 +377,18 @@ export function judgeAggregatePassRateText(side) {
   const passRate = side?.aggregate?.pass_rate;
   if (!Number.isFinite(passRate)) return "未记录";
   return `${Math.round(passRate * 100)}%`;
+}
+
+export function judgeCriterionTone(score) {
+  if (score === 2) return "pass";
+  if (score === 1) return "partial";
+  return "fail";
+}
+
+export function judgeCriterionSymbol(score) {
+  if (score === 2) return "✓";
+  if (score === 1) return "△";
+  return "✗";
 }
 
 export function judgeItemResultLabel(item) {

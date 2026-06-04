@@ -32,7 +32,6 @@ infra/migrations/0003_eval_control_tables.sql
 
 `0003` 当前必须包含：
 
-- `eval_node_probe_runs`
 - Eval Center Node Probe 手动保存记录所需索引
 
 ## 词典数据

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from app.api.routes import eval_debug
 from app.config.settings import Settings
 from app.eval_adapter import node_lab
+from app.eval_adapter import node_lab_judge as node_lab_judge_adapter
 from app.eval_adapter.schemas import (
     ArticleAnalysisNodeLabCompareResult,
     ArticleAnalysisNodeLabCompareRequest,
@@ -143,20 +144,27 @@ def _judge_execute_result() -> NodeLabJudgeExecuteResult:
                 criteria=[
                     NodeLabJudgeCriterionScore(
                         criterion_id="GN1",
-                        score=1,
+                        score=2,
                         reason="解释准确。",
                         evidence="命中原句结构。",
-                    )
+                    ),
+                    NodeLabJudgeCriterionScore(
+                        criterion_id="GN2",
+                        score=1,
+                        reason="针对性略弱。",
+                        evidence="存在较多通用语法描述。",
+                    ),
                 ],
-                item_summary=NodeLabJudgeItemSummary(passed=1, failed=0),
+                item_summary=NodeLabJudgeItemSummary(passed=1, partial=1, failed=0),
             )
         ],
         aggregate=NodeLabJudgeAggregate(
             item_count=1,
-            criteria_count=1,
+            criteria_count=2,
             passed=1,
+            partial=1,
             failed=0,
-            pass_rate=1.0,
+            pass_rate=0.75,
         ),
     )
     return NodeLabJudgeExecuteResult(
@@ -217,6 +225,85 @@ def _judge_run_result() -> NodeLabJudgeRunResult:
         rubric_scoring_result=execute_result.rubric_scoring_result,
         pairwise_result=_pairwise_result(),
     )
+
+
+@pytest.mark.anyio
+async def test_execute_node_lab_judge_computes_ternary_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(node_lab_judge_adapter, "get_settings", _settings)
+    monkeypatch.setattr(
+        node_lab_judge_adapter,
+        "run_agent_with_route",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                output={
+                    "baseline": {
+                        "items": [
+                            {
+                                "item_id": "grammar_note:s1:focus",
+                                "item_type": "grammar_note",
+                                "sentence_id": "s1",
+                                "label": "focus",
+                                "source_excerpt": "Source sentence.",
+                                "criteria": [
+                                    {"criterion_id": "GN1", "score": 2, "reason": "结构判断准确。"},
+                                    {"criterion_id": "GN2", "score": 1, "reason": "解释还可更贴句。"},
+                                ],
+                            }
+                        ],
+                        "output_level_scores": [],
+                    },
+                    "candidate": {
+                        "items": [
+                            {
+                                "item_id": "grammar_note:s1:focus",
+                                "item_type": "grammar_note",
+                                "sentence_id": "s1",
+                                "label": "focus",
+                                "source_excerpt": "Source sentence.",
+                                "criteria": [
+                                    {"criterion_id": "GN1", "score": 0, "reason": "结构判断错误。"},
+                                    {"criterion_id": "GN2", "score": 1, "reason": "解释仍偏模板化。"},
+                                ],
+                            }
+                        ],
+                        "output_level_scores": [],
+                    },
+                    "meta": {"preset_id": "grammar-default-v1"},
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        node_lab_judge_adapter,
+        "extract_run_usage",
+        lambda _result: {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+    )
+
+    result = await node_lab_judge_adapter.execute_node_lab_judge(
+        NodeLabJudgeExecuteRequest(
+            node_name="grammar",
+            judge_strategy="grammar_item_review",
+            judge_method="rubric_plus_pairwise",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+            judger_model_profile="eval-profile",
+            system_prompt="system",
+            user_prompt="user",
+            output_mode="rubric_scoring",
+            output_schema_kind="grammar_item_scoring",
+            metadata={"preset_id": "grammar-default-v1"},
+        )
+    )
+
+    assert result.status == "succeeded"
+    assert result.rubric_scoring_result is not None
+    assert result.rubric_scoring_result.baseline.items[0].item_summary.partial == 1
+    assert result.rubric_scoring_result.baseline.aggregate.passed == 1
+    assert result.rubric_scoring_result.baseline.aggregate.partial == 1
+    assert result.rubric_scoring_result.baseline.aggregate.pass_rate == 0.75
+    assert result.rubric_scoring_result.candidate.aggregate.failed == 1
+    assert result.rubric_scoring_result.candidate.aggregate.partial == 1
+    assert result.rubric_scoring_result.candidate.aggregate.pass_rate == 0.25
 
 
 @pytest.mark.parametrize(

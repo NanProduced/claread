@@ -11,7 +11,7 @@ const POSTGRES_USER = process.env.DIRECTUS_POSTGRES_USER ?? "claread";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const EVAL_CONTROL_MIGRATION = resolve(
   SCRIPT_DIR,
-  "../../../infra/migrations/0003_eval_control_tables.sql",
+  "../../../infra/migrations/eval-center/0001_eval_center_control_plane.sql",
 );
 
 const DIRECTUS_EMAIL = process.env.DIRECTUS_EMAIL ?? process.env.ADMIN_EMAIL ?? "admin@claread.dev";
@@ -21,18 +21,20 @@ const DIRECTUS_TOKEN = process.env.DIRECTUS_TOKEN ?? process.env.ADMIN_TOKEN ?? 
 const MODULE_BAR_ITEMS = [
   { type: "module", id: "claread-eval-center", enabled: true },
 ];
-const DEPRECATED_MODULE_IDS = new Set(["claread-grammar-prompt-lab"]);
+
+// 已完成清理的历史 deprecation 项（2026-06 一次性移除）：
+//   - module id "claread-grammar-prompt-lab" → 入口 index.js 变量名同步改为 EvalCenterModule
+//   - collection "eval_node_probe_runs" → NodeProbeMode.vue 已删，migrations 中无该表
+//   - field  "eval_review_notes.ab_report_id" → 已无引用
+// 如需添加新弃用项，请直接修改本注释上方。
+const DEPRECATED_MODULE_IDS = new Set();
+const DEPRECATED_COLLECTION_IDS = [];
+const DEPRECATED_FIELDS = [
+  ["eval_example_lab_entries", "rag_eligible"],
+];
+const LEGACY_COLLECTIONS = [];
 
 const COLLECTIONS = [
-  {
-    collection: "eval_node_probe_runs",
-    icon: "science",
-    color: "#2563EB",
-    note: "Eval Center Node Probe 手动保存记录。正式 workflow eval artifact 仍保存在 evals/runs。",
-    display_template: "{{ node_name }} {{ reading_variant }} {{ prompt_mode }}",
-    sort_field: "date_created",
-    sort: 30,
-  },
   {
     collection: "eval_prompt_variant_drafts",
     icon: "edit_note",
@@ -46,7 +48,7 @@ const COLLECTIONS = [
     collection: "eval_workflow_run_requests",
     icon: "pending_actions",
     color: "#0F766E",
-    note: "Runner bridge 请求队列。Directus 只创建请求，执行由外部 worker 完成。",
+    note: "Workflow run 请求队列。Directus 保存控制面记录，执行可由 directus_async 或外部 worker 完成。",
     display_template: "{{ run_id }} {{ status }}",
     sort_field: "date_created",
     sort: 32,
@@ -64,10 +66,19 @@ const COLLECTIONS = [
     collection: "eval_review_notes",
     icon: "rate_review",
     color: "#B45309",
-    note: "Eval Center human review notes linked to workflow runs, node probe runs, cases, A/B reports, or prompt variants. Artifacts remain immutable.",
+    note: "Eval Center human review notes linked to workflow runs, workflow compare results, cases, or prompt variants. Artifacts remain immutable.",
     display_template: "{{ target_type }} {{ target_id }} {{ verdict }}",
     sort_field: "date_created",
     sort: 34,
+  },
+  {
+    collection: "eval_example_lab_entries",
+    icon: "school",
+    color: "#059669",
+    note: "Example Lab few-shot example entries. Stores manually curated examples with RAG-ready metadata for grammar_note / sentence_analysis.",
+    display_template: "{{ example_id }} {{ example_type }} {{ label }}",
+    sort_field: "date_updated",
+    sort: 35,
   },
 ];
 
@@ -199,8 +210,7 @@ const PROMPT_VARIANT_FIELD_METADATA = [
       sort: 13,
       options: {
         choices: [
-          { text: "Workflow Eval", value: "workflow_eval" },
-          { text: "Node Probe", value: "node_probe" },
+          { text: "Workflow Lab", value: "workflow_lab" },
         ],
       },
     },
@@ -311,7 +321,6 @@ const JUDGE_RUN_REQUEST_FIELD_METADATA = [
       sort: 15,
       options: {
         choices: [
-          { text: "Fake", value: "fake" },
           { text: "LLM", value: "llm" },
         ],
       },
@@ -348,9 +357,8 @@ const REVIEW_NOTES_FIELD_METADATA = [
       options: {
         choices: [
           { text: "Workflow Run", value: "workflow_run" },
-          { text: "Node Probe Run", value: "node_probe_run" },
           { text: "Case Artifact", value: "case_artifact" },
-          { text: "A/B Report", value: "ab_report" },
+          { text: "Workflow Compare", value: "workflow_compare" },
           { text: "Prompt Variant", value: "prompt_variant" },
         ],
       },
@@ -359,8 +367,7 @@ const REVIEW_NOTES_FIELD_METADATA = [
   ["target_id", { interface: "input", width: "half", sort: 11 }],
   ["run_id", { interface: "input", width: "half", sort: 12 }],
   ["case_id", { interface: "input", width: "half", sort: 13 }],
-  ["ab_report_id", { interface: "input", width: "half", sort: 14 }],
-  ["prompt_variant_id", { interface: "input", width: "half", sort: 15 }],
+  ["prompt_variant_id", { interface: "input", width: "half", sort: 14 }],
   [
     "verdict",
     {
@@ -382,17 +389,147 @@ const REVIEW_NOTES_FIELD_METADATA = [
       },
     },
   ],
-  ["promote_candidate", { interface: "boolean", width: "half", sort: 17 }],
-  ["tags", { interface: "tags", width: "half", sort: 18 }],
-  ["note", { interface: "input-rich-text-md", width: "full", sort: 19 }],
+  ["promote_candidate", { interface: "boolean", width: "half", sort: 16 }],
+  ["tags", { interface: "tags", width: "half", sort: 17 }],
+  ["note", { interface: "input-rich-text-md", width: "full", sort: 18 }],
+];
+
+const EXAMPLE_LAB_FIELD_METADATA = [
+  ["id", { hidden: true, readonly: true, interface: "input", sort: 1 }],
+  ["date_created", { readonly: true, interface: "datetime", width: "half", sort: 2, translations: [{ language: "zh-CN", translation: "创建时间" }] }],
+  ["date_updated", { readonly: true, interface: "datetime", width: "half", sort: 3, translations: [{ language: "zh-CN", translation: "更新时间" }] }],
+  ["user_created", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 4, hidden: true }],
+  ["user_updated", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 5, hidden: true }],
+
+  ["example_id", { interface: "input", width: "half", sort: 10, note: "人工可读 ID，如 grammar-gaokao-003", translations: [{ language: "zh-CN", translation: "示例 ID (example_id)" }] }],
+  [
+    "example_type",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 11,
+      translations: [{ language: "zh-CN", translation: "示例类型 (example_type)" }],
+      options: {
+        choices: [
+          { text: "grammar — 语法批注", value: "grammar" },
+          { text: "sentence_analysis — 句子分析", value: "sentence_analysis" },
+          { text: "vocab — 词汇高亮", value: "vocab" },
+          { text: "phrase — 短语释义", value: "phrase" },
+          { text: "context — 语境释义", value: "context" },
+          { text: "translation — 翻译", value: "translation" },
+        ],
+      },
+    },
+  ],
+
+  ["sentence_text", { interface: "input-multiline", width: "full", sort: 20, note: "英文原句", translations: [{ language: "zh-CN", translation: "原句 (sentence_text)" }] }],
+  ["output_fragment", { interface: "claread-output-fragment-editor", width: "full", sort: 21, note: "根据 example_type 自动切换结构化表单", translations: [{ language: "zh-CN", translation: "输出片段 (output_fragment)" }] }],
+  ["label", { interface: "input", width: "half", sort: 22, note: "中文标签/概述", translations: [{ language: "zh-CN", translation: "标签 (label)" }] }],
+
+  [
+    "source_kind",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 30,
+      translations: [{ language: "zh-CN", translation: "来源类型 (source_kind)" }],
+      options: {
+        choices: [
+          { text: "manual — 手动输入", value: "manual" },
+          { text: "run_capture — 运行捕获", value: "run_capture" },
+          { text: "yaml_import — YAML 导入", value: "yaml_import" },
+          { text: "seed_import — Seed 导入", value: "seed_import" },
+          { text: "other — 其他", value: "other" },
+        ],
+      },
+    },
+  ],
+  ["source_ref", { interface: "input", width: "half", sort: 31, hidden: true, translations: [{ language: "zh-CN", translation: "来源引用 (source_ref)" }] }],
+  [
+    "reading_variant",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 32,
+      translations: [{ language: "zh-CN", translation: "阅读变体 (reading_variant)" }],
+      options: {
+        allowNone: true,
+        choices: [
+          { text: "default — 默认", value: "default" },
+          { text: "beginner_reading — 入门阅读", value: "beginner_reading" },
+          { text: "intermediate_reading — 中阶阅读", value: "intermediate_reading" },
+          { text: "intensive_reading — 精读模式", value: "intensive_reading" },
+          { text: "gaokao — 高考", value: "gaokao" },
+          { text: "cet — 四六级", value: "cet" },
+          { text: "kaoyan — 考研", value: "kaoyan" },
+          { text: "tem — 专四专八", value: "tem" },
+          { text: "ielts_toefl — 雅思/托福", value: "ielts_toefl" },
+          { text: "academic_general — 学术通用", value: "academic_general" },
+        ],
+      },
+    },
+  ],
+  [
+    "target_node",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 33,
+      translations: [{ language: "zh-CN", translation: "目标节点 (target_node)" }],
+      options: {
+        allowNone: true,
+        choices: [
+          { text: "grammar — 语法", value: "grammar" },
+          { text: "vocabulary — 词汇", value: "vocabulary" },
+          { text: "translation — 翻译", value: "translation" },
+          { text: "academic — 学术", value: "academic" },
+        ],
+      },
+    },
+  ],
+
+  // 注：决策 3 (2026-06) 已移除 rag_eligible 字段；准入由 DB CHECK 约束
+  // eval_example_lab_entries_approved_rag_eligible_check 强制 example_type 限制。
+  ["grammar_tags", { interface: "claread-ai-rag-generator-interface", width: "full", sort: 41, note: "AI 生成或手动编辑的语法标签数组", translations: [{ language: "zh-CN", translation: "语法标签 (grammar_tags)" }] }],
+  ["structure_signals", { interface: "claread-ai-rag-generator-interface", width: "full", sort: 42, note: "AI 生成或手动编辑的结构信号数组", translations: [{ language: "zh-CN", translation: "结构信号 (structure_signals)" }] }],
+  ["retrieval_text", { interface: "claread-ai-rag-generator-interface", width: "full", sort: 43, note: "AI 生成或手动编辑的 RAG 检索文本", translations: [{ language: "zh-CN", translation: "检索文本 (retrieval_text)" }] }],
+  [
+    "teaching_goal",
+    {
+      interface: "select-dropdown",
+      width: "half",
+      sort: 44,
+      translations: [{ language: "zh-CN", translation: "教学目标 (teaching_goal)" }],
+      options: {
+        allowNone: true,
+        choices: [
+          { text: "focused — 聚焦", value: "focused" },
+          { text: "balanced — 均衡", value: "balanced" },
+          { text: "structural — 结构", value: "structural" },
+          { text: "explicit_split — 显式拆分", value: "explicit_split" },
+          { text: "structural_logic — 结构逻辑", value: "structural_logic" },
+          { text: "explicit_exam — 应试", value: "explicit_exam" },
+          { text: "speed_support — 速读辅助", value: "speed_support" },
+          { text: "rhetorical — 修辞", value: "rhetorical" },
+          { text: "info_extraction — 信息提取", value: "info_extraction" },
+        ],
+      },
+    },
+  ],
+
+  ["quality_score", { interface: "input", width: "half", sort: 50, note: "0.0 - 1.0", translations: [{ language: "zh-CN", translation: "质量评分 (quality_score)" }] }],
+  ["approved", { interface: "boolean", width: "half", sort: 51, note: "审批通过后才可写入向量库", translations: [{ language: "zh-CN", translation: "已审批 (approved)" }] }],
+
+  ["notes", { interface: "input-rich-text-md", width: "full", sort: 60, translations: [{ language: "zh-CN", translation: "备注 (notes)" }] }],
+  ["tags_json", { ...jsonMeta(61, "自定义标签数组"), translations: [{ language: "zh-CN", translation: "自定义标签 (tags_json)" }] }],
 ];
 
 const FIELD_METADATA_BY_COLLECTION = {
-  eval_node_probe_runs: FIELD_METADATA,
   eval_prompt_variant_drafts: PROMPT_VARIANT_FIELD_METADATA,
   eval_workflow_run_requests: WORKFLOW_RUN_REQUEST_FIELD_METADATA,
   eval_judge_run_requests: JUDGE_RUN_REQUEST_FIELD_METADATA,
   eval_review_notes: REVIEW_NOTES_FIELD_METADATA,
+  eval_example_lab_entries: EXAMPLE_LAB_FIELD_METADATA,
 };
 
 function jsonMeta(sort, note) {
@@ -431,7 +568,7 @@ function runSql(sql) {
 }
 
 function readEvalControlMigrationSql() {
-  return readFileSync(EVAL_CONTROL_MIGRATION, "utf8");
+  return readFileSync(EVAL_CONTROL_MIGRATION, "utf8").replace(/^\uFEFF/, "");
 }
 
 function restartDirectus() {
@@ -473,8 +610,22 @@ async function fetchJson(path, options = {}) {
   return payload;
 }
 
+async function tryRequestWithToken(token, path = "/users/me") {
+  const response = await fetch(joinUrl(DIRECTUS_URL, path), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  return response.ok;
+}
+
 async function login() {
-  if (DIRECTUS_TOKEN) return DIRECTUS_TOKEN;
+  if (DIRECTUS_TOKEN) {
+    const tokenValid = await tryRequestWithToken(DIRECTUS_TOKEN);
+    if (tokenValid) return DIRECTUS_TOKEN;
+  }
   if (!DIRECTUS_PASSWORD) {
     throw new Error(
       "Directus metadata sync requires DIRECTUS_TOKEN/ADMIN_TOKEN or DIRECTUS_PASSWORD/ADMIN_PASSWORD.",
@@ -532,6 +683,19 @@ async function syncCollections(token) {
       },
     });
   }
+
+  for (const item of LEGACY_COLLECTIONS) {
+    try {
+      await request(token, "PATCH", `/collections/${item.collection}`, {
+        meta: {
+          note: item.note,
+          hidden: true,
+        },
+      });
+    } catch (error) {
+      if (!String(error?.message || "").includes("404")) throw error;
+    }
+  }
 }
 
 async function syncFields(token) {
@@ -541,6 +705,28 @@ async function syncFields(token) {
         meta,
       });
     }
+  }
+}
+
+function cleanupDeprecatedMetadata() {
+  if (DEPRECATED_COLLECTION_IDS.length) {
+    runSql(`
+      DELETE FROM directus_fields
+      WHERE collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
+      DELETE FROM directus_relations
+      WHERE many_collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")})
+         OR one_collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
+      DELETE FROM directus_permissions
+      WHERE collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
+      DELETE FROM directus_collections
+      WHERE collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
+    `);
+  }
+  for (const [collection, field] of DEPRECATED_FIELDS) {
+    runSql(`
+      DELETE FROM directus_fields
+      WHERE collection = ${sqlLiteral(collection)} AND field = ${sqlLiteral(field)};
+    `);
   }
 }
 
@@ -560,6 +746,7 @@ restartDirectus();
 await waitForDirectusReady();
 
 const token = await login();
+cleanupDeprecatedMetadata();
 await syncCollections(token);
 await syncFields(token);
 await syncModuleBar(token);

@@ -66,6 +66,7 @@ export function normalizeSingleRunPayload(payload) {
         ? scene.warnings
         : [],
     error: payload?.error || null,
+    savedHistoryRunId: payload?.saved_history_run_id || null,
     raw: payload,
   };
 }

@@ -23,6 +23,8 @@ logs/
 *.log
 services/api/logs/
 services/api/static/covers/
+apps/directus/.runtime/
+apps/directus/runtime-evals/
 evals/runs/
 
 # Local configuration and secrets

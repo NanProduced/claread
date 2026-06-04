@@ -6,6 +6,9 @@ const props = defineProps({
   baselineRunId: { type: String, default: "" },
   candidateRunId: { type: String, default: "" },
   loading: { type: Boolean, default: false },
+  compareResult: { type: Object, default: null },
+  caseCoverage: { type: Number, default: 0 },
+  datasetId: { type: String, default: "" },
 });
 const emit = defineEmits(["update:baseline-run-id", "update:candidate-run-id", "compare", "select-run"]);
 
@@ -16,6 +19,8 @@ watch(() => props.baselineRunId, (value) => { localBaseline.value = value; });
 watch(() => props.candidateRunId, (value) => { localCandidate.value = value; });
 
 const learningRuns = computed(() => props.runs.filter((run) => (run.learning_case_count || 0) > 0 && run.has_report));
+const baselineRun = computed(() => learningRuns.value.find((run) => run.run_id === localBaseline.value) || null);
+const candidateRun = computed(() => learningRuns.value.find((run) => run.run_id === localCandidate.value) || null);
 const canCompare = computed(() => (
   localBaseline.value
   && localCandidate.value
@@ -38,15 +43,37 @@ function setCandidate(value) {
   <section class="compare-builder">
     <header>
       <div>
-        <p>差异报告</p>
-        <h2>选择两条已完成 run，生成 baseline 与候选版本的对比</h2>
+        <p>对比构建</p>
+        <h2>选择 baseline run 与候选 run，生成句子级差异</h2>
       </div>
       <button type="button" :disabled="!canCompare" title="同步读取两侧 artifact，生成当前对比报告。" @click="emit('compare')">
-        {{ loading ? "生成中..." : "生成差异报告" }}
+        {{ loading ? "生成中..." : "生成对比" }}
       </button>
     </header>
 
-    <p class="builder-hint">先选择 baseline，再选择要验证的候选 run。生成后可逐 case 查看双侧证据。</p>
+    <p class="builder-hint">
+      这里的 baseline run / 候选 run 都来自<strong>已经完成的 dataset run</strong>，不是 single run。
+      先在「数据集验证」里跑出至少两条已完成 run，再回来对比。
+    </p>
+
+    <dl class="context-facts" v-if="baselineRun || candidateRun || datasetId">
+      <div>
+        <dt>Baseline run</dt>
+        <dd>{{ baselineRun?.run_id || "未选择" }}</dd>
+      </div>
+      <div>
+        <dt>候选 run</dt>
+        <dd>{{ candidateRun?.run_id || "未选择" }}</dd>
+      </div>
+      <div>
+        <dt>Dataset</dt>
+        <dd>{{ datasetId || baselineRun?.dataset_id || candidateRun?.dataset_id || "—" }}</dd>
+      </div>
+      <div>
+        <dt>Case 覆盖</dt>
+        <dd>{{ caseCoverage > 0 ? `${caseCoverage} 条` : "生成对比后计算" }}</dd>
+      </div>
+    </dl>
 
     <div class="compare-grid">
       <label>
@@ -72,7 +99,7 @@ function setCandidate(value) {
     <div class="selected-runs">
       <button v-if="localBaseline" type="button" @click="emit('select-run', localBaseline)">查看 baseline 详情</button>
       <button v-if="localCandidate" type="button" @click="emit('select-run', localCandidate)">查看候选 run 详情</button>
-      <p v-if="learningRuns.length === 0">暂无可用于 learning compare 的 completed run。</p>
+      <p v-if="learningRuns.length === 0">暂无可用于 learning compare 的 run。先去「数据集验证」完成 baseline 与 candidate 两条 runs。</p>
     </div>
   </section>
 </template>
@@ -108,6 +135,29 @@ header h2 {
   margin-top: 12px;
   line-height: 1.6;
 }
+.context-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px 0 0;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.context-facts div {
+  background: var(--theme--background-subdued);
+  padding: 10px;
+  min-width: 0;
+}
+.context-facts dt {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-weight: 700;
+}
+.context-facts dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
 .compare-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -139,7 +189,8 @@ button:disabled {
   gap: 8px;
   margin-top: 12px;
 }
-@media (max-width: 760px) {
+@media (max-width: 900px) {
+  .context-facts,
   .compare-grid {
     grid-template-columns: 1fr;
   }

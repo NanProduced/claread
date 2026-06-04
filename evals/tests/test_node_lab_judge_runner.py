@@ -41,21 +41,28 @@ class FakeJudgeClient:
                                 "criteria": [
                                     {
                                         "criterion_id": "GN1",
-                                        "score": 1,
+                                        "score": 2,
                                         "reason": "解释准确。",
                                         "evidence": "Although 从句被正确定位。",
+                                    },
+                                    {
+                                        "criterion_id": "GN2",
+                                        "score": 1,
+                                        "reason": "针对性还不够强。",
+                                        "evidence": "后半段有较多通用语法描述。",
                                     }
                                 ],
-                                "item_summary": {"passed": 1, "failed": 0},
+                                "item_summary": {"passed": 1, "partial": 1, "failed": 0},
                             }
                         ],
                         "output_level_scores": [],
                         "aggregate": {
                             "item_count": 1,
-                            "criteria_count": 1,
+                            "criteria_count": 2,
                             "passed": 1,
+                            "partial": 1,
                             "failed": 0,
-                            "pass_rate": 1.0,
+                            "pass_rate": 0.75,
                         },
                     },
                     "candidate": {
@@ -72,18 +79,25 @@ class FakeJudgeClient:
                                         "score": 0,
                                         "reason": "解释偏离句内作用。",
                                         "evidence": "未说明从句在当前句中的关系。",
+                                    },
+                                    {
+                                        "criterion_id": "GN2",
+                                        "score": 1,
+                                        "reason": "提到当前句，但仍然偏模板化。",
+                                        "evidence": "仍以通用解释为主。",
                                     }
                                 ],
-                                "item_summary": {"passed": 0, "failed": 1},
+                                "item_summary": {"passed": 0, "partial": 1, "failed": 1},
                             }
                         ],
                         "output_level_scores": [],
                         "aggregate": {
                             "item_count": 1,
-                            "criteria_count": 1,
+                            "criteria_count": 2,
                             "passed": 0,
+                            "partial": 1,
                             "failed": 1,
-                            "pass_rate": 0.0,
+                            "pass_rate": 0.25,
                         },
                     },
                     "meta": {"preset_id": "grammar-default-v1"},
@@ -157,18 +171,22 @@ class TranslationJudgeClient(FakeJudgeClient):
                     "baseline": {
                         "items": [],
                         "output_level_scores": [
-                            {"criterion_id": "TT1", "score": 1, "reason": "核心意思准确。", "evidence": "原句主干被保留。"},
-                            {"criterion_id": "TT2", "score": 1, "reason": "逻辑关系清晰。", "evidence": "转折关系未丢失。"},
+                            {"criterion_id": "TT1", "score": 2, "reason": "核心意思准确。", "evidence": "原句主干被保留。"},
+                            {"criterion_id": "TT2", "score": 1, "reason": "逻辑关系基本保留。", "evidence": "让步关系表达略弱。"},
+                            {"criterion_id": "TT3", "score": 2, "reason": "中文表达自然。", "evidence": "句子流畅。"},
+                            {"criterion_id": "TT4", "score": 1, "reason": "语气基本保留。", "evidence": "正式程度略有减弱。"},
                         ],
-                        "aggregate": {"item_count": None, "criteria_count": 2, "passed": 2, "failed": 0, "pass_rate": 1.0},
+                        "aggregate": {"item_count": None, "criteria_count": 4, "passed": 2, "partial": 2, "failed": 0, "pass_rate": 0.75},
                     },
                     "candidate": {
                         "items": [],
                         "output_level_scores": [
-                            {"criterion_id": "TT1", "score": 1, "reason": "核心意思准确。", "evidence": "原句主干被保留。"},
+                            {"criterion_id": "TT1", "score": 2, "reason": "核心意思准确。", "evidence": "原句主干被保留。"},
                             {"criterion_id": "TT2", "score": 0, "reason": "逻辑关系略被抹平。", "evidence": "让步关系被弱化。"},
+                            {"criterion_id": "TT3", "score": 1, "reason": "整体可读，但有直译感。", "evidence": "个别词序不自然。"},
+                            {"criterion_id": "TT4", "score": 0, "reason": "语域明显变口语。", "evidence": "原文正式感丢失。"},
                         ],
-                        "aggregate": {"item_count": None, "criteria_count": 2, "passed": 1, "failed": 1, "pass_rate": 0.5},
+                        "aggregate": {"item_count": None, "criteria_count": 4, "passed": 1, "partial": 1, "failed": 2, "pass_rate": 0.375},
                     },
                     "meta": {"preset_id": "translation-default-v1"},
                 }
@@ -315,6 +333,8 @@ async def test_node_lab_judge_runner_writes_artifacts(tmp_path: Path) -> None:
     )
 
     assert result["rubric_scoring_result"]["baseline"]["aggregate"]["passed"] == 1
+    assert result["rubric_scoring_result"]["baseline"]["aggregate"]["partial"] == 1
+    assert result["rubric_scoring_result"]["candidate"]["aggregate"]["failed"] == 1
     assert result["pairwise_result"]["pairwise_review"]["preferred_side"] == "baseline"
     assert result["step_runs"]["rubric"]["status"] == "succeeded"
     assert result["step_runs"]["pairwise"]["status"] == "succeeded"
@@ -324,12 +344,16 @@ async def test_node_lab_judge_runner_writes_artifacts(tmp_path: Path) -> None:
     assert "raw_item" not in client.calls[1]["user_prompt"]
     assert "source_sentence" in client.calls[1]["user_prompt"]
     assert "selected_annotations" in client.calls[1]["user_prompt"]
+    assert "representative_failed_items" in client.calls[1]["user_prompt"]
     assert (artifact_dir / "judge-config.json").is_file()
     assert (artifact_dir / "rubric-packet.json").is_file()
     assert (artifact_dir / "pairwise-packet.json").is_file()
     assert (artifact_dir / "raw-responses" / "rubric.json").is_file()
     assert (artifact_dir / "raw-responses" / "pairwise.json").is_file()
     assert (artifact_dir / "result.json").is_file()
+    pairwise_packet = json.loads((artifact_dir / "pairwise-packet.json").read_text(encoding="utf-8"))
+    assert pairwise_packet["failed_items"][0]["severity"] == "fail"
+    assert pairwise_packet["failed_items"][1]["severity"] == "partial"
 
 
 @pytest.mark.asyncio
@@ -365,6 +389,9 @@ async def test_node_lab_judge_runner_translation_uses_output_level_and_light_pai
     assert "TT2" in client.calls[1]["user_prompt"]
     assert "逻辑关系略被抹平" in client.calls[1]["user_prompt"]
     assert (artifact_dir / "pairwise-packet.json").is_file()
+    pairwise_packet = json.loads((artifact_dir / "pairwise-packet.json").read_text(encoding="utf-8"))
+    assert pairwise_packet["failed_items"][0]["severity"] == "fail"
+    assert pairwise_packet["translation_units"][0]["rubric_watchouts"] == []
 
 
 @pytest.mark.asyncio

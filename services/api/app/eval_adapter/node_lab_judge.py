@@ -14,8 +14,12 @@ from app.eval_adapter.schemas import (
     ArticleAnalysisNodeLabCompareResult,
     EvalError,
     ModelIdentity,
+    NodeLabJudgeAggregate,
+    NodeLabJudgeCriterionScore,
     NodeLabJudgeExecuteRequest,
     NodeLabJudgeExecuteResult,
+    NodeLabJudgeItemResult,
+    NodeLabJudgeItemSummary,
     NodeLabJudgeRunRequest,
     NodeLabJudgeRunResult,
     NodeLabJudgeSideResult,
@@ -39,11 +43,29 @@ class _NodeLabJudgeExecuteDeps(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class _RubricItemPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    item_type: str
+    sentence_id: str | None = None
+    label: str | None = None
+    source_excerpt: str | None = None
+    criteria: list[NodeLabJudgeCriterionScore] = Field(default_factory=list)
+
+
+class _RubricSidePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[_RubricItemPayload] = Field(default_factory=list)
+    output_level_scores: list[NodeLabJudgeCriterionScore] = Field(default_factory=list)
+
+
 class _RubricScoringPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    baseline: NodeLabJudgeSideResult
-    candidate: NodeLabJudgeSideResult
+    baseline: _RubricSidePayload
+    candidate: _RubricSidePayload
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -65,6 +87,67 @@ class _ProbeAppendixPayload(BaseModel):
 
     questions: list[NodeLabProbeQuestionResult] = Field(default_factory=list)
     summary: str | None = None
+
+
+def _score_counts(criteria: list[NodeLabJudgeCriterionScore]) -> tuple[int, int, int]:
+    passed = sum(1 for criterion in criteria if criterion.score == 2)
+    partial = sum(1 for criterion in criteria if criterion.score == 1)
+    failed = sum(1 for criterion in criteria if criterion.score == 0)
+    return passed, partial, failed
+
+
+def _build_item_summary(criteria: list[NodeLabJudgeCriterionScore]) -> NodeLabJudgeItemSummary:
+    passed, partial, failed = _score_counts(criteria)
+    return NodeLabJudgeItemSummary(
+        passed=passed,
+        partial=partial,
+        failed=failed,
+    )
+
+
+def _build_side_result(
+    payload: _RubricSidePayload,
+    *,
+    strategy: str,
+) -> NodeLabJudgeSideResult:
+    items = [
+        NodeLabJudgeItemResult(
+            item_id=item.item_id,
+            item_type=item.item_type,
+            sentence_id=item.sentence_id,
+            label=item.label,
+            source_excerpt=item.source_excerpt,
+            criteria=item.criteria,
+            item_summary=_build_item_summary(item.criteria),
+        )
+        for item in payload.items
+    ]
+    output_level_scores = payload.output_level_scores
+    item_criteria_count = sum(len(item.criteria) for item in items)
+    output_criteria_count = len(output_level_scores)
+    passed_items = sum(item.item_summary.passed for item in items)
+    partial_items = sum(item.item_summary.partial for item in items)
+    failed_items = sum(item.item_summary.failed for item in items)
+    passed_output, partial_output, failed_output = _score_counts(output_level_scores)
+    criteria_count = item_criteria_count + output_criteria_count
+    passed = passed_items + passed_output
+    partial = partial_items + partial_output
+    failed = failed_items + failed_output
+    weighted_total = (passed * 2) + partial
+    denominator = criteria_count * 2
+    pass_rate = (weighted_total / denominator) if denominator else 0.0
+    return NodeLabJudgeSideResult(
+        items=items,
+        output_level_scores=output_level_scores,
+        aggregate=NodeLabJudgeAggregate(
+            item_count=None if strategy == "translation_output_review" else len(items),
+            criteria_count=criteria_count,
+            passed=passed,
+            partial=partial,
+            failed=failed,
+            pass_rate=pass_rate,
+        ),
+    )
 
 
 def _request_id(request: NodeLabJudgeExecuteRequest) -> str:
@@ -325,8 +408,8 @@ async def execute_node_lab_judge(
         response.rubric_scoring_result = NodeLabRubricScoringResult(
             strategy=request.judge_strategy,
             method=request.judge_method,
-            baseline=payload.baseline,
-            candidate=payload.candidate,
+            baseline=_build_side_result(payload.baseline, strategy=request.judge_strategy),
+            candidate=_build_side_result(payload.candidate, strategy=request.judge_strategy),
             meta=payload.meta,
         )
     elif request.output_mode == "pairwise":

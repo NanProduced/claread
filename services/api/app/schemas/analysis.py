@@ -139,6 +139,14 @@ class SentenceEntry(BaseModel):
     entry_type: Literal["grammar_note", "sentence_analysis"] = Field(description="入口类型")
     label: str = Field(description="Chip 显示文案")
     title: str | None = Field(default=None, description="详情面板标题，默认使用 label")
+    analysis_text: str | None = Field(
+        default=None,
+        description="sentence_analysis 的结构化中文解析正文；旧 artifact 可能为空。",
+    )
+    chunks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="sentence_analysis 的原始 chunk 列表；其他 entry_type 为空。",
+    )
     content: str = Field(
         default="",
         description="详情内容，支持 Markdown 格式（**粗体**, *斜体*, `行内代码`, - 列表）",

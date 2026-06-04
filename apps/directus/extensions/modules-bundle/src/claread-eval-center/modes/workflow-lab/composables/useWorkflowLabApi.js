@@ -37,6 +37,9 @@ export function useWorkflowLabApi() {
     async runSingleWorkflow(payload) {
       return dataOf(await api.post("/eval-center/workflow-lab/single-run", payload));
     },
+    async saveSingleRunToHistory(payload) {
+      return dataOf(await api.post("/eval-center/workflow-lab/run-history/single-run", payload));
+    },
     async cancelRunRequest(requestId) {
       return dataOf(await api.post(`/eval-center/workflow-runs/requests/${encodeURIComponent(requestId)}/cancel`));
     },
@@ -48,6 +51,22 @@ export function useWorkflowLabApi() {
     },
     async listModelProfiles() {
       return dataOf(await api.get("/eval-center/article-analysis/model-profiles")) || [];
+    },
+    async listDatasets() {
+      const data = dataOf(await api.get("/eval-center/workflow-runs/datasets")) || [];
+      return Array.isArray(data) ? data : [];
+    },
+    async createDataset(payload) {
+      return dataOf(await api.post("/eval-center/workflow-runs/datasets", payload));
+    },
+    async addDatasetCase(datasetId, payload) {
+      return dataOf(await api.post(`/eval-center/workflow-runs/datasets/${encodeURIComponent(datasetId)}/cases`, payload));
+    },
+    async getJudgeResult(runId, judgeRunId) {
+      if (!runId || !judgeRunId) return null;
+      return dataOf(await api.get(
+        `/eval-center/runs/${encodeURIComponent(runId)}/judge/${encodeURIComponent(judgeRunId)}`,
+      ));
     },
     async listCandidateDrafts() {
       return dataOf(await api.get("/items/eval_prompt_variant_drafts", {

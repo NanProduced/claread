@@ -3,17 +3,19 @@ import { computed } from "vue";
 import { useNodeLabState } from "../composables/useNodeLabState";
 import { useNodeLabApi } from "../composables/useNodeLabApi";
 import {
+  statusLabel,
+  shortId,
+} from "../../../composables/useEvalFormatting";
+import {
   safeJsonParse,
   nodeLabel,
   readingGoalLabel,
   readingVariantLabel,
   normalizePreviewText,
   buildInputPreview,
-  statusLabel,
   compareViewSourceLabel,
   compareViewSourceTone,
   compareTrialSourceLabel,
-  shortId,
   trialJudgeCount,
   defaultJudgeModeForNode,
   judgeModeAllowedForNode,

@@ -25,6 +25,7 @@ const emit = defineEmits([
   "save-draft",
   "publish",
   "unpublish",
+  "go-to-single-run",
 ]);
 
 const AGENTS = [
@@ -33,6 +34,38 @@ const AGENTS = [
   { key: "translation", label: "翻译" },
   { key: "repair", label: "修复" },
 ];
+
+// 每个 agent 在串行 workflow 里负责什么、它的下游是谁
+const AGENT_DESCRIPTIONS = {
+  vocabulary: {
+    step: "第 1 步 / 4 步",
+    role: "在原文中识别生词、短语、文化语境词，输出 vocab highlight / phrase gloss / context gloss。",
+    downstream: "下游:Grammar 会消费你的 anchor 标注,决定哪些句子值得做语法拆解。",
+  },
+  grammar: {
+    step: "第 2 步 / 4 步",
+    role: "在 vocabulary 标注过的句子上,识别语法结构,输出 grammar note / sentence analysis。",
+    downstream: "下游:Translation 会消费你的 analysis,把分析结论带入翻译判断。",
+  },
+  translation: {
+    step: "第 3 步 / 4 步",
+    role: "基于 grammar 标记后的句子,产出逐句中文翻译。",
+    downstream: "下游:Repair 会消费你的翻译,做质量修复(术语一致、可读性、漏译)。",
+  },
+  repair: {
+    step: "第 4 步 / 4 步",
+    role: "对 translation 后的结果做质量修复,主要使用 instructions 和错误上下文,不使用 policy lines。",
+    downstream: "下游:workflow runtime 把 repair 后的 render_scene 落盘到 case artifact。",
+  },
+};
+
+const STEP_DEFS = [
+  { key: "name", label: "命名" },
+  { key: "baseline", label: "从 baseline 创建" },
+  { key: "edit", label: "编辑 agent" },
+  { key: "publish", label: "发布到验证入口" },
+];
+
 const activeAgent = ref("vocabulary");
 const examplesError = ref("");
 
@@ -64,13 +97,42 @@ const activeLayer = computed(() => layerFor(activeAgent.value));
 const baselineLayer = computed(() => baselineFor(activeAgent.value));
 const hasBundle = computed(() => AGENTS.some((agent) => layerFor(agent.key).instructions.trim()));
 const canSave = computed(() => props.form.variant_id?.trim() && hasBundle.value && !props.saving);
-const changedAgents = computed(() => AGENTS.filter((agent) => isChanged(agent.key)).map((agent) => agent.label));
+const isPublished = computed(() => props.form.status === "ready_for_eval");
+const agentDiffs = computed(() => {
+  const out = {};
+  for (const agent of AGENTS) {
+    const layer = layerFor(agent.key);
+    const baseline = baselineFor(agent.key);
+    const diffs = [];
+    if ((layer.instructions || "") !== (baseline.instructions || "")) diffs.push("instructions");
+    if (JSON.stringify(layer.policy_lines || []) !== JSON.stringify(baseline.policy_lines || [])) diffs.push("policy lines");
+    if (JSON.stringify(layer.examples || []) !== JSON.stringify(baseline.examples || [])) diffs.push("examples");
+    if (diffs.length) out[agent.key] = diffs;
+  }
+  return out;
+});
+const changedAgents = computed(() => Object.keys(agentDiffs.value));
 const draftGroups = computed(() => groupCandidatesByStatus(props.drafts));
 const currentStatusLabel = computed(() => props.form.status === "ready_for_eval"
-  ? "已发布到运行入口"
+  ? "已发布到验证入口"
   : props.form.status === "archived"
     ? "已归档"
     : "草稿");
+const hasName = computed(() => Boolean((props.form.variant_id || "").trim()));
+const hasEdit = computed(() => Object.keys(agentDiffs.value).length > 0);
+const stepState = computed(() => ({
+  name: hasName.value,
+  baseline: hasBundle.value,
+  edit: hasEdit.value,
+  publish: isPublished.value,
+}));
+const currentStepIndex = computed(() => {
+  if (!hasName.value) return 0;
+  if (!hasBundle.value) return 1;
+  if (!hasEdit.value) return 2;
+  // 已发布 → 仍把"发布"作为 active 步骤(让最后一步保持高亮),用 done + active 组合
+  return STEP_DEFS.length - 1;
+});
 
 function layerFor(agentName) {
   return props.form.agents?.[agentName] || {
@@ -189,6 +251,18 @@ function draftSubtitle(draft) {
   }
   return `${draft.status} / legacy`;
 }
+
+function dimensionLabel(agentKey) {
+  const diffs = agentDiffs.value[agentKey] || [];
+  return diffs.length ? diffs.join(" · ") : "—";
+}
+
+function goToSingleRun() {
+  if (!isPublished.value) return;
+  emit("go-to-single-run", props.form.variant_id);
+}
+
+const publishTitle = "发布到验证入口后,本版本会出现在「单篇验证」「数据集验证」的候选选择器中";
 </script>
 
 <template>
@@ -251,6 +325,56 @@ function draftSubtitle(draft) {
       <div v-if="error" class="notice error" aria-live="assertive">{{ error }}</div>
       <div v-if="message" class="notice success" aria-live="polite">{{ message }}</div>
 
+      <section class="stepper" aria-label="候选版本步骤">
+        <ol>
+          <li
+            v-for="(step, index) in STEP_DEFS"
+            :key="step.key"
+            :class="{
+              done: stepState[step.key],
+              active: index === currentStepIndex,
+            }"
+          >
+            <span class="step-index">{{ index + 1 }}</span>
+            <span class="step-label">{{ step.label }}</span>
+            <span v-if="stepState[step.key]" class="step-check" aria-hidden="true">✓</span>
+          </li>
+        </ol>
+      </section>
+
+      <section class="pipeline" aria-label="workflow 串行结构">
+        <header>
+          <strong>Workflow 串行结构</strong>
+          <small>点击任一节点切换编辑区,4 个 agent 按顺序消费上一阶段的输出,不是 4 个并列视角</small>
+        </header>
+        <ol>
+          <li v-for="(agent, index) in AGENTS" :key="agent.key" class="pipeline-item">
+            <button
+              type="button"
+              :class="['pipeline-step', { active: activeAgent === agent.key, changed: !!agentDiffs[agent.key] }]"
+              :aria-pressed="activeAgent === agent.key"
+              :aria-label="`切换到 ${AGENT_DESCRIPTIONS[agent.key]?.step || ''} ${agent.label}`"
+              @click="activeAgent = agent.key"
+            >
+              <span class="pipeline-index" aria-hidden="true">{{ index + 1 }}</span>
+              <span class="pipeline-label">{{ agent.label }}</span>
+            </button>
+            <span v-if="index < AGENTS.length - 1" class="pipeline-arrow" aria-hidden="true">→</span>
+          </li>
+        </ol>
+      </section>
+
+      <section v-if="isPublished && form.variant_id" class="published-cta" role="region" aria-label="已发布 CTA">
+        <div>
+          <strong>已发布到验证入口</strong>
+          <small>本版本现在会出现在「单篇验证」「数据集验证」的候选选择器中</small>
+        </div>
+        <div class="published-cta-actions">
+          <button type="button" class="primary-cta" @click="goToSingleRun">去单篇验证</button>
+          <button type="button" class="ghost-cta" @click="emit('go-to-single-run', null)">留在候选版本</button>
+        </div>
+      </section>
+
       <section class="setup-strip">
         <label>
           <span title="Candidate 的稳定标识，只允许字母、数字、点、下划线和短横线。">Variant ID</span>
@@ -299,10 +423,11 @@ function draftSubtitle(draft) {
             v-for="agent in AGENTS"
             :key="agent.key"
             type="button"
-            :class="{ active: activeAgent === agent.key, changed: isChanged(agent.key) }"
+            :class="{ active: activeAgent === agent.key, changed: !!agentDiffs[agent.key] }"
             @click="activeAgent = agent.key"
           >
             {{ agent.label }}
+            <span v-if="agentDiffs[agent.key]" class="agent-diff-tag" :title="`改了: ${agentDiffs[agent.key].join(', ')}`">改</span>
           </button>
         </section>
 
@@ -310,7 +435,7 @@ function draftSubtitle(draft) {
           <div class="agent-editor">
             <header>
               <div>
-                <p>{{ activeLayer.agent_name }}</p>
+                <p>{{ activeLayer.agent_name }} · {{ AGENT_DESCRIPTIONS[activeLayer.agent_name]?.step || "" }}</p>
                 <h3>{{ activeLayer.label }} Prompt Layer</h3>
               </div>
               <div class="header-actions">
@@ -318,6 +443,17 @@ function draftSubtitle(draft) {
                 <button type="button" title="把四个 agent 都恢复为 baseline 内容。" @click="resetAll">重置全部</button>
               </div>
             </header>
+
+            <section class="agent-explainer">
+              <div>
+                <span class="explainer-label">负责</span>
+                <p>{{ AGENT_DESCRIPTIONS[activeLayer.agent_name]?.role || "—" }}</p>
+              </div>
+              <div>
+                <span class="explainer-label">下游</span>
+                <p>{{ AGENT_DESCRIPTIONS[activeLayer.agent_name]?.downstream || "—" }}</p>
+              </div>
+            </section>
 
             <label>
               <span title="Agent system instructions。Workflow runtime 会通过 eval-only override 应用这里的内容。">Agent Instructions</span>
@@ -371,7 +507,13 @@ function draftSubtitle(draft) {
           <aside class="baseline-reference">
             <section>
               <p>当前差异</p>
-              <strong>{{ changedAgents.length ? changedAgents.join(" / ") : "全部沿用 baseline" }}</strong>
+              <strong v-if="!changedAgents.length">全部沿用 baseline</strong>
+              <ul v-else class="diff-list">
+                <li v-for="agentKey in changedAgents" :key="agentKey">
+                  <span class="diff-agent">{{ AGENTS.find((a) => a.key === agentKey)?.label || agentKey }}</span>
+                  <span class="diff-dims">{{ agentDiffs[agentKey].join(" · ") }}</span>
+                </li>
+              </ul>
               <small>{{ readyCandidates.length }} 条已发布候选版本可直接用于验证与回归。</small>
             </section>
             <section>
@@ -409,8 +551,8 @@ function draftSubtitle(draft) {
           <button type="button" :disabled="!canSave" @click="emit('save-draft')">
             {{ saving && form.status !== 'ready_for_eval' ? "保存中" : "保存草稿" }}
           </button>
-          <button type="button" :disabled="!canSave" @click="emit('publish')">
-            {{ saving && form.status === 'ready_for_eval' ? "发布中" : "发布到运行入口" }}
+          <button type="button" :disabled="!canSave" @click="emit('publish')" :title="publishTitle">
+            {{ saving && form.status === 'ready_for_eval' ? "发布中" : "发布到验证入口" }}
           </button>
           <button
             v-if="selectedId && form.status === 'ready_for_eval'"
@@ -626,6 +768,296 @@ label {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.stepper {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  background: var(--theme--background);
+  padding: 12px 14px;
+}
+
+.stepper ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stepper li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 6px;
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+}
+
+.stepper li.done {
+  border-color: color-mix(in srgb, var(--theme--success) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--success) 6%, var(--theme--background));
+  color: var(--theme--success);
+}
+
+.stepper li.active {
+  border-style: solid;
+  border-color: var(--theme--primary);
+  background: color-mix(in srgb, var(--theme--primary) 6%, var(--theme--background));
+  color: var(--theme--foreground);
+  font-weight: 700;
+}
+
+/* 已发布完成态:done + active 同时存在,active 视觉优先,保留 done 勾 */
+.stepper li.done.active {
+  border-color: var(--theme--primary);
+  background: color-mix(in srgb, var(--theme--primary) 6%, var(--theme--background));
+  color: var(--theme--foreground);
+}
+
+.stepper li.done.active .step-index {
+  border-color: var(--theme--primary);
+  color: var(--theme--primary);
+}
+
+.step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.step-check {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pipeline {
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 8px;
+  background: var(--theme--background-subdued);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.pipeline header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pipeline header small {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.pipeline ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.pipeline-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pipeline-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 999px;
+  background: var(--theme--background);
+  color: var(--theme--foreground-subdued);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pipeline-step.changed {
+  border-color: color-mix(in srgb, var(--theme--primary) 45%, var(--theme--border-color));
+}
+
+.pipeline-step.active {
+  border-color: var(--theme--primary);
+  background: color-mix(in srgb, var(--theme--primary) 8%, var(--theme--background));
+  color: var(--theme--primary);
+  font-weight: 700;
+}
+
+.pipeline-step:focus-visible {
+  outline: 2px solid var(--theme--primary);
+  outline-offset: 2px;
+}
+
+.pipeline-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pipeline-arrow {
+  margin-left: 2px;
+  color: var(--theme--foreground-subdued);
+}
+
+.published-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--theme--success) 45%, var(--theme--border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--theme--success) 6%, var(--theme--background));
+  padding: 10px 14px;
+  position: relative;
+}
+.published-cta::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--theme--success);
+}
+.published-cta {
+  padding-left: 28px;
+}
+
+.published-cta strong {
+  color: var(--theme--success);
+}
+
+.published-cta small {
+  display: block;
+  margin-top: 4px;
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.published-cta-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.primary-cta {
+  background: var(--theme--primary);
+  color: var(--theme--primary-foreground, #fff);
+  border: 1px solid var(--theme--primary);
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ghost-cta {
+  background: transparent;
+  color: var(--theme--foreground);
+  border: 1px solid var(--theme--border-color);
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.agent-diff-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--theme--primary) 45%, var(--theme--border-color));
+  border-radius: 999px;
+  background: var(--theme--primary);
+  color: var(--theme--primary-foreground, #fff);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.agent-explainer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 6px;
+  background: var(--theme--background-subdued);
+  padding: 10px 12px;
+}
+
+.agent-explainer p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--theme--foreground);
+}
+
+.explainer-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--theme--foreground-subdued);
+  padding: 1px 6px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 999px;
+  background: var(--theme--background);
+}
+
+.diff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.diff-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.diff-agent {
+  font-weight: 700;
+}
+
+.diff-dims {
+  color: var(--theme--foreground-subdued);
 }
 .line-editor,
 .example-editor {

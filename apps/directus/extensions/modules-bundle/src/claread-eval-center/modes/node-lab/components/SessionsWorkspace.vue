@@ -7,6 +7,8 @@ import {
   shortId,
   statusLabel,
   statusTone,
+} from "../../../composables/useEvalFormatting";
+import {
   formatClockTime,
   sessionCompareCount,
   sessionJudgeCount,
@@ -45,6 +47,7 @@ const {
 
 const {
   selectSession,
+  updateSession,
   loadSessionDetail,
   loadTrialDetail,
   deleteSession,
@@ -274,6 +277,8 @@ function judgeRequestsForTrialCount(trialId) {
 }
 
 const pendingDeleteTarget = ref(null); // { type: 'session' | 'trial', id: string, label: string }
+const isEditingSessionTitle = ref(false);
+const sessionTitleDraft = ref("");
 
 function confirmDelete() {
   if (!pendingDeleteTarget.value) return;
@@ -283,6 +288,32 @@ function confirmDelete() {
     deleteTrial(pendingDeleteTarget.value.id);
   }
   pendingDeleteTarget.value = null;
+}
+
+function startSessionRename() {
+  if (!selectedSessionDetail.value?.session) return;
+  sessionTitleDraft.value = selectedSessionDetail.value.session.title || "";
+  isEditingSessionTitle.value = true;
+}
+
+function cancelSessionRename() {
+  isEditingSessionTitle.value = false;
+  sessionTitleDraft.value = selectedSessionDetail.value?.session?.title || "";
+}
+
+async function saveSessionRename() {
+  const session = selectedSessionDetail.value?.session;
+  const nextTitle = String(sessionTitleDraft.value || "").trim();
+  if (!session) return;
+  if (!nextTitle) return;
+  if (nextTitle === session.title) {
+    cancelSessionRename();
+    return;
+  }
+  const updated = await updateSession(session.session_id, { title: nextTitle });
+  if (updated?.session_id) {
+    isEditingSessionTitle.value = false;
+  }
 }
 </script>
 
@@ -342,7 +373,19 @@ function confirmDelete() {
       <template v-if="selectedSessionDetail?.session">
         <div class="session-hero">
           <div class="hero-main">
-            <h2 class="session-title">{{ selectedSessionDetail.session.title }}</h2>
+            <div class="session-title-row">
+              <template v-if="isEditingSessionTitle">
+                <v-input v-model="sessionTitleDraft" class="session-title-input" />
+                <div class="session-title-actions">
+                  <v-button small :loading="loading.sessions" @click="saveSessionRename">保存</v-button>
+                  <v-button small secondary @click="cancelSessionRename">取消</v-button>
+                </div>
+              </template>
+              <template v-else>
+                <h2 class="session-title">{{ selectedSessionDetail.session.title }}</h2>
+                <v-button small secondary @click="startSessionRename">重命名</v-button>
+              </template>
+            </div>
             <span class="badge" :class="`badge-${statusTone(selectedSessionDetail.session.status)}`">{{ statusLabel(selectedSessionDetail.session.status) }}</span>
           </div>
           <p class="session-desc">{{ sessionDecisionNarrative }}</p>
@@ -631,7 +674,24 @@ function confirmDelete() {
 
 .session-hero { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--color-border, #e5e7eb); }
 .hero-main { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
 .session-title { font-size: 24px; font-weight: 600; }
+.session-title-input {
+  min-width: min(420px, 100%);
+  flex: 1 1 320px;
+}
+.session-title-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .session-desc { font-size: 14px; color: var(--color-text-subdued, #6b7280); line-height: 1.6; }
 .meta-row { display: flex; gap: 24px; flex-wrap: wrap; }
 .meta-badge { display: flex; flex-direction: column; gap: 4px; }

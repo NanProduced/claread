@@ -270,13 +270,14 @@ def _collect_failed_items_by_sentence(
     for participant, side in (("baseline", rubric_result.baseline), ("candidate", rubric_result.candidate)):
         for item in side.items:
             for criterion in item.criteria:
-                if criterion.score == 1:
+                if criterion.score == 2:
                     continue
                 failed = PairwiseFailedItem(
                     participant=participant,
                     item_id=item.item_id,
                     item_type=item.item_type,
                     criterion_id=criterion.criterion_id,
+                    severity="fail" if criterion.score == 0 else "partial",
                     reason=criterion.reason,
                     evidence=criterion.evidence,
                 )
@@ -284,13 +285,14 @@ def _collect_failed_items_by_sentence(
                 failed_by_sentence[sentence_id].append(failed)
                 all_failed.append(failed)
         for criterion in side.output_level_scores:
-            if criterion.score == 1:
+            if criterion.score == 2:
                 continue
             failed = PairwiseFailedItem(
                 participant=participant,
                 item_id="output_level",
                 item_type="output_level",
                 criterion_id=criterion.criterion_id,
+                severity="fail" if criterion.score == 0 else "partial",
                 reason=criterion.reason,
                 evidence=criterion.evidence,
             )
@@ -299,10 +301,49 @@ def _collect_failed_items_by_sentence(
     return failed_by_sentence, all_failed
 
 
+def _severity_rank(item: PairwiseFailedItem) -> int:
+    return 0 if item.severity == "fail" else 1
+
+
+def _failed_item_key(item: PairwiseFailedItem) -> tuple[str, str, str, str, str]:
+    return (
+        item.participant,
+        item.item_id,
+        item.criterion_id,
+        item.severity,
+        item.reason.strip(),
+    )
+
+
+def _representative_failed_items(items: list[PairwiseFailedItem], *, limit: int) -> list[PairwiseFailedItem]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _severity_rank(item),
+            item.participant,
+            item.item_type,
+            item.criterion_id,
+            item.item_id,
+        ),
+    )
+    deduped: list[PairwiseFailedItem] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for item in ordered:
+        key = _failed_item_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
 def _summarize_watchouts(items: list[PairwiseFailedItem]) -> list[str]:
     watchouts: list[str] = []
-    for item in items[:4]:
-        watchouts.append(f"{item.participant} {item.item_type} / {item.criterion_id}: {item.reason}")
+    for item in _representative_failed_items(items, limit=4):
+        severity = "严重问题" if item.severity == "fail" else "可改进项"
+        watchouts.append(f"{severity} | {item.participant} {item.item_type} / {item.criterion_id}: {item.reason}")
     return watchouts
 
 
@@ -473,9 +514,7 @@ def _translation_units_from_compare(
                 source_sentence=source_sentence,
                 baseline_translation=baseline_outputs.get(sentence_id) or None,
                 candidate_translation=candidate_outputs.get(sentence_id) or None,
-                rubric_watchouts=_summarize_watchouts(
-                    failed_by_sentence.get(sentence_id, []) or failed_by_sentence.get("global", [])
-                ),
+                rubric_watchouts=_summarize_watchouts(failed_by_sentence.get(sentence_id, [])),
             )
         )
     return units
@@ -484,13 +523,24 @@ def _translation_units_from_compare(
 def _overall_watchouts(
     rubric_result: NodeLabRubricScoringResult,
     failed_items: list[PairwiseFailedItem],
+    *,
+    total_failed_count: int,
 ) -> list[str]:
     watchouts = [
-        f"baseline 通过 {rubric_result.baseline.aggregate.passed} / {rubric_result.baseline.aggregate.criteria_count}",
-        f"candidate 通过 {rubric_result.candidate.aggregate.passed} / {rubric_result.candidate.aggregate.criteria_count}",
+        (
+            "baseline 完全通过 "
+            f"{rubric_result.baseline.aggregate.passed} / 部分通过 {rubric_result.baseline.aggregate.partial} / "
+            f"失败 {rubric_result.baseline.aggregate.failed} / 总计 {rubric_result.baseline.aggregate.criteria_count}"
+        ),
+        (
+            "candidate 完全通过 "
+            f"{rubric_result.candidate.aggregate.passed} / 部分通过 {rubric_result.candidate.aggregate.partial} / "
+            f"失败 {rubric_result.candidate.aggregate.failed} / 总计 {rubric_result.candidate.aggregate.criteria_count}"
+        ),
     ]
     if failed_items:
-        watchouts.append(f"共有 {len(failed_items)} 条局部风险，请重点关注代表性失败项。")
+        watchouts.append(f"共有 {total_failed_count} 条局部风险，请重点关注代表性失败项。")
+        watchouts.extend(_summarize_watchouts(failed_items[:6]))
     return watchouts
 
 
@@ -504,6 +554,7 @@ def build_pairwise_packet(
     rubric_result: NodeLabRubricScoringResult,
 ) -> PairwisePacket:
     failed_by_sentence, all_failed = _collect_failed_items_by_sentence(rubric_result)
+    representative_failed = _representative_failed_items(all_failed, limit=8)
     aggregate = {
         "baseline": rubric_result.baseline.aggregate.model_dump(mode="json"),
         "candidate": rubric_result.candidate.aggregate.model_dump(mode="json"),
@@ -516,8 +567,12 @@ def build_pairwise_packet(
         reading_variant=reading_variant,
         context=context,
         aggregate=aggregate,
-        watchouts=_overall_watchouts(rubric_result, all_failed),
-        failed_items=all_failed[:8],
+        watchouts=_overall_watchouts(
+            rubric_result,
+            representative_failed,
+            total_failed_count=len(all_failed),
+        ),
+        failed_items=representative_failed,
         question=preset.pairwise.question if preset.pairwise and preset.pairwise.question else "请给出整体对比评估意见。",
     )
     if preset.node_name == "translation":
