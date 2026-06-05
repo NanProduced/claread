@@ -136,6 +136,22 @@ function grammarToneFromEntryType(entryType) {
   return "tone-grammar-note";
 }
 
+function linkedIdKey(rawId) {
+  const value = String(rawId || "").trim();
+  return value ? value.replace(/^[a-z]+_/, "") : "";
+}
+
+function matchGrammarMark(entry, marks = []) {
+  const grammarMarks = marks.filter((item) => item?.annotation_type === "grammar_note");
+  const entryKey = linkedIdKey(entry?.id);
+  if (entryKey) {
+    const exact = grammarMarks.find((item) => linkedIdKey(item?.id) === entryKey);
+    if (exact) return exact;
+  }
+  if (grammarMarks.length === 1) return grammarMarks[0];
+  return null;
+}
+
 function orderKey(sentenceId) {
   const raw = String(sentenceId || "");
   const match = raw.match(/(\d+)/);
@@ -295,18 +311,10 @@ const sentenceRows = computed(() => {
           detail: lexicalMarkDetail(item),
           tone: lexicalToneFromAnnotationType(item?.annotation_type),
         }));
-      const grammarMarks = marks
-        .filter((item) => item?.annotation_type === "grammar_note")
-        .map((item) => ({
-          anchor: noteAnchorText(item),
-          label: "语法",
-          content: lexicalMarkSummary(item),
-          detail: lexicalMarkDetail(item),
-          tone: "tone-grammar-note",
-        }));
       const grammarEntries = entries
         .filter((item) => item?.entry_type === "grammar_note" || item?.entry_type === "sentence_analysis")
         .map((item) => {
+          const linkedMark = item?.entry_type === "grammar_note" ? matchGrammarMark(item, marks) : null;
           const rawChunks = Array.isArray(item?.chunks)
             ? item.chunks
               .map((chunk) => ({
@@ -330,7 +338,7 @@ const sentenceRows = computed(() => {
             .filter(Boolean)
             .filter((chunkText) => !originalText || !originalText.includes(chunkText));
           return {
-            anchor: noteAnchorText(item),
+            anchor: linkedMark ? noteAnchorText(linkedMark) : noteAnchorText(item),
             label: grammarEntryTypeLabel(item),
             title: item?.label || item?.title || grammarEntryTypeLabel(item),
             content: String(item?.content || "—"),
@@ -339,8 +347,24 @@ const sentenceRows = computed(() => {
             chunks,
             missingChunks,
             highlightedSentence: highlightSegments(originalText, chunks.map((chunk) => chunk?.text)),
+            linkedMarkKey: linkedMark ? linkedIdKey(linkedMark?.id) : "",
           };
         });
+      const linkedGrammarMarkKeys = new Set(
+        grammarEntries
+          .map((entry) => entry.linkedMarkKey)
+          .filter(Boolean)
+      );
+      const grammarMarks = marks
+        .filter((item) => item?.annotation_type === "grammar_note")
+        .filter((item) => !linkedGrammarMarkKeys.has(linkedIdKey(item?.id)))
+        .map((item) => ({
+          anchor: noteAnchorText(item),
+          label: "语法",
+          content: lexicalMarkSummary(item),
+          detail: lexicalMarkDetail(item),
+          tone: "tone-grammar-note",
+        }));
       const supplementalEntries = entries
         .filter((item) => item?.entry_type !== "grammar_note" && item?.entry_type !== "sentence_analysis")
         .map((item) => ({
@@ -407,8 +431,8 @@ const sentenceRows = computed(() => {
                 :class="mark.tone"
               >
                 <div class="note-head">
-                  <span class="anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
-                  <span class="type-chip" :class="mark.tone">{{ mark.typeLabel }}</span>
+                  <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                  <span class="eval-mark-type" :class="mark.tone">{{ mark.typeLabel }}</span>
                 </div>
                 <p class="note-body">{{ mark.summary }}</p>
                 <p v-if="mark.detail" class="note-detail">{{ mark.detail }}</p>
@@ -436,8 +460,8 @@ const sentenceRows = computed(() => {
                 :class="mark.tone"
               >
                 <div class="note-head">
-                  <span class="anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
-                  <span class="type-chip" :class="mark.tone">{{ mark.label }}</span>
+                  <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                  <span class="eval-mark-type" :class="mark.tone">{{ mark.label }}</span>
                 </div>
                 <p class="note-body">{{ mark.content }}</p>
                 <p v-if="mark.detail" class="note-detail">{{ mark.detail }}</p>
@@ -450,8 +474,8 @@ const sentenceRows = computed(() => {
                 :class="entry.tone"
               >
                 <div class="note-head">
-                  <span class="anchor-chip" :class="entry.tone">{{ entry.anchor }}</span>
-                  <span class="type-chip" :class="entry.tone">{{ entry.label }}</span>
+                  <span class="eval-anchor-chip" :class="entry.tone">{{ entry.anchor }}</span>
+                  <span class="eval-mark-type" :class="entry.tone">{{ entry.label }}</span>
                 </div>
                 <strong class="entry-title">{{ entry.title }}</strong>
                 <template v-if="entry.tone === 'tone-sentence-analysis'">
@@ -515,8 +539,8 @@ const sentenceRows = computed(() => {
                 class="note-card extra-card"
               >
                 <div class="note-head">
-                  <span class="anchor-chip extra">{{ entry.anchor }}</span>
-                  <span class="type-chip extra">{{ entry.label }}</span>
+                  <span class="eval-anchor-chip extra">{{ entry.anchor }}</span>
+                  <span class="eval-mark-type extra">{{ entry.label }}</span>
                 </div>
                 <strong class="entry-title">{{ entry.title }}</strong>
                 <p class="note-body preserve-lines">{{ entry.content }}</p>
@@ -599,7 +623,7 @@ const sentenceRows = computed(() => {
 }
 
 .source-segment.tone-phrase {
-  background: color-mix(in srgb, #ff9f43 20%, var(--theme--background));
+  background: color-mix(in srgb, #db2777 20%, var(--theme--background));
 }
 
 .source-segment.tone-context {
@@ -614,7 +638,7 @@ const sentenceRows = computed(() => {
   background: linear-gradient(
     180deg,
     color-mix(in srgb, #e4b000 18%, var(--theme--background)) 0%,
-    color-mix(in srgb, #ff9f43 18%, var(--theme--background)) 100%
+    color-mix(in srgb, #db2777 18%, var(--theme--background)) 100%
   );
 }
 
@@ -624,7 +648,7 @@ const sentenceRows = computed(() => {
 }
 
 .source-segment.tone-mixed-phrase {
-  background: color-mix(in srgb, #ff9f43 14%, var(--theme--background));
+  background: color-mix(in srgb, #db2777 14%, var(--theme--background));
   box-shadow: inset 0 -2px 0 0 color-mix(in srgb, #746694 72%, transparent);
 }
 
@@ -742,8 +766,8 @@ const sentenceRows = computed(() => {
 }
 
 .lexical-card.tone-phrase {
-  border-color: color-mix(in srgb, #ff9f43 36%, var(--theme--border-color));
-  background: color-mix(in srgb, #ff9f43 6%, var(--theme--background));
+  border-color: color-mix(in srgb, #db2777 36%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 6%, var(--theme--background));
 }
 
 .lexical-card.tone-context {
@@ -757,8 +781,8 @@ const sentenceRows = computed(() => {
 }
 
 .grammar-card.tone-sentence-analysis {
-  border-color: color-mix(in srgb, #2f8a7d 30%, var(--theme--border-color));
-  background: color-mix(in srgb, #2f8a7d 5%, var(--theme--background));
+  border-color: color-mix(in srgb, #059669 30%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 5%, var(--theme--background));
 }
 
 .extra-card {
@@ -775,9 +799,9 @@ const sentenceRows = computed(() => {
 .analysis-context {
   display: grid;
   gap: 6px;
-  border: 1px solid color-mix(in srgb, #2f8a7d 20%, var(--theme--border-color));
+  border: 1px solid color-mix(in srgb, #059669 20%, var(--theme--border-color));
   border-radius: 10px;
-  background: color-mix(in srgb, #2f8a7d 4%, var(--theme--background));
+  background: color-mix(in srgb, #059669 4%, var(--theme--background));
   padding: 10px 12px;
 }
 
@@ -799,8 +823,8 @@ const sentenceRows = computed(() => {
 
 .analysis-mark {
   border-radius: 6px;
-  background: color-mix(in srgb, #2f8a7d 18%, var(--theme--background));
-  box-shadow: inset 0 -2px 0 0 color-mix(in srgb, #2f8a7d 66%, transparent);
+  background: color-mix(in srgb, #059669 18%, var(--theme--background));
+  box-shadow: inset 0 -2px 0 0 color-mix(in srgb, #059669 66%, transparent);
   color: inherit;
   padding: 0 1px;
 }
@@ -817,9 +841,9 @@ const sentenceRows = computed(() => {
   gap: 8px;
   min-height: 26px;
   padding: 0 10px;
-  border: 1px solid color-mix(in srgb, #2f8a7d 28%, var(--theme--border-color));
+  border: 1px solid color-mix(in srgb, #059669 28%, var(--theme--border-color));
   border-radius: 999px;
-  background: color-mix(in srgb, #2f8a7d 6%, var(--theme--background));
+  background: color-mix(in srgb, #059669 6%, var(--theme--background));
 }
 
 .analysis-evidence-value {
@@ -831,7 +855,7 @@ const sentenceRows = computed(() => {
 .warning-list {
   margin: 0;
   padding-left: 18px;
-  color: #b86400;
+  color: #b45309;
   display: grid;
   gap: 4px;
   font-size: 12px;
@@ -848,9 +872,9 @@ const sentenceRows = computed(() => {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
   align-items: start;
-  border: 1px solid color-mix(in srgb, #2f8a7d 18%, var(--theme--border-color));
+  border: 1px solid color-mix(in srgb, #059669 18%, var(--theme--border-color));
   border-radius: 10px;
-  background: color-mix(in srgb, #2f8a7d 3%, var(--theme--background));
+  background: color-mix(in srgb, #059669 3%, var(--theme--background));
   padding: 10px 12px;
 }
 
@@ -861,8 +885,8 @@ const sentenceRows = computed(() => {
   min-width: 28px;
   min-height: 28px;
   border-radius: 8px;
-  background: color-mix(in srgb, #2f8a7d 12%, var(--theme--background));
-  color: #245f56;
+  background: color-mix(in srgb, #059669 12%, var(--theme--background));
+  color: #065f46;
   font-size: 12px;
   font-weight: 800;
 }
@@ -885,8 +909,8 @@ const sentenceRows = computed(() => {
   overflow-wrap: anywhere;
 }
 
-.anchor-chip,
-.type-chip {
+.eval-anchor-chip,
+.eval-mark-type {
   display: inline-flex;
   align-items: center;
   min-height: 22px;
@@ -897,60 +921,60 @@ const sentenceRows = computed(() => {
   line-height: 1.2;
 }
 
-.anchor-chip {
+.eval-anchor-chip {
   border: 1px solid color-mix(in srgb, #e4b000 34%, var(--theme--border-color));
   background: color-mix(in srgb, #e4b000 15%, var(--theme--background));
   color: #785300;
 }
 
-.anchor-chip.tone-vocab,
-.type-chip.tone-vocab,
+.eval-anchor-chip.tone-vocab,
+.eval-mark-type.tone-vocab,
 .legend-pill.tone-vocab {
   border-color: color-mix(in srgb, #e4b000 34%, var(--theme--border-color));
   background: color-mix(in srgb, #e4b000 15%, var(--theme--background));
   color: #785300;
 }
 
-.anchor-chip.tone-phrase,
-.type-chip.tone-phrase,
+.eval-anchor-chip.tone-phrase,
+.eval-mark-type.tone-phrase,
 .legend-pill.tone-phrase {
-  border-color: color-mix(in srgb, #ff9f43 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #ff9f43 12%, var(--theme--background));
-  color: #9a4f00;
+  border-color: color-mix(in srgb, #db2777 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 10%, var(--theme--background));
+  color: #9f1239;
 }
 
-.anchor-chip.tone-context,
-.type-chip.tone-context,
+.eval-anchor-chip.tone-context,
+.eval-mark-type.tone-context,
 .legend-pill.tone-context {
   border-color: color-mix(in srgb, #54a7de 34%, var(--theme--border-color));
   background: color-mix(in srgb, #54a7de 12%, var(--theme--background));
   color: #285f8d;
 }
 
-.anchor-chip.tone-grammar-note,
-.type-chip.tone-grammar-note,
+.eval-anchor-chip.tone-grammar-note,
+.eval-mark-type.tone-grammar-note,
 .legend-pill.tone-grammar-note {
   border-color: color-mix(in srgb, #746694 38%, var(--theme--border-color));
   background: color-mix(in srgb, #746694 12%, var(--theme--background));
   color: #554777;
 }
 
-.anchor-chip.tone-sentence-analysis,
-.type-chip.tone-sentence-analysis,
+.eval-anchor-chip.tone-sentence-analysis,
+.eval-mark-type.tone-sentence-analysis,
 .legend-pill.tone-sentence-analysis {
-  border-color: color-mix(in srgb, #2f8a7d 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #2f8a7d 12%, var(--theme--background));
-  color: #245f56;
+  border-color: color-mix(in srgb, #059669 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 12%, var(--theme--background));
+  color: #065f46;
 }
 
-.anchor-chip.extra,
-.type-chip.extra {
+.eval-anchor-chip.extra,
+.eval-mark-type.extra {
   border-color: color-mix(in srgb, #3c8c68 28%, var(--theme--border-color));
   background: color-mix(in srgb, #3c8c68 10%, var(--theme--background));
   color: #2d6b4f;
 }
 
-.type-chip {
+.eval-mark-type {
   border: 1px solid var(--theme--border-color);
   background: var(--theme--background-subdued);
   color: var(--theme--foreground-subdued);

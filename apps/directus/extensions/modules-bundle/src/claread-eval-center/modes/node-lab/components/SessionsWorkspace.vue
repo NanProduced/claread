@@ -279,6 +279,7 @@ function judgeRequestsForTrialCount(trialId) {
 const pendingDeleteTarget = ref(null); // { type: 'session' | 'trial', id: string, label: string }
 const isEditingSessionTitle = ref(false);
 const sessionTitleDraft = ref("");
+const isTimelineCollapsed = ref(false);
 
 function confirmDelete() {
   if (!pendingDeleteTarget.value) return;
@@ -326,275 +327,427 @@ function formatExcerpt(text) {
 </script>
 
 <template>
-  <div class="sessions-workspace">
-    <div class="sessions-sidebar">
-      <div class="sidebar-header">
-        <h3 class="sidebar-title">Compare 实验记录本</h3>
-      </div>
-      <p class="sidebar-hint">
-        每个 Session 固定 node、阅读目标/变体与 baseline 参考系。
-        <button class="btn-link inline-hint" @click="goStartCompareFromEmpty">没有 Session？先去跑一条 compare</button>
-      </p>
-      <div class="session-list">
-        <button
-          v-for="item in currentSessions"
-          :key="item.session_id"
-          class="session-nav-item"
-          :class="{ active: selectedSessionId === item.session_id }"
-          :aria-current="selectedSessionId === item.session_id ? 'true' : undefined"
-          @click="selectSession(item.session_id)"
-        >
-          <div class="item-header">
-            <span class="item-title">{{ item.title }}</span>
-            <span v-if="selectedSessionId === item.session_id" class="badge badge-active">当前</span>
+  <div class="sessions-workspace" :class="{ 'in-session-detail': !!selectedSessionId }">
+    <!-- Level 1: Sessions Directory -->
+    <template v-if="!selectedSessionId">
+      <div class="directory-view">
+        <div class="directory-header mb-4">
+          <div class="header-title-row">
+            <h2 class="directory-title">Compare 实验记录本 (Sessions)</h2>
+            <button class="btn-link inline-hint" @click="goStartCompareFromEmpty">没有 Session？先去跑一条 compare</button>
           </div>
-          <div class="item-meta">
-            <span>{{ statusLabel(item.status) }}</span>
-            <span class="dot-separator">·</span>
-            <span>{{ sessionCompareCount(item) }} compare</span>
-            <span class="dot-separator">·</span>
-            <span>{{ sessionJudgeCount(item, state.sessionDetailsById) }} judge</span>
-          </div>
-          <div class="item-meta">
-            <span>{{ nodeLabel(item.node_name) }}</span>
-            <span class="dot-separator">·</span>
-            <span>{{ readingGoalLabel(item.baseline_snapshot_json?.reading_goal) }}</span>
-            <span class="dot-separator">·</span>
-            <span>{{ readingVariantLabel(item.baseline_snapshot_json?.reading_variant) }}</span>
-          </div>
-          <div class="item-meta">
-            <span>Baseline {{ sessionBaselineLabel(item) }}</span>
-          </div>
-        </button>
-        <div v-if="!currentSessions.length" class="empty-state compact">
-          <p>暂无记录本</p>
-          <span class="empty-hint">请在 Baseline Compare 跑出第一条 compare 后新建 Session。</span>
+          <p class="directory-desc">
+            每个 Session 固定特定的分析节点、阅读目标、阅读变体与 baseline 参考系。在此可统一查阅、管理并对比所有的实验运行结果。
+          </p>
         </div>
-        <div v-if="loading.sessions && !currentSessions.length" class="session-loading">
+
+        <div v-if="currentSessions.length" class="session-table-wrapper">
+          <table class="session-table">
+            <thead>
+              <tr>
+                <th>记录本名称</th>
+                <th>分析节点</th>
+                <th>固定阅读上下文 (目标 / 变体)</th>
+                <th>参考参考系 (Baseline)</th>
+                <th>Compare 实验</th>
+                <th>状态</th>
+                <th>更新时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr 
+                v-for="item in currentSessions" 
+                :key="item.session_id" 
+                @click="selectSession(item.session_id)"
+                class="session-table-row"
+              >
+                <td class="cell-title">{{ item.title }}</td>
+                <td class="cell-node">
+                  <span class="ctx-chip-sm">{{ nodeLabel(item.node_name) }}</span>
+                </td>
+                <td class="cell-context">
+                  <span class="ctx-chip-sm">{{ readingGoalLabel(item.baseline_snapshot_json?.reading_goal) }}</span>
+                  <span class="dot-separator">·</span>
+                  <span class="ctx-chip-sm">{{ readingVariantLabel(item.baseline_snapshot_json?.reading_variant) }}</span>
+                </td>
+                <td class="cell-baseline text-muted">
+                  {{ item.baseline_snapshot_json?.prompt_profile || "未记录" }}
+                </td>
+                <td class="cell-count font-bold">
+                  {{ sessionCompareCount(item) }} 条 compare
+                  <span v-if="sessionJudgeCount(item, state.sessionDetailsById) > 0" class="judge-badge-sub">
+                    / {{ sessionJudgeCount(item, state.sessionDetailsById) }} judge
+                  </span>
+                </td>
+                <td class="cell-status">
+                  <span class="badge" :class="`badge-${statusTone(item.status)}`">
+                    {{ statusLabel(item.status) }}
+                  </span>
+                </td>
+                <td class="cell-time text-muted">
+                  {{ formatClockTime(item.date_updated) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-else-if="!loading.sessions" class="empty-state">
+          <p>暂无实验记录本</p>
+          <span class="empty-hint">请在 Baseline Compare 跑出第一条 compare 并选择“新建 Session 并加入”。</span>
+        </div>
+
+        <div v-if="loading.sessions" class="session-loading">
           <div class="loading-spinner-sm"></div>
           <span>正在加载 Session 列表...</span>
         </div>
       </div>
-    </div>
+    </template>
 
-    <div class="sessions-main">
-      <template v-if="selectedSessionDetail?.session">
-        <div class="session-hero">
-          <div class="hero-main">
-            <div class="session-title-row">
-              <template v-if="isEditingSessionTitle">
-                <v-input v-model="sessionTitleDraft" class="session-title-input" />
-                <div class="session-title-actions">
-                  <v-button small :loading="loading.sessions" @click="saveSessionRename">保存</v-button>
-                  <v-button small secondary @click="cancelSessionRename">取消</v-button>
-                </div>
-              </template>
-              <template v-else>
-                <h2 class="session-title">{{ selectedSessionDetail.session.title }}</h2>
-                <v-button small secondary @click="startSessionRename">重命名</v-button>
-              </template>
-            </div>
-            <span class="badge" :class="`badge-${statusTone(selectedSessionDetail.session.status)}`">{{ statusLabel(selectedSessionDetail.session.status) }}</span>
-          </div>
-          <p class="session-desc">{{ sessionDecisionNarrative }}</p>
-          <div class="action-buttons mt-3">
-            <v-button secondary @click="state.activeWorkspace = 'baseline_compare'">返回 Baseline Compare</v-button>
-            <v-button class="btn-danger-text" outlined @click="pendingDeleteTarget = { type: 'session', id: selectedSessionDetail.session.session_id, label: selectedSessionDetail.session.title }">删除整个 Session</v-button>
-          </div>
-          <div v-if="pendingDeleteTarget" class="confirm-banner is-danger" role="alert">
-            <p>确认删除{{ pendingDeleteTarget.type === 'session' ? '整个 Session' : '这条 Compare' }}「{{ pendingDeleteTarget.label }}」？此操作不可撤销。</p>
-            <div class="confirm-actions">
-              <v-button small danger @click="confirmDelete">确认删除</v-button>
-              <v-button small secondary @click="pendingDeleteTarget = null">取消</v-button>
-            </div>
-          </div>
-
-          <div class="notebook-context mt-3">
-            <span class="badge badge-locked">固定上下文</span>
-            <span class="ctx-chip">Node：{{ nodeLabel(selectedSessionDetail.session.node_name) }}</span>
-            <span class="ctx-chip">阅读目标：{{ readingGoalLabel(selectedSessionDetail.session.baseline_snapshot_json?.reading_goal) }}</span>
-            <span class="ctx-chip">阅读变体：{{ readingVariantLabel(selectedSessionDetail.session.baseline_snapshot_json?.reading_variant) }}</span>
-            <span class="ctx-chip">Baseline：{{ selectedSessionDetail.session.baseline_snapshot_json?.prompt_profile || "未记录" }}</span>
-          </div>
-
-          <div class="meta-row mt-3">
-            <div class="meta-badge" v-for="[label, value] in sessionNotebookFacts" :key="label">
-              <span class="label">{{ label }}</span>
-              <span class="value">{{ value }}</span>
-            </div>
-          </div>
-
-          <div v-if="sessionProgressBars.length" class="progress-bars mt-3">
-            <div v-for="bar in sessionProgressBars" :key="bar.label" class="progress-bar-item">
-              <span class="progress-label">{{ bar.label }}</span>
-              <div class="progress-track">
-                <div class="progress-fill" :class="`is-${bar.color}`" :style="{ width: `${Math.min(100, (bar.count / bar.max) * 100)}%` }"></div>
-              </div>
-              <span class="progress-count">{{ bar.count }}</span>
-            </div>
-          </div>
+    <!-- Level 2: Active Session Workspace -->
+    <template v-else>
+      <div class="sessions-main full-width">
+        <!-- Back Navigation Breadcrumb -->
+        <div class="session-back-nav mb-4">
+          <v-button secondary small @click="selectedSessionId = ''">
+            ← 返回所有记录本
+          </v-button>
         </div>
 
-        <div class="timeline-container">
-          <div class="timeline-sidebar">
-            <h4 class="block-title mb-3">Compare 时间线</h4>
-            <p class="block-hint">这里是这本 notebook 的历史入口。点一条 compare，再决定回到 Baseline Compare 查看或重新 Judge。</p>
-            <div v-if="selectedSessionDetail.trials.length" class="timeline-list">
-              <button
-                v-for="(trial, index) in selectedSessionDetail.trials"
-                :key="trial.trial_id"
-                class="timeline-item"
-                :class="{ active: selectedSessionTrialId === trial.trial_id }"
-                @click="loadTrialDetail(trial.trial_id, selectedSessionId)"
-              >
-                <div class="item-header">
-                  <span class="item-idx">#{{ index + 1 }}</span>
-                  <span class="item-type">Compare</span>
-                  <span class="item-id">{{ shortId(trial.trial_id) }}</span>
-                </div>
-                <div class="item-status">
-                  <span class="badge badge-sm" :class="`badge-${statusTone(trial.status)}`">{{ statusLabel(trial.status) }}</span>
-                  <span class="badge badge-sm badge-neutral">{{ statusLabel(trial.result_summary_json?.result_status?.compare_status) }}</span>
-                  <span v-if="judgeRequestsForTrialCount(trial.trial_id) > 0" class="badge badge-sm badge-active">
-                    {{ judgeRequestsForTrialCount(trial.trial_id) }} judge
-                  </span>
-                </div>
-                <p v-if="trial.display_excerpt || trial.input_excerpt" class="item-excerpt">「{{ formatExcerpt(trial.display_excerpt || trial.input_excerpt) }}」</p>
-              </button>
+        <template v-if="selectedSessionDetail?.session">
+          <div class="session-hero">
+            <div class="hero-main">
+              <div class="session-title-row">
+                <template v-if="isEditingSessionTitle">
+                  <v-input v-model="sessionTitleDraft" class="session-title-input" />
+                  <div class="session-title-actions">
+                    <v-button small :loading="loading.sessions" @click="saveSessionRename">保存</v-button>
+                    <v-button small secondary @click="cancelSessionRename">取消</v-button>
+                  </div>
+                </template>
+                <template v-else>
+                  <h2 class="session-title">{{ selectedSessionDetail.session.title }}</h2>
+                  <v-button small secondary @click="startSessionRename">重命名</v-button>
+                </template>
+              </div>
+              <span class="badge" :class="`badge-${statusTone(selectedSessionDetail.session.status)}`">{{ statusLabel(selectedSessionDetail.session.status) }}</span>
             </div>
-            <div v-else class="empty-state compact">
-              <p>暂无 compare</p>
-              <span class="empty-hint">回到 Baseline Compare 跑出第一条结果并选择"加入 Session"。</span>
+            <p class="session-desc">{{ sessionDecisionNarrative }}</p>
+            <div class="action-buttons mt-3">
+              <v-button secondary @click="state.activeWorkspace = 'baseline_compare'">返回 Baseline Compare</v-button>
+              <v-button class="btn-danger-text" outlined @click="pendingDeleteTarget = { type: 'session', id: selectedSessionDetail.session.session_id, label: selectedSessionDetail.session.title }">删除整个 Session</v-button>
+            </div>
+            <div v-if="pendingDeleteTarget" class="confirm-banner is-danger" role="alert">
+              <p>确认删除{{ pendingDeleteTarget.type === 'session' ? '整个 Session' : '这条 Compare' }}「{{ pendingDeleteTarget.label }}」？此操作不可撤销。</p>
+              <div class="confirm-actions">
+                <v-button small danger @click="confirmDelete">确认删除</v-button>
+                <v-button small secondary @click="pendingDeleteTarget = null">取消</v-button>
+              </div>
+            </div>
+
+            <div class="notebook-context mt-3">
+              <span class="badge badge-locked">固定上下文</span>
+              <span class="ctx-chip">Node：{{ nodeLabel(selectedSessionDetail.session.node_name) }}</span>
+              <span class="ctx-chip">阅读目标：{{ readingGoalLabel(selectedSessionDetail.session.baseline_snapshot_json?.reading_goal) }}</span>
+              <span class="ctx-chip">阅读变体：{{ readingVariantLabel(selectedSessionDetail.session.baseline_snapshot_json?.reading_variant) }}</span>
+              <span class="ctx-chip">Baseline：{{ selectedSessionDetail.session.baseline_snapshot_json?.prompt_profile || "未记录" }}</span>
+            </div>
+
+            <div class="meta-row mt-3">
+              <div class="meta-badge" v-for="[label, value] in sessionNotebookFacts" :key="label">
+                <span class="label">{{ label }}</span>
+                <span class="value">{{ value }}</span>
+              </div>
+            </div>
+
+            <div v-if="sessionProgressBars.length" class="progress-bars mt-3">
+              <div v-for="bar in sessionProgressBars" :key="bar.label" class="progress-bar-item">
+                <span class="progress-label">{{ bar.label }}</span>
+                <div class="progress-track">
+                  <div class="progress-fill" :class="`is-${bar.color}`" :style="{ width: `${Math.min(100, (bar.count / bar.max) * 100)}%` }"></div>
+                </div>
+                <span class="progress-count">{{ bar.count }}</span>
+              </div>
             </div>
           </div>
 
-          <div class="timeline-detail">
-            <h4 class="block-title mb-3">
-              Compare 详情
-              <span v-if="selectedSessionTrialId" class="text-muted font-normal text-sm ml-2">#{{ shortId(selectedSessionTrialId) }}</span>
-            </h4>
-
-            <template v-if="selectedSessionTrialDetail?.trial">
-              <div class="action-buttons mb-4">
-                <v-button secondary @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id)">在 Baseline Compare 中打开</v-button>
-                <v-button @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id, { openJudge: true })">重新 Judge</v-button>
-                <v-button class="btn-danger-text" outlined @click="pendingDeleteTarget = { type: 'trial', id: selectedSessionTrialDetail.trial.trial_id, label: shortId(selectedSessionTrialDetail.trial.trial_id) }">删除这条 compare</v-button>
+          <div class="timeline-container" :class="{ 'is-collapsed': isTimelineCollapsed }">
+            <div v-if="!isTimelineCollapsed" class="timeline-sidebar">
+              <div class="timeline-sidebar-header mb-3">
+                <h4 class="block-title">Compare 时间线</h4>
+                <v-button class="btn-collapse" icon secondary small @click="isTimelineCollapsed = true" title="收起时间线">
+                  ←
+                </v-button>
               </div>
-
-              <div class="meta-grid mb-4">
-                <div class="meta-item">
-                  <span class="meta-label">Compare 状态</span>
-                  <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.compare_status) }}</span>
-                </div>
-                <div class="meta-item">
-                  <span class="meta-label">Baseline 状态</span>
-                  <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.baseline_status) }}</span>
-                </div>
-                <div class="meta-item">
-                  <span class="meta-label">Candidate 状态</span>
-                  <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.candidate_status) }}</span>
-                </div>
-                <div class="meta-item">
-                  <span class="meta-label">执行耗时</span>
-                  <span class="meta-value">
-                    <span v-if="selectedSessionTrialDetail.trial.started_at && selectedSessionTrialDetail.trial.finished_at">
-                      {{ formatClockTime(selectedSessionTrialDetail.trial.started_at) }} – {{ formatClockTime(selectedSessionTrialDetail.trial.finished_at) }}
+              <p class="block-hint">这里是这本 notebook 的历史入口。点一条 compare，再决定回到 Baseline Compare 查看或重新 Judge。</p>
+              <div v-if="selectedSessionDetail.trials.length" class="timeline-list">
+                <button
+                  v-for="(trial, index) in selectedSessionDetail.trials"
+                  :key="trial.trial_id"
+                  class="timeline-item"
+                  :class="{ active: selectedSessionTrialId === trial.trial_id }"
+                  @click="loadTrialDetail(trial.trial_id, selectedSessionId)"
+                >
+                  <div class="item-header">
+                    <span class="item-idx">#{{ index + 1 }}</span>
+                    <span class="item-type">Compare</span>
+                    <span class="item-id">{{ shortId(trial.trial_id) }}</span>
+                  </div>
+                  <div class="item-status">
+                    <span class="badge badge-sm" :class="`badge-${statusTone(trial.status)}`">{{ statusLabel(trial.status) }}</span>
+                    <span class="badge badge-sm badge-neutral">{{ statusLabel(trial.result_summary_json?.result_status?.compare_status) }}</span>
+                    <span v-if="judgeRequestsForTrialCount(trial.trial_id) > 0" class="badge badge-sm badge-active">
+                      {{ judgeRequestsForTrialCount(trial.trial_id) }} judge
                     </span>
-                    <span v-else>未记录</span>
-                  </span>
-                </div>
-              </div>
-
-              <div v-if="selectedSessionTrialDetail.trial.input_excerpt" class="input-excerpt mb-3">
-                <span class="meta-label">输入摘要</span>
-                <p>{{ formatExcerpt(selectedSessionTrialDetail.trial.input_excerpt) }}</p>
-              </div>
-
-              <template v-if="selectedSessionTrialResult()?.baseline && selectedSessionTrialResult()?.candidate">
-                <div class="compare-split">
-                  <div class="compare-pane">
-                    <div class="pane-header"><h4>Baseline</h4></div>
-                    <NodeProbeOutputView
-                      :node-name="state.activeNode"
-                      :output="selectedSessionTrialResult().baseline?.node_output || null"
-                      :prepared-sentences="selectedSessionTrialResult().baseline?.prepared_sentences || []"
-                      :quick-validation="selectedSessionTrialResult().baseline?.quick_validation || null"
-                      empty-text="尚无输出。"
-                    />
                   </div>
-                  <div class="compare-pane">
-                    <div class="pane-header"><h4>Candidate</h4></div>
-                    <NodeProbeOutputView
-                      :node-name="state.activeNode"
-                      :output="selectedSessionTrialResult().candidate?.node_output || null"
-                      :prepared-sentences="selectedSessionTrialResult().candidate?.prepared_sentences || []"
-                      :quick-validation="selectedSessionTrialResult().candidate?.quick_validation || null"
-                      empty-text="尚无输出。"
-                    />
+                  <p v-if="trial.display_excerpt || trial.input_excerpt" class="item-excerpt">「{{ formatExcerpt(trial.display_excerpt || trial.input_excerpt) }}」</p>
+                </button>
+              </div>
+              <div v-else class="empty-state compact">
+                <p>暂无 compare</p>
+                <span class="empty-hint">回到 Baseline Compare 跑出第一条结果并选择"加入 Session"。</span>
+              </div>
+            </div>
+
+            <div class="timeline-detail">
+              <h4 class="block-title mb-3">
+                <v-button v-if="isTimelineCollapsed" class="btn-expand mr-2" icon secondary small @click="isTimelineCollapsed = false" title="展开时间线">
+                  →
+                </v-button>
+                Compare 详情
+                <span v-if="selectedSessionTrialId" class="text-muted font-normal text-sm ml-2">#{{ shortId(selectedSessionTrialId) }}</span>
+              </h4>
+
+              <template v-if="selectedSessionTrialDetail?.trial">
+                <div class="action-buttons mb-4">
+                  <v-button secondary @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id)">在 Baseline Compare 中打开</v-button>
+                  <v-button @click="openSessionTrialInCompare(selectedSessionTrialDetail.trial.trial_id, { openJudge: true })">重新 Judge</v-button>
+                  <v-button class="btn-danger-text" outlined @click="pendingDeleteTarget = { type: 'trial', id: selectedSessionTrialDetail.trial.trial_id, label: shortId(selectedSessionTrialDetail.trial.trial_id) }">删除这条 compare</v-button>
+                </div>
+
+                <div class="meta-grid mb-4">
+                  <div class="meta-item">
+                    <span class="meta-label">Compare 状态</span>
+                    <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.compare_status) }}</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Baseline 状态</span>
+                    <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.baseline_status) }}</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Candidate 状态</span>
+                    <span class="meta-value">{{ statusLabel(selectedSessionTrialDetail.trial.result_summary_json?.result_status?.candidate_status) }}</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">执行耗时</span>
+                    <span class="meta-value">
+                      <span v-if="selectedSessionTrialDetail.trial.started_at && selectedSessionTrialDetail.trial.finished_at">
+                        {{ formatClockTime(selectedSessionTrialDetail.trial.started_at) }} – {{ formatClockTime(selectedSessionTrialDetail.trial.finished_at) }}
+                      </span>
+                      <span v-else>未记录</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div v-if="selectedSessionTrialDetail.trial.input_excerpt" class="input-excerpt mb-3">
+                  <span class="meta-label">输入摘要</span>
+                  <p>{{ formatExcerpt(selectedSessionTrialDetail.trial.input_excerpt) }}</p>
+                </div>
+
+                <template v-if="selectedSessionTrialResult()?.baseline && selectedSessionTrialResult()?.candidate">
+                  <div class="compare-split">
+                    <div class="compare-pane">
+                      <div class="pane-header"><h4>Baseline</h4></div>
+                      <NodeProbeOutputView
+                        :node-name="state.activeNode"
+                        :output="selectedSessionTrialResult().baseline?.node_output || null"
+                        :prepared-sentences="selectedSessionTrialResult().baseline?.prepared_sentences || []"
+                        :quick-validation="selectedSessionTrialResult().baseline?.quick_validation || null"
+                        empty-text="尚无输出。"
+                      />
+                    </div>
+                    <div class="compare-pane">
+                      <div class="pane-header"><h4>Candidate</h4></div>
+                      <NodeProbeOutputView
+                        :node-name="state.activeNode"
+                        :output="selectedSessionTrialResult().candidate?.node_output || null"
+                        :prepared-sentences="selectedSessionTrialResult().candidate?.prepared_sentences || []"
+                        :quick-validation="selectedSessionTrialResult().candidate?.quick_validation || null"
+                        empty-text="尚无输出。"
+                      />
+                    </div>
+                  </div>
+                </template>
+
+                <div v-if="judgeRequestsForTrial(selectedSessionTrialId).length" class="mt-4">
+                  <h5 class="block-title">所挂 Judge 结果</h5>
+                  <div class="judge-tile-list mt-2">
+                    <button
+                      v-for="req in judgeRequestsForTrial(selectedSessionTrialId)"
+                      :key="req.judge_request_id"
+                      class="judge-tile judge-tile--interactive"
+                      @click="openSessionTrialInCompare(selectedSessionTrialId, { openJudge: true, judgeRequestId: req.judge_request_id })"
+                    >
+                      <div class="judge-tile-head">
+                        <span class="judge-id">{{ req.judge_request_id }}</span>
+                        <span class="badge badge-sm" :class="`badge-${statusTone(req.status)}`">{{ statusLabel(req.status) }}</span>
+                      </div>
+                      <p class="text-sm text-muted">{{ req.notes || "暂无备注" }}</p>
+                    </button>
                   </div>
                 </div>
               </template>
-
-              <div v-if="judgeRequestsForTrial(selectedSessionTrialId).length" class="mt-4">
-                <h5 class="block-title">所挂 Judge 结果</h5>
-                <div class="judge-tile-list mt-2">
-                  <button
-                    v-for="req in judgeRequestsForTrial(selectedSessionTrialId)"
-                    :key="req.judge_request_id"
-                    class="judge-tile judge-tile--interactive"
-                    @click="openSessionTrialInCompare(selectedSessionTrialId, { openJudge: true, judgeRequestId: req.judge_request_id })"
-                  >
-                    <div class="judge-tile-head">
-                      <span class="judge-id">{{ req.judge_request_id }}</span>
-                      <span class="badge badge-sm" :class="`badge-${statusTone(req.status)}`">{{ statusLabel(req.status) }}</span>
-                    </div>
-                    <p class="text-sm text-muted">{{ req.notes || "暂无备注" }}</p>
-                  </button>
-                </div>
+              <div v-else class="empty-state">
+                <p>请在左侧选择一条 compare 以查看详情。</p>
               </div>
-            </template>
-            <div v-else class="empty-state">
-              <p>请在左侧选择一条 compare 以查看详情。</p>
             </div>
           </div>
+        </template>
+        <template v-else-if="loading.sessions">
+          <div class="session-loading">
+            <div class="loading-spinner-sm"></div>
+            <span>正在加载 Session 详情...</span>
+          </div>
+        </template>
+        <div v-else class="empty-state">
+          <p>未找到该 Session，或者加载失败。</p>
         </div>
-      </template>
-      <div v-else class="empty-state">
-        <p>请先在 Baseline Compare 跑出第一条 compare，再选择加入或新建 Session。</p>
-        <span class="empty-hint">Session 是固定实验上下文的 compare 记录本，Single Run 不再进入 Session。</span>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .sessions-workspace {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 28px;
-  align-items: start;
+  width: 100%;
+  font-family: var(--theme--fonts--sans--font-family, -apple-system, BlinkMacSystemFont, sans-serif);
 }
 
-.sessions-sidebar {
-  background: var(--theme--background);
-  border: 1px solid var(--theme--border-color);
-  border-radius: 8px;
-  padding: 16px;
+/* Level 1: Sessions Directory */
+.directory-view {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-
-.sidebar-header { display: flex; justify-content: space-between; align-items: center; }
-.sidebar-title { font-size: 14px; font-weight: 600; color: var(--theme--foreground); }
-.session-list { display: flex; flex-direction: column; gap: 8px; }
-
-.sidebar-hint {
-  font-size: 12px;
-  color: var(--theme--foreground-subdued);
-  line-height: 1.55;
-  margin: -8px 0 4px;
+.directory-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
+.header-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.directory-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--theme--foreground, #172940);
+  margin: 0;
+}
+.directory-desc {
+  font-size: 13px;
+  color: var(--theme--foreground-subdued, #6B7280);
+  line-height: 1.6;
+  margin: 0;
+}
+.session-table-wrapper {
+  background: var(--theme--background, #ffffff);
+  border: 1px solid var(--theme--border-color, #D9DEE7);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.session-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.session-table th {
+  background: var(--theme--background-subdued, #FAFBFC);
+  color: var(--theme--foreground-subdued, #6B7280);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--theme--border-color, #E3E7EE);
+}
+.session-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--theme--border-color, #E3E7EE);
+  font-size: 13px;
+  color: var(--theme--foreground, #172940);
+  vertical-align: middle;
+}
+.session-table-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.session-table-row:hover {
+  background: var(--theme--background-subdued, #FAFBFC);
+}
+.session-table-row:last-child td {
+  border-bottom: none;
+}
+.cell-title {
+  font-weight: 600;
+  color: var(--theme--primary, #2563eb) !important;
+}
+.ctx-chip-sm {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--theme--background-subdued, #FAFBFC);
+  border: 1px solid var(--theme--border-color, #E3E7EE);
+  font-size: 11px;
+  color: var(--theme--foreground-subdued, #6B7280);
+  font-weight: 500;
+}
+.judge-badge-sub {
+  font-size: 11px;
+  color: var(--theme--success, #11795B);
+  font-weight: 600;
+}
+
+/* Level 2: Detail Workspace */
+.sessions-main {
+  background: var(--theme--background, #ffffff);
+  border: 1px solid var(--theme--border-color, #D9DEE7);
+  border-radius: 8px;
+  padding: 24px;
+}
+.sessions-main.full-width {
+  width: 100%;
+}
+.session-back-nav {
+  display: flex;
+  align-items: center;
+}
+
+.session-hero { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--theme--border-color); }
+.hero-main { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.session-title { font-size: 20px; font-weight: 600; color: var(--theme--foreground); }
+.session-title-input {
+  min-width: min(420px, 100%);
+  flex: 1 1 320px;
+}
+.session-title-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.session-desc { font-size: 13px; color: var(--theme--foreground-subdued); line-height: 1.6; }
 
 .block-hint {
   font-size: 12px;
@@ -657,52 +810,7 @@ function formatExcerpt(text) {
   color: var(--theme--foreground);
 }
 
-.session-nav-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border-radius: 6px;
-  border: 1px solid var(--theme--border-color);
-  background: var(--theme--background);
-  text-align: left;
-  transition: all 0.2s ease;
-}
-.session-nav-item:hover { background: var(--theme--background-subdued); border-color: var(--theme--primary-subdued); }
-.session-nav-item.active { background: color-mix(in srgb, var(--theme--primary, #2563eb) 4%, var(--theme--background)); border-color: var(--theme--primary, #2563eb); }
-.item-header { display: flex; justify-content: space-between; align-items: center; }
-.item-title { font-size: 13px; font-weight: 600; color: var(--theme--foreground); }
-.item-meta { display: flex; gap: 8px; font-size: 11px; color: var(--theme--foreground-subdued); align-items: center; }
-.dot-separator { margin: 0 4px; }
-
-.sessions-main {
-  background: var(--theme--background);
-  border: 1px solid var(--theme--border-color);
-  border-radius: 8px;
-  padding: 24px;
-}
-
-.session-hero { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--theme--border-color); }
-.hero-main { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
-.session-title-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-.session-title { font-size: 20px; font-weight: 600; color: var(--theme--foreground); }
-.session-title-input {
-  min-width: min(420px, 100%);
-  flex: 1 1 320px;
-}
-.session-title-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.session-desc { font-size: 13px; color: var(--theme--foreground-subdued); line-height: 1.6; }
+.dot-separator { margin: 0 4px; color: var(--theme--border-color, #E3E7EE); }
 
 .meta-row {
   display: grid;
@@ -774,7 +882,31 @@ function formatExcerpt(text) {
   display: grid;
   grid-template-columns: 300px 1fr;
   gap: 28px;
+  transition: grid-template-columns 0.2s ease;
 }
+.timeline-container.is-collapsed {
+  grid-template-columns: 1fr;
+}
+
+.timeline-sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.btn-collapse {
+  min-width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+}
+.btn-expand {
+  min-width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
 .timeline-list { display: flex; flex-direction: column; gap: 10px; }
 .timeline-item {
   display: flex;
@@ -794,6 +926,7 @@ function formatExcerpt(text) {
   border-left-color: var(--theme--primary);
   background: color-mix(in srgb, var(--theme--primary) 4%, var(--theme--background));
 }
+.item-header { display: flex; justify-content: space-between; align-items: center; }
 .item-type { font-size: 12px; font-weight: 600; color: var(--theme--foreground); }
 .item-id { font-size: 11px; color: var(--theme--foreground-subdued); float: right; }
 .item-status { display: flex; gap: 6px; margin-top: 4px; }
@@ -921,7 +1054,7 @@ function formatExcerpt(text) {
 .empty-state.compact { padding: 16px 12px; }
 .empty-hint { font-size: 12px; margin-top: 4px; }
 
-.block-title { font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--theme--foreground); }
+.block-title { font-size: 13px; font-weight: 700; color: var(--theme--foreground); margin: 0; }
 
 .mt-2 { margin-top: 8px; }
 .mt-3 { margin-top: 12px; }
@@ -929,12 +1062,14 @@ function formatExcerpt(text) {
 .mb-3 { margin-bottom: 12px; }
 .mb-4 { margin-bottom: 16px; }
 .ml-2 { margin-left: 8px; }
+.mr-2 { margin-right: 8px; }
 .text-sm { font-size: 12px; }
 .text-muted { color: var(--theme--foreground-subdued); }
 .font-normal { font-weight: 400; }
+.font-bold { font-weight: 600; }
+.text-center { text-align: center; }
 
 @media (max-width: 1200px) {
-  .sessions-workspace { grid-template-columns: 1fr; }
   .timeline-container { grid-template-columns: 1fr; }
 }
 

@@ -32,7 +32,7 @@ Web Reader 2.0（Plate 底座接入）这一前置任务已经完成。当前工
 | Web Reader 2.0 | Plate Reader 底座、对象模型、selection/jump、词典/资产/Ask bridge 已完成并作为当前基础设施冻结 | 后端 canonical render scene 与小程序消费链路保持不变；后续只做增量优化，不再回到 Reader 2.0 方案评审 |
 | Ask Claread | 在 Reader 2.0 底座上完成 AI 助手的冻结收尾，校正 correctness、文档口径和评估边界 | 当前目标是冻结可用正确状态，而不是继续无界扩功能；必须保持 article-bound、可回源、可确认写入、统一审计/结算 |
 | 阅读器与多端稳定性 | 持续补 Reader 自动化、摘录回跳、移动 Web 和小程序 DevTools 人工回归 | Reader 2.0 与 Ask 重构都不应破坏当前小程序和 Web 主链路 |
-| 质量与内部运营底座 | Ask 冻结后同步明确 evals、RAG、Directus 与后续产品调整的边界 | 不提前铺开泛内部工具，只为 Ask 评估和后续需求调整提供必要底座 |
+| 质量与内部运营底座 | 在 Ask 冻结后继续收口 Eval Center、Example Lab、解析观察台与后续运营控制面 | 控制面已进入可用阶段；后续要按治理价值排序推进，而不是泛化铺开后台 |
 
 ## 近期工作顺序
 
@@ -40,7 +40,7 @@ Web Reader 2.0（Plate 底座接入）这一前置任务已经完成。当前工
 2. 统一 Ask Claread 正式文档口径，以 `docs/product/ask-claread.md` 和 `docs/architecture/ask-claread.md` 作为当前真相源。
 3. 保持 Reader 2.0 底座稳定，继续补真实数据自动化和小程序 DevTools 人工回归，避免 Ask 收尾影响阅读主链路。
 4. 在冻结完成后，继续稳定新的 Reader 标注模型，重点验证高亮、笔记和 Ask Claread 的单一新逻辑闭环。
-5. Directus 当前只进入边界设计和 schema 准备；等 Ask Claread 冻结评估完成后，再决定是否启动正式内部工具开发。
+5. Directus / Claread Console 已进入真实开发阶段；后续要把 Eval Center、Example Lab、解析观察台和 Inspector 的正式边界压回主线文档，并按治理优先级继续推进。
 
 ## 暂不拍板
 
@@ -50,7 +50,7 @@ Web Reader 2.0（Plate 底座接入）这一前置任务已经完成。当前工
 - 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG。
 - Grammar X-Ray、分享页、导出和其他 AI 能力的优先级，但它们都不应抢在 Ask Claread 主线前面。
 - 是否在 Ask Claread 之外单独产品化“AI 整合总结用户历史数据”能力，以及是否做跨文章/跨资产的长期学习画像。
-- Directus 内部工具的具体第一批模块：Daily Reader 运营、评测样本、prompt 审核，还是 usage/feedback 观察面板。
+- Claread Console 下一阶段优先落哪条工作流：解析治理、RAG promotion、运营工作台，还是 feedback / usage 观察面板。
 - render snapshot / render profile 是否立即建表，以及与现有 `render_scene_json` 的迁移方式。
 - contracts 生成方式、共享包边界和 CI 门槛。
 

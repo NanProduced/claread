@@ -127,24 +127,34 @@ function dash(value) {
     <p v-if="scopeNote" class="scope-note">{{ scopeNote }}</p>
 
     <div class="review-form">
-      <select v-model="verdict">
-        <option value="good">good</option>
-        <option value="bad">bad</option>
-        <option value="mixed">mixed</option>
-        <option value="needs_review">needs_review</option>
-        <option value="win">win</option>
-        <option value="loss">loss</option>
-        <option value="tie">tie</option>
-        <option value="blocked">blocked</option>
-      </select>
-      <label>
-        <input v-model="promoteCandidate" type="checkbox" />
-        promote candidate
+      <div class="form-row">
+        <label class="form-field select-field">
+          <span>Verdict 判定</span>
+          <select v-model="verdict">
+            <option value="good">good</option>
+            <option value="bad">bad</option>
+            <option value="mixed">mixed</option>
+            <option value="needs_review">needs_review</option>
+            <option value="win">win</option>
+            <option value="loss">loss</option>
+            <option value="tie">tie</option>
+            <option value="blocked">blocked</option>
+          </select>
+        </label>
+        <label class="form-field checkbox-field">
+          <input v-model="promoteCandidate" type="checkbox" />
+          <span>Promote Candidate (推荐候选版本)</span>
+        </label>
+      </div>
+      <label class="form-field note-field">
+        <span>Review Note 评审记录</span>
+        <textarea v-model="note" rows="3" placeholder="Record human review evidence for promotion decisions (记录人工评测证据与推荐决策)..." />
       </label>
-      <textarea v-model="note" rows="3" placeholder="Record human review evidence for promotion decisions." />
-      <button type="button" :disabled="!canSave" @click="saveNote">
-        {{ saving ? "Saving" : "Save Note" }}
-      </button>
+      <div class="form-actions">
+        <button type="button" class="primary-button" :disabled="!canSave" @click="saveNote">
+          {{ saving ? "Saving..." : "Save Note" }}
+        </button>
+      </div>
     </div>
 
     <div class="note-list">
@@ -199,44 +209,123 @@ function dash(value) {
 }
 
 .review-form {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.35fr) minmax(140px, 0.45fr) minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--theme--background-subdued, #f8f9fa);
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
 }
 
-.review-form label {
+.review-form .form-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.review-form .form-field {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  color: var(--theme--foreground-subdued);
+}
+
+.review-form .select-field {
+  flex: 1;
+  min-width: 180px;
+}
+
+.review-form .checkbox-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  color: var(--theme--foreground);
+  margin-top: 20px;
+}
+
+.review-form .checkbox-field input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--theme--primary);
+}
+
+.review-form .note-field {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.review-form .form-field span {
+  font-weight: 700;
   font-size: 12px;
+  color: var(--theme--foreground-subdued);
 }
 
 .review-form select,
-.review-form textarea,
-.review-form button,
-.review-heading button {
+.review-form textarea {
   border: 1px solid var(--theme--border-color);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--theme--background);
   color: var(--theme--foreground);
   font: inherit;
   font-size: 12px;
-  padding: 6px 8px;
+  padding: 8px 12px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.review-form select:focus,
+.review-form textarea:focus {
+  border-color: var(--theme--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme--primary) 12%, transparent);
+  outline: none;
 }
 
 .review-form textarea {
-  min-height: 36px;
+  min-height: 80px;
   resize: vertical;
 }
 
-.review-form button,
-.review-heading button {
-  cursor: pointer;
+.review-form .form-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
-.review-form button:disabled,
+.primary-button,
+.review-heading button {
+  min-height: 34px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.primary-button {
+  background: var(--theme--primary);
+  color: var(--theme--primary-foreground, #fff);
+  border-color: var(--theme--primary);
+}
+
+.primary-button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.primary-button:disabled,
 .review-heading button:disabled {
   cursor: not-allowed;
   opacity: 0.55;

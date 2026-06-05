@@ -372,7 +372,7 @@ function scrollToSection(id) {
 }
 
 .code-font {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
   font-size: 13px;
 }
 

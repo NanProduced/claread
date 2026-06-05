@@ -381,7 +381,7 @@ const currentStep = computed(() => {
 }
 .detail-content { padding: 16px; border-top: 1px solid var(--color-border, #e5e7eb); }
 
-.code-font { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.code-font { font-family: var(--theme--fonts--monospace--font-family, monospace); font-size: 13px; }
 
 .validation-error {
   margin: -8px 0 8px;

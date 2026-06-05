@@ -81,7 +81,7 @@ const parsedBlocks = computed(() => {
   background: var(--theme--background-page, #f8f9fa);
   padding: 6px 12px;
   border-bottom: 1px solid var(--theme--border-color, #e0e0e0);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
   font-size: 13px;
   font-weight: 600;
   color: var(--theme--primary, #206bc4);
@@ -112,7 +112,7 @@ const parsedBlocks = computed(() => {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
   font-size: 13px;
   line-height: 1.6;
   color: var(--theme--foreground, #333);

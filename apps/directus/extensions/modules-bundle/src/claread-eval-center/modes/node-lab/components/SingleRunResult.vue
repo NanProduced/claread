@@ -512,7 +512,7 @@ const savedSingleRunAt = computed(() => singleRunUiState.value?.lastSavedAt || "
 pre {
   margin: 0;
   white-space: pre-wrap;
-  font-family: ui-monospace, monospace;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
   font-size: 12px;
   color: var(--color-text-subdued);
 }

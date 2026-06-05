@@ -269,7 +269,7 @@ async function copyJson() {
 /* Content Area */
 .json-content {
   padding: 12px 16px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
   font-size: 13px;
 }
 

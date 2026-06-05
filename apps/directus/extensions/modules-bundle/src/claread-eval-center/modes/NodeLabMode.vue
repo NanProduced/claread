@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, provide, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, provide, watch, ref } from "vue";
 import BaselineReference from "./node-lab/components/BaselineReference.vue";
 import CandidateEditor from "./node-lab/components/CandidateEditor.vue";
 import SingleRunResult from "./node-lab/components/SingleRunResult.vue";
@@ -418,6 +418,26 @@ watch(
   },
 );
 
+const activeWorkspaceTab = ref("config");
+
+// Watch for single run or compare results to automatically switch tab to 'result'
+watch(
+  [compareResult, singleRunResult],
+  ([newCompare, newSingle]) => {
+    if (newCompare || newSingle) {
+      activeWorkspaceTab.value = "result";
+    }
+  }
+);
+
+// Reset tab to config when changing workspace modes
+watch(
+  () => state.activeWorkspace,
+  () => {
+    activeWorkspaceTab.value = "config";
+  }
+);
+
 onMounted(async () => {
   loadPersistedState();
   await loadModelProfiles();
@@ -510,15 +530,72 @@ onBeforeUnmount(() => {
     <div v-if="feedback.error" class="feedback-banner error">{{ feedback.error }}</div>
     <div v-else-if="feedback.info" class="feedback-banner info">{{ feedback.info }}</div>
 
+    <!-- Sticky Actions & Tab Control Bar -->
+    <div v-if="state.activeWorkspace !== 'sessions'" class="sticky-actions-bar">
+      <!-- Left side: Tab Switcher -->
+      <div class="segmented-control tab-control">
+        <button
+          class="segment-btn"
+          :class="{ active: activeWorkspaceTab === 'config' }"
+          @click="activeWorkspaceTab = 'config'"
+        >
+          配置与编辑
+        </button>
+        <button
+          class="segment-btn"
+          :class="{ active: activeWorkspaceTab === 'result' }"
+          @click="activeWorkspaceTab = 'result'"
+        >
+          结果与对比
+          <span v-if="state.activeWorkspace === 'single_run' && singleRunResult?.run" class="tab-badge">✓</span>
+          <span v-else-if="state.activeWorkspace === 'baseline_compare' && compareResult" class="tab-badge">✓</span>
+        </button>
+      </div>
+
+      <!-- Right side: Mode-driven CTA Action Buttons -->
+      <div class="action-bar-ctas">
+        <template v-if="state.activeWorkspace === 'single_run'">
+          <v-button secondary small :disabled="loading.run" @click="runSingle({ dryRun: true, useCandidate: true })">预览 Prompt</v-button>
+          <v-button secondary small :disabled="loading.run" @click="runSingle({ dryRun: false, useCandidate: false })">运行 Baseline</v-button>
+          <v-button small :disabled="loading.run" @click="runSingle({ dryRun: false, useCandidate: true })">运行 Candidate</v-button>
+        </template>
+        <template v-else-if="state.activeWorkspace === 'baseline_compare'">
+          <v-button small :disabled="loading.compare" @click="runCompare({ persist: false })">运行 Compare</v-button>
+          <v-button
+            small
+            :disabled="!!joinSessionBlockReason"
+            :title="attachCurrentCompareTooltip"
+            @click="addCurrentCompareToSession()"
+          >
+            加入 Session
+          </v-button>
+          <v-button
+            outlined
+            small
+            :disabled="!!createSessionAndAddBlockReason"
+            :title="createSessionAndAddTooltip"
+            @click="createSessionAndAddCurrentCompare()"
+          >
+            新建 Session 并加入
+          </v-button>
+          <span v-if="joinSessionBlockReason || createSessionAndAddBlockReason" class="session-block-hint">
+            {{ joinSessionBlockReason || createSessionAndAddBlockReason }}
+          </span>
+        </template>
+      </div>
+    </div>
+
     <div
       v-if="state.activeWorkspace !== 'sessions'"
       class="workbench"
       :class="{
         'is-compare': state.activeWorkspace === 'baseline_compare',
+        'is-config-tab': activeWorkspaceTab === 'config',
+        'is-result-tab': activeWorkspaceTab === 'result'
       }"
     >
-      <!-- Left Column: Inputs & Configuration -->
-      <div class="panel-column column-editor">
+      <!-- Configuration Tab Content -->
+      <div v-if="activeWorkspaceTab === 'config'" class="panel-column column-editor">
         <section class="panel-section">
           <div class="section-header">
             <h3 class="section-title">场景与输入</h3>
@@ -545,59 +622,10 @@ onBeforeUnmount(() => {
           <BaselineReference />
           <CandidateEditor />
         </div>
-
-        <!-- Execution Actions -->
-        <section class="panel-section action-section">
-          <template v-if="state.activeWorkspace === 'single_run'">
-            <div class="action-header">
-              <h3 class="section-title">执行操作</h3>
-              <span class="help-icon" :title="helpText.session_write">?</span>
-            </div>
-            <p class="section-hint mb-3">单次快速试跑，不会进入 Session。需要固定上下文的多轮记录，请前往 Baseline Compare。</p>
-            <div class="action-buttons">
-              <v-button secondary :disabled="loading.run" @click="runSingle({ dryRun: true, useCandidate: true })">预览 Prompt</v-button>
-              <v-button secondary :disabled="loading.run" @click="runSingle({ dryRun: false, useCandidate: false })">运行 Baseline</v-button>
-              <v-button :disabled="loading.run" @click="runSingle({ dryRun: false, useCandidate: true })">运行 Candidate</v-button>
-            </div>
-          </template>
-          <template v-else-if="state.activeWorkspace === 'baseline_compare'">
-            <div class="action-header">
-              <h3 class="section-title">执行对比</h3>
-              <span class="help-icon" :title="helpText.compare_status">?</span>
-            </div>
-            <p class="section-hint mb-3">同时运行 Baseline 和 Candidate 以观察差异。完成后再决定是否把当前结果加入 Session。</p>
-            <div class="action-buttons">
-              <v-button :disabled="loading.compare" @click="runCompare({ persist: false })">运行 Compare</v-button>
-              <v-button
-                :disabled="!!joinSessionBlockReason"
-                :title="attachCurrentCompareTooltip"
-                @click="addCurrentCompareToSession()"
-              >
-                加入 Session
-              </v-button>
-              <v-button
-                outlined
-                :disabled="!!createSessionAndAddBlockReason"
-                :title="createSessionAndAddTooltip"
-                @click="createSessionAndAddCurrentCompare()"
-              >
-                新建 Session 并加入
-              </v-button>
-            </div>
-            <p v-if="joinSessionBlockReason || createSessionAndAddBlockReason" class="session-block-hint">
-              {{ joinSessionBlockReason || createSessionAndAddBlockReason }}
-            </p>
-            <p class="block-hint mt-3">
-              当前 Session 目标：
-              <strong>{{ selectedSessionDetail?.session?.title || "未选择" }}</strong>
-              <span v-if="selectedSessionDetail?.session">。只有点击"加入 Session"时，当前 compare 才会写入这本 notebook。</span>
-            </p>
-          </template>
-        </section>
       </div>
 
-      <!-- Right Column: Outputs & Results -->
-      <div class="panel-column column-output">
+      <!-- Results Tab Content -->
+      <div v-if="activeWorkspaceTab === 'result'" class="panel-column column-output">
         <section class="result-shell">
           <div class="result-header">
             <h3 class="result-title">
@@ -917,6 +945,73 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
 
 .workbench.is-compare {
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+}
+
+.workbench.is-config-tab,
+.workbench.is-result-tab {
+  display: block;
+  width: 100%;
+}
+
+.workbench.is-result-tab .result-shell {
+  position: static;
+}
+
+/* Compare editor grid - 50/50 split on large screens */
+.compare-editor-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .compare-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Sticky Action bar */
+.sticky-actions-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 4px 12px rgba(17, 17, 17, 0.03);
+}
+
+.action-bar-ctas {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--theme--success, #10b981);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+.session-block-hint {
+  font-size: 11px;
+  color: var(--theme--danger, #dc2626);
+  margin-left: 8px;
 }
 
 .judge-panel {

@@ -42,7 +42,7 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 - 用户、身份、记录、词典、用户资产。
 - 分析任务和 workflow。
 - prompt / model 配置机制。
-- LangSmith trace 和后续评测数据。
+- LangSmith trace、Directus 控制面和后续评测数据。
 
 客户端差异通过以下方式处理：
 
@@ -58,15 +58,15 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 3. 小程序已切到“句子级可写、局部/跨句只读回显”的收口目标：结果页读取 `reader_notes` / `user_annotations`，句子级高亮可直接创建或更新；句子级笔记默认先展示预览，再通过二级菜单进入编辑或删除；Web 创建的 `text_range` / `multi_text` 资产只负责回显与 focus，不在小程序端改写锚点；`/vocabulary` 继续保持独立词汇资产入口。
 4. 小程序 Reader 结果页对 `reader_notes` 已补齐本地优先回读：页面进入时先读取本地 `reader_notes` cache，再用云端 `GET /reader-notes?analysis_record_id=...` 结果覆盖，避免 sync queue flush 稍慢时表现成“刚写完就丢失”。
 5. 收紧数据层长期约束：`text_range` / `multi_text` 校验、局部索引、annotations/notes 分页和完整 OpenAPI contracts 生成。
-6. Directus 当前只适合进入边界设计和 schema 准备；等首个 AI 能力纵切跑通并出现真实运营需求后，再进入正式开发。
+6. Directus / Claread Console 已进入可用基线阶段：解析观察台、Render Scene Inspector、Eval Center 和 Example Lab 已有一批可用能力；后续重点转向控制面收口、治理链路和运营工作台分层，而不是继续停留在 schema 准备阶段。
 
 ## 已知边界
 
 - 真实 `.env`、模型 key、微信 secret、Zilliz token 不提交。
-- `apps/directus/`、`evals/` 和部分 `packages/` 仍是规划位置，具体实现后续评估。
+- `evals/` 和部分 `packages/` 仍有规划位置；`apps/directus/` 已进入真实开发与本地运行阶段，但仍只承担控制面，不承担核心执行面。
 - 小程序 UI/UX 是当前实现，不代表 Web 端体验上限。
 - 模型输出质量和结构化输出稳定性依赖 `services/api/.env` 中的模型 profile；更换模型后需要重新跑解析链路。
-- 旧脚本式 regression suite 不进入新仓库主线；评测系统后续基于 Directus + LLM-as-a-Judge 重新设计。
+- 旧脚本式 regression suite 不进入新仓库主线；当前评测控制面已落到 Directus / Eval Center，后续仍按 Directus + 自建 eval harness + LLM-as-a-Judge 的路线继续演进。
 - Ask Claread 当前的跨文章稳定主路径以 `record_ref / known title reference / external analysis/supplement asset` 为主；用户高亮与用户笔记只通过显式引用进入 Ask，不存在独立“用户学习资产自由查询”产品面。
 
 ## 文档使用规则

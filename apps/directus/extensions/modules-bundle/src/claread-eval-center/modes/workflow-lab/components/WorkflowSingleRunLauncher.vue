@@ -260,7 +260,7 @@ function goToCandidate() {
 
       <footer>
         <p v-if="!form.candidate_prompt_variant_id" class="warn-text">Candidate 必选,否则无法构成 baseline / candidate compare。</p>
-        <button type="button" :disabled="submitting || !form.candidate_prompt_variant_id" @click="submit">
+        <button type="button" class="primary-button" :disabled="submitting || !form.candidate_prompt_variant_id" @click="submit">
           {{ submitting ? "双跑中..." : "开始双跑 compare" }}
         </button>
       </footer>
@@ -387,36 +387,51 @@ label {
 }
 
 .locked-context {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: 6px;
   background: var(--theme--background-subdued);
+  align-self: end;
+  min-height: 36px;
+  box-sizing: border-box;
 }
 
-.locked-context > div,
-.locked-context > p {
-  min-width: 0;
-  background: var(--theme--background);
-  padding: 10px 12px;
+.locked-context > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
 }
 
 .locked-context span {
-  display: block;
-  color: var(--theme--foreground-subdued);
-  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  color: var(--theme--foreground-subdued);
   text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
 }
 
 .locked-context strong {
-  display: block;
-  margin-top: 4px;
+  font-weight: 600;
   color: var(--theme--foreground);
-  font-size: 13px;
+  background: var(--theme--background);
+  border: 1px solid var(--theme--border-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.primary-button {
+  background: var(--theme--primary);
+  color: var(--theme--primary-foreground, #fff);
+  border: 1px solid var(--theme--primary) !important;
+}
+
+.primary-button:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
 input,

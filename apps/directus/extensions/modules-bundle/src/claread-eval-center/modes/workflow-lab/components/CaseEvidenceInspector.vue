@@ -244,19 +244,21 @@ header h2 {
 .signal-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
-  overflow: hidden;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--theme--background);
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 8px;
 }
 
 .signal-grid div {
-  background: var(--theme--background);
-  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .signal-grid dd {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 14px;
   font-weight: 700;
   overflow-wrap: anywhere;
@@ -326,15 +328,17 @@ header h2 {
 .debug-counts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--theme--background);
   border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
-  border-radius: 6px;
-  overflow: hidden;
+  border-radius: 8px;
 }
 
 .debug-counts div {
-  background: var(--theme--background);
-  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .debug-counts dt {
@@ -344,7 +348,7 @@ header h2 {
 }
 
 .debug-counts dd {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 14px;
   font-weight: 700;
 }

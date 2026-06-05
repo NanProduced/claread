@@ -492,7 +492,7 @@ const judgeStepRuns = computed(() => {
 .packet-title { font-size: 12px; font-weight: 600; padding: 8px 12px; background: var(--color-surface-subdued, #f9fafb); border-bottom: 1px solid var(--color-border, #e5e7eb); }
 .packet-content { padding: 12px; }
 
-pre { margin: 0; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; color: var(--color-text-subdued, #6b7280); }
+pre { margin: 0; white-space: pre-wrap; font-family: var(--theme--fonts--monospace--font-family, monospace); font-size: 12px; color: var(--color-text-subdued, #6b7280); }
 
 .meta-grid {
   display: grid;

@@ -29,6 +29,8 @@ Claread 是一个多端英文阅读辅助产品。当前稳定基线包含微信
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
 | `docs/architecture/backend-multiclient-review.md` | 后端多端化架构评审和待评估问题域 |
+| `docs/architecture/directus-console.md` | Claread Console 的当前定位、模块边界与 Example Lab / grammar RAG 契约 |
+| `docs/architecture/eval-center-integration-map.md` | Eval Center / Example Lab / grammar RAG 联动说明：模块依赖、字段分层、契约校验、数据流、联动更新清单 |
 | `docs/architecture/workflow.md` | 当前 workflow 基线 |
 | `docs/operations/directus-local-dev.md` | Directus 本地开发与热更新说明 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |
@@ -59,7 +61,7 @@ claread/
 ├── apps/
 │   ├── miniprogram/   # 当前可运行客户端
 │   ├── web/           # Web baseline 与后续 Web 产品体验
-│   └── directus/      # 后续
+│   └── directus/      # Claread Console 本地 Directus runtime 与控制面扩展
 ├── services/
 │   ├── api/           # 当前通用后端
 │   └── worker/        # 后续

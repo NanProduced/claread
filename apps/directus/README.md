@@ -1,14 +1,14 @@
 # Directus Scaffold
 
-`apps/directus/` 承载 `Claread Console` 的本地 Directus runtime、扩展 workspace 骨架和后续原生化开发入口。
+`apps/directus/` 承载 `Claread Console` 的本地 Directus runtime、扩展 workspace 和当前原生化控制面开发入口。
 
 ## 目标
 
 - 接入 monorepo workspace
 - 提供本地 Directus runtime
 - 固定 `watch + auto reload` 开发闭环
-- 保留 `module`、`panel`、`endpoint` 扩展包骨架
-- 为后续基于 Directus 原生能力的数据展示开发提供干净起点
+- 提供 `module`、`panel`、`endpoint`、`hook` 扩展工作区
+- 为当前控制面与后续治理型能力提供稳定开发入口
 
 ## 目录
 
@@ -20,9 +20,15 @@ apps/directus/
     modules-bundle/
     panels-bundle/
     endpoints-bundle/
+    hooks-bundle/
   scripts/
     watch-extensions.mjs
+    directus-mcp-headers-helper.mjs
+    sync-parse-run-observability-metadata.mjs
+    sync-eval-center-metadata.mjs
 ```
+
+脚本说明见 [scripts/README.md](scripts/README.md)。
 
 ## 本地开发
 
@@ -45,6 +51,7 @@ pnpm directus:down
 pnpm directus:logs
 pnpm directus:extensions:build
 pnpm directus:parse-run:sync-metadata
+pnpm directus:eval-center:sync-metadata
 ```
 
 默认访问：
@@ -90,17 +97,11 @@ Claude Code 项目级接入已配置在仓库根目录 [`.mcp.json`](/C:/Users/n
 
 ## 当前状态
 
-- Directus overlay 仍连接 Claread 本地 PostgreSQL。
-- 扩展 workspace 仍保留为可构建、可 watch 的空骨架。
-- 当前没有启用任何自定义 `Claread Console` 业务壳。
-- parse-run observability 的当前正式方向是：
-  - 以原始业务表作为 Directus 数据模型主体
-  - 以 `analysis_records` 为中心配置关系
-  - 优先用原生 `Collections / Fields / Relationships / Displays / Panels`
-  - 只有原生关系无法表达的读取需求，才考虑轻量自定义 endpoint
-- Task 1 / Task 2 的 collection / field / relation metadata 通过
-  [apps/directus/scripts/sync-parse-run-observability-metadata.mjs](/C:/Users/nanpr/claread/claread/apps/directus/scripts/sync-parse-run-observability-metadata.mjs)
-  同步，不直接手改 live Directus metadata。
+- Directus overlay 连接 Claread 本地 PostgreSQL。
+- 扩展 workspace 已承载真实能力：Eval Center module、Render Scene Inspector、Example Lab AI RAG Generator、hooks-bundle、endpoints-bundle。
+- Parse Run Observability 通过 `sync-parse-run-observability-metadata.mjs` 同步 metadata，不直接手改 live Directus metadata。
+- Eval Center / Example Lab 通过 `sync-eval-center-metadata.mjs` 同步 metadata，不直接手改 live Directus metadata。
+- 详细脚本说明见 [scripts/README.md](scripts/README.md)。
 
 ## 约束
 

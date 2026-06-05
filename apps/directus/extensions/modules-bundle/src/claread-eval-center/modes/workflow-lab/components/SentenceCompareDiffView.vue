@@ -95,23 +95,88 @@ const MARK_TYPES = {
   sentence_analysis: { label: "句法", tone: "analysis" },
 };
 
+function noteAnchorText(item) {
+  return item?.anchor?.anchor_text || item?.anchor?.text || item?.lookup_text || item?.label || item?.title || "—";
+}
+
+function linkedIdKey(rawId) {
+  const value = String(rawId || "").trim();
+  return value ? value.replace(/^[a-z]+_/, "") : "";
+}
+
+function matchGrammarMark(entry, marks = []) {
+  const grammarMarks = marks.filter((item) => item?.annotation_type === "grammar_note");
+  const entryKey = linkedIdKey(entry?.id);
+  if (entryKey) {
+    const exact = grammarMarks.find((item) => linkedIdKey(item?.id) === entryKey);
+    if (exact) return exact;
+  }
+  if (grammarMarks.length === 1) return grammarMarks[0];
+  return null;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+function renderSimpleMarkdown(value) {
+  const normalized = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!normalized) return "<p>—</p>";
+
+  const blocks = normalized.split(/\n\s*\n/).filter(Boolean);
+  return blocks.map((block) => {
+    const lines = block.split("\n").map((line) => line.trimEnd());
+    const isList = lines.every((line) => /^\-\s+/.test(line.trim()));
+    if (isList) {
+      const items = lines
+        .map((line) => line.replace(/^\-\s+/, ""))
+        .map((line) => `<li>${renderInlineMarkdown(line)}</li>`)
+        .join("");
+      return `<ul>${items}</ul>`;
+    }
+    return `<p>${lines.map((line) => renderInlineMarkdown(line)).join("<br>")}</p>`;
+  }).join("");
+}
+
 function formatMark(mark) {
-  const anchor = mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || "—";
+  const anchor = noteAnchorText(mark);
   const rawType = mark?.annotation_type || mark?.visual_tone || "mark";
   const typeInfo = MARK_TYPES[rawType] || { label: String(rawType).toUpperCase(), tone: "neutral" };
-  const extra = mark?.glossary?.zh || mark?.glossary?.gloss || mark?.glossary?.phrase_type || "";
+  const primary = mark?.glossary?.zh || mark?.glossary?.gloss || mark?.lookup_text || "";
+  const detail = mark?.glossary?.reason || mark?.glossary?.phrase_type || "";
   return {
     anchor: String(anchor),
     type: typeInfo.label,
     tone: typeInfo.tone,
-    extra: extra ? String(extra) : ""
+    primary: primary ? String(primary) : "",
+    detail: detail ? String(detail) : "",
   };
 }
 
-function formatEntry(entry) {
-  const label = entry?.label || entry?.entry_type || "条目";
+function formatEntry(entry, marks = []) {
+  const entryType = String(entry?.entry_type || "");
+  const label = entry?.label || entryType || "条目";
   const content = entry?.content || entry?.title || entry?.note_zh || entry?.analysis_zh || "";
-  return { label: String(label), content: content ? String(content) : "—" };
+  const linkedMark = entryType === "grammar_note" ? matchGrammarMark(entry, marks) : null;
+  return {
+    label: String(label),
+    content: content ? String(content) : "—",
+    anchor: linkedMark ? noteAnchorText(linkedMark) : "",
+    tone: entryType === "sentence_analysis" ? "analysis" : entryType === "grammar_note" ? "grammar" : "neutral",
+    isSentenceAnalysis: entryType === "sentence_analysis",
+    html: entryType === "sentence_analysis" ? renderSimpleMarkdown(content) : "",
+  };
 }
 
 function translationFor(bySid, sid) {
@@ -119,11 +184,14 @@ function translationFor(bySid, sid) {
 }
 
 function marksFor(bySid, sid) {
-  return (bySid.marks.get(sid) || []).map(formatMark);
+  return (bySid.marks.get(sid) || [])
+    .filter((item) => item?.annotation_type !== "grammar_note")
+    .map(formatMark);
 }
 
 function entriesFor(bySid, sid) {
-  return (bySid.entries.get(sid) || []).map(formatEntry);
+  const marks = bySid.marks.get(sid) || [];
+  return (bySid.entries.get(sid) || []).map((entry) => formatEntry(entry, marks));
 }
 
 const hasAnyData = computed(() => Boolean(
@@ -313,7 +381,8 @@ const overviewCards = computed(() => ([
                     <li v-for="(mark, i) in row.marks.baseline" :key="`bm-${row.sid}-${i}`">
                       <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -324,7 +393,8 @@ const overviewCards = computed(() => ([
                     <li v-for="(mark, i) in row.marks.candidate" :key="`cm-${row.sid}-${i}`">
                       <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -337,7 +407,8 @@ const overviewCards = computed(() => ([
                     <li v-for="(mark, i) in row.marks.baseline" :key="`bm-unified-${row.sid}-${i}`">
                       <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -350,9 +421,13 @@ const overviewCards = computed(() => ([
                 <div class="side baseline">
                   <span class="side-tag">Baseline</span>
                   <ul v-if="row.entries.baseline.length" class="mini-list">
-                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-${row.sid}-${i}`">
-                      <strong>{{ entry.label }}</strong>
-                      <span class="entry-content">{{ entry.content }}</span>
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                        <strong>{{ entry.label }}</strong>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -360,9 +435,13 @@ const overviewCards = computed(() => ([
                 <div class="side candidate">
                   <span class="side-tag">候选</span>
                   <ul v-if="row.entries.candidate.length" class="mini-list">
-                    <li v-for="(entry, i) in row.entries.candidate" :key="`ce-${row.sid}-${i}`">
-                      <strong>{{ entry.label }}</strong>
-                      <span class="entry-content">{{ entry.content }}</span>
+                    <li v-for="(entry, i) in row.entries.candidate" :key="`ce-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                        <strong>{{ entry.label }}</strong>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -372,9 +451,13 @@ const overviewCards = computed(() => ([
                 <div class="side-unified">
                   <span class="unified-tag">双侧一致</span>
                   <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
-                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-unified-${row.sid}-${i}`">
-                      <strong>{{ entry.label }}</strong>
-                      <span class="entry-content">{{ entry.content }}</span>
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-unified-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                        <strong>{{ entry.label }}</strong>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -423,7 +506,8 @@ const overviewCards = computed(() => ([
                     <li v-for="(mark, i) in row.marks.baseline" :key="`sbm-unified-${row.sid}-${i}`">
                       <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -434,9 +518,13 @@ const overviewCards = computed(() => ([
                 <div class="side-unified">
                   <span class="unified-tag">双侧一致</span>
                   <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
-                    <li v-for="(entry, i) in row.entries.baseline" :key="`sbe-unified-${row.sid}-${i}`">
-                      <strong>{{ entry.label }}</strong>
-                      <span class="entry-content">{{ entry.content }}</span>
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`sbe-unified-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                        <strong>{{ entry.label }}</strong>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -471,7 +559,8 @@ const overviewCards = computed(() => ([
                     <li v-for="(mark, i) in row.marks" :key="`bm-${row.sid}-${i}`">
                       <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -481,9 +570,13 @@ const overviewCards = computed(() => ([
                 <dt>条目</dt>
                 <dd>
                   <ul v-if="row.entries.length" class="mini-list">
-                    <li v-for="(entry, i) in row.entries" :key="`be-${row.sid}-${i}`">
-                      <strong>{{ entry.label }}</strong>
-                      <span class="entry-content">{{ entry.content }}</span>
+                    <li v-for="(entry, i) in row.entries" :key="`be-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                        <strong>{{ entry.label }}</strong>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -518,7 +611,8 @@ const overviewCards = computed(() => ([
                     <li v-for="(mark, i) in row.marks" :key="`cm-${row.sid}-${i}`">
                       <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -528,9 +622,13 @@ const overviewCards = computed(() => ([
                 <dt>条目</dt>
                 <dd>
                   <ul v-if="row.entries.length" class="mini-list">
-                    <li v-for="(entry, i) in row.entries" :key="`ce-${row.sid}-${i}`">
-                      <strong>{{ entry.label }}</strong>
-                      <span class="entry-content">{{ entry.content }}</span>
+                    <li v-for="(entry, i) in row.entries" :key="`ce-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                        <strong>{{ entry.label }}</strong>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
                     </li>
                   </ul>
                   <span v-else class="empty-cell">—</span>
@@ -795,6 +893,16 @@ const overviewCards = computed(() => ([
   font-size: 12px;
   line-height: 1.5;
 }
+.entry-item {
+  display: grid;
+  gap: 6px;
+}
+.entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .anchor-chip {
   display: inline-flex;
   align-items: center;
@@ -814,6 +922,25 @@ const overviewCards = computed(() => ([
 .mark-extra,
 .entry-content {
   color: var(--theme--foreground);
+}
+.mark-detail {
+  color: var(--theme--foreground-subdued);
+}
+.markdown-body :deep(p),
+.markdown-body :deep(ul) {
+  margin: 0;
+}
+.markdown-body :deep(ul) {
+  padding-left: 18px;
+}
+.markdown-body :deep(code) {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--theme--background-subdued);
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+}
+.markdown-body :deep(strong) {
+  font-weight: 700;
 }
 .empty-cell {
   color: var(--theme--foreground-subdued);

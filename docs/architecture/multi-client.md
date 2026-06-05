@@ -14,7 +14,7 @@ Claread 使用一套后端业务内核，服务多个客户端。
 |--------|------|------|
 | 微信小程序 | `apps/miniprogram/` | 当前第一个客户端，功能子集，受平台能力限制 |
 | Web | `apps/web/` | 当前 baseline 已接入真实后端，后续推进高保真阅读体验 |
-| Directus / Admin | `apps/directus/` | 后续内部运营、数据管理、评测样本、RAG 示例管理 |
+| Directus / Admin | `apps/directus/` | 当前内部控制面，承接解析观察、Eval Center、Example Lab 与后续运营治理能力 |
 
 小程序是第一个客户端，不是一次性冻结的旧客户端。迁移完成后，小程序仍会继续迭代，只是它的新增能力应在多端契约下推进。
 
@@ -70,7 +70,7 @@ PostgreSQL 是事务型数据真相源。
 
 Redis 用于缓存和多 worker 场景下的共享状态。
 
-Zilliz 用于 Grammar RAG few-shot 示例检索。
+Zilliz 用于 grammar few-shot / RAG 示例检索；示例控制面当前由 Directus `Example Lab` 管理。
 
 `analysis_render_snapshots` 是后续多端 render profile 的建议表，当前 `0001` baseline 中尚不存在。
 
