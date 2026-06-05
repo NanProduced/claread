@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useApi } from "@directus/extensions-sdk";
+import WorkflowSentenceCompareNotebook from "./WorkflowSentenceCompareNotebook.vue";
 
 const props = defineProps({
   compareId: { type: String, default: "" },
@@ -9,6 +10,12 @@ const props = defineProps({
   requests: { type: Array, default: () => [] },
   submitting: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
+  readonly: { type: Boolean, default: false },
+  preparedSentences: { type: Array, default: () => [] },
+  baselineArtifact: { type: Object, default: null },
+  candidateArtifact: { type: Object, default: null },
+  /** Persisted compare report comparisons — passed through to notebook */
+  comparisons: { type: Array, default: () => [] },
 });
 const emit = defineEmits(["queue", "refresh"]);
 
@@ -17,6 +24,7 @@ const api = useApi();
 const rubricId = ref("");
 const adapterKind = ref("llm");
 const judgeModelProfile = ref("");
+const filterMode = ref("all");
 
 const modelProfileOptions = computed(() => (props.modelProfiles || []).map((profile) => ({
   value: profile.profile_name,
@@ -24,7 +32,23 @@ const modelProfileOptions = computed(() => (props.modelProfiles || []).map((prof
   modelName: profile.model_name || profile.profile_name,
 })));
 
-const compareRequests = computed(() => props.requests.filter((item) => item.compare_id === props.compareId));
+const compareRequests = computed(() => {
+  const reqs = props.requests.filter((item) => item.compare_id === props.compareId);
+  return reqs.sort((a, b) => new Date(b.date_created || 0).getTime() - new Date(a.date_created || 0).getTime());
+});
+
+const currentRequest = computed(() => {
+  if (!compareRequests.value.length) return null;
+  // Always show the most recent request — never silently substitute
+  // an older succeeded result.  This prevents the UX confusion where
+  // a newly-queued judge is hidden behind an old valid one.
+  return compareRequests.value[0];
+});
+
+const historyRequests = computed(() => {
+  if (!currentRequest.value) return [];
+  return compareRequests.value.filter(r => (r.id || r.judge_run_id) !== (currentRequest.value.id || currentRequest.value.judge_run_id));
+});
 
 const requestState = reactive({});
 
@@ -100,8 +124,17 @@ watch(
   () => props.requests,
   (requests) => {
     for (const req of requests) {
-      if (req.compare_id === props.compareId && req.status === "succeeded" && !requestState[req.id || req.judge_run_id]) {
-        void ensureResult(req);
+      if (req.compare_id === props.compareId) {
+        const key = req.id || req.judge_run_id;
+        // Fetch result for any terminal request we haven't loaded yet,
+        // AND always fetch the current (most recent) request if it's
+        // terminal — even if it failed.
+        const isTerminal = req.status === "succeeded" || req.status === "partial_failure"
+          || req.status === "failed" || req.status === "total_failure"
+          || req.status === "cancelled" || req.status === "errored" || req.status === "complete";
+        if (isTerminal && !requestState[key]) {
+          void ensureResult(req);
+        }
       }
     }
   },
@@ -114,15 +147,16 @@ watch(
     for (const key of Object.keys(requestState)) {
       delete requestState[key];
     }
+    const terminalSet = new Set(["succeeded", "partial_failure", "failed", "total_failure", "cancelled", "errored", "complete"]);
     for (const req of props.requests) {
-      if (req.compare_id === props.compareId && req.status === "succeeded") {
+      if (req.compare_id === props.compareId && terminalSet.has(req.status)) {
         void ensureResult(req);
       }
     }
   },
 );
 
-const TERMINAL_STATUSES = new Set(["succeeded", "complete", "failed", "total_failure", "cancelled", "errored"]);
+const TERMINAL_STATUSES = new Set(["succeeded", "complete", "partial_failure", "failed", "total_failure", "cancelled", "errored"]);
 
 let pollTimer = null;
 
@@ -204,6 +238,32 @@ function rubricLabel(rubric) {
   return rubric.title || rubric.id;
 }
 
+/** Build judge overlay Map for the notebook component */
+const judgeOverlayMap = computed(() => {
+  if (!currentRequest.value) return null;
+  const cases = requestCases(currentRequest.value);
+  if (!cases.length) return null;
+  const map = new Map();
+  for (const c of cases) {
+    map.set(String(c.case_id), {
+      verdict: c.verdict,
+      summary: c.summary || "",
+      reasons: Array.isArray(c.reasons) ? c.reasons : [],
+      status: c.status,
+      error: c.error || null,
+      baseline_hard_failures: c.baseline_hard_failures ?? 0,
+      baseline_soft_failures: c.baseline_soft_failures ?? 0,
+      candidate_hard_failures: c.candidate_hard_failures ?? 0,
+      candidate_soft_failures: c.candidate_soft_failures ?? 0,
+    });
+  }
+  return map;
+});
+
+const currentResult = computed(() => {
+  if (!currentRequest.value) return null;
+  return requestState[currentRequest.value.id || currentRequest.value.judge_run_id];
+});
 </script>
 
 <template>
@@ -211,19 +271,14 @@ function rubricLabel(rubric) {
     <header>
       <div>
         <p>Judge 评审</p>
-        <h3>Compare 级评审</h3>
+        <h3>当前评审结论</h3>
       </div>
-      <button type="button" title="刷新当前 compare 的 judge request 状态。" @click="emit('refresh')">刷新</button>
+      <button v-if="!readonly" type="button" title="刷新评审状态。" @click="emit('refresh')">刷新</button>
     </header>
 
-    <p class="judge-disclaimer">
-      本面板锚定 <strong>workflow_compare</strong>，展示 compare-scope 评审请求与结果摘要。
-      当前默认提供 <strong>本地规则 Judge</strong>，用于快速给出可回看的 compare 结论；最终裁决仍需人工复核。
-    </p>
-
-    <div class="judge-form">
+    <div v-if="!readonly" class="judge-form">
       <label>
-        <span title="选择 compare-level pairwise judge 使用的 rubric。">Rubric</span>
+        <span title="选择评审使用的 rubric。">Rubric</span>
         <select v-model="rubricId" :disabled="disabled">
           <option v-for="rubric in rubrics" :key="rubric.id" :value="rubric.id">
             {{ rubricLabel(rubric) }}
@@ -231,14 +286,13 @@ function rubricLabel(rubric) {
         </select>
       </label>
       <label>
-        <span title="真实 Judge 会调用 OpenAI-compatible 模型；fake 仅用于调试 deterministic 包装链路。">Judge 适配器</span>
+        <span title="适配器类型。">Judge 适配器</span>
         <select v-model="adapterKind" :disabled="disabled">
           <option value="llm">llm，调用真实 Judge</option>
-          <option value="fake">fake，本地规则 Judge（立即执行）</option>
         </select>
       </label>
       <label v-if="adapterKind === 'llm'">
-        <span title="真实 Judge 使用的模型配置。当前通过安全模型列表选择模型名；底层调用仍依赖 judge 环境变量中的 base_url / api_key。">Judge 模型</span>
+        <span title="真实 Judge 使用的模型配置。">Judge 模型</span>
         <select v-model="judgeModelProfile" :disabled="disabled">
           <option v-for="profile in modelProfileOptions" :key="profile.value" :value="profile.value">
             {{ profile.label }}
@@ -250,115 +304,152 @@ function rubricLabel(rubric) {
       </button>
     </div>
 
-    <p class="judge-help">
-      当前 compare-level judge 默认评审这次 compare 中全部发生变化的句子级 case。
-      不再暴露额外的句子数限制选项，避免把单篇 judge 复杂化。
-    </p>
-
     <div class="judge-requests">
-      <p v-if="compareRequests.length === 0">当前 compare 暂无 judge request。</p>
+      <p v-if="!currentRequest">暂无评审结论。</p>
+
+      <!-- Current Request -->
       <article
-        v-for="request in compareRequests"
-        v-else
-        :key="request.id || request.judge_run_id"
-        class="judge-request"
+        v-if="currentRequest"
+        class="judge-request current-judge"
       >
         <header>
           <div class="judge-head-main">
-            <strong>{{ request.judge_run_id }}</strong>
-            <span class="status-pill" :class="`is-${statusTone(request.status)}`">{{ statusLabel(request.status) }}</span>
+            <span class="status-pill" :class="`is-${statusTone(currentRequest.status)}`">{{ statusLabel(currentRequest.status) }}</span>
+            <span class="judge-meta-light" v-if="!readonly">{{ currentRequest.judge_run_id }}</span>
           </div>
-          <small class="judge-meta">{{ request.rubric_id }} / {{ request.judge_adapter_kind }}</small>
         </header>
 
-        <div v-if="requestState[request.id || request.judge_run_id]?.loading" class="result-loading">正在读取评审结果…</div>
-        <div v-else-if="requestState[request.id || request.judge_run_id]?.error" class="result-error">{{ requestState[request.id || request.judge_run_id].error }}</div>
+        <div v-if="currentResult?.loading" class="result-loading">正在读取评审结果…</div>
+        <div v-else-if="currentRequest.status === 'failed' || currentRequest.status === 'errored'" class="result-error">
+          评审失败。{{ currentResult?.error || '请检查日志或重新发起。' }}
+        </div>
+        <div v-else-if="currentResult?.error" class="result-error">{{ currentResult.error }}</div>
+
         <div
-          v-else-if="requestState[request.id || request.judge_run_id]?.result?.summary"
+          v-else-if="currentResult?.result?.summary"
           class="result-summary"
         >
           <div>
-            <dt>总 case</dt>
-            <dd>{{ requestState[request.id || request.judge_run_id].result.summary.total_cases ?? "—" }}</dd>
+            <dt>Judge 模型</dt>
+            <dd>{{ currentResult.result.summary.judge_model_name || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Judge Profile</dt>
+            <dd>{{ currentResult.result.summary.judge_model_profile || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Judge 耗时</dt>
+            <dd>{{ currentResult.result.summary.judge_latency_seconds != null ? `${Number(currentResult.result.summary.judge_latency_seconds).toFixed(1)}s` : "—" }}</dd>
+          </div>
+          <div>
+            <dt>Judge Tokens</dt>
+            <dd>
+              {{
+                currentResult.result.summary.judge_total_tokens != null
+                  ? `${currentResult.result.summary.judge_total_tokens}（入 ${currentResult.result.summary.judge_input_tokens ?? "—"} / 出 ${currentResult.result.summary.judge_output_tokens ?? "—"}）`
+                  : "—"
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>差异句数</dt>
+            <dd>{{ currentResult.result.summary.total_cases ?? "—" }}</dd>
           </div>
           <div>
             <dt>候选更优</dt>
-            <dd>{{ requestState[request.id || request.judge_run_id].result.summary.candidate_preferred ?? requestState[request.id || request.judge_run_id].result.summary.passed ?? 0 }}</dd>
+            <dd>{{ currentResult.result.summary.candidate_preferred ?? currentResult.result.summary.passed ?? 0 }}</dd>
           </div>
           <div>
             <dt>Baseline 更优</dt>
-            <dd>{{ requestState[request.id || request.judge_run_id].result.summary.baseline_preferred ?? requestState[request.id || request.judge_run_id].result.summary.failed ?? 0 }}</dd>
+            <dd>{{ currentResult.result.summary.baseline_preferred ?? currentResult.result.summary.failed ?? 0 }}</dd>
           </div>
           <div>
             <dt>持平</dt>
-            <dd>{{ requestState[request.id || request.judge_run_id].result.summary.tie ?? 0 }}</dd>
+            <dd>{{ currentResult.result.summary.tie ?? 0 }}</dd>
           </div>
           <div>
             <dt>需复查</dt>
-            <dd>{{ requestState[request.id || request.judge_run_id].result.summary.needs_review ?? 0 }}</dd>
-          </div>
-          <div>
-            <dt>异常</dt>
-            <dd>{{ requestState[request.id || request.judge_run_id].result.summary.errored ?? 0 }}</dd>
+            <dd>{{ currentResult.result.summary.needs_review ?? 0 }}</dd>
           </div>
         </div>
+
+        <!-- Sentence notebook with judge overlay -->
         <section
-          v-if="requestCases(request).length"
+          v-if="requestCases(currentRequest).length"
           class="case-results-block"
         >
           <header class="case-results-head">
-            <strong>逐 case 结果</strong>
-            <small>这批 fake judge 先把 deterministic compare 信号物化成可回看的 compare 结论。</small>
+            <strong>逐句评审结果</strong>
+            <div class="filter-bar">
+              <button type="button" :class="{ active: filterMode === 'all' }" @click="filterMode = 'all'">全部</button>
+              <button type="button" :class="{ active: filterMode === 'judged' }" @click="filterMode = 'judged'">仅评审</button>
+            </div>
           </header>
-          <ol class="case-results-list">
-            <li
-              v-for="caseResult in requestCases(request)"
-              :key="`${request.id || request.judge_run_id}-${caseResult.case_id}`"
-              class="case-result-card"
-            >
-              <div class="case-result-top">
-                <div class="case-result-id">{{ caseResult.case_id }}</div>
-                <span :class="`status-pill is-${caseVerdictTone(caseResult.verdict)}`">
-                  {{ caseVerdictLabel(caseResult.verdict) }}
-                </span>
-              </div>
-              <p class="case-result-summary">{{ caseResult.summary || "暂无摘要。" }}</p>
-              <dl class="case-result-metrics">
-                <div>
-                  <dt>Baseline 结构/轻微</dt>
-                  <dd>{{ caseResult.baseline_hard_failures ?? 0 }}/{{ caseResult.baseline_soft_failures ?? 0 }}</dd>
-                </div>
-                <div>
-                  <dt>候选 结构/轻微</dt>
-                  <dd>{{ caseResult.candidate_hard_failures ?? 0 }}/{{ caseResult.candidate_soft_failures ?? 0 }}</dd>
-                </div>
-                <div>
-                  <dt>倾向</dt>
-                  <dd>{{ caseResult.preferred_side || "无" }}</dd>
-                </div>
-                <div>
-                  <dt>分数</dt>
-                  <dd>{{ caseResult.overall_score ?? "—" }}</dd>
-                </div>
-              </dl>
-              <ul v-if="Array.isArray(caseResult.reasons) && caseResult.reasons.length" class="case-result-reasons">
-                <li v-for="reason in caseResult.reasons" :key="`${caseResult.case_id}-${reason}`">{{ reason }}</li>
-              </ul>
-            </li>
-          </ol>
-        </section>
-        <div v-else-if="request.status !== 'succeeded' && request.status !== 'complete'" class="result-pending">
-          {{ request.status === 'queued' ? '等待中，评审启动后会自动加载摘要。' : '评审进行中，完成后会显示摘要。' }}
-        </div>
 
-        <a
-          v-if="resultHref(request) && request.status !== 'queued' && request.status !== 'running'"
-          class="result-link"
-          :href="resultHref(request)"
-          target="_blank"
-          rel="noopener"
-        >查看完整结果 →</a>
+          <WorkflowSentenceCompareNotebook
+            :baseline-artifact="baselineArtifact"
+            :candidate-artifact="candidateArtifact"
+            :prepared-sentences="preparedSentences"
+            :comparisons="comparisons"
+            :judge-overlay="judgeOverlayMap"
+            :filter-mode="filterMode"
+            empty-text="暂无逐句评审数据。"
+          />
+
+          <!-- Debug info: collapsed -->
+          <details class="debug-details">
+            <summary>调试信号</summary>
+            <ol class="debug-list">
+              <li
+                v-for="caseResult in requestCases(currentRequest)"
+                :key="`${currentRequest.id || currentRequest.judge_run_id}-${caseResult.case_id}`"
+                class="debug-item"
+              >
+                <span class="debug-sid">{{ caseResult.case_id }}</span>
+                <span :class="`status-pill is-${caseVerdictTone(caseResult.verdict)}`">{{ caseVerdictLabel(caseResult.verdict) }}</span>
+                <span class="debug-signal" title="Baseline 硬/软失败">B: {{ caseResult.baseline_hard_failures ?? 0 }}/{{ caseResult.baseline_soft_failures ?? 0 }}</span>
+                <span class="debug-signal" title="Candidate 硬/软失败">C: {{ caseResult.candidate_hard_failures ?? 0 }}/{{ caseResult.candidate_soft_failures ?? 0 }}</span>
+              </li>
+            </ol>
+          </details>
+        </section>
+        <div v-else-if="currentRequest.status !== 'succeeded' && currentRequest.status !== 'complete' && currentRequest.status !== 'failed' && currentRequest.status !== 'errored'" class="result-pending">
+          {{ currentRequest.status === 'queued' ? '等待中，评审启动后会自动加载摘要。' : '评审进行中，完成后会显示摘要。' }}
+        </div>
       </article>
+
+      <!-- History Requests -->
+      <details v-if="historyRequests.length > 0" class="history-requests-details">
+        <summary>历史评审记录 ({{ historyRequests.length }})</summary>
+        <div class="history-requests-list">
+          <article
+            v-for="request in historyRequests"
+            :key="request.id || request.judge_run_id"
+            class="judge-request history-judge"
+          >
+            <header>
+              <div class="judge-head-main">
+                <span class="status-pill" :class="`is-${statusTone(request.status)}`">{{ statusLabel(request.status) }}</span>
+                <small class="judge-meta">{{ request.rubric_id }} / {{ request.judge_adapter_kind }}</small>
+              </div>
+            </header>
+
+            <div v-if="requestState[request.id || request.judge_run_id]?.result?.summary" class="result-summary-small">
+              <span>差异句数: {{ requestState[request.id || request.judge_run_id].result.summary.total_cases ?? "—" }}</span>
+              <span>候选优: {{ requestState[request.id || request.judge_run_id].result.summary.candidate_preferred ?? requestState[request.id || request.judge_run_id].result.summary.passed ?? 0 }}</span>
+              <span>Baseline优: {{ requestState[request.id || request.judge_run_id].result.summary.baseline_preferred ?? requestState[request.id || request.judge_run_id].result.summary.failed ?? 0 }}</span>
+            </div>
+
+            <a
+              v-if="resultHref(request) && request.status !== 'queued' && request.status !== 'running'"
+              class="result-link"
+              :href="resultHref(request)"
+              target="_blank"
+              rel="noopener"
+            >查看完整结果 →</a>
+          </article>
+        </div>
+      </details>
     </div>
   </section>
 </template>
@@ -378,7 +469,6 @@ header,
 }
 header p,
 label span,
-.judge-disclaimer,
 .result-pending,
 .result-loading,
 .result-error {
@@ -390,26 +480,10 @@ header h3 {
   margin: 2px 0 0;
   font-size: 14px;
 }
-.judge-disclaimer {
-  margin-top: 8px;
-  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
-  border-radius: 6px;
-  padding: 8px 10px;
-  line-height: 1.55;
-}
-.judge-disclaimer strong {
-  color: var(--theme--foreground);
-}
 .judge-form {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(160px, 0.9fr) minmax(90px, 0.6fr) auto;
   margin-top: 12px;
-}
-.judge-help {
-  margin: 10px 0 0;
-  color: var(--theme--foreground-subdued);
-  font-size: 12px;
-  line-height: 1.55;
 }
 label {
   display: grid;
@@ -438,7 +512,7 @@ input:disabled {
 }
 .judge-requests {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   margin-top: 12px;
 }
 .judge-request {
@@ -448,6 +522,30 @@ input:disabled {
   padding: 10px 12px;
   display: grid;
   gap: 8px;
+}
+.current-judge {
+  border-color: var(--theme--border-color);
+  background: var(--theme--background);
+}
+.history-judge {
+  border-color: var(--theme--border-color-subdued);
+  background: var(--theme--background-subdued);
+}
+.history-requests-details {
+  margin-top: 4px;
+}
+.history-requests-details summary {
+  cursor: pointer;
+  color: var(--theme--foreground-subdued);
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.history-requests-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--theme--border-color-subdued);
 }
 .judge-request header {
   display: flex;
@@ -490,115 +588,44 @@ input:disabled {
   color: var(--theme--foreground-subdued);
   font-size: 11px;
 }
-
+.judge-meta-light {
+  color: var(--theme--foreground-subdued);
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 11px;
+}
 .case-results-block {
   display: grid;
   gap: 10px;
 }
-
 .case-results-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
 }
-
-.case-results-head strong,
-.case-results-head small {
+.case-results-head strong {
   display: block;
 }
-
-.case-results-head small {
-  color: var(--theme--foreground-subdued);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.case-results-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.case-result-card {
-  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
-  border-radius: 6px;
-  background: var(--theme--background-subdued);
-  padding: 10px;
-  display: grid;
-  gap: 8px;
-}
-
-.case-result-top {
+.filter-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
 }
-
-.case-result-id {
-  font-family: var(--theme--fonts--monospace--font-family, monospace);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--theme--foreground-subdued);
-}
-
-.case-result-summary {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--theme--foreground);
-}
-
-.case-result-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
+.filter-bar button {
+  min-height: 28px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--theme--background);
-}
-
-.case-result-metrics div {
-  background: var(--theme--background);
-  padding: 8px 10px;
-}
-
-.case-result-metrics dt {
-  color: var(--theme--foreground-subdued);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.case-result-metrics dd {
-  margin: 4px 0 0;
-  font-size: 13px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.case-result-reasons {
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-}
-
-.case-result-reasons li {
-  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
-  border-radius: 999px;
   background: var(--theme--background);
   color: var(--theme--foreground-subdued);
-  font-size: 11px;
-  line-height: 1.4;
-  padding: 2px 8px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
-
+.filter-bar button.active {
+  background: var(--theme--primary);
+  color: var(--theme--background);
+  border-color: var(--theme--primary);
+}
 .result-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -623,6 +650,12 @@ input:disabled {
   font-weight: 700;
   overflow-wrap: anywhere;
 }
+.result-summary-small {
+  display: flex;
+  gap: 12px;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+}
 .result-loading,
 .result-error,
 .result-pending {
@@ -646,6 +679,47 @@ input:disabled {
 .result-link:hover {
   text-decoration: underline;
 }
+
+/* Debug details */
+.debug-details {
+  margin-top: 4px;
+}
+.debug-details summary {
+  cursor: pointer;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+.debug-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+.debug-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 4px;
+  background: var(--theme--background-subdued);
+  font-size: 11px;
+}
+.debug-sid {
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  color: var(--theme--foreground-subdued);
+  font-weight: 700;
+}
+.debug-signal {
+  color: var(--theme--foreground-subdued);
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 10px;
+}
+
 @media (max-width: 860px) {
   .judge-form {
     grid-template-columns: 1fr;
@@ -655,9 +729,6 @@ input:disabled {
   }
   .case-results-head {
     display: grid;
-  }
-  .case-result-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

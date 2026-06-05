@@ -1,6 +1,4 @@
-param(
-  [switch]$IncludeStaticRuns
-)
+param()
 
 $ErrorActionPreference = "Stop"
 
@@ -16,8 +14,6 @@ $directusEnvPath = Join-Path $RepoRoot "apps\\directus\\.env"
 $nodeLabRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\node-lab"
 $workflowRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-runs"
 $workflowCompareRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-compares"
-$staticRunsRoot = Join-Path $RepoRoot "evals\\runs"
-$datasetRoot = Join-Path $RepoRoot "evals\\datasets"
 $rubricRoot = Join-Path $RepoRoot "evals\\rubrics"
 $containerMigrationPath = "/tmp/eval_center_control_plane.sql"
 $containerDropSqlPath = "/tmp/drop_eval_center_tables.sql"
@@ -85,7 +81,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "[eval-center] resetting eval-only data ..."
-& $resetScript @PSBoundParameters
+& $resetScript
 
 Push-Location $RepoRoot
 try {
@@ -113,10 +109,10 @@ $reviewNoteCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_review_notes
 $nodeSessionCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_node_lab_sessions;"
 $nodeTrialCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_node_lab_trials;"
 $exampleEntryCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM eval_example_lab_entries;"
+$experimentFingerprintColumnCount = Invoke-PostgresScalar "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'eval_workflow_compares' AND column_name = 'experiment_fingerprint';"
 $nodeLabRuntimeEntries = Get-PathEntryCount $nodeLabRuntime
 $workflowRuntimeEntries = Get-PathEntryCount $workflowRuntime
 $workflowCompareRuntimeEntries = Get-PathEntryCount $workflowCompareRuntime
-$staticRunEntries = Get-PathEntryCount $staticRunsRoot
 $resetCountChecks = @(
   @{ Name = "prompt_variant_drafts"; Value = $promptVariantDraftCount }
   @{ Name = "workflow_requests"; Value = $workflowRequestCount }
@@ -143,13 +139,15 @@ if ($nodeWorkspaceConstraint -match "judge_compare") {
 if ($nodeResultKindConstraint -match "judge_compare_result") {
   throw "[eval-center] eval_node_lab_trials result_kind check still contains judge_compare_result."
 }
+if ($experimentFingerprintColumnCount -ne "1") {
+  throw "[eval-center] eval_workflow_compares.experiment_fingerprint column is missing."
+}
 $nonEmptyResetCounts = @($resetCountChecks | Where-Object { $_.Value -ne "0" })
 if ($nonEmptyResetCounts.Count -gt 0) {
   $summary = ($nonEmptyResetCounts | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join " "
   throw "[eval-center] eval-only tables are not empty after init: $summary"
 }
 
-Write-Host ("  datasets: " + (Test-Path $datasetRoot))
 Write-Host ("  rubrics: " + (Test-Path $rubricRoot))
 Write-Host ("  metadata: eval_example_lab_entries collection present")
 Write-Host ("  metadata: rag_eligible removed from directus_fields")
@@ -160,5 +158,5 @@ Write-Host ("  reset counts: prompt_variant_drafts=0 workflow_requests=0 workflo
 Write-Host ("  node-lab runtime entries: " + $nodeLabRuntimeEntries)
 Write-Host ("  workflow runtime entries: " + $workflowRuntimeEntries)
 Write-Host ("  workflow compare runtime entries: " + $workflowCompareRuntimeEntries)
-Write-Host ("  static evals/runs entries: " + $staticRunEntries)
+Write-Host ("  workflow_compare.experiment_fingerprint column: present")
 Write-Host "[eval-center] init complete."

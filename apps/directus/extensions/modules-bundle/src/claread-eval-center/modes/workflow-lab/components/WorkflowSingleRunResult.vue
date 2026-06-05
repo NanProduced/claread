@@ -61,11 +61,14 @@ function summarizeRun(side) {
   if (!artifact) return null;
   const adapterStatus = artifact.adapter_status || "unknown";
   const latency = Number(artifact.latency_seconds || 0);
-  const tokens = artifact.usage_summary?.total_tokens ?? null;
+  const usageSummary = artifact.usage_summary || {};
+  const tokens = usageSummary.total_tokens ?? null;
   return {
     adapter_status: adapterStatus,
     latency_seconds: Number.isFinite(latency) ? latency : 0,
     total_tokens: tokens,
+    input_tokens: usageSummary.input_tokens ?? null,
+    output_tokens: usageSummary.output_tokens ?? null,
     prompt_variant_id: artifact.prompt_identity?.prompt_variant_id || null,
     prompt_snapshot_hash: artifact.prompt_identity?.prompt_snapshot_hash || null,
     profile_name: artifact.model_identity?.profile_name || null,
@@ -146,7 +149,7 @@ function readingVariantLabel(value) {
             <dd>{{ readingVariantLabel(inputSnapshot.reading_variant) }}</dd>
           </div>
           <div>
-            <dt>Case 数</dt>
+            <dt>差异句数</dt>
             <dd>{{ dash(report?.total_cases, "—") }}</dd>
           </div>
         </div>
@@ -174,7 +177,7 @@ function readingVariantLabel(value) {
             <div><dt>Snapshot</dt><dd>{{ dash(baselineSummary?.prompt_snapshot_hash) }}</dd></div>
             <div><dt>模型</dt><dd>{{ dash(baselineSummary?.profile_name || baselineSummary?.model_name) }}</dd></div>
             <div><dt>耗时</dt><dd>{{ baselineSummary ? `${baselineSummary.latency_seconds.toFixed(2)} s` : "—" }}</dd></div>
-            <div><dt>Tokens</dt><dd>{{ dash(baselineSummary?.total_tokens, "—") }}</dd></div>
+            <div><dt>Tokens</dt><dd>{{ baselineSummary?.total_tokens != null ? `总 ${baselineSummary.total_tokens} · 入 ${baselineSummary.input_tokens ?? "—"} / 出 ${baselineSummary.output_tokens ?? "—"}` : "—" }}</dd></div>
             <div><dt>句子标注</dt><dd>{{ baselineSummary ? `${baselineSummary.sentence_entry_count} 条` : "—" }}</dd></div>
           </dl>
           <p v-if="baselineSummary?.inline_mark_count || baselineSummary?.translation_count" class="aux-line">
@@ -192,7 +195,7 @@ function readingVariantLabel(value) {
             <div><dt>Snapshot</dt><dd>{{ dash(candidateSummary?.prompt_snapshot_hash) }}</dd></div>
             <div><dt>模型</dt><dd>{{ dash(candidateSummary?.profile_name || candidateSummary?.model_name) }}</dd></div>
             <div><dt>耗时</dt><dd>{{ candidateSummary ? `${candidateSummary.latency_seconds.toFixed(2)} s` : "—" }}</dd></div>
-            <div><dt>Tokens</dt><dd>{{ dash(candidateSummary?.total_tokens, "—") }}</dd></div>
+            <div><dt>Tokens</dt><dd>{{ candidateSummary?.total_tokens != null ? `总 ${candidateSummary.total_tokens} · 入 ${candidateSummary.input_tokens ?? "—"} / 出 ${candidateSummary.output_tokens ?? "—"}` : "—" }}</dd></div>
             <div><dt>句子标注</dt><dd>{{ candidateSummary ? `${candidateSummary.sentence_entry_count} 条` : "—" }}</dd></div>
           </dl>
           <p v-if="candidateSummary?.inline_mark_count || candidateSummary?.translation_count" class="aux-line">
@@ -210,21 +213,21 @@ function readingVariantLabel(value) {
           <div><dt>更好</dt><dd>{{ report?.wins ?? 0 }}</dd></div>
           <div><dt>变差</dt><dd>{{ report?.losses ?? 0 }}</dd></div>
           <div><dt>持平</dt><dd>{{ report?.ties ?? 0 }}</dd></div>
-          <div><dt>总 case</dt><dd>{{ report?.total_cases ?? 0 }}</dd></div>
+          <div><dt>差异句数</dt><dd>{{ report?.total_cases ?? 0 }}</dd></div>
         </dl>
       </section>
 
       <section v-if="baselineArtifact || candidateArtifact" class="sentence-diff">
         <header>
           <strong>句子级差异</strong>
-          <small>主视图,与 CaseEvidenceInspector 同源</small>
+          <small>主视图,与双边句子证据同源</small>
         </header>
         <SentenceCompareDiffView
           :baseline-artifact="baselineArtifact"
           :candidate-artifact="candidateArtifact"
           :prepared-sentences="preparedSentences"
           :compare-case="firstComparison"
-          empty-text="本次 compare 暂无可比较 case。"
+          empty-text="本次 compare 暂无可比较差异句。"
         />
         <p v-if="firstComparison" class="case-delta-note">
           <span :class="`verdict-pill is-${firstComparison.verdict === 'win' ? 'success' : firstComparison.verdict === 'loss' ? 'danger' : 'neutral'}`">{{ firstComparison.verdict || "—" }}</span>

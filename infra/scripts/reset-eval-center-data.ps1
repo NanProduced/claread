@@ -1,7 +1,3 @@
-param(
-  [switch]$IncludeStaticRuns
-)
-
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\\..")
@@ -14,7 +10,6 @@ $containerResetSqlPath = "/tmp/reset_eval_center_tables.sql"
 $nodeLabRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\node-lab"
 $workflowRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-runs"
 $workflowCompareRuntime = Join-Path $RepoRoot "apps\\directus\\.runtime\\evals\\workflow-compares"
-$staticRuns = Join-Path $RepoRoot "evals\\runs"
 
 Write-Host "[eval-center] truncating eval-only tables in $PostgresContainer ..."
 docker cp $resetSqlPath "${PostgresContainer}:$containerResetSqlPath"
@@ -31,11 +26,6 @@ foreach ($path in @($nodeLabRuntime, $workflowRuntime, $workflowCompareRuntime))
     Write-Host "[eval-center] removing runtime artifacts: $path"
     Remove-Item -LiteralPath $path -Recurse -Force
   }
-}
-
-if ($IncludeStaticRuns -and (Test-Path $staticRuns)) {
-  Write-Host "[eval-center] removing static test runs: $staticRuns"
-  Get-ChildItem -LiteralPath $staticRuns -Force | Remove-Item -Recurse -Force
 }
 
 Write-Host "[eval-center] reset complete."

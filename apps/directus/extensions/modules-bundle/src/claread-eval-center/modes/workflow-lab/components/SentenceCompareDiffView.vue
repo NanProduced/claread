@@ -12,7 +12,7 @@ const props = defineProps({
   candidateArtifact: { type: [Object, Array, null], default: null },
   preparedSentences: { type: Array, default: () => [] },
   compareCase: { type: Object, default: null },
-  emptyText: { type: String, default: "选择 baseline 与候选 case 后，这里会逐句显示差异。" },
+  emptyText: { type: String, default: "选择 baseline 与候选差异句后，这里会逐句显示差异。" },
 });
 
 const baselineScene = computed(() => normalizeWorkflowScene(props.baselineArtifact));
@@ -67,8 +67,8 @@ function collectBySentence(scene) {
   }
   const marks = new Map();
   for (const item of sceneInlineMarks(scene)) {
-    if (item && item.sentence_id != null) {
-      const sid = String(item.sentence_id);
+    if (item && item.anchor?.sentence_id != null) {
+      const sid = String(item.anchor.sentence_id);
       if (!marks.has(sid)) marks.set(sid, []);
       marks.get(sid).push(item);
     }
@@ -90,7 +90,7 @@ const candidateBySid = computed(() => collectBySentence(candidateScene.value));
 function formatMark(mark) {
   const anchor = mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || "—";
   const type = mark?.annotation_type || mark?.visual_tone || "mark";
-  const extra = mark?.zh || mark?.gloss || mark?.phrase_type || "";
+  const extra = mark?.glossary?.zh || mark?.glossary?.gloss || mark?.glossary?.phrase_type || "";
   return { anchor: String(anchor), type: String(type), extra: extra ? String(extra) : "" };
 }
 

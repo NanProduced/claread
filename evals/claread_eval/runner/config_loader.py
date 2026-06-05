@@ -76,7 +76,7 @@ def load_runner_config(path: str | Path) -> RunnerFileConfig:
     base_dir = config_path.parent
     adapter_kind = payload.pop("adapter_kind", "fake")
     runs_root = _resolve_path(base_dir, payload.pop("runs_root", "../runs"))
-    datasets_root = _resolve_path(base_dir, payload.pop("datasets_root", "../datasets"))
+    datasets_root = _resolve_path(base_dir, payload.pop("datasets_root", ""))
     fake_latency_seconds = payload.pop("fake_latency_seconds", 0.0)
     prompt_override = payload.pop("prompt_override", None)
     prompt_variant_path_raw = payload.pop("prompt_variant_path", None)

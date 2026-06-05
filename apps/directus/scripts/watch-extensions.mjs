@@ -23,6 +23,11 @@ const bundles = [
     label: "endpoints",
     watchPath: path.join(directusRoot, "extensions/endpoints-bundle/src"),
   },
+  {
+    filter: "@claread/directus-hooks",
+    label: "hooks",
+    watchPath: path.join(directusRoot, "extensions/hooks-bundle/src"),
+  },
 ];
 
 const state = new Map(

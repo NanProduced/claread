@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS eval_workflow_run_requests (
     finished_at TIMESTAMPTZ,
     error_json JSONB,
     notes TEXT,
-    tags JSONB NOT NULL DEFAULT '[]'::jsonb
+    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    custom_title TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_eval_workflow_run_requests_status_created
@@ -102,7 +103,7 @@ CREATE TABLE IF NOT EXISTS eval_judge_run_requests (
     rubric_id TEXT NOT NULL CHECK (rubric_id ~ '^[A-Za-z0-9._-]+$'),
     rubric_version TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued' CHECK (
-        status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')
+        status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'partial_failure')
     ),
     judge_adapter_kind TEXT NOT NULL DEFAULT 'llm' CHECK (
         judge_adapter_kind IN ('fake', 'llm')
@@ -188,6 +189,8 @@ CREATE TABLE IF NOT EXISTS eval_workflow_compares (
     baseline_run_id TEXT NOT NULL CHECK (baseline_run_id ~ '^[A-Za-z0-9._-]+$'),
     candidate_run_id TEXT NOT NULL CHECK (candidate_run_id ~ '^[A-Za-z0-9._-]+$'),
     input_hash TEXT,
+    experiment_fingerprint TEXT
+        CHECK (experiment_fingerprint IS NULL OR experiment_fingerprint ~ '^[0-9a-f]{16}$'),
     reading_goal TEXT,
     reading_variant TEXT,
     source_type TEXT,
@@ -198,7 +201,8 @@ CREATE TABLE IF NOT EXISTS eval_workflow_compares (
     losses INTEGER NOT NULL DEFAULT 0 CHECK (losses >= 0),
     ties INTEGER NOT NULL DEFAULT 0 CHECK (ties >= 0),
     identity_warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
-    notes TEXT
+    notes TEXT,
+    custom_title TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_eval_workflow_compares_created
@@ -207,8 +211,15 @@ CREATE INDEX IF NOT EXISTS idx_eval_workflow_compares_created
 CREATE INDEX IF NOT EXISTS idx_eval_workflow_compares_candidate
     ON eval_workflow_compares (candidate_run_id, date_created DESC);
 
+CREATE INDEX IF NOT EXISTS idx_eval_workflow_compares_fingerprint_created
+    ON eval_workflow_compares (experiment_fingerprint, date_created DESC)
+    WHERE experiment_fingerprint IS NOT NULL;
+
 COMMENT ON TABLE eval_workflow_compares IS
     'Workflow Lab compare control-plane records. This is the only user-facing Workflow history object.';
+
+COMMENT ON COLUMN eval_workflow_compares.experiment_fingerprint IS
+    'Stable sha1(16hex) over workflow compare experiment conditions. Used for cross-experiment grouping only; never used to deduplicate or reuse compare rows.';
 
 CREATE TABLE IF NOT EXISTS eval_workflow_compare_judge_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -224,7 +235,7 @@ CREATE TABLE IF NOT EXISTS eval_workflow_compare_judge_requests (
     rubric_id TEXT NOT NULL CHECK (rubric_id ~ '^[A-Za-z0-9._-]+$'),
     rubric_version TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued' CHECK (
-        status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')
+        status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'partial_failure')
     ),
     judge_adapter_kind TEXT NOT NULL DEFAULT 'llm' CHECK (
         judge_adapter_kind IN ('fake', 'llm')
@@ -356,7 +367,8 @@ CREATE TABLE IF NOT EXISTS eval_node_lab_trials (
     review_state TEXT NOT NULL DEFAULT 'unreviewed' CHECK (
         review_state IN ('unreviewed', 'needs_followup', 'accepted', 'rejected')
     ),
-    decision_note TEXT
+    decision_note TEXT,
+    custom_title TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_eval_node_lab_trials_session_created
@@ -532,7 +544,28 @@ CREATE TABLE IF NOT EXISTS eval_example_lab_entries (
     tags_json JSONB NOT NULL DEFAULT '[]'::jsonb,
 
     CONSTRAINT eval_example_lab_entries_approved_rag_eligible_check
-        CHECK (approved = false OR example_type IN ('grammar', 'sentence_analysis'))
+        CHECK (approved = false OR example_type IN ('grammar', 'sentence_analysis')),
+
+    CONSTRAINT eval_example_lab_entries_fragment_type_check
+        CHECK (
+            output_fragment->>'type' IS NULL
+            OR output_fragment = '{}'::jsonb
+            OR (example_type = 'grammar' AND output_fragment->>'type' = 'grammar_note')
+            OR (example_type = 'sentence_analysis' AND output_fragment->>'type' = 'sentence_analysis')
+            OR (example_type = 'vocab' AND output_fragment->>'type' IN ('vocab_highlight', 'term_note', 'logic_note'))
+            OR (example_type = 'phrase' AND output_fragment->>'type' = 'phrase_gloss')
+            OR (example_type = 'context' AND output_fragment->>'type' = 'context_gloss')
+            OR (example_type = 'translation' AND output_fragment->>'type' IN ('translation', 'academic_translation'))
+        ),
+
+    CONSTRAINT eval_example_lab_entries_teaching_goal_check
+        CHECK (
+            teaching_goal IS NULL
+            OR teaching_goal IN (
+                'focused', 'balanced', 'structural', 'explicit_split', 'structural_logic',
+                'explicit_exam', 'speed_support', 'rhetorical', 'info_extraction'
+            )
+        )
 );
 
 CREATE INDEX IF NOT EXISTS idx_eval_example_lab_entries_type_created
@@ -543,3 +576,34 @@ CREATE INDEX IF NOT EXISTS idx_eval_example_lab_entries_variant
 
 COMMENT ON TABLE eval_example_lab_entries IS
     'Example Lab few-shot example entries. Stores manually curated examples with RAG-ready metadata. Only grammar / sentence_analysis entries may be approved (approved=true requires example_type in that set).';
+
+-- Live DB cleanup: keep RAG-eligible types on a canonical 1:1 mapping.
+UPDATE eval_example_lab_entries
+SET example_type = 'sentence_analysis'
+WHERE example_type = 'grammar'
+  AND output_fragment->>'type' = 'sentence_analysis';
+
+ALTER TABLE eval_example_lab_entries
+    DROP CONSTRAINT IF EXISTS eval_example_lab_entries_fragment_type_check;
+
+ALTER TABLE eval_example_lab_entries
+    ADD CONSTRAINT eval_example_lab_entries_fragment_type_check
+    CHECK (
+        output_fragment->>'type' IS NULL
+        OR output_fragment = '{}'::jsonb
+        OR (example_type = 'grammar' AND output_fragment->>'type' = 'grammar_note')
+        OR (example_type = 'sentence_analysis' AND output_fragment->>'type' = 'sentence_analysis')
+        OR (example_type = 'vocab' AND output_fragment->>'type' IN ('vocab_highlight', 'term_note', 'logic_note'))
+        OR (example_type = 'phrase' AND output_fragment->>'type' = 'phrase_gloss')
+        OR (example_type = 'context' AND output_fragment->>'type' = 'context_gloss')
+        OR (example_type = 'translation' AND output_fragment->>'type' IN ('translation', 'academic_translation'))
+    );
+
+COMMENT ON COLUMN eval_workflow_compares.custom_title IS
+    'User-defined display title for the compare record. Nullable; when NULL the UI should fall back to compare_id or a generated summary.';
+
+COMMENT ON COLUMN eval_workflow_run_requests.custom_title IS
+    'User-defined display title for the run request. Nullable; when NULL the UI should fall back to run_id or a generated summary.';
+
+COMMENT ON COLUMN eval_node_lab_trials.custom_title IS
+    'User-defined display title for the trial. Nullable; when NULL the UI should fall back to node_name / reading_goal / reading_variant.';

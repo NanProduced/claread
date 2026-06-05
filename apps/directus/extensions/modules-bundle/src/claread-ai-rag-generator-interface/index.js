@@ -1,399 +1,561 @@
-import { defineComponent, h, ref, resolveComponent } from "vue";
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue';
 
-/**
- * Custom Directus Interface: AI RAG Field Generator.
- *
- * Bound to grammar_tags, structure_signals, and retrieval_text fields of eval_example_lab_entries.
- * Provides:
- *   - A model profile selector (fetched from Claread API via Directus proxy)
- *   - An "AI Generate" button that generates all RAG fields at once
- *   - Auto-fills grammar_tags, structure_signals, teaching_goal, retrieval_text
- *   - Field-specific display (JSON editor for tags/signals, textarea for retrieval_text)
- */
+const STORAGE_PREFIX = 'claread:example-lab:ai-rag';
+const GENERATED_FRAGMENT_KEY = '__ai_rag_generated';
+
+function parseJsonValue(value, fallback) {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed === null || parsed === undefined ? fallback : parsed;
+    } catch {
+      return fallback;
+    }
+  }
+  return value;
+}
+
+function readSessionState(key) {
+  if (typeof window === 'undefined' || !window.sessionStorage || !key) return null;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionState(key, value) {
+  if (typeof window === 'undefined' || !window.sessionStorage || !key) return;
+  try {
+    if (!value) {
+      window.sessionStorage.removeItem(key);
+      return;
+    }
+    window.sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function unwrapInjectedValue(value) {
+  if (value && typeof value === 'object' && 'value' in value) return value.value;
+  return value;
+}
+
+function stringifyEditorValue(value) {
+  if (typeof value === 'string') return value;
+  if (value === undefined) return '';
+  return JSON.stringify(value, null, 2);
+}
+
+function emitFieldValue(emit, field, value) {
+  if (typeof emit !== 'function' || !field) return;
+
+  // The Directus docs expose the setFieldValue event but don't document
+  // the exact payload shape. Emit both common forms for compatibility.
+  emit('setFieldValue', field, value);
+  emit('setFieldValue', { field, value });
+}
+
+function syncTextareaField(root, value) {
+  const textarea = root?.querySelector('textarea.sans-serif, textarea');
+  if (!textarea) return false;
+
+  const nextValue = typeof value === 'string' ? value : stringifyEditorValue(value);
+  if (textarea.value === nextValue) return true;
+
+  textarea.value = nextValue;
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+
+function syncCodeMirrorField(root, value) {
+  const editor = root?.querySelector('.CodeMirror')?.CodeMirror;
+  if (!editor || typeof editor.setValue !== 'function') return false;
+
+  const nextValue = stringifyEditorValue(value);
+  if (editor.getValue?.() === nextValue) return true;
+
+  editor.setValue(nextValue);
+  if (typeof editor.save === 'function') editor.save();
+  return true;
+}
+
+function syncFieldEditor(field, value) {
+  if (typeof document === 'undefined' || !field || value === undefined) return;
+
+  const root = document.querySelector(`[data-field="${field}"]`);
+  if (!root) return;
+
+  if (Array.isArray(value)) {
+    if (syncCodeMirrorField(root, value)) return;
+    syncTextareaField(root, value);
+    return;
+  }
+
+  syncTextareaField(root, value);
+}
+
 export default {
-  id: "claread-ai-rag-generator-interface",
-  name: "Claread AI RAG Generator",
-  icon: "auto_awesome",
-  description: "AI-generates RAG fields (grammar_tags, structure_signals, teaching_goal, retrieval_text) for Example Lab entries.",
-  types: ["text", "json"],
-  group: "presentation",
-  options: [
-    {
-      field: "modelProfilesEndpoint",
-      type: "string",
-      name: "Model Profiles Endpoint",
-      meta: {
-        width: "full",
-        interface: "input",
-        note: "Endpoint to fetch model profiles list (Claread API proxy)",
-      },
-      schema: {
-        default_value: "/eval-center/article-analysis/model-profiles",
-      },
-    },
-    {
-      field: "generateEndpoint",
-      type: "string",
-      name: "Generate Endpoint",
-      meta: {
-        width: "full",
-        interface: "input",
-        note: "Endpoint to call for AI generation",
-      },
-      schema: {
-        default_value: "/eval-center/example-lab/ai-generate-rag-fields",
-      },
-    },
-  ],
-  component: defineComponent({
-    props: [
-      "value",
-      "modelProfilesEndpoint",
-      "generateEndpoint",
-      "collection",
-      "primaryKey",
-      "field",
-      "values",
-      "disabled",
-      "loading",
-    ],
+  id: 'claread-ai-rag-generator-interface',
+  name: 'Claread AI RAG Generator',
+  icon: 'auto_awesome',
+  description: 'AI-powered RAG field generator for Example Lab entries',
+  localTypes: ['presentation'],
+  component: {
+    props: ['value', 'collection', 'primaryKey', 'field', 'disabled', 'loading'],
+    emits: ['input', 'setFieldValue'],
     setup(props, { emit }) {
-      const VButton = resolveComponent("v-button");
-      const VIcon = resolveComponent("v-icon");
-      const RULE_MODE_VALUE = "__rule__";
+      const values = inject('values', ref({}));
+      const api = inject('api', null);
+      const primaryKeyRef = inject('primaryKey', ref(null));
+      const collectionRef = inject('collection', ref('eval_example_lab_entries'));
 
       const generating = ref(false);
+      const error = ref(null);
+      const lastResult = ref(null);
+      const modelProfile = ref(null);
       const modelProfiles = ref([]);
-      const selectedModel = ref(RULE_MODE_VALUE);
-      const errorMsg = ref("");
-      const successMsg = ref("");
+      const showReasoning = ref(false);
 
-      // Fetch model profiles from Claread API proxy (same as Node Lab)
-      const fetchModels = async () => {
-        const endpoint = props.modelProfilesEndpoint || "/eval-center/article-analysis/model-profiles";
+      const sentenceText = computed(() => String(values?.value?.sentence_text || ''));
+      const outputFragment = computed(() => {
+        const parsed = parseJsonValue(values?.value?.output_fragment, {});
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        return parsed;
+      });
+      const readingVariant = computed(() => String(values?.value?.reading_variant || 'intermediate_reading'));
+      const exampleType = computed(() => String(values?.value?.example_type || ''));
+      const exampleId = computed(() => String(values?.value?.example_id || 'draft'));
+      const collectionName = computed(() =>
+        props.collection || unwrapInjectedValue(collectionRef) || 'eval_example_lab_entries'
+      );
+      const itemPrimaryKey = computed(() =>
+        props.primaryKey ?? unwrapInjectedValue(primaryKeyRef) ?? null
+      );
+
+      const isRagEligible = computed(() =>
+        exampleType.value === 'grammar' || exampleType.value === 'sentence_analysis'
+      );
+
+      const canGenerate = computed(() =>
+        isRagEligible.value &&
+        sentenceText.value.trim().length > 0 &&
+        outputFragment.value &&
+        typeof outputFragment.value === 'object' &&
+        !Array.isArray(outputFragment.value) &&
+        String(outputFragment.value.type || '').trim().length > 0 &&
+        String(modelProfile.value || '').trim().length > 0
+      );
+
+      const prereqMessage = computed(() => {
+        if (!isRagEligible.value) {
+          return 'Select example_type = grammar or sentence_analysis to enable AI generation.';
+        }
+        if (!sentenceText.value.trim()) {
+          return 'Fill sentence text before generating.';
+        }
+        if (!String(outputFragment.value?.type || '').trim()) {
+          return 'Choose an output fragment type before generating.';
+        }
+        if (!String(modelProfile.value || '').trim()) {
+          return 'Choose a model profile before generating.';
+        }
+        return '';
+      });
+
+      const storageKey = computed(() => {
+        const collection = collectionName.value;
+        const recordId = itemPrimaryKey.value || exampleId.value || 'draft';
+        return `${STORAGE_PREFIX}:${collection}:${recordId}`;
+      });
+
+      const modelSelectOptions = computed(() =>
+        modelProfiles.value.map((profile) => {
+          const badges = [];
+          if (profile.annotation_route_default) badges.push('annotation-default');
+          if (profile.default_profile) badges.push('global-default');
+          const suffix = badges.length ? ` [${badges.join(', ')}]` : '';
+          return {
+            text: `${profile.profile_name} (${profile.model_name || profile.provider})${suffix}`,
+            value: profile.profile_name,
+          };
+        })
+      );
+
+      const confidenceLabel = computed(() => {
+        const value = String(lastResult.value?.confidence || '').toLowerCase();
+        if (!value) return '';
+        if (value === 'high') return 'High confidence';
+        if (value === 'medium') return 'Medium confidence';
+        if (value === 'low') return 'Low confidence';
+        return value;
+      });
+
+      const usage = computed(() => lastResult.value?.usage || null);
+
+      function restoreSessionState() {
+        const stored = readSessionState(storageKey.value);
+        if (!stored) return;
+        if (stored.modelProfile && !modelProfile.value) modelProfile.value = stored.modelProfile;
+        if (stored.lastResult) lastResult.value = stored.lastResult;
+      }
+
+      async function loadModelProfiles() {
+        if (!api) {
+          error.value = 'Directus API is unavailable in this interface.';
+          return;
+        }
+
         try {
-          const resp = await fetch(endpoint, { credentials: "include", headers: { Accept: "application/json" } });
-          if (!resp.ok) return;
-          const payload = await resp.json();
-          const profiles = payload?.data || [];
-          modelProfiles.value = profiles.map((p) => ({
-            text: `${p.profile_name} · ${p.model_name}${p.annotation_route_default ? " (default)" : ""}`,
-            value: p.profile_name,
-          }));
-        } catch {
-          // Silently fail - models list is optional
+          const response = await api.get('/eval-center/example-lab/model-profiles');
+          const profiles = Array.isArray(response?.data?.data) ? response.data.data : [];
+          modelProfiles.value = profiles;
+
+          if (!modelProfile.value && profiles.length > 0) {
+            const preferred =
+              profiles.find((item) => item.annotation_route_default)
+              || profiles.find((item) => item.default_profile)
+              || profiles[0];
+            modelProfile.value = preferred?.profile_name || null;
+          }
+        } catch (requestError) {
+          error.value =
+            requestError?.response?.data?.errors?.[0]?.message
+            || requestError?.message
+            || 'Failed to load model profiles.';
         }
-      };
+      }
 
-      const getSiblingValue = (fieldName) => {
-        if (props.values && typeof props.values === "object") {
-          return props.values[fieldName];
+      function updateSiblingFields(data) {
+        const formValues = values?.value;
+        const nextValues = {
+          grammar_tags: data.grammar_tags,
+          structure_signals: data.structure_signals,
+          retrieval_text: data.retrieval_text,
+          teaching_goal: data.teaching_goal,
+        };
+
+        for (const [field, value] of Object.entries(nextValues)) {
+          if (value === undefined) continue;
+          emitFieldValue(emit, field, value);
+          if (formValues && typeof formValues === 'object') {
+            formValues[field] = value;
+          }
         }
-        return undefined;
-      };
 
-      const handleGenerate = async () => {
-        const sentenceText = getSiblingValue("sentence_text");
-        const outputFragment = getSiblingValue("output_fragment");
-        const readingVariant = getSiblingValue("reading_variant");
+        const nextFragment = {
+          ...outputFragment.value,
+          [GENERATED_FRAGMENT_KEY]: Object.fromEntries(
+            Object.entries(nextValues).filter(([, value]) => value !== undefined)
+          ),
+        };
+        emitFieldValue(emit, 'output_fragment', nextFragment);
+        if (formValues && typeof formValues === 'object') {
+          formValues.output_fragment = nextFragment;
+        }
 
-        if (!sentenceText) {
-          errorMsg.value = "请先填写 sentence_text";
-          successMsg.value = "";
+        void nextTick(() => {
+          // Some built-in Directus editors (CodeMirror / textarea wrappers)
+          // don't visually refresh from sibling field emits alone.
+          window.setTimeout(() => {
+            for (const [field, value] of Object.entries(nextValues)) {
+              syncFieldEditor(field, value);
+            }
+          }, 0);
+        });
+      }
+
+      async function generate() {
+        if (!canGenerate.value || generating.value) return;
+        if (!api) {
+          error.value = 'Directus API is unavailable in this interface.';
           return;
         }
 
         generating.value = true;
-        errorMsg.value = "";
-        successMsg.value = "";
-
-        const endpoint = props.generateEndpoint || "/eval-center/example-lab/ai-generate-rag-fields";
+        error.value = null;
+        showReasoning.value = false;
 
         try {
-          const body = {
-            sentence_text: sentenceText,
-            output_fragment: typeof outputFragment === "string" ? JSON.parse(outputFragment || "{}") : (outputFragment || {}),
-            reading_variant: readingVariant || "default",
+          const payload = {
+            sentence_text: sentenceText.value,
+            output_fragment: outputFragment.value,
+            reading_variant: readingVariant.value,
+            model_profile: modelProfile.value,
           };
-          if (selectedModel.value && selectedModel.value !== RULE_MODE_VALUE) {
-            body.model_profile = selectedModel.value;
+
+          const response = await api.post('/eval-center/example-lab/ai-generate-rag-fields', payload);
+          const data = response?.data?.data;
+          if (!data || typeof data !== 'object') {
+            throw new Error('Empty response from AI generation API.');
           }
 
-          const resp = await fetch(endpoint, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify(body),
-          });
-
-          if (!resp.ok) {
-            const errPayload = await resp.json().catch(() => ({}));
-            throw new Error(errPayload?.errors?.[0]?.message || `HTTP ${resp.status}`);
-          }
-
-          const payload = await resp.json();
-          const data = payload?.data;
-          if (!data) throw new Error("Empty response");
-
-          // Update current field value
-          const currentField = props.field;
-          if (currentField === "grammar_tags" && data.grammar_tags) {
-            emit("input", JSON.stringify(data.grammar_tags));
-          } else if (currentField === "structure_signals" && data.structure_signals) {
-            emit("input", JSON.stringify(data.structure_signals));
-          } else if (currentField === "retrieval_text" && data.retrieval_text) {
-            emit("input", data.retrieval_text);
-          }
-
-          // Update sibling fields via Directus form store
-          updateSiblingFields(data, currentField);
-
-          const latency = data.latency_ms ? ` (${Math.round(data.latency_ms / 1000)}s)` : "";
-          successMsg.value = generationSuccessLabel(data.generated_by, latency);
-        } catch (err) {
-          errorMsg.value = err.message || "生成失败";
-          successMsg.value = "";
+          lastResult.value = data;
+          updateSiblingFields(data);
+        } catch (requestError) {
+          error.value =
+            requestError?.response?.data?.errors?.[0]?.message
+            || requestError?.message
+            || 'Failed to generate AI RAG fields.';
         } finally {
           generating.value = false;
         }
-      };
-
-      const generationSuccessLabel = (generatedBy, latency) => {
-        if (generatedBy === "llm") return `LLM 生成成功${latency}`;
-        if (generatedBy === "llm_fallback") return `LLM 调用失败，已回退规则生成${latency}`;
-        return `规则生成成功${latency}`;
-      };
-
-      const resolveSiblingFormValues = () => {
-        if (props.values && typeof props.values === "object") {
-          return props.values;
-        }
-
-        const formEl = document.querySelector("[data-directus-form]");
-        if (!formEl) return null;
-
-        let formInstance = null;
-        let el = formEl;
-        while (el && !formInstance) {
-          if (el.__vue__ && (el.__vue__.values || el.__vue__.editForm)) {
-            formInstance = el.__vue__;
-            break;
-          }
-          if (el.__vue_parent_component) {
-            const instance = el.__vue_parent_component;
-            if (instance.setupState?.values || instance.proxy?.values) {
-              formInstance = instance;
-              break;
-            }
-          }
-          el = el.parentElement;
-        }
-
-        return formInstance?.values || formInstance?.proxy?.values || formInstance?.setupState?.values || null;
-      };
-
-      const updateSiblingFields = (data, currentField) => {
-        const formValues = resolveSiblingFormValues();
-        if (!formValues) return;
-
-        if (currentField !== "grammar_tags" && data.grammar_tags) {
-          formValues.grammar_tags = JSON.stringify(data.grammar_tags);
-        }
-        if (currentField !== "structure_signals" && data.structure_signals) {
-          formValues.structure_signals = JSON.stringify(data.structure_signals);
-        }
-        if (currentField !== "retrieval_text" && data.retrieval_text) {
-          formValues.retrieval_text = data.retrieval_text;
-        }
-        if (data.teaching_goal) {
-          formValues.teaching_goal = data.teaching_goal;
-        }
-      };
-
-      // Fetch models on mount
-      if (typeof window !== "undefined") {
-        fetchModels();
       }
 
-      return () => {
-        const children = [];
-        const currentField = props.field || "retrieval_text";
+      watch(storageKey, () => {
+        restoreSessionState();
+      }, { immediate: true });
 
-        // Model selector + Generate button row
-        children.push(
-          h(
-            "div",
-            {
-              style: {
-                display: "flex",
-                gap: "8px",
-                alignItems: "flex-end",
-                marginBottom: "8px",
-              },
-            },
-            [
-              h(
-                "div",
-                { style: { flex: "1 1 auto", minWidth: "200px" } },
-                [
-                  h(
-                    "div",
-                    {
-                      style: {
-                        fontSize: "12px",
-                        fontWeight: "600",
-                        color: "var(--theme--foreground-subdued, #6B7280)",
-                        marginBottom: "4px",
-                      },
-                    },
-                    "生成模式",
-                  ),
-                  h("select", {
-                    value: selectedModel.value,
-                    style: {
-                      width: "100%",
-                      padding: "6px 10px",
-                      border: "1px solid var(--theme--border-color, #D1D5DB)",
-                      borderRadius: "4px",
-                      fontSize: "13px",
-                      background: "var(--theme--background, #FFF)",
-                      color: "var(--theme--foreground, #172940)",
-                    },
-                    onChange: (e) => {
-                      selectedModel.value = e.target.value || RULE_MODE_VALUE;
-                    },
-                  }, [
-                    h("option", { value: RULE_MODE_VALUE }, "规则模式（默认）"),
-                    ...modelProfiles.value.map((p) =>
-                      h("option", { value: p.value }, p.text),
-                    ),
-                  ]),
-                ],
-              ),
-              h(
-                VButton,
-                {
-                  kind: "primary",
-                  secondary: true,
-                  disabled: generating.value || props.disabled,
-                  onClick: handleGenerate,
-                },
-                {
-                  default: () => [
-                    h(VIcon, { name: generating.value ? "hourglass_empty" : "auto_awesome", small: true }),
-                    h("span", { style: { marginLeft: "6px" } }, generating.value ? "生成中..." : "AI 生成"),
-                  ],
-                },
-              ),
-            ],
-          ),
-        );
+      watch([lastResult, modelProfile], () => {
+        writeSessionState(storageKey.value, {
+          modelProfile: modelProfile.value || null,
+          lastResult: lastResult.value || null,
+        });
+      }, { deep: true });
 
-        // Success/error messages
-        if (successMsg.value) {
-          children.push(
-            h(
-              "div",
-              {
-                style: {
-                  padding: "6px 10px",
-                  marginBottom: "8px",
-                  borderRadius: "4px",
-                  fontSize: "12px",
-                  background: "var(--theme--success-background, #ECFDF5)",
-                  color: "var(--theme--success, #059669)",
-                },
-              },
-              successMsg.value,
-            ),
-          );
-        }
-        if (errorMsg.value) {
-          children.push(
-            h(
-              "div",
-              {
-                style: {
-                  padding: "6px 10px",
-                  marginBottom: "8px",
-                  borderRadius: "4px",
-                  fontSize: "12px",
-                  background: "var(--theme--danger-background, #FEF2F2)",
-                  color: "var(--theme--danger, #DC2626)",
-                },
-              },
-              errorMsg.value,
-            ),
-          );
-        }
+      onMounted(() => {
+        restoreSessionState();
+        void loadModelProfiles();
+      });
 
-        // Field-specific editor
-        if (currentField === "grammar_tags" || currentField === "structure_signals") {
-          // JSON array editor for tags/signals
-          children.push(
-            h("textarea", {
-              value: props.value || "[]",
-              disabled: props.disabled,
-              placeholder: `${currentField}（AI 生成或手动编辑 JSON 数组）`,
-              rows: 3,
-              style: {
-                width: "100%",
-                padding: "8px 10px",
-                border: "1px solid var(--theme--border-color, #D1D5DB)",
-                borderRadius: "4px",
-                fontSize: "12px",
-                fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
-                lineHeight: "1.5",
-                resize: "vertical",
-                background: "var(--theme--background, #FFF)",
-                color: "var(--theme--foreground, #172940)",
-                boxSizing: "border-box",
-              },
-              onInput: (e) => {
-                emit("input", e.target.value);
-              },
-            }),
-          );
-        } else {
-          // Textarea for retrieval_text
-          children.push(
-            h("textarea", {
-              value: props.value || "",
-              disabled: props.disabled,
-              placeholder: "retrieval_text（AI 生成或手动编辑）",
-              rows: 6,
-              style: {
-                width: "100%",
-                padding: "8px 10px",
-                border: "1px solid var(--theme--border-color, #D1D5DB)",
-                borderRadius: "4px",
-                fontSize: "12px",
-                fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
-                lineHeight: "1.5",
-                resize: "vertical",
-                background: "var(--theme--background, #FFF)",
-                color: "var(--theme--foreground, #172940)",
-                boxSizing: "border-box",
-              },
-              onInput: (e) => {
-                emit("input", e.target.value);
-              },
-            }),
-          );
-        }
-
-        return h(
-          "div",
-          {
-            style: {
-              display: "flex",
-              flexDirection: "column",
-              gap: "0",
-            },
-          },
-          children,
-        );
+      return {
+        canGenerate,
+        confidenceLabel,
+        error,
+        exampleType,
+        generate,
+        generating,
+        isRagEligible,
+        lastResult,
+        modelProfile,
+        modelSelectOptions,
+        prereqMessage,
+        showReasoning,
+        usage,
       };
     },
-  }),
+    template: `
+      <div class="rag-gen">
+        <div class="toolbar">
+          <div class="toolbar-header">
+            <div class="toolbar-left">
+              <v-icon name="auto_awesome" small class="toolbar-icon" />
+              <span class="toolbar-label">AI Generate</span>
+            </div>
+          </div>
+          <div class="toolbar-controls">
+            <div class="model-row">
+              <v-select
+                v-model="modelProfile"
+                :items="modelSelectOptions"
+                item-text="text"
+                item-value="value"
+                placeholder="Model profile"
+                class="model-picker"
+              />
+            </div>
+            <div class="action-row">
+              <v-button
+                :disabled="!canGenerate || generating"
+                :loading="generating"
+                small
+                @click="generate"
+              >
+                Generate
+              </v-button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="prereqMessage" class="prereq">
+          <v-icon name="info_outline" x-small />
+          {{ prereqMessage }}
+        </div>
+
+        <v-notice v-if="error" type="danger" dense>{{ error }}</v-notice>
+
+        <div v-if="lastResult" class="result-summary">
+          <div class="summary-meta">
+            <span v-if="lastResult.generated_by" class="meta-item">{{ lastResult.generated_by }}</span>
+            <span v-if="lastResult.profile_name" class="meta-item">{{ lastResult.profile_name }}</span>
+            <span v-if="lastResult.model_name" class="meta-item">{{ lastResult.model_name }}</span>
+            <span v-if="lastResult.latency_ms" class="meta-item">{{ lastResult.latency_ms }} ms</span>
+            <span v-if="usage && usage.prompt_tokens !== undefined" class="meta-item">
+              prompt {{ usage.prompt_tokens }}
+            </span>
+            <span v-if="usage && usage.completion_tokens !== undefined" class="meta-item">
+              completion {{ usage.completion_tokens }}
+            </span>
+            <span v-if="usage && usage.total_tokens !== undefined" class="meta-item">
+              total {{ usage.total_tokens }}
+            </span>
+            <span v-if="confidenceLabel" class="conf-badge" :class="'conf-' + lastResult.confidence">
+              {{ confidenceLabel }}
+            </span>
+          </div>
+
+          <div v-if="lastResult.reasoning" class="reasoning-accordion">
+            <button class="reasoning-btn" @click="showReasoning = !showReasoning">
+              <v-icon :name="showReasoning ? 'expand_less' : 'expand_more'" x-small />
+              Reasoning
+            </button>
+            <pre v-if="showReasoning" class="reasoning-body">{{ lastResult.reasoning }}</pre>
+          </div>
+        </div>
+      </div>
+    `,
+    styles: `
+      .rag-gen {
+        font-family: inherit;
+      }
+
+      .toolbar {
+        display: grid;
+        gap: 10px;
+        padding: 10px 12px;
+        background: var(--theme--background-subdued, #f8f9fa);
+        border: 1px solid var(--theme--border-color, #e0e4e8);
+        border-radius: 6px;
+      }
+
+      .toolbar-header {
+        display: flex;
+        align-items: center;
+      }
+
+      .toolbar-left {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .toolbar-icon {
+        color: var(--theme--primary, #5b6cf9);
+      }
+
+      .toolbar-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--theme--foreground, #1a1d23);
+        letter-spacing: -0.01em;
+      }
+
+      .toolbar-controls {
+        display: grid;
+        gap: 10px;
+      }
+
+      .model-row {
+        min-width: 0;
+      }
+
+      .model-picker {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .action-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+      }
+
+      .prereq {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 8px;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 11.5px;
+        line-height: 1.5;
+        color: var(--theme--foreground-subdued, #7a8294);
+        background: transparent;
+      }
+
+      .result-summary {
+        margin-top: 10px;
+        padding: 8px 0 0;
+        border-top: 1px dashed var(--theme--border-color, #e0e4e8);
+      }
+
+      .summary-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .meta-item {
+        font-size: 11px;
+        color: var(--theme--foreground-subdued, #7a8294);
+        font-variant-numeric: tabular-nums;
+        padding: 2px 7px;
+        background: var(--theme--background-subdued, #f3f4f6);
+        border-radius: 4px;
+      }
+
+      .conf-badge {
+        font-size: 10.5px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 10px;
+        letter-spacing: 0.03em;
+      }
+
+      .conf-high {
+        background: rgba(16, 185, 129, 0.1);
+        color: #059669;
+      }
+
+      .conf-medium {
+        background: rgba(245, 158, 11, 0.1);
+        color: #d97706;
+      }
+
+      .conf-low {
+        background: rgba(239, 68, 68, 0.1);
+        color: #dc2626;
+      }
+
+      .reasoning-accordion {
+        margin-top: 8px;
+      }
+
+      .reasoning-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        background: none;
+        border: none;
+        padding: 3px 0;
+        font-size: 11.5px;
+        font-weight: 500;
+        color: var(--theme--primary, #5b6cf9);
+        cursor: pointer;
+      }
+
+      .reasoning-btn:hover {
+        opacity: 0.7;
+      }
+
+      .reasoning-body {
+        margin: 6px 0 0;
+        padding: 8px 10px;
+        border-radius: 4px;
+        font-size: 11.5px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--theme--foreground-subdued, #6b7280);
+        background: var(--theme--background-subdued, #fafafb);
+        max-height: 160px;
+        overflow-y: auto;
+      }
+    `,
+  },
 };

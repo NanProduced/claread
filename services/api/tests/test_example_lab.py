@@ -29,16 +29,15 @@ def _settings_with_profile(profile: str = "primary", *, base_url: str = "https:/
     )
 
 
-async def test_rule_only_path_returns_rule_label() -> None:
-    result = await example_lab.generate_rag_fields(
-        sentence_text="The quick brown fox jumps over the lazy dog.",
-        output_fragment={"type": "grammar_note", "label": "非限制性定语从句"},
-        reading_variant="gaokao",
-        model_profile=None,
-    )
-
-    assert result["generated_by"] == "rule"
-    assert "nonrestrictive_relative_clause" in result["grammar_tags"]
+async def test_no_model_profile_raises_value_error() -> None:
+    """Without model_profile, generate_rag_fields should raise ValueError."""
+    with pytest.raises(ValueError, match="model_profile is required"):
+        await example_lab.generate_rag_fields(
+            sentence_text="The quick brown fox jumps over the lazy dog.",
+            output_fragment={"type": "grammar_note", "label": "非限制性定语从句"},
+            reading_variant="gaokao",
+            model_profile=None,
+        )
 
 
 async def test_llm_path_uses_shared_helper_and_returns_llm_label() -> None:
@@ -46,8 +45,9 @@ async def test_llm_path_uses_shared_helper_and_returns_llm_label() -> None:
     fake = AsyncMock()
     fake.return_value = StructuredCompletionResult(
         parsed={
+            "reasoning": "The sentence contains a that-clause modifying 'cat'.",
             "grammar_tags": ["relative_clause"],
-            "structure_signals": ["has_wh_clause", "long_sentence"],
+            "structure_signals": ["has_that_clause", "long_sentence"],
             "teaching_goal": "balanced",
             "retrieval_text": "raw-text",
         },
@@ -55,10 +55,11 @@ async def test_llm_path_uses_shared_helper_and_returns_llm_label() -> None:
         model_name="primary-model",
         profile_name="primary",
         base_url="https://example.invalid/v1",
+        usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
     )
 
-    with patch.object(example_lab, "get_settings", lambda: settings), patch.object(
-        example_lab, "run_structured_completion", fake
+    with patch("app.config.settings.get_settings", lambda: settings), patch(
+        "app.llm.structured_completion.run_structured_completion", fake
     ):
         result = await example_lab.generate_rag_fields(
             sentence_text="The cat that chased the mouse ran away.",
@@ -70,6 +71,10 @@ async def test_llm_path_uses_shared_helper_and_returns_llm_label() -> None:
     assert result["generated_by"] == "llm"
     assert result["grammar_tags"] == ["relative_clause"]
     assert result["teaching_goal"] == "balanced"
+    assert result["confidence"] in ("high", "medium", "low")
+    assert result["model_name"] == "primary-model"
+    assert result["profile_name"] == "primary"
+    assert result["usage"]["total_tokens"] == 150
     assert fake.call_count == 1
 
 
@@ -79,8 +84,8 @@ async def test_llm_failure_falls_back_to_rule_with_llm_fallback_label() -> None:
 
     fake = AsyncMock(side_effect=StructuredCompletionError("LLM HTTP 502: bad gateway"))
 
-    with patch.object(example_lab, "get_settings", lambda: settings), patch.object(
-        example_lab, "run_structured_completion", fake
+    with patch("app.config.settings.get_settings", lambda: settings), patch(
+        "app.llm.structured_completion.run_structured_completion", fake
     ):
         result = await example_lab.generate_rag_fields(
             sentence_text="Whatever the cat brought.",
@@ -90,8 +95,9 @@ async def test_llm_failure_falls_back_to_rule_with_llm_fallback_label() -> None:
         )
 
     assert result["generated_by"] == "llm_fallback"
-    # Rule-based extraction should have run and produced a label.
     assert result["grammar_tags"]
+    assert result["model_name"] == ""
+    assert result["usage"] is None
 
 
 async def test_llm_profile_not_configured_falls_back_to_rule() -> None:
@@ -107,8 +113,8 @@ async def test_llm_profile_not_configured_falls_back_to_rule() -> None:
         )
     )
 
-    with patch.object(example_lab, "get_settings", lambda: settings), patch.object(
-        example_lab, "run_structured_completion", fake
+    with patch("app.config.settings.get_settings", lambda: settings), patch(
+        "app.llm.structured_completion.run_structured_completion", fake
     ):
         result = await example_lab.generate_rag_fields(
             sentence_text="The student studied hard.",

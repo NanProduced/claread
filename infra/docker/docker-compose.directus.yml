@@ -38,3 +38,4 @@ services:
       - ../../apps/directus/extensions/modules-bundle:/directus/extensions/directus-extension-claread-modules
       - ../../apps/directus/extensions/panels-bundle:/directus/extensions/directus-extension-claread-panels
       - ../../apps/directus/extensions/endpoints-bundle:/directus/extensions/directus-extension-claread-endpoints
+      - ../../apps/directus/extensions/hooks-bundle:/directus/extensions/directus-extension-claread-hooks

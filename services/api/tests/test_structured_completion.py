@@ -217,6 +217,34 @@ async def test_run_structured_completion_raises_on_http_error() -> None:
             )
 
 
+async def test_run_structured_completion_surfaces_timeout() -> None:
+    settings = _settings_with_profile()
+
+    class _FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, *args: Any, **kwargs: Any) -> MagicMock:
+            raise httpx.ReadTimeout("timed out", request=MagicMock())
+
+    with patch("app.llm.structured_completion.httpx.AsyncClient", _FakeAsyncClient):
+        with pytest.raises(StructuredCompletionError, match="timed out after 7.0s"):
+            await run_structured_completion(
+                settings=settings,
+                route=MODEL_ROUTE_ANNOTATION_GENERATION,
+                selection=_selection_with_profile("primary"),
+                system_prompt="judge",
+                user_prompt="packet",
+                timeout_seconds=7.0,
+            )
+
+
 async def test_run_structured_completion_raises_on_empty_content() -> None:
     settings = _settings_with_profile()
     response = _build_response({"choices": [{"message": {"content": ""}}]})

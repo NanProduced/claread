@@ -25,6 +25,7 @@ const props = defineProps({
 
 const NODE_ENDPOINT = "/eval-center/node-lab/run-history";
 const WORKFLOW_ENDPOINT = "/eval-center/workflow-lab/run-history";
+const WORKFLOW_COMPARE_ENDPOINT = "/eval-center/workflow-lab/compares";
 
 const POLL_INTERVAL_MS = 7000;
 const LIVE_STATUSES = new Set(["queued", "running"]);
@@ -52,6 +53,69 @@ const workflowFilters = ref({
 const isPollingActive = ref(false);
 let pollHandle = null;
 let visibilityListenerBound = false;
+
+// Compare replay state (mirrors WorkflowLabMode.vue).
+// Without these, the WorkflowCompareReport + WorkflowJudgePanel props blow up
+// at template render time, which previously turned the whole Run History page
+// into a blank screen whenever a workflow_compare record was selected.
+const selectedCompareCase = ref(null);
+const compareArtifacts = ref({ baseline: null, candidate: null });
+const compareCaseLoading = ref(false);
+const compareCaseError = ref("");
+
+const renaming = ref(false);
+const renameValue = ref("");
+const renameSaving = ref(false);
+const renameError = ref("");
+
+function startRename() {
+  const record = currentSource.value === "workflow" ? currentWorkflowRecord.value : currentTrial.value;
+  renameValue.value = record?.custom_title || "";
+  renaming.value = true;
+  renameError.value = "";
+}
+
+function cancelRename() {
+  renaming.value = false;
+  renameValue.value = "";
+  renameError.value = "";
+}
+
+async function saveRename() {
+  const trimmed = renameValue.value.trim();
+  if (trimmed.length > 200) {
+    renameError.value = "标题不能超过 200 字。";
+    return;
+  }
+  renameSaving.value = true;
+  renameError.value = "";
+  try {
+    if (currentSource.value === "workflow" && currentWorkflowRecord.value?.compare_id) {
+      await api.patch(
+        `/eval-center/workflow-lab/run-history/${encodeURIComponent(currentWorkflowRecord.value.compare_id)}`,
+        { custom_title: trimmed || null },
+      );
+    } else if (currentTrial.value?.trial_id) {
+      await api.patch(
+        `/eval-center/node-lab/run-history/${encodeURIComponent(currentTrial.value.trial_id)}`,
+        { custom_title: trimmed || null },
+      );
+    } else {
+      renameError.value = "当前记录不支持重命名。";
+      renameSaving.value = false;
+      return;
+    }
+    renaming.value = false;
+    renameValue.value = "";
+    // Refresh detail and list so both panes pick up the new title immediately.
+    await retrySelectRecord();
+    await loadRecords({ keepSelection: true });
+  } catch (err) {
+    renameError.value = err?.response?.data?.errors?.[0]?.message || err?.message || "重命名失败。";
+  } finally {
+    renameSaving.value = false;
+  }
+}
 
 const filteredTitle = computed(() => {
   const sourceLabel = sourceFilter.value === "workflow"
@@ -129,6 +193,7 @@ const workflowJudgeReports = computed(() => (
 const workflowFullCaseArtifacts = computed(() => []);
 const workflowSingleRunArtifact = computed(() => null);
 const workflowCompareReports = computed(() => []);
+const currentTrialMeta = computed(() => currentTrialRuntimeMeta(currentTrial.value, currentResult.value));
 
 const resultKindLabel = computed(() => {
   if (currentSource.value === "workflow") return workflowWorkspaceLabel(currentWorkflowRecord.value);
@@ -295,16 +360,58 @@ async function selectRecord(recordOrKey) {
   if (!record) return;
   pendingDeleteKey.value = "";
   selectedRecordKey.value = recordKeyOf(record);
+  // Reset compare replay state when switching records so a stale selection
+  // from the previous detail does not leak into the new one.
+  selectedCompareCase.value = null;
+  compareArtifacts.value = { baseline: null, candidate: null };
+  compareCaseError.value = "";
+  compareCaseLoading.value = false;
   detailLoading.value = true;
   detailError.value = "";
   try {
     detail.value = await fetchData(
       `${record.source === "workflow" ? WORKFLOW_ENDPOINT : NODE_ENDPOINT}/${encodeURIComponent(recordId(record))}`,
     );
+    if (record.source === "workflow") {
+      // Auto-pick the first comparison (if any) so the replay pane shows a
+      // selected case on first render. Empty-state UI is preserved when the
+      // report has zero comparisons.
+      const firstComparison = Array.isArray(detail.value?.report?.comparisons)
+        ? detail.value.report.comparisons[0] || null
+        : null;
+      if (firstComparison) {
+        await selectCompareCase(firstComparison);
+      }
+    }
   } catch (err) {
     detailError.value = err?.response?.data?.errors?.[0]?.message || err?.message || "读取详情失败。";
   } finally {
     detailLoading.value = false;
+  }
+}
+
+async function selectCompareCase(comparison) {
+  selectedCompareCase.value = comparison || null;
+  compareCaseError.value = "";
+  if (!comparison?.case_id || !currentWorkflowRecord.value?.compare_id) {
+    compareArtifacts.value = { baseline: null, candidate: null };
+    return;
+  }
+  compareCaseLoading.value = true;
+  try {
+    const data = await fetchData(
+      `${WORKFLOW_COMPARE_ENDPOINT}/${encodeURIComponent(currentWorkflowRecord.value.compare_id)}/cases/${encodeURIComponent(comparison.case_id)}`,
+    );
+    compareArtifacts.value = {
+      baseline: data?.baseline_artifact || null,
+      candidate: data?.candidate_artifact || null,
+    };
+  } catch (err) {
+    // Recoverable: keep the page mounted and surface a scoped error.
+    compareArtifacts.value = { baseline: null, candidate: null };
+    compareCaseError.value = err?.response?.data?.errors?.[0]?.message || err?.message || "读取差异句证据失败。";
+  } finally {
+    compareCaseLoading.value = false;
   }
 }
 
@@ -467,8 +574,37 @@ function recordTitle(record) {
 
 function recordExcerpt(record) {
   if (record?.source === "workflow") {
+    const parts = [];
+    const baselineBits = [];
+    const candidateBits = [];
+    if (record.baseline_model) baselineBits.push(`B:${record.baseline_model}`);
+    if (record.baseline_latency_seconds != null) baselineBits.push(`${Number(record.baseline_latency_seconds).toFixed(1)}s`);
+    if (record.baseline_total_tokens != null) {
+      baselineBits.push(
+        `${record.baseline_total_tokens} tok`
+        + `（入 ${record.baseline_input_tokens ?? "—"} / 出 ${record.baseline_output_tokens ?? "—"}）`,
+      );
+    }
+    if (record.candidate_model) candidateBits.push(`C:${record.candidate_model}`);
+    if (record.candidate_latency_seconds != null) candidateBits.push(`${Number(record.candidate_latency_seconds).toFixed(1)}s`);
+    if (record.candidate_total_tokens != null) {
+      candidateBits.push(
+        `${record.candidate_total_tokens} tok`
+        + `（入 ${record.candidate_input_tokens ?? "—"} / 出 ${record.candidate_output_tokens ?? "—"}）`,
+      );
+    }
+    if (baselineBits.length) parts.push(baselineBits.join(" "));
+    if (candidateBits.length) parts.push(candidateBits.join(" "));
+    if (parts.length) return parts.join(" · ");
     return record.display_excerpt || record.run_id || "";
   }
+  const parts = [];
+  if (record.model_name) parts.push(record.model_name);
+  if (record.latency_seconds != null) parts.push(`${Number(record.latency_seconds).toFixed(1)}s`);
+  if (record.total_tokens != null) {
+    parts.push(`${record.total_tokens} tok（入 ${record.input_tokens ?? "—"} / 出 ${record.output_tokens ?? "—"}）`);
+  }
+  if (parts.length) return parts.join(" · ");
   return record.display_excerpt || record.input_excerpt || record.input_text_hash || "";
 }
 
@@ -489,9 +625,29 @@ function compareSides(result) {
 }
 
 function tokenSummary(runtime) {
-  const total = runtime?.aggregate?.total_tokens;
+  const aggregate = runtime?.aggregate || {};
+  const total = runtime?.total_tokens ?? aggregate.total_tokens;
+  const input = runtime?.input_tokens ?? aggregate.input_tokens;
+  const output = runtime?.output_tokens ?? aggregate.output_tokens;
   if (total == null) return "未记录";
-  return `${total} tokens`;
+  return `总 ${total} · 入 ${input ?? "—"} / 出 ${output ?? "—"}`;
+}
+
+function currentTrialRuntimeMeta(trial, result) {
+  const runtimeSummary = result?.run?.runtime_summary || null;
+  const aggregate = runtimeSummary?.aggregate || {};
+  return {
+    model_name: trial?.model_name || result?.run?.model_identity?.model_name || runtimeSummary?.model_name || null,
+    model_profile: trial?.model_profile || result?.run?.model_identity?.profile_name || runtimeSummary?.model_profile || null,
+    latency_seconds: trial?.latency_seconds != null
+      ? trial.latency_seconds
+      : runtimeSummary?.latency_ms != null
+        ? Number(runtimeSummary.latency_ms) / 1000
+        : null,
+    total_tokens: trial?.total_tokens != null ? trial.total_tokens : (runtimeSummary?.total_tokens ?? aggregate.total_tokens ?? null),
+    input_tokens: trial?.input_tokens != null ? trial.input_tokens : (runtimeSummary?.input_tokens ?? aggregate.input_tokens ?? null),
+    output_tokens: trial?.output_tokens != null ? trial.output_tokens : (runtimeSummary?.output_tokens ?? aggregate.output_tokens ?? null),
+  };
 }
 
 function workflowCaseSeverityRank(item) {
@@ -618,7 +774,13 @@ function judgePassRate(summary) {
         <header class="detail-header">
           <div>
             <p class="eyebrow">{{ resultKindLabel }}</p>
-            <h2>{{ currentWorkflowRecord.display_title || currentWorkflowRecord.compare_id }}</h2>
+            <div v-if="renaming" class="rename-row">
+              <input v-model="renameValue" placeholder="输入自定义标题" :disabled="renameSaving" @keydown.enter="saveRename" @keydown.escape="cancelRename" />
+              <button type="button" :disabled="renameSaving" @click="saveRename">{{ renameSaving ? "保存中..." : "保存" }}</button>
+              <button type="button" :disabled="renameSaving" @click="cancelRename">取消</button>
+              <span v-if="renameError" class="rename-error">{{ renameError }}</span>
+            </div>
+            <h2 v-else>{{ currentWorkflowRecord.display_title || currentWorkflowRecord.compare_id }} <button type="button" class="rename-trigger" title="重命名" @click="startRename">✎</button></h2>
             <p>{{ currentWorkflowRecord.display_excerpt || currentWorkflowRecord.compare_id }}</p>
           </div>
           <div class="detail-actions">
@@ -668,6 +830,27 @@ function judgePassRate(summary) {
           </div>
         </dl>
 
+        <section class="facts-strip">
+          <div class="facts-side facts-baseline">
+            <span class="facts-label">Baseline</span>
+            <span v-if="currentWorkflowRecord.baseline_model" class="facts-model">{{ currentWorkflowRecord.baseline_model }}</span>
+            <span v-if="currentWorkflowRecord.baseline_model_profile" class="facts-profile">{{ currentWorkflowRecord.baseline_model_profile }}</span>
+            <span v-if="currentWorkflowRecord.baseline_latency_seconds != null" class="facts-stat">{{ Number(currentWorkflowRecord.baseline_latency_seconds).toFixed(1) }}s</span>
+            <span v-if="currentWorkflowRecord.baseline_total_tokens != null" class="facts-stat">
+              总 {{ currentWorkflowRecord.baseline_total_tokens }} · 入 {{ currentWorkflowRecord.baseline_input_tokens ?? "—" }} / 出 {{ currentWorkflowRecord.baseline_output_tokens ?? "—" }}
+            </span>
+          </div>
+          <div class="facts-side facts-candidate">
+            <span class="facts-label">Candidate</span>
+            <span v-if="currentWorkflowRecord.candidate_model" class="facts-model">{{ currentWorkflowRecord.candidate_model }}</span>
+            <span v-if="currentWorkflowRecord.candidate_model_profile" class="facts-profile">{{ currentWorkflowRecord.candidate_model_profile }}</span>
+            <span v-if="currentWorkflowRecord.candidate_latency_seconds != null" class="facts-stat">{{ Number(currentWorkflowRecord.candidate_latency_seconds).toFixed(1) }}s</span>
+            <span v-if="currentWorkflowRecord.candidate_total_tokens != null" class="facts-stat">
+              总 {{ currentWorkflowRecord.candidate_total_tokens }} · 入 {{ currentWorkflowRecord.candidate_input_tokens ?? "—" }} / 出 {{ currentWorkflowRecord.candidate_output_tokens ?? "—" }}
+            </span>
+          </div>
+        </section>
+
         <section class="result-section">
           <div class="section-heading">
             <h3>Compare 摘要</h3>
@@ -675,7 +858,7 @@ function judgePassRate(summary) {
           </div>
           <dl class="meta-grid workflow-summary-grid">
             <div>
-              <dt>总 Cases</dt>
+              <dt>差异句数</dt>
               <dd>{{ workflowSummary?.total_cases ?? 0 }}</dd>
             </div>
             <div>
@@ -700,14 +883,22 @@ function judgePassRate(summary) {
         <section class="result-section">
           <div class="section-heading">
             <h3>Compare 报告</h3>
-            <span>{{ workflowCaseRows.length }} 条 Case</span>
+            <span>{{ workflowCaseRows.length }} 条差异句</span>
           </div>
+          <div v-if="!workflowCaseRows.length" class="empty-inline">这条 compare 还没有可回放的差异句。</div>
+          <div v-else-if="compareCaseError" class="notice is-danger" role="alert">
+            <span>{{ compareCaseError }}</span>
+            <button v-if="selectedCompareCase" type="button" class="notice-retry" @click="selectCompareCase(selectedCompareCase)">重试</button>
+          </div>
+          <div v-else-if="compareCaseLoading && !compareArtifacts.baseline && !compareArtifacts.candidate" class="empty-inline">正在加载差异句证据…</div>
           <WorkflowCompareReport
+            v-else
             :compare-id="currentWorkflowRecord.compare_id"
             :result="{ compare_id: currentWorkflowRecord.compare_id, report: workflowSummary, report_id: currentWorkflowRecord.report_id, created: false }"
-            :selected-case-id="''"
-            :baseline-artifact="null"
-            :candidate-artifact="null"
+            :selected-case-id="selectedCompareCase?.case_id || ''"
+            :baseline-artifact="compareArtifacts.baseline"
+            :candidate-artifact="compareArtifacts.candidate"
+            @select-case="selectCompareCase"
           />
         </section>
 
@@ -721,7 +912,12 @@ function judgePassRate(summary) {
             :requests="workflowJudgeReports"
             :rubrics="[]"
             :disabled="true"
+            :readonly="true"
             :submitting="false"
+            :prepared-sentences="compareArtifacts.baseline?.prepared_sentences || compareArtifacts.candidate?.prepared_sentences || detail?.evidence_index?.prepared_sentences || []"
+            :baseline-artifact="compareArtifacts.baseline"
+            :candidate-artifact="compareArtifacts.candidate"
+            :comparisons="workflowSummary?.comparisons || []"
             @refresh="retrySelectRecord"
           />
         </section>
@@ -751,7 +947,13 @@ function judgePassRate(summary) {
         <header class="detail-header">
           <div>
             <p class="eyebrow">{{ resultKindLabel }}</p>
-            <h2>{{ currentTrial.node_name }} · {{ currentTrial.reading_goal }} · {{ currentTrial.reading_variant }}</h2>
+            <div v-if="renaming" class="rename-row">
+              <input v-model="renameValue" placeholder="输入自定义标题" :disabled="renameSaving" @keydown.enter="saveRename" @keydown.escape="cancelRename" />
+              <button type="button" :disabled="renameSaving" @click="saveRename">{{ renameSaving ? "保存中..." : "保存" }}</button>
+              <button type="button" :disabled="renameSaving" @click="cancelRename">取消</button>
+              <span v-if="renameError" class="rename-error">{{ renameError }}</span>
+            </div>
+            <h2 v-else>{{ currentTrial.custom_title || `${currentTrial.node_name} · ${currentTrial.reading_goal} · ${currentTrial.reading_variant}` }} <button type="button" class="rename-trigger" title="重命名" @click="startRename">✎</button></h2>
             <p>{{ currentTrial.display_excerpt || currentTrial.input_excerpt || currentTrial.input_text_hash }}</p>
           </div>
           <div class="detail-actions">
@@ -790,6 +992,25 @@ function judgePassRate(summary) {
           <div>
             <dt>创建时间</dt>
             <dd>{{ formatDateTime(currentTrial.date_created) }}</dd>
+          </div>
+        </dl>
+
+        <dl v-if="currentTrialMeta.model_name || currentTrialMeta.latency_seconds != null || currentTrialMeta.total_tokens != null" class="meta-grid runtime-meta">
+          <div v-if="currentTrialMeta.model_name">
+            <dt>模型</dt>
+            <dd>{{ currentTrialMeta.model_name }}</dd>
+          </div>
+          <div v-if="currentTrialMeta.model_profile">
+            <dt>Profile</dt>
+            <dd>{{ currentTrialMeta.model_profile }}</dd>
+          </div>
+          <div v-if="currentTrialMeta.latency_seconds != null">
+            <dt>耗时</dt>
+            <dd>{{ Number(currentTrialMeta.latency_seconds).toFixed(1) }}s</dd>
+          </div>
+          <div v-if="currentTrialMeta.total_tokens != null">
+            <dt>Tokens</dt>
+            <dd>总 {{ currentTrialMeta.total_tokens }} · 入 {{ currentTrialMeta.input_tokens ?? "—" }} / 出 {{ currentTrialMeta.output_tokens ?? "—" }}</dd>
           </div>
         </dl>
 
@@ -1237,6 +1458,127 @@ dd {
 
 .danger-button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--theme--danger) 10%, var(--theme--background));
+}
+
+.rename-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.rename-row input {
+  flex: 1;
+  min-height: 34px;
+  border: 1px solid var(--theme--primary);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 16px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+}
+
+.rename-row button {
+  min-height: 34px;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rename-row button:first-of-type {
+  border-color: var(--theme--primary);
+  color: var(--theme--primary);
+}
+
+.rename-error {
+  color: var(--theme--danger);
+  font-size: 12px;
+}
+
+.rename-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 4px;
+  background: var(--theme--background);
+  color: var(--theme--foreground-subdued);
+  font-size: 13px;
+  cursor: pointer;
+  vertical-align: middle;
+  margin-left: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+h2:hover .rename-trigger {
+  opacity: 1;
+}
+
+.rename-trigger:hover {
+  color: var(--theme--primary);
+  border-color: var(--theme--primary);
+}
+
+.facts-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.facts-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+}
+
+.facts-baseline {
+  border-color: color-mix(in srgb, var(--theme--border-color) 80%, var(--theme--foreground));
+}
+
+.facts-candidate {
+  border-color: color-mix(in srgb, var(--theme--primary) 35%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 3%, var(--theme--background));
+}
+
+.facts-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--theme--foreground-subdued);
+}
+
+.facts-model {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.facts-profile {
+  font-size: 12px;
+  color: var(--theme--foreground-subdued);
+}
+
+.facts-stat {
+  font-size: 12px;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  color: var(--theme--foreground-subdued);
+}
+
+.runtime-meta {
+  margin-top: 0;
 }
 
 @media (max-width: 1100px) {

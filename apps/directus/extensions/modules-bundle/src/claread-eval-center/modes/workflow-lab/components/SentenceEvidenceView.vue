@@ -49,8 +49,8 @@ const translationsBySid = computed(() => {
 const marksBySid = computed(() => {
   const map = new Map();
   for (const item of sceneInlineMarks(scene.value)) {
-    if (item && item.sentence_id != null) {
-      const sid = String(item.sentence_id);
+    if (item && item.anchor?.sentence_id != null) {
+      const sid = String(item.anchor.sentence_id);
       if (!map.has(sid)) map.set(sid, []);
       map.get(sid).push(item);
     }
@@ -101,7 +101,7 @@ const sentenceRows = computed(() => {
 function formatMark(mark) {
   const anchor = mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || null;
   const type = mark?.annotation_type || mark?.visual_tone || "mark";
-  const extra = mark?.zh || mark?.gloss || mark?.phrase_type || "";
+  const extra = mark?.glossary?.zh || mark?.glossary?.gloss || mark?.glossary?.phrase_type || "";
   return {
     anchor: anchor ? String(anchor) : "—",
     type: String(type),

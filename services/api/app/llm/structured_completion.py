@@ -44,6 +44,8 @@ class StructuredCompletionResult:
         model_name: Resolved model identifier.
         profile_name: Resolved model profile name.
         base_url: Resolved base URL.
+        usage: Token usage from the API response, if available.
+            Contains prompt_tokens, completion_tokens, total_tokens.
     """
 
     parsed: dict[str, Any]
@@ -51,6 +53,7 @@ class StructuredCompletionResult:
     model_name: str
     profile_name: str
     base_url: str
+    usage: dict[str, int] | None = None
 
 
 def _strip_code_fence(content: str) -> str:
@@ -179,6 +182,10 @@ async def run_structured_completion(
         raise StructuredCompletionError(
             f"LLM HTTP {exc.response.status_code}: {snippet}"
         ) from exc
+    except httpx.TimeoutException as exc:
+        raise StructuredCompletionError(
+            f"LLM request timed out after {timeout_seconds:.1f}s"
+        ) from exc
     except httpx.RequestError as exc:
         raise StructuredCompletionError(f"LLM request failed: {exc}") from exc
     except json.JSONDecodeError as exc:
@@ -189,6 +196,16 @@ async def run_structured_completion(
     content = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
     if not isinstance(content, str) or not content.strip():
         raise StructuredCompletionError("LLM response content was empty")
+
+    # Extract token usage if available
+    usage = None
+    raw_usage = payload.get("usage")
+    if isinstance(raw_usage, dict):
+        usage = {
+            "prompt_tokens": raw_usage.get("prompt_tokens", 0),
+            "completion_tokens": raw_usage.get("completion_tokens", 0),
+            "total_tokens": raw_usage.get("total_tokens", 0),
+        }
 
     try:
         parsed = _parse_json_object(content)
@@ -203,4 +220,5 @@ async def run_structured_completion(
         model_name=config.model_name,
         profile_name=config.profile_name,
         base_url=config.base_url,
+        usage=usage,
     )

@@ -48,6 +48,22 @@ function validationError(message, field) {
   return error;
 }
 
+function parseJsonObject(value, field) {
+  if (value === null || value === undefined || value === "") return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+    }
+    throw validationError(`${field} must be a JSON object`, field);
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  throw validationError(`${field} must be a JSON object`, field);
+}
+
 function buildNodeLabAuthConfig(readEnv, env) {
   const baseUrl = readEnv(env, "CLAREAD_API_BASE_URL");
   const adminKey =
@@ -84,6 +100,52 @@ export function registerExampleLabRoutes(router, _context, deps) {
     });
   });
 
+  // GET /example-lab/model-profiles
+  // Proxies to Claread API /eval/article-analysis/model-profiles (shared across eval tools)
+  router.get("/example-lab/model-profiles", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
+    const { baseUrl, adminKey } = buildNodeLabAuthConfig(readEnv, env);
+    if (!baseUrl || !adminKey) {
+      return res.status(503).json({
+        errors: [{ message: "Eval proxy is not configured.", extensions: { code: "SERVICE_UNAVAILABLE" } }],
+      });
+    }
+
+    try {
+      const upstream = await fetch(
+        joinUrl(baseUrl, "/eval/article-analysis/model-profiles"),
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            "x-admin-api-key": adminKey,
+          },
+        },
+      );
+
+      if (!upstream.ok) {
+        const errorPayload = await parseUpstreamError(upstream);
+        const error = new Error(
+          errorPayload?.detail || errorPayload?.message || "Upstream request failed.",
+        );
+        error.status = upstream.status;
+        error.code = "UPSTREAM_EVAL_ERROR";
+        throw error;
+      }
+
+      const payload = await upstream.json();
+      res.json({ data: payload });
+    } catch (error) {
+      if (error?.status) {
+        return res.status(error.status).json({
+          errors: [{ message: error.message, extensions: { code: error.code } }],
+        });
+      }
+      next(error);
+    }
+  });
+
   // POST /example-lab/ai-generate-rag-fields
   // Proxies to Claread API /eval/article-analysis/example-lab/generate-rag-fields
   router.post("/example-lab/ai-generate-rag-fields", async (req, res, next) => {
@@ -102,16 +164,15 @@ export function registerExampleLabRoutes(router, _context, deps) {
       const modelProfile = String(body.model_profile || "").trim();
 
       if (!sentenceText) throw validationError("sentence_text is required", "sentence_text");
+      if (!modelProfile) throw validationError("model_profile is required", "model_profile");
 
       const upstreamBody = {
         sentence_text: sentenceText,
-        output_fragment: body.output_fragment || {},
+        output_fragment: parseJsonObject(body.output_fragment, "output_fragment"),
         reading_variant: body.reading_variant || "default",
         timeout_seconds: body.timeout_seconds || 30,
       };
-      if (modelProfile) {
-        upstreamBody.model_profile = modelProfile;
-      }
+      upstreamBody.model_profile = modelProfile;
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 60000);

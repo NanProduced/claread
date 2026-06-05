@@ -408,6 +408,7 @@ const EXAMPLE_LAB_FIELD_METADATA = [
       interface: "select-dropdown",
       width: "half",
       sort: 11,
+      note: "RAG 相关类型按固定映射保存：grammar -> grammar_note，sentence_analysis -> sentence_analysis",
       translations: [{ language: "zh-CN", translation: "示例类型 (example_type)" }],
       options: {
         choices: [
@@ -423,8 +424,21 @@ const EXAMPLE_LAB_FIELD_METADATA = [
   ],
 
   ["sentence_text", { interface: "input-multiline", width: "full", sort: 20, note: "英文原句", translations: [{ language: "zh-CN", translation: "原句 (sentence_text)" }] }],
-  ["output_fragment", { interface: "claread-output-fragment-editor", width: "full", sort: 21, note: "根据 example_type 自动切换结构化表单", translations: [{ language: "zh-CN", translation: "输出片段 (output_fragment)" }] }],
-  ["label", { interface: "input", width: "half", sort: 22, note: "中文标签/概述", translations: [{ language: "zh-CN", translation: "标签 (label)" }] }],
+  ["output_fragment", { interface: "claread-output-fragment-editor", width: "full", sort: 21, note: "根据 example_type 自动切换结构化表单；RAG 路径固定 grammar -> grammar_note、sentence_analysis -> sentence_analysis", translations: [{ language: "zh-CN", translation: "输出片段 (output_fragment)" }] }],
+  ["label", {
+    interface: "input",
+    width: "half",
+    sort: 22,
+    note: "中文标签/概述；grammar/sentence_analysis 在表单中由 output_fragment.label 自动同步",
+    hidden: false,
+    translations: [{ language: "zh-CN", translation: "标签 (label)" }],
+    conditions: [
+      {
+        rule: { example_type: { _in: ["grammar", "sentence_analysis"] } },
+        hidden: true,
+      },
+    ],
+  }],
 
   [
     "source_kind",
@@ -432,6 +446,8 @@ const EXAMPLE_LAB_FIELD_METADATA = [
       interface: "select-dropdown",
       width: "half",
       sort: 30,
+      hidden: true,
+      note: "默认 manual；仅导入/追溯场景需要查看",
       translations: [{ language: "zh-CN", translation: "来源类型 (source_kind)" }],
       options: {
         choices: [
@@ -455,7 +471,6 @@ const EXAMPLE_LAB_FIELD_METADATA = [
       options: {
         allowNone: true,
         choices: [
-          { text: "default — 默认", value: "default" },
           { text: "beginner_reading — 入门阅读", value: "beginner_reading" },
           { text: "intermediate_reading — 中阶阅读", value: "intermediate_reading" },
           { text: "intensive_reading — 精读模式", value: "intensive_reading" },
@@ -475,6 +490,8 @@ const EXAMPLE_LAB_FIELD_METADATA = [
       interface: "select-dropdown",
       width: "half",
       sort: 33,
+      hidden: true,
+      note: "由 example_type 自动映射；仅导入/审计场景需要查看",
       translations: [{ language: "zh-CN", translation: "目标节点 (target_node)" }],
       options: {
         allowNone: true,
@@ -490,16 +507,27 @@ const EXAMPLE_LAB_FIELD_METADATA = [
 
   // 注：决策 3 (2026-06) 已移除 rag_eligible 字段；准入由 DB CHECK 约束
   // eval_example_lab_entries_approved_rag_eligible_check 强制 example_type 限制。
-  ["grammar_tags", { interface: "claread-ai-rag-generator-interface", width: "full", sort: 41, note: "AI 生成或手动编辑的语法标签数组", translations: [{ language: "zh-CN", translation: "语法标签 (grammar_tags)" }] }],
-  ["structure_signals", { interface: "claread-ai-rag-generator-interface", width: "full", sort: 42, note: "AI 生成或手动编辑的结构信号数组", translations: [{ language: "zh-CN", translation: "结构信号 (structure_signals)" }] }],
-  ["retrieval_text", { interface: "claread-ai-rag-generator-interface", width: "full", sort: 43, note: "AI 生成或手动编辑的 RAG 检索文本", translations: [{ language: "zh-CN", translation: "检索文本 (retrieval_text)" }] }],
+  // AI RAG Generator presentation interface (alias field, no DB column)
+  ["ai_rag_generator", { interface: "claread-ai-rag-generator-interface", special: ["alias", "no-data"], width: "full", sort: 40, hidden: false, required: false, note: "AI 生成 grammar_tags / structure_signals / retrieval_text / teaching_goal", conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false }] }],
+  ["grammar_tags", { interface: "input-code", width: "full", sort: 41, options: { language: "json" }, note: "AI 生成或手动编辑的语法标签数组", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "语法标签 (grammar_tags)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
+  ["structure_signals", { interface: "input-code", width: "full", sort: 42, options: { language: "json" }, note: "AI 生成或手动编辑的结构信号数组", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "结构信号 (structure_signals)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
+  ["retrieval_text", { interface: "input-multiline", width: "full", sort: 43, note: "AI 生成或手动编辑的 RAG 检索文本", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "检索文本 (retrieval_text)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
   [
     "teaching_goal",
     {
       interface: "select-dropdown",
       width: "half",
       sort: 44,
+      hidden: true,
+      required: false,
       translations: [{ language: "zh-CN", translation: "教学目标 (teaching_goal)" }],
+      conditions: [
+        {
+          rule: { example_type: { _in: ["grammar", "sentence_analysis"] } },
+          hidden: false,
+          required: false,
+        },
+      ],
       options: {
         allowNone: true,
         choices: [
@@ -518,7 +546,7 @@ const EXAMPLE_LAB_FIELD_METADATA = [
   ],
 
   ["quality_score", { interface: "input", width: "half", sort: 50, note: "0.0 - 1.0", translations: [{ language: "zh-CN", translation: "质量评分 (quality_score)" }] }],
-  ["approved", { interface: "boolean", width: "half", sort: 51, note: "审批通过后才可写入向量库", translations: [{ language: "zh-CN", translation: "已审批 (approved)" }] }],
+  ["approved", { interface: "boolean", width: "half", sort: 51, note: "审批通过后才可写入向量库", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "已审批 (approved)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false }] }],
 
   ["notes", { interface: "input-rich-text-md", width: "full", sort: 60, translations: [{ language: "zh-CN", translation: "备注 (notes)" }] }],
   ["tags_json", { ...jsonMeta(61, "自定义标签数组"), translations: [{ language: "zh-CN", translation: "自定义标签 (tags_json)" }] }],
@@ -701,9 +729,22 @@ async function syncCollections(token) {
 async function syncFields(token) {
   for (const [collection, fields] of Object.entries(FIELD_METADATA_BY_COLLECTION)) {
     for (const [field, meta] of fields) {
-      await request(token, "PATCH", `/fields/${collection}/${field}`, {
-        meta,
-      });
+      const body = { meta };
+      // Alias fields need type and schema for creation
+      if (meta.special?.includes("alias")) {
+        body.field = field;
+        body.type = "alias";
+        body.schema = null;
+      }
+      try {
+        await request(token, "PATCH", `/fields/${collection}/${field}`, body);
+      } catch (e) {
+        if (String(e?.message || "").includes("404") || String(e?.message || "").includes("doesn't exist")) {
+          await request(token, "POST", `/fields/${collection}`, body);
+        } else {
+          throw e;
+        }
+      }
     }
   }
 }

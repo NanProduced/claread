@@ -95,6 +95,11 @@ class _FakeStructuredCompletion:
             model_name="primary-judge",
             profile_name="primary",
             base_url="https://example.invalid/v1",
+            usage={
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "total_tokens": 18,
+            },
         )
 
 
@@ -133,6 +138,10 @@ async def test_run_workflow_lab_compare_judge_returns_per_case_results() -> None
     assert result.judge_model_profile == "primary"
     assert result.model_name == "primary-judge"
     assert result.profile_name == "primary"
+    assert result.input_tokens == 22
+    assert result.output_tokens == 14
+    assert result.total_tokens == 36
+    assert result.latency_seconds is not None
     assert len(result.results) == 2
     first: WorkflowLabCompareJudgeCaseResult = result.results[0]
     assert first.case_id == "case-1"
@@ -142,6 +151,7 @@ async def test_run_workflow_lab_compare_judge_returns_per_case_results() -> None
     assert first.overall_score == 0.8
     assert first.summary == "候选更清晰。"
     assert first.reasons == ["结构更明确", "翻译更准确"]
+    assert first.usage_summary == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
     assert first.error is None
     assert len(fake.calls) == 2
 
@@ -311,6 +321,11 @@ class _SlowFakeStructuredCompletion:
             model_name="primary-judge",
             profile_name="primary",
             base_url="https://example.invalid/v1",
+            usage={
+                "prompt_tokens": 5,
+                "completion_tokens": 3,
+                "total_tokens": 8,
+            },
         )
 
 
@@ -380,3 +395,153 @@ async def test_run_workflow_lab_compare_judge_clamps_concurrency_to_max() -> Non
         # Should not raise even with bogus concurrency.
         result = await run_workflow_lab_compare_judge(request, settings=settings)
     assert result.results[0].status == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# Regression: WorkflowLabCompareJudgeSidePayload.warnings must be list[str]
+# ---------------------------------------------------------------------------
+
+
+def test_side_payload_rejects_object_warnings() -> None:
+    """The schema is warnings: list[str]. The previous Directus -> API payload
+    accidentally sent list[dict] (render_scene warnings with code/message),
+    which pydantic rejected with
+    "body.packets.0.baseline.warnings.0: Input should be a valid string".
+
+    This test pins that contract: any object entry must be rejected so the
+    Directus-side normalization in summarizeCompareJudgeSentenceOutput cannot
+    silently regress.
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        WorkflowLabCompareJudgeSidePayload(
+            sentence_text="x",
+            warnings=[{"code": "SCHEMA_DRIFT", "message": "drift"}],
+        )
+
+
+def test_side_payload_accepts_string_warnings() -> None:
+    payload = WorkflowLabCompareJudgeSidePayload(
+        sentence_text="x",
+        warnings=[
+            "[SCHEMA_DRIFT] schema version drift sentence_id=s-1",
+            "another warning",
+        ],
+    )
+    assert payload.warnings == [
+        "[SCHEMA_DRIFT] schema version drift sentence_id=s-1",
+        "another warning",
+    ]
+
+
+async def test_run_workflow_lab_compare_judge_accepts_string_warnings_end_to_end() -> None:
+    """End-to-end: a request whose baseline/candidate warnings are plain
+    strings (the new Directus-side shape) must validate and execute cleanly.
+    """
+    settings = _settings_with_profile()
+    packet = _build_packet("case-1")
+    # Mutate the packet so warnings are plain strings, mirroring what the
+    # Directus extension now sends after summarizeCompareJudgeSentenceOutput
+    # normalizes render_scene.warnings.
+    object.__setattr__(
+        packet.baseline,
+        "warnings",
+        ["[SCHEMA_DRIFT] schema version drift sentence_id=sent-case-1"],
+    )
+    object.__setattr__(
+        packet.candidate,
+        "warnings",
+        ["[TIMEOUT] agent timeout after 30s"],
+    )
+    request = _build_request([packet])
+    fake = _FakeStructuredCompletion(
+        parsed={
+            "verdict": "tie",
+            "summary": "ok",
+            "reasons": [],
+            "overall_score": 0.5,
+        }
+    )
+
+    with patch(
+        "app.eval_adapter.workflow_lab_compare_judge.run_structured_completion",
+        fake,
+    ):
+        result = await run_workflow_lab_compare_judge(request, settings=settings)
+
+    assert result.results[0].status == "succeeded"
+    assert result.results[0].verdict == "tie"
+
+
+async def test_run_workflow_lab_compare_judge_compacts_heavy_prompt_payload() -> None:
+    settings = _settings_with_profile()
+    packet = _build_packet("case-heavy")
+    object.__setattr__(
+        packet.baseline,
+        "translation",
+        " ".join(["baseline-translation"] * 80),
+    )
+    object.__setattr__(
+        packet.baseline,
+        "inline_marks",
+        [
+            {
+                "anchor": f"anchor-{idx}-" + ("x" * 60),
+                "type": "grammar_note",
+                "extra": "detail-" + ("y" * 60),
+            }
+            for idx in range(8)
+        ],
+    )
+    object.__setattr__(
+        packet.baseline,
+        "sentence_entries",
+        [
+            {
+                "type": "sentence_analysis",
+                "label": f"label-{idx}",
+                "content": " ".join([f"entry-{idx}"] * 80),
+                "chunks": [{"label": "chunk", "text": " ".join(["chunk"] * 40)} for _ in range(4)],
+            }
+            for idx in range(6)
+        ],
+    )
+    object.__setattr__(
+        packet.baseline,
+        "warnings",
+        [f"warning-{idx}-" + ("z" * 220) for idx in range(6)],
+    )
+    object.__setattr__(
+        packet.baseline,
+        "drop_log",
+        [
+            {"code": f"DROP_{idx}", "reason": " ".join(["drop"] * 50), "sentence_id": f"s-{idx}"}
+            for idx in range(5)
+        ],
+    )
+    request = _build_request([packet])
+    fake = _FakeStructuredCompletion(
+        parsed={
+            "verdict": "tie",
+            "summary": "ok",
+            "reasons": [],
+            "overall_score": 0.5,
+        }
+    )
+
+    with patch(
+        "app.eval_adapter.workflow_lab_compare_judge.run_structured_completion",
+        fake,
+    ):
+        await run_workflow_lab_compare_judge(request, settings=settings)
+
+    sent_prompt = json.loads(fake.calls[0]["user_prompt"])
+    baseline = sent_prompt["packet"]["baseline"]
+    assert len(baseline["inline_marks"]) == 6
+    assert len(baseline["sentence_entries"]) == 4
+    assert len(baseline["warnings"]) == 4
+    assert len(baseline["drop_log"]) == 3
+    assert len(baseline["translation"]) <= 240
+    assert all(len(item["summary"]) <= 180 for item in baseline["sentence_entries"])
+    assert fake.calls[0]["max_tokens"] == 320

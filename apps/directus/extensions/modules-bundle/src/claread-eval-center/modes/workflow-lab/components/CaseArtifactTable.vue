@@ -43,10 +43,10 @@ const sortedCases = computed(() => [...props.cases].sort((a, b) => {
     <table>
       <thead>
         <tr>
-          <th scope="col" title="Dataset case id。点击后在右侧查看完整 evidence。">Case</th>
+          <th scope="col" title="差异句 ID。点击后在右侧查看完整证据。">差异句</th>
           <th scope="col" title="adapter 执行状态。">状态</th>
-          <th scope="col" title="本 case 收集到的 warnings 数量。">Warn</th>
-          <th scope="col" title="本 case 在 evidence 准备过程中被丢弃的条目数；后端尚未暴露时显示 —。">Drop</th>
+          <th scope="col" title="该差异句收集到的 warnings 数量。">Warn</th>
+          <th scope="col" title="该差异句在证据准备过程中被丢弃的条目数；后端尚未暴露时显示 —。">Drop</th>
           <th scope="col" title="逐句翻译条目数量。" class="col-numeric">Trans</th>
           <th scope="col" title="行内标注数量。" class="col-numeric">Marks</th>
           <th scope="col" title="句子条目数量。" class="col-numeric">Entries</th>
@@ -59,7 +59,7 @@ const sortedCases = computed(() => [...props.cases].sort((a, b) => {
           :key="row.case_id"
           :class="{ active: row.case_id === props.selectedCaseId }"
         >
-          <td data-label="Case">
+          <td data-label="差异句">
             <button
               type="button"
               class="case-link"
@@ -88,7 +88,7 @@ const sortedCases = computed(() => [...props.cases].sort((a, b) => {
         </tr>
       </tbody>
     </table>
-    <p v-if="props.cases.length === 0" class="empty">当前没有可展示的 learning case。</p>
+    <p v-if="props.cases.length === 0" class="empty">当前没有可展示的差异句。</p>
   </div>
 </template>
 

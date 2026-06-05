@@ -632,7 +632,7 @@ class ExampleLabGenerateRagFieldsRequest(BaseModel):
 
     sentence_text: str = Field(min_length=1)
     output_fragment: dict[str, Any] = Field(default_factory=dict)
-    reading_variant: str = "default"
+    reading_variant: str = "intermediate_reading"
     model_profile: str | None = None
     timeout_seconds: float | None = Field(default=None, gt=0.0)
 
@@ -644,8 +644,13 @@ class ExampleLabGenerateRagFieldsResult(BaseModel):
     structure_signals: list[str] = Field(default_factory=list)
     teaching_goal: str = "balanced"
     retrieval_text: str = ""
-    generated_by: str = "rule"
+    generated_by: str = "llm"
+    confidence: str = "high"
+    reasoning: str = ""
     latency_ms: int = 0
+    model_name: str = ""
+    profile_name: str = ""
+    usage: dict[str, int] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -740,6 +745,7 @@ class WorkflowLabCompareJudgeCaseResult(BaseModel):
     overall_score: float | None = None
     summary: str = ""
     reasons: list[str] = Field(default_factory=list)
+    usage_summary: dict[str, int] | None = None
     error: WorkflowLabCompareJudgeCaseError | None = None
 
 
@@ -757,4 +763,8 @@ class WorkflowLabCompareJudgeResult(BaseModel):
     profile_name: str | None = None
     provider: str | None = None
     base_url: str | None = None
+    latency_seconds: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
     results: list[WorkflowLabCompareJudgeCaseResult] = Field(default_factory=list)

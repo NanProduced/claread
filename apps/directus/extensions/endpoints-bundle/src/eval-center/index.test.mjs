@@ -14,9 +14,13 @@ import {
   buildRetryWorkflowRequestConfig,
   buildWorkflowCompareJudgeRequestErrorJson,
   buildWorkflowLabCompareReport,
+  buildWorkflowLabExperimentFingerprint,
   classifyWorkflowCompareJudgeRequestStatus,
+  newWorkflowCompareId,
+  normalizeWarningsToStringList,
   resolveWorkflowCompareJudgeTotalTimeoutMs,
   buildSingleRunCaseArtifact,
+  workflowSingleRunHistoryRunId,
   syntheticSingleRunCompareRunId,
   cancelJudgeRunRequest,
   createWorkflowCompareJudgeRequest,
@@ -711,21 +715,28 @@ test("createWorkflowLabCompare materializes a persisted workflow compare under w
     assert.equal(existsSync(join(root, "workflow-compares", created.compare_id, "report.md")), true);
     assert.equal(existsSync(join(root, "workflow-compares", created.compare_id, "evidence-index.json")), true);
 
-    const existing = await createWorkflowLabCompare(database, env, {
+    // Re-running the same run pair is a new experiment and must mint a fresh
+    // compare_id rather than collapsing onto the previous one. The two rows
+    // are linked only by their shared experiment_fingerprint.
+    const second = await createWorkflowLabCompare(database, env, {
       baseline_run_id: "baseline",
       candidate_run_id: "candidate",
     });
-    assert.equal(existing.created, false);
-    assert.equal(existing.compare_id, created.compare_id);
-    assert.equal(existing.detail.report.losses, 1);
+    assert.equal(second.created, true);
+    assert.notEqual(second.compare_id, created.compare_id);
+    assert.equal(database.tables.eval_workflow_compares.length, 2);
+    const fingerprints = database.tables.eval_workflow_compares.map((row) => row.experiment_fingerprint);
+    assert.equal(fingerprints[0], fingerprints[1]);
     const raw = JSON.parse(readFileSync(join(root, "workflow-compares", created.compare_id, "compare.json"), "utf8"));
     assert.equal(raw.candidate_run_id, "candidate");
+    assert.ok(raw.experiment_fingerprint, "compare.json must persist experiment_fingerprint");
+    assert.equal(raw.fingerprint_payload.schema_version, "workflow-experiment-fingerprint-v1");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("createWorkflowLabCompare reuses the same compare_id for an immutable run pair", async () => {
+test("createWorkflowLabCompare mints a fresh compare_id on every call (no reuse)", async () => {
   const root = mkdtempSync(join(tmpdir(), "workflow-lab-compare-reuse-"));
   try {
     const database = createEvalCenterDb();
@@ -749,9 +760,12 @@ test("createWorkflowLabCompare reuses the same compare_id for an immutable run p
     });
 
     assert.equal(first.created, true);
-    assert.equal(second.created, false);
-    assert.equal(second.compare_id, first.compare_id);
-    assert.equal(database.tables.eval_workflow_compares.length, 1);
+    assert.equal(second.created, true);
+    assert.notEqual(second.compare_id, first.compare_id);
+    assert.equal(database.tables.eval_workflow_compares.length, 2);
+    // Same input + same prompts => same fingerprint, used only for grouping.
+    const fingerprints = database.tables.eval_workflow_compares.map((row) => row.experiment_fingerprint);
+    assert.equal(fingerprints[0], fingerprints[1]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1124,7 +1138,6 @@ test("workflowRunRequestSummary exposes expected artifact path separately", () =
       rag_mode: "off",
       trace_scope: "off",
       timeout_seconds: 120,
-      config_file: "evals/run-configs/ui-bridge-summary-run.yaml",
     },
     prompt_variant_id: null,
     prompt_variant_snapshot_hash: null,
@@ -1270,7 +1283,6 @@ test("buildRetryWorkflowRequestConfig patches cloned run id surfaces", () => {
         run_id: "old-run",
         dataset_id: "article-analysis-v1",
         preset_id: "smoke-fake",
-        config_file: "evals/run-configs/ui-old-run.yaml",
         yaml_content: 'run_id: "old-run"\ndataset_id: "article-analysis-v1"\nadapter_kind: fake\n',
       },
     },
@@ -1278,7 +1290,6 @@ test("buildRetryWorkflowRequestConfig patches cloned run id surfaces", () => {
   );
 
   assert.equal(config.run_id, "new-run");
-  assert.equal(config.config_file, "evals/run-configs/ui-new-run.yaml");
   assert.match(config.yaml_content, /^run_id: "new-run"$/m);
   assert.doesNotMatch(config.yaml_content, /^run_id: "old-run"$/m);
   assert.equal(config.preset_id, "smoke-fake");
@@ -1813,6 +1824,84 @@ test("syntheticSingleRunCompareRunId differs by side and by prompt context", () 
   assert.ok(candidateId.startsWith("single-compare-candidate-"));
 });
 
+test("workflowSingleRunHistoryRunId mints a unique safe id on every call", () => {
+  const ids = new Set();
+  for (let i = 0; i < 25; i += 1) {
+    const id = workflowSingleRunHistoryRunId();
+    assert.ok(id.startsWith("workflow-single-"), `id must keep workflow-single- prefix, got ${id}`);
+    assert.ok(isSafeFileId(id), `id must be a safe file id, got ${id}`);
+    ids.add(id);
+  }
+  assert.equal(ids.size, 25, "every workflow-single run id must be unique per call");
+});
+
+test("newWorkflowCompareId mints a unique safe id on every call", () => {
+  const ids = new Set();
+  for (let i = 0; i < 25; i += 1) {
+    const id = newWorkflowCompareId();
+    assert.ok(id.startsWith("workflow-compare-"), `id must keep workflow-compare- prefix, got ${id}`);
+    assert.ok(isSafeFileId(id), `id must be a safe file id, got ${id}`);
+    ids.add(id);
+  }
+  assert.equal(ids.size, 25, "every workflow-compare id must be unique per call");
+});
+
+test("buildWorkflowLabExperimentFingerprint is stable across calls with the same conditions", () => {
+  const inputContext = {
+    text: "Hello world",
+    reading_goal: "daily_reading",
+    reading_variant: "intermediate_reading",
+    source_type: "user_input",
+  };
+  const baseline = {
+    prompt_variant_id: "baseline-v1",
+    prompt_snapshot_hash: "snap-b",
+    model_profile: "qwen35-plus",
+    model_name: "qwen3.5-plus",
+  };
+  const candidate = {
+    prompt_variant_id: "candidate-v1",
+    prompt_snapshot_hash: "snap-c",
+    model_profile: "qwen35-plus",
+    model_name: "qwen3.5-plus",
+  };
+  const a = buildWorkflowLabExperimentFingerprint(inputContext, baseline, candidate);
+  const b = buildWorkflowLabExperimentFingerprint(inputContext, baseline, candidate);
+  assert.equal(a.experiment_fingerprint, b.experiment_fingerprint);
+  assert.equal(a.schema_version, "workflow-experiment-fingerprint-v1");
+  assert.equal(a.input_hash, b.input_hash);
+});
+
+test("buildWorkflowLabExperimentFingerprint changes when any condition changes", () => {
+  const base = {
+    text: "Hello world",
+    reading_goal: "daily_reading",
+    reading_variant: "intermediate_reading",
+    source_type: "user_input",
+  };
+  const baseline = {
+    prompt_variant_id: "baseline-v1",
+    prompt_snapshot_hash: "snap-b",
+    model_profile: "qwen35-plus",
+    model_name: "qwen3.5-plus",
+  };
+  const candidate = {
+    prompt_variant_id: "candidate-v1",
+    prompt_snapshot_hash: "snap-c",
+    model_profile: "qwen35-plus",
+    model_name: "qwen3.5-plus",
+  };
+  const fp = buildWorkflowLabExperimentFingerprint(base, baseline, candidate);
+  // each axis in turn should change the fingerprint
+  assert.notEqual(fp.experiment_fingerprint, buildWorkflowLabExperimentFingerprint({ ...base, text: "Different text" }, baseline, candidate).experiment_fingerprint);
+  assert.notEqual(fp.experiment_fingerprint, buildWorkflowLabExperimentFingerprint({ ...base, reading_goal: "exam_prep" }, baseline, candidate).experiment_fingerprint);
+  assert.notEqual(fp.experiment_fingerprint, buildWorkflowLabExperimentFingerprint({ ...base, reading_variant: "advanced_reading" }, baseline, candidate).experiment_fingerprint);
+  assert.notEqual(fp.experiment_fingerprint, buildWorkflowLabExperimentFingerprint({ ...base, source_type: "url_article" }, baseline, candidate).experiment_fingerprint);
+  assert.notEqual(fp.experiment_fingerprint, buildWorkflowLabExperimentFingerprint(base, { ...baseline, prompt_snapshot_hash: "snap-b-v2" }, candidate).experiment_fingerprint);
+  assert.notEqual(fp.experiment_fingerprint, buildWorkflowLabExperimentFingerprint(base, { ...baseline, model_name: "qwen3.5-pro" }, candidate).experiment_fingerprint);
+  assert.notEqual(fp.experiment_fingerprint, buildWorkflowLabExperimentFingerprint(base, baseline, { ...candidate, prompt_variant_id: "candidate-v2" }).experiment_fingerprint);
+});
+
 test("buildSingleRunCaseArtifact binds case_id to input context", () => {
   const artifact = buildSingleRunCaseArtifact({
     body: {
@@ -1891,7 +1980,7 @@ test("saveWorkflowLabSingleRunToHistory persists a standalone workflow run artif
   assert.ok(caseFiles[0].startsWith("single-run-") && caseFiles[0].endsWith(".json"));
 });
 
-test("saveWorkflowLabSingleRunToHistory deduplicates the same single run payload", async () => {
+test("saveWorkflowLabSingleRunToHistory mints a fresh run_id on every call (no dedupe)", async () => {
   const runsRoot = mkdtempSync(join(tmpdir(), "workflow-single-history-dup-"));
   const payload = {
     request: {
@@ -1937,8 +2026,13 @@ test("saveWorkflowLabSingleRunToHistory deduplicates the same single run payload
     body: payload,
   });
 
-  assert.equal(second.duplicate, true);
-  assert.equal(first.record.run_id, second.record.run_id);
+  // Two calls over the same input + same configuration are two separate
+  // experiments. Both must be persisted as separate run directories.
+  assert.equal(first.duplicate, false);
+  assert.equal(second.duplicate, false);
+  assert.notEqual(first.record.run_id, second.record.run_id);
+  assert.ok(existsSync(join(runsRoot, first.record.run_id, "run.json")));
+  assert.ok(existsSync(join(runsRoot, second.record.run_id, "run.json")));
 });
 
 test("createWorkflowDataset writes dataset yaml and optional initial case from single run", async () => {
@@ -2043,7 +2137,6 @@ test("retryWorkflowRunRequest clones a failed request as a new queued request", 
       config_json: {
         run_id: "old-run",
         dataset_id: "article-analysis-v1",
-        config_file: "evals/run-configs/ui-old-run.yaml",
         yaml_content: 'run_id: "old-run"\ndataset_id: "article-analysis-v1"\nadapter_kind: fake\n',
       },
       prompt_variant_id: null,
@@ -2649,7 +2742,7 @@ test("cross-layer: FE JUDGE_MODES_BY_NODE.grammar exposes 'raw' (BE VALID_JUDGE_
 // Workflow compare LLM judge (now proxied to services/api)
 // ---------------------------------------------------------------------------
 
-import { buildWorkflowCompareLlmJudgeCaseResults } from "./index.js";
+import { buildWorkflowCompareLlmJudgeCaseResults, summarizeCompareJudgeSentenceOutput } from "./index.js";
 
 function makeCompareArtifact() {
   return {
@@ -2711,12 +2804,12 @@ test("buildWorkflowCompareLlmJudgeCaseResults surfaces LLM_NOT_CONFIGURED when n
   };
 
   try {
-    const results = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
-    assert.equal(results.length, 1);
-    assert.equal(results[0].status, "error");
-    assert.equal(results[0].error.code, "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED");
-    assert.match(results[0].error.message, /judger_model_profile/);
-    assert.equal(results[0].verdict, "needs_review");
+    const execution = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    assert.equal(execution.caseResults.length, 1);
+    assert.equal(execution.caseResults[0].status, "error");
+    assert.equal(execution.caseResults[0].error.code, "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED");
+    assert.match(execution.caseResults[0].error.message, /judger_model_profile/);
+    assert.equal(execution.caseResults[0].verdict, "needs_review");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2758,6 +2851,11 @@ test("buildWorkflowCompareLlmJudgeCaseResults maps API results back into case_re
         judge_model_profile: "eval-judge",
         model_name: "judge-model",
         profile_name: "eval-judge",
+        provider: "openai_compatible",
+        latency_seconds: 12.5,
+        input_tokens: 123,
+        output_tokens: 45,
+        total_tokens: 168,
         results: [
           {
             case_id: "case-1",
@@ -2775,9 +2873,9 @@ test("buildWorkflowCompareLlmJudgeCaseResults maps API results back into case_re
   };
 
   try {
-    const results = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
-    assert.equal(results.length, 1);
-    const [r] = results;
+    const execution = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    assert.equal(execution.caseResults.length, 1);
+    const [r] = execution.caseResults;
     assert.equal(r.case_id, "case-1");
     assert.equal(r.status, "succeeded");
     assert.equal(r.verdict, "candidate_preferred");
@@ -2786,6 +2884,13 @@ test("buildWorkflowCompareLlmJudgeCaseResults maps API results back into case_re
     assert.equal(r.summary, "候选更清晰");
     assert.deepEqual(r.reasons, ["结构更明确", "翻译更准确"]);
     assert.equal(r.error, undefined);
+    assert.equal(execution.judgeMeta.judge_model_name, "judge-model");
+    assert.equal(execution.judgeMeta.judge_model_profile, "eval-judge");
+    assert.equal(execution.judgeMeta.judge_provider, "openai_compatible");
+    assert.equal(execution.judgeMeta.latency_seconds, 12.5);
+    assert.equal(execution.judgeMeta.input_tokens, 123);
+    assert.equal(execution.judgeMeta.output_tokens, 45);
+    assert.equal(execution.judgeMeta.total_tokens, 168);
 
     // Verify we called the right URL with the right body.
     assert.equal(fetchCalls.length, 1);
@@ -2799,6 +2904,7 @@ test("buildWorkflowCompareLlmJudgeCaseResults maps API results back into case_re
     assert.equal(sentBody.rubric_id, "rubric-x");
     assert.equal(sentBody.packets.length, 1);
     assert.equal(sentBody.packets[0].case_id, "case-1");
+    assert.equal(sentBody.packets[0].baseline.sentence_entries.length, 0);
     // Both per-packet and total timeout must be sent so the API can self
     // short-circuit before the Directus proxy cuts the connection.
     assert.equal(sentBody.timeout_seconds, 30);
@@ -2809,6 +2915,39 @@ test("buildWorkflowCompareLlmJudgeCaseResults maps API results back into case_re
     globalThis.fetch = originalFetch;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("summarizeCompareJudgeSentenceOutput compacts grammar-heavy sentence entries for judge packets", () => {
+  const artifact = {
+    ...makeCompareArtifact(),
+    sentence_entries: [
+      {
+        sentence_id: "s1",
+        type: "sentence_analysis",
+        title: "复杂句分析",
+        content: "A".repeat(1200),
+        chunks: [
+          { label: "主干", text: "B".repeat(200) },
+          { label: "从句", text: "C".repeat(200) },
+        ],
+      },
+      {
+        sentence_id: "s1",
+        type: "grammar_note",
+        label: "语法点",
+        description: "D".repeat(800),
+      },
+    ],
+    drop_log: [{ code: "DROP_TOO_LONG", reason: "E".repeat(500), sentence_id: "s1" }],
+  };
+  const summary = summarizeCompareJudgeSentenceOutput(artifact, {
+    case_id: "case-1",
+    sentence_id: "s1",
+    sentence_text: "Hello world.",
+  });
+  assert.equal(summary.sentence_entries.length, 2);
+  assert.ok(Object.keys(summary.sentence_entries[0]).length >= 1);
+  assert.ok(summary.drop_log[0].reason.length <= 180);
 });
 
 test("buildWorkflowCompareLlmJudgeCaseResults marks every case errored when the API call fails", async () => {
@@ -2839,11 +2978,11 @@ test("buildWorkflowCompareLlmJudgeCaseResults marks every case errored when the 
     new Response(JSON.stringify({ detail: "model profile is not configured" }), { status: 503 });
 
   try {
-    const results = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
-    assert.equal(results.length, 1);
-    assert.equal(results[0].status, "error");
-    assert.equal(results[0].verdict, "needs_review");
-    assert.match(results[0].error.code, /UPSTREAM_EVAL_ERROR|WORKFLOW_COMPARE_JUDGE_LLM_ERROR/);
+    const execution = await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    assert.equal(execution.caseResults.length, 1);
+    assert.equal(execution.caseResults[0].status, "error");
+    assert.equal(execution.caseResults[0].verdict, "needs_review");
+    assert.match(execution.caseResults[0].error.code, /UPSTREAM_EVAL_ERROR|WORKFLOW_COMPARE_JUDGE_LLM_ERROR/);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(root, { recursive: true, force: true });
@@ -3043,6 +3182,131 @@ test("buildWorkflowCompareLlmJudgeCaseResults sends per-packet + total timeout a
     assert.equal(sentBody.timeout_seconds, 20);
     // callEvalUpstreamJson sets up an AbortController; we only need the
     // request body to prove the budgets are aligned end-to-end.
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Compare judge packet warnings normalization
+// ---------------------------------------------------------------------------
+
+test("normalizeWarningsToStringList keeps string warnings untouched", () => {
+  const out = normalizeWarningsToStringList([
+    "schema drift on grammar",
+    "  trimmed  ",
+  ]);
+  assert.deepEqual(out, ["schema drift on grammar", "trimmed"]);
+});
+
+test("normalizeWarningsToStringList flattens object warnings to a readable string", () => {
+  const out = normalizeWarningsToStringList([
+    { code: "SCHEMA_DRIFT", message: "schema version drift", sentence_id: "s-7" },
+    { code: "TIMEOUT", message: "agent timeout", detail: "after 30s" },
+  ]);
+  assert.equal(out.length, 2);
+  assert.match(out[0], /\[SCHEMA_DRIFT\]/);
+  assert.match(out[0], /schema version drift/);
+  assert.match(out[0], /sentence_id=s-7/);
+  assert.match(out[1], /\[TIMEOUT\]/);
+  assert.match(out[1], /agent timeout/);
+  assert.match(out[1], /after 30s/);
+  // Must not contain raw JSON braces / unescaped keys.
+  for (const line of out) {
+    assert.doesNotMatch(line, /\{.*"code".*\}/);
+  }
+});
+
+test("normalizeWarningsToStringList drops null/empty/garbage entries", () => {
+  const out = normalizeWarningsToStringList([
+    null,
+    "",
+    "   ",
+    { code: "X", message: "kept" },
+    42,
+    { code: "  ", message: "  " }, // both empty after trim
+  ]);
+  assert.deepEqual(out, ["[X] kept"]);
+});
+
+test("buildWorkflowCompareLlmJudgeCaseResults sends warnings as plain string[]", async () => {
+  // Regression for: "body.packets.0.baseline.warnings.0: Input should be a
+  // valid string". Directus-side render_scene.warnings is list[dict]; the
+  // API schema requires list[str]. summarizeCompareJudgeSentenceOutput must
+  // therefore flatten the dict entries to readable strings before posting.
+  const root = mkdtempSync(join(tmpdir(), "wf-llm-warn-"));
+  const artifact = {
+    ...makeCompareArtifact(),
+    render_scene: {
+      schema_version: "render-scene-v1",
+      warnings: [
+        { code: "SCHEMA_DRIFT", message: "schema version drift", sentence_id: "s-1" },
+      ],
+    },
+  };
+  writeCaseArtifacts(root, "run-b", artifact);
+  writeCaseArtifacts(root, "run-c", artifact);
+
+  const env = {
+    CLAREAD_EVAL_RUNS_ROOT: root,
+    CLAREAD_API_BASE_URL: "http://api.invalid",
+    CLAREAD_API_ADMIN_KEY: "admin-key",
+  };
+  const requestRow = {
+    judge_run_id: "judge-1",
+    compare_id: "cmp-1",
+    rubric_id: "rubric-x",
+    rubric_version: "v1",
+    config_json: { judger_model_profile: "eval-judge" },
+  };
+  const compareDetail = {
+    compare: { compare_id: "cmp-1", baseline_run_id: "run-b", candidate_run_id: "run-c" },
+    report: makeCompareReport(),
+  };
+
+  const originalFetch = globalThis.fetch;
+  let sentBody;
+  globalThis.fetch = async (_url, options) => {
+    sentBody = JSON.parse(options.body);
+    return new Response(
+      JSON.stringify({
+        schema_version: "workflow-compare-judge-v1",
+        judge_run_id: "judge-1",
+        compare_id: "cmp-1",
+        rubric_id: "rubric-x",
+        judge_model_profile: "eval-judge",
+        results: [
+          {
+            case_id: "case-1",
+            status: "succeeded",
+            verdict: "tie",
+            preferred_side: null,
+            overall_score: 0.5,
+            summary: "ok",
+            reasons: [],
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail);
+    const packet = sentBody.packets[0];
+    assert.ok(Array.isArray(packet.baseline.warnings));
+    assert.ok(Array.isArray(packet.candidate.warnings));
+    // Every entry must be a string (not an object), otherwise the API-side
+    // pydantic model raises "Input should be a valid string".
+    for (const w of packet.baseline.warnings) {
+      assert.equal(typeof w, "string", `expected string, got ${typeof w}: ${JSON.stringify(w)}`);
+    }
+    for (const w of packet.candidate.warnings) {
+      assert.equal(typeof w, "string");
+    }
+    assert.equal(packet.baseline.warnings.length, 1);
+    assert.match(packet.baseline.warnings[0], /\[SCHEMA_DRIFT\]/);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(root, { recursive: true, force: true });

@@ -311,6 +311,7 @@ async function resolveRunRootOrThrow(roots, runId) {
 
 function summarizeRun(run, report, counts) {
   const runId = run.run_id || report?.run_id;
+  const usageSummary = run.usage_summary || null;
   return {
     run_id: runId,
     dataset_id: run.dataset_id || report?.dataset_id || null,
@@ -344,6 +345,15 @@ function summarizeRun(run, report, counts) {
     compare_report_count: counts.compare_report_count,
     mode: run.mode || "workflow",
     judge_report_count: counts.judge_report_count ?? 0,
+    model_identity: run.model_identity || null,
+    model_name: run.model_identity?.model_name || run.model_name || null,
+    model_profile: run.model_identity?.profile_name || run.model_profile || null,
+    latency_seconds: run.latency_seconds ?? report?.latency_seconds ?? null,
+    total_tokens: run.total_tokens ?? usageSummary?.total_tokens ?? report?.total_tokens ?? null,
+    input_tokens: usageSummary?.input_tokens ?? null,
+    output_tokens: usageSummary?.output_tokens ?? null,
+    usage_summary: usageSummary,
+    custom_title: run.custom_title || null,
   };
 }
 
@@ -380,15 +390,20 @@ function workflowHistoryRecord(summary) {
     compare_report_count: summary?.compare_report_count ?? 0,
     created_at: summary?.created_at || null,
     date_created: summary?.created_at || null,
-    display_title: summary?.mode === "workflow_single_run"
+    display_title: summary?.custom_title || (summary?.mode === "workflow_single_run"
       ? `${promptVariantId || "baseline"} · single run`
-      : `${promptVariantId || "baseline"} · ${summary?.dataset_id || "dataset"}`,
+      : `${promptVariantId || "baseline"} · ${summary?.dataset_id || "dataset"}`),
     display_excerpt: [
       summary?.mode === "workflow_single_run" ? "single run" : null,
       summary?.topology_mode || null,
       Number(summary?.learning_case_count || 0) > 0 ? `${summary.learning_case_count} learning` : null,
       Number(summary?.judge_report_count || 0) > 0 ? `${summary.judge_report_count} judge` : null,
     ].filter(Boolean).join(" · "),
+    custom_title: summary?.custom_title || null,
+    model_name: summary?.model_identity?.model_name || summary?.model_name || null,
+    model_profile: summary?.model_identity?.profile_name || summary?.model_profile || null,
+    latency_seconds: summary?.latency_seconds ?? null,
+    total_tokens: summary?.total_tokens ?? summary?.usage_summary?.total_tokens ?? null,
   };
 }
 
@@ -883,7 +898,7 @@ function normalizeSentenceMark(mark) {
   return {
     anchor: String(mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || ""),
     type: String(mark?.annotation_type || mark?.visual_tone || ""),
-    extra: String(mark?.zh || mark?.gloss || mark?.phrase_type || ""),
+    extra: String(mark?.glossary?.zh || mark?.glossary?.gloss || mark?.glossary?.phrase_type || ""),
   };
 }
 
@@ -892,7 +907,7 @@ function artifactMarkMap(artifact) {
   const scene = workflowSceneFromArtifact(artifact);
   const items = Array.isArray(scene?.inline_marks) ? scene.inline_marks : Array.isArray(artifact?.inline_marks) ? artifact.inline_marks : [];
   for (const item of items) {
-    const sid = item?.sentence_id;
+    const sid = item?.anchor?.sentence_id || item?.sentence_id;
     if (sid == null) continue;
     const key = String(sid);
     if (!map.has(key)) map.set(key, []);
@@ -1169,6 +1184,54 @@ function computeInputHash(inputSnapshot) {
   };
 }
 
+// experiment fingerprint (stable)
+//
+// Captures the conditions under which an experiment is executed:
+//   - input_hash (text + reading context)
+//   - reading_goal / reading_variant / source_type
+//   - baseline + candidate prompt snapshot identity
+//   - model profile / model identity
+//
+// The fingerprint is intentionally stable for a given (article, prompt
+// configuration, model profile) so it can be used for grouping /
+// cross-experiment analysis. It MUST NOT be used to deduplicate runs or
+// compares — re-running the same conditions is a separate experiment and
+// must always produce a fresh run_id / compare_id.
+function buildWorkflowLabExperimentFingerprint(inputContext, baselineSnapshot, candidateSnapshot) {
+  const inputHash = computeInputHash(inputContext || {}).input_hash;
+  const baselineIdentity = normalizePromptSnapshotIdentity(baselineSnapshot);
+  const candidateIdentity = normalizePromptSnapshotIdentity(candidateSnapshot);
+  const raw = stableJson({
+    input_hash: inputHash,
+    reading_goal: inputContext?.reading_goal || "daily_reading",
+    reading_variant: inputContext?.reading_variant || "intermediate_reading",
+    source_type: inputContext?.source_type || "user_input",
+    baseline_prompt: baselineIdentity,
+    candidate_prompt: candidateIdentity,
+  });
+  const digest = createHash("sha1").update(raw).digest("hex").slice(0, 16);
+  return {
+    schema_version: "workflow-experiment-fingerprint-v1",
+    experiment_fingerprint: digest,
+    input_hash: inputHash,
+    reading_goal: inputContext?.reading_goal || "daily_reading",
+    reading_variant: inputContext?.reading_variant || "intermediate_reading",
+    source_type: inputContext?.source_type || "user_input",
+    baseline_prompt_identity: baselineIdentity,
+    candidate_prompt_identity: candidateIdentity,
+  };
+}
+
+function normalizePromptSnapshotIdentity(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return {
+    prompt_variant_id: snapshot.prompt_variant_id || null,
+    prompt_snapshot_hash: snapshot.prompt_snapshot_hash || null,
+    model_profile: snapshot.model_profile || null,
+    model_name: snapshot.model_name || null,
+  };
+}
+
 function buildWorkflowLabCompareReport(baseline, candidate, now = new Date()) {
   const baselineById = new Map(baseline.artifacts.map((artifact) => [artifact.case_id, artifact]));
   const candidateById = new Map(candidate.artifacts.map((artifact) => [artifact.case_id, artifact]));
@@ -1251,11 +1314,24 @@ function renderWorkflowLabCompareMarkdown(report) {
 }
 
 function workflowCompareIdForRunPair(baselineRunId, candidateRunId) {
+  // Legacy helper kept for backwards-compatible ID generation in places that
+  // still need a deterministic-from-pair form (e.g. retry/cancel path on
+  // already-persisted compare rows). The Workflow Lab main path no longer
+  // uses this to deduplicate: see createOrReuseWorkflowCompare + the
+  // experiment-fingerprint comment there.
   const digest = createHash("sha1")
     .update(stableJson({ baseline_run_id: baselineRunId, candidate_run_id: candidateRunId }))
     .digest("hex")
     .slice(0, 12);
   return `workflow-compare-${digest}`;
+}
+
+function newWorkflowCompareId() {
+  // Unique per creation. Each compare is its own experiment and must never
+  // be silently collapsed onto a previous compare with the same run pair.
+  const ts = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14); // YYYYMMDDHHMMSS
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+  return `workflow-compare-${ts}-${suffix}`;
 }
 
 function buildWorkflowCompareEvidenceIndex(report, baselineRunId, candidateRunId, inputHash = null) {
@@ -1280,6 +1356,8 @@ function buildWorkflowCompareEvidenceIndex(report, baselineRunId, candidateRunId
 }
 
 function workflowCompareSummaryFromRow(row, detail = {}) {
+  const baselineRunSummary = detail.baseline_run_summary?.summary || detail.baseline_run_summary || null;
+  const candidateRunSummary = detail.candidate_run_summary?.summary || detail.candidate_run_summary || null;
   const compareMeta = detail.compare_json && typeof detail.compare_json === "object"
     ? detail.compare_json
     : {};
@@ -1287,7 +1365,7 @@ function workflowCompareSummaryFromRow(row, detail = {}) {
     ? detail.report
     : {};
   const candidatePromptVariantId = compareMeta.candidate_prompt_variant_id
-    || detail.candidate_run_summary?.prompt_variant_id
+    || candidateRunSummary?.prompt_variant_id
     || null;
   const status = row?.status || compareMeta.status || "complete";
   return {
@@ -1313,8 +1391,21 @@ function workflowCompareSummaryFromRow(row, detail = {}) {
     created_at: row.date_created || compareMeta.created_at || null,
     date_created: row.date_created || compareMeta.created_at || null,
     date_updated: row.date_updated || compareMeta.updated_at || null,
-    display_title: `${candidatePromptVariantId || "baseline"} · compare`,
+    display_title: row.custom_title || `${candidatePromptVariantId || "baseline"} · compare`,
     display_excerpt: `${row.baseline_run_id} vs ${row.candidate_run_id}`,
+    custom_title: row.custom_title || null,
+    baseline_model: baselineRunSummary?.model_name || baselineRunSummary?.model_identity?.model_name || null,
+    baseline_model_profile: baselineRunSummary?.model_profile || baselineRunSummary?.model_identity?.profile_name || null,
+    baseline_latency_seconds: baselineRunSummary?.latency_seconds ?? null,
+    baseline_total_tokens: baselineRunSummary?.total_tokens ?? baselineRunSummary?.usage_summary?.total_tokens ?? null,
+    baseline_input_tokens: baselineRunSummary?.input_tokens ?? baselineRunSummary?.usage_summary?.input_tokens ?? null,
+    baseline_output_tokens: baselineRunSummary?.output_tokens ?? baselineRunSummary?.usage_summary?.output_tokens ?? null,
+    candidate_model: candidateRunSummary?.model_name || candidateRunSummary?.model_identity?.model_name || null,
+    candidate_model_profile: candidateRunSummary?.model_profile || candidateRunSummary?.model_identity?.profile_name || null,
+    candidate_latency_seconds: candidateRunSummary?.latency_seconds ?? null,
+    candidate_total_tokens: candidateRunSummary?.total_tokens ?? candidateRunSummary?.usage_summary?.total_tokens ?? null,
+    candidate_input_tokens: candidateRunSummary?.input_tokens ?? candidateRunSummary?.usage_summary?.input_tokens ?? null,
+    candidate_output_tokens: candidateRunSummary?.output_tokens ?? candidateRunSummary?.usage_summary?.output_tokens ?? null,
   };
 }
 
@@ -1360,17 +1451,11 @@ async function createOrReuseWorkflowCompare({ database, env, baselineRunId, cand
     throw error;
   }
 
-  const compareId = workflowCompareIdForRunPair(baselineRunId, candidateRunId);
-  const existing = await database("eval_workflow_compares")
-    .where({ compare_id: compareId })
-    .first();
-  if (existing) {
-    return {
-      created: false,
-      compare_id: compareId,
-      detail: await loadWorkflowCompareHistoryDetail(database, env, compareId),
-    };
-  }
+  // Reuse was removed: every call mints a fresh compare_id. Same run pair
+  // submitted twice => two compare rows, each with their own
+  // experiment_fingerprint. Stable grouping across those rows comes from
+  // the fingerprint, not from collapsing the rows.
+  const compareId = newWorkflowCompareId();
 
   const roots = resolveWorkflowRunRoots(env);
   const baseline = await loadRunForWorkflowLabCompare(roots, baselineRunId);
@@ -1378,6 +1463,26 @@ async function createOrReuseWorkflowCompare({ database, env, baselineRunId, cand
   assertWorkflowLabCompareInputConsistency(baseline, candidate);
   const report = buildWorkflowLabCompareReport(baseline, candidate);
   const inputHash = computeInputHash(artifactInputSnapshot(baseline.artifacts[0], baseline.run)).input_hash;
+  const fingerprint = buildWorkflowLabExperimentFingerprint(
+    {
+      text: baseline.run?.source_text || baseline.run?.text || "",
+      reading_goal: baseline.run?.reading_goal,
+      reading_variant: baseline.run?.reading_variant,
+      source_type: baseline.run?.source_type,
+    },
+    {
+      prompt_variant_id: baseline.artifacts?.[0]?.prompt_identity?.prompt_variant_id || baseline.run?.prompt_variant_id || null,
+      prompt_snapshot_hash: baseline.artifacts?.[0]?.prompt_identity?.prompt_snapshot_hash || null,
+      model_profile: baseline.artifacts?.[0]?.model_identity?.profile_name || null,
+      model_name: baseline.artifacts?.[0]?.model_identity?.model_name || null,
+    },
+    {
+      prompt_variant_id: candidate.artifacts?.[0]?.prompt_identity?.prompt_variant_id || candidate.run?.prompt_variant_id || null,
+      prompt_snapshot_hash: candidate.artifacts?.[0]?.prompt_identity?.prompt_snapshot_hash || null,
+      model_profile: candidate.artifacts?.[0]?.model_identity?.profile_name || null,
+      model_name: candidate.artifacts?.[0]?.model_identity?.model_name || null,
+    },
+  );
   const compareRoot = resolveWorkflowCompareRuntimeRoot(env);
   const comparePath = compareDir(compareRoot, compareId);
   const compareMeta = {
@@ -1402,6 +1507,8 @@ async function createOrReuseWorkflowCompare({ database, env, baselineRunId, cand
       candidate.artifacts?.[0]?.prompt_identity?.prompt_variant_id
       || candidate.run?.prompt_variant_id
       || null,
+    experiment_fingerprint: fingerprint.experiment_fingerprint,
+    fingerprint_payload: fingerprint,
     created_at: new Date().toISOString(),
   };
   const evidenceIndex = buildWorkflowCompareEvidenceIndex(report, baselineRunId, candidateRunId, inputHash);
@@ -1427,6 +1534,7 @@ async function createOrReuseWorkflowCompare({ database, env, baselineRunId, cand
     losses: report.losses || 0,
     ties: report.ties || 0,
     identity_warnings: Array.isArray(report.identity_warnings) ? report.identity_warnings : [],
+    experiment_fingerprint: fingerprint.experiment_fingerprint,
     user_created: reqUser || null,
   });
   return {
@@ -1463,6 +1571,7 @@ async function listWorkflowCompareHistoryRecords(database, env, limit = 30) {
       "identity_warnings",
       "date_created",
       "date_updated",
+      "custom_title",
     ])
     .orderBy("date_created", "desc")
     .limit(limit);
@@ -1471,10 +1580,15 @@ async function listWorkflowCompareHistoryRecords(database, env, limit = 30) {
     let detail = {};
     try {
       const artifact = await loadWorkflowCompareArtifactPayload(env, row.compare_id);
+      const [baselineRunSummary, candidateRunSummary] = await Promise.all([
+        loadWorkflowCompareUnderlyingRunSummary(env, row.baseline_run_id),
+        loadWorkflowCompareUnderlyingRunSummary(env, row.candidate_run_id),
+      ]);
       detail = {
         compare_json: artifact.compare_json,
         report: artifact.report,
-        candidate_run_summary: await loadWorkflowCompareUnderlyingRunSummary(env, row.candidate_run_id),
+        baseline_run_summary: baselineRunSummary,
+        candidate_run_summary: candidateRunSummary,
       };
     } catch {
       detail = {};
@@ -1517,6 +1631,7 @@ async function loadWorkflowCompareHistoryDetail(database, env, compareId) {
     record: workflowCompareSummaryFromRow(row, {
       compare_json: artifact.compare_json,
       report: artifact.report,
+      baseline_run_summary: baselineRunSummary,
       candidate_run_summary: candidateRunSummary,
     }),
     compare: {
@@ -1688,8 +1803,9 @@ function compareJudgeCaseScore(verdict) {
   return null;
 }
 
-function buildWorkflowCompareJudgeArtifacts({ requestRow, compare, caseResults }) {
+function buildWorkflowCompareJudgeArtifacts({ requestRow, compare, caseResults, judgeMeta = null }) {
   const results = Array.isArray(caseResults) ? caseResults : [];
+  const normalizedJudgeMeta = judgeMeta && typeof judgeMeta === "object" ? judgeMeta : {};
   const summary = {
     total_cases: results.length,
     candidate_preferred: results.filter((item) => item.verdict === "candidate_preferred").length,
@@ -1712,6 +1828,8 @@ function buildWorkflowCompareJudgeArtifacts({ requestRow, compare, caseResults }
     attempt_no: requestRow.attempt_no || 1,
     max_attempts: requestRow.max_attempts || 1,
     retry_reason: requestRow.retry_reason || null,
+    model_identity: normalizedJudgeMeta.model_identity || null,
+    runtime_summary: normalizedJudgeMeta.runtime_summary || null,
   };
   const caseResultsPayload = {
     schema_version: "workflow-compare-judge-case-results-v1",
@@ -1730,6 +1848,13 @@ function buildWorkflowCompareJudgeArtifacts({ requestRow, compare, caseResults }
     rubric_version: requestRow.rubric_version,
     judge_adapter_kind: requestRow.judge_adapter_kind,
     created_at: new Date().toISOString(),
+    judge_model_name: normalizedJudgeMeta.judge_model_name || null,
+    judge_model_profile: normalizedJudgeMeta.judge_model_profile || null,
+    judge_provider: normalizedJudgeMeta.judge_provider || null,
+    latency_seconds: normalizedJudgeMeta.latency_seconds ?? null,
+    input_tokens: normalizedJudgeMeta.input_tokens ?? null,
+    output_tokens: normalizedJudgeMeta.output_tokens ?? null,
+    total_tokens: normalizedJudgeMeta.total_tokens ?? null,
     ...summary,
     notes: [
       "Workflow compare judge evaluates sentence-level compare cases anchored to the persisted compare_id.",
@@ -1749,13 +1874,17 @@ function buildWorkflowCompareJudgeArtifacts({ requestRow, compare, caseResults }
     `- Judge Run: ${requestRow.judge_run_id}`,
     `- Rubric: ${requestRow.rubric_id}@${requestRow.rubric_version}`,
     `- Adapter: ${requestRow.judge_adapter_kind}`,
+    normalizedJudgeMeta.judge_model_name ? `- Judge Model: ${normalizedJudgeMeta.judge_model_name}` : null,
+    normalizedJudgeMeta.judge_model_profile ? `- Judge Profile: ${normalizedJudgeMeta.judge_model_profile}` : null,
+    Number.isFinite(normalizedJudgeMeta.latency_seconds) ? `- Judge Latency: ${normalizedJudgeMeta.latency_seconds.toFixed(2)}s` : null,
+    Number.isFinite(normalizedJudgeMeta.total_tokens) ? `- Judge Tokens: ${normalizedJudgeMeta.total_tokens}` : null,
     `- Total Cases: ${summary.total_cases}`,
     `- Candidate Preferred: ${summary.candidate_preferred}`,
     `- Baseline Preferred: ${summary.baseline_preferred}`,
     `- Tie: ${summary.tie}`,
     `- Needs Review: ${summary.needs_review}`,
     "",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   return { judgeRun, caseResultsPayload, judgeReport, reportMd };
 }
 
@@ -1791,16 +1920,135 @@ function summarizeCompareJudgeSentenceOutput(artifact, comparison) {
   const translation = artifactTranslationMap(artifact).get(String(sentenceId)) || null;
   const marks = artifactMarkMap(artifact).get(String(sentenceId)) || [];
   const entries = artifactEntryMap(artifact).get(String(sentenceId)) || [];
+  const rawWarnings = Array.isArray(scene?.warnings)
+    ? scene.warnings
+    : Array.isArray(artifact?.warnings)
+      ? artifact.warnings
+      : [];
   return {
     user_facing_state: scene?.user_facing_state || artifact?.user_facing_state || null,
     sentence_id: sentenceId,
-    sentence_text: sentenceText,
-    translation,
-    inline_marks: marks,
-    sentence_entries: entries,
-    warnings: Array.isArray(scene?.warnings) ? scene.warnings : Array.isArray(artifact?.warnings) ? artifact.warnings : [],
-    drop_log: Array.isArray(artifact?.drop_log) ? artifact.drop_log : [],
+    sentence_text: truncateJudgeText(sentenceText, 240),
+    translation: truncateJudgeText(translation, 240) || null,
+    inline_marks: compactCompareJudgeInlineMarks(marks),
+    sentence_entries: compactCompareJudgeSentenceEntries(entries),
+    // The API-side WorkflowLabCompareJudgeSidePayload schema requires
+    // warnings: list[str]. The Directus-side artifact / render_scene carries
+    // warnings as list[dict] (e.g. {code, message, sentence_id, ...}); we
+    // flatten them into a readable single-line string so the request body
+    // no longer fails Pydantic validation with
+    // "Input should be a valid string" on body.packets.0.baseline.warnings.0.
+    warnings: normalizeWarningsToStringList(rawWarnings).slice(0, 4),
+    drop_log: compactCompareJudgeDropLog(artifact?.drop_log),
   };
+}
+
+function normalizeWarningsToStringList(rawWarnings) {
+  if (!Array.isArray(rawWarnings)) return [];
+  const out = [];
+  for (const item of rawWarnings) {
+    if (item == null) continue;
+    if (typeof item === "string") {
+      const trimmed = item.trim();
+      if (trimmed) out.push(trimmed);
+      continue;
+    }
+    if (typeof item === "object") {
+      // Prefer a small, readable subset over a raw JSON dump.
+      const code = typeof item.code === "string" ? item.code.trim() : "";
+      const message = typeof item.message === "string" ? item.message.trim() : "";
+      const detail = typeof item.detail === "string" ? item.detail.trim() : "";
+      const sentenceId = item.sentence_id != null ? String(item.sentence_id).trim() : "";
+      const parts = [];
+      if (code) parts.push(`[${code}]`);
+      if (message) parts.push(message);
+      if (sentenceId) parts.push(`sentence_id=${sentenceId}`);
+      if (detail) parts.push(detail);
+      const flattened = parts.join(" ").replace(/\s+/g, " ").trim();
+      if (flattened) out.push(flattened.slice(0, 500));
+    }
+  }
+  return out;
+}
+
+function truncateJudgeText(value, maxChars = 320) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, maxChars);
+}
+
+function pickJudgeEntrySummary(entry) {
+  const candidates = [
+    entry?.summary,
+    entry?.text,
+    entry?.content,
+    entry?.description,
+    entry?.explanation,
+    entry?.gloss,
+    entry?.note,
+    entry?.analysis_summary,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return truncateJudgeText(candidate, 360);
+    }
+  }
+  return "";
+}
+
+function compactCompareJudgeSentenceEntry(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const compact = {
+    type: entry.type || entry.entry_type || entry.kind || null,
+    label: entry.label || entry.title || entry.name || null,
+    summary: pickJudgeEntrySummary(entry) || null,
+  };
+  if (typeof entry.source_text === "string" && entry.source_text.trim()) {
+    compact.source_text = truncateJudgeText(entry.source_text, 180);
+  }
+  if (typeof entry.anchor_text === "string" && entry.anchor_text.trim()) {
+    compact.anchor_text = truncateJudgeText(entry.anchor_text, 180);
+  }
+  if (Array.isArray(entry.chunks) && entry.chunks.length > 0) {
+    compact.chunks = entry.chunks.slice(0, 4).map((chunk) => ({
+      label: chunk?.label || chunk?.type || null,
+      text: truncateJudgeText(String(chunk?.text || ""), 120) || null,
+    }));
+  }
+  if (compact.type === "sentence_analysis" && !compact.summary) {
+    compact.summary = "sentence_analysis";
+  }
+  return compact;
+}
+
+function compactCompareJudgeInlineMarks(marks) {
+  if (!Array.isArray(marks)) return [];
+  return marks.slice(0, 6).map((mark) => {
+    if (!mark || typeof mark !== "object" || Array.isArray(mark)) return null;
+    return {
+      anchor: truncateJudgeText(mark.anchor || mark.anchor_text || mark.text || "", 80) || null,
+      type: truncateJudgeText(mark.type || mark.annotation_type || mark.visual_tone || "", 40) || null,
+      extra: truncateJudgeText(mark.extra || mark.glossary?.zh || mark.glossary?.gloss || mark.zh || mark.gloss || mark.label || "", 80) || null,
+    };
+  }).filter(Boolean);
+}
+
+function compactCompareJudgeSentenceEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry) => compactCompareJudgeSentenceEntry(entry)).filter(Boolean).slice(0, 4);
+}
+
+function compactCompareJudgeDropLog(rawDropLog) {
+  if (!Array.isArray(rawDropLog)) return [];
+  return rawDropLog.slice(0, 3).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { message: truncateJudgeText(String(item || ""), 180) || "drop" };
+    }
+    return {
+      code: item.code || null,
+      reason: truncateJudgeText(String(item.reason || item.message || ""), 180) || null,
+      sentence_id: item.sentence_id ? String(item.sentence_id) : null,
+    };
+  });
 }
 
 async function requestOpenAICompatibleJudge({ env, model, packet }) {
@@ -1857,12 +2105,18 @@ async function buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareD
   // case so the artifact + run row record a clear configuration error.
   if (!judgeModelProfile) {
     const message = "judger_model_profile is required for LLM judge.";
-    return comparisons.map((comparison) =>
-      _summarizeCompareJudgeFailure(comparison, {
-        code: "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED",
-        message,
-      })
-    );
+    return {
+      caseResults: comparisons.map((comparison) =>
+        _summarizeCompareJudgeFailure(comparison, {
+          code: "WORKFLOW_COMPARE_JUDGE_LLM_NOT_CONFIGURED",
+          message,
+        })
+      ),
+      judgeMeta: {
+        judge_model_name: debugModelName || null,
+        judge_model_profile: judgeModelProfile || null,
+      },
+    };
   }
 
   // Build all sentence-level compare packets up-front, then hand them to the
@@ -1938,9 +2192,15 @@ async function buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareD
       timeoutMs: directusProxyTimeoutMs,
     });
   } catch (error) {
-    return packetEntries.map(({ comparison }) =>
-      _summarizeCompareJudgeFailure(comparison, error)
-    );
+    return {
+      caseResults: packetEntries.map(({ comparison }) =>
+        _summarizeCompareJudgeFailure(comparison, error)
+      ),
+      judgeMeta: {
+        judge_model_name: debugModelName || null,
+        judge_model_profile: judgeModelProfile || null,
+      },
+    };
   }
 
   const resultsByCaseId = new Map();
@@ -1950,7 +2210,7 @@ async function buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareD
     }
   }
 
-  return packetEntries.map(({ comparison }) => {
+  const caseResults = packetEntries.map(({ comparison }) => {
     const judged = resultsByCaseId.get(comparison.case_id);
     if (!judged) {
       return _summarizeCompareJudgeFailure(comparison, {
@@ -1991,6 +2251,29 @@ async function buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareD
         : [],
     };
   });
+  return {
+    caseResults,
+    judgeMeta: {
+      judge_model_name: apiPayload?.model_name || debugModelName || null,
+      judge_model_profile: apiPayload?.profile_name || judgeModelProfile || null,
+      judge_provider: apiPayload?.provider || null,
+      latency_seconds: Number.isFinite(Number(apiPayload?.latency_seconds)) ? Number(apiPayload.latency_seconds) : null,
+      input_tokens: Number.isFinite(Number(apiPayload?.input_tokens)) ? Number(apiPayload.input_tokens) : null,
+      output_tokens: Number.isFinite(Number(apiPayload?.output_tokens)) ? Number(apiPayload.output_tokens) : null,
+      total_tokens: Number.isFinite(Number(apiPayload?.total_tokens)) ? Number(apiPayload.total_tokens) : null,
+      model_identity: {
+        model_name: apiPayload?.model_name || debugModelName || null,
+        profile_name: apiPayload?.profile_name || judgeModelProfile || null,
+        provider: apiPayload?.provider || null,
+      },
+      runtime_summary: {
+        latency_seconds: Number.isFinite(Number(apiPayload?.latency_seconds)) ? Number(apiPayload.latency_seconds) : null,
+        input_tokens: Number.isFinite(Number(apiPayload?.input_tokens)) ? Number(apiPayload.input_tokens) : null,
+        output_tokens: Number.isFinite(Number(apiPayload?.output_tokens)) ? Number(apiPayload.output_tokens) : null,
+        total_tokens: Number.isFinite(Number(apiPayload?.total_tokens)) ? Number(apiPayload.total_tokens) : null,
+      },
+    },
+  };
 }
 
 async function executeWorkflowCompareJudgeDirect(database, env, requestRow, compareDetail) {
@@ -2006,13 +2289,15 @@ async function executeWorkflowCompareJudgeDirect(database, env, requestRow, comp
       error_json: null,
     });
   try {
-    const caseResults = requestRow.judge_adapter_kind === "llm"
+    const execution = requestRow.judge_adapter_kind === "llm"
       ? await buildWorkflowCompareLlmJudgeCaseResults(env, requestRow, compareDetail)
-      : buildWorkflowCompareFakeJudgeCaseResults(compareDetail.report);
+      : { caseResults: buildWorkflowCompareFakeJudgeCaseResults(compareDetail.report), judgeMeta: null };
+    const caseResults = execution.caseResults;
     const artifacts = buildWorkflowCompareJudgeArtifacts({
       requestRow,
       compare: compareDetail.compare,
       caseResults,
+      judgeMeta: execution.judgeMeta,
     });
     await writeJsonFile(path.join(judgeDir, "judge-run.json"), artifacts.judgeRun);
     await writeJsonFile(path.join(judgeDir, "case-results.json"), artifacts.caseResultsPayload);
@@ -2337,6 +2622,12 @@ async function loadWorkflowCompareJudgeArtifact(env, compareId, judgeRunId) {
       tie: report?.tie ?? null,
       needs_review: report?.needs_review ?? null,
       errored: report?.errored ?? null,
+      judge_model_name: report?.judge_model_name || judgeRun?.model_identity?.model_name || null,
+      judge_model_profile: report?.judge_model_profile || judgeRun?.model_identity?.profile_name || null,
+      judge_latency_seconds: report?.latency_seconds ?? judgeRun?.runtime_summary?.latency_seconds ?? null,
+      judge_total_tokens: report?.total_tokens ?? judgeRun?.runtime_summary?.total_tokens ?? null,
+      judge_input_tokens: report?.input_tokens ?? judgeRun?.runtime_summary?.input_tokens ?? null,
+      judge_output_tokens: report?.output_tokens ?? judgeRun?.runtime_summary?.output_tokens ?? null,
     },
     judge_run: judgeRun,
     report,
@@ -3217,7 +3508,6 @@ function promptVariantSnapshotFromRow(row, baselinePromptVersion = null) {
       ...promptOverride,
       prompt_snapshot_hash: snapshotHash,
     },
-    recommended_manifest_path: `evals/prompt-variants/article-analysis/${manifest.variant_id}/manifest.yaml`,
     date_updated: row.date_updated || null,
     notes: row.notes || "",
   };
@@ -3399,18 +3689,14 @@ async function createWorkflowLabSingleRun({
   };
 }
 
-function workflowSingleRunHistoryRunId(body = {}, result = {}) {
-  const raw = stableJson({
-    text: String(body?.text || "").trim(),
-    reading_goal: body?.reading_goal || "daily_reading",
-    reading_variant: body?.reading_variant || "intermediate_reading",
-    prompt_variant_id: result?.prompt_identity?.prompt_variant_id || body?.prompt_variant_id || null,
-    prompt_snapshot_hash: result?.prompt_identity?.prompt_snapshot_hash || null,
-    profile_name: result?.model_identity?.profile_name || null,
-    model_name: result?.model_identity?.model_name || null,
-  });
-  const digest = createHash("sha1").update(raw).digest("hex").slice(0, 8);
-  return `workflow-single-${digest}`;
+function workflowSingleRunHistoryRunId() {
+  // Unique per execution. Re-running the same article + same configuration
+  // is a NEW experiment and must always produce a new run_id, never reuse
+  // the previous one. The stable grouping key lives in
+  // buildWorkflowLabExperimentFingerprint, not in the run id.
+  const ts = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14); // YYYYMMDDHHMMSS
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+  return `workflow-single-${ts}-${suffix}`;
 }
 
 // single run case_id 必须随 input / reading 上下文绑定;
@@ -3601,6 +3887,26 @@ async function createWorkflowLabSingleRunCompare({
     reading_variant: sharedFields.reading_variant,
     source_type: sharedFields.source_type,
   });
+  const fingerprint = buildWorkflowLabExperimentFingerprint(
+    {
+      text: sharedFields.text,
+      reading_goal: sharedFields.reading_goal,
+      reading_variant: sharedFields.reading_variant,
+      source_type: sharedFields.source_type,
+    },
+    {
+      prompt_variant_id: baselineResult?.prompt_identity?.prompt_variant_id || baselineBody.prompt_variant_id || null,
+      prompt_snapshot_hash: baselineResult?.prompt_identity?.prompt_snapshot_hash || null,
+      model_profile: baselineResult?.model_identity?.profile_name || null,
+      model_name: baselineResult?.model_identity?.model_name || null,
+    },
+    {
+      prompt_variant_id: candidateResult?.prompt_identity?.prompt_variant_id || candidateBody.prompt_variant_id || null,
+      prompt_snapshot_hash: candidateResult?.prompt_identity?.prompt_snapshot_hash || null,
+      model_profile: candidateResult?.model_identity?.profile_name || null,
+      model_name: candidateResult?.model_identity?.model_name || null,
+    },
+  );
 
   return {
     source: "persisted-compare",
@@ -3630,6 +3936,7 @@ async function createWorkflowLabSingleRunCompare({
       source_type: sharedFields.source_type,
       input_hash: inputHash.input_hash,
     },
+    experiment_fingerprint: fingerprint.experiment_fingerprint,
   };
 }
 
@@ -3719,6 +4026,13 @@ function buildWorkflowSingleRunHistoryArtifact({ body, result, runId }) {
     reading_goal: body?.reading_goal || "daily_reading",
     reading_variant: body?.reading_variant || "intermediate_reading",
     source_type: body?.source_type || "user_input",
+    model_identity: result?.model_identity || null,
+    model_name: result?.model_identity?.model_name || null,
+    model_profile: result?.model_identity?.profile_name || null,
+    latency_seconds: caseArtifact.latency_seconds,
+    total_tokens: caseArtifact.usage_summary?.total_tokens ?? null,
+    usage_summary: caseArtifact.usage_summary,
+    runtime_summary: runtimeSummary,
   };
   return {
     run,
@@ -3742,13 +4056,11 @@ async function saveWorkflowLabSingleRunToHistory({ env, body = {} }) {
     error.code = "VALIDATION_ERROR";
     throw error;
   }
-  const runId = body?.run_id && isSafeFileId(body.run_id) ? String(body.run_id) : workflowSingleRunHistoryRunId(request, result);
+  // Always mint a fresh run_id. Two runs over the same article + same
+  // configuration are still two separate experiments; reusing the old
+  // run_id would silently swallow one of them.
+  const runId = workflowSingleRunHistoryRunId();
   const roots = resolveWorkflowRunRoots(env);
-  const existingRoot = await findExistingRunRoot(roots, runId);
-  if (existingRoot) {
-    const summary = await loadRunSummary(roots, runId);
-    return { record: workflowHistoryRecord(summary), duplicate: true };
-  }
   const artifact = buildWorkflowSingleRunHistoryArtifact({ body: request, result, runId });
   const runsRoot = resolveWorkflowRuntimeRunsRoot(env);
   const dir = runDir(runsRoot, runId);
@@ -5086,7 +5398,6 @@ function buildRetryWorkflowRequestConfig(row, runId) {
     timeout_seconds: originalConfig.timeout_seconds || 120,
     execution_mode: originalConfig.execution_mode || "runner_bridge",
     runner_kind: originalConfig.runner_kind || "external_worker",
-    config_file: `evals/run-configs/ui-${runId}.yaml`,
   };
 
   return {
@@ -5279,13 +5590,18 @@ export {
   buildRetryJudgeRunId,
   buildWorkflowCompareLlmJudgeCaseResults,
   buildWorkflowCompareJudgeRequestErrorJson,
+  summarizeCompareJudgeSentenceOutput,
   classifyWorkflowCompareJudgeRequestStatus,
+  normalizeWarningsToStringList,
   resolveWorkflowCompareJudgeTotalTimeoutMs,
   buildRetryRunId,
   buildRetryWorkflowRequestConfig,
   createWorkflowDataset,
   buildWorkflowLabCompareReport,
+  buildWorkflowLabExperimentFingerprint,
+  newWorkflowCompareId,
   buildSingleRunCaseArtifact,
+  workflowSingleRunHistoryRunId,
   createOrReuseWorkflowCompare,
   createWorkflowCompareJudgeRequest,
   deleteWorkflowCompareCascade,
@@ -5406,7 +5722,6 @@ async function sendWorkflowRequest(req, res, env, database) {
       trace_scope: simpleYamlValue(patchedYaml, "trace_scope", "off"),
       timeout_seconds: Number(simpleYamlValue(patchedYaml, "timeout_seconds", 120)) || 120,
       preset_id: config.preset_id,
-      config_file: `evals/run-configs/${configFileName}`,
       yaml_content: patchedYaml,
     };
     let requestRow = null;
@@ -5443,7 +5758,6 @@ async function sendWorkflowRequest(req, res, env, database) {
           ? { run_id: requestRow.run_id, status: requestRow.status }
           : null,
         yaml_content: patchedYaml,
-        config_file: `evals/run-configs/${configFileName}`,
         recommended_cli_command: cliCommand,
         message: executionMode === "directus_async"
           ? "Workflow run has been dispatched inside Directus. Artifacts will be written to runtime eval storage."
@@ -5507,13 +5821,10 @@ async function sendWorkflowRequest(req, res, env, database) {
   fullConfig = await attachPromptVariantSnapshot(database, fullConfig);
 
   const yamlContent = buildYamlContent(fullConfig);
-  const configFileName = `ui-${runId}.yaml`;
-  const cliCommand = `cd evals && uv run python -m claread_eval.runner.entrypoint --config run-configs/${configFileName}`;
   const requestConfig = {
     ...fullConfig,
     execution_mode: executionMode,
     runner_kind: executionMode === "directus_async" ? "directus_async" : "external_worker",
-    config_file: `evals/run-configs/${configFileName}`,
     yaml_content: yamlContent,
   };
   let requestRow = null;
@@ -5546,8 +5857,6 @@ async function sendWorkflowRequest(req, res, env, database) {
         : null,
       config: fullConfig,
       yaml_content: yamlContent,
-      config_file: `evals/run-configs/${configFileName}`,
-      recommended_cli_command: cliCommand,
       message: executionMode === "directus_async"
         ? "Workflow run has been dispatched inside Directus. Artifacts will be written to runtime eval storage."
         : executionMode === "runner_bridge"
@@ -5778,6 +6087,33 @@ export default (router, context) => {
     } catch (error) {
       if (error?.status) sendArtifactError(res, error);
       else next(error);
+    }
+  });
+
+  router.patch("/workflow-lab/run-history/:compareId", async (req, res, next) => {
+    try {
+      const compareId = req.params?.compareId;
+      if (!isSafeFileId(compareId)) {
+        return res.status(400).json({ errors: [{ message: "Invalid compare id.", code: "INVALID_COMPARE_ID" }] });
+      }
+      const customTitle = req.body?.custom_title;
+      if (customTitle !== undefined && customTitle !== null && typeof customTitle !== "string") {
+        return res.status(422).json({ errors: [{ message: "custom_title must be a string or null.", code: "VALIDATION_ERROR" }] });
+      }
+      const trimmed = typeof customTitle === "string" ? customTitle.trim() : null;
+      if (trimmed !== null && trimmed.length > 200) {
+        return res.status(422).json({ errors: [{ message: "custom_title must be 200 characters or fewer.", code: "VALIDATION_ERROR" }] });
+      }
+      const updated = await database("eval_workflow_compares")
+        .where({ compare_id: compareId })
+        .update({ custom_title: trimmed || null, date_updated: new Date() })
+        .returning(["compare_id", "custom_title"]);
+      if (!updated || !updated.length) {
+        return res.status(404).json({ errors: [{ message: "Workflow compare record not found.", code: "WORKFLOW_COMPARE_NOT_FOUND" }] });
+      }
+      res.json({ data: updated[0] });
+    } catch (error) {
+      next(error);
     }
   });
 
@@ -6100,6 +6436,37 @@ export default (router, context) => {
     }
   });
 
+  router.patch("/workflow-lab/run-history/single-run/:runId", async (req, res, next) => {
+    try {
+      const runId = req.params?.runId;
+      if (!isSafeFileId(runId)) {
+        return res.status(400).json({ errors: [{ message: "Invalid run id.", code: "INVALID_RUN_ID" }] });
+      }
+      const customTitle = req.body?.custom_title;
+      if (customTitle !== undefined && customTitle !== null && typeof customTitle !== "string") {
+        return res.status(422).json({ errors: [{ message: "custom_title must be a string or null.", code: "VALIDATION_ERROR" }] });
+      }
+      const trimmed = typeof customTitle === "string" ? customTitle.trim() : null;
+      if (trimmed !== null && trimmed.length > 200) {
+        return res.status(422).json({ errors: [{ message: "custom_title must be 200 characters or fewer.", code: "VALIDATION_ERROR" }] });
+      }
+      // Update the run.json artifact's custom_title field
+      const roots = resolveWorkflowRunRoots(env);
+      const root = await resolveRunRootOrThrow(roots, runId);
+      const dir = runDir(root, runId);
+      const runJsonPath = path.join(dir, "run.json");
+      if (!(await fileExists(runJsonPath))) {
+        return res.status(404).json({ errors: [{ message: "Run artifact not found.", code: "RUN_NOT_FOUND" }] });
+      }
+      const runJson = await readJsonFile(runJsonPath);
+      runJson.custom_title = trimmed || undefined;
+      await writeFile(runJsonPath, JSON.stringify(runJson, null, 2), "utf-8");
+      res.json({ data: { run_id: runId, custom_title: trimmed || null } });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/workflow-runs/datasets", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
@@ -6226,7 +6593,6 @@ export default (router, context) => {
           prompt_bundle_summary: workflowBundleSummary(manifest),
           snapshot_hash: snapshotHash,
           yaml_content: renderPromptVariantYaml(manifest, snapshotHash),
-          recommended_manifest_path: `evals/prompt-variants/article-analysis/${manifest.variant_id}/manifest.yaml`,
           message: "Preview only. Save/export the manifest explicitly before using it for workflow eval.",
         },
       });

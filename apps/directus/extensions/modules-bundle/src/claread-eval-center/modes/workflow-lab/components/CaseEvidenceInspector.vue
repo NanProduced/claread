@@ -103,13 +103,13 @@ const compareSummaryCards = computed(() => {
     </header>
 
     <div v-if="loading" class="empty">正在读取证据...</div>
-    <div v-else-if="!hasCompare && !props.artifact" class="empty">选择 case 后，这里会展示双侧或单侧句子级证据。</div>
+    <div v-else-if="!hasCompare && !props.artifact" class="empty">选择差异句后，这里会展示双侧或单侧句子级证据。</div>
 
     <template v-else-if="hasCompare">
       <p v-if="compareMissingMessage" class="compare-missing">{{ compareMissingMessage }}</p>
 
       <section v-if="compareCase" class="auxiliary">
-        <header><strong>证据摘要</strong><small>主视图负责完整句子差异；这里保留 case 元信息与原始 artifact 入口。</small></header>
+        <header><strong>证据摘要</strong><small>主视图负责完整句子差异；这里保留差异句元信息与原始 artifact 入口。</small></header>
         <dl class="signal-grid">
           <div v-for="card in compareSummaryCards" :key="card.label">
             <dt>{{ card.label }}</dt>
@@ -120,7 +120,7 @@ const compareSummaryCards = computed(() => {
         <header><strong>Deterministic 原因</strong><small>来自 compare report</small></header>
         <dl class="signal-grid">
           <div>
-            <dt>当前 case</dt>
+            <dt>当前差异句</dt>
             <dd>{{ headerCaseId }}</dd>
           </div>
           <div>
@@ -171,17 +171,17 @@ const compareSummaryCards = computed(() => {
       <SentenceEvidenceView
         :payload="props.artifact"
         :prepared-sentences="preparedSentences"
-        empty-text="当前 case 没有可展示证据。"
+        empty-text="当前差异句没有可展示证据。"
       />
       <details v-if="props.artifact" class="artifact-section">
         <summary>调试 / 原始结构查看</summary>
-        <WorkflowArtifactScene
-          :payload="props.artifact"
-          title="Case 证据"
-          empty-text="当前 case 没有可展示证据。"
-          :compact="true"
-          :show-debug="true"
-        />
+                <WorkflowArtifactScene
+                  :payload="props.artifact"
+                  title="差异句证据"
+                  empty-text="当前差异句没有可展示证据。"
+                  :compact="true"
+                  :show-debug="true"
+                />
       </details>
     </template>
   </aside>

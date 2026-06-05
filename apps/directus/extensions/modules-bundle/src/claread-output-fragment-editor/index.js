@@ -1,5 +1,14 @@
 import { defineComponent, h, ref, computed, watch, inject } from "vue";
 
+function emitFieldValue(emit, field, value) {
+  if (typeof emit !== "function" || !field) return;
+
+  // The Directus docs expose setFieldValue for sibling updates but omit
+  // the exact event payload. Emit both common shapes for compatibility.
+  emit("setFieldValue", field, value);
+  emit("setFieldValue", { field, value });
+}
+
 /**
  * Custom Directus Interface: Claread Output Fragment Editor.
  *
@@ -7,9 +16,9 @@ import { defineComponent, h, ref, computed, watch, inject } from "vue";
  * in eval_example_lab_entries. The form dynamically switches layout
  * based on the example_type field value.
  *
- * Uses inject('values') to access sibling field values reactively,
- * as documented in Directus community and consistent with the provide/inject
- * pattern used internally by Directus v-form.
+ * Uses inject('values') to read sibling field values reactively.
+ * Uses the Directus setFieldValue event to push sibling updates back
+ * into the host form state.
  */
 export default {
   id: "claread-output-fragment-editor",
@@ -28,7 +37,7 @@ export default {
       "disabled",
       "loading",
     ],
-    emits: ["input"],
+    emits: ["input", "setFieldValue"],
     setup(props, { emit }) {
       // Inject form values from Directus v-form (reactive)
       const formValues = inject("values", ref({}));
@@ -76,20 +85,31 @@ export default {
 
       const syncOuterLabel = (nextLabel) => {
         if (!shouldSyncOuterLabel.value) return;
-        if (!formValues.value || typeof formValues.value !== "object") return;
-        if (formValues.value.label !== nextLabel) {
+        if (formValues.value && typeof formValues.value === "object") {
           formValues.value.label = nextLabel;
         }
+        emitFieldValue(emit, "label", nextLabel);
       };
 
       watch([shouldSyncOuterLabel, outputFragmentLabel], ([enabled, nextLabel]) => {
         if (enabled) syncOuterLabel(nextLabel);
       }, { immediate: true });
 
+      const MINIMAL_TEMPLATES = {
+        grammar_note: { type: "grammar_note", spans: [], label: "", note_zh: "" },
+        sentence_analysis: { type: "sentence_analysis", label: "", analysis_zh: "", chunks: [] },
+        vocab_highlight: { type: "vocab_highlight", text: "" },
+        phrase_gloss: { type: "phrase_gloss", text: "", phrase_type: "", zh: "" },
+        context_gloss: { type: "context_gloss", text: "", gloss: "", reason: "" },
+        translation: { type: "translation", sentence_id: "", translation_zh: "" },
+        academic_translation: { type: "translation", sentence_id: "", translation_zh: "", translation_notes: [] },
+        term_note: { type: "term_note", sentence_ids: [], text: "", term_category: "", zh: "" },
+        logic_note: { type: "logic_note", sentence_ids: [], logic_type: "", anchor_text: "", explanation: "" },
+      };
+
       // Auto-set the `type` field based on example_type
       const autoSetType = (et) => {
         if (!et) return;
-        const currentType = formData.value.type;
         const typeMap = {
           grammar: "grammar_note",
           sentence_analysis: "sentence_analysis",
@@ -99,16 +119,23 @@ export default {
           translation: "translation",
         };
         const defaultType = typeMap[et];
-        if (defaultType && currentType !== defaultType) {
-          const validSubTypes = {
-            grammar: ["grammar_note", "sentence_analysis"],
-            vocab: ["vocab_highlight", "term_note", "logic_note"],
-          };
-          const valid = validSubTypes[et];
-          if (!valid || !valid.includes(currentType)) {
-            formData.value = { ...formData.value, type: defaultType };
-            emitChange();
-          }
+        if (!defaultType) return;
+
+        const currentType = formData.value.type;
+        // If user has already selected a valid sub-type for this example_type, keep it
+        const validSubTypes = {
+          grammar: ["grammar_note"],
+          vocab: ["vocab_highlight", "term_note", "logic_note"],
+          translation: ["translation", "academic_translation"],
+        };
+        const valid = validSubTypes[et];
+        const targetType = (valid && valid.includes(currentType)) ? currentType : defaultType;
+
+        // Reset to minimal template for the target type
+        const template = MINIMAL_TEMPLATES[targetType];
+        if (template) {
+          formData.value = { ...template };
+          emitChange();
         }
       };
 
@@ -119,7 +146,6 @@ export default {
         const ft = fragmentType.value;
 
         if (et === "grammar") {
-          if (ft === "sentence_analysis") return "sentence_analysis";
           return "grammar_note";
         }
         if (et === "sentence_analysis") return "sentence_analysis";
@@ -148,7 +174,7 @@ export default {
       });
 
       const emitChange = () => {
-        emit("input", JSON.stringify(formData.value));
+        emit("input", formData.value);
       };
 
       const updateField = (key, value) => {
@@ -190,11 +216,20 @@ export default {
       };
 
       const switchType = (newType) => {
-        const preserved = {};
-        if (formData.value.sentence_id) preserved.sentence_id = formData.value.sentence_id;
-        if (formData.value.translation_zh) preserved.translation_zh = formData.value.translation_zh;
-        formData.value = { type: newType, ...preserved };
-        emitChange();
+        const template = MINIMAL_TEMPLATES[newType];
+        if (template) {
+          // Preserve sentence_id and translation_zh if switching between translation sub-types
+          const preserved = {};
+          if (newType === "academic_translation" && formData.value.type === "translation") {
+            if (formData.value.sentence_id) preserved.sentence_id = formData.value.sentence_id;
+            if (formData.value.translation_zh) preserved.translation_zh = formData.value.translation_zh;
+          }
+          formData.value = { ...template, ...preserved };
+          emitChange();
+        } else {
+          formData.value = { type: newType };
+          emitChange();
+        }
       };
 
       // --- Style constants ---
@@ -269,12 +304,10 @@ export default {
             ]),
             h("div", { style: rowStyle }, [
               h("span", {
-                style: chipStyle(fragmentType.value !== "sentence_analysis"),
-                onClick: () => { if (!props.disabled) switchType("grammar_note"); },
+                style: { ...chipStyle(true), cursor: "default" },
               }, "grammar_note — 语法批注"),
               h("span", {
-                style: chipStyle(fragmentType.value === "sentence_analysis"),
-                onClick: () => { if (!props.disabled) switchType("sentence_analysis"); },
+                style: { ...chipStyle(false), cursor: "default", opacity: 0.55 },
               }, "sentence_analysis — 句子分析"),
             ]),
           ]);
@@ -614,7 +647,7 @@ export default {
               try {
                 const parsed = JSON.parse(e.target.value);
                 formData.value = parsed;
-                emit("input", e.target.value);
+                emit("input", parsed);
               } catch {
                 // Don't update on invalid JSON
               }

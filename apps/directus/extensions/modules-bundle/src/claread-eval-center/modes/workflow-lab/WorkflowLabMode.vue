@@ -73,6 +73,71 @@ const judgeRequests = ref([]);
 const judgeSubmitting = ref(false);
 const modelProfiles = ref([]);
 
+const SINGLE_RUN_STATE_KEY = "claread-eval-center:workflow-lab:single-run-state:v1";
+
+const restoredFromSession = ref(false);
+
+function saveSingleRunState() {
+  try {
+    const state = {
+      activeWorkspace: activeWorkspace.value,
+      activeCompareTab: activeCompareTab.value,
+      compareResult: compareResult.value,
+      pendingSingleRunCandidateId: pendingSingleRunCandidateId.value,
+      savedAt: new Date().toISOString(),
+    };
+    sessionStorage.setItem(SINGLE_RUN_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // sessionStorage may be unavailable; silently ignore
+  }
+}
+
+function restoreSingleRunState() {
+  try {
+    const raw = sessionStorage.getItem(SINGLE_RUN_STATE_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    if (!state || typeof state !== "object") return;
+    // Only restore if less than 4 hours old
+    const savedAt = new Date(state.savedAt || 0).getTime();
+    if (Date.now() - savedAt > 4 * 60 * 60 * 1000) {
+      sessionStorage.removeItem(SINGLE_RUN_STATE_KEY);
+      return;
+    }
+    if (state.activeWorkspace && WORKSPACES.some(w => w.id === state.activeWorkspace)) {
+      activeWorkspace.value = state.activeWorkspace;
+    }
+    if (state.activeCompareTab) {
+      activeCompareTab.value = state.activeCompareTab;
+    }
+    if (state.compareResult) {
+      compareResult.value = state.compareResult;
+    }
+    if (state.pendingSingleRunCandidateId) {
+      pendingSingleRunCandidateId.value = state.pendingSingleRunCandidateId;
+    }
+    restoredFromSession.value = true;
+  } catch {
+    // Corrupt or unavailable; silently ignore
+  }
+}
+
+function clearSingleRunState() {
+  try {
+    sessionStorage.removeItem(SINGLE_RUN_STATE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+watch(
+  () => [activeWorkspace.value, activeCompareTab.value, compareResult.value, pendingSingleRunCandidateId.value],
+  () => {
+    saveSingleRunState();
+  },
+  { deep: true },
+);
+
 const activeWorkspaceMeta = computed(() => WORKSPACES.find((item) => item.id === activeWorkspace.value) || WORKSPACES[0]);
 const nextWorkspaceMeta = computed(() => WORKSPACES.find((item) => item.id === NEXT_WORKSPACE_BY_ID[activeWorkspace.value]) || null);
 const publishedCandidateCount = computed(() => readyCandidates.value.length);
@@ -541,6 +606,7 @@ const contextFacts = computed(() => {
 });
 
 onMounted(async () => {
+  restoreSingleRunState();
   await Promise.all([
     loadCandidates({ syncSelection: true }),
     loadRubrics(),
@@ -614,6 +680,10 @@ watch(currentCompareId, async (compareId) => {
     />
 
     <div v-else-if="activeWorkspace === 'single_run'" class="single-run-flow">
+      <div v-if="restoredFromSession && compareResult" class="notice is-info" role="status">
+        <span>已恢复上次单篇实验</span>
+        <button type="button" class="notice-dismiss" @click="restoredFromSession = false">关闭</button>
+      </div>
       <template v-if="compareResult || singleRunCompareSubmitting">
         <WorkflowSingleRunResult
           :compare-result="compareResult"
@@ -690,6 +760,10 @@ watch(currentCompareId, async (compareId) => {
             :model-profiles="modelProfiles"
             :submitting="judgeSubmitting"
             :disabled="!currentCompareId"
+            :prepared-sentences="compareArtifacts.baseline?.prepared_sentences || compareArtifacts.candidate?.prepared_sentences || []"
+            :baseline-artifact="baselineArtifact"
+            :candidate-artifact="candidateArtifact"
+            :comparisons="currentCompareRecord?.report?.comparisons || []"
             @queue="queueJudge"
             @refresh="loadJudgeRequests(currentCompareId)"
           />
@@ -797,6 +871,35 @@ watch(currentCompareId, async (compareId) => {
 .notice.success {
   border-color: color-mix(in srgb, var(--theme--success) 45%, var(--theme--border-color));
   color: var(--theme--success);
+}
+
+.notice.is-info {
+  border: 1px solid color-mix(in srgb, var(--theme--primary) 35%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 6%, var(--theme--background));
+  color: var(--theme--primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notice-dismiss {
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background);
+  color: var(--theme--foreground-subdued);
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.notice-dismiss:hover {
+  color: var(--theme--foreground);
+  border-color: var(--theme--foreground);
 }
 
 .workspace-nav {

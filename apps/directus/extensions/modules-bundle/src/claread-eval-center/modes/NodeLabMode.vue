@@ -72,6 +72,7 @@ const {
   addCurrentCompareToSession,
   createSessionAndAddCurrentCompare,
   loadJudgeRequestDetail,
+  stopJudgeRequestPolling,
   clearSessionAttachment,
 } = nodeLabApi;
 

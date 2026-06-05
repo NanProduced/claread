@@ -622,6 +622,13 @@ function trialSummary(row) {
     decision_note: row.decision_note || "",
     date_created: row.date_created,
     date_updated: row.date_updated,
+    custom_title: row.custom_title || null,
+    model_name: row.model_name || null,
+    model_profile: row.model_profile || null,
+    latency_seconds: row.latency_seconds != null ? Number(row.latency_seconds) : null,
+    total_tokens: row.total_tokens != null ? Number(row.total_tokens) : null,
+    input_tokens: row.input_tokens != null ? Number(row.input_tokens) : null,
+    output_tokens: row.output_tokens != null ? Number(row.output_tokens) : null,
   };
 }
 
@@ -653,7 +660,8 @@ async function enrichSessionRows(database, rows) {
   });
 }
 
-async function enrichTrialRows(database, rows) {
+async function enrichTrialRows(database, rows, options = {}) {
+  const { resolveNodeLabArtifactsRoot, env } = options;
   if (!Array.isArray(rows) || rows.length === 0) return [];
 
   const sessionIds = [...new Set(rows.map((row) => row.session_id).filter(Boolean))];
@@ -682,12 +690,84 @@ async function enrichTrialRows(database, rows) {
     }
   }
 
-  return rows.map((row) => ({
-    ...row,
-    session_title: row.session_id ? sessionTitleById.get(row.session_id) || null : null,
-    source_kind: row.session_id ? "session" : "standalone",
-    judge_request_count: judgeCountByTrialId.get(row.trial_id) || 0,
-    display_excerpt: row.input_excerpt || "",
+  async function runtimeMetaFromArtifact(row) {
+    const absoluteArtifactPath = row?.artifact_path && resolveNodeLabArtifactsRoot && env
+      ? absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, row.artifact_path)
+      : null;
+    if (!absoluteArtifactPath || !(await fileExists(absoluteArtifactPath))) {
+      return {
+        model_name: null,
+        model_profile: null,
+        latency_seconds: null,
+        total_tokens: null,
+        input_tokens: null,
+        output_tokens: null,
+      };
+    }
+    try {
+      const result = await readJsonFile(absoluteArtifactPath);
+      if (row.workspace_type === "baseline_compare") {
+        const baselineTokens = runtimeTokensFromSummary(result?.baseline?.runtime_summary);
+        const candidateTokens = runtimeTokensFromSummary(result?.candidate?.runtime_summary);
+        return {
+          model_name: result?.baseline?.model_identity?.model_name || result?.candidate?.model_identity?.model_name || null,
+          model_profile: result?.baseline?.model_identity?.profile_name || result?.candidate?.model_identity?.profile_name || null,
+          latency_seconds: latencyMsForTrial("baseline_compare", result)
+            ? latencyMsForTrial("baseline_compare", result) / 1000
+            : null,
+          total_tokens: baselineTokens.total_tokens ?? candidateTokens.total_tokens ?? null,
+          input_tokens: baselineTokens.input_tokens ?? candidateTokens.input_tokens ?? null,
+          output_tokens: baselineTokens.output_tokens ?? candidateTokens.output_tokens ?? null,
+        };
+      }
+      const runtimeTokens = runtimeTokensFromSummary(result?.run?.runtime_summary);
+      return {
+        model_name: result?.run?.model_identity?.model_name || result?.run?.runtime_summary?.model_name || null,
+        model_profile: result?.run?.model_identity?.profile_name || result?.run?.runtime_summary?.model_profile || null,
+        latency_seconds: result?.run?.runtime_summary?.latency_ms
+          ? Number(result.run.runtime_summary.latency_ms) / 1000
+          : null,
+        total_tokens: runtimeTokens.total_tokens ?? result?.run?.usage_summary?.total_tokens ?? null,
+        input_tokens: runtimeTokens.input_tokens ?? result?.run?.usage_summary?.input_tokens ?? null,
+        output_tokens: runtimeTokens.output_tokens ?? result?.run?.usage_summary?.output_tokens ?? null,
+      };
+    } catch {
+      return {
+        model_name: null,
+        model_profile: null,
+        latency_seconds: null,
+        total_tokens: null,
+        input_tokens: null,
+        output_tokens: null,
+      };
+    }
+  }
+
+  return await Promise.all(rows.map(async (row) => {
+    const rsj = normalizeRowJson(row, "result_summary_json") || {};
+    const artifactMeta = (
+      rsj.model_name
+      || rsj.model_profile
+      || rsj.latency_seconds != null
+      || rsj.total_tokens != null
+      || rsj.input_tokens != null
+      || rsj.output_tokens != null
+    )
+      ? {}
+      : await runtimeMetaFromArtifact(row);
+    return {
+      ...row,
+      session_title: row.session_id ? sessionTitleById.get(row.session_id) || null : null,
+      source_kind: row.session_id ? "session" : "standalone",
+      judge_request_count: judgeCountByTrialId.get(row.trial_id) || 0,
+      display_excerpt: row.input_excerpt || "",
+      model_name: rsj.model_name || artifactMeta.model_name || null,
+      model_profile: rsj.model_profile || artifactMeta.model_profile || null,
+      latency_seconds: rsj.latency_seconds != null ? Number(rsj.latency_seconds) : artifactMeta.latency_seconds,
+      total_tokens: rsj.total_tokens != null ? Number(rsj.total_tokens) : artifactMeta.total_tokens,
+      input_tokens: rsj.input_tokens != null ? Number(rsj.input_tokens) : artifactMeta.input_tokens,
+      output_tokens: rsj.output_tokens != null ? Number(rsj.output_tokens) : artifactMeta.output_tokens,
+    };
   }));
 }
 
@@ -1159,10 +1239,38 @@ async function persistTrial({
     ? {
         result_status: resultStatus,
         compare_summary: resultPayload?.compare_summary || {},
+        model_name: resultPayload?.baseline?.model_identity?.model_name || resultPayload?.candidate?.model_identity?.model_name || null,
+        model_profile: resultPayload?.baseline?.model_identity?.profile_name || resultPayload?.candidate?.model_identity?.profile_name || null,
+        latency_seconds: latencyMsForTrial("baseline_compare", resultPayload)
+          ? latencyMsForTrial("baseline_compare", resultPayload) / 1000
+          : null,
+        total_tokens: runtimeTokensFromSummary(resultPayload?.baseline?.runtime_summary).total_tokens
+          ?? runtimeTokensFromSummary(resultPayload?.candidate?.runtime_summary).total_tokens
+          ?? null,
+        input_tokens: runtimeTokensFromSummary(resultPayload?.baseline?.runtime_summary).input_tokens
+          ?? runtimeTokensFromSummary(resultPayload?.candidate?.runtime_summary).input_tokens
+          ?? null,
+        output_tokens: runtimeTokensFromSummary(resultPayload?.baseline?.runtime_summary).output_tokens
+          ?? runtimeTokensFromSummary(resultPayload?.candidate?.runtime_summary).output_tokens
+          ?? null,
       }
     : {
         result_status: resultStatus,
         participant_label: resultPayload?.run?.participant_label || "baseline",
+        model_name: resultPayload?.run?.model_identity?.model_name || resultPayload?.run?.runtime_summary?.model_name || null,
+        model_profile: resultPayload?.run?.model_identity?.profile_name || resultPayload?.run?.runtime_summary?.model_profile || null,
+        latency_seconds: resultPayload?.run?.runtime_summary?.latency_ms
+          ? Number(resultPayload.run.runtime_summary.latency_ms) / 1000
+          : null,
+        total_tokens: runtimeTokensFromSummary(resultPayload?.run?.runtime_summary).total_tokens
+          ?? resultPayload?.run?.usage_summary?.total_tokens
+          ?? null,
+        input_tokens: runtimeTokensFromSummary(resultPayload?.run?.runtime_summary).input_tokens
+          ?? resultPayload?.run?.usage_summary?.input_tokens
+          ?? null,
+        output_tokens: runtimeTokensFromSummary(resultPayload?.run?.runtime_summary).output_tokens
+          ?? resultPayload?.run?.usage_summary?.output_tokens
+          ?? null,
       };
 
   if (workspaceType === "baseline_compare" && sessionId) {
@@ -1352,7 +1460,7 @@ async function loadSessionDetail(database, resolveNodeLabArtifactsRoot, env, ses
   const trials = await database("eval_node_lab_trials")
     .where({ session_id: sessionId })
     .orderBy("date_created", "desc");
-  const enrichedTrials = await enrichTrialRows(database, trials);
+  const enrichedTrials = await enrichTrialRows(database, trials, { resolveNodeLabArtifactsRoot, env });
   const judgeRequests = await database("eval_node_lab_judge_requests")
     .where({ session_id: sessionId })
     .orderBy("date_created", "desc");
@@ -1539,6 +1647,15 @@ function latencyMsForTrial(workspaceType, resultPayload) {
     Number(resultPayload?.baseline?.runtime_summary?.latency_ms || 0),
     Number(resultPayload?.candidate?.runtime_summary?.latency_ms || 0),
   );
+}
+
+function runtimeTokensFromSummary(summary) {
+  const aggregate = summary?.aggregate || {};
+  return {
+    total_tokens: summary?.total_tokens ?? aggregate.total_tokens ?? null,
+    input_tokens: summary?.input_tokens ?? aggregate.input_tokens ?? null,
+    output_tokens: summary?.output_tokens ?? aggregate.output_tokens ?? null,
+  };
 }
 
 export function registerNodeLabRoutes(router, context, deps) {
@@ -2107,7 +2224,7 @@ export function registerNodeLabRoutes(router, context, deps) {
       if (sessionScope === "standalone") builder.whereNull("session_id");
       if (sessionScope === "session") builder.whereNotNull("session_id");
       const rows = await builder.limit(clampLimit(req.query?.limit));
-      const enrichedRows = await enrichTrialRows(database, rows);
+      const enrichedRows = await enrichTrialRows(database, rows, { resolveNodeLabArtifactsRoot, env });
       res.json({ data: { records: enrichedRows.map(trialSummary) } });
     } catch (error) {
       next(error);
@@ -2158,6 +2275,37 @@ export function registerNodeLabRoutes(router, context, deps) {
     }
   });
 
+  router.patch("/node-lab/run-history/:trialId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+    try {
+      validateIdentifier(req.params.trialId, "trial_id", isSafeFileId);
+      const customTitle = req.body?.custom_title;
+      if (customTitle !== undefined && customTitle !== null && typeof customTitle !== "string") {
+        return res.status(422).json({ errors: [{ message: "custom_title must be a string or null.", code: "VALIDATION_ERROR" }] });
+      }
+      const trimmed = typeof customTitle === "string" ? customTitle.trim() : null;
+      if (trimmed !== null && trimmed.length > 200) {
+        return res.status(422).json({ errors: [{ message: "custom_title must be 200 characters or fewer.", code: "VALIDATION_ERROR" }] });
+      }
+      const updated = await database("eval_node_lab_trials")
+        .where({ trial_id: req.params.trialId })
+        .update({ custom_title: trimmed || null, date_updated: new Date().toISOString() })
+        .returning(["trial_id", "custom_title"]);
+      if (!updated || !updated.length) {
+        throw Object.assign(new Error("Trial was not found."), { status: 404, code: "NODE_LAB_TRIAL_NOT_FOUND" });
+      }
+      res.json({ data: updated[0] });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [{ message: error.message, extensions: { code: error.code } }],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
   router.get("/node-lab/run-history/:trialId", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {
@@ -2165,13 +2313,51 @@ export function registerNodeLabRoutes(router, context, deps) {
       validateIdentifier(req.params.trialId, "trial_id", isSafeFileId);
       const row = await database("eval_node_lab_trials").where({ trial_id: req.params.trialId }).first();
       if (!row) throw Object.assign(new Error("Trial was not found."), { status: 404, code: "NODE_LAB_TRIAL_NOT_FOUND" });
-      const [enrichedRow] = await enrichTrialRows(database, [row]);
+      const [enrichedRow] = await enrichTrialRows(database, [row], { resolveNodeLabArtifactsRoot, env });
       const absoluteArtifactPath = row.artifact_path
         ? absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, row.artifact_path)
         : null;
       const result = absoluteArtifactPath && await fileExists(absoluteArtifactPath)
         ? await readJsonFile(absoluteArtifactPath)
         : null;
+      // Extract runtime meta from result artifact for detail view
+      const runtimeMeta = {};
+      if (result) {
+        if (row.workspace_type !== "baseline_compare") {
+          const runtimeTokens = runtimeTokensFromSummary(result?.run?.runtime_summary);
+          runtimeMeta.model_name = result?.run?.model_identity?.model_name || result?.run?.runtime_summary?.model_name || null;
+          runtimeMeta.model_profile = result?.run?.model_identity?.profile_name || result?.run?.runtime_summary?.model_profile || null;
+          runtimeMeta.latency_seconds = result?.run?.runtime_summary?.latency_ms
+            ? Number(result.run.runtime_summary.latency_ms) / 1000
+            : null;
+          runtimeMeta.total_tokens = runtimeTokens.total_tokens
+            ?? result?.run?.usage_summary?.total_tokens
+            ?? null;
+          runtimeMeta.input_tokens = runtimeTokens.input_tokens
+            ?? result?.run?.usage_summary?.input_tokens
+            ?? null;
+          runtimeMeta.output_tokens = runtimeTokens.output_tokens
+            ?? result?.run?.usage_summary?.output_tokens
+            ?? null;
+        } else {
+          const baselineTokens = runtimeTokensFromSummary(result?.baseline?.runtime_summary);
+          const candidateTokens = runtimeTokensFromSummary(result?.candidate?.runtime_summary);
+          runtimeMeta.model_name = result?.baseline?.model_identity?.model_name || result?.candidate?.model_identity?.model_name || null;
+          runtimeMeta.model_profile = result?.baseline?.model_identity?.profile_name || result?.candidate?.model_identity?.profile_name || null;
+          runtimeMeta.latency_seconds = latencyMsForTrial("baseline_compare", result)
+            ? latencyMsForTrial("baseline_compare", result) / 1000
+            : null;
+          runtimeMeta.total_tokens = baselineTokens.total_tokens
+            ?? candidateTokens.total_tokens
+            ?? null;
+          runtimeMeta.input_tokens = baselineTokens.input_tokens
+            ?? candidateTokens.input_tokens
+            ?? null;
+          runtimeMeta.output_tokens = baselineTokens.output_tokens
+            ?? candidateTokens.output_tokens
+            ?? null;
+        }
+      }
       const judgeRows = await database("eval_node_lab_judge_requests")
         .where({ trial_id: row.trial_id })
         .orderBy("date_created", "desc")
@@ -2190,7 +2376,7 @@ export function registerNodeLabRoutes(router, context, deps) {
         : null;
       res.json({
         data: {
-          trial: trialSummary(enrichedRow),
+          trial: { ...trialSummary(enrichedRow), ...runtimeMeta },
           result,
           session: session ? sessionSummary(session) : null,
           judge_requests: judgeRequests,
@@ -2217,7 +2403,7 @@ export function registerNodeLabRoutes(router, context, deps) {
       if (req.query?.reading_goal) builder.where({ reading_goal: String(req.query.reading_goal) });
       if (req.query?.reading_variant) builder.where({ reading_variant: String(req.query.reading_variant) });
       const rows = await builder.limit(clampLimit(req.query?.limit));
-      const enrichedRows = await enrichTrialRows(database, rows);
+      const enrichedRows = await enrichTrialRows(database, rows, { resolveNodeLabArtifactsRoot, env });
       res.json({ data: enrichedRows.map(trialSummary) });
     } catch (error) {
       next(error);
@@ -2230,7 +2416,7 @@ export function registerNodeLabRoutes(router, context, deps) {
       validateIdentifier(req.params.trialId, "trial_id", isSafeFileId);
       const row = await database("eval_node_lab_trials").where({ trial_id: req.params.trialId }).first();
       if (!row) throw Object.assign(new Error("Trial was not found."), { status: 404, code: "NODE_LAB_TRIAL_NOT_FOUND" });
-      const [enrichedRow] = await enrichTrialRows(database, [row]);
+      const [enrichedRow] = await enrichTrialRows(database, [row], { resolveNodeLabArtifactsRoot, env });
       const absoluteArtifactPath = row.artifact_path
         ? absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, row.artifact_path)
         : null;
