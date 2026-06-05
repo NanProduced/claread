@@ -461,64 +461,101 @@ function verdictLabel(verdict) {
           </div>
 
           <div class="diff-rows">
-            <div class="diff-row" :class="{ changed: row.translation.changed }">
+            <div class="diff-row" :class="{ changed: row.translation.changed, identical: !row.translation.changed }">
               <span class="row-label">翻译</span>
-              <div class="side baseline">
-                <span class="side-tag">Baseline</span>
-                <span>{{ row.translation.baseline || "—" }}</span>
-              </div>
-              <div class="side candidate">
-                <span class="side-tag">候选</span>
-                <span>{{ row.translation.candidate || "—" }}</span>
-              </div>
+              <template v-if="row.translation.changed">
+                <div class="side baseline">
+                  <span class="side-tag">Baseline</span>
+                  <span>{{ row.translation.baseline || "—" }}</span>
+                </div>
+                <div class="side candidate">
+                  <span class="side-tag">候选</span>
+                  <span>{{ row.translation.candidate || "—" }}</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <span>{{ row.translation.baseline || "—" }}</span>
+                </div>
+              </template>
             </div>
-            <div class="diff-row" :class="{ changed: row.marks.changed }">
+            <div class="diff-row" :class="{ changed: row.marks.changed, identical: !row.marks.changed }">
               <span class="row-label">标注</span>
-              <div class="side baseline">
-                <span class="side-tag">Baseline</span>
-                <ul v-if="row.marks.baseline.length" class="mini-list">
-                  <li v-for="(mark, i) in row.marks.baseline" :key="`bm-${row.sid}-${i}`">
-                    <span class="anchor-chip">{{ mark.anchor }}</span>
-                    <span class="mark-type">{{ mark.type }}</span>
-                    <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
-                  </li>
-                </ul>
-                <span v-else class="empty-cell">—</span>
-              </div>
-              <div class="side candidate">
-                <span class="side-tag">候选</span>
-                <ul v-if="row.marks.candidate.length" class="mini-list">
-                  <li v-for="(mark, i) in row.marks.candidate" :key="`cm-${row.sid}-${i}`">
-                    <span class="anchor-chip">{{ mark.anchor }}</span>
-                    <span class="mark-type">{{ mark.type }}</span>
-                    <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
-                  </li>
-                </ul>
-                <span v-else class="empty-cell">—</span>
-              </div>
+              <template v-if="row.marks.changed">
+                <div class="side baseline">
+                  <span class="side-tag">Baseline</span>
+                  <ul v-if="row.marks.baseline.length" class="mini-list">
+                    <li v-for="(mark, i) in row.marks.baseline" :key="`bm-${row.sid}-${i}`">
+                      <span class="anchor-chip">{{ mark.anchor }}</span>
+                      <span class="mark-type">{{ mark.type }}</span>
+                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+                <div class="side candidate">
+                  <span class="side-tag">候选</span>
+                  <ul v-if="row.marks.candidate.length" class="mini-list">
+                    <li v-for="(mark, i) in row.marks.candidate" :key="`cm-${row.sid}-${i}`">
+                      <span class="anchor-chip">{{ mark.anchor }}</span>
+                      <span class="mark-type">{{ mark.type }}</span>
+                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
+                    <li v-for="(mark, i) in row.marks.baseline" :key="`bm-unified-${row.sid}-${i}`">
+                      <span class="anchor-chip">{{ mark.anchor }}</span>
+                      <span class="mark-type">{{ mark.type }}</span>
+                      <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
             </div>
-            <div class="diff-row" :class="{ changed: row.entries.changed }">
+            <div class="diff-row" :class="{ changed: row.entries.changed, identical: !row.entries.changed }">
               <span class="row-label">条目</span>
-              <div class="side baseline">
-                <span class="side-tag">Baseline</span>
-                <ul v-if="row.entries.baseline.length" class="mini-list">
-                  <li v-for="(entry, i) in row.entries.baseline" :key="`be-${row.sid}-${i}`">
-                    <strong>{{ entry.label }}</strong>
-                    <span class="entry-content">{{ entry.content }}</span>
-                  </li>
-                </ul>
-                <span v-else class="empty-cell">—</span>
-              </div>
-              <div class="side candidate">
-                <span class="side-tag">候选</span>
-                <ul v-if="row.entries.candidate.length" class="mini-list">
-                  <li v-for="(entry, i) in row.entries.candidate" :key="`ce-${row.sid}-${i}`">
-                    <strong>{{ entry.label }}</strong>
-                    <span class="entry-content">{{ entry.content }}</span>
-                  </li>
-                </ul>
-                <span v-else class="empty-cell">—</span>
-              </div>
+              <template v-if="row.entries.changed">
+                <div class="side baseline">
+                  <span class="side-tag">Baseline</span>
+                  <ul v-if="row.entries.baseline.length" class="mini-list">
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-${row.sid}-${i}`">
+                      <strong>{{ entry.label }}</strong>
+                      <span class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+                <div class="side candidate">
+                  <span class="side-tag">候选</span>
+                  <ul v-if="row.entries.candidate.length" class="mini-list">
+                    <li v-for="(entry, i) in row.entries.candidate" :key="`ce-${row.sid}-${i}`">
+                      <strong>{{ entry.label }}</strong>
+                      <span class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-unified-${row.sid}-${i}`">
+                      <strong>{{ entry.label }}</strong>
+                      <span class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
             </div>
           </div>
         </li>
@@ -639,7 +676,7 @@ function verdictLabel(verdict) {
 .source-line {
   margin: 0;
   color: var(--theme--foreground);
-  font-family: "Source Serif Pro", Georgia, "Times New Roman", serif;
+  font-family: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
   font-size: 15px;
   line-height: 1.75;
   text-wrap: pretty;
@@ -949,5 +986,44 @@ function verdictLabel(verdict) {
   .diff-row {
     grid-template-columns: 1fr;
   }
+}
+
+.diff-row.identical {
+  border-color: var(--theme--border-color-subdued, var(--theme--border-color));
+  opacity: 0.75;
+}
+
+.diff-row.identical:hover {
+  opacity: 1;
+}
+
+.side-unified {
+  grid-column: span 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.unified-tag {
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  border: 1px dashed var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+
+.inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 </style>

@@ -342,6 +342,11 @@ header small,
   padding: 12px 14px;
 }
 
+.input-context,
+.delta-summary {
+  max-width: 800px;
+}
+
 .input-context header,
 .run-pane header,
 .delta-summary header,
@@ -520,7 +525,7 @@ button:disabled {
 
 .run-id-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 1px;
   margin-top: 8px;
   border: 1px solid var(--theme--border-color);
@@ -545,8 +550,10 @@ button:disabled {
 .run-id-grid dd {
   margin: 4px 0 0;
   font-family: var(--theme--fonts--monospace--font-family, monospace);
-  font-size: 12px;
-  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: var(--theme--foreground-subdued);
+  user-select: all;
+  overflow-wrap: break-word;
 }
 
 .status-pill,

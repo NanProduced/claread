@@ -26,7 +26,7 @@ import httpx
 from app.config.settings import Settings
 from app.llm.router import ModelSelectionError, resolve_model_config
 from app.llm.routes import ModelRoute
-from app.llm.types import ModelSelection
+from app.llm.types import ModelSelection, RunModelSettings
 
 
 class StructuredCompletionError(RuntimeError):
@@ -88,6 +88,7 @@ def _build_payload(
     user_prompt: str,
     temperature: float | None,
     max_tokens: int | None,
+    model_settings: RunModelSettings | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model_name,
@@ -101,6 +102,15 @@ def _build_payload(
         body["temperature"] = temperature
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
+    # Propagate profile-defined ``extra_body`` (e.g. ``enable_thinking: false``)
+    # and ``extra_headers`` so non-pydantic_ai callers honour the same
+    # model_settings that provider_factory passes to pydantic_ai. Without this
+    # merge, profile-level overrides (thinking_mode, vendor params) are silently
+    # dropped, leading to e.g. a Qwen model defaulting to thinking-mode and
+    # blowing past the request timeout.
+    if model_settings is not None:
+        if model_settings.extra_body:
+            body.update(model_settings.extra_body)
     return body
 
 
@@ -165,12 +175,15 @@ async def run_structured_completion(
         user_prompt=user_prompt,
         temperature=temperature,
         max_tokens=max_tokens,
+        model_settings=config.model_settings,
     )
     url = f"{config.base_url.rstrip('/')}/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {config.api_key}",
     }
+    if config.model_settings is not None and config.model_settings.extra_headers:
+        headers.update(config.model_settings.extra_headers)
 
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:

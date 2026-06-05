@@ -44,44 +44,36 @@ VALID_TEACHING_GOALS = [
 ]
 
 LLM_SYSTEM_PROMPT = """\
-You are a grammar analysis assistant for an English reading education app called Claread. \
-Your task is to generate RAG metadata fields for a few-shot example entry.
+You are a grammar analysis assistant for Claread, an English reading education app. \
+Generate RAG metadata for a few-shot example entry.
 
-## Output Format
+## Output
 
-You MUST return a JSON object with these fields IN THIS ORDER:
+Return a JSON object with these fields (in this order):
 
-1. **reasoning** (string): First, analyze the sentence's grammatical features. \
-Identify clause structures, verb patterns, inversion triggers, and any notable syntactic phenomena. \
-Explain your analysis in English.
-
-2. **grammar_tags** (array of strings): Grammar category tags based on your analysis. \
-MUST be from: {grammar_tags}
-
-3. **structure_signals** (array of strings): Structural signals detected from the sentence. \
-MUST be from: {structure_signals}
-
-4. **teaching_goal** (string): Pedagogical focus. MUST be one of: {teaching_goals}
-
-5. **retrieval_text** (string): Structured text for embedding, EXACTLY in this format:
-output_type=<type>
-variant=<variant>
-grammar_tags=<comma-separated tags>
-signals=<comma-separated signals>
-teaching_goal=<goal>
-sentence=<original sentence>
-label=<Chinese label>
+1. **grammar_tags** (array of strings): MUST be from: {grammar_tags}
+2. **structure_signals** (array of strings): MUST be from: {structure_signals}
+3. **teaching_goal** (string): MUST be one of: {teaching_goals}
+4. **retrieval_text** (string): EXACTLY this key=value format, one per line:
+   output_type=<type>
+   variant=<variant>
+   grammar_tags=<comma-separated tags>
+   signals=<comma-separated signals>
+   teaching_goal=<goal>
+   sentence=<original sentence>
+   label=<Chinese label>
+5. **rationale** (string, ≤ 200 chars): A short Chinese sentence explaining WHY you \
+chose these grammar_tags / structure_signals / teaching_goal. Reference the label \
+and the key syntactic features you detected. Keep it concise — one or two sentences.
 
 ## Rules
 
-1. ALWAYS write your reasoning BEFORE deciding on tags. Think through the grammar first.
-2. grammar_tags MUST come from the allowed list. Choose the most specific tags.
-3. structure_signals MUST come from the allowed list. Detect structural features from the sentence text.
-4. teaching_goal should match the reading variant's pedagogical focus.
-5. retrieval_text MUST follow the exact key=value format, one per line.
-6. Return ONLY the JSON object, no markdown fences or explanation.
-7. If <rule_hints> are provided in the user message, use them as a starting reference \
-but override with your own analysis when your reasoning disagrees.
+1. All enum values MUST come from the allowed lists. Choose the most specific match.
+2. Detect structure_signals from the actual sentence text (length, leading verb \
+form, that/which clauses, comma insertions, inversion triggers, nesting).
+3. teaching_goal should match the reading variant's pedagogical focus.
+4. retrieval_text MUST follow the key=value format exactly.
+5. Return ONLY the JSON object, no markdown fences or extra prose.
 """.format(
     grammar_tags=", ".join(VALID_GRAMMAR_TAGS),
     structure_signals=", ".join(VALID_STRUCTURE_SIGNALS),
@@ -90,11 +82,12 @@ but override with your own analysis when your reasoning disagrees.
 
 
 def _build_rule_hints(sentence_text: str, label: str, output_type: str) -> dict[str, Any]:
-    """Build rule-based hints combining grammar tags and structure signals.
+    """Build rule-based hints for confidence assessment (not sent to LLM).
 
-    Uses _rule_extract_grammar_tags for grammar_tags (Chinese label regex)
-    and grammar_retrieval_hints.extract_signals for structure_signals
-    (shared with the RAG query-side pipeline).
+    The hints are computed locally and used only by ``_assess_confidence`` to
+    compare against the LLM's output. The LLM itself receives only the cleaned
+    sentence_text/label/output_fragment, so the rule engine and the LLM each
+    do their own work and the agreement is measured post-hoc.
     """
     grammar_tags = _rule_extract_grammar_tags(label, output_type)
     structure_signals = extract_signals(sentence_text).to_signal_list()
@@ -108,7 +101,6 @@ def _build_llm_user_prompt(
     sentence_text: str,
     output_fragment: dict[str, Any],
     reading_variant: str,
-    rule_hints: dict[str, Any],
 ) -> str:
     output_type = output_fragment.get("type", "grammar_note")
     label = output_fragment.get("label", "")
@@ -125,17 +117,6 @@ def _build_llm_user_prompt(
         lines.append(f"note_zh: {note_zh}")
     if analysis_zh:
         lines.append(f"analysis_zh: {analysis_zh}")
-
-    # Rule hints section
-    lines.append("")
-    lines.append("<rule_hints>")
-    lines.append("规则引擎快速匹配结果（仅供参考，你可以覆盖这些结果）：")
-    if rule_hints.get("grammar_tags"):
-        lines.append(f"- grammar_tags: {rule_hints['grammar_tags']}")
-    if rule_hints.get("structure_signals"):
-        lines.append(f"- structure_signals: {rule_hints['structure_signals']}")
-    lines.append("</rule_hints>")
-
     return "\n".join(lines)
 
 
@@ -337,7 +318,7 @@ async def generate_rag_fields(
         default_profile=effective_model_profile,
         routes={MODEL_ROUTE_ANNOTATION_GENERATION: RouteModelSelection(profile=effective_model_profile)},
     )
-    user_prompt = _build_llm_user_prompt(sentence_text, output_fragment, reading_variant, rule_hints)
+    user_prompt = _build_llm_user_prompt(sentence_text, output_fragment, reading_variant)
 
     try:
         result = await run_structured_completion(
@@ -347,8 +328,8 @@ async def generate_rag_fields(
             system_prompt=LLM_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             timeout_seconds=timeout_seconds,
-            temperature=0.2,
-            max_tokens=1024,
+            temperature=0.0,
+            max_tokens=512,
         )
         validated = _validate_and_normalize(
             result.parsed,
@@ -358,14 +339,14 @@ async def generate_rag_fields(
             label=label,
         )
         latency_ms = int(time.time() * 1000) - start_ms
-        reasoning = str(result.parsed.get("reasoning", ""))[:500]
+        rationale = str(result.parsed.get("rationale", ""))[:300]
         confidence = _assess_confidence(validated, rule_hints)
         return {
             **validated,
             "generated_by": "llm",
             "latency_ms": latency_ms,
             "confidence": confidence,
-            "reasoning": reasoning,
+            "reasoning": rationale,
             "model_name": result.model_name,
             "profile_name": result.profile_name,
             "usage": result.usage,

@@ -129,6 +129,67 @@ async def test_run_structured_completion_returns_parsed_payload() -> None:
     assert body["messages"][0]["role"] == "system"
     assert body["messages"][1]["role"] == "user"
     assert body["temperature"] == 0.0
+    # extra_body is empty for the "primary" test profile; ensure no spurious
+    # keys leak into the body.
+    assert "enable_thinking" not in body
+
+
+async def test_run_structured_completion_propagates_extra_body_and_headers() -> None:
+    """Profile-defined ``model_settings.extra_body``/``extra_headers`` must reach
+    the upstream LLM request. Without this propagation, profile-level overrides
+    such as ``enable_thinking: false`` are silently dropped, and a Qwen profile
+    defaults to thinking-mode that overruns the request timeout.
+    """
+    settings = Settings(
+        default_model_profile="qwen",
+        model_profiles_json=json.dumps(
+            {
+                "qwen": {
+                    "provider": "openai_compatible",
+                    "model_name": "qwen3.5-plus",
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "api_key": "qwen-key",
+                    "model_settings": {
+                        "extra_body": {"enable_thinking": False},
+                        "extra_headers": {"X-Trace-Id": "abc-123"},
+                    },
+                }
+            }
+        ),
+    )
+    response = _build_response(
+        {"choices": [{"message": {"content": json.dumps({"ok": True})}}]}
+    )
+    captured: dict[str, Any] = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any]) -> MagicMock:
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["body"] = json
+            return response
+
+    with patch("app.llm.structured_completion.httpx.AsyncClient", _FakeAsyncClient):
+        await run_structured_completion(
+            settings=settings,
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            selection=_selection_with_profile("qwen"),
+            system_prompt="judge",
+            user_prompt="packet",
+        )
+
+    assert captured["body"]["enable_thinking"] is False
+    assert captured["headers"]["X-Trace-Id"] == "abc-123"
+    assert captured["headers"]["Authorization"] == "Bearer qwen-key"
 
 
 async def test_run_structured_completion_handles_code_fence() -> None:

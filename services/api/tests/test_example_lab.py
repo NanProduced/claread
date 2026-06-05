@@ -45,11 +45,11 @@ async def test_llm_path_uses_shared_helper_and_returns_llm_label() -> None:
     fake = AsyncMock()
     fake.return_value = StructuredCompletionResult(
         parsed={
-            "reasoning": "The sentence contains a that-clause modifying 'cat'.",
             "grammar_tags": ["relative_clause"],
             "structure_signals": ["has_that_clause", "long_sentence"],
             "teaching_goal": "balanced",
             "retrieval_text": "raw-text",
+            "rationale": "含限定性 that 从句修饰 cat，句子较长。",
         },
         raw_text=json.dumps({"grammar_tags": ["relative_clause"]}),
         model_name="primary-model",
@@ -75,7 +75,48 @@ async def test_llm_path_uses_shared_helper_and_returns_llm_label() -> None:
     assert result["model_name"] == "primary-model"
     assert result["profile_name"] == "primary"
     assert result["usage"]["total_tokens"] == 150
+    # The short Chinese rationale should flow into the public "reasoning" field.
+    assert "限定性" in result["reasoning"]
+    # The new prompt should be shorter and not require a long CoT reasoning field.
+    call_kwargs = fake.call_args.kwargs
+    assert "rationale" not in call_kwargs["system_prompt"].lower() or "≤ 200" in call_kwargs["system_prompt"]
+    assert "rule_hints" not in call_kwargs["user_prompt"]
+    assert call_kwargs["max_tokens"] == 512
+    assert call_kwargs["temperature"] == 0.0
     assert fake.call_count == 1
+
+
+async def test_rationale_is_truncated_to_300_chars() -> None:
+    """Rationale must be capped so a chatty LLM cannot blow up the result payload."""
+    settings = _settings_with_profile()
+    fake = AsyncMock()
+    long_rationale = "x" * 1000
+    fake.return_value = StructuredCompletionResult(
+        parsed={
+            "grammar_tags": ["relative_clause"],
+            "structure_signals": ["has_that_clause"],
+            "teaching_goal": "balanced",
+            "retrieval_text": "raw-text",
+            "rationale": long_rationale,
+        },
+        raw_text=json.dumps({"grammar_tags": ["relative_clause"]}),
+        model_name="primary-model",
+        profile_name="primary",
+        base_url="https://example.invalid/v1",
+        usage=None,
+    )
+
+    with patch("app.config.settings.get_settings", lambda: settings), patch(
+        "app.llm.structured_completion.run_structured_completion", fake
+    ):
+        result = await example_lab.generate_rag_fields(
+            sentence_text="The cat that chased the mouse ran away.",
+            output_fragment={"type": "grammar_note", "label": "限制性定语从句"},
+            reading_variant="gaokao",
+            model_profile="primary",
+        )
+
+    assert len(result["reasoning"]) == 300
 
 
 async def test_llm_failure_falls_back_to_rule_with_llm_fallback_label() -> None:

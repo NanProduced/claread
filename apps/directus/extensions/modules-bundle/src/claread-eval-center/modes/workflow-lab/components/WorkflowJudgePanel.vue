@@ -276,32 +276,37 @@ const currentResult = computed(() => {
       <button v-if="!readonly" type="button" title="刷新评审状态。" @click="emit('refresh')">刷新</button>
     </header>
 
-    <div v-if="!readonly" class="judge-form">
-      <label>
-        <span title="选择评审使用的 rubric。">Rubric</span>
-        <select v-model="rubricId" :disabled="disabled">
-          <option v-for="rubric in rubrics" :key="rubric.id" :value="rubric.id">
-            {{ rubricLabel(rubric) }}
-          </option>
-        </select>
-      </label>
-      <label>
-        <span title="适配器类型。">Judge 适配器</span>
-        <select v-model="adapterKind" :disabled="disabled">
-          <option value="llm">llm，调用真实 Judge</option>
-        </select>
-      </label>
-      <label v-if="adapterKind === 'llm'">
-        <span title="真实 Judge 使用的模型配置。">Judge 模型</span>
-        <select v-model="judgeModelProfile" :disabled="disabled">
-          <option v-for="profile in modelProfileOptions" :key="profile.value" :value="profile.value">
-            {{ profile.label }}
-          </option>
-        </select>
-      </label>
-      <button type="button" :disabled="disabled || submitting || !compareId || !rubricId" @click="queue">
-        {{ submitting ? "入队中" : "发起 Judge" }}
-      </button>
+    <div v-if="!readonly" class="judge-form-card">
+      <div class="card-title">评审配置</div>
+      <div class="judge-form-grid">
+        <label>
+          <span title="选择评审使用的 rubric。">Rubric</span>
+          <select v-model="rubricId" :disabled="disabled">
+            <option v-for="rubric in rubrics" :key="rubric.id" :value="rubric.id">
+              {{ rubricLabel(rubric) }}
+            </option>
+          </select>
+        </label>
+        <label>
+          <span title="适配器类型。">Judge 适配器</span>
+          <select v-model="adapterKind" :disabled="disabled">
+            <option value="llm">llm，调用真实 Judge</option>
+          </select>
+        </label>
+        <label v-if="adapterKind === 'llm'">
+          <span title="真实 Judge 使用的模型配置。">Judge 模型</span>
+          <select v-model="judgeModelProfile" :disabled="disabled">
+            <option v-for="profile in modelProfileOptions" :key="profile.value" :value="profile.value">
+              {{ profile.label }}
+            </option>
+          </select>
+        </label>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="primary-cta-btn" :disabled="disabled || submitting || !compareId || !rubricId" @click="queue">
+          {{ submitting ? "入队中" : "发起 Judge" }}
+        </button>
+      </div>
     </div>
 
     <div class="judge-requests">
@@ -460,8 +465,7 @@ const currentResult = computed(() => {
   border-radius: 6px;
   padding: 12px;
 }
-header,
-.judge-form {
+header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -480,10 +484,53 @@ header h3 {
   margin: 2px 0 0;
   font-size: 14px;
 }
-.judge-form {
+.judge-form-card {
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  padding: 16px;
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(160px, 0.9fr) minmax(90px, 0.6fr) auto;
+  gap: 12px;
   margin-top: 12px;
+  box-shadow: 0 4px 18px rgba(17, 17, 17, 0.04);
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--theme--foreground-subdued);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.judge-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px dashed var(--theme--border-color);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+.primary-cta-btn {
+  background: var(--theme--primary);
+  color: var(--theme--primary-foreground, #fff);
+  border: 1px solid var(--theme--primary);
+  padding: 8px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 38px;
+  transition: all 0.2s ease;
+}
+.primary-cta-btn:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+.primary-cta-btn:active:not(:disabled) {
+  transform: translateY(0);
 }
 label {
   display: grid;
@@ -721,9 +768,6 @@ input:disabled {
 }
 
 @media (max-width: 860px) {
-  .judge-form {
-    grid-template-columns: 1fr;
-  }
   .result-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

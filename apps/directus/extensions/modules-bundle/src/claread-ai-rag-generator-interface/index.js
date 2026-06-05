@@ -401,7 +401,7 @@ export default {
           <div v-if="lastResult.reasoning" class="reasoning-accordion">
             <button class="reasoning-btn" @click="showReasoning = !showReasoning">
               <v-icon :name="showReasoning ? 'expand_less' : 'expand_more'" x-small />
-              Reasoning
+              字段理由 / Rationale
             </button>
             <pre v-if="showReasoning" class="reasoning-body">{{ lastResult.reasoning }}</pre>
           </div>
