@@ -479,11 +479,11 @@ onBeforeUnmount(() => {
     </header>
 
     <nav class="lab-navigation">
-      <div class="segmented-control">
+      <div class="node-tabs">
         <button
           v-for="node in nodeOptions"
           :key="node.id"
-          class="segment-btn"
+          class="node-tab-btn"
           :class="{ active: state.activeNode === node.id }"
           @click="state.activeNode = node.id"
         >
@@ -491,17 +491,19 @@ onBeforeUnmount(() => {
           <span v-if="hasNodeActivity(node.id, state)" class="activity-dot"></span>
         </button>
       </div>
-      <div class="nav-divider"></div>
-      <div class="segmented-control mode-control">
-        <button
-          v-for="workspace in workspaceOptions"
-          :key="workspace.id"
-          class="segment-btn"
-          :class="{ active: state.activeWorkspace === workspace.id }"
-          @click="state.activeWorkspace = workspace.id"
-        >
-          {{ workspace.label }}
-        </button>
+      <div class="workspace-modes-bar">
+        <span class="modes-bar-label">工作区模式：</span>
+        <div class="segmented-control mode-control">
+          <button
+            v-for="workspace in workspaceOptions"
+            :key="workspace.id"
+            class="segment-btn"
+            :class="{ active: state.activeWorkspace === workspace.id }"
+            @click="state.activeWorkspace = workspace.id"
+          >
+            {{ workspace.label }}
+          </button>
+        </div>
       </div>
     </nav>
 
@@ -720,6 +722,10 @@ onBeforeUnmount(() => {
   color: var(--color-text);
   line-height: 1.5;
   padding-bottom: 40px;
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* Reset typography & controls */
@@ -794,21 +800,74 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   line-height: 1.4;
 }
 
-/* Navigation Segmented Control */
+/* Navigation Tab & Modes Bar */
 .lab-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+}
+
+.node-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--color-border);
+  width: 100%;
+  padding-bottom: 8px;
+}
+
+.node-tab-btn {
+  position: relative;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text-subdued);
+  padding: 4px 4px 12px 4px;
+  transition: color 0.15s ease;
+}
+
+.node-tab-btn:hover {
+  color: var(--color-text);
+}
+
+.node-tab-btn.active {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.node-tab-btn.active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-primary);
+  border-radius: 999px;
+}
+
+.workspace-modes-bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px;
-  background: var(--color-surface-subdued);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  width: max-content;
+}
+
+.modes-bar-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-subdued);
 }
 
 .segmented-control {
   display: flex;
   gap: 4px;
+  background: var(--color-surface-subdued);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 4px;
 }
 
 .segment-btn {
@@ -846,11 +905,7 @@ select, input, textarea { font-family: inherit; font-size: 14px; box-sizing: bor
   background: var(--color-primary);
 }
 
-.nav-divider {
-  width: 1px;
-  height: 20px;
-  background: var(--color-border);
-}
+
 
 /* Workbench Split Layout */
 .workbench {

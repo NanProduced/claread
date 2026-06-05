@@ -573,6 +573,21 @@ test("buildAuthGuard requires a Directus admin user", () => {
   assert.equal(adminResponse.statusCode, 200);
 });
 
+test("workflow rename patch routes keep the Directus admin auth guard", () => {
+  const source = readFileSync(fileURLToPath(new URL("./index.js", import.meta.url)), "utf8");
+
+  assert.match(
+    source,
+    /router\.patch\("\/workflow-lab\/run-history\/:compareId",\s*async\s*\(req,\s*res,\s*next\)\s*=>\s*\{\s*if\s*\(!buildAuthGuard\(req,\s*res\)\)\s*return;/,
+    "workflow compare rename route must enforce buildAuthGuard",
+  );
+  assert.match(
+    source,
+    /router\.patch\("\/workflow-lab\/run-history\/single-run\/:runId",\s*async\s*\(req,\s*res,\s*next\)\s*=>\s*\{\s*if\s*\(!buildAuthGuard\(req,\s*res\)\)\s*return;/,
+    "workflow single-run rename route must enforce buildAuthGuard",
+  );
+});
+
 test("isSafeFileId rejects traversal-looking values", () => {
   assert.equal(isSafeFileId("run.v1-2026_05"), true);
   assert.equal(isSafeFileId(".."), false);

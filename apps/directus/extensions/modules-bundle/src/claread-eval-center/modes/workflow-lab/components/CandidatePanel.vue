@@ -94,6 +94,15 @@ const fewShotOptions = [
 ];
 
 const activeLayer = computed(() => layerFor(activeAgent.value));
+const activeAgentColor = computed(() => {
+  const colors = {
+    vocabulary: '#e4b000',
+    grammar: '#746694',
+    translation: '#54a7de',
+    repair: '#059669',
+  };
+  return colors[activeAgent.value] || 'var(--theme--primary)';
+});
 const baselineLayer = computed(() => baselineFor(activeAgent.value));
 const hasBundle = computed(() => AGENTS.some((agent) => layerFor(agent.key).instructions.trim()));
 const canSave = computed(() => props.form.variant_id?.trim() && hasBundle.value && !props.saving);
@@ -358,6 +367,7 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
             >
               <span class="pipeline-index" aria-hidden="true">{{ index + 1 }}</span>
               <span class="pipeline-label">{{ agent.label }}</span>
+              <span v-if="agentDiffs[agent.key]" class="pipeline-diff-badge" :title="`已修改: ${agentDiffs[agent.key].join(', ')}`">改</span>
             </button>
             <span v-if="index < AGENTS.length - 1" class="pipeline-arrow" aria-hidden="true">→</span>
           </li>
@@ -418,19 +428,6 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
       </div>
 
       <template v-else>
-        <section class="agent-tabs" aria-label="Workflow prompt agents">
-          <button
-            v-for="agent in AGENTS"
-            :key="agent.key"
-            type="button"
-            :class="{ active: activeAgent === agent.key, changed: !!agentDiffs[agent.key] }"
-            @click="activeAgent = agent.key"
-          >
-            {{ agent.label }}
-            <span v-if="agentDiffs[agent.key]" class="agent-diff-tag" :title="`改了: ${agentDiffs[agent.key].join(', ')}`">改</span>
-          </button>
-        </section>
-
         <section class="editor-layout">
           <div class="agent-editor">
             <header>
@@ -444,7 +441,7 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
               </div>
             </header>
 
-            <section class="agent-explainer">
+            <section class="agent-explainer" :style="{ '--agent-tone-color': activeAgentColor }">
               <div>
                 <span class="explainer-label">负责</span>
                 <p>{{ AGENT_DESCRIPTIONS[activeLayer.agent_name]?.role || "—" }}</p>
@@ -472,8 +469,10 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
               </div>
               <p v-if="!activeLayer.policy_name" class="muted">repair agent 当前只使用 instructions 和错误上下文，不使用 policy lines。</p>
               <div v-for="(line, index) in activeLayer.policy_lines" :key="`policy-${index}`" class="line-row">
-                <input :value="line" @input="setPolicyLine(index, $event.target.value)" />
-                <button type="button" title="删除这条 policy line。" @click="removePolicyLine(index)">删除</button>
+                <input :value="line" placeholder="输入 Policy Line 规则内容..." @input="setPolicyLine(index, $event.target.value)" />
+                <button type="button" class="delete-line-btn" title="删除这条 policy line。" @click="removePolicyLine(index)">
+                  <span class="delete-icon">×</span>
+                </button>
               </div>
             </section>
 
@@ -485,10 +484,12 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
               <div v-for="(example, index) in activeLayer.examples" :key="`example-${index}`" class="example-row">
                 <div class="example-head">
                   <input :value="example.example_type" placeholder="example_type" @input="updateExample(index, 'example_type', $event.target.value)" />
-                  <button type="button" title="删除这个 example。" @click="removeExample(index)">删除</button>
+                  <button type="button" class="delete-line-btn" title="删除这个 example。" @click="removeExample(index)">
+                    <span class="delete-icon">×</span>
+                  </button>
                 </div>
-                <input :value="example.sentence_text" placeholder="示例原句" @input="updateExample(index, 'sentence_text', $event.target.value)" />
-                <textarea :value="example.output_fragment" rows="3" placeholder="输出片段" @input="updateExample(index, 'output_fragment', $event.target.value)" />
+                <input :value="example.sentence_text" class="sentence-input" placeholder="示例原句" @input="updateExample(index, 'sentence_text', $event.target.value)" />
+                <textarea :value="example.output_fragment" class="output-textarea" rows="3" placeholder="输出片段" @input="updateExample(index, 'output_fragment', $event.target.value)" />
               </div>
               <p v-if="activeLayer.examples.length === 0" class="muted">当前 agent 没有 Candidate examples。</p>
               <details class="raw-json">
@@ -505,35 +506,40 @@ const publishTitle = "发布到验证入口后,本版本会出现在「单篇验
           </div>
 
           <aside class="baseline-reference">
-            <section>
-              <p>当前差异</p>
-              <strong v-if="!changedAgents.length">全部沿用 baseline</strong>
-              <ul v-else class="diff-list">
-                <li v-for="agentKey in changedAgents" :key="agentKey">
-                  <span class="diff-agent">{{ AGENTS.find((a) => a.key === agentKey)?.label || agentKey }}</span>
-                  <span class="diff-dims">{{ agentDiffs[agentKey].join(" · ") }}</span>
-                </li>
-              </ul>
-              <small>{{ readyCandidates.length }} 条已发布候选版本可直接用于验证与回归。</small>
+            <section class="ref-section current-diff-section">
+              <p class="ref-title">当前修改状态</p>
+              <div class="ref-card">
+                <strong v-if="!changedAgents.length" class="no-diff-hint">全部沿用 baseline</strong>
+                <ul v-else class="diff-list">
+                  <li v-for="agentKey in changedAgents" :key="agentKey">
+                    <span class="diff-agent">{{ AGENTS.find((a) => a.key === agentKey)?.label || agentKey }}</span>
+                    <span class="diff-dims">{{ agentDiffs[agentKey].join(" · ") }}</span>
+                  </li>
+                </ul>
+                <small class="ready-candidates-count">{{ readyCandidates.length }} 条已发布候选版本可直接用于验证与回归。</small>
+              </div>
             </section>
-            <section>
-              <p>Baseline 参考</p>
-              <dl>
-                <div><dt>Prompt version</dt><dd>{{ form.prompt_version || "-" }}</dd></div>
-                <div><dt>Profile</dt><dd>{{ form.prompt_profile || "-" }}</dd></div>
-                <div><dt>Policy</dt><dd>{{ baselineLayer.policy_focus || "-" }}</dd></div>
-                <div><dt>Examples</dt><dd>{{ baselineLayer.examples?.length || 0 }}</dd></div>
-              </dl>
-              <details open>
-                <summary>Baseline Instructions</summary>
-                <pre>{{ baselineLayer.instructions }}</pre>
-              </details>
-              <details>
-                <summary>Baseline Policy Lines</summary>
-                <ol>
-                  <li v-for="(line, index) in baselineLayer.policy_lines" :key="`baseline-policy-${index}`">{{ line }}</li>
-                </ol>
-              </details>
+            <section class="ref-section baseline-meta-section">
+              <p class="ref-title">Baseline 参考</p>
+              <div class="ref-card">
+                <dl class="baseline-meta-grid">
+                  <div><dt>Prompt version</dt><dd>{{ form.prompt_version || "-" }}</dd></div>
+                  <div><dt>Profile</dt><dd>{{ form.prompt_profile || "-" }}</dd></div>
+                  <div><dt>Policy</dt><dd>{{ baselineLayer.policy_focus || "-" }}</dd></div>
+                  <div><dt>Examples</dt><dd>{{ baselineLayer.examples?.length || 0 }}</dd></div>
+                </dl>
+                
+                <details open class="ref-details">
+                  <summary>Baseline Instructions</summary>
+                  <pre class="baseline-pre">{{ baselineLayer.instructions }}</pre>
+                </details>
+                <details class="ref-details">
+                  <summary>Baseline Policy Lines</summary>
+                  <ol class="baseline-policy-list">
+                    <li v-for="(line, index) in baselineLayer.policy_lines" :key="`baseline-policy-${index}`">{{ line }}</li>
+                  </ol>
+                </details>
+              </div>
             </section>
           </aside>
         </section>
@@ -693,10 +699,75 @@ textarea {
   background: var(--theme--success-background);
 }
 .setup-strip {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(160px, 0.9fr) auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 14px 16px;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  margin-top: 14px;
+}
+.setup-strip label {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  align-items: end;
+  margin: 0;
+  flex: 1;
+  min-width: 200px;
+}
+.setup-strip label span {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+.setup-strip input {
+  flex: 1;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+}
+.status-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  min-height: auto;
+}
+.status-panel span {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--theme--foreground-subdued);
+}
+.status-panel strong {
+  font-size: 12px;
+  background: color-mix(in srgb, var(--theme--primary) 8%, var(--theme--background));
+  color: var(--theme--primary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--theme--primary) 20%, var(--theme--border-color));
+  white-space: nowrap;
+}
+.setup-strip button {
+  background: var(--theme--primary);
+  color: var(--theme--primary-foreground, #fff);
+  border: 1px solid var(--theme--primary);
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+.setup-strip button:hover:not(:disabled) {
+  opacity: 0.9;
 }
 .advanced-settings {
   border-top: 1px solid var(--theme--border-color);
@@ -715,21 +786,13 @@ textarea {
   gap: 10px;
   margin-top: 12px;
 }
-.status-panel {
-  display: grid;
-  gap: 6px;
-  min-height: 34px;
-  border: 1px solid var(--theme--border-color);
-  border-radius: 4px;
-  background: var(--theme--background-subdued);
-  padding: 8px;
-}
-.status-panel strong {
-  font-size: 13px;
-}
 label {
   display: grid;
   gap: 6px;
+}
+textarea {
+  width: 100%;
+  box-sizing: border-box;
 }
 .empty-state {
   border: 1px dashed var(--theme--border-color);
@@ -738,30 +801,40 @@ label {
   margin-top: 14px;
   padding: 18px;
 }
-.agent-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-.agent-tabs button.active {
-  border-color: var(--theme--primary);
-}
-.agent-tabs button.changed::after {
-  content: " *";
-  color: var(--theme--primary);
+.pipeline-diff-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--theme--primary);
+  color: var(--theme--primary-foreground, #fff);
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 700;
+  margin-left: 2px;
 }
 .editor-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.32fr);
-  gap: 14px;
-  margin-top: 12px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 16px;
+  margin-top: 16px;
 }
-.agent-editor,
-.baseline-reference {
+.agent-editor {
   display: grid;
-  gap: 14px;
-  padding: 14px;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  background: var(--theme--background);
+}
+.baseline-reference {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 .header-actions,
 .editor-actions div {
@@ -1009,30 +1082,32 @@ label {
 .agent-explainer {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
+  gap: 16px;
+  border: 1px solid var(--theme--border-color);
+  border-left: 3px solid var(--agent-tone-color, var(--theme--primary));
   border-radius: 6px;
   background: var(--theme--background-subdued);
-  padding: 10px 12px;
+  padding: 12px 16px;
 }
 
 .agent-explainer p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  line-height: 1.55;
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
   color: var(--theme--foreground);
 }
 
 .explainer-label {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--theme--foreground-subdued);
-  padding: 1px 6px;
+  padding: 2px 8px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 999px;
+  border-radius: 4px;
   background: var(--theme--background);
 }
 
@@ -1041,104 +1116,308 @@ label {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .diff-list li {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   font-size: 12px;
 }
 
 .diff-agent {
   font-weight: 700;
+  font-size: 13px;
+  color: var(--theme--foreground);
 }
 
 .diff-dims {
   color: var(--theme--foreground-subdued);
+  font-size: 12px;
 }
+
 .line-editor,
 .example-editor {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  margin-top: 8px;
 }
-.line-row,
-.example-row {
-  display: grid;
+
+.line-row {
+  position: relative;
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
-.line-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-.example-row {
+
+.line-row input {
+  flex: 1;
   border: 1px solid var(--theme--border-color);
   border-radius: 6px;
-  padding: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--theme--background);
+  color: var(--theme--foreground);
+  transition: all 0.2s ease;
 }
+
+.line-row input:focus {
+  border-color: var(--theme--primary);
+  outline: none;
+}
+
+.delete-line-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  background: var(--theme--background);
+  color: var(--theme--foreground-subdued);
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: normal;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.delete-line-btn:hover {
+  border-color: var(--theme--danger);
+  color: var(--theme--danger);
+  background: color-mix(in srgb, var(--theme--danger) 6%, var(--theme--background));
+}
+
+.example-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--theme--background-subdued);
+}
+
 .example-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
+
+.example-head input {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: var(--theme--background);
+  border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--theme--foreground-subdued);
+  max-width: 140px;
+}
+
+.example-row .sentence-input {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--theme--foreground);
+  background: var(--theme--background);
+}
+
+.example-row .output-textarea {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--theme--background);
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  resize: vertical;
+}
+
 .raw-json {
   border-top: 1px solid var(--theme--border-color);
-  padding-top: 10px;
+  padding-top: 12px;
+  margin-top: 8px;
 }
+
 .inline-error {
   margin: 8px 0 0;
   color: var(--theme--danger);
   font-size: 12px;
   line-height: 1.5;
 }
-.baseline-reference {
-  align-content: start;
-}
-.baseline-reference section {
-  display: grid;
+
+.ref-section {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
-.baseline-reference dl {
+
+.ref-title {
+  margin: 0;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ref-card {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  background: var(--theme--background);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.no-diff-hint {
+  font-size: 13px;
+  color: var(--theme--foreground-subdued);
+}
+
+.ready-candidates-count {
+  font-size: 11px;
+  color: var(--theme--foreground-subdued);
+}
+
+.baseline-meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
+  margin: 0 0 12px;
 }
-.baseline-reference dd {
+
+.baseline-meta-grid div {
+  padding: 6px 10px;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+}
+
+.baseline-meta-grid dt {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--theme--foreground-subdued);
+  letter-spacing: 0.05em;
+}
+
+.baseline-meta-grid dd {
   margin: 2px 0 0;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--theme--foreground);
 }
-pre {
-  max-height: 260px;
+
+.ref-details {
+  border-top: 1px solid var(--theme--border-color);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.ref-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--theme--foreground-subdued);
+  user-select: none;
+}
+
+.baseline-pre {
+  max-height: 220px;
   overflow: auto;
   white-space: pre-wrap;
   font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 6px;
+}
+
+.baseline-policy-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
   font-size: 12px;
+  line-height: 1.6;
+  color: var(--theme--foreground);
 }
-ol {
-  margin: 0;
-  padding-left: 18px;
-}
+
 .editor-actions {
-  align-items: end;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   border-top: 1px solid var(--theme--border-color);
-  margin-top: 14px;
-  padding-top: 14px;
+  margin-top: 24px;
+  padding-top: 20px;
 }
+
 .editor-actions label {
-  min-width: min(460px, 100%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  max-width: 50%;
+  margin: 0;
 }
+
+.editor-actions label span {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+
+.editor-actions input {
+  flex: 1;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.editor-actions div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-actions button {
+  padding: 8px 16px;
+  font-size: 13px;
+  border-radius: 6px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
 .preview {
   border-top: 1px solid var(--theme--border-color);
-  margin-top: 14px;
-  padding-top: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
 }
+
 .preview header {
   margin-bottom: 10px;
 }
+
 code {
   color: var(--theme--foreground-subdued);
   font-size: 12px;
 }
+
 @media (max-width: 1180px) {
   .candidate-panel,
   .editor-layout,

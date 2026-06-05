@@ -214,9 +214,9 @@ function simpleAnchorStatus(sentenceId, fragments) {
             <span class="evidence-value">{{ Array.isArray(item.spans) ? `${item.spans.length} 段` : "未提供" }}</span>
           </div>
           <div v-if="Array.isArray(item.spans) && item.spans.length" class="anchor-chip-row">
-            <span v-for="(span, spanIndex) in item.spans" :key="`span-${index}-${spanIndex}`" class="anchor-chip">
-              <span class="anchor-chip__text">{{ dash(span?.text) }}</span>
-              <span class="anchor-chip__role">{{ roleLabel(span?.role) }}</span>
+            <span v-for="(span, spanIndex) in item.spans" :key="`span-${index}-${spanIndex}`" class="eval-anchor-chip tone-grammar">
+              <span class="eval-anchor-chip__text">{{ dash(span?.text) }}</span>
+              <span class="eval-anchor-chip__role">{{ roleLabel(span?.role) }}</span>
             </span>
           </div>
         </div>
@@ -303,7 +303,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
         <div class="evidence-row">
           <div class="evidence-summary">
             <span class="evidence-label">锚点</span>
-            <span class="evidence-value">{{ dash(item.text) }}</span>
+            <span class="eval-anchor-chip tone-vocab">{{ dash(item.text) }}</span>
           </div>
         </div>
         <ul v-if="simpleAnchorStatus(item.sentence_id, [item.text]).missing?.length" class="warning-list">
@@ -337,11 +337,11 @@ function simpleAnchorStatus(sentenceId, fragments) {
         <div class="evidence-row">
           <div class="evidence-summary">
             <span class="evidence-label">锚点</span>
-            <span class="evidence-value">{{ dash(item.text) }}</span>
+            <span class="eval-anchor-chip tone-phrase">{{ dash(item.text) }}</span>
           </div>
           <div class="evidence-summary">
             <span class="evidence-label">类型</span>
-            <span class="evidence-value">{{ dash(item.phrase_type) }}</span>
+            <span class="eval-mark-type tone-phrase">{{ dash(item.phrase_type) }}</span>
           </div>
         </div>
         <ul v-if="simpleAnchorStatus(item.sentence_id, [item.text]).missing?.length" class="warning-list">
@@ -376,7 +376,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
         <div class="evidence-row">
           <div class="evidence-summary">
             <span class="evidence-label">锚点</span>
-            <span class="evidence-value">{{ dash(item.text) }}</span>
+            <span class="eval-anchor-chip tone-context">{{ dash(item.text) }}</span>
           </div>
         </div>
         <ul v-if="simpleAnchorStatus(item.sentence_id, [item.text]).missing?.length" class="warning-list">
@@ -502,15 +502,16 @@ function simpleAnchorStatus(sentenceId, fragments) {
 
 .sentence-context {
   margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 6px;
+  padding: 8px 12px;
+  border-radius: 4px;
   background: var(--theme--background);
-  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border: none;
+  border-left: 3px solid var(--theme--primary-subdued, var(--theme--primary));
 }
 
 .context-label {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   color: var(--theme--foreground-subdued);
   font-size: 11px;
   font-weight: 700;
@@ -519,15 +520,18 @@ function simpleAnchorStatus(sentenceId, fragments) {
 
 .context-text {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 14px;
+  line-height: 1.7;
+  font-family: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
+  color: var(--theme--foreground, #111827);
+  letter-spacing: -0.015em;
 }
 
 .anchor-mark {
-  background: color-mix(in srgb, var(--theme--warning) 24%, transparent);
+  background: color-mix(in srgb, var(--theme--warning, #e4b000) 24%, transparent);
   color: inherit;
   border-radius: 4px;
-  padding: 0 1px;
+  padding: 0 2px;
 }
 
 .evidence-row {
@@ -560,32 +564,84 @@ function simpleAnchorStatus(sentenceId, fragments) {
   margin-top: 8px;
 }
 
-.anchor-chip {
+.eval-anchor-chip {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
-  padding: 4px 10px;
-  border-radius: 999px;
+  min-height: 24px;
+  padding: 2px 10px;
+  border-radius: 4px;
   border: 1px solid var(--theme--border-color);
   background: var(--theme--background);
 }
 
-.anchor-chip__text {
-  font-size: 12px;
+.eval-anchor-chip__text {
+  font-size: 11px;
   font-weight: 600;
   color: var(--theme--foreground);
 }
 
-.anchor-chip__role {
-  font-size: 11px;
+.eval-anchor-chip__role {
+  font-size: 10px;
   color: var(--theme--foreground-subdued);
+}
+
+/* Tone styles for eval-anchor-chip */
+.eval-anchor-chip.tone-vocab {
+  border-color: color-mix(in srgb, #e4b000 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 12%, var(--theme--background));
+}
+.eval-anchor-chip.tone-vocab .eval-anchor-chip__text { color: #785300; }
+
+.eval-anchor-chip.tone-phrase {
+  border-color: color-mix(in srgb, #db2777 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 10%, var(--theme--background));
+}
+.eval-anchor-chip.tone-phrase .eval-anchor-chip__text { color: #9f1239; }
+
+.eval-anchor-chip.tone-context {
+  border-color: color-mix(in srgb, #54a7de 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 10%, var(--theme--background));
+}
+.eval-anchor-chip.tone-context .eval-anchor-chip__text { color: #285f8d; }
+
+.eval-anchor-chip.tone-grammar {
+  border-color: color-mix(in srgb, #746694 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 10%, var(--theme--background));
+}
+.eval-anchor-chip.tone-grammar .eval-anchor-chip__text { color: #554777; }
+
+.eval-anchor-chip.tone-analysis {
+  border-color: color-mix(in srgb, #059669 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 10%, var(--theme--background));
+}
+.eval-anchor-chip.tone-analysis .eval-anchor-chip__text { color: #065f46; }
+
+/* Eval Mark Type (e.g. Phrase type badge) */
+.eval-mark-type {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  border: 1px solid var(--theme--border-color);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.eval-mark-type.tone-phrase {
+  color: #9f1239;
+  border-color: color-mix(in srgb, #db2777 30%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 6%, var(--theme--background));
 }
 
 .warning-list {
   margin: 10px 0 0;
   padding-left: 18px;
-  color: var(--theme--warning);
+  color: var(--theme--warning-color, #b45309);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -602,9 +658,10 @@ function simpleAnchorStatus(sentenceId, fragments) {
   gap: 10px;
   align-items: start;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--theme--background);
-  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border: none;
+  border-left: 3px solid color-mix(in srgb, #059669 40%, var(--theme--border-color));
 }
 
 .chunk-order {
@@ -621,11 +678,13 @@ function simpleAnchorStatus(sentenceId, fragments) {
 
 .chunk-main strong {
   font-size: 12px;
+  color: var(--theme--foreground);
 }
 
 .chunk-main span {
   font-size: 13px;
   line-height: 1.6;
+  color: var(--theme--foreground);
 }
 
 .output-card pre,

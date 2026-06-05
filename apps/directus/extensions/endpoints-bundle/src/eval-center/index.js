@@ -6091,6 +6091,8 @@ export default (router, context) => {
   });
 
   router.patch("/workflow-lab/run-history/:compareId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
     try {
       const compareId = req.params?.compareId;
       if (!isSafeFileId(compareId)) {
@@ -6437,6 +6439,8 @@ export default (router, context) => {
   });
 
   router.patch("/workflow-lab/run-history/single-run/:runId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+
     try {
       const runId = req.params?.runId;
       if (!isSafeFileId(runId)) {

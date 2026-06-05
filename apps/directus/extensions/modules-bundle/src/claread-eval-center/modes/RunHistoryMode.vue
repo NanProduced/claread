@@ -195,6 +195,13 @@ const workflowSingleRunArtifact = computed(() => null);
 const workflowCompareReports = computed(() => []);
 const currentTrialMeta = computed(() => currentTrialRuntimeMeta(currentTrial.value, currentResult.value));
 
+const compareModelsSummary = computed(() => {
+  if (currentTrial.value?.result_kind !== "compare_result" || !currentResult.value) return null;
+  const baselineModel = currentResult.value.baseline?.model_identity?.model_name || "未记录";
+  const candidateModel = currentResult.value.candidate?.model_identity?.model_name || "未记录";
+  return `${baselineModel} vs ${candidateModel}`;
+});
+
 const resultKindLabel = computed(() => {
   if (currentSource.value === "workflow") return workflowWorkspaceLabel(currentWorkflowRecord.value);
   const kind = currentTrial.value?.result_kind;
@@ -675,6 +682,22 @@ function judgePassRate(summary) {
   const passed = Number(summary.passed ?? 0);
   return `${Math.round((passed / total) * 100)}%`;
 }
+
+function formatExcerpt(text) {
+  if (!text) return "";
+  if (text.startsWith("[attached compare") || text.includes("hash=")) {
+    return "已关联 Compare 结果 (无明文摘要)";
+  }
+  return text;
+}
+
+function workspaceTypeTone(record) {
+  const label = workspaceLabel(record);
+  if (label.includes("Workflow")) return "type-workflow";
+  if (label === "Compare" || label.includes("Compare")) return "type-compare";
+  if (label === "Single Run") return "type-single-run";
+  return "type-default";
+}
 </script>
 
 <template>
@@ -750,11 +773,11 @@ function judgePassRate(summary) {
           @click="selectRecord(record)"
         >
           <span class="record-topline">
-            <span class="record-type">{{ workspaceLabel(record) }}</span>
+            <span class="record-type" :class="workspaceTypeTone(record)">{{ workspaceLabel(record) }}</span>
             <StatusPill :label="statusLabel(record.status)" :tone="statusTone(record.status)" />
           </span>
           <strong>{{ recordTitle(record) }}</strong>
-          <span class="record-excerpt">{{ recordExcerpt(record) }}</span>
+          <span class="record-excerpt">{{ formatExcerpt(recordExcerpt(record)) }}</span>
           <span class="record-meta">
             <span>{{ sourceLabel(record) }}</span>
             <span>{{ formatDateTime(record.date_created || record.created_at) }}</span>
@@ -781,7 +804,7 @@ function judgePassRate(summary) {
               <span v-if="renameError" class="rename-error">{{ renameError }}</span>
             </div>
             <h2 v-else>{{ currentWorkflowRecord.display_title || currentWorkflowRecord.compare_id }} <button type="button" class="rename-trigger" title="重命名" @click="startRename">✎</button></h2>
-            <p>{{ currentWorkflowRecord.display_excerpt || currentWorkflowRecord.compare_id }}</p>
+            <p>{{ formatExcerpt(currentWorkflowRecord.display_excerpt || currentWorkflowRecord.compare_id) }}</p>
           </div>
           <div class="detail-actions">
             <StatusPill :label="statusLabel(currentWorkflowRecord.status)" :tone="statusTone(currentWorkflowRecord.status)" size="large" />
@@ -954,7 +977,7 @@ function judgePassRate(summary) {
               <span v-if="renameError" class="rename-error">{{ renameError }}</span>
             </div>
             <h2 v-else>{{ currentTrial.custom_title || `${currentTrial.node_name} · ${currentTrial.reading_goal} · ${currentTrial.reading_variant}` }} <button type="button" class="rename-trigger" title="重命名" @click="startRename">✎</button></h2>
-            <p>{{ currentTrial.display_excerpt || currentTrial.input_excerpt || currentTrial.input_text_hash }}</p>
+            <p>{{ formatExcerpt(currentTrial.display_excerpt || currentTrial.input_excerpt || currentTrial.input_text_hash) }}</p>
           </div>
           <div class="detail-actions">
             <StatusPill :label="statusLabel(currentTrial.status)" :tone="statusTone(currentTrial.status)" size="large" />
@@ -996,22 +1019,37 @@ function judgePassRate(summary) {
         </dl>
 
         <dl v-if="currentTrialMeta.model_name || currentTrialMeta.latency_seconds != null || currentTrialMeta.total_tokens != null" class="meta-grid runtime-meta">
-          <div v-if="currentTrialMeta.model_name">
-            <dt>模型</dt>
-            <dd>{{ currentTrialMeta.model_name }}</dd>
-          </div>
-          <div v-if="currentTrialMeta.model_profile">
-            <dt>Profile</dt>
-            <dd>{{ currentTrialMeta.model_profile }}</dd>
-          </div>
-          <div v-if="currentTrialMeta.latency_seconds != null">
-            <dt>耗时</dt>
-            <dd>{{ Number(currentTrialMeta.latency_seconds).toFixed(1) }}s</dd>
-          </div>
-          <div v-if="currentTrialMeta.total_tokens != null">
-            <dt>Tokens</dt>
-            <dd>总 {{ currentTrialMeta.total_tokens }} · 入 {{ currentTrialMeta.input_tokens ?? "—" }} / 出 {{ currentTrialMeta.output_tokens ?? "—" }}</dd>
-          </div>
+          <!-- Single Run Mode Fields -->
+          <template v-if="currentTrial.result_kind !== 'compare_result'">
+            <div v-if="currentTrialMeta.model_name">
+              <dt>模型</dt>
+              <dd>{{ currentTrialMeta.model_name }}</dd>
+            </div>
+            <div v-if="currentTrialMeta.model_profile">
+              <dt>Profile</dt>
+              <dd>{{ currentTrialMeta.model_profile }}</dd>
+            </div>
+            <div v-if="currentTrialMeta.latency_seconds != null">
+              <dt>耗时</dt>
+              <dd>{{ Number(currentTrialMeta.latency_seconds).toFixed(1) }}s</dd>
+            </div>
+            <div v-if="currentTrialMeta.total_tokens != null">
+              <dt>Tokens</dt>
+              <dd>总 {{ currentTrialMeta.total_tokens }} · 入 {{ currentTrialMeta.input_tokens ?? "—" }} / 出 {{ currentTrialMeta.output_tokens ?? "—" }}</dd>
+            </div>
+          </template>
+
+          <!-- Compare Mode Fields -->
+          <template v-else>
+            <div v-if="compareModelsSummary">
+              <dt>对比模型</dt>
+              <dd>{{ compareModelsSummary }}</dd>
+            </div>
+            <div v-if="currentTrialMeta.latency_seconds != null">
+              <dt>最长耗时</dt>
+              <dd>{{ Number(currentTrialMeta.latency_seconds).toFixed(1) }}s</dd>
+            </div>
+          </template>
         </dl>
 
         <section v-if="currentSession" class="session-band">
@@ -1047,7 +1085,28 @@ function judgePassRate(summary) {
                 <strong>{{ side.label }}</strong>
                 <StatusPill :label="statusLabel(side.value.status)" :tone="statusTone(side.value.status)" />
               </div>
-              <p>{{ side.value.model_identity?.model_name || "未记录模型" }} · {{ tokenSummary(side.value.runtime_summary) }}</p>
+              <div class="compare-side__meta">
+                <div class="meta-row model-row">
+                  <span class="meta-model-name">
+                    {{ side.value.model_identity?.model_name || side.value.runtime_summary?.model_name || "未记录模型" }}
+                  </span>
+                  <span v-if="side.value.model_identity?.profile_name || side.value.runtime_summary?.model_profile" class="meta-profile-badge">
+                    {{ side.value.model_identity?.profile_name || side.value.runtime_summary?.model_profile }}
+                  </span>
+                </div>
+                <div class="meta-row stats-row">
+                  <span class="meta-stat-item latency">
+                    <span class="meta-icon">⏱️</span>
+                    <span class="meta-label">耗时</span>
+                    <span class="meta-value">{{ side.value.runtime_summary?.latency_ms != null ? (side.value.runtime_summary.latency_ms / 1000).toFixed(1) + 's' : '—' }}</span>
+                  </span>
+                  <span class="meta-stat-item tokens">
+                    <span class="meta-icon">🪙</span>
+                    <span class="meta-label">Token</span>
+                    <span class="meta-value">{{ tokenSummary(side.value.runtime_summary) }}</span>
+                  </span>
+                </div>
+              </div>
               <NodeProbeOutputView
                 :node-name="currentTrial.node_name"
                 :output="side.value.node_output || null"
@@ -1102,8 +1161,8 @@ function judgePassRate(summary) {
 <style scoped>
 .run-history {
   display: grid;
-  grid-template-columns: minmax(320px, 0.38fr) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(320px, 0.35fr) minmax(0, 1fr);
+  gap: 24px;
   min-height: 720px;
 }
 
@@ -1112,6 +1171,7 @@ function judgePassRate(summary) {
   min-width: 0;
   border: 1px solid var(--theme--border-color);
   background: var(--theme--background);
+  border-radius: 8px;
 }
 
 .history-list {
@@ -1136,8 +1196,10 @@ function judgePassRate(summary) {
 .eyebrow {
   margin: 0 0 4px;
   color: var(--theme--foreground-subdued);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 h2,
@@ -1149,13 +1211,15 @@ h3 {
 .list-header h2,
 .detail-header h2 {
   font-size: 18px;
+  font-weight: 600;
   line-height: 1.3;
 }
 
 .detail-header p {
   margin: 8px 0 0;
   color: var(--theme--foreground-subdued);
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .detail-actions,
@@ -1166,12 +1230,23 @@ h3 {
 }
 
 .icon-button {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
   background: var(--theme--background);
   color: var(--theme--foreground);
   cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.icon-button:hover:not(:disabled) {
+  border-color: var(--theme--primary-subdued);
+  color: var(--theme--primary);
 }
 
 .icon-button:disabled {
@@ -1185,43 +1260,64 @@ h3 {
   gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
 }
 
 .filters label {
   display: grid;
-  gap: 5px;
+  grid-template-columns: 80px 1fr;
+  align-items: center;
+  gap: 10px;
   color: var(--theme--foreground-subdued);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .filters select {
   width: 100%;
-  min-height: 34px;
+  min-height: 28px;
+  padding: 2px 6px;
   border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
   background: var(--theme--background);
   color: var(--theme--foreground);
+  font-size: 12px;
 }
 
 .record-list {
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .record-row {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  gap: 7px;
-  padding: 14px 16px;
-  border: 0;
-  border-bottom: 1px solid var(--theme--border-color);
-  background: transparent;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--theme--border-color);
+  border-left: 3px solid transparent;
+  border-radius: 6px;
+  background: var(--theme--background);
   color: var(--theme--foreground);
   text-align: left;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.record-row:hover {
+  border-color: var(--theme--primary-subdued);
+  background: var(--theme--background-subdued);
 }
 
 .record-row.active {
-  background: color-mix(in srgb, var(--theme--primary) 10%, transparent);
-  box-shadow: inset 3px 0 0 var(--theme--primary);
+  border-color: var(--theme--primary);
+  border-left-color: var(--theme--primary);
+  background: color-mix(in srgb, var(--theme--primary) 4%, var(--theme--background));
 }
 
 .record-topline,
@@ -1232,37 +1328,75 @@ h3 {
   gap: 10px;
 }
 
-.record-type,
-.record-meta,
-.record-excerpt {
+.record-type {
+  display: inline-flex;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
   color: var(--theme--foreground-subdued);
-  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.record-type.type-workflow {
+  background: color-mix(in srgb, var(--theme--primary) 10%, var(--theme--background));
+  border-color: color-mix(in srgb, var(--theme--primary) 35%, var(--theme--border-color));
+  color: var(--theme--primary);
+}
+
+.record-type.type-compare {
+  background: color-mix(in srgb, #54a7de 10%, var(--theme--background));
+  border-color: color-mix(in srgb, #54a7de 35%, var(--theme--border-color));
+  color: #285f8d;
+}
+
+.record-type.type-single-run {
+  background: var(--theme--background-subdued);
+  border-color: var(--theme--border-color);
+  color: var(--theme--foreground-subdued);
+}
+
+.record-row strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--theme--foreground);
 }
 
 .record-excerpt {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.record-meta {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+}
+
 .history-detail {
-  padding: 18px;
-  overflow: auto;
+  padding: 24px;
+  overflow-y: auto;
 }
 
 .meta-grid,
 .judge-meta {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
   margin: 16px 0;
 }
 
 .meta-grid div,
 .judge-meta div {
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
 }
 
 dt {
@@ -1270,10 +1404,14 @@ dt {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 dd {
   margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--theme--foreground);
   overflow-wrap: anywhere;
 }
 
@@ -1283,9 +1421,11 @@ dd {
   justify-content: space-between;
   gap: 12px;
   margin: 16px 0;
-  padding: 12px;
+  padding: 12px 14px;
+  border-radius: 6px;
   border: 1px solid var(--theme--border-color);
-  background: color-mix(in srgb, var(--theme--primary) 7%, transparent);
+  border-left: 3px solid var(--theme--primary);
+  background: color-mix(in srgb, var(--theme--primary) 4%, var(--theme--background));
 }
 
 .session-band div {
@@ -1293,21 +1433,37 @@ dd {
   gap: 4px;
 }
 
-.session-band span {
-  color: var(--theme--foreground-subdued);
+.session-band strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--theme--foreground);
 }
 
-.session-id {
-  font-family: var(--theme--fonts--monospace--font-family);
+.session-band span {
+  color: var(--theme--foreground-subdued);
   font-size: 12px;
 }
 
+.session-id {
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 11px;
+  color: var(--theme--foreground-subdued);
+}
+
 .result-section {
-  margin: 18px 0;
+  margin: 24px 0;
 }
 
 .section-heading {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--theme--border-color);
+  padding-bottom: 6px;
+}
+
+.section-heading h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--theme--foreground);
 }
 
 .section-heading span {
@@ -1318,7 +1474,7 @@ dd {
 .compare-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
 .workflow-summary-grid {
@@ -1336,6 +1492,7 @@ dd {
   width: 100%;
   padding: 12px;
   border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
   background: var(--theme--background);
   color: var(--theme--foreground);
   text-align: left;
@@ -1350,6 +1507,7 @@ dd {
 .workflow-case-table-wrap {
   overflow: auto;
   border: 1px solid var(--theme--border-color);
+  border-radius: 6px;
 }
 
 .workflow-case-table {
@@ -1375,8 +1533,10 @@ dd {
 
 .compare-side {
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
+  border-radius: 6px;
   border: 1px solid var(--theme--border-color);
+  background: var(--theme--background);
 }
 
 .compare-side__header {
@@ -1387,9 +1547,73 @@ dd {
   margin-bottom: 8px;
 }
 
-.compare-side p {
-  margin: 0 0 10px;
+.compare-side__meta {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.compare-side__meta .meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.compare-side__meta .model-row {
+  font-weight: 600;
+  color: var(--theme--foreground);
+}
+
+.compare-side__meta .meta-model-name {
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.compare-side__meta .meta-profile-badge {
+  font-size: 10px;
+  font-weight: normal;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--theme--primary) 8%, var(--theme--background));
+  color: var(--theme--primary);
+  border: 1px solid color-mix(in srgb, var(--theme--primary) 20%, var(--theme--border-color));
+}
+
+.compare-side__meta .stats-row {
   color: var(--theme--foreground-subdued);
+  font-size: 11px;
+}
+
+.compare-side__meta .meta-stat-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.compare-side__meta .meta-icon {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.compare-side__meta .meta-label {
+  font-weight: bold;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.compare-side__meta .meta-value {
+  color: var(--theme--foreground);
+  font-weight: 500;
 }
 
 .judge-list {
@@ -1401,15 +1625,21 @@ dd {
 .empty-inline,
 .notice {
   padding: 16px;
+  border-radius: 6px;
   color: var(--theme--foreground-subdued);
+  font-size: 13px;
 }
 
 .empty-inline {
-  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
+  border: 1px dashed var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  text-align: center;
 }
 
 .notice.is-danger {
   color: var(--theme--danger);
+  border: 1px solid color-mix(in srgb, var(--theme--danger) 25%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 6%, var(--theme--background));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1418,9 +1648,9 @@ dd {
 
 .notice.is-warning {
   margin-top: 14px;
-  border: 1px solid color-mix(in srgb, #d18d00 35%, var(--theme--border-color));
-  color: #8b5a00;
-  background: color-mix(in srgb, #d18d00 8%, var(--theme--background));
+  border: 1px solid color-mix(in srgb, #d97706 35%, var(--theme--border-color));
+  color: #b45309;
+  background: color-mix(in srgb, #d97706 8%, var(--theme--background));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1429,12 +1659,14 @@ dd {
 
 .notice-retry {
   border: 1px solid color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
+  border-radius: 4px;
   background: var(--theme--background);
   color: var(--theme--danger);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   padding: 4px 12px;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .notice-retry:hover {
@@ -1443,12 +1675,14 @@ dd {
 
 .danger-button {
   border: 1px solid color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
+  border-radius: 4px;
   background: var(--theme--background);
   color: var(--theme--danger);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   padding: 6px 12px;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .danger-button:disabled {
@@ -1469,23 +1703,24 @@ dd {
 
 .rename-row input {
   flex: 1;
-  min-height: 34px;
+  min-height: 32px;
   border: 1px solid var(--theme--primary);
   border-radius: 4px;
   padding: 4px 10px;
   font: inherit;
-  font-size: 16px;
+  font-size: 15px;
   background: var(--theme--background);
   color: var(--theme--foreground);
 }
 
 .rename-row button {
-  min-height: 34px;
+  min-height: 32px;
   border: 1px solid var(--theme--border-color);
+  border-radius: 4px;
   background: var(--theme--background);
   color: var(--theme--foreground);
   padding: 4px 12px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1497,34 +1732,31 @@ dd {
 
 .rename-error {
   color: var(--theme--danger);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .rename-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--theme--border-color);
   border-radius: 4px;
   background: var(--theme--background);
   color: var(--theme--foreground-subdued);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   vertical-align: middle;
   margin-left: 6px;
-  opacity: 0;
+  opacity: 0.7;
   transition: opacity 0.15s;
-}
-
-h2:hover .rename-trigger {
-  opacity: 1;
 }
 
 .rename-trigger:hover {
   color: var(--theme--primary);
   border-color: var(--theme--primary);
+  opacity: 1;
 }
 
 .facts-strip {
@@ -1542,19 +1774,21 @@ h2:hover .rename-trigger {
   padding: 10px 12px;
   border: 1px solid var(--theme--border-color);
   border-radius: 6px;
+  background: var(--theme--background);
 }
 
 .facts-baseline {
-  border-color: color-mix(in srgb, var(--theme--border-color) 80%, var(--theme--foreground));
+  border-left: 3px solid var(--theme--foreground-subdued);
 }
 
 .facts-candidate {
   border-color: color-mix(in srgb, var(--theme--primary) 35%, var(--theme--border-color));
+  border-left: 3px solid var(--theme--primary);
   background: color-mix(in srgb, var(--theme--primary) 3%, var(--theme--background));
 }
 
 .facts-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1564,15 +1798,16 @@ h2:hover .rename-trigger {
 .facts-model {
   font-weight: 700;
   font-size: 13px;
+  color: var(--theme--foreground);
 }
 
 .facts-profile {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--theme--foreground-subdued);
 }
 
 .facts-stat {
-  font-size: 12px;
+  font-size: 11px;
   font-family: var(--theme--fonts--monospace--font-family, monospace);
   color: var(--theme--foreground-subdued);
 }

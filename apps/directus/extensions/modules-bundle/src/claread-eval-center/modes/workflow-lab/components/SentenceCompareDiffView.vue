@@ -87,11 +87,25 @@ function collectBySentence(scene) {
 const baselineBySid = computed(() => collectBySentence(baselineScene.value));
 const candidateBySid = computed(() => collectBySentence(candidateScene.value));
 
+const MARK_TYPES = {
+  vocab_highlight: { label: "词汇", tone: "vocab" },
+  phrase_gloss: { label: "短语", tone: "phrase" },
+  context_gloss: { label: "语境", tone: "context" },
+  grammar_note: { label: "语法", tone: "grammar" },
+  sentence_analysis: { label: "句法", tone: "analysis" },
+};
+
 function formatMark(mark) {
   const anchor = mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || "—";
-  const type = mark?.annotation_type || mark?.visual_tone || "mark";
+  const rawType = mark?.annotation_type || mark?.visual_tone || "mark";
+  const typeInfo = MARK_TYPES[rawType] || { label: String(rawType).toUpperCase(), tone: "neutral" };
   const extra = mark?.glossary?.zh || mark?.glossary?.gloss || mark?.glossary?.phrase_type || "";
-  return { anchor: String(anchor), type: String(type), extra: extra ? String(extra) : "" };
+  return {
+    anchor: String(anchor),
+    type: typeInfo.label,
+    tone: typeInfo.tone,
+    extra: extra ? String(extra) : ""
+  };
 }
 
 function formatEntry(entry) {
@@ -297,8 +311,8 @@ const overviewCards = computed(() => ([
                   <span class="side-tag">Baseline</span>
                   <ul v-if="row.marks.baseline.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks.baseline" :key="`bm-${row.sid}-${i}`">
-                      <span class="anchor-chip">{{ mark.anchor }}</span>
-                      <span class="mark-type">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
                       <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
                     </li>
                   </ul>
@@ -308,8 +322,8 @@ const overviewCards = computed(() => ([
                   <span class="side-tag">候选</span>
                   <ul v-if="row.marks.candidate.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks.candidate" :key="`cm-${row.sid}-${i}`">
-                      <span class="anchor-chip">{{ mark.anchor }}</span>
-                      <span class="mark-type">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
                       <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
                     </li>
                   </ul>
@@ -321,8 +335,8 @@ const overviewCards = computed(() => ([
                   <span class="unified-tag">双侧一致</span>
                   <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
                     <li v-for="(mark, i) in row.marks.baseline" :key="`bm-unified-${row.sid}-${i}`">
-                      <span class="anchor-chip">{{ mark.anchor }}</span>
-                      <span class="mark-type">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
                       <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
                     </li>
                   </ul>
@@ -407,8 +421,8 @@ const overviewCards = computed(() => ([
                   <span class="unified-tag">双侧一致</span>
                   <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
                     <li v-for="(mark, i) in row.marks.baseline" :key="`sbm-unified-${row.sid}-${i}`">
-                      <span class="anchor-chip">{{ mark.anchor }}</span>
-                      <span class="mark-type">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
                       <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
                     </li>
                   </ul>
@@ -455,8 +469,8 @@ const overviewCards = computed(() => ([
                 <dd>
                   <ul v-if="row.marks.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks" :key="`bm-${row.sid}-${i}`">
-                      <span class="anchor-chip">{{ mark.anchor }}</span>
-                      <span class="mark-type">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
                       <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
                     </li>
                   </ul>
@@ -502,8 +516,8 @@ const overviewCards = computed(() => ([
                 <dd>
                   <ul v-if="row.marks.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks" :key="`cm-${row.sid}-${i}`">
-                      <span class="anchor-chip">{{ mark.anchor }}</span>
-                      <span class="mark-type">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
                       <span v-if="mark.extra" class="mark-extra">{{ mark.extra }}</span>
                     </li>
                   </ul>
@@ -927,4 +941,97 @@ const overviewCards = computed(() => ([
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.eval-anchor-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.eval-anchor-chip.tone-vocab {
+  border-color: color-mix(in srgb, #e4b000 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 12%, var(--theme--background));
+  color: #785300;
+}
+
+.eval-anchor-chip.tone-phrase {
+  border-color: color-mix(in srgb, #db2777 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 10%, var(--theme--background));
+  color: #9f1239;
+}
+
+.eval-anchor-chip.tone-context {
+  border-color: color-mix(in srgb, #54a7de 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 10%, var(--theme--background));
+  color: #285f8d;
+}
+
+.eval-anchor-chip.tone-grammar {
+  border-color: color-mix(in srgb, #746694 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 10%, var(--theme--background));
+  color: #554777;
+}
+
+.eval-anchor-chip.tone-analysis {
+  border-color: color-mix(in srgb, #059669 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 10%, var(--theme--background));
+  color: #065f46;
+}
+
+.eval-anchor-chip.tone-neutral {
+  border-color: var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+}
+
+.eval-mark-type {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  border: 1px solid var(--theme--border-color);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.eval-mark-type.tone-vocab {
+  color: #785300;
+  border-color: color-mix(in srgb, #e4b000 30%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 6%, var(--theme--background));
+}
+
+.eval-mark-type.tone-phrase {
+  color: #9f1239;
+  border-color: color-mix(in srgb, #db2777 30%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 6%, var(--theme--background));
+}
+
+.eval-mark-type.tone-context {
+  color: #285f8d;
+  border-color: color-mix(in srgb, #54a7de 30%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 6%, var(--theme--background));
+}
+
+.eval-mark-type.tone-grammar {
+  color: #554777;
+  border-color: color-mix(in srgb, #746694 30%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 6%, var(--theme--background));
+}
+
+.eval-mark-type.tone-analysis {
+  color: #065f46;
+  border-color: color-mix(in srgb, #059669 30%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 6%, var(--theme--background));
+}
+
 </style>

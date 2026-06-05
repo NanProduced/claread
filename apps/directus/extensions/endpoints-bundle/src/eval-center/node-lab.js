@@ -2136,6 +2136,7 @@ export function registerNodeLabRoutes(router, context, deps) {
         source_text_hash: snapshotSourceHash,
         request_id: snapshot.request_id || null,
         char_count: snapshot.source_char_count || null,
+        text: body.request?.text || snapshot.text || snapshot.source_text || "",
       };
       const canonicalBody = {
         workspace_type: "baseline_compare",

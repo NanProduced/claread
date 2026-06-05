@@ -741,6 +741,8 @@ export function createNodeLabApi(deps: NodeLabState) {
         reading_goal: String(snapshot.reading_goal || "").trim(),
         reading_variant: String(snapshot.reading_variant || "").trim(),
         source_type: snapshot.source_type || "user_input",
+        text: currentText.value || "",
+        source_text_hash: snapshot.source_text_hash || "",
       };
       const body = {
         request: compareRequestFromSnapshot,

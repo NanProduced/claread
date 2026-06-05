@@ -80,6 +80,43 @@ function scopedOutputForRow(rowSide, nodeName) {
     sentence_translations: rowSide.translations || [],
   };
 }
+
+function areSidesEmpty(row, nodeName) {
+  if (nodeName === "grammar") {
+    return !row.baseline.notes.length && !row.baseline.analyses.length &&
+           !row.candidate.notes.length && !row.candidate.analyses.length;
+  }
+  if (nodeName === "vocabulary") {
+    return !row.baseline.vocabHighlights.length && !row.baseline.phraseGlosses.length && !row.baseline.contextGlosses.length &&
+           !row.candidate.vocabHighlights.length && !row.candidate.phraseGlosses.length && !row.candidate.contextGlosses.length;
+  }
+  if (nodeName === "translation") {
+    return !row.baseline.translations.length && !row.candidate.translations.length;
+  }
+  return false;
+}
+
+function areSidesIdentical(row, nodeName) {
+  if (nodeName === "grammar") {
+    return JSON.stringify(row.baseline.notes) === JSON.stringify(row.candidate.notes) &&
+           JSON.stringify(row.baseline.analyses) === JSON.stringify(row.candidate.analyses);
+  }
+  if (nodeName === "vocabulary") {
+    return JSON.stringify(row.baseline.vocabHighlights) === JSON.stringify(row.candidate.vocabHighlights) &&
+           JSON.stringify(row.baseline.phraseGlosses) === JSON.stringify(row.candidate.phraseGlosses) &&
+           JSON.stringify(row.baseline.contextGlosses) === JSON.stringify(row.candidate.contextGlosses);
+  }
+  if (nodeName === "translation") {
+    return JSON.stringify(row.baseline.translations) === JSON.stringify(row.candidate.translations);
+  }
+  return false;
+}
+
+function emptyTextForNode(nodeName) {
+  if (nodeName === "grammar") return "该句双侧均没有结构化分析输出。";
+  if (nodeName === "vocabulary") return "该句双侧均没有词汇标注输出。";
+  return "该句双侧均没有翻译输出。";
+}
 </script>
 
 <template>
@@ -108,7 +145,91 @@ function scopedOutputForRow(rowSide, nodeName) {
         <span class="compare-row__id">{{ row.sentenceId }}</span>
         <p class="compare-row__sentence">{{ row.sentenceText || '当前未返回原句。' }}</p>
       </div>
-      <div class="compare-row__body">
+
+      <!-- Case 1: Both sides empty -->
+      <div v-if="areSidesEmpty(row, state.activeNode)" class="compare-row__body is-folded">
+        <div class="compare-empty-folded">
+          <span class="empty-icon-label">∅</span>
+          {{ emptyTextForNode(state.activeNode) }}
+        </div>
+      </div>
+
+      <!-- Case 2: Identical outputs -->
+      <div v-else-if="areSidesIdentical(row, state.activeNode)" class="compare-row__body is-folded">
+        <div class="identical-header-banner">
+          <span class="badge badge-success-soft">无差异（完全一致）</span>
+        </div>
+        <div class="compare-column-folded">
+          <template v-if="state.activeNode === 'grammar'">
+            <NodeProbeOutputView
+              v-if="row.baseline.notes.length || row.baseline.analyses.length"
+              :node-name="state.activeNode"
+              :output="scopedOutputForRow(row.baseline, state.activeNode)"
+              :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+              :quick-validation="compareResult?.baseline?.quick_validation || null"
+              empty-text="该句没有结构化输出。"
+            />
+          </template>
+          <template v-else-if="state.activeNode === 'vocabulary'">
+            <NodeProbeOutputView
+              v-if="row.baseline.vocabHighlights.length || row.baseline.phraseGlosses.length || row.baseline.contextGlosses.length"
+              :node-name="state.activeNode"
+              :output="scopedOutputForRow(row.baseline, state.activeNode)"
+              :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+              empty-text="该句没有词汇标注。"
+            />
+          </template>
+          <template v-else>
+            <NodeProbeOutputView
+              v-if="row.baseline.translations.length"
+              :node-name="state.activeNode"
+              :output="scopedOutputForRow(row.baseline, state.activeNode)"
+              :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+              empty-text="该句没有翻译输出。"
+            />
+          </template>
+        </div>
+
+        <div v-if="showInlineJudge && (getJudgeItemsForSentence('baseline', row.sentenceId).length || getJudgeItemsForSentence('candidate', row.sentenceId).length)" class="unified-judge-row mt-3">
+          <div v-if="getJudgeItemsForSentence('baseline', row.sentenceId).length" class="inline-judge-panel fade-in">
+            <div class="inline-judge-header">
+              <span class="inline-judge-title">Baseline 评分</span>
+            </div>
+            <div v-for="judgeItem in getJudgeItemsForSentence('baseline', row.sentenceId)" :key="judgeItem.item_id" class="judge-item-group mt-2">
+              <div class="judge-item-label">{{ judgeItemResultLabel(judgeItem) }}</div>
+              <ul class="insight-list">
+                <li v-for="criterion in judgeItem.criteria" :key="criterion.criterion_id">
+                  <span class="rubric-indicator" :class="`is-${judgeCriterionTone(criterion.score)}`">
+                    {{ judgeCriterionSymbol(criterion.score) }}
+                  </span>
+                  <strong>{{ criterion.criterion_id }}</strong>
+                  <span>：{{ criterion.reason }}</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div v-if="getJudgeItemsForSentence('candidate', row.sentenceId).length" class="inline-judge-panel fade-in">
+            <div class="inline-judge-header">
+              <span class="inline-judge-title">Candidate 评分</span>
+            </div>
+            <div v-for="judgeItem in getJudgeItemsForSentence('candidate', row.sentenceId)" :key="judgeItem.item_id" class="judge-item-group mt-2">
+              <div class="judge-item-label">{{ judgeItemResultLabel(judgeItem) }}</div>
+              <ul class="insight-list">
+                <li v-for="criterion in judgeItem.criteria" :key="criterion.criterion_id">
+                  <span class="rubric-indicator" :class="`is-${judgeCriterionTone(criterion.score)}`">
+                    {{ judgeCriterionSymbol(criterion.score) }}
+                  </span>
+                  <strong>{{ criterion.criterion_id }}</strong>
+                  <span>：{{ criterion.reason }}</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Case 3: Different outputs (Double Columns) -->
+      <div v-else class="compare-row__body">
         <div class="compare-column" role="region" aria-label="Baseline">
           <div class="compare-column__header">
             <h4>Baseline</h4>
@@ -288,9 +409,11 @@ function scopedOutputForRow(rowSide, nodeName) {
 
 .compare-row__sentence {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.7;
   color: var(--color-text);
+  font-family: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
+  letter-spacing: -0.015em;
 }
 
 .compare-row__body {
@@ -466,5 +589,58 @@ function scopedOutputForRow(rowSide, nodeName) {
   .compare-row__body {
     grid-template-columns: 1fr;
   }
+  .unified-judge-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compare-row__body.is-folded {
+  display: block;
+  padding: 16px;
+}
+
+.compare-empty-folded {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 80px;
+  padding: 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subdued);
+  color: var(--color-text-subdued);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.empty-icon-label {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.identical-header-banner {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.badge-success-soft {
+  border-color: color-mix(in srgb, var(--theme--success, #10b981) 30%, var(--color-border));
+  color: var(--theme--success, #10b981);
+  background: color-mix(in srgb, var(--theme--success, #10b981) 6%, var(--color-surface));
+}
+
+.compare-column-folded {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+}
+
+.unified-judge-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
 }
 </style>
