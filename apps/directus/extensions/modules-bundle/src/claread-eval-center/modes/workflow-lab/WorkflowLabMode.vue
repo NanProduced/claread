@@ -270,13 +270,14 @@ function workflowBundleManifest(form) {
   };
 }
 
-function policiesFromAgents(agents) {
+function policiesFromAgents(agents, readingVariant) {
   const policies = {};
   for (const layer of Object.values(normalizeAgentMap(agents))) {
     if (!layer.policy_name || !layer.policy_focus) continue;
     if (!policies[layer.policy_name]) policies[layer.policy_name] = {};
     const lines = layer.policy_lines.filter((line) => line.trim());
-    const variantKey = layer.policy_variant || "default";
+    const variantKey = layer.policy_variant || readingVariant;
+    if (!variantKey) continue;
     policies[layer.policy_name][layer.policy_focus] = {
       [variantKey]: lines,
     };
@@ -289,9 +290,10 @@ function examplesFromAgents(agents, readingVariant) {
   for (const layer of Object.values(normalizeAgentMap(agents))) {
     const cleanExamples = layer.examples.filter((entry) => entry.sentence_text && entry.output_fragment);
     if (cleanExamples.length === 0) continue;
+    const exampleVariant = layer.policy_variant || readingVariant;
+    if (!exampleVariant) continue;
     examples[layer.agent_name] = {
-      [layer.policy_variant || readingVariant || "default"]: cleanExamples,
-      default: cleanExamples,
+      [exampleVariant]: cleanExamples,
     };
   }
   return examples;
@@ -462,7 +464,7 @@ function candidatePayload(extra = {}) {
     scope: "workflow_lab",
     few_shot_mode: candidateForm.value.few_shot_mode,
     notes: candidateForm.value.notes,
-    policies_json: policiesFromAgents(manifest.agents),
+    policies_json: policiesFromAgents(manifest.agents, manifest.reading_variant),
     examples_json: examplesFromAgents(manifest.agents, manifest.reading_variant),
     manifest_json: manifest,
     ...extra,

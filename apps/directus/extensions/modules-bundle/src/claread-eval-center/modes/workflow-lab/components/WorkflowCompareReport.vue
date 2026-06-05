@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
-import ReviewNotesPanel from "../../../components/ReviewNotesPanel.vue";
+import WorkflowCompareReviewPanel from "../../../components/WorkflowCompareReviewPanel.vue";
 import WorkflowSentenceCompareNotebook from "./WorkflowSentenceCompareNotebook.vue";
 
 const props = defineProps({
@@ -83,12 +83,11 @@ const filterMode = ref("all");
             <h3>记录人工判断，放在证据阅读之后</h3>
           </div>
         </header>
-        <ReviewNotesPanel
-          target-type="workflow_compare"
-          :target-id="compareId || result?.compare_id || report.compare_id || ''"
-          :run-id="report.candidate_run_id"
-          title="Compare Review"
-          scope-note="这类 note 挂在 workflow_compare 记录上，表达 compare-scope 判断；不是逐句 review。"
+        <WorkflowCompareReviewPanel
+          v-if="compareId || result?.compare_id || report.compare_id"
+          :compare-id="compareId || result?.compare_id || report.compare_id || ''"
+          :candidate-run-id="report.candidate_run_id"
+          :compare-summary="report"
         />
       </section>
     </template>

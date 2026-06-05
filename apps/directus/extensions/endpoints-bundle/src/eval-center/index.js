@@ -156,59 +156,7 @@ function compareJudgeArtifactDir(root, compareId, judgeRunId) {
   return path.join(compareDir(root, compareId), "judge", judgeRunId);
 }
 
-function workflowCompareReportDir(root, candidateRunId) {
-  return path.join(runDir(root, candidateRunId), "compare");
-}
 
-function legacyWorkflowCompareReportDir(root, candidateRunId) {
-  return path.join(runDir(root, candidateRunId), "ab");
-}
-
-function workflowCompareReportPath(root, candidateRunId, reportId) {
-  if (!isSafeFileId(reportId)) {
-    const error = new Error("Invalid workflow compare report id.");
-    error.status = 400;
-    error.code = "INVALID_WORKFLOW_COMPARE_REPORT_ID";
-    throw error;
-  }
-  return path.join(workflowCompareReportDir(root, candidateRunId), `${reportId}.json`);
-}
-
-function legacyWorkflowCompareReportPath(root, candidateRunId, reportId) {
-  if (!isSafeFileId(reportId)) {
-    const error = new Error("Invalid workflow compare report id.");
-    error.status = 400;
-    error.code = "INVALID_WORKFLOW_COMPARE_REPORT_ID";
-    throw error;
-  }
-  return path.join(legacyWorkflowCompareReportDir(root, candidateRunId), `${reportId}.json`);
-}
-
-function workflowCompareReportMarkdownPath(root, candidateRunId, reportId) {
-  if (!isSafeFileId(reportId)) {
-    const error = new Error("Invalid workflow compare report id.");
-    error.status = 400;
-    error.code = "INVALID_WORKFLOW_COMPARE_REPORT_ID";
-    throw error;
-  }
-  return path.join(workflowCompareReportDir(root, candidateRunId), `${reportId}.md`);
-}
-
-async function resolveWorkflowCompareReportJsonPath(root, candidateRunId, reportId) {
-  const primaryPath = workflowCompareReportPath(root, candidateRunId, reportId);
-  if (await fileExists(primaryPath)) return primaryPath;
-  const legacyPath = legacyWorkflowCompareReportPath(root, candidateRunId, reportId);
-  if (await fileExists(legacyPath)) return legacyPath;
-  return primaryPath;
-}
-
-async function listWorkflowCompareReportIds(root, runId) {
-  const buckets = await Promise.all([
-    listJsonIds(workflowCompareReportDir(root, runId)),
-    listJsonIds(legacyWorkflowCompareReportDir(root, runId)),
-  ]);
-  return [...new Set(buckets.flat())].sort();
-}
 
 function judgeArtifactDir(root, runId, judgeRunId) {
   if (!isSafeFileId(judgeRunId)) {
@@ -340,9 +288,6 @@ function summarizeRun(run, report, counts) {
       : null,
     case_artifact_count: counts.case_artifact_count,
     learning_case_count: counts.learning_case_count ?? null,
-    academic_case_count: counts.academic_case_count ?? null,
-    non_learning_case_count: counts.non_learning_case_count ?? null,
-    compare_report_count: counts.compare_report_count,
     mode: run.mode || "workflow",
     judge_report_count: counts.judge_report_count ?? 0,
     model_identity: run.model_identity || null,
@@ -387,7 +332,6 @@ function workflowHistoryRecord(summary) {
     soft_failure_count: summary?.soft_failure_count ?? 0,
     regression_count: summary?.regression_count ?? 0,
     judge_report_count: summary?.judge_report_count ?? 0,
-    compare_report_count: summary?.compare_report_count ?? 0,
     created_at: summary?.created_at || null,
     date_created: summary?.created_at || null,
     display_title: summary?.custom_title || (summary?.mode === "workflow_single_run"
@@ -435,18 +379,11 @@ function inferRunTopologyMode(caseArtifacts) {
 function countRunTopologies(caseArtifacts) {
   const items = Array.isArray(caseArtifacts) ? caseArtifacts : [];
   let learning = 0;
-  let academic = 0;
-  let unknown = 0;
   for (const artifact of items) {
-    const topologyMode = topologyFromCaseArtifact(artifact);
-    if (topologyMode === "learning") learning += 1;
-    else if (topologyMode === "academic") academic += 1;
-    else unknown += 1;
+    if (topologyFromCaseArtifact(artifact) === "learning") learning += 1;
   }
   return {
     learning_case_count: learning,
-    academic_case_count: academic,
-    non_learning_case_count: academic + unknown,
   };
 }
 
@@ -510,7 +447,6 @@ async function loadRunSummary(roots, runId) {
   const topologyCounts = countRunTopologies(caseSummaries);
   return summarizeRun(run, report, {
     case_artifact_count: caseIndex?.total_cases ?? await countJsonFiles(path.join(dir, "cases")),
-    compare_report_count: (await listWorkflowCompareReportIds(root, runId)).length,
     judge_report_count: await countJudgeArtifactDirs(path.join(dir, "judge")),
     topology_mode: inferRunTopologyMode(caseSummaries),
     ...topologyCounts,
@@ -555,14 +491,12 @@ async function loadRunDetail(roots, runId) {
   const report = (await fileExists(reportPath)) ? await readJsonFile(reportPath) : null;
   const caseIndex = await loadCaseIndex(root, runId);
   const caseSummaries = caseIndex?.cases ?? await loadCaseArtifactSummaries(root, runId, dir);
-  const compareReportIds = await listWorkflowCompareReportIds(root, runId);
   const judgeReports = await listJudgeArtifacts(root, runId);
   const topologyCounts = countRunTopologies(caseSummaries);
 
   return {
     summary: summarizeRun(run, report, {
       case_artifact_count: caseSummaries.length,
-      compare_report_count: compareReportIds.length,
       judge_report_count: judgeReports.length,
       topology_mode: inferRunTopologyMode(caseSummaries),
       ...topologyCounts,
@@ -577,37 +511,8 @@ async function loadRunDetail(roots, runId) {
         }
       : null,
     case_artifacts: caseSummaries,
-    compare_reports: compareReportIds.map((id) => ({
-      id,
-      href: `/eval-center/runs/${encodeURIComponent(runId)}/compare/${encodeURIComponent(id)}`,
-    })),
     judge_reports: judgeReports,
   };
-}
-
-async function loadWorkflowCompareReportSummaries(root, runId) {
-  const reportIds = await listWorkflowCompareReportIds(root, runId);
-  const reports = [];
-  for (const reportId of reportIds) {
-    try {
-      const report = await readJsonFile(await resolveWorkflowCompareReportJsonPath(root, runId, reportId));
-      reports.push({
-        id: reportId,
-        report_id: reportId,
-        baseline_run_id: report?.baseline_run_id || null,
-        candidate_run_id: report?.candidate_run_id || runId,
-        created_at: report?.created_at || null,
-        total_cases: report?.total_cases ?? null,
-        wins: report?.wins ?? null,
-        losses: report?.losses ?? null,
-        ties: report?.ties ?? null,
-        manual_review: report?.manual_review ?? null,
-      });
-    } catch {
-      // Ignore malformed compare artifacts in list view.
-    }
-  }
-  return reports.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
 
 async function loadWorkflowRunHistoryRecords(roots, limit) {
@@ -639,7 +544,6 @@ async function loadWorkflowRunHistoryDetail(roots, runId) {
     case_artifacts: detail.case_artifacts || [],
     full_case_artifacts: fullCaseArtifacts,
     judge_reports: judgeReports,
-    compare_reports: await loadWorkflowCompareReportSummaries(root, runId),
   };
 }
 
@@ -3421,18 +3325,19 @@ function workflowBundlePromptOverride(manifest) {
     if (layer.policy_name && layer.policy_focus) {
       const policyName = layer.policy_name;
       const focus = layer.policy_focus;
-      const variant = layer.policy_variant || manifest.reading_variant || "default";
+      const variant = layer.policy_variant || manifest.reading_variant;
+      if (!variant) continue;
       policies[policyName] = normalizeJsonObject(policies[policyName]);
       policies[policyName][focus] = {
         ...(normalizeJsonObject(policies[policyName][focus])),
         [variant]: layer.policy_lines,
-        default: layer.policy_lines,
       };
     }
     if (Array.isArray(layer.examples) && layer.examples.length > 0) {
+      const exampleVariant = layer.policy_variant || manifest.reading_variant;
+      if (!exampleVariant) continue;
       examples[agentName] = normalizeJsonObject(examples[agentName]);
-      examples[agentName][layer.policy_variant || manifest.reading_variant || "default"] = layer.examples;
-      examples[agentName].default = layer.examples;
+      examples[agentName][exampleVariant] = layer.examples;
     }
   }
 
@@ -6118,43 +6023,6 @@ export default (router, context) => {
       next(error);
     }
   });
-
-  async function sendWorkflowCompareReportList(req, res, next) {
-    if (!buildAuthGuard(req, res)) return;
-
-    try {
-      const root = await resolveRunRootOrThrow(resolveWorkflowRunRoots(env), req.params.runId);
-      const reportIds = await listWorkflowCompareReportIds(root, req.params.runId);
-      res.json({
-        data: reportIds.map((id) => ({
-          id,
-          href: `/eval-center/runs/${encodeURIComponent(req.params.runId)}/compare/${encodeURIComponent(id)}`,
-        })),
-      });
-    } catch (error) {
-      if (error?.status) sendArtifactError(res, error);
-      else next(error);
-    }
-  }
-
-  router.get("/runs/:runId/compare", sendWorkflowCompareReportList);
-
-  async function sendWorkflowCompareReportDetail(req, res, next) {
-    if (!buildAuthGuard(req, res)) return;
-
-    try {
-      const root = await resolveRunRootOrThrow(resolveWorkflowRunRoots(env), req.params.runId);
-      const report = await readJsonFile(
-        await resolveWorkflowCompareReportJsonPath(root, req.params.runId, req.params.reportId),
-      );
-      res.json({ data: report });
-    } catch (error) {
-      if (error?.status) sendArtifactError(res, error);
-      else next(error);
-    }
-  }
-
-  router.get("/runs/:runId/compare/:reportId", sendWorkflowCompareReportDetail);
 
   router.post("/workflow-lab/compare", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;

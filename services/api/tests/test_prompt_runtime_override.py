@@ -47,7 +47,7 @@ def test_policy_override_falls_back_outside_scope() -> None:
         policies={
             "grammar": {
                 "balanced": {
-                    "default": ["variant policy line"],
+                    "intermediate_reading": ["variant policy line"],
                 }
             }
         },

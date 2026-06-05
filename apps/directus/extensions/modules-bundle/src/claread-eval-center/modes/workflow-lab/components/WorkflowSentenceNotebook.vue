@@ -1,6 +1,14 @@
 <script setup>
 import { computed } from "vue";
-import { dash, normalizeWorkflowScene, sceneInlineMarks, sceneSentenceEntries, sceneTranslations } from "../composables/workflowLabFormatting.js";
+import {
+  dash,
+  extractHealthSignals,
+  normalizeWorkflowScene,
+  sceneInlineMarks,
+  sceneSentenceEntries,
+  sceneTranslations,
+  sentenceWarningChips,
+} from "../composables/workflowLabFormatting.js";
 
 const props = defineProps({
   payload: { type: [Object, Array, null], default: null },
@@ -9,6 +17,11 @@ const props = defineProps({
 });
 
 const scene = computed(() => normalizeWorkflowScene(props.payload));
+const warningsGrouped = computed(() => extractHealthSignals(props.payload).warningsGrouped);
+
+function chipsFor(sid) {
+  return sentenceWarningChips(warningsGrouped.value, sid);
+}
 
 const sentenceMap = computed(() => {
   const map = new Map();
@@ -394,7 +407,19 @@ const sentenceRows = computed(() => {
     <ol v-else class="sentence-list">
       <li v-for="row in sentenceRows" :key="row.sentenceId" class="sentence-card">
         <header class="sentence-head">
-          <span class="sentence-id">{{ row.sentenceId }}</span>
+          <div class="sentence-id-stack">
+            <span class="sentence-id">{{ row.sentenceId }}</span>
+            <template v-if="chipsFor(row.sentenceId).length">
+              <div class="sentence-chips">
+                <span
+                  v-for="chip in chipsFor(row.sentenceId)"
+                  :key="`n-chip-${row.sentenceId}-${chip.code}`"
+                  :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`]"
+                  :title="chip.message || chip.text"
+                >{{ chip.text }}</span>
+              </div>
+            </template>
+          </div>
           <div class="sentence-copy">
             <p class="source-line" aria-label="原句">
               <template v-for="(segment, index) in row.originalSegments" :key="`${row.sentenceId}-${index}`">
@@ -414,14 +439,14 @@ const sentenceRows = computed(() => {
           <section class="annotation-group vocab-group">
             <div class="group-head">
               <div class="group-head-main">
-                <strong>词汇 / 短语标注</strong>
+                <strong>词汇</strong>
                 <div class="type-legend" aria-label="词汇标注类型">
                   <span class="legend-pill tone-vocab">词汇</span>
                   <span class="legend-pill tone-phrase">短语</span>
                   <span class="legend-pill tone-context">语境</span>
                 </div>
               </div>
-              <small>{{ row.lexicalMarks.length }} 条</small>
+              <span class="group-count-badge tone-vocab-count">{{ row.lexicalMarks.length }} 条词汇</span>
             </div>
             <div v-if="row.lexicalMarks.length" class="note-list">
               <article
@@ -431,8 +456,9 @@ const sentenceRows = computed(() => {
                 :class="mark.tone"
               >
                 <div class="note-head">
-                  <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                  <span class="type-stripe" :class="mark.tone" aria-hidden="true"></span>
                   <span class="eval-mark-type" :class="mark.tone">{{ mark.typeLabel }}</span>
+                  <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                 </div>
                 <p class="note-body">{{ mark.summary }}</p>
                 <p v-if="mark.detail" class="note-detail">{{ mark.detail }}</p>
@@ -444,85 +470,103 @@ const sentenceRows = computed(() => {
           <section class="annotation-group grammar-group">
             <div class="group-head">
               <div class="group-head-main">
-                <strong>语法 / 句法标注</strong>
+                <strong>语法 / 句法</strong>
                 <div class="type-legend" aria-label="语法标注类型">
                   <span class="legend-pill tone-grammar-note">语法</span>
                   <span class="legend-pill tone-sentence-analysis">句法</span>
                 </div>
               </div>
-              <small>{{ row.grammarMarks.length + row.grammarEntries.length }} 条</small>
+              <span class="group-count-badge tone-grammar-count">{{ row.grammarMarks.length + row.grammarEntries.length }} 条语法</span>
             </div>
-            <div v-if="row.grammarMarks.length || row.grammarEntries.length" class="note-list">
-              <article
-                v-for="(mark, index) in row.grammarMarks"
-                :key="`grammar-mark-${row.sentenceId}-${index}`"
-                class="note-card grammar-card compact"
-                :class="mark.tone"
-              >
-                <div class="note-head">
-                  <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
-                  <span class="eval-mark-type" :class="mark.tone">{{ mark.label }}</span>
+            <div v-if="row.grammarMarks.length || row.grammarEntries.length" class="note-list grammar-note-list">
+              <!-- grammar_note inline marks (compact) -->
+              <template v-if="row.grammarMarks.length">
+                <div class="grammar-subtype-divider tone-grammar-note">
+                  <span class="grammar-subtype-label">语法标注</span>
+                  <span class="grammar-subtype-count">{{ row.grammarMarks.length }}</span>
                 </div>
-                <p class="note-body">{{ mark.content }}</p>
-                <p v-if="mark.detail" class="note-detail">{{ mark.detail }}</p>
-              </article>
-
-              <article
-                v-for="(entry, index) in row.grammarEntries"
-                :key="`grammar-entry-${row.sentenceId}-${index}`"
-                class="note-card grammar-card"
-                :class="entry.tone"
-              >
-                <div class="note-head">
-                  <span class="eval-anchor-chip" :class="entry.tone">{{ entry.anchor }}</span>
-                  <span class="eval-mark-type" :class="entry.tone">{{ entry.label }}</span>
-                </div>
-                <strong class="entry-title">{{ entry.title }}</strong>
-                <template v-if="entry.tone === 'tone-sentence-analysis'">
-                  <div v-if="row.originalText" class="analysis-context">
-                    <span class="analysis-context-label">原句定位</span>
-                    <p class="analysis-context-text">
-                      <template
-                        v-for="(segment, segmentIndex) in entry.highlightedSentence"
-                        :key="`analysis-segment-${row.sentenceId}-${index}-${segmentIndex}`"
-                      >
-                        <mark v-if="segment.highlighted" class="analysis-mark">{{ segment.text }}</mark>
-                        <span v-else>{{ segment.text }}</span>
-                      </template>
-                    </p>
+                <article
+                  v-for="(mark, index) in row.grammarMarks"
+                  :key="`grammar-mark-${row.sentenceId}-${index}`"
+                  class="note-card grammar-card compact"
+                  :class="mark.tone"
+                >
+                  <div class="note-head">
+                    <span class="grammar-index-badge tone-grammar-note">#{{ index + 1 }}</span>
+                    <span class="type-stripe" :class="mark.tone" aria-hidden="true"></span>
+                    <span class="eval-mark-type" :class="mark.tone">{{ mark.label }}</span>
+                    <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                   </div>
+                  <p class="note-body">{{ mark.content }}</p>
+                  <p v-if="mark.detail" class="note-detail">{{ mark.detail }}</p>
+                </article>
+              </template>
 
-                  <div class="analysis-evidence-row">
-                    <div class="analysis-evidence-summary">
-                      <span class="analysis-evidence-label">拆解块</span>
-                      <span class="analysis-evidence-value">{{ entry.chunks.length }} 段</span>
+              <!-- sentence_analysis / grammar entries (detailed) -->
+              <template v-if="row.grammarEntries.length">
+                <div class="grammar-subtype-divider" :class="row.grammarEntries[0]?.tone">
+                  <span class="grammar-subtype-label">句法分析</span>
+                  <span class="grammar-subtype-count">{{ row.grammarEntries.length }}</span>
+                </div>
+                <article
+                  v-for="(entry, index) in row.grammarEntries"
+                  :key="`grammar-entry-${row.sentenceId}-${index}`"
+                  class="note-card grammar-card"
+                  :class="entry.tone"
+                >
+                  <div class="note-head">
+                    <span class="grammar-index-badge" :class="entry.tone">#{{ row.grammarMarks.length + index + 1 }}</span>
+                    <span class="type-stripe" :class="entry.tone" aria-hidden="true"></span>
+                    <span class="eval-mark-type" :class="entry.tone">{{ entry.label }}</span>
+                    <span class="eval-anchor-chip" :class="entry.tone">{{ entry.anchor }}</span>
+                  </div>
+                  <strong class="entry-title">{{ entry.title }}</strong>
+                  <template v-if="entry.tone === 'tone-sentence-analysis'">
+                    <div v-if="row.originalText" class="analysis-context">
+                      <span class="analysis-context-label">原句定位</span>
+                      <p class="analysis-context-text">
+                        <template
+                          v-for="(segment, segmentIndex) in entry.highlightedSentence"
+                          :key="`analysis-segment-${row.sentenceId}-${index}-${segmentIndex}`"
+                        >
+                          <mark v-if="segment.highlighted" class="analysis-mark">{{ segment.text }}</mark>
+                          <span v-else>{{ segment.text }}</span>
+                        </template>
+                      </p>
                     </div>
-                  </div>
 
-                  <ul v-if="entry.missingChunks.length" class="warning-list">
-                    <li v-for="(chunkText, chunkIndex) in entry.missingChunks" :key="`missing-chunk-${row.sentenceId}-${index}-${chunkIndex}`">
-                      sentence_analysis: chunk text '{{ chunkText }}' not found in sentence {{ row.sentenceId }}
-                    </li>
-                  </ul>
-
-                  <p class="note-body preserve-lines">{{ entry.analysisText || entry.content }}</p>
-
-                  <div v-if="entry.chunks.length" class="chunk-list">
-                    <div
-                      v-for="(chunk, chunkIndex) in entry.chunks"
-                      :key="`chunk-${row.sentenceId}-${index}-${chunkIndex}`"
-                      class="chunk-row"
-                    >
-                      <span class="chunk-order">{{ chunk.order || chunkIndex + 1 }}</span>
-                      <div class="chunk-main">
-                        <strong>{{ chunk.label || "未命名" }}</strong>
-                        <span>{{ chunk.text || "—" }}</span>
+                    <div class="analysis-evidence-row">
+                      <div class="analysis-evidence-summary">
+                        <span class="analysis-evidence-label">拆解块</span>
+                        <span class="analysis-evidence-value">{{ entry.chunks.length }} 段</span>
                       </div>
                     </div>
-                  </div>
-                </template>
-                <p v-else class="note-body preserve-lines">{{ entry.content }}</p>
-              </article>
+
+                    <ul v-if="entry.missingChunks.length" class="warning-list">
+                      <li v-for="(chunkText, chunkIndex) in entry.missingChunks" :key="`missing-chunk-${row.sentenceId}-${index}-${chunkIndex}`">
+                        sentence_analysis: chunk text '{{ chunkText }}' not found in sentence {{ row.sentenceId }}
+                      </li>
+                    </ul>
+
+                    <p class="note-body preserve-lines">{{ entry.analysisText || entry.content }}</p>
+
+                    <div v-if="entry.chunks.length" class="chunk-list">
+                      <div
+                        v-for="(chunk, chunkIndex) in entry.chunks"
+                        :key="`chunk-${row.sentenceId}-${index}-${chunkIndex}`"
+                        class="chunk-row"
+                      >
+                        <span class="chunk-order">{{ chunk.order || chunkIndex + 1 }}</span>
+                        <div class="chunk-main">
+                          <strong>{{ chunk.label || "未命名" }}</strong>
+                          <span>{{ chunk.text || "—" }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <p v-else class="note-body preserve-lines">{{ entry.content }}</p>
+                </article>
+              </template>
             </div>
             <p v-else class="empty-line">这句没有语法或句法标注。</p>
           </section>
@@ -761,28 +805,28 @@ const sentenceRows = computed(() => {
 }
 
 .lexical-card.tone-vocab {
-  border-color: color-mix(in srgb, #e4b000 30%, var(--theme--border-color));
-  background: color-mix(in srgb, #e4b000 4%, var(--theme--background));
+  border-color: color-mix(in srgb, #e4b000 40%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 8%, var(--theme--background));
 }
 
 .lexical-card.tone-phrase {
-  border-color: color-mix(in srgb, #db2777 36%, var(--theme--border-color));
-  background: color-mix(in srgb, #db2777 6%, var(--theme--background));
+  border-color: color-mix(in srgb, #db2777 44%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 10%, var(--theme--background));
 }
 
 .lexical-card.tone-context {
-  border-color: color-mix(in srgb, #54a7de 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #54a7de 5%, var(--theme--background));
+  border-color: color-mix(in srgb, #54a7de 42%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 9%, var(--theme--background));
 }
 
 .grammar-card.tone-grammar-note {
-  border-color: color-mix(in srgb, #746694 28%, var(--theme--border-color));
-  background: color-mix(in srgb, #746694 4%, var(--theme--background));
+  border-color: color-mix(in srgb, #746694 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 8%, var(--theme--background));
 }
 
 .grammar-card.tone-sentence-analysis {
-  border-color: color-mix(in srgb, #059669 30%, var(--theme--border-color));
-  background: color-mix(in srgb, #059669 5%, var(--theme--background));
+  border-color: color-mix(in srgb, #059669 40%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 9%, var(--theme--background));
 }
 
 .extra-card {
@@ -909,6 +953,127 @@ const sentenceRows = computed(() => {
   overflow-wrap: anywhere;
 }
 
+/* ── Type stripe (colored block before type label) ──────── */
+.type-stripe {
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.type-stripe.tone-vocab    { background: #e4b000; }
+.type-stripe.tone-phrase   { background: #db2777; }
+.type-stripe.tone-context  { background: #54a7de; }
+.type-stripe.tone-grammar-note      { background: #746694; }
+.type-stripe.tone-sentence-analysis { background: #059669; }
+
+/* ── Grammar sequential index badge ─────────────────────── */
+.grammar-index-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
+
+.grammar-index-badge.tone-grammar-note {
+  background: color-mix(in srgb, #746694 18%, var(--theme--background));
+  color: #554777;
+}
+
+.grammar-index-badge.tone-sentence-analysis {
+  background: color-mix(in srgb, #059669 18%, var(--theme--background));
+  color: #065f46;
+}
+
+/* ── Group count badge ───────────────────────────────────── */
+.group-count-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.group-count-badge.tone-vocab-count {
+  background: color-mix(in srgb, #e4b000 14%, var(--theme--background));
+  border-color: color-mix(in srgb, #e4b000 30%, var(--theme--border-color));
+  color: #785300;
+}
+
+.group-count-badge.tone-grammar-count {
+  background: color-mix(in srgb, #746694 14%, var(--theme--background));
+  border-color: color-mix(in srgb, #746694 30%, var(--theme--border-color));
+  color: #554777;
+}
+
+/* ── Grammar sub-type divider ────────────────────────────── */
+.grammar-subtype-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  margin-top: 4px;
+}
+
+.grammar-subtype-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--theme--border-color);
+}
+
+.grammar-subtype-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.grammar-subtype-divider.tone-grammar-note .grammar-subtype-label {
+  color: #554777;
+}
+
+.grammar-subtype-divider.tone-sentence-analysis .grammar-subtype-label {
+  color: #065f46;
+}
+
+.grammar-subtype-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.grammar-subtype-divider.tone-grammar-note .grammar-subtype-count {
+  background: color-mix(in srgb, #746694 18%, var(--theme--background));
+  color: #554777;
+}
+
+.grammar-subtype-divider.tone-sentence-analysis .grammar-subtype-count {
+  background: color-mix(in srgb, #059669 18%, var(--theme--background));
+  color: #065f46;
+}
+
+.grammar-note-list {
+  gap: 8px;
+}
+
+/* ── eval-anchor-chip and eval-mark-type ─────────────────── */
 .eval-anchor-chip,
 .eval-mark-type {
   display: inline-flex;
@@ -919,65 +1084,77 @@ const sentenceRows = computed(() => {
   font-size: 11px;
   font-weight: 700;
   line-height: 1.2;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
 }
 
-.eval-anchor-chip {
-  border: 1px solid color-mix(in srgb, #e4b000 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #e4b000 15%, var(--theme--background));
-  color: #785300;
-}
-
+/* Tone overrides — listed AFTER the base rule so they win */
 .eval-anchor-chip.tone-vocab,
-.eval-mark-type.tone-vocab,
 .legend-pill.tone-vocab {
-  border-color: color-mix(in srgb, #e4b000 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #e4b000 15%, var(--theme--background));
+  border-color: color-mix(in srgb, #e4b000 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 18%, var(--theme--background));
   color: #785300;
+}
+.eval-mark-type.tone-vocab {
+  border-color: color-mix(in srgb, #e4b000 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 22%, var(--theme--background));
+  color: #6b4a00;
 }
 
 .eval-anchor-chip.tone-phrase,
-.eval-mark-type.tone-phrase,
 .legend-pill.tone-phrase {
-  border-color: color-mix(in srgb, #db2777 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #db2777 10%, var(--theme--background));
+  border-color: color-mix(in srgb, #db2777 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 13%, var(--theme--background));
   color: #9f1239;
+}
+.eval-mark-type.tone-phrase {
+  border-color: color-mix(in srgb, #db2777 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 20%, var(--theme--background));
+  color: #881337;
 }
 
 .eval-anchor-chip.tone-context,
-.eval-mark-type.tone-context,
 .legend-pill.tone-context {
-  border-color: color-mix(in srgb, #54a7de 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #54a7de 12%, var(--theme--background));
+  border-color: color-mix(in srgb, #54a7de 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 15%, var(--theme--background));
   color: #285f8d;
+}
+.eval-mark-type.tone-context {
+  border-color: color-mix(in srgb, #54a7de 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 22%, var(--theme--background));
+  color: #1e4e77;
 }
 
 .eval-anchor-chip.tone-grammar-note,
-.eval-mark-type.tone-grammar-note,
 .legend-pill.tone-grammar-note {
-  border-color: color-mix(in srgb, #746694 38%, var(--theme--border-color));
-  background: color-mix(in srgb, #746694 12%, var(--theme--background));
+  border-color: color-mix(in srgb, #746694 42%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 15%, var(--theme--background));
   color: #554777;
+}
+.eval-mark-type.tone-grammar-note {
+  border-color: color-mix(in srgb, #746694 55%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 22%, var(--theme--background));
+  color: #413563;
 }
 
 .eval-anchor-chip.tone-sentence-analysis,
-.eval-mark-type.tone-sentence-analysis,
 .legend-pill.tone-sentence-analysis {
-  border-color: color-mix(in srgb, #059669 34%, var(--theme--border-color));
-  background: color-mix(in srgb, #059669 12%, var(--theme--background));
+  border-color: color-mix(in srgb, #059669 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 15%, var(--theme--background));
   color: #065f46;
+}
+.eval-mark-type.tone-sentence-analysis {
+  border-color: color-mix(in srgb, #059669 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 22%, var(--theme--background));
+  color: #054a38;
 }
 
 .eval-anchor-chip.extra,
 .eval-mark-type.extra {
-  border-color: color-mix(in srgb, #3c8c68 28%, var(--theme--border-color));
-  background: color-mix(in srgb, #3c8c68 10%, var(--theme--background));
+  border-color: color-mix(in srgb, #3c8c68 32%, var(--theme--border-color));
+  background: color-mix(in srgb, #3c8c68 12%, var(--theme--background));
   color: #2d6b4f;
-}
-
-.eval-mark-type {
-  border: 1px solid var(--theme--border-color);
-  background: var(--theme--background-subdued);
-  color: var(--theme--foreground-subdued);
 }
 
 .entry-title {
@@ -1015,5 +1192,68 @@ const sentenceRows = computed(() => {
   .sentence-head {
     grid-template-columns: 1fr;
   }
+}
+
+.sentence-id-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sentence-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.warn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+
+.warn-chip.is-anchor {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-chunks {
+  color: #065f46;
+  border-color: color-mix(in srgb, #059669 45%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 6%, var(--theme--background));
+}
+
+.warn-chip.is-draft,
+.warn-chip.is-schema,
+.warn-chip.is-fallback {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-repair {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 10%, var(--theme--background));
+}
+
+.warn-chip.is-repair-fail {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 70%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 18%, var(--theme--background));
 }
 </style>

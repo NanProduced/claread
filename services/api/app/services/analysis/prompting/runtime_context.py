@@ -89,7 +89,7 @@ def get_prompt_override_examples(example_name: str, variant: str) -> list[dict[s
     example_data = override.examples.get(example_name)
     if not isinstance(example_data, dict):
         return []
-    raw_entries = example_data.get(variant, example_data.get("default", []))
+    raw_entries = example_data.get(variant, [])
     if isinstance(raw_entries, list):
         return [entry for entry in raw_entries if isinstance(entry, dict)]
     if isinstance(raw_entries, dict):
@@ -105,7 +105,7 @@ def _resolve_variant_lines(value: Any, variant: str | None) -> list[str]:
     if variant and variant in value:
         lines = value[variant]
     else:
-        lines = value.get("default", [])
+        lines = []
     if isinstance(lines, list):
         return [str(line) for line in lines]
     return [str(lines)]

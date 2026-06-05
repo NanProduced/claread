@@ -255,6 +255,7 @@ const judgeOverlayMap = computed(() => {
       baseline_soft_failures: c.baseline_soft_failures ?? 0,
       candidate_hard_failures: c.candidate_hard_failures ?? 0,
       candidate_soft_failures: c.candidate_soft_failures ?? 0,
+      overall_score: c.overall_score ?? null,
     });
   }
   return map;
@@ -330,51 +331,81 @@ const currentResult = computed(() => {
         </div>
         <div v-else-if="currentResult?.error" class="result-error">{{ currentResult.error }}</div>
 
+        <!-- Structured Judge Summary Metrics -->
         <div
           v-else-if="currentResult?.result?.summary"
-          class="result-summary"
+          class="result-summary-container"
         >
-          <div>
-            <dt>Judge 模型</dt>
-            <dd>{{ currentResult.result.summary.judge_model_name || "—" }}</dd>
-          </div>
-          <div>
-            <dt>Judge Profile</dt>
-            <dd>{{ currentResult.result.summary.judge_model_profile || "—" }}</dd>
-          </div>
-          <div>
-            <dt>Judge 耗时</dt>
-            <dd>{{ currentResult.result.summary.judge_latency_seconds != null ? `${Number(currentResult.result.summary.judge_latency_seconds).toFixed(1)}s` : "—" }}</dd>
-          </div>
-          <div>
-            <dt>Judge Tokens</dt>
-            <dd>
+          <!-- Runtime Context Line -->
+          <div class="result-runtime-metadata">
+            <span class="meta-item"><span class="meta-label-inline">Judge 模型:</span> {{ currentResult.result.summary.judge_model_name || "—" }} <span class="profile-tag">({{ currentResult.result.summary.judge_model_profile || "—" }})</span></span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item"><span class="meta-label-inline">耗时:</span> {{ currentResult.result.summary.judge_latency_seconds != null ? `${Number(currentResult.result.summary.judge_latency_seconds).toFixed(1)}s` : "—" }}</span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item">
+              <span class="meta-label-inline">Tokens:</span>
               {{
                 currentResult.result.summary.judge_total_tokens != null
-                  ? `${currentResult.result.summary.judge_total_tokens}（入 ${currentResult.result.summary.judge_input_tokens ?? "—"} / 出 ${currentResult.result.summary.judge_output_tokens ?? "—"}）`
+                  ? `${currentResult.result.summary.judge_total_tokens} (入 ${currentResult.result.summary.judge_input_tokens ?? "—"} / 出 ${currentResult.result.summary.judge_output_tokens ?? "—"})`
                   : "—"
               }}
-            </dd>
+            </span>
           </div>
-          <div>
-            <dt>差异句数</dt>
-            <dd>{{ currentResult.result.summary.total_cases ?? "—" }}</dd>
+
+          <!-- Hero Metrics Cards -->
+          <div class="result-verdict-metrics">
+            <div class="verdict-metric-card is-primary">
+              <span class="metric-lbl">差异数</span>
+              <span class="metric-val">{{ currentResult.result.summary.total_cases ?? 0 }}</span>
+            </div>
+            <div class="verdict-metric-card is-success">
+              <span class="metric-lbl">候选更优</span>
+              <span class="metric-val">{{ currentResult.result.summary.candidate_preferred ?? currentResult.result.summary.passed ?? 0 }}</span>
+            </div>
+            <div class="verdict-metric-card is-danger">
+              <span class="metric-lbl">Baseline 更优</span>
+              <span class="metric-val">{{ currentResult.result.summary.baseline_preferred ?? currentResult.result.summary.failed ?? 0 }}</span>
+            </div>
+            <div class="verdict-metric-card is-neutral">
+              <span class="metric-lbl">持平</span>
+              <span class="metric-val">{{ currentResult.result.summary.tie ?? 0 }}</span>
+            </div>
+            <div class="verdict-metric-card is-warning">
+              <span class="metric-lbl">需复查</span>
+              <span class="metric-val">{{ currentResult.result.summary.needs_review ?? 0 }}</span>
+            </div>
           </div>
-          <div>
-            <dt>候选更优</dt>
-            <dd>{{ currentResult.result.summary.candidate_preferred ?? currentResult.result.summary.passed ?? 0 }}</dd>
-          </div>
-          <div>
-            <dt>Baseline 更优</dt>
-            <dd>{{ currentResult.result.summary.baseline_preferred ?? currentResult.result.summary.failed ?? 0 }}</dd>
-          </div>
-          <div>
-            <dt>持平</dt>
-            <dd>{{ currentResult.result.summary.tie ?? 0 }}</dd>
-          </div>
-          <div>
-            <dt>需复查</dt>
-            <dd>{{ currentResult.result.summary.needs_review ?? 0 }}</dd>
+
+          <!-- Distribution Stack Bar Chart -->
+          <div class="judge-distribution-container" v-if="currentResult.result.summary.total_cases > 0">
+            <div class="distribution-bar">
+              <div
+                class="dist-segment is-candidate"
+                :style="{ width: ((currentResult.result.summary.candidate_preferred ?? currentResult.result.summary.passed ?? 0) / currentResult.result.summary.total_cases * 100) + '%' }"
+                title="候选更优"
+              ></div>
+              <div
+                class="dist-segment is-tie"
+                :style="{ width: ((currentResult.result.summary.tie ?? 0) / currentResult.result.summary.total_cases * 100) + '%' }"
+                title="持平"
+              ></div>
+              <div
+                class="dist-segment is-baseline"
+                :style="{ width: ((currentResult.result.summary.baseline_preferred ?? currentResult.result.summary.failed ?? 0) / currentResult.result.summary.total_cases * 100) + '%' }"
+                title="Baseline 更优"
+              ></div>
+              <div
+                class="dist-segment is-review"
+                :style="{ width: ((currentResult.result.summary.needs_review ?? 0) / currentResult.result.summary.total_cases * 100) + '%' }"
+                title="需复查"
+              ></div>
+            </div>
+            <div class="distribution-legend">
+              <span class="legend-item"><span class="legend-dot is-candidate"></span>候选更优 ({{ currentResult.result.summary.candidate_preferred ?? currentResult.result.summary.passed ?? 0 }})</span>
+              <span class="legend-item"><span class="legend-dot is-tie"></span>持平 ({{ currentResult.result.summary.tie ?? 0 }})</span>
+              <span class="legend-item"><span class="legend-dot is-baseline"></span>Baseline 更优 ({{ currentResult.result.summary.baseline_preferred ?? currentResult.result.summary.failed ?? 0 }})</span>
+              <span class="legend-item"><span class="legend-dot is-review"></span>需复查 ({{ currentResult.result.summary.needs_review ?? 0 }})</span>
+            </div>
           </div>
         </div>
 
@@ -673,29 +704,162 @@ input:disabled {
   color: var(--theme--background);
   border-color: var(--theme--primary);
 }
-.result-summary {
+.result-summary-container {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
+  gap: 14px;
+  background: var(--theme--background);
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 4px 18px rgba(17, 17, 17, 0.03);
+}
+.result-runtime-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 11px;
+  color: var(--theme--foreground-subdued);
+  border-bottom: 1px dashed var(--theme--border-color);
+  padding-bottom: 8px;
+}
+.meta-label-inline {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.profile-tag {
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  color: var(--theme--foreground-subdued);
+}
+.meta-divider {
+  color: var(--theme--border-color);
+  font-weight: 700;
+}
+.result-verdict-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 12px;
+}
+.verdict-metric-card {
   border: 1px solid var(--theme--border-color);
   border-radius: 6px;
+  background: var(--theme--background-subdued);
+  padding: 10px 12px 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.metric-lbl {
+  font-size: 11px;
+  color: var(--theme--foreground-subdued);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.metric-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--theme--foreground);
+}
+.verdict-metric-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: transparent;
+}
+.verdict-metric-card.is-primary::before {
+  background: var(--theme--primary);
+}
+.verdict-metric-card.is-primary .metric-val {
+  color: var(--theme--primary);
+}
+.verdict-metric-card.is-success::before {
+  background: var(--theme--success);
+}
+.verdict-metric-card.is-success .metric-val {
+  color: var(--theme--success);
+}
+.verdict-metric-card.is-danger::before {
+  background: var(--theme--danger);
+}
+.verdict-metric-card.is-danger .metric-val {
+  color: var(--theme--danger);
+}
+.verdict-metric-card.is-warning::before {
+  background: var(--theme--warning);
+}
+.verdict-metric-card.is-warning .metric-val {
+  color: var(--theme--warning);
+}
+.verdict-metric-card.is-neutral::before {
+  background: var(--theme--foreground-subdued);
+}
+
+/* Distribution Bar styles */
+.judge-distribution-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.distribution-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
   overflow: hidden;
   background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
 }
-.result-summary div {
-  background: var(--theme--background);
-  padding: 8px 10px;
+.dist-segment {
+  height: 100%;
 }
-.result-summary dt {
-  color: var(--theme--foreground-subdued);
+.dist-segment.is-candidate {
+  background: var(--theme--success);
+}
+.dist-segment.is-tie {
+  background: color-mix(in srgb, var(--theme--foreground-subdued) 60%, transparent);
+}
+.dist-segment.is-baseline {
+  background: var(--theme--danger);
+}
+.dist-segment.is-review {
+  background: var(--theme--warning);
+}
+.distribution-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
-  font-weight: 700;
+  color: var(--theme--foreground-subdued);
+  font-weight: 500;
 }
-.result-summary dd {
-  margin: 4px 0 0;
-  font-size: 14px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
+.legend-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.legend-dot.is-candidate {
+  background: var(--theme--success);
+}
+.legend-dot.is-tie {
+  background: var(--theme--foreground-subdued);
+}
+.legend-dot.is-baseline {
+  background: var(--theme--danger);
+}
+.legend-dot.is-review {
+  background: var(--theme--warning);
 }
 .result-summary-small {
   display: flex;

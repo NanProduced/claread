@@ -1,6 +1,10 @@
 <script setup>
 import { computed } from "vue";
 import {
+  chipSideLabel,
+  chipTooltip,
+  extractHealthSignals,
+  mergeSentenceWarningChips,
   normalizeWorkflowScene,
   sceneInlineMarks,
   sceneSentenceEntries,
@@ -14,6 +18,13 @@ const props = defineProps({
   compareCase: { type: Object, default: null },
   emptyText: { type: String, default: "选择 baseline 与候选差异句后，这里会逐句显示差异。" },
 });
+
+const baselineWarningsGrouped = computed(() => extractHealthSignals(props.baselineArtifact).warningsGrouped);
+const candidateWarningsGrouped = computed(() => extractHealthSignals(props.candidateArtifact).warningsGrouped);
+
+function chipsFor(sid) {
+  return mergeSentenceWarningChips(baselineWarningsGrouped.value, candidateWarningsGrouped.value, sid);
+}
 
 const baselineScene = computed(() => normalizeWorkflowScene(props.baselineArtifact));
 const candidateScene = computed(() => normalizeWorkflowScene(props.candidateArtifact));
@@ -253,8 +264,8 @@ function isFieldChanged(bValue, cValue) {
 function changedFieldLabels(row) {
   const labels = [];
   if (row.translation.changed) labels.push("翻译");
-  if (row.marks.changed) labels.push("标注");
-  if (row.entries.changed) labels.push("条目");
+  if (row.marks.changed) labels.push("词汇");
+  if (row.entries.changed) labels.push("语法");
   return labels;
 }
 
@@ -346,6 +357,14 @@ const overviewCards = computed(() => ([
               <span class="sid-text">{{ row.sid }}</span>
               <span v-if="row.changed" class="changed-badge">发生变化</span>
               <span v-else class="stable-badge">无变化</span>
+              <template v-if="chipsFor(row.sid).length">
+                <span
+                  v-for="chip in chipsFor(row.sid)"
+                  :key="`chip-${row.sid}-${chip.code}`"
+                  :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`, chipSideLabel(chip.sides) && `is-side-${chipSideLabel(chip.sides)}`]"
+                  :title="chipTooltip(chip)"
+                ><span v-if="chipSideLabel(chip.sides)" :class="['chip-side', `is-${chipSideLabel(chip.sides)}`]">{{ chipSideLabel(chip.sides) }}</span>{{ chip.text }}</span>
+              </template>
             </div>
             <div class="sentence-block">
               <span class="sentence-label">原句</span>
@@ -373,14 +392,15 @@ const overviewCards = computed(() => ([
               </template>
             </div>
             <div class="diff-row" :class="{ changed: row.marks.changed, identical: !row.marks.changed }">
-              <span class="row-label">标注</span>
+              <span class="row-label">词汇</span>
               <template v-if="row.marks.changed">
                 <div class="side baseline">
                   <span class="side-tag">Baseline</span>
                   <ul v-if="row.marks.baseline.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks.baseline" :key="`bm-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                       <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
@@ -391,8 +411,9 @@ const overviewCards = computed(() => ([
                   <span class="side-tag">候选</span>
                   <ul v-if="row.marks.candidate.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks.candidate" :key="`cm-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                       <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
@@ -405,8 +426,9 @@ const overviewCards = computed(() => ([
                   <span class="unified-tag">双侧一致</span>
                   <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
                     <li v-for="(mark, i) in row.marks.baseline" :key="`bm-unified-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                       <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
@@ -416,15 +438,17 @@ const overviewCards = computed(() => ([
               </template>
             </div>
             <div class="diff-row" :class="{ changed: row.entries.changed, identical: !row.entries.changed }">
-              <span class="row-label">条目</span>
+              <span class="row-label">语法</span>
               <template v-if="row.entries.changed">
                 <div class="side baseline">
                   <span class="side-tag">Baseline</span>
                   <ul v-if="row.entries.baseline.length" class="mini-list">
                     <li v-for="(entry, i) in row.entries.baseline" :key="`be-${row.sid}-${i}`" class="entry-item">
                       <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
                         <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
                       </div>
                       <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
                       <span v-else class="entry-content">{{ entry.content }}</span>
@@ -437,8 +461,10 @@ const overviewCards = computed(() => ([
                   <ul v-if="row.entries.candidate.length" class="mini-list">
                     <li v-for="(entry, i) in row.entries.candidate" :key="`ce-${row.sid}-${i}`" class="entry-item">
                       <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
                         <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
                       </div>
                       <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
                       <span v-else class="entry-content">{{ entry.content }}</span>
@@ -453,8 +479,10 @@ const overviewCards = computed(() => ([
                   <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
                     <li v-for="(entry, i) in row.entries.baseline" :key="`be-unified-${row.sid}-${i}`" class="entry-item">
                       <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
                         <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
                       </div>
                       <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
                       <span v-else class="entry-content">{{ entry.content }}</span>
@@ -499,13 +527,14 @@ const overviewCards = computed(() => ([
                 </div>
               </div>
               <div class="diff-row identical">
-                <span class="row-label">标注</span>
+                <span class="row-label">词汇</span>
                 <div class="side-unified">
                   <span class="unified-tag">双侧一致</span>
                   <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
                     <li v-for="(mark, i) in row.marks.baseline" :key="`sbm-unified-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                       <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
@@ -514,14 +543,16 @@ const overviewCards = computed(() => ([
                 </div>
               </div>
               <div class="diff-row identical">
-                <span class="row-label">条目</span>
+                <span class="row-label">语法</span>
                 <div class="side-unified">
                   <span class="unified-tag">双侧一致</span>
                   <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
                     <li v-for="(entry, i) in row.entries.baseline" :key="`sbe-unified-${row.sid}-${i}`" class="entry-item">
                       <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
                         <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
                       </div>
                       <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
                       <span v-else class="entry-content">{{ entry.content }}</span>
@@ -540,12 +571,22 @@ const overviewCards = computed(() => ([
         <ol class="diff-list only-list">
           <li v-for="row in baselineOnlyRows" :key="`b-${row.sid}`" class="diff-card removed">
             <header class="diff-head">
-              <span class="sid-text">{{ row.sid }}</span>
+              <div class="head-meta">
+                <span class="sid-text">{{ row.sid }}</span>
+                <span class="removed-badge">仅 baseline</span>
+                <template v-if="chipsFor(row.sid).length">
+                  <span
+                    v-for="chip in chipsFor(row.sid)"
+                    :key="`b-chip-${row.sid}-${chip.code}`"
+                    :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`, chipSideLabel(chip.sides) && `is-side-${chipSideLabel(chip.sides)}`]"
+                    :title="chipTooltip(chip)"
+                  ><span v-if="chipSideLabel(chip.sides)" :class="['chip-side', `is-${chipSideLabel(chip.sides)}`]">{{ chipSideLabel(chip.sides) }}</span>{{ chip.text }}</span>
+                </template>
+              </div>
               <div class="sentence-block">
                 <span class="sentence-label">原句</span>
                 <p class="sentence-text">{{ row.text }}</p>
               </div>
-              <span class="removed-badge">仅 baseline</span>
             </header>
             <div class="only-fields">
               <div>
@@ -553,12 +594,13 @@ const overviewCards = computed(() => ([
                 <dd>{{ row.translation || "—" }}</dd>
               </div>
               <div>
-                <dt>标注</dt>
+                <dt>词汇</dt>
                 <dd>
                   <ul v-if="row.marks.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks" :key="`bm-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                       <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
@@ -567,13 +609,15 @@ const overviewCards = computed(() => ([
                 </dd>
               </div>
               <div>
-                <dt>条目</dt>
+                <dt>语法</dt>
                 <dd>
                   <ul v-if="row.entries.length" class="mini-list">
                     <li v-for="(entry, i) in row.entries" :key="`be-${row.sid}-${i}`" class="entry-item">
                       <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
                         <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
                       </div>
                       <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
                       <span v-else class="entry-content">{{ entry.content }}</span>
@@ -592,12 +636,22 @@ const overviewCards = computed(() => ([
         <ol class="diff-list only-list">
           <li v-for="row in candidateOnlyRows" :key="`c-${row.sid}`" class="diff-card added">
             <header class="diff-head">
-              <span class="sid-text">{{ row.sid }}</span>
+              <div class="head-meta">
+                <span class="sid-text">{{ row.sid }}</span>
+                <span class="added-badge">仅 candidate</span>
+                <template v-if="chipsFor(row.sid).length">
+                  <span
+                    v-for="chip in chipsFor(row.sid)"
+                    :key="`c-chip-${row.sid}-${chip.code}`"
+                    :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`, chipSideLabel(chip.sides) && `is-side-${chipSideLabel(chip.sides)}`]"
+                    :title="chipTooltip(chip)"
+                  ><span v-if="chipSideLabel(chip.sides)" :class="['chip-side', `is-${chipSideLabel(chip.sides)}`]">{{ chipSideLabel(chip.sides) }}</span>{{ chip.text }}</span>
+                </template>
+              </div>
               <div class="sentence-block">
                 <span class="sentence-label">原句</span>
                 <p class="sentence-text">{{ row.text }}</p>
               </div>
-              <span class="added-badge">仅 candidate</span>
             </header>
             <div class="only-fields">
               <div>
@@ -605,12 +659,13 @@ const overviewCards = computed(() => ([
                 <dd>{{ row.translation || "—" }}</dd>
               </div>
               <div>
-                <dt>标注</dt>
+                <dt>词汇</dt>
                 <dd>
                   <ul v-if="row.marks.length" class="mini-list">
                     <li v-for="(mark, i) in row.marks" :key="`cm-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
                       <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
                       <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                       <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                     </li>
@@ -619,13 +674,15 @@ const overviewCards = computed(() => ([
                 </dd>
               </div>
               <div>
-                <dt>条目</dt>
+                <dt>语法</dt>
                 <dd>
                   <ul v-if="row.entries.length" class="mini-list">
                     <li v-for="(entry, i) in row.entries" :key="`ce-${row.sid}-${i}`" class="entry-item">
                       <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
                         <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
                       </div>
                       <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
                       <span v-else class="entry-content">{{ entry.content }}</span>
@@ -1131,34 +1188,179 @@ const overviewCards = computed(() => ([
   white-space: nowrap;
 }
 
-.eval-mark-type.tone-vocab {
-  color: #785300;
-  border-color: color-mix(in srgb, #e4b000 30%, var(--theme--border-color));
-  background: color-mix(in srgb, #e4b000 6%, var(--theme--background));
+/* Tone overrides - stronger saturation for immediate recognition */
+.eval-mark-type.tone-vocab,
+.eval-mark-type.vocab {
+  color: #6b4a00;
+  border-color: color-mix(in srgb, #e4b000 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 22%, var(--theme--background));
 }
 
-.eval-mark-type.tone-phrase {
-  color: #9f1239;
-  border-color: color-mix(in srgb, #db2777 30%, var(--theme--border-color));
-  background: color-mix(in srgb, #db2777 6%, var(--theme--background));
+.eval-mark-type.tone-phrase,
+.eval-mark-type.phrase {
+  color: #881337;
+  border-color: color-mix(in srgb, #db2777 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 20%, var(--theme--background));
 }
 
-.eval-mark-type.tone-context {
-  color: #285f8d;
-  border-color: color-mix(in srgb, #54a7de 30%, var(--theme--border-color));
-  background: color-mix(in srgb, #54a7de 6%, var(--theme--background));
+.eval-mark-type.tone-context,
+.eval-mark-type.context {
+  color: #1e4e77;
+  border-color: color-mix(in srgb, #54a7de 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 22%, var(--theme--background));
 }
 
-.eval-mark-type.tone-grammar {
+.eval-mark-type.tone-grammar,
+.eval-mark-type.grammar {
+  color: #413563;
+  border-color: color-mix(in srgb, #746694 55%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 22%, var(--theme--background));
+}
+
+.eval-mark-type.tone-analysis,
+.eval-mark-type.analysis {
+  color: #054a38;
+  border-color: color-mix(in srgb, #059669 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 22%, var(--theme--background));
+}
+
+/* ── Type stripe (colored block before type label) ──────── */
+.type-stripe {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.type-stripe.is-vocab    { background: #e4b000; }
+.type-stripe.is-phrase   { background: #db2777; }
+.type-stripe.is-context  { background: #54a7de; }
+.type-stripe.is-grammar  { background: #746694; }
+.type-stripe.is-analysis { background: #059669; }
+.type-stripe.is-neutral  { background: var(--theme--foreground-subdued); }
+
+/* ── Grammar sequential index badge ─────────────────────── */
+.grammar-index-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
+
+.grammar-index-badge.is-grammar {
+  background: color-mix(in srgb, #746694 18%, var(--theme--background));
   color: #554777;
-  border-color: color-mix(in srgb, #746694 30%, var(--theme--border-color));
-  background: color-mix(in srgb, #746694 6%, var(--theme--background));
 }
 
-.eval-mark-type.tone-analysis {
+.grammar-index-badge.is-analysis {
+  background: color-mix(in srgb, #059669 18%, var(--theme--background));
   color: #065f46;
-  border-color: color-mix(in srgb, #059669 30%, var(--theme--border-color));
+}
+
+.grammar-index-badge.is-neutral {
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+}
+
+/* Sentence-level workflow health chips */
+.warn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+
+.warn-chip.is-anchor {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-chunks {
+  color: #065f46;
+  border-color: color-mix(in srgb, #059669 45%, var(--theme--border-color));
   background: color-mix(in srgb, #059669 6%, var(--theme--background));
+}
+
+.warn-chip.is-draft,
+.warn-chip.is-schema,
+.warn-chip.is-fallback {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-repair {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 10%, var(--theme--background));
+}
+
+.warn-chip.is-repair-fail {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 70%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 18%, var(--theme--background));
+}
+
+.warn-chip.is-repair::before {
+  content: "修复";
+  font-size: 9px;
+  font-weight: 800;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--theme--danger) 30%, var(--theme--background));
+  color: var(--theme--background);
+  margin-right: 2px;
+}
+
+/* side badge inside a warn-chip */
+.chip-side {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  color: var(--theme--foreground-subdued);
+  text-transform: uppercase;
+}
+
+.chip-side.is-B {
+  color: var(--theme--foreground);
+  border-color: color-mix(in srgb, var(--theme--foreground-subdued) 45%, var(--theme--border-color));
+}
+
+.chip-side.is-C {
+  color: var(--theme--primary);
+  border-color: color-mix(in srgb, var(--theme--primary) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 8%, var(--theme--background));
+}
+
+.chip-side.is-B\\+C {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 10%, var(--theme--background));
 }
 
 </style>

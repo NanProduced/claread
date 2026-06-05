@@ -4,9 +4,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import JsonTreeView from "../components/JsonTreeView.vue";
 import NodeProbeOutputView from "../components/NodeProbeOutputView.vue";
 import ResultBlock from "../components/ResultBlock.vue";
-import ReviewNotesPanel from "../components/ReviewNotesPanel.vue";
 import StatusPill from "../components/StatusPill.vue";
 import WorkflowCompareReport from "./workflow-lab/components/WorkflowCompareReport.vue";
+import WorkflowCompareReviewPanel from "../components/WorkflowCompareReviewPanel.vue";
 import WorkflowJudgePanel from "./workflow-lab/components/WorkflowJudgePanel.vue";
 import {
   formatDateTime,
@@ -190,9 +190,6 @@ const workflowJudgeReports = computed(() => (
     ? detail.value.compare_judge_requests
     : []
 ));
-const workflowFullCaseArtifacts = computed(() => []);
-const workflowSingleRunArtifact = computed(() => null);
-const workflowCompareReports = computed(() => []);
 const currentTrialMeta = computed(() => currentTrialRuntimeMeta(currentTrial.value, currentResult.value));
 
 const compareModelsSummary = computed(() => {
@@ -201,6 +198,36 @@ const compareModelsSummary = computed(() => {
   const candidateModel = currentResult.value.candidate?.model_identity?.model_name || "未记录";
   return `${baselineModel} vs ${candidateModel}`;
 });
+
+// Workflow compare performance diffs (candidate relative to baseline).
+const wfLatencyDiff = computed(() => {
+  const b = currentWorkflowRecord.value?.baseline_latency_seconds;
+  const c = currentWorkflowRecord.value?.candidate_latency_seconds;
+  if (b == null || c == null) return null;
+  return Number(c) - Number(b);
+});
+
+const wfTokensDiff = computed(() => {
+  const b = currentWorkflowRecord.value?.baseline_total_tokens;
+  const c = currentWorkflowRecord.value?.candidate_total_tokens;
+  if (b == null || c == null) return null;
+  return Number(c) - Number(b);
+});
+
+function fmtDiff(diff, unit = "", positiveIsBetter = false) {
+  if (diff == null) return null;
+  const sign = diff > 0 ? "+" : "";
+  const cls = diff === 0 ? "diff-neutral" : (positiveIsBetter === (diff > 0) ? "diff-better" : "diff-worse");
+  return { text: `${sign}${diff}${unit}`, cls };
+}
+
+const wfLatencyDiffBadge = computed(() => fmtDiff(
+  wfLatencyDiff.value != null ? parseFloat(wfLatencyDiff.value.toFixed(1)) : null,
+  "s",
+  false, // lower is better for latency
+));
+
+const wfTokensDiffBadge = computed(() => fmtDiff(wfTokensDiff.value, "", false));
 
 const resultKindLabel = computed(() => {
   if (currentSource.value === "workflow") return workflowWorkspaceLabel(currentWorkflowRecord.value);
@@ -556,11 +583,7 @@ function workspaceLabel(record) {
   return record?.workspace_type || "Result";
 }
 
-function workflowWorkspaceLabel(recordOrType) {
-  const workspaceType = typeof recordOrType === "string"
-    ? recordOrType
-    : recordOrType?.workspace_type;
-  if (workspaceType === "workflow_compare") return "Workflow Compare";
+function workflowWorkspaceLabel(_recordOrType) {
   return "Workflow Compare";
 }
 
@@ -854,23 +877,59 @@ function workspaceTypeTone(record) {
         </dl>
 
         <section class="facts-strip">
-          <div class="facts-side facts-baseline">
-            <span class="facts-label">Baseline</span>
-            <span v-if="currentWorkflowRecord.baseline_model" class="facts-model">{{ currentWorkflowRecord.baseline_model }}</span>
-            <span v-if="currentWorkflowRecord.baseline_model_profile" class="facts-profile">{{ currentWorkflowRecord.baseline_model_profile }}</span>
-            <span v-if="currentWorkflowRecord.baseline_latency_seconds != null" class="facts-stat">{{ Number(currentWorkflowRecord.baseline_latency_seconds).toFixed(1) }}s</span>
-            <span v-if="currentWorkflowRecord.baseline_total_tokens != null" class="facts-stat">
-              总 {{ currentWorkflowRecord.baseline_total_tokens }} · 入 {{ currentWorkflowRecord.baseline_input_tokens ?? "—" }} / 出 {{ currentWorkflowRecord.baseline_output_tokens ?? "—" }}
-            </span>
+          <!-- Baseline card -->
+          <div class="facts-card facts-baseline">
+            <div class="facts-card-header">
+              <span class="facts-role-badge facts-role-baseline">Baseline</span>
+              <span class="facts-model-name">{{ currentWorkflowRecord.baseline_model || "—" }}</span>
+            </div>
+            <p v-if="currentWorkflowRecord.baseline_model_profile" class="facts-model-profile">{{ currentWorkflowRecord.baseline_model_profile }}</p>
+            <dl class="facts-metrics">
+              <div v-if="currentWorkflowRecord.baseline_latency_seconds != null" class="facts-metric-row">
+                <dt>耗时</dt>
+                <dd>
+                  <span class="facts-metric-value">{{ Number(currentWorkflowRecord.baseline_latency_seconds).toFixed(1) }}s</span>
+                  <span v-if="wfLatencyDiffBadge" class="facts-diff-badge" :class="wfLatencyDiffBadge.cls">{{ wfLatencyDiffBadge.text }}</span>
+                </dd>
+              </div>
+              <div v-if="currentWorkflowRecord.baseline_total_tokens != null" class="facts-metric-row">
+                <dt>Token 总量</dt>
+                <dd>
+                  <span class="facts-metric-value">{{ currentWorkflowRecord.baseline_total_tokens }}</span>
+                  <span v-if="wfTokensDiffBadge" class="facts-diff-badge" :class="wfTokensDiffBadge.cls">{{ wfTokensDiffBadge.text }}</span>
+                </dd>
+              </div>
+              <div v-if="currentWorkflowRecord.baseline_input_tokens != null" class="facts-metric-row facts-metric-sub">
+                <dt>入 / 出</dt>
+                <dd>{{ currentWorkflowRecord.baseline_input_tokens ?? "—" }} / {{ currentWorkflowRecord.baseline_output_tokens ?? "—" }}</dd>
+              </div>
+            </dl>
           </div>
-          <div class="facts-side facts-candidate">
-            <span class="facts-label">Candidate</span>
-            <span v-if="currentWorkflowRecord.candidate_model" class="facts-model">{{ currentWorkflowRecord.candidate_model }}</span>
-            <span v-if="currentWorkflowRecord.candidate_model_profile" class="facts-profile">{{ currentWorkflowRecord.candidate_model_profile }}</span>
-            <span v-if="currentWorkflowRecord.candidate_latency_seconds != null" class="facts-stat">{{ Number(currentWorkflowRecord.candidate_latency_seconds).toFixed(1) }}s</span>
-            <span v-if="currentWorkflowRecord.candidate_total_tokens != null" class="facts-stat">
-              总 {{ currentWorkflowRecord.candidate_total_tokens }} · 入 {{ currentWorkflowRecord.candidate_input_tokens ?? "—" }} / 出 {{ currentWorkflowRecord.candidate_output_tokens ?? "—" }}
-            </span>
+          <!-- Candidate card -->
+          <div class="facts-card facts-candidate">
+            <div class="facts-card-header">
+              <span class="facts-role-badge facts-role-candidate">Candidate</span>
+              <span class="facts-model-name">{{ currentWorkflowRecord.candidate_model || "—" }}</span>
+            </div>
+            <p v-if="currentWorkflowRecord.candidate_model_profile" class="facts-model-profile">{{ currentWorkflowRecord.candidate_model_profile }}</p>
+            <dl class="facts-metrics">
+              <div v-if="currentWorkflowRecord.candidate_latency_seconds != null" class="facts-metric-row">
+                <dt>耗时</dt>
+                <dd>
+                  <span class="facts-metric-value" :class="wfLatencyDiff != null ? (wfLatencyDiff > 0 ? 'val-worse' : wfLatencyDiff < 0 ? 'val-better' : '') : ''">{{ Number(currentWorkflowRecord.candidate_latency_seconds).toFixed(1) }}s</span>
+                </dd>
+              </div>
+              <div v-if="currentWorkflowRecord.candidate_total_tokens != null" class="facts-metric-row">
+                <dt>Token 总量</dt>
+                <dd>
+                  <span class="facts-metric-value" :class="wfTokensDiff != null ? (wfTokensDiff > 0 ? 'val-worse' : wfTokensDiff < 0 ? 'val-better' : '') : ''">{{ currentWorkflowRecord.candidate_total_tokens }}</span>
+                </dd>
+              </div>
+              <div v-if="currentWorkflowRecord.candidate_input_tokens != null" class="facts-metric-row facts-metric-sub">
+                <dt>入 / 出</dt>
+                <dd>{{ currentWorkflowRecord.candidate_input_tokens ?? "—" }} / {{ currentWorkflowRecord.candidate_output_tokens ?? "—" }}</dd>
+              </div>
+            </dl>
           </div>
         </section>
 
@@ -947,15 +1006,13 @@ function workspaceTypeTone(record) {
 
         <section v-if="currentWorkflowRecord.compare_id" class="result-section">
           <div class="section-heading">
-            <h3>人工 Review</h3>
-            <span>只读 / 补充</span>
+            <h3>Compare 决策面板</h3>
+            <span>记录 compare-scope 人工判断</span>
           </div>
-          <ReviewNotesPanel
-            title="Workflow Compare Review"
-            target-type="workflow_compare"
-            :target-id="currentWorkflowRecord.compare_id"
-            :run-id="currentWorkflowRecord.candidate_run_id"
-            scope-note="这类 note 挂在 workflow_compare 上，用于回看阶段补充 compare-scope 人工结论。"
+          <WorkflowCompareReviewPanel
+            :compare-id="currentWorkflowRecord.compare_id"
+            :candidate-run-id="currentWorkflowRecord.candidate_run_id"
+            :compare-summary="workflowSummary"
           />
         </section>
 
@@ -1759,6 +1816,7 @@ dd {
   opacity: 1;
 }
 
+/* ── Workflow Compare facts panel ─────────────────────────── */
 .facts-strip {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1766,50 +1824,142 @@ dd {
   margin: 16px 0;
 }
 
-.facts-side {
+.facts-card {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  padding: 10px 12px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
   border: 1px solid var(--theme--border-color);
-  border-radius: 6px;
-  background: var(--theme--background);
-}
-
-.facts-baseline {
-  border-left: 3px solid var(--theme--foreground-subdued);
+  border-radius: 8px;
+  background: var(--theme--background-subdued, var(--theme--background));
 }
 
 .facts-candidate {
-  border-color: color-mix(in srgb, var(--theme--primary) 35%, var(--theme--border-color));
-  border-left: 3px solid var(--theme--primary);
-  background: color-mix(in srgb, var(--theme--primary) 3%, var(--theme--background));
+  border-color: color-mix(in srgb, var(--theme--primary) 28%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 4%, var(--theme--background));
 }
 
-.facts-label {
+.facts-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.facts-role-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.facts-role-baseline {
+  background: color-mix(in srgb, var(--theme--foreground-subdued) 12%, transparent);
   color: var(--theme--foreground-subdued);
 }
 
-.facts-model {
-  font-weight: 700;
+.facts-role-candidate {
+  background: color-mix(in srgb, var(--theme--primary) 14%, transparent);
+  color: var(--theme--primary);
+}
+
+.facts-model-name {
   font-size: 13px;
+  font-weight: 700;
+  color: var(--theme--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.facts-model-profile {
+  margin: -4px 0 0;
+  font-size: 11px;
+  color: var(--theme--foreground-subdued);
+}
+
+.facts-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+}
+
+.facts-metric-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.facts-metric-row dt {
+  flex-shrink: 0;
+  width: 64px;
+  font-size: 11px;
+  color: var(--theme--foreground-subdued);
+}
+
+.facts-metric-row dd {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+}
+
+.facts-metric-value {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
   color: var(--theme--foreground);
 }
 
-.facts-profile {
+.facts-metric-value.val-better {
+  color: var(--theme--success);
+}
+
+.facts-metric-value.val-worse {
+  color: var(--theme--danger);
+}
+
+.facts-metric-sub .facts-metric-value,
+.facts-metric-sub dt,
+.facts-metric-sub dd {
   font-size: 11px;
+  font-weight: 400;
   color: var(--theme--foreground-subdued);
 }
 
-.facts-stat {
-  font-size: 11px;
-  font-family: var(--theme--fonts--monospace--font-family, monospace);
+.facts-diff-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.facts-diff-badge.diff-better {
+  color: var(--theme--success);
+  background: color-mix(in srgb, var(--theme--success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--theme--success) 30%, transparent);
+}
+
+.facts-diff-badge.diff-worse {
+  color: var(--theme--danger);
+  background: color-mix(in srgb, var(--theme--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--theme--danger) 30%, transparent);
+}
+
+.facts-diff-badge.diff-neutral {
   color: var(--theme--foreground-subdued);
+  background: color-mix(in srgb, var(--theme--foreground-subdued) 10%, transparent);
+  border-color: var(--theme--border-color);
 }
 
 .runtime-meta {

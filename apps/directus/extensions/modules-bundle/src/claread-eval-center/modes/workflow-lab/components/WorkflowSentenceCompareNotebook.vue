@@ -1,6 +1,10 @@
 <script setup>
 import { computed } from "vue";
 import {
+  chipSideLabel,
+  chipTooltip,
+  extractHealthSignals,
+  mergeSentenceWarningChips,
   normalizeWorkflowScene,
   sceneInlineMarks,
   sceneSentenceEntries,
@@ -29,6 +33,13 @@ const props = defineProps({
 
 const baselineScene = computed(() => normalizeWorkflowScene(props.baselineArtifact));
 const candidateScene = computed(() => normalizeWorkflowScene(props.candidateArtifact));
+
+const baselineWarningsGrouped = computed(() => extractHealthSignals(props.baselineArtifact).warningsGrouped);
+const candidateWarningsGrouped = computed(() => extractHealthSignals(props.candidateArtifact).warningsGrouped);
+
+function chipsFor(sid) {
+  return mergeSentenceWarningChips(baselineWarningsGrouped.value, candidateWarningsGrouped.value, sid);
+}
 
 function sceneSentenceTextMap(artifact, scene) {
   const map = new Map();
@@ -173,12 +184,13 @@ function formatMark(mark) {
     tone: typeInfo.tone,
     primary: primary ? String(primary) : "",
     detail: detail ? String(detail) : "",
+    rawType: String(rawType),
   };
 }
 
 function formatEntry(entry, marks = []) {
   const entryType = String(entry?.entry_type || "");
-  const label = entry?.label || entryType || "条目";
+  const label = entry?.label || entryType || "语法";
   const content = entry?.content || entry?.title || entry?.note_zh || entry?.analysis_zh || "";
   const linkedMark = entryType === "grammar_note" ? matchGrammarMark(entry, marks) : null;
   return {
@@ -188,6 +200,44 @@ function formatEntry(entry, marks = []) {
     tone: entryType === "sentence_analysis" ? "analysis" : entryType === "grammar_note" ? "grammar" : "neutral",
     isSentenceAnalysis: entryType === "sentence_analysis",
     html: entryType === "sentence_analysis" ? renderSimpleMarkdown(content) : "",
+    entryType: entryType,
+  };
+}
+
+function getGroupedMarks(marks) {
+  const vocab = [];
+  const phrase = [];
+  const context = [];
+  const other = [];
+  for (const m of marks || []) {
+    if (m.tone === "vocab") vocab.push(m);
+    else if (m.tone === "phrase") phrase.push(m);
+    else if (m.tone === "context") context.push(m);
+    else other.push(m);
+  }
+  return {
+    vocab,
+    phrase,
+    context,
+    other,
+    hasAny: (marks || []).length > 0
+  };
+}
+
+function getGroupedEntries(entries) {
+  const grammar = [];
+  const analysis = [];
+  const other = [];
+  for (const e of entries || []) {
+    if (e.entryType === "grammar_note") grammar.push(e);
+    else if (e.entryType === "sentence_analysis") analysis.push(e);
+    else other.push(e);
+  }
+  return {
+    grammar,
+    analysis,
+    other,
+    hasAny: (entries || []).length > 0
   };
 }
 
@@ -238,8 +288,8 @@ function isFieldChanged(bValue, cValue) {
 function changedFieldLabels(row) {
   const labels = [];
   if (row.translation.changed) labels.push("翻译变化");
-  if (row.marks.changed) labels.push("标注变化");
-  if (row.entries.changed) labels.push("条目变化");
+  if (row.marks.changed) labels.push("词汇变化");
+  if (row.entries.changed) labels.push("语法变化");
   return labels;
 }
 
@@ -365,8 +415,8 @@ const sentenceRows = computed(() => {
 
       const changedFields = [];
       if (localTranslationChanged) changedFields.push("翻译变化");
-      if (localMarksChanged) changedFields.push("标注变化");
-      if (localEntriesChanged) changedFields.push("条目变化");
+      if (localMarksChanged) changedFields.push("词汇变化");
+      if (localEntriesChanged) changedFields.push("语法变化");
       // If local diff found nothing but the compare report still flagged
       // this sentence, add a generic label so the user knows it's a
       // compare object.
@@ -526,6 +576,14 @@ function verdictLabel(verdict) {
               <template v-if="row.changedFields.length">
                 <span v-for="label in row.changedFields" :key="`${row.sid}-${label}`" class="field-badge">{{ label }}</span>
               </template>
+              <template v-if="chipsFor(row.sid).length">
+                <span
+                  v-for="chip in chipsFor(row.sid)"
+                  :key="`cn-chip-${row.sid}-${chip.code}`"
+                  :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`, chipSideLabel(chip.sides) && `is-side-${chipSideLabel(chip.sides)}`]"
+                  :title="chipTooltip(chip)"
+                ><span v-if="chipSideLabel(chip.sides)" :class="['chip-side', `is-${chipSideLabel(chip.sides)}`]">{{ chipSideLabel(chip.sides) }}</span>{{ chip.text }}</span>
+              </template>
             </div>
             <p class="source-line">{{ row.text }}</p>
           </header>
@@ -563,93 +621,228 @@ function verdictLabel(verdict) {
               </template>
             </div>
             <div class="diff-row" :class="{ changed: row.marks.changed, identical: !row.marks.changed }">
-              <span class="row-label">标注</span>
+              <span class="row-label">词汇</span>
               <template v-if="row.marks.changed">
                 <div class="side baseline">
                   <span class="side-tag">Baseline</span>
-                  <ul v-if="row.marks.baseline.length" class="mini-list">
-                    <li v-for="(mark, i) in row.marks.baseline" :key="`bm-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
-                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
-                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
-                    </li>
-                  </ul>
+                  <div class="grouped-marks-list" v-if="row.marks.baseline.length">
+                    <!-- Vocab group -->
+                    <div class="mark-subgroup tone-vocab" v-if="getGroupedMarks(row.marks.baseline).vocab.length">
+                      <span class="subgroup-badge">词解</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).vocab" :key="`bm-vocab-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-vocab">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Phrase group -->
+                    <div class="mark-subgroup tone-phrase" v-if="getGroupedMarks(row.marks.baseline).phrase.length">
+                      <span class="subgroup-badge">短语</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).phrase" :key="`bm-phrase-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-phrase">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Context group -->
+                    <div class="mark-subgroup tone-context" v-if="getGroupedMarks(row.marks.baseline).context.length">
+                      <span class="subgroup-badge">语境</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).context" :key="`bm-context-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-context">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                   <span v-else class="empty-cell">—</span>
                 </div>
                 <div class="side candidate">
                   <span class="side-tag">候选</span>
-                  <ul v-if="row.marks.candidate.length" class="mini-list">
-                    <li v-for="(mark, i) in row.marks.candidate" :key="`cm-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
-                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
-                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
-                    </li>
-                  </ul>
+                  <div class="grouped-marks-list" v-if="row.marks.candidate.length">
+                    <!-- Vocab group -->
+                    <div class="mark-subgroup tone-vocab" v-if="getGroupedMarks(row.marks.candidate).vocab.length">
+                      <span class="subgroup-badge">词解</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.candidate).vocab" :key="`cm-vocab-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-vocab">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Phrase group -->
+                    <div class="mark-subgroup tone-phrase" v-if="getGroupedMarks(row.marks.candidate).phrase.length">
+                      <span class="subgroup-badge">短语</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.candidate).phrase" :key="`cm-phrase-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-phrase">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Context group -->
+                    <div class="mark-subgroup tone-context" v-if="getGroupedMarks(row.marks.candidate).context.length">
+                      <span class="subgroup-badge">语境</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.candidate).context" :key="`cm-context-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-context">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                   <span v-else class="empty-cell">—</span>
                 </div>
               </template>
               <template v-else>
                 <div class="side-unified">
                   <span class="unified-tag">双侧一致</span>
-                  <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
-                    <li v-for="(mark, i) in row.marks.baseline" :key="`bm-unified-${row.sid}-${i}`">
-                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
-                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
-                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
-                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
-                    </li>
-                  </ul>
+                  <div class="grouped-marks-list" v-if="row.marks.baseline.length">
+                    <!-- Vocab group -->
+                    <div class="mark-subgroup tone-vocab" v-if="getGroupedMarks(row.marks.baseline).vocab.length">
+                      <span class="subgroup-badge">词解</span>
+                      <ul class="subgroup-items inline-list">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).vocab" :key="`bm-vocab-unified-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-vocab">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Phrase group -->
+                    <div class="mark-subgroup tone-phrase" v-if="getGroupedMarks(row.marks.baseline).phrase.length">
+                      <span class="subgroup-badge">短语</span>
+                      <ul class="subgroup-items inline-list">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).phrase" :key="`bm-phrase-unified-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-phrase">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Context group -->
+                    <div class="mark-subgroup tone-context" v-if="getGroupedMarks(row.marks.baseline).context.length">
+                      <span class="subgroup-badge">语境</span>
+                      <ul class="subgroup-items inline-list">
+                        <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).context" :key="`bm-context-unified-${row.sid}-${i}`">
+                          <span class="eval-anchor-chip tone-context">{{ mark.anchor }}</span>
+                          <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                          <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                   <span v-else class="empty-cell">—</span>
                 </div>
               </template>
             </div>
             <div class="diff-row" :class="{ changed: row.entries.changed, identical: !row.entries.changed }">
-              <span class="row-label">条目</span>
+              <span class="row-label">语法</span>
               <template v-if="row.entries.changed">
                 <div class="side baseline">
                   <span class="side-tag">Baseline</span>
-                  <ul v-if="row.entries.baseline.length" class="mini-list">
-                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-${row.sid}-${i}`" class="entry-item">
-                      <div class="entry-head">
-                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
-                      </div>
-                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
-                      <span v-else class="entry-content">{{ entry.content }}</span>
-                    </li>
-                  </ul>
+                  <div class="grouped-entries-list" v-if="row.entries.baseline.length">
+                    <!-- Grammar note group -->
+                    <div class="entry-subgroup tone-grammar" v-if="getGroupedEntries(row.entries.baseline).grammar.length">
+                      <span class="subgroup-badge">语法注解</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(entry, i) in getGroupedEntries(row.entries.baseline).grammar" :key="`be-grammar-${row.sid}-${i}`" class="entry-item">
+                          <div class="entry-head">
+                            <span v-if="entry.anchor" class="eval-anchor-chip tone-grammar">{{ entry.anchor }}</span>
+                            <strong>{{ entry.label }}</strong>
+                          </div>
+                          <span class="entry-content">{{ entry.content }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Sentence analysis group -->
+                    <div class="entry-subgroup tone-analysis" v-if="getGroupedEntries(row.entries.baseline).analysis.length">
+                      <span class="subgroup-badge">句法分析</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(entry, i) in getGroupedEntries(row.entries.baseline).analysis" :key="`be-analysis-${row.sid}-${i}`" class="entry-item">
+                          <div class="entry-head">
+                            <span v-if="entry.anchor" class="eval-anchor-chip tone-analysis">{{ entry.anchor }}</span>
+                            <strong>{{ entry.label }}</strong>
+                          </div>
+                          <div class="entry-markdown markdown-body" v-html="entry.html"></div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                   <span v-else class="empty-cell">—</span>
                 </div>
                 <div class="side candidate">
                   <span class="side-tag">候选</span>
-                  <ul v-if="row.entries.candidate.length" class="mini-list">
-                    <li v-for="(entry, i) in row.entries.candidate" :key="`ce-${row.sid}-${i}`" class="entry-item">
-                      <div class="entry-head">
-                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
-                      </div>
-                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
-                      <span v-else class="entry-content">{{ entry.content }}</span>
-                    </li>
-                  </ul>
+                  <div class="grouped-entries-list" v-if="row.entries.candidate.length">
+                    <!-- Grammar note group -->
+                    <div class="entry-subgroup tone-grammar" v-if="getGroupedEntries(row.entries.candidate).grammar.length">
+                      <span class="subgroup-badge">语法注解</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(entry, i) in getGroupedEntries(row.entries.candidate).grammar" :key="`ce-grammar-${row.sid}-${i}`" class="entry-item">
+                          <div class="entry-head">
+                            <span v-if="entry.anchor" class="eval-anchor-chip tone-grammar">{{ entry.anchor }}</span>
+                            <strong>{{ entry.label }}</strong>
+                          </div>
+                          <span class="entry-content">{{ entry.content }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Sentence analysis group -->
+                    <div class="entry-subgroup tone-analysis" v-if="getGroupedEntries(row.entries.candidate).analysis.length">
+                      <span class="subgroup-badge">句法分析</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(entry, i) in getGroupedEntries(row.entries.candidate).analysis" :key="`ce-analysis-${row.sid}-${i}`" class="entry-item">
+                          <div class="entry-head">
+                            <span v-if="entry.anchor" class="eval-anchor-chip tone-analysis">{{ entry.anchor }}</span>
+                            <strong>{{ entry.label }}</strong>
+                          </div>
+                          <div class="entry-markdown markdown-body" v-html="entry.html"></div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                   <span v-else class="empty-cell">—</span>
                 </div>
               </template>
               <template v-else>
                 <div class="side-unified">
                   <span class="unified-tag">双侧一致</span>
-                  <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
-                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-unified-${row.sid}-${i}`" class="entry-item">
-                      <div class="entry-head">
-                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
-                        <strong>{{ entry.label }}</strong>
-                      </div>
-                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
-                      <span v-else class="entry-content">{{ entry.content }}</span>
-                    </li>
-                  </ul>
+                  <div class="grouped-entries-list" v-if="row.entries.baseline.length">
+                    <!-- Grammar note group -->
+                    <div class="entry-subgroup tone-grammar" v-if="getGroupedEntries(row.entries.baseline).grammar.length">
+                      <span class="subgroup-badge">语法注解</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(entry, i) in getGroupedEntries(row.entries.baseline).grammar" :key="`be-grammar-unified-${row.sid}-${i}`" class="entry-item">
+                          <div class="entry-head">
+                            <span v-if="entry.anchor" class="eval-anchor-chip tone-grammar">{{ entry.anchor }}</span>
+                            <strong>{{ entry.label }}</strong>
+                          </div>
+                          <span class="entry-content">{{ entry.content }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- Sentence analysis group -->
+                    <div class="entry-subgroup tone-analysis" v-if="getGroupedEntries(row.entries.baseline).analysis.length">
+                      <span class="subgroup-badge">句法分析</span>
+                      <ul class="subgroup-items">
+                        <li v-for="(entry, i) in getGroupedEntries(row.entries.baseline).analysis" :key="`be-analysis-unified-${row.sid}-${i}`" class="entry-item">
+                          <div class="entry-head">
+                            <span v-if="entry.anchor" class="eval-anchor-chip tone-analysis">{{ entry.anchor }}</span>
+                            <strong>{{ entry.label }}</strong>
+                          </div>
+                          <div class="entry-markdown markdown-body" v-html="entry.html"></div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                   <span v-else class="empty-cell">—</span>
                 </div>
               </template>
@@ -1250,6 +1443,151 @@ function verdictLabel(verdict) {
   color: #065f46;
   border-color: color-mix(in srgb, #059669 30%, var(--theme--border-color));
   background: color-mix(in srgb, #059669 6%, var(--theme--background));
+}
+
+/* Subgroup styles */
+.grouped-marks-list,
+.grouped-entries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mark-subgroup,
+.entry-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--subgroup-color, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--background-subdued) 30%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+
+.mark-subgroup.tone-vocab {
+  --subgroup-color: #e4b000;
+}
+.mark-subgroup.tone-phrase {
+  --subgroup-color: #db2777;
+}
+.mark-subgroup.tone-context {
+  --subgroup-color: #54a7de;
+}
+
+.entry-subgroup.tone-grammar {
+  --subgroup-color: #746694;
+}
+.entry-subgroup.tone-analysis {
+  --subgroup-color: #059669;
+}
+
+.subgroup-badge {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--subgroup-color, var(--theme--border-color));
+  background: color-mix(in srgb, var(--subgroup-color) 8%, var(--theme--background));
+  color: var(--subgroup-color);
+}
+
+.subgroup-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subgroup-items.inline-list {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.warn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+
+.warn-chip.is-anchor {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-chunks {
+  color: #065f46;
+  border-color: color-mix(in srgb, #059669 45%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 6%, var(--theme--background));
+}
+
+.warn-chip.is-draft,
+.warn-chip.is-schema,
+.warn-chip.is-fallback {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-repair {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 10%, var(--theme--background));
+}
+
+.warn-chip.is-repair-fail {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 70%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 18%, var(--theme--background));
+}
+
+.chip-side {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  color: var(--theme--foreground-subdued);
+  text-transform: uppercase;
+}
+
+.chip-side.is-B {
+  color: var(--theme--foreground);
+  border-color: color-mix(in srgb, var(--theme--foreground-subdued) 45%, var(--theme--border-color));
+}
+
+.chip-side.is-C {
+  color: var(--theme--primary);
+  border-color: color-mix(in srgb, var(--theme--primary) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 8%, var(--theme--background));
+}
+
+.chip-side.is-B\+C {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 10%, var(--theme--background));
 }
 
 </style>

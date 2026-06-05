@@ -81,6 +81,7 @@ def load_policy_lines_raw(
     if variant and variant in focus_data:
         lines = focus_data[variant]
     else:
+        # YAML baseline: "default" is the shared baseline policy, not a variant fallback
         lines = focus_data.get("default", [])
     return lines if isinstance(lines, list) else [lines]
 
@@ -104,6 +105,7 @@ def load_examples(
     if variant in data:
         entries = data[variant]
     else:
+        # YAML baseline: "default" is the shared baseline examples, not a variant fallback
         entries = data.get("default", [])
     return entries if isinstance(entries, list) else [entries]
 
