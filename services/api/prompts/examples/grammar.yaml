@@ -11,17 +11,6 @@ beginner_reading:
   output_fragment: '{"type": "grammar_note", "spans": [{"text": "gave up"}, {"text":
     "smoking"}], "label": "give up + 动词-ing", "note_zh": "give up 后面跟动词的 -ing 形式，表示“放弃做某事”。日常很常用，比如
     I gave up eating junk food（我戒掉了垃圾食品）。"}'
-default:
-- example_type: grammar
-  sentence_text: Not only did the policy raise costs, but it also reduced supply.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Not only"}, {"text":
-    "did"}, {"text": "but"}], "label": "not only...but also 倒装结构", "note_zh": "Not
-    only 放在句首时触发部分倒装（did 提前）。阅读时先理解前半句主干，再接上 but 后面的补充。"}'
-- example_type: grammar
-  sentence_text: Had the company invested earlier, it would have dominated the market.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Had"}, {"text": "would
-    have"}], "label": "虚拟条件句倒装", "note_zh": "Had 开头等于 If it had，是虚拟条件句的倒装形式，表示与过去事实相反的假设。would
-    have dominated 是对应的虚拟结果。"}'
 intensive_reading:
 - example_type: sentence_analysis
   sentence_text: Rarely has a discovery so fundamentally altered our understanding

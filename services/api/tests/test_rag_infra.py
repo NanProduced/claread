@@ -246,17 +246,16 @@ class TestZillizSchemaContract:
             field_names = [f.name for f in schema.fields]
             assert "source_sentence" in field_names
             assert "output_fragment" in field_names
-            assert "grammar_granularity" in field_names
+            assert "retrieval_text" in field_names
             assert "example_id" in field_names
             assert "vector" in field_names
             assert "reading_variant" in field_names
             assert "output_type" in field_names
             assert "grammar_tags" in field_names
-            assert "structure_signals" in field_names
             assert "label" in field_names
             assert "quality_score" in field_names
             assert "approved" in field_names
-            assert len(schema.fields) == 12
+            assert len(schema.fields) == 11
         finally:
             mod._client = original
 
@@ -289,13 +288,17 @@ class TestEmbeddingClient:
 
     @pytest.mark.anyio
     async def test_embed_texts_auto_batches_over_25(self):
-        from app.infra.bailian_embedding import embed_texts
+        from app.infra.bailian_embedding import _EmbeddingBatchResult, embed_texts
         texts = [f"text {i}" for i in range(30)]
 
         with patch("app.infra.bailian_embedding.get_settings") as mock_settings, \
              patch("app.infra.bailian_embedding._call_embedding_sync") as mock_call:
             mock_settings.return_value.bailian_api_key = "test_key"
-            mock_call.side_effect = lambda texts, **kw: [[0.1] * 1024 for _ in texts]
+            mock_call.side_effect = lambda texts, **kw: _EmbeddingBatchResult(
+                embeddings=[[0.1] * 1024 for _ in texts],
+                usage_data={},
+                provider_metadata={},
+            )
 
             result = await embed_texts(texts)
             assert len(result) == 30
@@ -303,13 +306,17 @@ class TestEmbeddingClient:
 
     @pytest.mark.anyio
     async def test_embed_texts_single_batch(self):
-        from app.infra.bailian_embedding import embed_texts
+        from app.infra.bailian_embedding import _EmbeddingBatchResult, embed_texts
         texts = [f"text {i}" for i in range(3)]
 
         with patch("app.infra.bailian_embedding.get_settings") as mock_settings, \
              patch("app.infra.bailian_embedding._call_embedding_sync") as mock_call:
             mock_settings.return_value.bailian_api_key = "test_key"
-            mock_call.return_value = [[0.1] * 1024 for _ in texts]
+            mock_call.return_value = _EmbeddingBatchResult(
+                embeddings=[[0.1] * 1024 for _ in texts],
+                usage_data={},
+                provider_metadata={},
+            )
 
             result = await embed_texts(texts)
             assert len(result) == 3
@@ -333,7 +340,7 @@ class TestRerankClient:
 
     @pytest.mark.anyio
     async def test_rerank_returns_sorted_results(self):
-        from app.infra.bailian_rerank import RerankResult, rerank
+        from app.infra.bailian_rerank import RerankResult, _RerankBatchResult, rerank
 
         mock_results = [
             RerankResult(index=1, relevance_score=0.95, document="doc2"),
@@ -343,7 +350,11 @@ class TestRerankClient:
         with patch("app.infra.bailian_rerank.get_settings") as mock_settings, \
              patch("app.infra.bailian_rerank._call_rerank_sync") as mock_call:
             mock_settings.return_value.bailian_api_key = "test_key"
-            mock_call.return_value = mock_results
+            mock_call.return_value = _RerankBatchResult(
+                results=mock_results,
+                usage_data={},
+                provider_metadata={},
+            )
 
             result = await rerank("test query", ["doc1", "doc2"], top_n=2)
             assert len(result) == 2

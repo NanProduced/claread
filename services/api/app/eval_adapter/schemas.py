@@ -636,17 +636,75 @@ class ExampleLabGenerateRagFieldsRequest(BaseModel):
     model_profile: str | None = None
     timeout_seconds: float | None = Field(default=None, gt=0.0)
 
+    @model_validator(mode="after")
+    def _validate_output_fragment_structure(self) -> ExampleLabGenerateRagFieldsRequest:
+        """Validate output_fragment conforms to the few-shot JSON contract.
+
+        Contract per design doc:
+        - grammar_note: type="grammar_note", label (required), note_zh (required), spans (optional)
+        - sentence_analysis: type="sentence_analysis", label (required), analysis_zh (required), chunks (optional)
+        """
+        frag = self.output_fragment
+        if not frag:
+            return self
+
+        frag_type = frag.get("type")
+        if not frag_type or not isinstance(frag_type, str):
+            raise ValueError("output_fragment must have a string 'type' field")
+
+        if frag_type == "grammar_note":
+            if not frag.get("label"):
+                raise ValueError("grammar_note output_fragment must have a non-empty 'label' field")
+            if not frag.get("note_zh"):
+                raise ValueError("grammar_note output_fragment must have a non-empty 'note_zh' field")
+            spans = frag.get("spans")
+            if spans is not None:
+                if not isinstance(spans, list):
+                    raise ValueError("grammar_note output_fragment 'spans' must be an array if present")
+                for i, span in enumerate(spans):
+                    if not isinstance(span, dict):
+                        raise ValueError(f"grammar_note output_fragment spans[{i}] must be an object")
+                    if "text" not in span or not isinstance(span["text"], str):
+                        raise ValueError(f"grammar_note output_fragment spans[{i}] must have a string 'text' field")
+
+        elif frag_type == "sentence_analysis":
+            if not frag.get("label"):
+                raise ValueError("sentence_analysis output_fragment must have a non-empty 'label' field")
+            if not frag.get("analysis_zh"):
+                raise ValueError("sentence_analysis output_fragment must have a non-empty 'analysis_zh' field")
+            chunks = frag.get("chunks")
+            if chunks is not None:
+                if not isinstance(chunks, list):
+                    raise ValueError("sentence_analysis output_fragment 'chunks' must be an array if present")
+                for i, chunk in enumerate(chunks):
+                    if not isinstance(chunk, dict):
+                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must be an object")
+                    if "text" not in chunk or not isinstance(chunk["text"], str):
+                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must have a string 'text' field")
+                    if "order" not in chunk or not isinstance(chunk["order"], int):
+                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must have an integer 'order' field")
+                    if "label" not in chunk or not isinstance(chunk["label"], str):
+                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must have a string 'label' field")
+
+        else:
+            raise ValueError(
+                f"output_fragment.type must be 'grammar_note' or 'sentence_analysis', "
+                f"got {frag_type!r}"
+            )
+
+        return self
+
 
 class ExampleLabGenerateRagFieldsResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     grammar_tags: list[str] = Field(default_factory=list)
-    structure_signals: list[str] = Field(default_factory=list)
-    teaching_goal: str = "balanced"
     retrieval_text: str = ""
+    derived_by: str = ""
     generated_by: str = "llm"
     confidence: str = "high"
     reasoning: str = ""
+    fallback_reason: str = ""
     latency_ms: int = 0
     model_name: str = ""
     profile_name: str = ""

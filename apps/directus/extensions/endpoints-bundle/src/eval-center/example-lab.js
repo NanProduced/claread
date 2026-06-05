@@ -8,6 +8,11 @@
  *
  * All generation requests are proxied to the Claread API, which resolves model
  * profiles when needed and handles the actual LLM invocation.
+ *
+ * Note: RAG-derived fields use open vocabulary. `grammar_tags` is a
+ * normalized tag list maintained by the AI generator + hook, and the RAG
+ * surface area is {grammar_tags, retrieval_text, derived_at, derived_by}
+ * — nothing else.
  */
 
 // ---------------------------------------------------------------------------
@@ -19,21 +24,7 @@ const VALID_SOURCE_KINDS = ["manual", "run_capture", "yaml_import", "seed_import
 const VALID_TARGET_NODES = ["grammar", "vocabulary", "translation", "academic"];
 const VALID_READING_VARIANTS = [
   "gaokao", "cet", "kaoyan", "tem", "ielts_toefl",
-  "beginner_reading", "intermediate_reading", "intensive_reading", "academic_general", "default",
-];
-const VALID_GRAMMAR_TAGS = [
-  "general", "nonfinite", "inversion", "parallelism", "nested_clause",
-  "object_clause", "relative_clause", "nonrestrictive_relative_clause",
-  "participle_adverbial", "participle_attribute", "appositive_clause",
-  "main_clause_interruption", "passive_voice",
-];
-const VALID_STRUCTURE_SIGNALS = [
-  "has_wh_clause", "local_structure", "has_inversion", "has_that_clause",
-  "has_comma_insertion", "nested_structure", "leading_vbn", "leading_ving", "long_sentence",
-];
-const VALID_TEACHING_GOALS = [
-  "focused", "balanced", "structural", "explicit_split", "structural_logic",
-  "explicit_exam", "speed_support", "rhetorical", "info_extraction",
+  "beginner_reading", "intermediate_reading", "intensive_reading", "academic_general",
 ];
 
 // ---------------------------------------------------------------------------
@@ -93,9 +84,6 @@ export function registerExampleLabRoutes(router, _context, deps) {
         source_kinds: VALID_SOURCE_KINDS,
         target_nodes: VALID_TARGET_NODES,
         reading_variants: VALID_READING_VARIANTS,
-        grammar_tags: VALID_GRAMMAR_TAGS,
-        structure_signals: VALID_STRUCTURE_SIGNALS,
-        teaching_goals: VALID_TEACHING_GOALS,
       },
     });
   });
@@ -162,14 +150,24 @@ export function registerExampleLabRoutes(router, _context, deps) {
       const body = req.body || {};
       const sentenceText = String(body.sentence_text || "").trim();
       const modelProfile = String(body.model_profile || "").trim();
+      const readingVariant = String(body.reading_variant || "").trim();
 
       if (!sentenceText) throw validationError("sentence_text is required", "sentence_text");
       if (!modelProfile) throw validationError("model_profile is required", "model_profile");
+      if (!readingVariant) {
+        throw validationError("reading_variant is required", "reading_variant");
+      }
+      if (readingVariant === "default") {
+        throw validationError(
+          "reading_variant 'default' is no longer supported; pick a concrete variant",
+          "reading_variant",
+        );
+      }
 
       const upstreamBody = {
         sentence_text: sentenceText,
         output_fragment: parseJsonObject(body.output_fragment, "output_fragment"),
-        reading_variant: body.reading_variant || "default",
+        reading_variant: readingVariant,
         timeout_seconds: body.timeout_seconds || 30,
       };
       upstreamBody.model_profile = modelProfile;

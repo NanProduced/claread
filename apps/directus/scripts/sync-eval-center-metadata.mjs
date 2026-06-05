@@ -3,16 +3,22 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const DIRECTUS_ENV_FILE = resolve(SCRIPT_DIR, "../.env");
+
+loadDotEnv(DIRECTUS_ENV_FILE);
+
 const DIRECTUS_URL = process.env.DIRECTUS_URL ?? "http://127.0.0.1:8055";
 const DIRECTUS_CONTAINER = process.env.DIRECTUS_CONTAINER ?? "claread-directus";
 const POSTGRES_CONTAINER = process.env.DIRECTUS_POSTGRES_CONTAINER ?? "claread-postgres";
 const POSTGRES_DB = process.env.DIRECTUS_POSTGRES_DB ?? "claread";
 const POSTGRES_USER = process.env.DIRECTUS_POSTGRES_USER ?? "claread";
-const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const EVAL_CONTROL_MIGRATION = resolve(
   SCRIPT_DIR,
   "../../../infra/migrations/eval-center/0001_eval_center_control_plane.sql",
 );
+const DIRECTUS_SKIP_SQL_BOOTSTRAP = isTruthyEnv(process.env.DIRECTUS_SKIP_SQL_BOOTSTRAP);
+const DIRECTUS_SKIP_RESTART = isTruthyEnv(process.env.DIRECTUS_SKIP_RESTART);
 
 const DIRECTUS_EMAIL = process.env.DIRECTUS_EMAIL ?? process.env.ADMIN_EMAIL ?? "admin@claread.dev";
 const DIRECTUS_PASSWORD = process.env.DIRECTUS_PASSWORD ?? process.env.ADMIN_PASSWORD ?? "";
@@ -507,43 +513,14 @@ const EXAMPLE_LAB_FIELD_METADATA = [
 
   // 注：决策 3 (2026-06) 已移除 rag_eligible 字段；准入由 DB CHECK 约束
   // eval_example_lab_entries_approved_rag_eligible_check 强制 example_type 限制。
+  // 注：RAG 辅助字段 grammar_tags / retrieval_text 改为开放词表 + machine-derived；
+  // 派生时间与来源由 derived_at / derived_by 记录。
   // AI RAG Generator presentation interface (alias field, no DB column)
-  ["ai_rag_generator", { interface: "claread-ai-rag-generator-interface", special: ["alias", "no-data"], width: "full", sort: 40, hidden: false, required: false, note: "AI 生成 grammar_tags / structure_signals / retrieval_text / teaching_goal", conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false }] }],
-  ["grammar_tags", { interface: "input-code", width: "full", sort: 41, options: { language: "json" }, note: "AI 生成或手动编辑的语法标签数组", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "语法标签 (grammar_tags)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
-  ["structure_signals", { interface: "input-code", width: "full", sort: 42, options: { language: "json" }, note: "AI 生成或手动编辑的结构信号数组", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "结构信号 (structure_signals)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
-  ["retrieval_text", { interface: "input-multiline", width: "full", sort: 43, note: "AI 生成或手动编辑的 RAG 检索文本", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "检索文本 (retrieval_text)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
-  [
-    "teaching_goal",
-    {
-      interface: "select-dropdown",
-      width: "half",
-      sort: 44,
-      hidden: true,
-      required: false,
-      translations: [{ language: "zh-CN", translation: "教学目标 (teaching_goal)" }],
-      conditions: [
-        {
-          rule: { example_type: { _in: ["grammar", "sentence_analysis"] } },
-          hidden: false,
-          required: false,
-        },
-      ],
-      options: {
-        allowNone: true,
-        choices: [
-          { text: "focused — 聚焦", value: "focused" },
-          { text: "balanced — 均衡", value: "balanced" },
-          { text: "structural — 结构", value: "structural" },
-          { text: "explicit_split — 显式拆分", value: "explicit_split" },
-          { text: "structural_logic — 结构逻辑", value: "structural_logic" },
-          { text: "explicit_exam — 应试", value: "explicit_exam" },
-          { text: "speed_support — 速读辅助", value: "speed_support" },
-          { text: "rhetorical — 修辞", value: "rhetorical" },
-          { text: "info_extraction — 信息提取", value: "info_extraction" },
-        ],
-      },
-    },
-  ],
+  ["ai_rag_generator", { interface: "claread-ai-rag-generator-interface", special: ["alias", "no-data"], width: "full", sort: 40, hidden: false, required: false, note: "AI 生成 grammar_tags / retrieval_text / derived_by", conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false }] }],
+  ["grammar_tags", { interface: "input-code", width: "full", sort: 41, options: { language: "json" }, note: "AI 生成或手动编辑的语法标签数组；开放词表（hook 层做归一化与去重）", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "语法标签 (grammar_tags)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
+  ["retrieval_text", { interface: "input-multiline", width: "full", sort: 42, note: "AI 生成或手动编辑的 RAG 检索文本（embedding 主文本）", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "检索文本 (retrieval_text)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
+  ["derived_at", { interface: "datetime", width: "half", sort: 43, note: "最近一次重建时间", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "派生时间 (derived_at)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
+  ["derived_by", { interface: "input", width: "half", sort: 44, note: "派生来源（模型 / pipeline 标识）", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "派生来源 (derived_by)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
 
   ["quality_score", { interface: "input", width: "half", sort: 50, note: "0.0 - 1.0", translations: [{ language: "zh-CN", translation: "质量评分 (quality_score)" }] }],
   ["approved", { interface: "boolean", width: "half", sort: 51, note: "审批通过后才可写入向量库", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "已审批 (approved)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false }] }],
@@ -568,6 +545,34 @@ function jsonMeta(sort, note) {
     sort,
     note,
   };
+}
+
+function loadDotEnv(envFile) {
+  try {
+    const raw = readFileSync(envFile, "utf8").replace(/^\uFEFF/, "");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIndex = trimmed.indexOf("=");
+      if (eqIndex === -1) continue;
+      const key = trimmed.slice(0, eqIndex).trim();
+      if (!key || process.env[key] != null) continue;
+      let value = trimmed.slice(eqIndex + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"'))
+        || (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+function isTruthyEnv(value) {
+  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
 }
 
 function sqlLiteral(value) {
@@ -749,25 +754,22 @@ async function syncFields(token) {
   }
 }
 
-function cleanupDeprecatedMetadata() {
+async function cleanupDeprecatedMetadata(token) {
   if (DEPRECATED_COLLECTION_IDS.length) {
-    runSql(`
-      DELETE FROM directus_fields
-      WHERE collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
-      DELETE FROM directus_relations
-      WHERE many_collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")})
-         OR one_collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
-      DELETE FROM directus_permissions
-      WHERE collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
-      DELETE FROM directus_collections
-      WHERE collection IN (${DEPRECATED_COLLECTION_IDS.map(sqlLiteral).join(", ")});
-    `);
+    for (const collection of DEPRECATED_COLLECTION_IDS) {
+      try {
+        await request(token, "DELETE", `/collections/${collection}`);
+      } catch (error) {
+        if (!String(error?.message || "").includes("404")) throw error;
+      }
+    }
   }
   for (const [collection, field] of DEPRECATED_FIELDS) {
-    runSql(`
-      DELETE FROM directus_fields
-      WHERE collection = ${sqlLiteral(collection)} AND field = ${sqlLiteral(field)};
-    `);
+    try {
+      await request(token, "DELETE", `/fields/${collection}/${field}`);
+    } catch (error) {
+      if (!String(error?.message || "").includes("404")) throw error;
+    }
   }
 }
 
@@ -781,17 +783,21 @@ async function syncModuleBar(token) {
   await request(token, "PATCH", "/settings", { module_bar: nextModuleBar });
 }
 
-runSql(readEvalControlMigrationSql());
-runSql(buildCollectionMetadataSql());
-restartDirectus();
-await waitForDirectusReady();
+if (!DIRECTUS_SKIP_SQL_BOOTSTRAP) {
+  runSql(readEvalControlMigrationSql());
+  runSql(buildCollectionMetadataSql());
+}
+if (!DIRECTUS_SKIP_RESTART) {
+  restartDirectus();
+  await waitForDirectusReady();
+}
 
 const token = await login();
-cleanupDeprecatedMetadata();
+await cleanupDeprecatedMetadata(token);
 await syncCollections(token);
 await syncFields(token);
 await syncModuleBar(token);
 
 console.log(
-  `Eval Center metadata synced. Enabled modules: ${MODULE_BAR_ITEMS.map((item) => item.id).join(", ")}; collections: ${COLLECTIONS.map((item) => item.collection).join(", ")}`,
+  `Eval Center metadata synced. Enabled modules: ${MODULE_BAR_ITEMS.map((item) => item.id).join(", ")}; collections: ${COLLECTIONS.map((item) => item.collection).join(", ")}; bootstrap=${DIRECTUS_SKIP_SQL_BOOTSTRAP ? "skipped" : "applied"}; restart=${DIRECTUS_SKIP_RESTART ? "skipped" : "performed"}`,
 );

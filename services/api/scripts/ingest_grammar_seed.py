@@ -1,10 +1,13 @@
 """Grammar seed 数据 ingestion 脚本。
 
 从 grammar_seed_v1.jsonl 读取 seed 数据，
-调用百炼 Embedding 生成向量，写入 Zilliz 两个 collection。
+调用百炼 Embedding 对 retrieval_text 生成向量，写入 Zilliz 两个 collection。
+
+映射字段：example_id, vector, reading_variant, output_type, grammar_tags,
+retrieval_text, label, source_sentence, output_fragment, quality_score, approved。
 
 用法：
-    python scripts/ingest_grammar_seed.py [--dry-run] [--batch-size 10] [--seed-file PATH]
+    python scripts/ingest_grammar_seed.py [--dry-run] [--force-recreate] [--batch-size 10] [--seed-file PATH]
 """
 
 from __future__ import annotations
@@ -48,11 +51,10 @@ def _map_record_to_zilliz(record: dict, vector: list[float]) -> dict:
         "reading_variant": record.get("variant", ""),
         "output_type": record.get("output_type", ""),
         "grammar_tags": json.dumps(record.get("tags", []), ensure_ascii=False),
-        "structure_signals": json.dumps(record.get("signals", []), ensure_ascii=False),
+        "retrieval_text": record.get("retrieval_text", ""),
         "label": record.get("label", ""),
         "source_sentence": record.get("source_sentence", ""),
         "output_fragment": record.get("output_fragment", ""),
-        "grammar_granularity": record.get("teaching_goal", ""),
         "quality_score": record.get("quality_score", 0.0),
         "approved": record.get("approved", True),
     }
@@ -62,6 +64,7 @@ async def _run_ingestion(
     seed_file: Path,
     batch_size: int,
     dry_run: bool,
+    force_recreate: bool,
 ) -> None:
     sys.path.insert(0, str(SERVER_ROOT))
 
@@ -71,6 +74,7 @@ async def _run_ingestion(
         close_zilliz,
         init_zilliz,
         zilliz_create_collection,
+        zilliz_drop_collection,
         zilliz_insert,
         zilliz_query,
     )
@@ -90,6 +94,8 @@ async def _run_ingestion(
 
     if dry_run:
         logger.info("=== DRY RUN MODE ===")
+        if force_recreate:
+            logger.info("Collections would be dropped and recreated before ingestion")
         for r in records:
             mapped = _map_record_to_zilliz(r, [0.0] * settings.bailian_embedding_dimension)
             collection = (
@@ -125,15 +131,20 @@ async def _run_ingestion(
             logger.info("No records for %s, skipping", collection_name)
             continue
 
+        if force_recreate:
+            await zilliz_drop_collection(collection_name)
+
         await zilliz_create_collection(collection_name, dimension=settings.bailian_embedding_dimension)
 
-        existing = await zilliz_query(
-            collection_name,
-            filter_expr="approved == true",
-            output_fields=["example_id"],
-            limit=1000,
-        )
-        existing_ids = {r["example_id"] for r in existing}
+        existing_ids: set[str] = set()
+        if not force_recreate:
+            existing = await zilliz_query(
+                collection_name,
+                filter_expr="approved == true",
+                output_fields=["example_id"],
+                limit=1000,
+            )
+            existing_ids = {r["example_id"] for r in existing}
 
         to_ingest = [r for r in group if r["example_id"] not in existing_ids]
         if not to_ingest:
@@ -177,6 +188,11 @@ async def _run_ingestion(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest grammar seed data into Zilliz")
     parser.add_argument("--dry-run", action="store_true", help="Print mapped data without writing to Zilliz")
+    parser.add_argument(
+        "--force-recreate",
+        action="store_true",
+        help="Drop and recreate grammar collections before ingestion",
+    )
     parser.add_argument("--batch-size", type=int, default=10, help="Embedding batch size (default: 10)")
     parser.add_argument("--seed-file", type=str, default=str(DEFAULT_SEED_FILE), help="Path to seed JSONL file")
     args = parser.parse_args()
@@ -185,6 +201,7 @@ def main() -> None:
         seed_file=Path(args.seed_file),
         batch_size=args.batch_size,
         dry_run=args.dry_run,
+        force_recreate=args.force_recreate,
     ))
 
 

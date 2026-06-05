@@ -1,23 +1,28 @@
-"""Lightweight structural signal extraction for grammar RAG query construction.
+"""Grammar RAG query construction and candidate sentence selection.
 
-Per grammar-rag-design.md §10.3, these rules serve as a cheap pre-filter
-for candidate sentence selection. They do NOT need to be perfectly accurate —
-the real ranking happens at the rerank stage.
+Provides:
+- ``build_query_text``: builds a canonical colon-format query string for
+  embedding retrieval, using open-vocabulary grammar tags derived from
+  English sentence structural signals.
+- ``extract_grammar_tags_from_sentence``: extracts grammar tags from English
+  sentence structure (used by both build_query_text and grammar_rag_service
+  for query-side tag generation).
+- ``extract_signals`` / ``SentenceSignals`` / ``select_candidate_sentences``:
+  lightweight structural signal extraction used as a cheap pre-filter for
+  candidate sentence selection (not part of the example schema).
 
-Signals extracted:
-- Sentence length (word count)
-- Comma count
-- Presence of that/which/who/whose/where/when
-- Leading V-ed / V-ing (participle openers)
-- Inversion triggers (Never/Rarely/Not only/Had at sentence start)
-- Insertion clause patterns (comma-separated mid-sentence interruption)
-- Nested clause indicators
+Query output fields: variant, output_type, grammar_tags, source_sentence.
+Grammar tags are extracted from English sentence structural signals and
+normalized through the open-vocabulary normalizer, falling back to
+``["unclassified"]`` when no signals are detected.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+
+from app.eval_adapter.example_lab import _rule_extract_grammar_tags, normalize_grammar_tags
 
 _LONG_SENTENCE_THRESHOLD = 20
 _MANY_COMMA_THRESHOLD = 2
@@ -132,6 +137,40 @@ def extract_signals(sentence: str) -> SentenceSignals:
     )
 
 
+def extract_grammar_tags_from_sentence(sentence: str) -> list[str]:
+    """Extract grammar tags from English sentence structural signals.
+
+    Maps structural signals detected by ``extract_signals`` to open-vocabulary
+    grammar tags, then normalizes them through ``normalize_grammar_tags``.
+    This is the query-side counterpart to the example-side
+    ``_rule_extract_grammar_tags`` which works on Chinese labels.
+
+    Returns sorted, normalized tag list. Falls back to ``["unclassified"]``
+    if no structural signals are detected.
+    """
+    signals = extract_signals(sentence)
+    raw_tags: list[str] = []
+
+    if signals.has_that:
+        raw_tags.append("relative_clause")
+    if signals.has_which or signals.has_who or signals.has_whose:
+        raw_tags.append("relative_clause")
+    if signals.has_inversion_trigger:
+        raw_tags.append("inversion")
+    if signals.leading_vbn:
+        raw_tags.append("past_participle_adverbial")
+    if signals.leading_ving:
+        raw_tags.append("present_participle_adverbial")
+    if signals.has_comma_insertion:
+        raw_tags.append("main_clause_interruption")
+    if signals.nested_structure:
+        raw_tags.append("nested_clause")
+
+    # Normalize through open-vocabulary normalizer (dedup, alias merge, etc.)
+    tags = normalize_grammar_tags(raw_tags)
+    return tags or ["unclassified"]
+
+
 def select_candidate_sentences(
     sentences: list[dict],
     output_type: str = "grammar_note",
@@ -178,32 +217,30 @@ def build_query_text(
     sentence: str,
     variant: str,
     output_type: str,
-    teaching_goal: str = "",
 ) -> str:
-    """Build a query_text for embedding, matching the retrieval_text template.
+    """Build a query_text for embedding in canonical colon format.
 
-    Per grammar-rag-design.md §9.1, the query side constructs a lightweight
-    text in the same representation space as the seed retrieval_text.
+    Output fields: variant, output_type, grammar_tags, source_sentence.
+    Grammar tags are extracted from English sentence structural signals via
+    ``extract_grammar_tags_from_sentence`` and normalized through
+    ``normalize_grammar_tags``.  Falls back to ``["unclassified"]``
+    when no structural signals are detected.
 
     Args:
         sentence: The English sentence to query.
         variant: Reading variant (gaokao, cet, etc.).
         output_type: "grammar_note" or "sentence_analysis".
-        teaching_goal: Optional teaching goal string.
 
     Returns:
-        A formatted query_text string.
+        A formatted query_text string in canonical colon format.
     """
-    signals = extract_signals(sentence)
-    signal_list = signals.to_signal_list()
+    grammar_tags = extract_grammar_tags_from_sentence(sentence)
 
     lines = [
-        f"output_type={output_type}",
-        f"variant={variant}",
-        f"possible_signals={', '.join(signal_list)}",
+        f"variant: {variant}",
+        f"output_type: {output_type}",
+        f"grammar_tags: {', '.join(grammar_tags)}",
+        f"source_sentence: {sentence}",
     ]
-    if teaching_goal:
-        lines.append(f"teaching_goal={teaching_goal}")
-    lines.append(f"sentence={sentence}")
 
     return "\n".join(lines)
