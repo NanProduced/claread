@@ -2906,7 +2906,7 @@ async function callEvalUpstreamJson({ env, path: upstreamPath, body, timeoutMs }
 const VALID_ADAPTER_KINDS = ["fake", "in_process", "http"];
 const VALID_EVAL_PURPOSES = ["dataset_regression", "prompt_experiment", "manual_debug"];
 const VALID_RAG_MODES = ["off", "baseline", "rag", "rag_fallback", "settings"];
-const VALID_TRACE_SCOPES = ["off", "isolated", "inherit"];
+const VALID_TRACE_SCOPES = ["off", "inherit"];
 const VALID_EXECUTION_MODES = ["manual", "runner_bridge", "directus_async"];
 const VALID_WORKFLOW_REQUEST_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
 const VALID_JUDGE_ADAPTER_KINDS = ["fake", "llm"];
@@ -3297,7 +3297,10 @@ function buildYamlContent(config) {
   lines.push(`model_selection: {}`);
   lines.push(`rag_mode: ${config.rag_mode || "off"}`);
   lines.push(`trace_scope: ${config.trace_scope || "off"}`);
-  lines.push(`trace_project: claread-eval`);
+  // trace_project is a deprecated no-op. Backend ignores it; emit null so
+  // YAML snapshots stop suggesting a per-call project switch is available.
+  // See docs/operations/langsmith.md.
+  lines.push(`trace_project: null`);
   lines.push(`timeout_seconds: ${config.timeout_seconds || 120}`);
   lines.push(`runs_root: ../runs`);
   lines.push(`datasets_root: ../datasets`);
@@ -3592,7 +3595,7 @@ function validateWorkflowSingleRunRequest(body) {
     errors.push({ field: "text", message: "text is required." });
   }
   if (body.reading_goal === "academic") {
-    errors.push({ field: "reading_goal", message: "Workflow Lab v1 only supports learning workflow." });
+    errors.push({ field: "reading_goal", message: "eval-center v1 only supports learning topology; academic should use a dedicated academic lab/workflow" });
   }
   if (body.rag_mode && !VALID_RAG_MODES.includes(body.rag_mode)) {
     errors.push({ field: "rag_mode", message: `rag_mode must be one of: ${VALID_RAG_MODES.join(", ")}.` });
@@ -3637,7 +3640,10 @@ async function createWorkflowLabSingleRun({
     model_selection: normalizeJsonObject(body.model_selection),
     rag_mode: body.rag_mode || "off",
     trace_scope: body.trace_scope || "off",
-    trace_project: body.trace_project || "claread-eval",
+    // trace_project is a deprecated no-op (see docs/operations/langsmith.md).
+    // Kept on the config row for backwards compatibility with persisted
+    // snapshots; never read by the backend and not surfaced to UI.
+    trace_project: body.trace_project || null,
     timeout_seconds: body.timeout_seconds || 120,
     prompt_variant_id: body.prompt_variant_id || null,
   });

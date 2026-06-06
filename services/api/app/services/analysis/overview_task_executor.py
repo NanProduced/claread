@@ -118,6 +118,7 @@ def _build_trace_metadata(
         profile_id="learning_overview_hint",
         model_name=model_name,
         model_provider=model_provider,
+        surface="overview_worker",
         extra={
             "record_id": str(payload.record_id),
             "source_hash": payload.source_text_hash,
@@ -349,6 +350,7 @@ def launch_task(payload: OverviewTaskExecutionPayload) -> asyncio.Task:
         reading_goal=payload.reading_goal,
         reading_variant=payload.reading_variant,
         profile_id="learning_overview_hint",
+        surface="overview_worker",
         extra={
             "record_id": str(payload.record_id),
             "source_hash": payload.source_text_hash,

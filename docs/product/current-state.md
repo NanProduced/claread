@@ -87,7 +87,7 @@ Claread Console 已进入可用控制面阶段，Eval Center、Render Scene Insp
 - 模型输出质量和结构化输出稳定性依赖 `services/api/.env` 中的模型 profile；更换模型后需要重新跑解析链路。
 - 旧脚本式 regression suite 不进入新仓库主线；当前评测控制面已落到 Directus / Eval Center，后续仍按 Directus + 自建 eval harness + LLM-as-a-Judge 的路线继续演进。
 - Ask Claread 当前的跨文章稳定主路径以 `record_ref / known title reference / external analysis/supplement asset` 为主；用户高亮与用户笔记只通过显式引用进入 Ask，不存在独立"用户学习资产自由查询"产品面。
-- Eval Center 当前公开主路径只有 node-lab、workflow-lab、run-history；judge / review 继续锚定 compare 或 trial，不把 Directus 变成执行面。
+- Eval Center 当前公开主路径只有 node-lab、workflow-lab、run-history；judge / review 继续锚定 compare 或 trial，不把 Directus 变成执行面。Eval Center v1 是 learning-only，所有 eval adapter 入口均在 schema 层拒绝 `reading_goal="academic"`；academic graph 在后端主 workflow `/analyze` 中继续保留，但不属于当前 eval-center 公开评测面。
 - Example Lab 是 Directus Collection，不是 Eval Center 独立 mode；grammar RAG / Example Lab 契约已收口（无 teaching_goal、无 structure_signals、无 retrieval_version；variant 是硬边界）。
 
 ## 文档使用规则

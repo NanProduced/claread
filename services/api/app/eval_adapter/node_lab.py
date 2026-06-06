@@ -500,7 +500,7 @@ async def _run_node_lab_once(
         plan = build_goal_execution_plan(request.reading_goal, request.reading_variant)
         topology_mode = getattr(plan, "topology_mode", "unknown")
         if topology_mode != "learning":
-            raise ValueError("node_lab v1 only supports learning topology")
+            raise ValueError("node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
 
         prepared_input = prepare_input(request.text)
         sentences_data = [

@@ -31,6 +31,7 @@ from app.eval_adapter.shared import (
 )
 from app.llm.router import ModelSelectionError, validate_model_selection
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
+from app.observability import SURFACE_EVAL_WORKFLOW_LAB, set_trace_surface
 from app.schemas.analysis import AnalyzeRequest
 from app.services.analysis.debug_snapshots import (
     build_academic_quality,
@@ -174,6 +175,7 @@ async def run_article_analysis_eval(
 
     try:
         with (
+            set_trace_surface(SURFACE_EVAL_WORKFLOW_LAB),
             prompt_runtime_override(request.prompt_override),
             grammar_rag_enabled_override(rag_override(request)),
             trace_scope(request),

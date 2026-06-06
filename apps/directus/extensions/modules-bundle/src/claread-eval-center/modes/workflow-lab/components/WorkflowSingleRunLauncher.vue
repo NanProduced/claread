@@ -12,6 +12,17 @@ const props = defineProps({
 const emit = defineEmits(["submit", "go-to-candidate"]);
 const STORAGE_KEY = "claread-eval-center:workflow-lab:single-run-compare-form:v1";
 
+// Must mirror the <select> options below. The deprecated "isolated" value
+// is intentionally excluded — the backend no longer accepts it, and we
+// must clamp any stale sessionStorage payload (left over from before that
+// option was removed) so users with an old browser session don't keep
+// submitting an upstream-rejected value. See docs/operations/langsmith.md.
+const VALID_TRACE_SCOPES = Object.freeze(["off", "inherit"]);
+
+function normalizeTraceScope(value) {
+  return VALID_TRACE_SCOPES.includes(value) ? value : "off";
+}
+
 const form = ref({
   text: "",
   baseline_prompt_variant_id: "",
@@ -109,7 +120,7 @@ onMounted(() => {
           candidate_prompt_variant_id: String(saved.candidate_prompt_variant_id || ""),
           model_profile: String(saved.model_profile || ""),
           rag_mode: String(saved.rag_mode || "off"),
-          trace_scope: String(saved.trace_scope || "off"),
+          trace_scope: normalizeTraceScope(saved.trace_scope),
           timeout_seconds: Number(saved.timeout_seconds) || 120,
         };
       }
@@ -247,7 +258,6 @@ function goToCandidate() {
             <span>调试记录</span>
             <select v-model="form.trace_scope">
               <option value="off">关闭</option>
-              <option value="isolated">仅保留当前验证</option>
               <option value="inherit">沿用上游设置</option>
             </select>
           </label>

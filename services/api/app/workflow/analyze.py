@@ -13,6 +13,7 @@ from app.llm.router import resolve_model_config, validate_model_selection
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.llm.runtime import dump_model_selection
 from app.llm.types import ModelSelection, parse_model_selection
+from app.observability import SURFACE_ANALYZE_DIRECT, get_trace_surface
 from app.schemas.analysis import AcademicRenderSceneModel, AnalyzeRequest, AnyRenderSceneModel, RenderSceneModel
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
 from app.workflow.academic_workflow import build_academic_graph
@@ -72,6 +73,12 @@ async def _invoke_article_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
 
     settings = get_settings()
     model_names = _collect_model_names(settings, model_selection)
+    # surface is per-async-context: eval adapters wrap their call site with
+    # ``set_trace_surface('eval_workflow_lab')`` so the same LangGraph root
+    # run that backs ``/analyze`` and ``/eval/article-analysis/workflow``
+    # is still filterable in LangSmith. The default keeps the direct
+    # ``/analyze`` route labelled cleanly.
+    surface = get_trace_surface(SURFACE_ANALYZE_DIRECT)
     result = await graph.ainvoke(
         {
             "payload": normalized_payload,
@@ -79,7 +86,7 @@ async def _invoke_article_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
         },
         config={
             "run_name": WORKFLOW_NAME,
-            "tags": build_workflow_root_tags(WORKFLOW_NAME, model_names),
+            "tags": build_workflow_root_tags(WORKFLOW_NAME, model_names, surface=surface),
             "configurable": {
                 "model_selection": dump_model_selection(model_selection),
             },
@@ -92,6 +99,7 @@ async def _invoke_article_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
                 reading_goal=normalized_payload.reading_goal,
                 reading_variant=normalized_payload.reading_variant,
                 profile_id=plan.prompt_profile,
+                surface=surface,
                 extra={
                     "model_preset": model_selection.preset if model_selection else None,
                     "runtime_model_selection": bool(model_selection),

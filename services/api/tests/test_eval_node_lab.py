@@ -335,7 +335,7 @@ async def test_execute_node_lab_judge_computes_ternary_summaries(monkeypatch: py
     ],
 )
 def test_node_lab_rejects_academic_goal(factory, kwargs) -> None:
-    with pytest.raises(ValidationError, match="node_lab v1 only supports daily_reading and exam"):
+    with pytest.raises(ValidationError, match="node_lab v1 only supports learning topology"):
         factory(**kwargs)
 
 

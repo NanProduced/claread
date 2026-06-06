@@ -993,6 +993,34 @@ test("validateWorkflowRunRequest rejects unsafe dataset ids", () => {
   assert.equal(errors[0].field, "dataset_id");
 });
 
+test("validateWorkflowRunRequest rejects deprecated trace_scope='isolated'", () => {
+  // The backend collapsed TraceScope to {"off","inherit"} after per-call
+  // LANGSMITH_PROJECT switching was removed. The Directus endpoint must
+  // mirror that or users would pass UI-side validation only to be 422'd
+  // upstream. See docs/operations/langsmith.md.
+  const errors = validateWorkflowRunRequest({
+    dataset_id: "article-analysis-v1",
+    trace_scope: "isolated",
+  });
+
+  const traceErr = errors.find((e) => e.field === "trace_scope");
+  assert.ok(traceErr, "expected a trace_scope validation error");
+  assert.match(traceErr.message, /off/);
+  assert.match(traceErr.message, /inherit/);
+  assert.doesNotMatch(traceErr.message, /isolated/);
+});
+
+test("validateWorkflowRunRequest accepts trace_scope='off' and 'inherit'", () => {
+  for (const scope of ["off", "inherit"]) {
+    const errors = validateWorkflowRunRequest({
+      dataset_id: "article-analysis-v1",
+      trace_scope: scope,
+    });
+    const traceErr = errors.find((e) => e.field === "trace_scope");
+    assert.equal(traceErr, undefined, `trace_scope='${scope}' should be accepted`);
+  }
+});
+
 test("workflowRequestRow does not prefill artifact fields before execution", () => {
   const row = workflowRequestRow(
     { accountability: { user: "00000000-0000-0000-0000-000000000001" } },

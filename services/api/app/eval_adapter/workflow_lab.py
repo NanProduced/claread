@@ -113,7 +113,7 @@ def get_workflow_lab_baseline_bundle(
 ) -> WorkflowLabBaselineBundle:
     plan = build_goal_execution_plan(request.reading_goal, request.reading_variant)
     if getattr(plan, "topology_mode", "unknown") != "learning":
-        raise ValueError("workflow_lab v1 only supports learning topology")
+        raise ValueError("workflow_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
 
     plan.few_shot_mode = request.few_shot_mode
     sentences = _sample_sentences(request.sample_sentences)

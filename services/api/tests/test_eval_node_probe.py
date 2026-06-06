@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.api.routes import eval_debug
 from app.config.settings import Settings
@@ -195,7 +196,7 @@ async def test_node_probe_rejects_academic_topology(
 ) -> None:
     monkeypatch.setattr(node_probe, "get_settings", _settings)
 
-    result = await node_probe.run_article_analysis_node_probe(
+    with pytest.raises(ValidationError, match="node_probe v1 only supports learning topology"):
         ArticleAnalysisNodeProbeRequest(
             text="This paper proposes a compact evaluation protocol for discourse analysis.",
             reading_goal="academic",
@@ -203,12 +204,6 @@ async def test_node_probe_rejects_academic_topology(
             model_selection={"default_profile": "eval-profile"},
             dry_run=True,
         )
-    )
-
-    assert result.status == "failed"
-    assert result.error is not None
-    assert result.error.code == "ValueError"
-    assert "learning topology" in result.error.message
 
 
 def test_eval_node_probe_route_is_admin_key_protected(
@@ -441,7 +436,7 @@ async def test_vocabulary_node_probe_rejects_academic_topology(
 ) -> None:
     monkeypatch.setattr(node_probe, "get_settings", _settings)
 
-    result = await node_probe.run_article_analysis_node_probe(
+    with pytest.raises(ValidationError, match="node_probe v1 only supports learning topology"):
         ArticleAnalysisNodeProbeRequest(
             text="This paper proposes a compact evaluation protocol for discourse analysis.",
             node_name="vocabulary",
@@ -450,12 +445,6 @@ async def test_vocabulary_node_probe_rejects_academic_topology(
             model_selection={"default_profile": "eval-profile"},
             dry_run=True,
         )
-    )
-
-    assert result.status == "failed"
-    assert result.error is not None
-    assert result.error.code == "ValueError"
-    assert "learning topology" in result.error.message
 
 
 @pytest.mark.anyio
@@ -464,7 +453,7 @@ async def test_translation_node_probe_rejects_academic_topology(
 ) -> None:
     monkeypatch.setattr(node_probe, "get_settings", _settings)
 
-    result = await node_probe.run_article_analysis_node_probe(
+    with pytest.raises(ValidationError, match="node_probe v1 only supports learning topology"):
         ArticleAnalysisNodeProbeRequest(
             text="This paper proposes a compact evaluation protocol for discourse analysis.",
             node_name="translation",
@@ -473,12 +462,6 @@ async def test_translation_node_probe_rejects_academic_topology(
             model_selection={"default_profile": "eval-profile"},
             dry_run=True,
         )
-    )
-
-    assert result.status == "failed"
-    assert result.error is not None
-    assert result.error.code == "ValueError"
-    assert "learning topology" in result.error.message
 
 
 @pytest.mark.anyio

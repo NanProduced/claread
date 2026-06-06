@@ -2,7 +2,15 @@
 
 本文档说明 Directus / Eval Center / Example Lab / services/api / PostgreSQL / Zilliz 之间的耦合关系与联动更新点。后续改 workflow、Directus UI、RAG、metadata sync、seed、Zilliz schema 时，应先查本文档避免漏改。
 
+> LangSmith trace 行为（每条子路径是否写、`trace_scope` 取值、`surface` tag 约定）以 `docs/operations/langsmith.md` 为准，本文档不重复维护。简而言之：eval-center 默认 `trace_scope="off"` 不写 trace；唯一可被显式 `inherit` 进入主 LangSmith project 的入口是 Workflow Lab compare（它复用 `/analyze` 主链）。
+
 ## 1. 控制面模块与依赖
+
+### Eval Center learning-only 边界
+
+Eval Center 当前 v1 是 learning-only，所有 eval adapter 入口（article-analysis eval workflow `/eval/article-analysis/workflow`、node-lab、node-probe、workflow-lab baseline bundle）均在 Pydantic schema 层拒绝 `reading_goal="academic"`，返回 422。Directus endpoint 侧同样拒绝 academic 请求。
+
+academic graph 在后端主 workflow `/analyze` 中继续保留，服务主产品和未来独立 academic lab 的可能性，但不属于当前 eval-center 公开评测面。这是有意的产品边界，不是偶然缺失。
 
 | 模块 | Directus 承载 | Directus endpoint / hook | PostgreSQL 表 | runtime artifact | Claread API / 其他后端依赖 |
 |------|--------------|--------------------------|---------------|-----------------|-----------------------------|

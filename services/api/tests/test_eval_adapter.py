@@ -367,3 +367,74 @@ def test_eval_workflow_route_is_admin_key_protected(
     assert allowed.status_code == 200
     assert allowed.json()["workflow_identity"]["workflow_name"] == "article_analysis"
     run_mock.assert_awaited_once()
+
+
+def test_eval_workflow_route_rejects_academic_goal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Eval Center v1 is learning-only; /eval/article-analysis/workflow must
+    reject reading_goal='academic' with 422."""
+    monkeypatch.setattr(eval_debug, "get_settings", _admin_settings)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/eval/article-analysis/workflow",
+        headers={"x-admin-api-key": "eval-key"},
+        json={"text": "Academic text.", "reading_goal": "academic", "reading_variant": "academic_general"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    # Pydantic validation error wraps the ValueError message
+    error_detail = body.get("detail", [])
+    messages = [e.get("msg", "") for e in error_detail if isinstance(e, dict)]
+    assert any("learning topology" in m for m in messages), f"Expected 'learning topology' in error messages, got: {messages}"
+
+
+def test_eval_node_probe_route_rejects_academic_goal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Eval Center v1 is learning-only; /eval/article-analysis/node-probe must
+    reject reading_goal='academic' with 422."""
+    monkeypatch.setattr(eval_debug, "get_settings", _admin_settings)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/eval/article-analysis/node-probe",
+        headers={"x-admin-api-key": "eval-key"},
+        json={"text": "Academic text.", "reading_goal": "academic", "reading_variant": "academic_general"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    error_detail = body.get("detail", [])
+    messages = [e.get("msg", "") for e in error_detail if isinstance(e, dict)]
+    assert any("learning topology" in m for m in messages), f"Expected 'learning topology' in error messages, got: {messages}"
+
+
+def test_eval_workflow_route_allows_learning_goal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Learning goal must still work after the academic rejection guard."""
+    monkeypatch.setattr(eval_debug, "get_settings", _admin_settings)
+    run_mock = AsyncMock(return_value=_fake_eval_result())
+    monkeypatch.setattr(eval_debug, "run_article_analysis_eval", run_mock)
+
+    app = FastAPI()
+    app.include_router(eval_debug.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/eval/article-analysis/workflow",
+        headers={"x-admin-api-key": "eval-key"},
+        json={"text": "Learning text.", "reading_goal": "daily_reading", "reading_variant": "intermediate_reading"},
+    )
+
+    assert response.status_code == 200
+    run_mock.assert_awaited_once()

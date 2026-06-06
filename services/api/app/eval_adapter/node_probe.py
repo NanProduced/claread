@@ -231,7 +231,7 @@ async def run_article_analysis_node_probe(
         plan = build_goal_execution_plan(request.reading_goal, request.reading_variant)
         topology_mode = getattr(plan, "topology_mode", "unknown")
         if topology_mode != "learning":
-            raise ValueError("node_probe v1 only supports learning topology")
+            raise ValueError("node_probe v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
 
         with (
             prompt_runtime_override(request.prompt_override),

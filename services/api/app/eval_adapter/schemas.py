@@ -24,7 +24,21 @@ NODE_LAB_JUDGE_SCHEMA_VERSION = "article-analysis-node-lab-judge-v1"
 
 EvalStatus = Literal["succeeded", "failed", "timeout"]
 RagMode = Literal["off", "baseline", "rag", "rag_fallback", "settings"]
-TraceScope = Literal["off", "isolated", "inherit"]
+# Per-call LangSmith tracing scope for eval requests.
+#
+# * ``"off"`` (default everywhere): the eval request will NOT emit LangSmith
+#   spans even if global ``LANGSMITH_TRACING`` is enabled. Implemented via
+#   ``langsmith.run_helpers.tracing_context(enabled=False)`` in
+#   :func:`app.eval_adapter.shared.trace_scope`. Concurrent-safe.
+# * ``"inherit"``: explicit opt-in to whatever the process-global LangSmith
+#   project / tracing flag is. Use this when an operator deliberately wants
+#   the eval run to show up in the main ``LANGSMITH_PROJECT`` for debugging.
+#
+# The historical ``"isolated"`` value (which used to mutate ``os.environ``
+# per request and was unsafe under concurrency) was removed in the
+# tracing-isolation pass. Sending it now is a 422 schema error — see
+# ``docs/operations/langsmith.md``.
+TraceScope = Literal["off", "inherit"]
 NodeProbeName = Literal["grammar", "vocabulary", "translation"]
 WorkflowLabPromptAgentName = Literal["vocabulary", "grammar", "translation", "repair"]
 NodeLabWorkspace = Literal["single_run", "baseline_compare"]
@@ -120,7 +134,7 @@ class NodeLabBaselineConfigRequest(BaseModel):
     def _validate_node_lab_goal(self) -> NodeLabBaselineConfigRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+                "node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
             )
         return self
 
@@ -151,7 +165,7 @@ class WorkflowLabBaselineBundleRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_learning_only(self) -> WorkflowLabBaselineBundleRequest:
         if self.reading_goal == "academic":
-            raise ValueError("workflow_lab v1 only supports learning topology")
+            raise ValueError("workflow_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
         return self
 
 
@@ -220,6 +234,12 @@ class ArticleAnalysisNodeLabRunRequest(BaseModel):
     source_type: SourceType = "user_input"
     extended: bool = False
     trace_scope: TraceScope = "off"
+    # Deprecated: per-call LangSmith project switching was removed because
+    # it was implemented via process-global ``os.environ`` mutation and was
+    # therefore unsafe under concurrent requests. Kept on the schema so
+    # existing Directus payloads / persisted snapshots that still include
+    # this field don't 422; the value is never read at runtime. See
+    # docs/operations/langsmith.md.
     trace_project: str | None = "claread-eval"
     timeout_seconds: float | None = Field(default=None, gt=0.0)
     dry_run: bool = False
@@ -230,7 +250,7 @@ class ArticleAnalysisNodeLabRunRequest(BaseModel):
     def _validate_candidate_node(self) -> ArticleAnalysisNodeLabRunRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+                "node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
             )
         if self.candidate_override is not None and self.candidate_override.node_name != self.node_name:
             raise ValueError("candidate_override.node_name must match node_name")
@@ -268,6 +288,7 @@ class ArticleAnalysisNodeLabCompareRequest(BaseModel):
     source_type: SourceType = "user_input"
     extended: bool = False
     trace_scope: TraceScope = "off"
+    # Deprecated: see ``ArticleAnalysisNodeLabRunRequest.trace_project``.
     trace_project: str | None = "claread-eval"
     timeout_seconds: float | None = Field(default=None, gt=0.0)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -277,7 +298,7 @@ class ArticleAnalysisNodeLabCompareRequest(BaseModel):
     def _validate_candidate_node(self) -> ArticleAnalysisNodeLabCompareRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+                "node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
             )
         if self.candidate_override.node_name != self.node_name:
             raise ValueError("candidate_override.node_name must match node_name")
@@ -421,7 +442,7 @@ class NodeLabJudgeExecuteRequest(BaseModel):
     def _validate_request(self) -> "NodeLabJudgeExecuteRequest":
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab judge v1 only supports daily_reading and exam; academic should use a dedicated academic lab/workflow"
+                "node_lab judge v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
             )
         allowed_by_node: dict[str, set[str]] = {
             "grammar": {"grammar_item_review"},
@@ -522,12 +543,17 @@ class ArticleAnalysisEvalRequest(BaseModel):
     prompt_variant_id: str | None = None
     prompt_override: PromptRuntimeOverride | None = None
     trace_scope: TraceScope = "off"
+    # Deprecated: see ``ArticleAnalysisNodeLabRunRequest.trace_project``.
     trace_project: str | None = "claread-eval"
     timeout_seconds: float | None = Field(default=None, gt=0.0)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _validate_prompt_identity(self) -> ArticleAnalysisEvalRequest:
+    def _validate_learning_only(self) -> ArticleAnalysisEvalRequest:
+        if self.reading_goal == "academic":
+            raise ValueError(
+                "eval workflow v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+            )
         if (
             self.prompt_variant_id
             and self.prompt_override is not None
@@ -559,13 +585,18 @@ class ArticleAnalysisNodeProbeRequest(BaseModel):
     prompt_variant_id: str | None = None
     prompt_override: PromptRuntimeOverride | None = None
     trace_scope: TraceScope = "off"
+    # Deprecated: see ``ArticleAnalysisNodeLabRunRequest.trace_project``.
     trace_project: str | None = "claread-eval"
     timeout_seconds: float | None = Field(default=None, gt=0.0)
     dry_run: bool = False
     source_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _validate_prompt_identity(self) -> ArticleAnalysisNodeProbeRequest:
+    def _validate_learning_only(self) -> ArticleAnalysisNodeProbeRequest:
+        if self.reading_goal == "academic":
+            raise ValueError(
+                "node_probe v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+            )
         if (
             self.prompt_variant_id
             and self.prompt_override is not None

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from hashlib import sha256
@@ -19,6 +18,7 @@ from app.llm.registry import build_model_registry
 from app.llm.router import resolve_model_config
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.llm.types import ModelSelection
+from app.observability import disabled_tracing
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
 
 
@@ -154,26 +154,33 @@ def rag_override(request: Any) -> bool | None:
 
 @contextmanager
 def trace_scope(request: Any) -> Iterator[None]:
-    """Apply eval trace scope for the current awaited block.
+    """Apply eval-only LangSmith tracing scope for the wrapped block.
 
-    This currently mutates LangSmith-related environment variables because the
-    existing tracing integration reads process env. Do not run concurrent eval
-    calls with different trace scopes until this moves to a context-local trace
-    configuration.
+    Policy (see ``docs/operations/langsmith.md``):
+
+    * ``trace_scope == "off"`` (the default for every eval-center request):
+      disable LangSmith tracing for the wrapped call only, via the SDK's
+      ``ContextVar``-based switch. **No process-global env mutation.**
+    * ``trace_scope == "inherit"``: no wrapping. Whatever global tracing
+      state (``LANGSMITH_TRACING``) is active applies. Use this when an
+      operator deliberately wants the eval run to appear in the main
+      ``LANGSMITH_PROJECT`` for debugging.
+
+    Anything else (e.g. the historical ``"isolated"`` value, which used to
+    mutate ``os.environ["LANGSMITH_PROJECT"]`` and was unsafe under
+    concurrency) is rejected at the schema layer and treated as
+    ``"inherit"`` here as a defensive default.
+
+    ``request.trace_project`` is intentionally ignored — per-call project
+    switching is no longer a supported capability. Operators who need a
+    dedicated eval project should configure a separate process /
+    deployment with its own ``LANGSMITH_PROJECT``.
     """
 
-    keys = ("LANGSMITH_TRACING", "LANGSMITH_TRACING_V2", "LANGSMITH_PROJECT")
-    previous = {key: os.environ.get(key) for key in keys}
-    try:
-        if request.trace_scope == "off":
-            os.environ["LANGSMITH_TRACING"] = "false"
-            os.environ["LANGSMITH_TRACING_V2"] = "false"
-        elif request.trace_scope == "isolated" and request.trace_project:
-            os.environ["LANGSMITH_PROJECT"] = request.trace_project
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+    scope = getattr(request, "trace_scope", "off")
+    if scope == "off":
+        with disabled_tracing():
+            yield
+        return
+    # "inherit" or any unexpected value: do nothing, inherit global tracing.
+    yield

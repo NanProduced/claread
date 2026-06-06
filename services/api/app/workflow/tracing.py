@@ -5,8 +5,24 @@ from typing import Any
 from pydantic_ai.usage import RunUsage
 
 
-def build_workflow_root_tags(workflow_name: str, model_names: list[str] | None = None) -> list[str]:
+def build_workflow_root_tags(
+    workflow_name: str,
+    model_names: list[str] | None = None,
+    *,
+    surface: str | None = None,
+) -> list[str]:
+    """Build the root-run tag list passed to LangGraph ``config['tags']``.
+
+    Includes ``surface:<value>`` (e.g. ``surface:analyze_direct``,
+    ``surface:eval_workflow_lab``) when provided so LangSmith filters can
+    cleanly separate main-product analyze traces from eval-center traces
+    even when they share the same workflow_name and project — see
+    ``docs/operations/langsmith.md`` for the canonical surface list.
+    """
+
     tags = ["workflow", workflow_name]
+    if surface:
+        tags.append(f"surface:{surface}")
     if model_names:
         tags.extend(model_names)
     return tags
@@ -22,6 +38,7 @@ def build_workflow_root_metadata(
     reading_goal: str,
     reading_variant: str,
     profile_id: str,
+    surface: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
@@ -34,6 +51,8 @@ def build_workflow_root_metadata(
         "reading_variant": reading_variant,
         "profile_id": profile_id,
     }
+    if surface:
+        metadata["surface"] = surface
     if extra:
         metadata.update(extra)
     return {key: value for key, value in metadata.items() if value is not None}
@@ -50,6 +69,7 @@ def build_llm_trace_metadata(
     profile_id: str,
     model_name: str,
     model_provider: str,
+    surface: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
@@ -65,6 +85,8 @@ def build_llm_trace_metadata(
         "ls_provider": model_provider,
         "ls_model_name": model_name,
     }
+    if surface:
+        metadata["surface"] = surface
     if extra:
         metadata.update(extra)
     return metadata

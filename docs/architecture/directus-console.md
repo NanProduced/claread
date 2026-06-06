@@ -86,6 +86,7 @@ academic policy 下 `content_summary = null` 不能直接判为失败。
 - Judge 已并回 Node Lab 主路径，不再是独立 mode
 - Baseline Compare 是主实验入口
 - Single Run 不进入 Session，也不持久化到 Run History
+- **learning-only**：node-lab v1 只支持 learning topology，所有入口（baseline config / run / compare / judge）均拒绝 `reading_goal="academic"`
 
 #### Workflow Lab 边界
 
@@ -97,6 +98,11 @@ academic policy 下 `content_summary = null` 不能直接判为失败。
 - 底层 workflow run artifact 仍存在于 `workflow-runs/`，但仅作为 compare 私有依赖
 - Dataset endpoint `/workflow-runs/datasets*` 暂时保留但已退出主路径
 - 后端 `/workflow-lab/run-history/single-run` 仍保留单篇 run artifact 持久化能力，但不是用户可见主工作区
+- **learning-only**：workflow-lab v1 只支持 learning topology，baseline bundle 和 single run 均拒绝 `reading_goal="academic"`
+
+#### Eval Center 整体 learning-only 边界
+
+Eval Center 当前 v1 是 learning-only，所有 eval adapter 入口（article-analysis eval workflow、node-lab、node-probe、workflow-lab）均在 schema 层拒绝 `reading_goal="academic"`。academic graph 在后端主 workflow `/analyze` 中继续保留，服务主产品和未来独立 academic lab 的可能性，但不属于当前 eval-center 公开评测面。这是有意的产品边界，不是偶然缺失。
 
 #### Run History 边界
 
@@ -220,6 +226,7 @@ Directus / Claread Console 负责：
 - 平台只展示 prompt version，不承接 prompt 在线编辑
 - 单一 admin 账号，不做多角色权限管理
 - LangSmith 只负责 trace / run inspection，不替代自建 eval
+- eval-center 各子路径默认 **不写 LangSmith trace**（`trace_scope="off"`）。只有 Workflow Lab compare 复用 `/analyze` 主链路时可显式 `trace_scope="inherit"` 写入，届时会带 `surface:eval_workflow_lab` tag。Node Lab / Node Lab Judge / Example Lab AI generator / Workflow Lab compare-judge 等子路径均不写 LangSmith。详细 trace 行为见 `docs/operations/langsmith.md`。
 
 ## 当前事实源
 
