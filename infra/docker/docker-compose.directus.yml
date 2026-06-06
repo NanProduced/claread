@@ -29,8 +29,17 @@ services:
       CLAREAD_EVAL_PROXY_TIMEOUT_MS: ${CLAREAD_EVAL_PROXY_TIMEOUT_MS}
       CLAREAD_EVAL_RUNS_ROOT: ${CLAREAD_EVAL_RUNS_ROOT}
       CLAREAD_NODE_LAB_ARTIFACTS_ROOT: ${CLAREAD_NODE_LAB_ARTIFACTS_ROOT}
+      CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT: ${CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT:-/directus/runtime-evals/workflow-runs}
+      CLAREAD_WORKFLOW_COMPARE_RUNTIME_ROOT: ${CLAREAD_WORKFLOW_COMPARE_RUNTIME_ROOT:-/directus/runtime-evals/workflow-compares}
       CLAREAD_NODE_LAB_JUDGE_DISPATCH_MODE: ${CLAREAD_NODE_LAB_JUDGE_DISPATCH_MODE:-directus_async}
       CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND: ${CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND:-python -m claread_eval.node_lab_judge.worker}
+    entrypoint: >
+      /bin/sh -c "
+      mkdir -p /directus/runtime-evals/node-lab/sessions
+      mkdir -p /directus/runtime-evals/workflow-runs
+      mkdir -p /directus/runtime-evals/workflow-compares
+      exec npx directus start
+      "
     volumes:
       - ../../apps/directus/.runtime/uploads:/directus/uploads
       - ../../apps/directus/.runtime/evals:/directus/runtime-evals

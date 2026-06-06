@@ -104,6 +104,7 @@ function nodeLabJudgeConfigRoot(resolveEvalsRoot, env) {
 
 function absoluteNodeLabArtifactPath(resolveNodeLabArtifactsRoot, env, artifactPath) {
   const relativePath = String(artifactPath || "")
+    .replace(/^runtime-evals[\\/]node-lab[\\/]/, "")
     .replace(/^evals[\\/]node-lab[\\/]/, "")
     .replace(/^node-lab[\\/]/, "");
   return path.join(resolveNodeLabArtifactsRoot(env), relativePath);
@@ -1217,7 +1218,7 @@ async function persistTrial({
   const finishedAt = finishedAtDate.toISOString();
   const artifactDir = trialArtifactDir(resolveNodeLabArtifactsRoot, env, sessionId, trialId);
   const effectiveSessionId = sessionId || "_standalone";
-  const artifactPath = `evals/node-lab/sessions/${effectiveSessionId}/trials/${trialId}/result.json`;
+  const artifactPath = `runtime-evals/node-lab/sessions/${effectiveSessionId}/trials/${trialId}/result.json`;
   const identity = trialIdentityForPayload(workspaceType, requestPayload, resultPayload);
   const baselineSnapshotHash = identity.baselineSnapshotHash;
   const candidateHashes = identity.candidateHashes;
@@ -1410,7 +1411,7 @@ async function createJudgeRequest(database, req, env, resolveNodeLabArtifactsRoo
     candidate: { trial_id: body.trial_id, label: "candidate" },
   };
   const effectiveSessionId = trialRow.session_id || "_standalone";
-  const artifactPath = `evals/node-lab/sessions/${effectiveSessionId}/trials/${trialRow.trial_id}/judge/${judgeRequestId}/result.json`;
+  const artifactPath = `runtime-evals/node-lab/sessions/${effectiveSessionId}/trials/${trialRow.trial_id}/judge/${judgeRequestId}/result.json`;
   const row = {
     judge_request_id: judgeRequestId,
     trial_id: trialRow.trial_id,
