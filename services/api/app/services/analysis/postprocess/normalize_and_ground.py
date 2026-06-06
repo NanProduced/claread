@@ -26,6 +26,7 @@ from app.services.analysis.postprocess.draft_validators import (
     validate_phrase_gloss_business_rules,
     validate_vocab_highlight_business_rules,
 )
+from app.services.analysis.postprocess.normalize import is_substring
 
 PRIORITY_RANK: dict[str, int] = {
     "context_gloss": 3,
@@ -73,10 +74,6 @@ def _make_anchor_key(annotation_type: str, sentence_id: str, anchor_text: str) -
     return f"{annotation_type}_{sentence_id}_{digest}"
 
 
-def _is_substring(text: str, sentence_text: str) -> bool:
-    return text in sentence_text
-
-
 def _log_drop(
     source_agent: Literal["vocabulary", "grammar", "translation"],
     annotation_type: str,
@@ -114,7 +111,7 @@ def _grounding_check(
             "sentence_id_not_found", "grounding", drop_log
         )
         return False
-    if not _is_substring(text, sentence_obj.text):
+    if not is_substring(text, sentence_obj.text):
         _log_drop(
             source_agent, annotation_type, sentence_id, text,
             "anchor_not_substring", "grounding", drop_log

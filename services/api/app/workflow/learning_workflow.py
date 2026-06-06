@@ -32,7 +32,8 @@ def _should_repair(state: AnalyzeState) -> bool:
     annotation_count = len(normalized_result.annotations)
 
     if annotation_count == 0:
-        return False
+        # 如果所有标注都被 drop 但有 quality drops，应触发 repair
+        return quality_drop_count > 0
 
     failure_ratio = quality_drop_count / (annotation_count + quality_drop_count)
     return failure_ratio > 0.35

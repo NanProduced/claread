@@ -15,6 +15,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -46,7 +47,44 @@ HTML_BLOCK_BREAK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
-CONTROL_CHAR_PATTERN = re.compile(r"[\u200b-\u200f\u202a-\u202e\ufeff]")
+# Extended invisible/control character pattern: C0 controls, zero-width chars,
+# soft hyphen, BOM, directional marks, invisible operators, bidi isolates.
+_INVISIBLE_CHAR_PATTERN = re.compile(
+    r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f"  # C0 controls + DEL
+    r"\u200b\u200c\u200d\u00ad\ufeff"                    # ZW chars + soft hyphen + BOM
+    r"\u200e\u200f\u202a-\u202e"                          # Directional controls
+    r"\u2060-\u2064\u2066-\u2069"                         # Invisible operators + bidi isolates
+    r"\ufffc]"                                             # OBJECT REPLACEMENT CHARACTER (PDF)
+)
+# Unicode whitespace → ASCII space mapping for common copy-paste artifacts.
+_UNICODE_SPACE_MAP = str.maketrans({
+    "\u00a0": " ",   # NO-BREAK SPACE (NBSP) — most common from Word/HTML
+    "\u2000": " ",   # EN QUAD
+    "\u2001": " ",   # EM QUAD
+    "\u2002": " ",   # EN SPACE
+    "\u2003": " ",   # EM SPACE
+    "\u2004": " ",   # THREE-PER-EM SPACE
+    "\u2005": " ",   # FOUR-PER-EM SPACE
+    "\u2006": " ",   # SIX-PER-EM SPACE
+    "\u2007": " ",   # FIGURE SPACE
+    "\u2008": " ",   # PUNCTUATION SPACE
+    "\u2009": " ",   # THIN SPACE
+    "\u200a": " ",   # HAIR SPACE
+    "\u202f": " ",   # NARROW NO-BREAK SPACE
+    "\u205f": " ",   # MEDIUM MATHEMATICAL SPACE
+    "\u3000": " ",   # IDEOGRAPHIC SPACE
+})
+# Punctuation normalization: curly quotes → straight, dashes → hyphen, ellipsis → dots.
+_PUNCTUATION_MAP = str.maketrans({
+    "\u2018": "'",   # LEFT SINGLE QUOTATION MARK
+    "\u2019": "'",   # RIGHT SINGLE QUOTATION MARK
+    "\u201c": '"',   # LEFT DOUBLE QUOTATION MARK
+    "\u201d": '"',   # RIGHT DOUBLE QUOTATION MARK
+    "\u2013": "-",   # EN DASH
+    "\u2014": "-",   # EM DASH
+})
+# NOTE: ellipsis (U+2026) maps to 3 chars, cannot use str.maketrans.
+_ELLIPSIS_PATTERN = re.compile(r"\u2026")
 MULTISPACE_PATTERN = re.compile(r"[ \t]+")
 LATIN_LETTER_PATTERN = re.compile(r"[A-Za-z]")
 ALPHANUMERIC_PATTERN = re.compile(r"[A-Za-z0-9]")
@@ -507,6 +545,43 @@ def _split_sentences_regex(
     return sentences
 
 
+def _unwrap_soft_breaks_in_paragraphs(
+    render_text: str, paragraph_spans: list[tuple[int, int]]
+) -> tuple[str, list[tuple[int, int]]]:
+    """在段落内部解开 PDF 软换行（如 "Matt\\nTebbutt" → "Matt Tebbutt"）。
+
+    段落边界已由 _split_paragraph_spans 确定，段落内部的换行一定是软换行。
+    返回新的 render_text 和调整后的 paragraph_spans。
+    """
+    if "\n" not in render_text:
+        return render_text, paragraph_spans
+
+    # 逐段落处理
+    parts: list[str] = []
+    new_spans: list[tuple[int, int]] = []
+    offset = 0
+
+    for para_start, para_end in paragraph_spans:
+        para_text = render_text[para_start:para_end]
+        # 段落内部的换行替换为空格
+        unwrapped = para_text.replace("\n", " ")
+        # 压缩多空格
+        unwrapped = MULTISPACE_PATTERN.sub(" ", unwrapped).strip()
+
+        new_start = offset
+        new_end = offset + len(unwrapped)
+        parts.append(unwrapped)
+        new_spans.append((new_start, new_end))
+        offset = new_end
+        # 段落之间保留 \n\n
+        if para_end < len(render_text):
+            parts.append("\n\n")
+            offset += 2
+
+    new_render_text = "".join(parts)
+    return new_render_text, new_spans
+
+
 def _build_sentences_from_spacy_spans(
     render_text: str,
     paragraph_spans: list[tuple[int, int]],
@@ -558,6 +633,13 @@ def layer5_split(
 
     # ---- Paragraph split (always by blank lines) ----
     paragraph_spans = _split_paragraph_spans(render_text)
+
+    # ---- Unwrap soft line breaks within paragraphs ----
+    # After paragraph boundaries are determined, any remaining newlines inside
+    # a paragraph are PDF soft-wraps (e.g., "Matt\nTebbutt" → "Matt Tebbutt").
+    render_text, paragraph_spans = _unwrap_soft_breaks_in_paragraphs(
+        render_text, paragraph_spans
+    )
 
     # ---- Sentence split ----
     if fast_path:
@@ -758,10 +840,60 @@ def sanitize_text(source_text: str) -> tuple[str, SanitizeReport]:
         actions.append("remove_email")
         removed_segment_count += email_count
 
-    # 9. 控制字符
-    text = CONTROL_CHAR_PATTERN.sub("", text)
+    # 9. Unicode 空白归一化 + 零宽字符移除 + NFC + 标点归一化
+    # 9a. Unicode 空白 → ASCII 空格 (NBSP, thin space, em space, etc.)
+    text_before = text
+    text = text.translate(_UNICODE_SPACE_MAP)
+    if text != text_before:
+        actions.append("normalize_unicode_whitespace")
 
-    # 10. 空格与换行归一化
+    # 9b. 零宽字符和控制字符移除 (zero-width, soft hyphen, BOM, directional, form feed, etc.)
+    text = _INVISIBLE_CHAR_PATTERN.sub("", text)
+
+    # 9c. Unicode NFC 归一化 (组合字符序列一致性)
+    text = unicodedata.normalize("NFC", text)
+
+    # 9d. 标点变体归一化 (弯引号→直引号, dash→hyphen, 省略号→...)
+    text_before = text
+    text = text.translate(_PUNCTUATION_MAP)
+    text = _ELLIPSIS_PATTERN.sub("...", text)
+    if text != text_before:
+        actions.append("normalize_punctuation_variants")
+
+    # 9e. 移除中文括号注释（如 "( 联系 )"、"(中位数)"、"( 消亡 )"）
+    # 高考/考试材料中常见中文词汇注释，PDF 复制后混入英文正文。
+    # 只移除纯中文括号注释，保留英文括号补充信息如 "(see Figure 1)"。
+    text_before = text
+    text = re.sub(r"\(\s*[\u4e00-\u9fff]+[\u4e00-\u9fff\s]*\)", "", text)
+    if text != text_before:
+        actions.append("remove_chinese_parenthetical_notes")
+
+    # 10. PDF 软换行解开
+    # Replace single newlines with spaces when the newline is NOT a paragraph boundary.
+    # Blank lines (\n\n) are preserved as paragraph boundaries.
+    text_before = text
+    # Pattern 0: hyphenated line break (e.g., "nutri-\ntious" → "nutritious",
+    # "Chiapane-\nco" → "Chiapaneco", "globali-\nsation" → "globalisation")
+    # Must run before Pattern 1-3 because it is more specific (requires hyphen).
+    # Use [a-zA-Z] instead of \w to avoid merging number ranges like "42-\n3" → "423".
+    text = re.sub(r"([a-zA-Z])-\n(?=[a-zA-Z])", r"\1", text)
+    # Pattern 1: lowercase/punctuation → newline → lowercase (most common soft-wrap)
+    text = re.sub(r"(?<=[a-z,;:\-])\n(?=[a-z])", " ", text)
+    # Pattern 2: comma/semicolon → newline → uppercase (e.g., "Matt,\nTebbutt")
+    text = re.sub(r"(?<=[,;])\n(?=[A-Z])", " ", text)
+    # Pattern 3: lowercase letter → newline → uppercase letter (e.g., "Matt\nTebbutt")
+    # This also merges heading+body lines without blank-line separation.
+    # That is acceptable: without blank-line separation, we cannot reliably
+    # distinguish headings from soft-wraps. Users should use blank lines to
+    # mark paragraph boundaries.
+    # Use [ \t]* (horizontal whitespace only) instead of \s* to avoid
+    # consuming the second \n in blank lines (\n\n), which would destroy
+    # paragraph boundaries.
+    text = re.sub(r"(?<=[a-z])\n[ \t]*(?=[A-Z][a-z])", " ", text)
+    if text != text_before:
+        actions.append("unwrap_pdf_soft_line_breaks")
+
+    # 11. 空格与换行归一化
     # Preserve blank lines so paragraph boundaries survive into layer5_split().
     lines = [MULTISPACE_PATTERN.sub(" ", ln).strip() for ln in text.split("\n")]
     cleaned = "\n".join(lines)

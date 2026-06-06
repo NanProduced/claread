@@ -6,6 +6,21 @@ from typing import cast
 from app.schemas.common import TextSpan
 from app.schemas.internal.analysis import PreparedSentence
 
+# 标点变体归一化映射，与 sanitize_text / normalize.py 保持一致。
+# 在 resolve_text_anchor 入口处对 anchor_text 做归一化，
+# 使 Level 1-3 的匹配就能处理弯引号/dash/省略号差异。
+_ANCHOR_PUNCTUATION_MAP = str.maketrans({
+    "\u2018": "'",   # LEFT SINGLE QUOTATION MARK
+    "\u2019": "'",   # RIGHT SINGLE QUOTATION MARK
+    "\u201c": '"',   # LEFT DOUBLE QUOTATION MARK
+    "\u201d": '"',   # RIGHT DOUBLE QUOTATION MARK
+    "\u2013": "-",   # EN DASH
+    "\u2014": "-",   # EM DASH
+})
+
+# 省略号字符 → 三个点（str.maketrans 无法做 1→3 映射，需单独处理）
+_ANCHOR_ELLIPSIS_PATTERN = re.compile(r"\u2026")
+
 QUOTE_CLASS = r"[\"'""'']"
 HYPHEN_CLASS = r"[-–—]"
 SEPARATOR_CLASS = r"[\s–—-]"
@@ -86,6 +101,12 @@ def resolve_text_anchor(
     """仅在句内解析锚点，避免模型直接生成全文坐标。"""
     if not anchor_text.strip():
         return None
+
+    # 对 anchor_text 做标点归一化，与 sanitize_text 保持一致。
+    # sentence_text 已在预处理阶段归一化，但 LLM 输出的 anchor_text
+    # 可能包含弯引号、en/em dash、省略号等标点变体。
+    anchor_text = anchor_text.translate(_ANCHOR_PUNCTUATION_MAP)
+    anchor_text = _ANCHOR_ELLIPSIS_PATTERN.sub("...", anchor_text)
 
     exact = _resolve_candidate(_find_all(sentence.text, anchor_text), anchor_occurrence)
     if exact is not None:

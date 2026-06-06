@@ -29,6 +29,7 @@ from app.schemas.internal.analysis import (
     VocabHighlight,
 )
 from app.services.analysis.postprocess.anchor_resolution import resolve_multi_text_anchor, resolve_text_anchor
+from app.services.analysis.postprocess.normalize import is_substring
 from app.services.analysis.preprocess.input_preparation import PreparedInput
 
 if TYPE_CHECKING:
@@ -260,7 +261,7 @@ def _validate_chunks(chunks: list[Chunk] | None, sentence_text: str) -> bool:
     orders = [chunk.order for chunk in chunks]
     if sorted(orders) != list(range(1, len(chunks) + 1)):
         return False
-    return all(chunk.text in sentence_text for chunk in chunks)
+    return all(is_substring(chunk.text, sentence_text) for chunk in chunks)
 
 
 def _format_grammar_spans(spans: list[SpanRef]) -> str:

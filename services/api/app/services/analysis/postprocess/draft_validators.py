@@ -11,6 +11,7 @@ from app.schemas.internal.analysis import (
     is_single_token,
 )
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.services.analysis.postprocess.normalize import is_substring
 
 
 class DraftValidationError(Exception):
@@ -63,7 +64,7 @@ def validate_vocabulary_draft(
             warnings.append(f"vocab_highlight: sentence_id {v.sentence_id} not found")
             continue
         sent_text = sentence_map[v.sentence_id].text
-        if v.text not in sent_text:
+        if not is_substring(v.text, sent_text):
             warnings.append(
                 f"vocab_highlight: text '{v.text}' not found in sentence {v.sentence_id}"
             )
@@ -74,7 +75,7 @@ def validate_vocabulary_draft(
             warnings.append(f"phrase_gloss: sentence_id {p.sentence_id} not found")
             continue
         sent_text = sentence_map[p.sentence_id].text
-        if p.text not in sent_text:
+        if not is_substring(p.text, sent_text):
             warnings.append(
                 f"phrase_gloss: text '{p.text}' not found in sentence {p.sentence_id}"
             )
@@ -85,7 +86,7 @@ def validate_vocabulary_draft(
             warnings.append(f"context_gloss: sentence_id {c.sentence_id} not found")
             continue
         sent_text = sentence_map[c.sentence_id].text
-        if c.text not in sent_text:
+        if not is_substring(c.text, sent_text):
             warnings.append(
                 f"context_gloss: text '{c.text}' not found in sentence {c.sentence_id}"
             )
@@ -106,7 +107,7 @@ def validate_grammar_draft(
             continue
         sent_text = sentence_map[g.sentence_id].text
         for span in g.spans:
-            if span.text not in sent_text:
+            if not is_substring(span.text, sent_text):
                 warnings.append(
                     f"grammar_note: span text '{span.text}' not found in sentence {g.sentence_id}"
                 )
@@ -123,7 +124,7 @@ def validate_grammar_draft(
             )
         if s.chunks:
             for chunk in s.chunks:
-                if chunk.text not in sent_text:
+                if not is_substring(chunk.text, sent_text):
                     warnings.append(
                         f"sentence_analysis: chunk text '{chunk.text}' "
                         f"not found in sentence {s.sentence_id}"

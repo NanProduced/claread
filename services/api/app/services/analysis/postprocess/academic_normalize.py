@@ -20,6 +20,7 @@ from app.schemas.internal.academic_normalized import AcademicNormalizedResult, A
 from app.schemas.internal.analysis import PreparedSentence
 from app.schemas.internal.execution_plan import AcademicGoalPolicy
 from app.schemas.internal.normalized import DropLogEntry
+from app.services.analysis.postprocess.normalize import is_substring
 
 
 ACADEMIC_DROP_SOURCE = Literal["term", "translation", "understanding"]
@@ -60,10 +61,6 @@ def _make_anchor_key(annotation_type: str, sentence_id: str, anchor_text: str) -
     )
     digest = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
     return f"{annotation_type}_{sentence_id}_{digest}"
-
-
-def _is_substring(text: str, sentence_text: str) -> bool:
-    return text in sentence_text
 
 
 def _log_academic_drop(
@@ -112,7 +109,7 @@ def _normalize_term_notes(
                 "sentence_id_not_found", "grounding", drop_log,
             )
             continue
-        if not _is_substring(item.text, primary_obj.text):
+        if not is_substring(item.text, primary_obj.text):
             _log_academic_drop(
                 "term", "term_note", primary_sid, item.text,
                 "anchor_not_substring", "grounding", drop_log,
@@ -201,7 +198,7 @@ def _normalize_logic_notes(
                 "sentence_id_not_found", "grounding", drop_log,
             )
             continue
-        if not _is_substring(item.anchor_text, primary_obj.text):
+        if not is_substring(item.anchor_text, primary_obj.text):
             _log_academic_drop(
                 "understanding", "logic_note", primary_sid, item.anchor_text,
                 "anchor_not_substring", "grounding", drop_log,

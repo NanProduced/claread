@@ -10,10 +10,10 @@ def test_prepare_input_sanitizes_markup_links_and_code() -> None:
         "<div>Hello</div> Visit https://example.com now.\n\n```python\nprint('x')\n```"
     )
 
-    assert prepared.render_text == "Hello\nVisit now."
+    assert prepared.render_text == "Hello Visit now."
     assert "remove_url" in prepared.sanitize_report.actions
     assert "remove_code_fence" in prepared.sanitize_report.actions
-    assert prepared.sentences[0].text == "Hello\nVisit now."
+    assert prepared.sentences[0].text == "Hello Visit now."
 
 
 def test_build_goal_execution_plan_preserves_beginner_profile_and_policies() -> None:

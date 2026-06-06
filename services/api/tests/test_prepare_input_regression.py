@@ -436,11 +436,19 @@ def test_crlf_blank_line_preserves_two_paragraphs() -> None:
 
 def test_heading_line_is_split_from_first_body_sentence() -> None:
     """
-    A short heading line followed by prose should not be merged into the first
-    body sentence, otherwise translation/grammar alignment drifts.
+    A short heading line followed by prose (with blank line) should not be
+    merged into the first body sentence, otherwise translation/grammar
+    alignment drifts.
+
+    NOTE: Without a blank line between heading and body, the soft-wrap
+    unwrapping in sanitize_text will merge them (e.g., "traditions\nIn" →
+    "traditions In"). This is by design: PDF soft-wraps are far more common
+    than heading+body without blank-line separation. Use blank lines to mark
+    paragraph boundaries.
     """
     text = (
         "April Fool's traditions\n"
+        "\n"
         "In the UK, jokes and tricks can be played up until noon on 1 April.\n"
         "After midday it's considered bad luck to play a trick."
     )
@@ -490,3 +498,413 @@ def test_fast_path_check_no_length_gate() -> None:
     )
     assert eligible is True, f"Short English should be fast_path eligible, reason={reason}"
     assert reason is None
+
+
+# ---------------------------------------------------------------------------
+# PDF soft-wrap line break unwrapping
+# ---------------------------------------------------------------------------
+
+
+def test_pdf_soft_wrap_unwrapped_in_render_text() -> None:
+    """PDF soft line breaks within words should be replaced with spaces."""
+    # Simulates text copied from a PDF where "nutritious meals" was split
+    # across a line break.
+    text = "They provide nutritious\nmeals for children."
+    result = prepare_input(text)
+    # The sentence should not contain a newline inside "nutritious meals"
+    for sent in result.sentences:
+        assert "\n" not in sent.text, f"Sentence contains newline: {sent.text!r}"
+    # The words should be reconstituted with a space
+    assert any("nutritious meals" in sent.text for sent in result.sentences), (
+        f"Expected 'nutritious meals' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_pdf_soft_wrap_matt_tebbutt() -> None:
+    """PDF soft wrap: 'chef Matt\\nTebbutt' should become 'chef Matt Tebbutt'."""
+    text = "The chef Matt\nTebbutt cooks delicious food."
+    result = prepare_input(text)
+    for sent in result.sentences:
+        assert "Matt\nTebbutt" not in sent.text, f"Sentence contains soft wrap: {sent.text!r}"
+    assert any("Matt Tebbutt" in sent.text for sent in result.sentences), (
+        f"Expected 'Matt Tebbutt' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_pdf_soft_wrap_a_day() -> None:
+    """PDF soft wrap: 'a\\nday' should become 'a day'."""
+    text = "It was a\nday to remember."
+    result = prepare_input(text)
+    assert any("a day" in sent.text for sent in result.sentences), (
+        f"Expected 'a day' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_pdf_soft_wrap_into_practice() -> None:
+    """PDF soft wrap: 'into\\npractice' should become 'into practice'."""
+    text = "They put the theory into\npractice every day."
+    result = prepare_input(text)
+    assert any("into practice" in sent.text for sent in result.sentences), (
+        f"Expected 'into practice' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_paragraph_boundary_preserved_after_soft_wrap_unwrap() -> None:
+    """Paragraph boundaries (blank lines) must still be preserved."""
+    text = "First paragraph ends here.\n\nSecond paragraph starts here."
+    result = prepare_input(text)
+    assert len(result.paragraphs) == 2, f"Expected 2 paragraphs, got {len(result.paragraphs)}"
+
+
+def test_heading_line_not_unwrapped() -> None:
+    """A heading line followed by body text (with blank line) should be separate paragraphs."""
+    text = "Chapter Title\n\nThe body text starts here and continues."
+    result = prepare_input(text)
+    # The heading should be a separate paragraph/sentence
+    assert len(result.paragraphs) >= 2, (
+        f"Expected heading to be separate, got {len(result.paragraphs)} paragraphs: "
+        f"{[p.text for p in result.paragraphs]}"
+    )
+
+
+def test_heading_line_without_blank_line_merged_by_soft_wrap() -> None:
+    """A heading line followed by body text without blank line will be merged
+    by soft-wrap unwrapping. This is by design: PDF soft-wraps (e.g.,
+    "Matt\\nTebbutt") are far more common than heading+body without blank-line
+    separation. Users should use blank lines to mark paragraph boundaries."""
+    text = "Chapter Title\nThe body text starts here and continues."
+    result = prepare_input(text)
+    # Pattern 3 merges "Title\nThe" into "Title The"
+    assert any("Title The" in sent.text for sent in result.sentences), (
+        f"Expected 'Title The' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Unicode whitespace normalization
+# ---------------------------------------------------------------------------
+
+
+def test_nbsp_normalized_to_space() -> None:
+    """Non-breaking space (U+00A0) should be normalized to regular space."""
+    text = "Hello\u00a0world, this is a test."
+    result = prepare_input(text)
+    assert "\u00a0" not in result.render_text, "NBSP should be replaced with regular space"
+    assert "Hello world" in result.render_text
+
+
+def test_thin_space_normalized() -> None:
+    """Thin space (U+2009) should be normalized to regular space."""
+    text = "Hello\u2009world, this is a test."
+    result = prepare_input(text)
+    assert "\u2009" not in result.render_text
+    assert "Hello world" in result.render_text
+
+
+def test_narrow_nbsp_normalized() -> None:
+    """Narrow no-break space (U+202F) should be normalized to regular space."""
+    text = "Hello\u202fworld, this is a test."
+    result = prepare_input(text)
+    assert "\u202f" not in result.render_text
+    assert "Hello world" in result.render_text
+
+
+def test_ideographic_space_normalized() -> None:
+    """Ideographic space (U+3000) should be normalized to regular space."""
+    text = "Hello\u3000world, this is a test."
+    result = prepare_input(text)
+    assert "\u3000" not in result.render_text
+    assert "Hello world" in result.render_text
+
+
+# ---------------------------------------------------------------------------
+# Invisible character removal
+# ---------------------------------------------------------------------------
+
+
+def test_zero_width_space_removed() -> None:
+    """Zero-width space (U+200B) should be removed."""
+    text = "Hello\u200bworld"
+    result = prepare_input(text)
+    assert "\u200b" not in result.render_text
+    assert "Helloworld" in result.render_text
+
+
+def test_soft_hyphen_removed() -> None:
+    """Soft hyphen (U+00AD) should be removed."""
+    text = "infor\u00admation"
+    result = prepare_input(text)
+    assert "\u00ad" not in result.render_text
+    assert "information" in result.render_text
+
+
+def test_bom_removed() -> None:
+    """BOM (U+FEFF) should be removed."""
+    text = "\ufeffHello world"
+    result = prepare_input(text)
+    assert "\ufeff" not in result.render_text
+    assert "Hello world" in result.render_text
+
+
+def test_form_feed_removed() -> None:
+    """Form feed (U+000C) should be removed."""
+    text = "Page one\u000cPage two"
+    result = prepare_input(text)
+    assert "\u000c" not in result.render_text
+
+
+# ---------------------------------------------------------------------------
+# Punctuation normalization
+# ---------------------------------------------------------------------------
+
+
+def test_curly_quotes_normalized() -> None:
+    """Curly quotes should be normalized to straight quotes."""
+    text = "\u201cHello\u201d she said, \u2018hi\u2019"
+    result = prepare_input(text)
+    assert "\u201c" not in result.render_text
+    assert "\u201d" not in result.render_text
+    assert "\u2018" not in result.render_text
+    assert "\u2019" not in result.render_text
+    assert '"Hello" she said' in result.render_text
+    assert "'hi'" in result.render_text
+
+
+def test_em_dash_normalized() -> None:
+    """Em dash (U+2014) should be normalized to hyphen."""
+    text = "The result\u2014as expected\u2014was positive."
+    result = prepare_input(text)
+    assert "\u2014" not in result.render_text
+    assert "-as expected-" in result.render_text
+
+
+def test_en_dash_normalized() -> None:
+    """En dash (U+2013) should be normalized to hyphen."""
+    text = "Pages 10\u201320"
+    result = prepare_input(text)
+    assert "\u2013" not in result.render_text
+    assert "10-20" in result.render_text
+
+
+def test_ellipsis_normalized() -> None:
+    """Ellipsis character (U+2026) should be normalized to three dots."""
+    text = "And then\u2026 it happened."
+    result = prepare_input(text)
+    assert "\u2026" not in result.render_text
+    assert "... it happened" in result.render_text
+
+
+# ---------------------------------------------------------------------------
+# sanitize_text action tracking
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_text_reports_unicode_whitespace_action() -> None:
+    """sanitize_text should report 'normalize_unicode_whitespace' when NBSP is found."""
+    _, report = sanitize_text("Hello\u00a0world")
+    assert "normalize_unicode_whitespace" in report.actions
+
+
+def test_sanitize_text_reports_punctuation_action() -> None:
+    """sanitize_text should report 'normalize_punctuation_variants' when curly quotes found."""
+    _, report = sanitize_text("\u201cHello\u201d")
+    assert "normalize_punctuation_variants" in report.actions
+
+
+def test_sanitize_text_reports_soft_wrap_action() -> None:
+    """sanitize_text should report 'unwrap_pdf_soft_line_breaks' when soft wraps found."""
+    _, report = sanitize_text("nutritious\nmeals")
+    assert "unwrap_pdf_soft_line_breaks" in report.actions
+
+
+# ---------------------------------------------------------------------------
+# Hyphenated line break (Pattern 0)
+# ---------------------------------------------------------------------------
+
+
+def test_hyphenated_line_break_removed() -> None:
+    """PDF hyphenated line break: 'nutri-\\ntious' → 'nutritious'."""
+    text = "They provide nutri-\ntious meals for children."
+    result = prepare_input(text)
+    assert any("nutritious" in sent.text for sent in result.sentences), (
+        f"Expected 'nutritious' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_hyphenated_line_break_preserves_intentional_hyphens() -> None:
+    """Intentional hyphens like 'state-of-the-art' should not be affected."""
+    text = "This is state-of-the-art technology."
+    result = prepare_input(text)
+    assert any("state-of-the-art" in sent.text for sent in result.sentences), (
+        f"Expected 'state-of-the-art' preserved: {[s.text for s in result.sentences]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pattern 3 blank-line protection
+# ---------------------------------------------------------------------------
+
+
+def test_pattern3_does_not_consume_blank_lines() -> None:
+    """Pattern 3's [ \\t]* must not match the second \\n in \\n\\n."""
+    text = "April Fool's traditions\n\nIn the UK, jokes are played."
+    result = prepare_input(text)
+    assert len(result.paragraphs) == 2, (
+        f"Expected 2 paragraphs, got {len(result.paragraphs)}: "
+        f"{[p.text for p in result.paragraphs]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Extended invisible character removal
+# ---------------------------------------------------------------------------
+
+
+def test_word_joiner_removed() -> None:
+    """WORD JOINER (U+2060) should be removed."""
+    text = "Hello\u2060world"
+    result = prepare_input(text)
+    assert "\u2060" not in result.render_text
+
+
+def test_null_char_removed() -> None:
+    """NULL (U+0000) should be removed."""
+    text = "Hello\u0000world"
+    result = prepare_input(text)
+    assert "\u0000" not in result.render_text
+
+
+def test_delete_char_removed() -> None:
+    """DELETE (U+007F) should be removed."""
+    text = "Hello\u007fworld"
+    result = prepare_input(text)
+    assert "\u007f" not in result.render_text
+
+
+# ---------------------------------------------------------------------------
+# Hyphenated line break — uppercase continuation (Pattern 0 enhancement)
+# ---------------------------------------------------------------------------
+
+
+def test_hyphenated_break_uppercase() -> None:
+    """PDF hyphenated line break with uppercase continuation: 'Chiapane-\\nco' → 'Chiapaneco'."""
+    text = "The skier Chiapane-\nco won the race."
+    result = prepare_input(text)
+    assert any("Chiapaneco" in sent.text for sent in result.sentences), (
+        f"Expected 'Chiapaneco' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_hyphenated_break_british_spelling() -> None:
+    """PDF hyphenated line break with British spelling: 'globali-\\nsation' → 'globalisation'."""
+    text = "The process of globali-\nsation has accelerated."
+    result = prepare_input(text)
+    assert any("globalisation" in sent.text for sent in result.sentences), (
+        f"Expected 'globalisation' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_hyphenated_break_disappear() -> None:
+    """PDF hyphenated line break: 'disap-\\npear' → 'disappear'."""
+    text = "The species began to disap-\npear from the region."
+    result = prepare_input(text)
+    assert any("disappear" in sent.text for sent in result.sentences), (
+        f"Expected 'disappear' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_hyphenated_break_uneven() -> None:
+    """PDF hyphenated line break: 'un-\\neven' → 'uneven'."""
+    text = "The surface was un-\neven and rough."
+    result = prepare_input(text)
+    assert any("uneven" in sent.text for sent in result.sentences), (
+        f"Expected 'uneven' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+def test_hyphenated_break_languages() -> None:
+    """PDF hyphenated line break: 'lan-\\nguages' → 'languages'."""
+    text = "They speak several lan-\nguages fluently."
+    result = prepare_input(text)
+    assert any("languages" in sent.text for sent in result.sentences), (
+        f"Expected 'languages' in sentences: {[s.text for s in result.sentences]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chinese parenthetical note removal (step 9e)
+# ---------------------------------------------------------------------------
+
+
+def test_chinese_parenthetical_note_removed() -> None:
+    """Chinese vocabulary notes like '( 联系 )' should be removed."""
+    text = "The contact ( 联系 ) between the two groups was limited."
+    result = prepare_input(text)
+    assert "联系" not in result.render_text
+    assert "contact" in result.render_text
+    assert "between" in result.render_text
+
+
+def test_chinese_parenthetical_note_no_space() -> None:
+    """Chinese vocabulary notes without spaces like '(中位数)' should be removed."""
+    text = "The median (中位数) of the data was 50."
+    result = prepare_input(text)
+    assert "中位数" not in result.render_text
+    assert "median" in result.render_text
+    assert "data" in result.render_text
+
+
+def test_chinese_parenthetical_note_multi_char() -> None:
+    """Multi-character Chinese notes like '( 消亡 )' should be removed."""
+    text = "The extinction ( 消亡 ) of species is accelerating."
+    result = prepare_input(text)
+    assert "消亡" not in result.render_text
+    assert "extinction" in result.render_text
+
+
+def test_english_parenthetical_preserved() -> None:
+    """English parenthetical notes like '(see Figure 1)' should be preserved."""
+    text = "The results (see Figure 1) show a clear trend."
+    result = prepare_input(text)
+    assert "(see Figure 1)" in result.render_text or "see Figure 1" in result.render_text
+
+
+# ---------------------------------------------------------------------------
+# U+FFFC (OBJECT REPLACEMENT CHARACTER) removal
+# ---------------------------------------------------------------------------
+
+
+def test_object_replacement_char_removed() -> None:
+    """OBJECT REPLACEMENT CHARACTER (U+FFFC) from PDF should be removed."""
+    text = "offer\ufefcing a free course"
+    result = prepare_input(text)
+    assert "\ufffc" not in result.render_text
+
+
+# ---------------------------------------------------------------------------
+# British spelling and structural preservation
+# ---------------------------------------------------------------------------
+
+
+def test_british_spelling_preserved() -> None:
+    """British spellings like 'industrialisation' should be preserved."""
+    text = "Industrialisation transformed the economy. Globalisation followed."
+    result = prepare_input(text)
+    assert "industrialisation" in result.render_text.lower() or "Industrialisation" in result.render_text
+    assert "globalisation" in result.render_text.lower() or "Globalisation" in result.render_text
+
+
+def test_semicolon_structure_preserved() -> None:
+    """Semicolons and the structures they create should be preserved."""
+    text = "The results were clear; however, more research is needed."
+    result = prepare_input(text)
+    assert ";" in result.render_text
+
+
+def test_numbers_preserved() -> None:
+    """Numbers should be preserved in the output."""
+    text = "In 2020, 3.5 million people were affected. The rate was 42%."
+    result = prepare_input(text)
+    assert "2020" in result.render_text
+    assert "3.5" in result.render_text
+    assert "42%" in result.render_text
