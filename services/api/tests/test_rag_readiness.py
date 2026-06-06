@@ -15,6 +15,9 @@ from unittest.mock import patch
 
 import pytest
 
+from app.infra.bailian_embedding import EmbeddingCallResult
+from app.infra.bailian_rerank import RerankCallResult, RerankResult
+from app.infra.zilliz_client import SearchResult
 from app.schemas.internal.execution_plan import GoalExecutionPlan, GoalPolicy
 from app.services.analysis.prompting.example_strategy import (
     get_grammar_example_strategy,
@@ -28,6 +31,17 @@ _TEST_SENTENCE = {
 }
 
 _SHORT_SENTENCE = {"sentence_id": "s1", "text": "Test sentence."}
+
+_MOCK_EMBEDDING_RESULT = EmbeddingCallResult(
+    embeddings=[[0.1] * 1024],
+    usage_data={"total_tokens": 10},
+    provider_metadata={},
+    model="text-embedding-v4",
+    dimension=1024,
+    input_count=1,
+    input_chars=100,
+    batch_count=1,
+)
 
 
 def _make_plan(few_shot_mode: str = "baseline") -> GoalExecutionPlan:
@@ -118,7 +132,7 @@ class TestGrammarRAGFallback:
             query_grammar_rag,
         )
         with patch(
-            "app.infra.bailian_embedding.embed_single",
+            "app.infra.bailian_embedding.embed_single_with_metadata",
             side_effect=Exception("unavailable"),
         ):
             result = await query_grammar_rag("gaokao", [_TEST_SENTENCE])
@@ -131,8 +145,8 @@ class TestGrammarRAGFallback:
             query_grammar_rag,
         )
         with patch(
-            "app.infra.bailian_embedding.embed_single",
-            return_value=[0.1] * 1024,
+            "app.infra.bailian_embedding.embed_single_with_metadata",
+            return_value=_MOCK_EMBEDDING_RESULT,
         ), patch("app.infra.zilliz_client.zilliz_search", return_value=[]):
             result = await query_grammar_rag("gaokao", [_TEST_SENTENCE])
         assert result.is_fallback
@@ -140,14 +154,21 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_low_confidence_returns_fallback(self):
-        from app.infra.bailian_rerank import RerankResult
-        from app.infra.zilliz_client import SearchResult
         from app.services.analysis.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
+        mock_rerank = RerankCallResult(
+            results=[RerankResult(index=0, relevance_score=0.05, document="doc1")],
+            usage_data={"total_tokens": 10},
+            provider_metadata={},
+            model="qwen3-rerank",
+            input_count=1,
+            input_chars=100,
+            top_n=1,
+        )
         with patch(
-            "app.infra.bailian_embedding.embed_single",
-            return_value=[0.1] * 1024,
+            "app.infra.bailian_embedding.embed_single_with_metadata",
+            return_value=_MOCK_EMBEDDING_RESULT,
         ), patch(
             "app.infra.zilliz_client.zilliz_search",
             return_value=[
@@ -161,8 +182,8 @@ class TestGrammarRAGFallback:
                 ),
             ],
         ), patch(
-            "app.infra.bailian_rerank.rerank",
-            return_value=[RerankResult(index=0, relevance_score=0.05, document="doc1")],
+            "app.infra.bailian_rerank.rerank_with_metadata",
+            return_value=mock_rerank,
         ), patch(
             "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
@@ -186,14 +207,24 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_successful_rag_returns_examples(self):
-        from app.infra.bailian_rerank import RerankResult
-        from app.infra.zilliz_client import SearchResult
         from app.services.analysis.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
+        mock_rerank = RerankCallResult(
+            results=[
+                RerankResult(index=0, relevance_score=0.95, document="doc1"),
+                RerankResult(index=1, relevance_score=0.85, document="doc2"),
+            ],
+            usage_data={"total_tokens": 20},
+            provider_metadata={},
+            model="qwen3-rerank",
+            input_count=1,
+            input_chars=200,
+            top_n=2,
+        )
         with patch(
-            "app.infra.bailian_embedding.embed_single",
-            return_value=[0.1] * 1024,
+            "app.infra.bailian_embedding.embed_single_with_metadata",
+            return_value=_MOCK_EMBEDDING_RESULT,
         ), patch(
             "app.infra.zilliz_client.zilliz_search",
             return_value=[
@@ -221,11 +252,8 @@ class TestGrammarRAGFallback:
                 ),
             ],
         ), patch(
-            "app.infra.bailian_rerank.rerank",
-            return_value=[
-                RerankResult(index=0, relevance_score=0.95, document="doc1"),
-                RerankResult(index=1, relevance_score=0.85, document="doc2"),
-            ],
+            "app.infra.bailian_rerank.rerank_with_metadata",
+            return_value=mock_rerank,
         ), patch(
             "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
@@ -242,6 +270,10 @@ class TestGrammarRAGFallback:
         assert result.query_sentence_id == "s1"
         assert result.query_sentence_text == _TEST_SENTENCE["text"]
         assert result.query_text
+        assert "variant:" in result.query_text
+        assert "output_type:" in result.query_text
+        assert "variant=" not in result.query_text
+        assert "output_type=" not in result.query_text
         assert result.ann_hit_count == 2
         assert result.rerank_hit_count == 2
         assert result.selected_examples == [
@@ -271,8 +303,6 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_injection_budget_limits_grammar_note_to_2(self):
-        from app.infra.bailian_rerank import RerankResult
-        from app.infra.zilliz_client import SearchResult
         from app.services.analysis.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
@@ -289,18 +319,27 @@ class TestGrammarRAGFallback:
             )
             for i in range(3)
         ]
+        mock_rerank = RerankCallResult(
+            results=[
+                RerankResult(index=i, relevance_score=0.95 - i * 0.1, document=f"doc{i}")
+                for i in range(3)
+            ],
+            usage_data={"total_tokens": 30},
+            provider_metadata={},
+            model="qwen3-rerank",
+            input_count=1,
+            input_chars=300,
+            top_n=3,
+        )
         with patch(
-            "app.infra.bailian_embedding.embed_single",
-            return_value=[0.1] * 1024,
+            "app.infra.bailian_embedding.embed_single_with_metadata",
+            return_value=_MOCK_EMBEDDING_RESULT,
         ), patch(
             "app.infra.zilliz_client.zilliz_search",
             return_value=three_results,
         ), patch(
-            "app.infra.bailian_rerank.rerank",
-            return_value=[
-                RerankResult(index=i, relevance_score=0.95 - i * 0.1, document=f"doc{i}")
-                for i in range(3)
-            ],
+            "app.infra.bailian_rerank.rerank_with_metadata",
+            return_value=mock_rerank,
         ), patch(
             "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
@@ -360,6 +399,199 @@ class TestGrammarRAGFallback:
         ]
 
 
+class TestRerankDocCanonicalContract:
+    """Rerank doc surface format must match the query side and the canonical
+    retrieval_text stored in Zilliz. The doc was historically hand-stitched
+    from fields, which let grammar_tags drift to a JSON-list literal even
+    when the query side emitted the canonical comma-joined form.
+    """
+
+    @pytest.mark.anyio
+    async def test_rerank_doc_uses_stored_retrieval_text(self):
+        from app.infra.bailian_embedding import EmbeddingCallResult
+        from app.infra.bailian_rerank import RerankCallResult, RerankResult
+        from app.infra.zilliz_client import SearchResult
+        from app.services.analysis.prompting.rag.grammar_rag_service import (
+            query_grammar_rag,
+        )
+
+        canonical_doc = (
+            "variant: gaokao\n"
+            "output_type: grammar_note\n"
+            "grammar_tags: relative_clause, inversion\n"
+            "label: 测试标签\n"
+            "source_sentence: The cat that ran.\n"
+            "explanation: 测试讲解"
+        )
+        search_results = [
+            SearchResult(
+                id="1", score=0.9, entity={
+                    "example_id": "test-1",
+                    "source_sentence": "The cat that ran.",
+                    "output_fragment": '{"type":"grammar_note","note_zh":"测试讲解"}',
+                    "label": "测试标签",
+                    # Zilliz stores grammar_tags as a JSON-serialized list.
+                    "grammar_tags": '["relative_clause","inversion"]',
+                    "reading_variant": "gaokao",
+                    "output_type": "grammar_note",
+                    # The stored retrieval_text is the canonical 6-line shape.
+                    "retrieval_text": canonical_doc,
+                },
+            ),
+        ]
+        embedding = EmbeddingCallResult(
+            embeddings=[[0.1] * 1024],
+            usage_data={"total_tokens": 10},
+            provider_metadata={},
+            model="text-embedding-v4",
+            dimension=1024,
+            input_count=1,
+            input_chars=100,
+            batch_count=1,
+        )
+
+        # Capture the actual documents passed to rerank_with_metadata so the
+        # assertion verifies what query_grammar_rag really sent, not what
+        # the mock chose to return.
+        captured: dict[str, list[str]] = {}
+
+        async def _capture_rerank(*args, **kwargs):
+            docs = kwargs.get("documents")
+            if docs is None and len(args) >= 2:
+                docs = args[1]
+            captured["docs"] = list(docs or [])
+            return RerankCallResult(
+                results=[
+                    RerankResult(index=i, relevance_score=0.95 - i * 0.1, document=doc)
+                    for i, doc in enumerate(captured["docs"])
+                ],
+                usage_data={"total_tokens": 10},
+                provider_metadata={},
+                model="qwen3-rerank",
+                input_count=1,
+                input_chars=200,
+                top_n=1,
+            )
+
+        with patch(
+            "app.infra.bailian_embedding.embed_single_with_metadata",
+            return_value=embedding,
+        ), patch(
+            "app.infra.zilliz_client.zilliz_search", return_value=search_results,
+        ), patch(
+            "app.infra.bailian_rerank.rerank_with_metadata", side_effect=_capture_rerank,
+        ), patch(
+            "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+        ) as mock_settings:
+            mock_settings.return_value.grammar_rag_confidence_threshold = 0.3
+            mock_settings.return_value.grammar_rag_ann_topk = 8
+            mock_settings.return_value.grammar_rag_rerank_topn = 5
+            mock_settings.return_value.bailian_embedding_model = "text-embedding-v4"
+            mock_settings.return_value.bailian_embedding_dimension = 1024
+            mock_settings.return_value.bailian_rerank_model = "qwen3-rerank"
+            mock_settings.return_value.zilliz_collection_grammar_note = "grammar_note_examples"
+            mock_settings.return_value.zilliz_collection_sentence_analysis = (
+                "sentence_analysis_examples"
+            )
+            result = await query_grammar_rag("gaokao", [_TEST_SENTENCE])
+
+        # The rerank call MUST have received the stored retrieval_text
+        # verbatim, not a hand-stitched doc with JSON-list grammar_tags.
+        docs = captured.get("docs", [])
+        assert len(docs) == 1, f"expected 1 rerank doc, got {len(docs)}"
+        assert docs[0] == canonical_doc
+        # The JSON-list literal surface must NOT leak through (this would
+        # happen if the manual stitch path ran instead of the stored-text
+        # reuse path).
+        assert '["relative_clause"' not in docs[0]
+        assert "grammar_tags: relative_clause, inversion" in docs[0]
+        # Sanity: the run was successful and produced the example.
+        assert not result.is_fallback
+        assert len(result.examples) == 1
+
+    @pytest.mark.anyio
+    async def test_rerank_doc_falls_back_to_stitch_when_retrieval_text_missing(self):
+        """Legacy / partial Zilliz rows without retrieval_text should still
+        produce a canonical colon-format doc via the manual stitch path,
+        with grammar_tags emitted as comma-joined (not JSON list)."""
+        from app.infra.bailian_embedding import EmbeddingCallResult
+        from app.infra.bailian_rerank import RerankCallResult, RerankResult
+        from app.infra.zilliz_client import SearchResult
+        from app.services.analysis.prompting.rag.grammar_rag_service import (
+            query_grammar_rag,
+        )
+
+        # Note: no retrieval_text in the entity; the stitch path should run.
+        search_results = [
+            SearchResult(
+                id="1", score=0.9, entity={
+                    "example_id": "test-1",
+                    "source_sentence": "The cat that ran.",
+                    "output_fragment": '{"type":"grammar_note","note_zh":"测试讲解"}',
+                    "label": "测试标签",
+                    "grammar_tags": '["relative_clause","inversion"]',
+                    "reading_variant": "gaokao",
+                    "output_type": "grammar_note",
+                },
+            ),
+        ]
+        # Rerank is patched; we only care about which document was sent in.
+        captured_docs: dict[str, list[str]] = {}
+
+        async def _capture(*args, **kwargs):
+            captured_docs["docs"] = list(kwargs.get("documents") or args[1] if len(args) > 1 else kwargs.get("documents", []))
+            return RerankCallResult(
+                results=[RerankResult(index=0, relevance_score=0.95, document=captured_docs["docs"][0])],
+                usage_data={"total_tokens": 10},
+                provider_metadata={},
+                model="qwen3-rerank",
+                input_count=1,
+                input_chars=200,
+                top_n=1,
+            )
+
+        embedding = EmbeddingCallResult(
+            embeddings=[[0.1] * 1024],
+            usage_data={"total_tokens": 10},
+            provider_metadata={},
+            model="text-embedding-v4",
+            dimension=1024,
+            input_count=1,
+            input_chars=100,
+            batch_count=1,
+        )
+        with patch(
+            "app.infra.bailian_embedding.embed_single_with_metadata",
+            return_value=embedding,
+        ), patch(
+            "app.infra.zilliz_client.zilliz_search", return_value=search_results,
+        ), patch(
+            "app.infra.bailian_rerank.rerank_with_metadata", side_effect=_capture,
+        ), patch(
+            "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+        ) as mock_settings:
+            mock_settings.return_value.grammar_rag_confidence_threshold = 0.3
+            mock_settings.return_value.grammar_rag_ann_topk = 8
+            mock_settings.return_value.grammar_rag_rerank_topn = 5
+            mock_settings.return_value.bailian_embedding_model = "text-embedding-v4"
+            mock_settings.return_value.bailian_embedding_dimension = 1024
+            mock_settings.return_value.bailian_rerank_model = "qwen3-rerank"
+            mock_settings.return_value.zilliz_collection_grammar_note = "grammar_note_examples"
+            mock_settings.return_value.zilliz_collection_sentence_analysis = (
+                "sentence_analysis_examples"
+            )
+            result = await query_grammar_rag("gaokao", [_TEST_SENTENCE])
+
+        docs = captured_docs.get("docs", [])
+        assert len(docs) == 1
+        # The fallback stitch path MUST emit grammar_tags in the canonical
+        # comma-joined form, matching the query side surface.
+        assert "grammar_tags: relative_clause, inversion" in docs[0]
+        # The JSON-list literal surface must NOT leak through.
+        assert '["relative_clause"' not in docs[0]
+        assert not result.is_fallback
+
+
 class TestRAGDebugInfo:
     @pytest.mark.anyio
     async def test_debug_info_has_required_fields(self):
@@ -368,8 +600,8 @@ class TestRAGDebugInfo:
             query_grammar_rag,
         )
         with patch(
-            "app.infra.bailian_embedding.embed_single",
-            return_value=[0.1] * 1024,
+            "app.infra.bailian_embedding.embed_single_with_metadata",
+            return_value=_MOCK_EMBEDDING_RESULT,
         ), patch("app.infra.zilliz_client.zilliz_search", return_value=[]):
             result = await query_grammar_rag("gaokao", [_SHORT_SENTENCE])
         info = build_rag_debug_info(result)
@@ -395,3 +627,5 @@ class TestRAGDebugInfo:
         assert "rerank_hits" in info
         assert "dropped_examples" in info
         assert "selected_examples" in info
+        assert "query_tags" in info
+        assert "tag_overlap" in info

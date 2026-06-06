@@ -409,6 +409,18 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     readerTextStartOffset?: number;
     readerTextEndOffset?: number;
     readerMarkVisualTone?: Parameters<typeof readerMarkClassName>[0];
+    readerMarks?: Array<{
+      annotationType: string;
+      anchorText: string;
+      clickable: boolean;
+      glossary?: any;
+      id: string;
+      parentId?: string;
+      lookupKind?: string;
+      lookupText?: string;
+      renderType?: string;
+      visualTone: any;
+    }>;
   };
   const jumpFocusedSegments = useMemo(
     () =>
@@ -507,54 +519,66 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     noteFocusedSegments.length > 0 ||
     analysisSegments.length > 0 ||
     annotationSegments.length > 0;
-  const visualTone = leaf.readerMarkVisualTone;
-  const useSegmentedGrammarMark = visualTone === "grammar" && hasDecoratedContent;
-  const markKey = grammarMarkKey(leaf);
-  const grammarCueIndex =
-    leaf.readerSentenceId && markKey
-      ? grammarCueIndexByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
-      : undefined;
-  const resolvedGrammarEntryId =
-    leaf.readerSentenceId && markKey
-      ? grammarEntryIdByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
-      : undefined;
-  const isLastLeafOfMark =
-    leaf.readerMarkAnnotationType === "grammar_note" &&
-    Boolean(markKey) &&
-    typeof leaf.readerTextEndOffset === "number" &&
-    leaf.readerTextEndOffset === lastLeafOffsetsByMarkKey?.get(markKey ?? "");
+  const marks = leaf.readerMarks && leaf.readerMarks.length > 0
+    ? leaf.readerMarks
+    : leaf.readerMarkVisualTone
+      ? [
+          {
+            annotationType: leaf.readerMarkAnnotationType,
+            anchorText: leaf.readerMarkAnchorText,
+            clickable: leaf.readerMarkClickable,
+            glossary: leaf.readerMarkGlossary,
+            id: leaf.readerMarkId,
+            parentId: leaf.readerMarkParentId,
+            lookupKind: leaf.readerMarkLookupKind,
+            lookupText: leaf.readerMarkLookupText,
+            renderType: leaf.readerMarkRenderType,
+            visualTone: leaf.readerMarkVisualTone,
+          } as any,
+        ]
+      : [];
 
-  const isLinkedToEntryId = (entryId: string | null | undefined) => {
-    if (!entryId) return false;
-    return resolvedGrammarEntryId === entryId ||
-      leaf.readerMarkParentId === entryId ||
-      leaf.readerMarkId === entryId ||
-      (leaf.readerMarkId?.startsWith("im_") &&
-        entryId.startsWith("se_") &&
-        leaf.readerMarkId.slice(3) === entryId.slice(3));
-  };
+  const grammarMark = marks.find(m => m.visualTone === "grammar");
+  let segmentedGrammarClassName: string | null = null;
+  let hasSegmentedGrammar = false;
 
-  const isLinkedToActiveEntry =
-    isLinkedToEntryId(activeAnalysisEntryId);
-  const isLinkedToExpandedEntry =
-    expandedAnalysisEntryIds ? Array.from(expandedAnalysisEntryIds).some(isLinkedToEntryId) : false;
+  if (grammarMark && hasDecoratedContent) {
+    hasSegmentedGrammar = true;
+    const markKey = grammarMark.parentId ?? grammarMark.id ?? null;
+    const resolvedGrammarEntryId =
+      leaf.readerSentenceId && markKey
+        ? grammarEntryIdByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
+        : undefined;
 
-  const isGrammarLink = leaf.readerMarkAnnotationType === "grammar_note";
-  const grammarLinkStateClass = isGrammarLink && (isLinkedToActiveEntry || isLinkedToExpandedEntry)
-    ? "reader-mark--grammar-linked"
-    : "";
-  const grammarPinnedStateClass = isGrammarLink && isLinkedToExpandedEntry
-    ? "reader-mark--grammar-pinned"
-    : "";
-  const segmentedGrammarClassName = useSegmentedGrammarMark
-    ? [
-        "reader-mark--grammar-segment",
-        grammarLinkStateClass,
-        grammarPinnedStateClass,
-      ]
-        .filter(Boolean)
-        .join(" ")
-    : null;
+    const isLinkedToEntryId = (entryId: string | null | undefined) => {
+      if (!entryId) return false;
+      return resolvedGrammarEntryId === entryId ||
+        grammarMark.parentId === entryId ||
+        grammarMark.id === entryId ||
+        (grammarMark.id?.startsWith("im_") &&
+          entryId.startsWith("se_") &&
+          grammarMark.id.slice(3) === entryId.slice(3));
+    };
+
+    const isLinkedToActiveEntry = isLinkedToEntryId(activeAnalysisEntryId);
+    const isLinkedToExpandedEntry = expandedAnalysisEntryIds
+      ? Array.from(expandedAnalysisEntryIds).some(isLinkedToEntryId)
+      : false;
+
+    const grammarLinkStateClass = isLinkedToActiveEntry || isLinkedToExpandedEntry
+      ? "reader-mark--grammar-linked"
+      : "";
+    const grammarPinnedStateClass = isLinkedToExpandedEntry
+      ? "reader-mark--grammar-pinned"
+      : "";
+
+    segmentedGrammarClassName = [
+      "reader-mark--grammar-segment",
+      grammarLinkStateClass,
+      grammarPinnedStateClass,
+    ].filter(Boolean).join(" ");
+  }
+
   const content = useMemo(
     () =>
       renderLeafContent(
@@ -584,132 +608,184 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
       selectionFocusedSegments,
     ],
   );
-  if (!visualTone) {
+
+  if (marks.length === 0) {
     return <span {...props.attributes}>{hasDecoratedContent ? content : props.children}</span>;
   }
 
-  const className = readerMarkClassName(visualTone, annotationVisibilityGroups);
+  let wrappedContent = hasDecoratedContent ? content : props.children;
+  const reversedMarks = [...marks].reverse();
 
-  const entryActiveClass = !isGrammarLink && (isLinkedToActiveEntry || isLinkedToExpandedEntry)
-    ? "reader-mark--entry-active"
-    : "";
-  const isClickable = Boolean(
-    className &&
-    (leaf.readerMarkClickable || leaf.readerMarkAnnotationType === "grammar_note") &&
-    leaf.readerSentenceId
-  );
-  const selectionMutedClass =
-    !useSegmentedGrammarMark && selectionFocusedSegments.length > 0 ? "reader-mark--selection-muted" : "";
-  const contextMutedClass =
-    !useSegmentedGrammarMark && contextFocusedSegments.length > 0 ? "reader-mark--context-muted" : "";
+  reversedMarks.forEach((mark, index) => {
+    const isOutermost = index === reversedMarks.length - 1;
+    const visualTone = mark.visualTone;
+    const useSegmentedGrammarMark = visualTone === "grammar" && hasDecoratedContent;
+    const markClassName = readerMarkClassName(visualTone, annotationVisibilityGroups);
 
-  return (
-    <span
-      {...props.attributes}
-      className={[
-        useSegmentedGrammarMark ? "" : className,
-        isClickable ? "reader-mark--interactive" : "",
-        selectionMutedClass,
-        contextMutedClass,
-        entryActiveClass,
-        useSegmentedGrammarMark ? "" : grammarLinkStateClass,
-        useSegmentedGrammarMark ? "" : grammarPinnedStateClass,
-      ].filter(Boolean).join(" ") || undefined}
-      data-reader-mark-id={leaf.readerMarkId}
-      data-reader-mark-parent-id={leaf.readerMarkParentId}
-      data-reader-mark-tone={visualTone}
-      data-reader-mark-active={entryActiveClass ? "true" : undefined}
-      tabIndex={isClickable ? -1 : undefined}
-      onClick={(event) => {
-        if (!isClickable || !leaf.readerSentenceId || leaf.readerTextStartOffset === undefined || leaf.readerTextEndOffset === undefined) {
-          return;
-        }
+    const markKey = mark.parentId ?? mark.id ?? null;
+    const resolvedGrammarEntryId =
+      leaf.readerSentenceId && markKey
+        ? grammarEntryIdByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
+        : undefined;
 
-        const selection = window.getSelection();
-        if (selection && !selection.isCollapsed && selection.toString().trim()) {
-          return;
-        }
+    const isLinkedToEntryId = (entryId: string | null | undefined) => {
+      if (!entryId) return false;
+      return resolvedGrammarEntryId === entryId ||
+        mark.parentId === entryId ||
+        mark.id === entryId ||
+        (mark.id?.startsWith("im_") &&
+          entryId.startsWith("se_") &&
+          mark.id.slice(3) === entryId.slice(3));
+    };
 
-        if (leaf.readerMarkAnnotationType === "grammar_note") {
-          const entryId = resolvedGrammarEntryId ?? leaf.readerMarkParentId ?? leaf.readerMarkId;
-          if (entryId) {
-            event.stopPropagation();
-            onAnalysisToggle?.(entryId);
+    const isLinkedToActiveEntry = isLinkedToEntryId(activeAnalysisEntryId);
+    const isLinkedToExpandedEntry = expandedAnalysisEntryIds
+      ? Array.from(expandedAnalysisEntryIds).some(isLinkedToEntryId)
+      : false;
+
+    const isGrammarLink = mark.annotationType === "grammar_note";
+    const grammarLinkStateClass = isGrammarLink && (isLinkedToActiveEntry || isLinkedToExpandedEntry)
+      ? "reader-mark--grammar-linked"
+      : "";
+    const grammarPinnedStateClass = isGrammarLink && isLinkedToExpandedEntry
+      ? "reader-mark--grammar-pinned"
+      : "";
+    const entryActiveClass = !isGrammarLink && (isLinkedToActiveEntry || isLinkedToExpandedEntry)
+      ? "reader-mark--entry-active"
+      : "";
+
+    const isClickable = Boolean(
+      markClassName &&
+      (mark.clickable || mark.annotationType === "grammar_note") &&
+      leaf.readerSentenceId
+    );
+
+    const selectionMutedClass =
+      !useSegmentedGrammarMark && selectionFocusedSegments.length > 0 ? "reader-mark--selection-muted" : "";
+    const contextMutedClass =
+      !useSegmentedGrammarMark && contextFocusedSegments.length > 0 ? "reader-mark--context-muted" : "";
+
+    const grammarCueIndex =
+      leaf.readerSentenceId && markKey
+        ? grammarCueIndexByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
+        : undefined;
+
+    const isLastLeafOfMark =
+      mark.annotationType === "grammar_note" &&
+      Boolean(markKey) &&
+      typeof leaf.readerTextEndOffset === "number" &&
+      leaf.readerTextEndOffset === lastLeafOffsetsByMarkKey?.get(markKey ?? "");
+
+    wrappedContent = (
+      <span
+        {...(isOutermost ? props.attributes : {})}
+        className={[
+          useSegmentedGrammarMark ? "" : markClassName,
+          isClickable ? "reader-mark--interactive" : "",
+          selectionMutedClass,
+          contextMutedClass,
+          entryActiveClass,
+          useSegmentedGrammarMark ? "" : grammarLinkStateClass,
+          useSegmentedGrammarMark ? "" : grammarPinnedStateClass,
+        ].filter(Boolean).join(" ") || undefined}
+        data-reader-mark-id={mark.id}
+        data-reader-mark-parent-id={mark.parentId}
+        data-reader-mark-tone={visualTone}
+        data-reader-mark-active={entryActiveClass ? "true" : undefined}
+        tabIndex={isClickable ? -1 : undefined}
+        onClick={(event) => {
+          if (!isClickable || !leaf.readerSentenceId || leaf.readerTextStartOffset === undefined || leaf.readerTextEndOffset === undefined) {
             return;
           }
-        }
 
-        const sentenceText = sentenceTextBySentence?.get(leaf.readerSentenceId) ?? "";
-        if (!sentenceText) {
-          return;
-        }
+          const selection = window.getSelection();
+          if (selection && !selection.isCollapsed && selection.toString().trim()) {
+            return;
+          }
 
-        const sentence = {
-          sentenceId: leaf.readerSentenceId,
-          text: sentenceText,
-        };
-        const mark = {
-          id: leaf.readerMarkId ?? `${leaf.readerSentenceId}:${leaf.readerTextStartOffset}:${leaf.readerTextEndOffset}`,
-          annotationType: leaf.readerMarkAnnotationType ?? "vocab_highlight",
-          visualTone,
-          lookupKind: leaf.readerMarkLookupKind,
-          lookupText: leaf.readerMarkLookupText,
-          glossary: leaf.readerMarkGlossary,
-        };
-        const anchor = resolveLookupPreviewAnchor(
-          event.currentTarget.closest("[data-reader-sentence-text='true']") as HTMLElement ?? event.currentTarget,
-          leaf.readerSentenceId,
-          leaf.readerTextStartOffset,
-          leaf.readerTextEndOffset,
-        );
-        const sourceContext = sourceContextBySentence?.get(leaf.readerSentenceId);
-        const anchorText =
-          typeof leaf.readerMarkAnchorText === "string"
-            ? leaf.readerMarkAnchorText
-            : typeof leaf.text === "string"
-              ? leaf.text
-              : "";
-        const isStructured =
-          leaf.readerMarkLookupKind === "phrase" ||
-          /\s/.test(anchorText) ||
-          leaf.readerMarkAnnotationType === "phrase_gloss" ||
-          leaf.readerMarkAnnotationType === "context_gloss";
+          if (mark.annotationType === "grammar_note") {
+            const entryId = resolvedGrammarEntryId ?? mark.parentId ?? mark.id;
+            if (entryId) {
+              event.stopPropagation();
+              onAnalysisToggle?.(entryId);
+              return;
+            }
+          }
 
-        event.stopPropagation();
-        event.currentTarget.focus({ preventScroll: true });
+          const sentenceText = sentenceTextBySentence?.get(leaf.readerSentenceId) ?? "";
+          if (!sentenceText) {
+            return;
+          }
 
-        if (isStructured) {
-          const intent = inspectIntentFromStructuredMark({
-            mark,
+          const sentence = {
+            sentenceId: leaf.readerSentenceId,
+            text: sentenceText,
+          };
+          const resolvedMark = {
+            id: mark.id ?? `${leaf.readerSentenceId}:${leaf.readerTextStartOffset}:${leaf.readerTextEndOffset}`,
+            annotationType: mark.annotationType ?? "vocab_highlight",
+            visualTone,
+            lookupKind: mark.lookupKind,
+            lookupText: mark.lookupText,
+            glossary: mark.glossary,
+          };
+          const anchor = resolveLookupPreviewAnchor(
+            event.currentTarget.closest("[data-reader-sentence-text='true']") as HTMLElement ?? event.currentTarget,
+            leaf.readerSentenceId,
+            leaf.readerTextStartOffset,
+            leaf.readerTextEndOffset,
+          );
+          const sourceContext = sourceContextBySentence?.get(leaf.readerSentenceId);
+          const anchorText =
+            typeof mark.anchorText === "string"
+              ? mark.anchorText
+              : typeof leaf.text === "string"
+                ? leaf.text
+                : "";
+          const isStructured =
+            mark.lookupKind === "phrase" ||
+            /\s/.test(anchorText) ||
+            mark.annotationType === "phrase_gloss" ||
+            mark.annotationType === "context_gloss";
+
+          event.stopPropagation();
+          event.currentTarget.focus({ preventScroll: true });
+
+          if (isStructured) {
+            const intent = inspectIntentFromStructuredMark({
+              mark: resolvedMark as any,
+              sentence,
+              anchorText,
+              sourceContext,
+              startOffset: leaf.readerTextStartOffset,
+              endOffset: leaf.readerTextEndOffset,
+            });
+            onInspectIntent?.(intent, anchor, event.currentTarget);
+            return;
+          }
+
+          const intent = lookupIntentFromMark({
+            mark: resolvedMark as any,
             sentence,
             anchorText,
             sourceContext,
             startOffset: leaf.readerTextStartOffset,
             endOffset: leaf.readerTextEndOffset,
           });
-          onInspectIntent?.(intent, anchor, event.currentTarget);
-          return;
-        }
+          onLookupIntent?.(intent, anchor, event.currentTarget);
+        }}
+      >
+        {wrappedContent}
+        {isOutermost && typeof grammarCueIndex === "number" && isLastLeafOfMark ? (
+          <span className="reader-grammar-cue" aria-hidden="true">
+            {circleNumber(grammarCueIndex)}
+          </span>
+        ) : null}
+      </span>
+    );
+  });
 
-        const intent = lookupIntentFromMark({
-          mark,
-          sentence,
-          anchorText,
-          sourceContext,
-          startOffset: leaf.readerTextStartOffset,
-          endOffset: leaf.readerTextEndOffset,
-        });
-        onLookupIntent?.(intent, anchor, event.currentTarget);
-      }}
-    >
-      {hasDecoratedContent ? content : props.children}
-      {typeof grammarCueIndex === "number" && isLastLeafOfMark ? (
-        <span className="reader-grammar-cue" aria-hidden="true">
-          {circleNumber(grammarCueIndex)}
-        </span>
-      ) : null}
-    </span>
-  );
+  return <>{wrappedContent}</>;
 });
 
 ReaderMarkLeaf.displayName = "ReaderMarkLeaf";

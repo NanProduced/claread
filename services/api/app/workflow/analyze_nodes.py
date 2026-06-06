@@ -469,8 +469,14 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
     repair_meta = _build_agent_trace_metadata(state, "repair_agent", _model_selection(config))
     repair_meta["extra"] = {**(repair_meta.get("extra") or {}), "error_context": error_context}
 
+    repair_model_selection = _model_selection(config)
     try:
-        repair_result = await _run_repair_llm_span(deps=repair_deps, metadata=repair_meta, error_context=error_context)
+        repair_result = await _run_repair_llm_span(
+            deps=repair_deps,
+            metadata=repair_meta,
+            error_context=error_context,
+            model_selection=repair_model_selection,
+        )
         repaired_result = repair_result.get("output")
         repair_usage = repair_result.get("usage_metadata")
         usage_summary = _aggregate_usage_summary({
@@ -509,6 +515,7 @@ async def _run_repair_llm_span(
     deps: RepairAgentDeps,
     metadata: dict[str, object],
     error_context: str,
+    model_selection: ModelSelection | None = None,
 ) -> dict[str, Any]:
     from app.agents.repair_agent import build_repair_prompt, get_repair_agent
     from app.llm.agent_runner import run_agent_with_route
@@ -519,10 +526,13 @@ async def _run_repair_llm_span(
         prompt=build_repair_prompt(deps, error_context),
         deps=deps,
         route=MODEL_ROUTE_ANNOTATION_GENERATION,
-        model_selection=None,
+        model_selection=model_selection,
     )
     usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
 
 
 async def project_render_scene_node(state: AnalyzeState) -> AnalyzeState:

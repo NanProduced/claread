@@ -1,6 +1,6 @@
 # Directus 本地开发
 
-本文描述 `Claread Console` 的本地 Directus runtime 与扩展 scaffold 用法。
+本文描述 `Claread Console` 的本地 Directus runtime、metadata sync 和当前扩展开发方式。
 
 ## 本地地址
 
@@ -12,7 +12,7 @@
 
 - 登录邮箱: `admin@claread.dev`
 - 显示名: `claread admin`
-- 密码: `Nan12091209`
+- 密码: 由本地 `apps/directus/.env` 或启动环境中的 `ADMIN_PASSWORD` 配置；仓库示例只保留占位值。
 
 说明:
 
@@ -33,6 +33,7 @@ pnpm directus:down
 pnpm directus:logs
 pnpm directus:extensions:build
 pnpm directus:parse-run:sync-metadata
+pnpm directus:eval-center:sync-metadata
 ```
 
 ## MCP
@@ -98,13 +99,36 @@ claude mcp list
 docker compose --env-file infra/docker/.env --env-file apps/directus/.env.example -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml up -d --force-recreate directus
 ```
 
+## MCP 适用边界
+
+MCP 适合辅助 Directus schema / collection / relation / flow 开发，但不适合：
+
+- 替代 SQL migration 设计
+- 替代 Displays / Panels / Layouts / Modules 代码实现
+- 替代复杂业务逻辑设计
+- 替代 Git 驱动的正式变更评审
+
+安全注意事项：
+
+- 不对 MCP 开启自动审批
+- 不把生产敏感数据带入 AI 会话
+- 不混用不可信 MCP Server
+- 长期应改用专用 MCP 用户和最小权限角色
+
+## 开发坑点
+
+- `module_bar` 配置必须写成对象数组 `[{ type: "module", id: "<module-id>", enabled: true }]`，不能写成字符串数组
+- `ai_usage_events` 需按 capability scope 观察（同一 record_id 下可能同时有 `analysis_full` / `analysis_overview_hint` / `reader_ask`）
+- JSONB 字段可能存在双重编码（字符串化 JSON 被存入 JSONB），Render Scene Inspector 侧已修复，但防御性编程时仍需注意
+
 ## 当前约束
 
 - Directus 只承担控制面。
-- 当前扩展包保留为空骨架，不预置业务壳。
+- 当前已存在真实扩展与 metadata sync 链路，不再只是空骨架。
 - 业务核心表是否只读保护、如何做原生展示，后续单独设计。
 - parse-run observability 当前优先走原始业务表 + 关系建模，复杂跨表摘要按需补轻量只读接口。
 - Parse run observability 的 Task 1 / Task 2 metadata 通过 repo 内脚本同步，不直接手改 live Directus metadata。
+- Eval Center / Example Lab metadata 同样通过 repo 内脚本同步，不直接手改 live Directus metadata。
 
 ## 业务表 reset 与 Directus 配置
 
@@ -144,6 +168,13 @@ pnpm directus:parse-run:sync-metadata
 
 - `modules-bundle`
 - `panels-bundle`
+- `hooks-bundle`
 - `endpoints-bundle`
 
-以上 bundle 当前仅作为 workspace scaffold 保留，用于后续 `display`、`layout`、`panel`、`module`、`endpoint` 开发。
+当前这些 bundle 已承载真实能力，包括：
+
+- Parse Run Observability collections / views / panels
+- Render Scene Inspector
+- Eval Center module
+- Example Lab AI RAG Generator interface
+- Eval / parse-run 相关 endpoints 与 hooks

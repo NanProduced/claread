@@ -1,6 +1,6 @@
 # 测试与验证
 
-先验证当前后端、小程序和 Web baseline，再进入大范围产品体验或架构改动。
+先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
 ## 后端核心测试
 
@@ -34,7 +34,7 @@ pnpm --filter @claread/web lint
 pnpm --filter @claread/web build
 ```
 
-Web baseline smoke 应覆盖手机号登录、分析提交、Reader、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
+Web smoke 应覆盖手机号登录、分析提交、Reader、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
 当前仓库未提交稳定的 Reader Playwright 用例。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，需在本地浏览器做交互回归；等 committed e2e 恢复后，再把命令补回本文。
 
@@ -119,3 +119,71 @@ plpgsql
 2. 小程序构建。
 3. TypeScript 检查。
 4. 微信开发者工具打开并验证主链路。
+
+## Directus / Claread Console 验证
+
+工作目录：仓库根目录。
+
+当前 Directus 控制面至少执行：
+
+```powershell
+pnpm directus:extensions:build
+pnpm --filter @claread/directus-endpoints test
+```
+
+如触达 metadata 结构，还应补：
+
+```powershell
+pnpm directus:parse-run:sync-metadata
+pnpm directus:eval-center:sync-metadata
+```
+
+当前建议的人工 smoke 包括：
+
+- Parse Run Observability 列表 / 详情 / saved views 可打开
+- Render Scene Inspector 能读取 learning / academic 样本
+- Eval Center 的 `node-lab` / `workflow-lab` / `run-history` 可进入
+- Example Lab 条目可保存，`output_fragment` 契约校验有效
+- Example Lab 的 AI RAG Generator 可生成 `grammar_tags` / `retrieval_text` / `derived_*`
+
+## Eval / Grammar RAG 验证
+
+工作目录：仓库根目录。
+
+当前与 Example Lab / grammar RAG 收口最相关的测试为：
+
+```powershell
+uv run pytest services/api/tests/test_example_lab.py -q
+uv run pytest services/api/tests/test_grammar_retrieval_hints.py -q
+uv run pytest services/api/tests/test_rag_infra.py -q
+uv run pytest services/api/tests/test_rag_integration.py -q
+uv run pytest services/api/tests/test_rag_readiness.py -q
+```
+
+如变更了 grammar seed / Zilliz schema，还应重建并重新 ingest 测试 collection，再做一次 workflow 侧 RAG smoke。
+
+## Eval Center 运维脚本
+
+| 脚本 | 用途 |
+|------|------|
+| `infra/scripts/reset-eval-center-data.ps1` | 清空 eval 控制面表 + 删除 runtime artifact（不清理业务表、Directus 配置、rubrics） |
+| `infra/scripts/init-eval-center-dev.ps1` | 重新应用 migration + 重置数据 + 同步 metadata + 执行 smoke checks |
+
+init 脚本 smoke checks：
+
+- `eval_example_lab_entries` collection metadata 存在
+- `directus_fields` 不残留 `rag_eligible`
+- Node Lab 默认值/constraint 不残留 `judge_compare`/`judge_compare_result`
+- `experiment_fingerprint` 列存在
+- eval-only 表 init 后为空
+- runtime artifact 目录已清空
+
+重置后人工验收：
+
+1. Directus 可正常登录
+2. Eval Center module 可进入
+3. Node Lab 可创建 session
+4. Workflow Lab 可发起 compare
+5. Example Lab 条目可保存
+6. Run History 页面可加载
+7. Parse Run Observability 列表可显示

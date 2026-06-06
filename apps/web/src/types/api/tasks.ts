@@ -57,3 +57,8 @@ export interface TaskStatusResponseDto {
   created_at: string;
   updated_at: string;
 }
+
+export interface ActiveTaskResponseDto {
+  has_active: boolean;
+  task?: TaskStatusResponseDto | null;
+}

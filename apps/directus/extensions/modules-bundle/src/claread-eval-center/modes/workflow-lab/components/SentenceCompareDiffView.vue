@@ -1,0 +1,1366 @@
+<script setup>
+import { computed } from "vue";
+import {
+  chipSideLabel,
+  chipTooltip,
+  extractHealthSignals,
+  mergeSentenceWarningChips,
+  normalizeWorkflowScene,
+  sceneInlineMarks,
+  sceneSentenceEntries,
+  sceneTranslations,
+} from "../composables/workflowLabFormatting.js";
+
+const props = defineProps({
+  baselineArtifact: { type: [Object, Array, null], default: null },
+  candidateArtifact: { type: [Object, Array, null], default: null },
+  preparedSentences: { type: Array, default: () => [] },
+  compareCase: { type: Object, default: null },
+  emptyText: { type: String, default: "选择 baseline 与候选差异句后，这里会逐句显示差异。" },
+});
+
+const baselineWarningsGrouped = computed(() => extractHealthSignals(props.baselineArtifact).warningsGrouped);
+const candidateWarningsGrouped = computed(() => extractHealthSignals(props.candidateArtifact).warningsGrouped);
+
+function chipsFor(sid) {
+  return mergeSentenceWarningChips(baselineWarningsGrouped.value, candidateWarningsGrouped.value, sid);
+}
+
+const baselineScene = computed(() => normalizeWorkflowScene(props.baselineArtifact));
+const candidateScene = computed(() => normalizeWorkflowScene(props.candidateArtifact));
+
+function sceneSentenceTextMap(artifact, scene) {
+  const map = new Map();
+  const candidates = [
+    scene?.article?.sentences,
+    artifact?.output?.article?.sentences,
+    artifact?.render_scene?.article?.sentences,
+    artifact?.input_snapshot?.article?.sentences,
+    artifact?.input_snapshot?.prepared_sentences,
+    artifact?.prepared_sentences,
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    for (const item of candidate) {
+      const sid = item?.sentence_id;
+      const text = item?.text || item?.source_text || item?.original_text || "";
+      if (sid != null && text && !map.has(String(sid))) {
+        map.set(String(sid), String(text));
+      }
+    }
+  }
+  return map;
+}
+
+const preparedMap = computed(() => {
+  const map = new Map();
+  for (const item of props.preparedSentences || []) {
+    if (item && item.sentence_id != null) {
+      map.set(String(item.sentence_id), String(item.text || ""));
+    }
+  }
+  return map;
+});
+
+const baselineSentenceMap = computed(() => sceneSentenceTextMap(props.baselineArtifact, baselineScene.value));
+const candidateSentenceMap = computed(() => sceneSentenceTextMap(props.candidateArtifact, candidateScene.value));
+
+function orderKey(sentenceId) {
+  const raw = String(sentenceId || "");
+  const match = raw.match(/(\d+)/);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+function collectBySentence(scene) {
+  const translations = new Map();
+  for (const item of sceneTranslations(scene)) {
+    if (item && item.sentence_id != null) translations.set(String(item.sentence_id), item);
+  }
+  const marks = new Map();
+  for (const item of sceneInlineMarks(scene)) {
+    if (item && item.anchor?.sentence_id != null) {
+      const sid = String(item.anchor.sentence_id);
+      if (!marks.has(sid)) marks.set(sid, []);
+      marks.get(sid).push(item);
+    }
+  }
+  const entries = new Map();
+  for (const item of sceneSentenceEntries(scene)) {
+    if (item && item.sentence_id != null) {
+      const sid = String(item.sentence_id);
+      if (!entries.has(sid)) entries.set(sid, []);
+      entries.get(sid).push(item);
+    }
+  }
+  return { translations, marks, entries };
+}
+
+const baselineBySid = computed(() => collectBySentence(baselineScene.value));
+const candidateBySid = computed(() => collectBySentence(candidateScene.value));
+
+const MARK_TYPES = {
+  vocab_highlight: { label: "词汇", tone: "vocab" },
+  phrase_gloss: { label: "短语", tone: "phrase" },
+  context_gloss: { label: "语境", tone: "context" },
+  grammar_note: { label: "语法", tone: "grammar" },
+  sentence_analysis: { label: "句法", tone: "analysis" },
+};
+
+function noteAnchorText(item) {
+  return item?.anchor?.anchor_text || item?.anchor?.text || item?.lookup_text || item?.label || item?.title || "—";
+}
+
+function linkedIdKey(rawId) {
+  const value = String(rawId || "").trim();
+  return value ? value.replace(/^[a-z]+_/, "") : "";
+}
+
+function matchGrammarMark(entry, marks = []) {
+  const grammarMarks = marks.filter((item) => item?.annotation_type === "grammar_note");
+  const entryKey = linkedIdKey(entry?.id);
+  if (entryKey) {
+    const exact = grammarMarks.find((item) => linkedIdKey(item?.id) === entryKey);
+    if (exact) return exact;
+  }
+  if (grammarMarks.length === 1) return grammarMarks[0];
+  return null;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+function renderSimpleMarkdown(value) {
+  const normalized = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!normalized) return "<p>—</p>";
+
+  const blocks = normalized.split(/\n\s*\n/).filter(Boolean);
+  return blocks.map((block) => {
+    const lines = block.split("\n").map((line) => line.trimEnd());
+    const isList = lines.every((line) => /^\-\s+/.test(line.trim()));
+    if (isList) {
+      const items = lines
+        .map((line) => line.replace(/^\-\s+/, ""))
+        .map((line) => `<li>${renderInlineMarkdown(line)}</li>`)
+        .join("");
+      return `<ul>${items}</ul>`;
+    }
+    return `<p>${lines.map((line) => renderInlineMarkdown(line)).join("<br>")}</p>`;
+  }).join("");
+}
+
+function formatMark(mark) {
+  const anchor = noteAnchorText(mark);
+  const rawType = mark?.annotation_type || mark?.visual_tone || "mark";
+  const typeInfo = MARK_TYPES[rawType] || { label: String(rawType).toUpperCase(), tone: "neutral" };
+  const primary = mark?.glossary?.zh || mark?.glossary?.gloss || mark?.lookup_text || "";
+  const detail = mark?.glossary?.reason || mark?.glossary?.phrase_type || "";
+  return {
+    anchor: String(anchor),
+    type: typeInfo.label,
+    tone: typeInfo.tone,
+    primary: primary ? String(primary) : "",
+    detail: detail ? String(detail) : "",
+  };
+}
+
+function formatEntry(entry, marks = []) {
+  const entryType = String(entry?.entry_type || "");
+  const label = entry?.label || entryType || "条目";
+  const content = entry?.content || entry?.title || entry?.note_zh || entry?.analysis_zh || "";
+  const linkedMark = entryType === "grammar_note" ? matchGrammarMark(entry, marks) : null;
+  return {
+    label: String(label),
+    content: content ? String(content) : "—",
+    anchor: linkedMark ? noteAnchorText(linkedMark) : "",
+    tone: entryType === "sentence_analysis" ? "analysis" : entryType === "grammar_note" ? "grammar" : "neutral",
+    isSentenceAnalysis: entryType === "sentence_analysis",
+    html: entryType === "sentence_analysis" ? renderSimpleMarkdown(content) : "",
+  };
+}
+
+function translationFor(bySid, sid) {
+  return bySid.translations.get(sid)?.translation_zh || null;
+}
+
+function marksFor(bySid, sid) {
+  return (bySid.marks.get(sid) || [])
+    .filter((item) => item?.annotation_type !== "grammar_note")
+    .map(formatMark);
+}
+
+function entriesFor(bySid, sid) {
+  const marks = bySid.marks.get(sid) || [];
+  return (bySid.entries.get(sid) || []).map((entry) => formatEntry(entry, marks));
+}
+
+const hasAnyData = computed(() => Boolean(
+  baselineScene.value
+  || candidateScene.value
+  || (props.baselineArtifact && (props.baselineArtifact.translations || props.baselineArtifact.render_scene))
+  || (props.candidateArtifact && (props.candidateArtifact.translations || props.candidateArtifact.render_scene))
+));
+
+const allBaselineSids = computed(() => {
+  const set = new Set();
+  for (const sid of baselineBySid.value.translations.keys()) set.add(sid);
+  for (const sid of baselineBySid.value.marks.keys()) set.add(sid);
+  for (const sid of baselineBySid.value.entries.keys()) set.add(sid);
+  return set;
+});
+
+const allCandidateSids = computed(() => {
+  const set = new Set();
+  for (const sid of candidateBySid.value.translations.keys()) set.add(sid);
+  for (const sid of candidateBySid.value.marks.keys()) set.add(sid);
+  for (const sid of candidateBySid.value.entries.keys()) set.add(sid);
+  return set;
+});
+
+const sharedSids = computed(() => {
+  // 真正的 intersection:在 baseline 和 candidate 两边都至少有一类输出
+  const result = [];
+  for (const sid of allBaselineSids.value) {
+    if (allCandidateSids.value.has(sid)) result.push(sid);
+  }
+  return result.sort((a, b) => orderKey(a) - orderKey(b));
+});
+
+const baselineOnlySids = computed(() => {
+  // baseline 有但 candidate 完全没有（任何字段都没有）
+  const result = [];
+  for (const sid of allBaselineSids.value) {
+    if (!allCandidateSids.value.has(sid)) result.push(sid);
+  }
+  return result.sort((a, b) => orderKey(a) - orderKey(b));
+});
+
+const candidateOnlySids = computed(() => {
+  // candidate 有但 baseline 完全没有
+  const result = [];
+  for (const sid of allCandidateSids.value) {
+    if (!allBaselineSids.value.has(sid)) result.push(sid);
+  }
+  return result.sort((a, b) => orderKey(a) - orderKey(b));
+});
+
+function isFieldChanged(bValue, cValue) {
+  if (bValue == null && cValue == null) return false;
+  if (bValue == null || cValue == null) return true;
+  return String(bValue) !== String(cValue);
+}
+
+function changedFieldLabels(row) {
+  const labels = [];
+  if (row.translation.changed) labels.push("翻译");
+  if (row.marks.changed) labels.push("词汇");
+  if (row.entries.changed) labels.push("语法");
+  return labels;
+}
+
+function makeRow(sid) {
+  const bT = translationFor(baselineBySid.value, sid);
+  const cT = translationFor(candidateBySid.value, sid);
+  const bM = marksFor(baselineBySid.value, sid);
+  const cM = marksFor(candidateBySid.value, sid);
+  const bE = entriesFor(baselineBySid.value, sid);
+  const cE = entriesFor(candidateBySid.value, sid);
+  return {
+    sid,
+    text: preparedMap.value.get(sid)
+      || baselineSentenceMap.value.get(sid)
+      || candidateSentenceMap.value.get(sid)
+      || "—",
+    translation: {
+      baseline: bT,
+      candidate: cT,
+      changed: isFieldChanged(bT, cT),
+    },
+    marks: {
+      baseline: bM,
+      candidate: cM,
+      changed: JSON.stringify(bM) !== JSON.stringify(cM),
+    },
+    entries: {
+      baseline: bE,
+      candidate: cE,
+      changed: JSON.stringify(bE) !== JSON.stringify(cE),
+    },
+    changedFields: [],
+    changed: isFieldChanged(bT, cT) || JSON.stringify(bM) !== JSON.stringify(cM) || JSON.stringify(bE) !== JSON.stringify(cE),
+  };
+}
+
+const sharedRows = computed(() => sharedSids.value.map((sid) => {
+  const row = makeRow(sid);
+  row.changedFields = changedFieldLabels(row);
+  return row;
+}));
+const baselineOnlyRows = computed(() => baselineOnlySids.value.map((sid) => ({
+  sid,
+  text: preparedMap.value.get(sid) || baselineSentenceMap.value.get(sid) || candidateSentenceMap.value.get(sid) || "—",
+  translation: translationFor(baselineBySid.value, sid),
+  marks: marksFor(baselineBySid.value, sid),
+  entries: entriesFor(baselineBySid.value, sid),
+})));
+const candidateOnlyRows = computed(() => candidateOnlySids.value.map((sid) => ({
+  sid,
+  text: preparedMap.value.get(sid) || candidateSentenceMap.value.get(sid) || baselineSentenceMap.value.get(sid) || "—",
+  translation: translationFor(candidateBySid.value, sid),
+  marks: marksFor(candidateBySid.value, sid),
+  entries: entriesFor(candidateBySid.value, sid),
+})));
+
+const changedRows = computed(() => sharedRows.value.filter((row) => row.changed));
+const stableRows = computed(() => sharedRows.value.filter((row) => !row.changed));
+const overviewCards = computed(() => ([
+  { key: "changed", label: "发生变化", value: changedRows.value.length, tone: "primary" },
+  { key: "stable", label: "两侧一致", value: stableRows.value.length, tone: "neutral" },
+  { key: "baseline_only", label: "仅 baseline", value: baselineOnlyRows.value.length, tone: "danger" },
+  { key: "candidate_only", label: "仅 candidate", value: candidateOnlyRows.value.length, tone: "success" },
+]).filter((item) => item.value > 0));
+</script>
+
+<template>
+  <section class="sentence-diff-view">
+    <div v-if="!hasAnyData" class="empty-state">{{ emptyText }}</div>
+    <template v-else>
+      <dl v-if="overviewCards.length" class="overview-grid">
+        <div v-for="card in overviewCards" :key="card.key" :class="`overview-card is-${card.tone}`">
+          <dt>{{ card.label }}</dt>
+          <dd>{{ card.value }}</dd>
+        </div>
+      </dl>
+
+      <section v-if="changedRows.length" class="focus-section">
+        <h4>双侧都有且发生变化（{{ changedRows.length }}）</h4>
+        <ol class="diff-list">
+        <li
+          v-for="row in changedRows"
+          :key="`s-${row.sid}`"
+          class="diff-card"
+          :class="{ changed: row.changed }"
+        >
+          <header class="diff-head">
+            <div class="head-meta">
+              <span class="sid-text">{{ row.sid }}</span>
+              <span v-if="row.changed" class="changed-badge">发生变化</span>
+              <span v-else class="stable-badge">无变化</span>
+              <template v-if="chipsFor(row.sid).length">
+                <span
+                  v-for="chip in chipsFor(row.sid)"
+                  :key="`chip-${row.sid}-${chip.code}`"
+                  :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`, chipSideLabel(chip.sides) && `is-side-${chipSideLabel(chip.sides)}`]"
+                  :title="chipTooltip(chip)"
+                ><span v-if="chipSideLabel(chip.sides)" :class="['chip-side', `is-${chipSideLabel(chip.sides)}`]">{{ chipSideLabel(chip.sides) }}</span>{{ chip.text }}</span>
+              </template>
+            </div>
+            <div class="sentence-block">
+              <span class="sentence-label">原句</span>
+              <p class="sentence-text">{{ row.text }}</p>
+            </div>
+            <div class="changed-fields" :class="{ empty: !row.changedFields.length }">
+              <template v-if="row.changedFields.length">
+                <span v-for="label in row.changedFields" :key="`${row.sid}-${label}`" class="field-badge">{{ label }}</span>
+              </template>
+              <span v-else>该句两侧输出一致。</span>
+            </div>
+          </header>
+          <div class="diff-rows">
+            <div class="diff-row" :class="{ changed: row.translation.changed, identical: !row.translation.changed }">
+              <span class="row-label">翻译</span>
+              <template v-if="row.translation.changed">
+                <div class="side baseline"><span class="side-tag">Baseline</span><span>{{ row.translation.baseline || "—" }}</span></div>
+                <div class="side candidate"><span class="side-tag">候选</span><span>{{ row.translation.candidate || "—" }}</span></div>
+              </template>
+              <template v-else>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <span>{{ row.translation.baseline || "—" }}</span>
+                </div>
+              </template>
+            </div>
+            <div class="diff-row" :class="{ changed: row.marks.changed, identical: !row.marks.changed }">
+              <span class="row-label">词汇</span>
+              <template v-if="row.marks.changed">
+                <div class="side baseline">
+                  <span class="side-tag">Baseline</span>
+                  <ul v-if="row.marks.baseline.length" class="mini-list">
+                    <li v-for="(mark, i) in row.marks.baseline" :key="`bm-${row.sid}-${i}`">
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+                <div class="side candidate">
+                  <span class="side-tag">候选</span>
+                  <ul v-if="row.marks.candidate.length" class="mini-list">
+                    <li v-for="(mark, i) in row.marks.candidate" :key="`cm-${row.sid}-${i}`">
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
+                    <li v-for="(mark, i) in row.marks.baseline" :key="`bm-unified-${row.sid}-${i}`">
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
+            </div>
+            <div class="diff-row" :class="{ changed: row.entries.changed, identical: !row.entries.changed }">
+              <span class="row-label">语法</span>
+              <template v-if="row.entries.changed">
+                <div class="side baseline">
+                  <span class="side-tag">Baseline</span>
+                  <ul v-if="row.entries.baseline.length" class="mini-list">
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+                <div class="side candidate">
+                  <span class="side-tag">候选</span>
+                  <ul v-if="row.entries.candidate.length" class="mini-list">
+                    <li v-for="(entry, i) in row.entries.candidate" :key="`ce-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`be-unified-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </li>
+        </ol>
+      </section>
+
+      <details v-if="stableRows.length" class="stable-section">
+        <summary>双侧一致（{{ stableRows.length }}）</summary>
+        <ol class="diff-list stable-list">
+          <li
+            v-for="row in stableRows"
+            :key="`stable-${row.sid}`"
+            class="diff-card stable"
+          >
+            <header class="diff-head">
+              <div class="head-meta">
+                <span class="sid-text">{{ row.sid }}</span>
+                <span class="stable-badge">无变化</span>
+              </div>
+              <div class="sentence-block">
+                <span class="sentence-label">原句</span>
+                <p class="sentence-text">{{ row.text }}</p>
+              </div>
+              <div class="changed-fields empty">
+                <span>该句两侧输出一致。</span>
+              </div>
+            </header>
+            <div class="diff-rows">
+              <div class="diff-row identical">
+                <span class="row-label">翻译</span>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <span>{{ row.translation.baseline || "—" }}</span>
+                </div>
+              </div>
+              <div class="diff-row identical">
+                <span class="row-label">词汇</span>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <ul v-if="row.marks.baseline.length" class="mini-list inline-list">
+                    <li v-for="(mark, i) in row.marks.baseline" :key="`sbm-unified-${row.sid}-${i}`">
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </div>
+              <div class="diff-row identical">
+                <span class="row-label">语法</span>
+                <div class="side-unified">
+                  <span class="unified-tag">双侧一致</span>
+                  <ul v-if="row.entries.baseline.length" class="mini-list inline-list">
+                    <li v-for="(entry, i) in row.entries.baseline" :key="`sbe-unified-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </div>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </details>
+
+      <section v-if="baselineOnlyRows.length" class="only-section">
+        <h4>仅 baseline（{{ baselineOnlyRows.length }}）</h4>
+        <ol class="diff-list only-list">
+          <li v-for="row in baselineOnlyRows" :key="`b-${row.sid}`" class="diff-card removed">
+            <header class="diff-head">
+              <div class="head-meta">
+                <span class="sid-text">{{ row.sid }}</span>
+                <span class="removed-badge">仅 baseline</span>
+                <template v-if="chipsFor(row.sid).length">
+                  <span
+                    v-for="chip in chipsFor(row.sid)"
+                    :key="`b-chip-${row.sid}-${chip.code}`"
+                    :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`, chipSideLabel(chip.sides) && `is-side-${chipSideLabel(chip.sides)}`]"
+                    :title="chipTooltip(chip)"
+                  ><span v-if="chipSideLabel(chip.sides)" :class="['chip-side', `is-${chipSideLabel(chip.sides)}`]">{{ chipSideLabel(chip.sides) }}</span>{{ chip.text }}</span>
+                </template>
+              </div>
+              <div class="sentence-block">
+                <span class="sentence-label">原句</span>
+                <p class="sentence-text">{{ row.text }}</p>
+              </div>
+            </header>
+            <div class="only-fields">
+              <div>
+                <dt>翻译</dt>
+                <dd>{{ row.translation || "—" }}</dd>
+              </div>
+              <div>
+                <dt>词汇</dt>
+                <dd>
+                  <ul v-if="row.marks.length" class="mini-list">
+                    <li v-for="(mark, i) in row.marks" :key="`bm-${row.sid}-${i}`">
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </dd>
+              </div>
+              <div>
+                <dt>语法</dt>
+                <dd>
+                  <ul v-if="row.entries.length" class="mini-list">
+                    <li v-for="(entry, i) in row.entries" :key="`be-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </dd>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section v-if="candidateOnlyRows.length" class="only-section">
+        <h4>仅 candidate（{{ candidateOnlyRows.length }}）</h4>
+        <ol class="diff-list only-list">
+          <li v-for="row in candidateOnlyRows" :key="`c-${row.sid}`" class="diff-card added">
+            <header class="diff-head">
+              <div class="head-meta">
+                <span class="sid-text">{{ row.sid }}</span>
+                <span class="added-badge">仅 candidate</span>
+                <template v-if="chipsFor(row.sid).length">
+                  <span
+                    v-for="chip in chipsFor(row.sid)"
+                    :key="`c-chip-${row.sid}-${chip.code}`"
+                    :class="['warn-chip', `is-${chip.tone}`, `is-${chip.category}`, chipSideLabel(chip.sides) && `is-side-${chipSideLabel(chip.sides)}`]"
+                    :title="chipTooltip(chip)"
+                  ><span v-if="chipSideLabel(chip.sides)" :class="['chip-side', `is-${chipSideLabel(chip.sides)}`]">{{ chipSideLabel(chip.sides) }}</span>{{ chip.text }}</span>
+                </template>
+              </div>
+              <div class="sentence-block">
+                <span class="sentence-label">原句</span>
+                <p class="sentence-text">{{ row.text }}</p>
+              </div>
+            </header>
+            <div class="only-fields">
+              <div>
+                <dt>翻译</dt>
+                <dd>{{ row.translation || "—" }}</dd>
+              </div>
+              <div>
+                <dt>词汇</dt>
+                <dd>
+                  <ul v-if="row.marks.length" class="mini-list">
+                    <li v-for="(mark, i) in row.marks" :key="`cm-${row.sid}-${i}`">
+                      <span class="type-stripe" :class="`is-${mark.tone}`" aria-hidden="true"></span>
+                      <span class="eval-mark-type" :class="mark.tone">{{ mark.type }}</span>
+                      <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                      <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
+                      <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </dd>
+              </div>
+              <div>
+                <dt>语法</dt>
+                <dd>
+                  <ul v-if="row.entries.length" class="mini-list">
+                    <li v-for="(entry, i) in row.entries" :key="`ce-${row.sid}-${i}`" class="entry-item">
+                      <div class="entry-head">
+                        <span class="grammar-index-badge" :class="`is-${entry.tone}`">#{{ i + 1 }}</span>
+                        <span class="type-stripe" :class="`is-${entry.tone}`" aria-hidden="true"></span>
+                        <span class="eval-mark-type" :class="`tone-${entry.tone}`">{{ entry.label }}</span>
+                        <span v-if="entry.anchor" class="eval-anchor-chip" :class="`tone-${entry.tone}`">{{ entry.anchor }}</span>
+                      </div>
+                      <div v-if="entry.isSentenceAnalysis" class="entry-markdown markdown-body" v-html="entry.html"></div>
+                      <span v-else class="entry-content">{{ entry.content }}</span>
+                    </li>
+                  </ul>
+                  <span v-else class="empty-cell">—</span>
+                </dd>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </section>
+    </template>
+  </section>
+</template>
+
+<style scoped>
+.sentence-diff-view {
+  display: grid;
+  gap: 14px;
+}
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0;
+}
+.overview-card {
+  background: var(--theme--background);
+  padding: 10px 12px;
+}
+.overview-card dt {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.overview-card dd {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--theme--foreground);
+}
+.overview-card.is-primary dd {
+  color: var(--theme--primary);
+}
+.overview-card.is-danger dd {
+  color: var(--theme--danger);
+}
+.overview-card.is-success dd {
+  color: var(--theme--success);
+}
+.focus-section,
+.only-section,
+.stable-section {
+  display: grid;
+  gap: 10px;
+}
+.focus-section h4,
+.only-section h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--theme--foreground-subdued);
+}
+.stable-section summary {
+  cursor: pointer;
+  color: var(--theme--foreground-subdued);
+  font-size: 13px;
+  font-weight: 700;
+}
+.diff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.diff-card {
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  background: var(--theme--background);
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+}
+.diff-card.changed {
+  border-color: color-mix(in srgb, var(--theme--primary) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 3%, var(--theme--background));
+}
+.diff-card.stable {
+  background: var(--theme--background-subdued);
+}
+.diff-card.removed {
+  border-color: color-mix(in srgb, var(--theme--danger) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 4%, var(--theme--background));
+}
+.diff-card.added {
+  border-color: color-mix(in srgb, var(--theme--success) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--success) 4%, var(--theme--background));
+}
+.diff-head {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  padding-bottom: 8px;
+}
+.head-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.sentence-block {
+  display: grid;
+  gap: 4px;
+}
+.sentence-label {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  font-weight: 700;
+}
+.sid-text {
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+  font-size: 12px;
+  color: var(--theme--foreground-subdued);
+  font-weight: 700;
+}
+.sentence-text {
+  margin: 0;
+  font-family: "Source Serif Pro", Georgia, "Times New Roman", "Noto Serif SC", serif;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--theme--foreground);
+  overflow-wrap: anywhere;
+}
+.changed-badge,
+.stable-badge,
+.added-badge,
+.removed-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--theme--border-color);
+  white-space: nowrap;
+}
+.changed-badge {
+  color: var(--theme--primary);
+  border-color: color-mix(in srgb, var(--theme--primary) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 8%, var(--theme--background));
+}
+.stable-badge {
+  color: var(--theme--foreground-subdued);
+  border-color: var(--theme--border-color-subdued, var(--theme--border-color));
+  background: var(--theme--background-subdued);
+}
+.added-badge {
+  color: var(--theme--success);
+  border-color: color-mix(in srgb, var(--theme--success) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--success) 8%, var(--theme--background));
+}
+.removed-badge {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 8%, var(--theme--background));
+}
+.diff-rows {
+  display: grid;
+  gap: 8px;
+}
+.changed-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+}
+.changed-fields.empty {
+  color: var(--theme--foreground-subdued);
+}
+.field-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--theme--primary) 40%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 6%, var(--theme--background));
+  color: var(--theme--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+.diff-row {
+  display: grid;
+  grid-template-columns: 56px repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 6px;
+  background: var(--theme--background);
+}
+.diff-row.changed {
+  border-color: color-mix(in srgb, var(--theme--primary) 40%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 6%, var(--theme--background));
+}
+.row-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--theme--foreground-subdued);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  align-self: start;
+  padding-top: 4px;
+}
+.side {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.side-tag {
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+}
+.side.baseline .side-tag {
+  color: var(--theme--foreground);
+}
+.side.candidate .side-tag {
+  color: var(--theme--primary);
+  border-color: color-mix(in srgb, var(--theme--primary) 45%, var(--theme--border-color));
+}
+.side > span:not(.side-tag) {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--theme--foreground);
+  overflow-wrap: anywhere;
+}
+.mini-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.mini-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.entry-item {
+  display: grid;
+  gap: 6px;
+}
+.entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.anchor-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--theme--warning) 16%, var(--theme--background));
+  color: var(--theme--foreground);
+  font-weight: 600;
+}
+.mark-type {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mark-extra,
+.entry-content {
+  color: var(--theme--foreground);
+}
+.mark-detail {
+  color: var(--theme--foreground-subdued);
+}
+.markdown-body :deep(p),
+.markdown-body :deep(ul) {
+  margin: 0;
+}
+.markdown-body :deep(ul) {
+  padding-left: 18px;
+}
+.markdown-body :deep(code) {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--theme--background-subdued);
+  font-family: var(--theme--fonts--monospace--font-family, monospace);
+}
+.markdown-body :deep(strong) {
+  font-weight: 700;
+}
+.empty-cell {
+  color: var(--theme--foreground-subdued);
+  font-style: italic;
+}
+.removed-translation,
+.added-translation {
+  margin: 0;
+  font-size: 13px;
+  color: var(--theme--foreground);
+}
+
+.only-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.only-fields > div {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 6px;
+  background: var(--theme--background);
+  position: relative;
+}
+.only-fields > div::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--theme--foreground-subdued);
+}
+.only-fields > div {
+  padding-left: 24px;
+}
+.diff-card.removed .only-fields > div {
+  border-left-color: color-mix(in srgb, var(--theme--danger) 45%, var(--theme--border-color));
+}
+.diff-card.added .only-fields > div {
+  border-left-color: color-mix(in srgb, var(--theme--success) 45%, var(--theme--border-color));
+}
+
+.only-fields dt {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--theme--foreground-subdued);
+}
+
+.only-fields dd {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--theme--foreground);
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 760px) {
+  .only-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.empty-state {
+  border: 1px dashed var(--theme--border-color-subdued, var(--theme--border-color));
+  border-radius: 8px;
+  padding: 18px;
+  color: var(--theme--foreground-subdued);
+}
+@media (max-width: 900px) {
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .diff-row {
+    grid-template-columns: 1fr;
+  }
+  .changed-badge,
+  .stable-badge,
+  .added-badge,
+  .removed-badge {
+    grid-column: 1 / -1;
+  }
+}
+
+.diff-row.identical {
+  border-color: var(--theme--border-color-subdued, var(--theme--border-color));
+  opacity: 0.75;
+}
+
+.diff-row.identical:hover {
+  opacity: 1;
+}
+
+.side-unified {
+  grid-column: span 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.unified-tag {
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  border: 1px dashed var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+
+.inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.eval-anchor-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.eval-anchor-chip.tone-vocab {
+  border-color: color-mix(in srgb, #e4b000 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 12%, var(--theme--background));
+  color: #785300;
+}
+
+.eval-anchor-chip.tone-phrase {
+  border-color: color-mix(in srgb, #db2777 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 10%, var(--theme--background));
+  color: #9f1239;
+}
+
+.eval-anchor-chip.tone-context {
+  border-color: color-mix(in srgb, #54a7de 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 10%, var(--theme--background));
+  color: #285f8d;
+}
+
+.eval-anchor-chip.tone-grammar {
+  border-color: color-mix(in srgb, #746694 38%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 10%, var(--theme--background));
+  color: #554777;
+}
+
+.eval-anchor-chip.tone-analysis {
+  border-color: color-mix(in srgb, #059669 34%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 10%, var(--theme--background));
+  color: #065f46;
+}
+
+.eval-anchor-chip.tone-neutral {
+  border-color: var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+}
+
+.eval-mark-type {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  border: 1px solid var(--theme--border-color);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Tone overrides - stronger saturation for immediate recognition */
+.eval-mark-type.tone-vocab,
+.eval-mark-type.vocab {
+  color: #6b4a00;
+  border-color: color-mix(in srgb, #e4b000 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #e4b000 22%, var(--theme--background));
+}
+
+.eval-mark-type.tone-phrase,
+.eval-mark-type.phrase {
+  color: #881337;
+  border-color: color-mix(in srgb, #db2777 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #db2777 20%, var(--theme--background));
+}
+
+.eval-mark-type.tone-context,
+.eval-mark-type.context {
+  color: #1e4e77;
+  border-color: color-mix(in srgb, #54a7de 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #54a7de 22%, var(--theme--background));
+}
+
+.eval-mark-type.tone-grammar,
+.eval-mark-type.grammar {
+  color: #413563;
+  border-color: color-mix(in srgb, #746694 55%, var(--theme--border-color));
+  background: color-mix(in srgb, #746694 22%, var(--theme--background));
+}
+
+.eval-mark-type.tone-analysis,
+.eval-mark-type.analysis {
+  color: #054a38;
+  border-color: color-mix(in srgb, #059669 50%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 22%, var(--theme--background));
+}
+
+/* ── Type stripe (colored block before type label) ──────── */
+.type-stripe {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.type-stripe.is-vocab    { background: #e4b000; }
+.type-stripe.is-phrase   { background: #db2777; }
+.type-stripe.is-context  { background: #54a7de; }
+.type-stripe.is-grammar  { background: #746694; }
+.type-stripe.is-analysis { background: #059669; }
+.type-stripe.is-neutral  { background: var(--theme--foreground-subdued); }
+
+/* ── Grammar sequential index badge ─────────────────────── */
+.grammar-index-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
+
+.grammar-index-badge.is-grammar {
+  background: color-mix(in srgb, #746694 18%, var(--theme--background));
+  color: #554777;
+}
+
+.grammar-index-badge.is-analysis {
+  background: color-mix(in srgb, #059669 18%, var(--theme--background));
+  color: #065f46;
+}
+
+.grammar-index-badge.is-neutral {
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+}
+
+/* Sentence-level workflow health chips */
+.warn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--theme--border-color);
+  background: var(--theme--background-subdued);
+  color: var(--theme--foreground-subdued);
+  white-space: nowrap;
+}
+
+.warn-chip.is-anchor {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-chunks {
+  color: #065f46;
+  border-color: color-mix(in srgb, #059669 45%, var(--theme--border-color));
+  background: color-mix(in srgb, #059669 6%, var(--theme--background));
+}
+
+.warn-chip.is-draft,
+.warn-chip.is-schema,
+.warn-chip.is-fallback {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 45%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 8%, var(--theme--background));
+}
+
+.warn-chip.is-repair {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 10%, var(--theme--background));
+}
+
+.warn-chip.is-repair-fail {
+  color: var(--theme--danger);
+  border-color: color-mix(in srgb, var(--theme--danger) 70%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--danger) 18%, var(--theme--background));
+}
+
+.warn-chip.is-repair::before {
+  content: "修复";
+  font-size: 9px;
+  font-weight: 800;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--theme--danger) 30%, var(--theme--background));
+  color: var(--theme--background);
+  margin-right: 2px;
+}
+
+/* side badge inside a warn-chip */
+.chip-side {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: var(--theme--background-subdued);
+  border: 1px solid var(--theme--border-color);
+  color: var(--theme--foreground-subdued);
+  text-transform: uppercase;
+}
+
+.chip-side.is-B {
+  color: var(--theme--foreground);
+  border-color: color-mix(in srgb, var(--theme--foreground-subdued) 45%, var(--theme--border-color));
+}
+
+.chip-side.is-C {
+  color: var(--theme--primary);
+  border-color: color-mix(in srgb, var(--theme--primary) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--primary) 8%, var(--theme--background));
+}
+
+.chip-side.is-B\\+C {
+  color: var(--theme--warning);
+  border-color: color-mix(in srgb, var(--theme--warning) 50%, var(--theme--border-color));
+  background: color-mix(in srgb, var(--theme--warning) 10%, var(--theme--background));
+}
+
+</style>

@@ -62,18 +62,6 @@ def is_likely_basic_english_word(text: str) -> bool:
     return False
 
 
-class UserRules(BaseModel):
-    model_config = BASE_MODEL_CONFIG
-
-    profile_id: str = Field(description="规则包ID")
-    reading_goal: ReadingGoal = Field(description="阅读目标")
-    reading_variant: ReadingVariant = Field(description="阅读场景")
-    annotation_style: AnnotationStyle = Field(description="标注风格")
-    translation_style: TranslationStyle = Field(description="翻译风格")
-    grammar_granularity: GrammarGranularity = Field(description="语法颗粒度")
-    vocabulary_policy: VocabularyPolicy = Field(description="词汇筛选策略")
-
-
 class SanitizeReport(BaseModel):
     actions: list[str] = Field(
         default_factory=list, description="输入清洗阶段实际执行的规范化或剔除动作。"

@@ -23,6 +23,7 @@ from app.services.analysis.prompting.prompt_strategy import (
     build_translation_prompt_strategy,
     build_vocabulary_prompt_strategy,
 )
+from app.services.analysis.prompting.runtime_context import is_grammar_rag_enabled
 
 
 @dataclass
@@ -71,7 +72,11 @@ async def build_grammar_bundle_async(
     rag_debug = None
     example_strategy = get_grammar_example_strategy(plan, sentences=sentences)
 
-    if settings.grammar_rag_enabled and sentences:
+    if (
+        grammar_bundle_mode_allows_rag(example_strategy.selection_mode)
+        and is_grammar_rag_enabled(settings)
+        and sentences
+    ):
         gn_result = await query_grammar_rag(
             variant=plan.variant_id,
             sentences=sentences,
@@ -106,6 +111,11 @@ async def build_grammar_bundle_async(
         example_strategy=example_strategy,
         rag_debug=rag_debug,
     )
+
+
+def grammar_bundle_mode_allows_rag(selection_mode: str) -> bool:
+    # Prompt variant modes own the example set and must not be replaced by RAG.
+    return selection_mode not in {"off", "variant"}
 
 
 def build_translation_bundle(

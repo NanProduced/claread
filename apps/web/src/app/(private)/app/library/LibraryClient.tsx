@@ -424,7 +424,7 @@ export function LibraryClient({
 
   const favoriteOptions = libraryFavoriteFilters.map((value) => ({
     value,
-    label: value === "all" ? "全部归档" : "仅收藏",
+    label: value === "all" ? "全部" : "仅收藏",
   }));
 
   const sortOptions = librarySortOptions.map((value) => ({
@@ -482,7 +482,7 @@ export function LibraryClient({
           </div>
         </div>
 
-        <div className="mb-8 shrink-0 flex items-center justify-between pb-2 pl-2">
+        <div className="mb-4 shrink-0 flex items-center justify-between pl-2">
           <div className="flex w-full max-w-sm items-center gap-3">
             <Search className="h-4 w-4 text-muted" />
             <input
@@ -499,8 +499,8 @@ export function LibraryClient({
           </p>
         </div>
 
-        <div className="mb-7 flex flex-col gap-4 pl-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="mb-5 flex flex-col gap-4 pl-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1.5">
             {favoriteOptions.map((option) => {
               const active = favoriteFilter === option.value;
               return (
@@ -509,10 +509,10 @@ export function LibraryClient({
                   type="button"
                   onClick={() => setFavoriteFilter(option.value)}
                   aria-pressed={active}
-                  className={`focus-ring inline-flex items-center gap-2 rounded-pill border px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] transition-colors ${
+                  className={`focus-ring inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] transition-all duration-200 ${
                     active
-                      ? "border-ink bg-ink text-reader-paper"
-                      : "border-hairline text-muted hover:border-ink-soft hover:text-ink"
+                      ? "bg-white shadow-[0_1px_3px_rgba(28,24,18,0.06)] ring-1 ring-hairline text-ink"
+                      : "text-muted hover:text-ink hover:bg-black/[0.03]"
                   }`}
                 >
                   {option.value === "favorited" ? <Heart className="h-3.5 w-3.5" /> : null}
@@ -534,8 +534,10 @@ export function LibraryClient({
                   type="button"
                   onClick={() => setSortOption(option.value)}
                   aria-pressed={active}
-                  className={`focus-ring rounded-pill px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] transition-colors ${
-                    active ? "bg-surface-warm text-ink" : "text-muted hover:text-ink"
+                  className={`focus-ring rounded-pill px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] transition-all duration-200 ${
+                    active 
+                      ? "bg-white shadow-[0_1px_3px_rgba(28,24,18,0.06)] ring-1 ring-hairline text-ink" 
+                      : "text-muted hover:text-ink hover:bg-black/[0.03]"
                   }`}
                 >
                   {option.label}

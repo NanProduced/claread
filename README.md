@@ -1,21 +1,22 @@
 # Claread
 
-Claread 是一个多端英文阅读辅助产品。当前稳定基线包含：
+Claread 是一个多端英文阅读辅助产品。当前基线包含：
 
-- `services/api/`：通用 FastAPI 后端。
+- `services/api/`：通用 FastAPI 后端，承载用户、记录、任务、词典、用户资产、配额、workflow 和 Ask Claread。
 - `apps/miniprogram/`：微信小程序客户端。
-- `apps/web/`：Web baseline，通过 Next.js BFF 接入真实后端。
+- `apps/web/`：Web 产品客户端，通过 Next.js BFF 接入真实后端。
+- `apps/directus/`：Claread Console 控制面，承载 Eval Center、Render Scene Inspector、Parse Run Observability 和 Example Lab。
 - `infra/docker/`：本地 PostgreSQL / Redis。
-- `infra/migrations/0001_initial_schema.sql`：当前 pre-release 数据库基线。
+- `infra/migrations/`：数据库初始基线 SQL（业务表 + Eval Center 控制面表）。
 
-微信小程序是第一个客户端，不是 Claread 的架构中心。Web、Directus 内部工具、评测系统和 few-shot RAG 都应复用同一套后端业务核心和 PostgreSQL 数据。
+所有客户端共享同一套后端业务核心和 PostgreSQL 数据。客户端差异通过 auth adapter、render profile、capability profile 和客户端 UI 层处理，不复制后端。
 
 ## 快速入口
 
 ```text
 docs/README.md                       # 文档地图
 docs/product/overview.md             # 产品定位
-docs/product/current-state.md        # 当前状态和下一步
+docs/product/current-state.md        # 当前状态和方向
 docs/development/mainline.md         # 当前开发主线
 docs/architecture/overview.md        # 架构总览
 docs/architecture/monorepo-boundaries.md # monorepo 边界
@@ -24,6 +25,7 @@ docs/operations/local-dev.md         # 本地开发环境
 services/api/README.md               # 后端服务
 apps/miniprogram/README.md           # 微信小程序
 apps/web/README.md                   # Web 客户端
+apps/directus/README.md              # Claread Console
 ```
 
 ## 安装依赖
@@ -70,16 +72,16 @@ pnpm web:dev
 
 默认访问 `http://127.0.0.1:3000`。
 
-启动 Claread Console 的 Directus Bootstrap：
+启动 Claread Console：
 
 ```powershell
 pnpm directus:up
 pnpm directus:extensions:watch
 ```
 
-默认访问 `http://127.0.0.1:8055`。Bootstrap 只提供本地 Directus runtime、扩展热重载和占位扩展壳子，不包含业务 schema 和执行逻辑。
+默认访问 `http://127.0.0.1:8055/admin`。Claread Console 已承载 Eval Center、Render Scene Inspector、Parse Run Observability 和 Example Lab 等可用能力，不再只是空骨架。详细说明见 `docs/operations/directus-local-dev.md`。
 
-本地 Directus 默认管理员登录邮箱为 `admin@claread.dev`，密码为 `Nan12091209`。
+本地 Directus 默认管理员登录邮箱为 `admin@claread.dev`，密码由本地 `apps/directus/.env` 或启动环境中的 `ADMIN_PASSWORD` 配置；仓库示例只保留占位值。
 
 ## 常用验证
 
@@ -98,13 +100,13 @@ pnpm directus:extensions:build
 uv run pytest tests/test_health.py -q
 ```
 
-当前稳定基线的完整验证入口见 `docs/operations/testing.md`。
+完整验证入口见 `docs/operations/testing.md`。
 
 ## 开发原则
 
 - 不为 Web 复制一套业务后端。
 - 不把微信小程序限制写成全局产品限制。
 - 客户端差异通过 auth adapter、render profile、capability profile 和客户端 UI 层处理。
-- Directus 是 Claread Console 的控制面，不承载业务核心执行逻辑。
+- Claread Console 是内部控制面，不承载业务核心执行逻辑；重逻辑保留在 `services/api/` 与后续 worker。
 - 真实密钥、模型配置、微信 secret、Zilliz token 和本地私有配置不提交。
 - 开发前阅读当前目录最近的 `AGENTS.md`。

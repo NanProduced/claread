@@ -339,7 +339,9 @@ async def _run_workflow_and_store(
             input_state,
             config={
                 "run_name": WORKFLOW_NAME,
-                "tags": build_workflow_root_tags(WORKFLOW_NAME),
+                "tags": build_workflow_root_tags(
+                    WORKFLOW_NAME, surface="daily_reader_pipeline"
+                ),
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,
@@ -349,6 +351,7 @@ async def _run_workflow_and_store(
                     reading_goal="daily_reading",
                     reading_variant="standard",
                     profile_id="daily_reader",
+                    surface="daily_reader_pipeline",
                     extra={
                         "article_title": article.title[:80],
                         "article_source": article.source,
@@ -502,7 +505,9 @@ async def run_workflow_only(article_id: str) -> dict | None:
             input_state,
             config={
                 "run_name": WORKFLOW_NAME,
-                "tags": build_workflow_root_tags(WORKFLOW_NAME),
+                "tags": build_workflow_root_tags(
+                    WORKFLOW_NAME, surface="daily_reader_pipeline"
+                ),
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,
@@ -512,6 +517,7 @@ async def run_workflow_only(article_id: str) -> dict | None:
                     reading_goal="daily_reading",
                     reading_variant="standard",
                     profile_id="daily_reader",
+                    surface="daily_reader_pipeline",
                 ),
             },
         )

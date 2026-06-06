@@ -11,11 +11,25 @@ import type {
   VisualTone,
 } from "@/types/view/ReaderMockVm";
 
+export interface ReaderPlateTextMark {
+  annotationType: AnnotationType;
+  anchorText: string;
+  clickable: boolean;
+  glossary?: InlineGlossary;
+  id: string;
+  parentId?: string;
+  lookupKind?: PhraseKind;
+  lookupText?: string;
+  renderType?: InlineMarkModel["renderType"];
+  visualTone: VisualTone;
+}
+
 export interface ReaderPlateTextLeaf {
   text: string;
   readerSentenceId?: string;
   readerTextStartOffset?: number;
   readerTextEndOffset?: number;
+  readerMarks?: ReaderPlateTextMark[];
   readerMarkAnnotationType?: AnnotationType;
   readerMarkAnchorText?: string;
   readerMarkClickable?: boolean;

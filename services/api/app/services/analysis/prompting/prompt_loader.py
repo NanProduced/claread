@@ -7,6 +7,11 @@ from pathlib import Path
 import yaml
 from cachetools import TTLCache
 
+from app.services.analysis.prompting.runtime_context import (
+    get_prompt_override_agent_instructions,
+    get_prompt_override_policy_lines,
+)
+
 PROMPTS_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent / "prompts"
 
 _REGISTRY_PATH = PROMPTS_ROOT / "registry.yaml"
@@ -45,6 +50,9 @@ def get_prompt_version() -> str:
 
 
 def load_agent_instructions(agent_name: str) -> str:
+    override_text = get_prompt_override_agent_instructions(agent_name)
+    if override_text is not None:
+        return override_text
     registry = _load_registry()
     agents = registry.get("agents", {})
     if agent_name not in agents:
@@ -57,7 +65,7 @@ def load_agent_instructions(agent_name: str) -> str:
     return str(content).strip()
 
 
-def load_policy_lines(
+def load_policy_lines_raw(
     policy_name: str,
     focus: str,
     variant: str | None = None,
@@ -73,8 +81,20 @@ def load_policy_lines(
     if variant and variant in focus_data:
         lines = focus_data[variant]
     else:
+        # YAML baseline: "default" is the shared baseline policy, not a variant fallback
         lines = focus_data.get("default", [])
     return lines if isinstance(lines, list) else [lines]
+
+
+def load_policy_lines(
+    policy_name: str,
+    focus: str,
+    variant: str | None = None,
+) -> list[str]:
+    override_lines = get_prompt_override_policy_lines(policy_name, focus, variant)
+    if override_lines is not None:
+        return override_lines
+    return load_policy_lines_raw(policy_name, focus, variant)
 
 
 def load_examples(
@@ -85,6 +105,7 @@ def load_examples(
     if variant in data:
         entries = data[variant]
     else:
+        # YAML baseline: "default" is the shared baseline examples, not a variant fallback
         entries = data.get("default", [])
     return entries if isinstance(entries, list) else [entries]
 

@@ -12,6 +12,7 @@ from app.services.analysis.prompting.example_strategy import ExampleEntry
 from app.services.analysis.prompting.prompt_composer import build_agent_prompt
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
 from app.services.analysis.prompting.prompt_strategy import PromptStrategy, build_prompt_sections
+from app.services.analysis.prompting.runtime_context import is_prompt_override_active
 
 
 @dataclass
@@ -33,8 +34,7 @@ def build_grammar_prompt(deps: GrammarAgentDeps) -> str:
     )
 
 
-@lru_cache(maxsize=1)
-def get_grammar_agent() -> Agent[GrammarAgentDeps, GrammarDraft]:
+def _build_grammar_agent() -> Agent[GrammarAgentDeps, GrammarDraft]:
     return Agent[GrammarAgentDeps, GrammarDraft](
         model=None,
         output_type=GrammarDraft,
@@ -45,3 +45,14 @@ def get_grammar_agent() -> Agent[GrammarAgentDeps, GrammarDraft]:
         output_retries=3,
         instrument=False,
     )
+
+
+@lru_cache(maxsize=1)
+def _get_cached_grammar_agent() -> Agent[GrammarAgentDeps, GrammarDraft]:
+    return _build_grammar_agent()
+
+
+def get_grammar_agent() -> Agent[GrammarAgentDeps, GrammarDraft]:
+    if is_prompt_override_active():
+        return _build_grammar_agent()
+    return _get_cached_grammar_agent()

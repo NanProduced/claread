@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "directus-extension build",
+    "test": "node --test src/eval-center/index.test.mjs",
     "watch": "directus-extension build --watch"
   },
   "devDependencies": {
@@ -26,6 +27,11 @@
         "type": "endpoint",
         "name": "parse-run-observability",
         "source": "src/parse-run-observability/index.js"
+      },
+      {
+        "type": "endpoint",
+        "name": "eval-center",
+        "source": "src/eval-center/index.js"
       }
     ]
   },

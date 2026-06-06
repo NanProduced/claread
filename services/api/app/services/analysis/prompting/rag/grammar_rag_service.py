@@ -2,14 +2,17 @@
 
 按 grammar-rag-design.md 完整实现：
 1. select_candidate_sentences → 选出候选句
-2. build_query_text → 构造 query_text
+2. build_query_text → 构造 query_text（canonical colon 格式）
 3. embed_single → 百炼 Embedding
-4. zilliz_search → Zilliz ANN（含 filter）
-5. rerank → 百炼 Rerank
+4. zilliz_search → Zilliz ANN（含 filter，不做 variant 回退）
+5. rerank → 百炼 Rerank（rerank doc 使用 canonical colon 格式 + explanation）
 6. _apply_confidence_filter → 按 rerank score 过滤
 7. 多样性去重 → 按 grammar_tags/label 去重
 8. 注入预算控制 → grammar_note 最多 2 条, sentence_analysis 最多 1 条
 9. 构造 ExampleEntry 列表
+
+query_tags: 查询侧通过 extract_grammar_tags_from_sentence 生成的语法标签。
+tag_overlap: query_tags 与各候选 grammar_tags 的重叠数量，用于诊断和排序参考。
 
 所有外部调用失败时自动 fallback 到 baseline。
 """
@@ -23,15 +26,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.config.settings import get_settings
+from app.eval_adapter.example_lab import normalize_grammar_tags
 from app.services.analysis.prompting.example_strategy import ExampleEntry
 from app.services.analysis.prompting.rag.grammar_retrieval_hints import (
     build_query_text,
+    extract_grammar_tags_from_sentence,
     select_candidate_sentences,
 )
 
 logger = logging.getLogger(__name__)
 
-_INJECTION_BUDGET = {
+INJECTION_BUDGET = {
     "grammar_note": 2,
     "sentence_analysis": 1,
 }
@@ -73,6 +78,8 @@ class RAGQueryResult:
     rerank_provider_metadata: dict[str, Any] | None = None
     rerank_input_count: int = 0
     rerank_input_chars: int = 0
+    query_tags: list[str] = field(default_factory=list)
+    tag_overlap: dict[str, int] = field(default_factory=dict)
 
     @property
     def is_fallback(self) -> bool:
@@ -108,6 +115,35 @@ def _normalize_grammar_tags(value: Any) -> list[str]:
             return []
         return [str(parsed)]
     return [str(value)]
+
+
+# Canonical retrieval_text (example side) is the 6-line colon format. The
+# query side emits 4 lines (no label / explanation); we only ever need the
+# example-side shape for rerank docs. Each required key MUST be present.
+_RERANK_RETRIEVAL_TEXT_REQUIRED_KEYS = (
+    "variant", "output_type", "grammar_tags", "label", "source_sentence", "explanation",
+)
+
+
+def _validate_canonical_retrieval_text(text: str) -> bool:
+    """Return True iff ``text`` looks like the canonical retrieval_text shape.
+
+    Used as a quick sanity check before we trust a Zilliz-stored
+    ``retrieval_text`` as the rerank doc. The same key set is the contract
+    documented in ``docs/architecture/eval-center-integration-map.md``.
+    """
+    found_keys: set[str] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if ":" not in line:
+            return False
+        key = line.split(":", 1)[0].strip()
+        if not key:
+            return False
+        found_keys.add(key)
+    return all(k in found_keys for k in _RERANK_RETRIEVAL_TEXT_REQUIRED_KEYS)
 
 
 def _compact_candidate_dict(
@@ -240,7 +276,7 @@ async def _do_rag_query(
     deduped, diversity_drops = _diversity_dedup(filtered)
     result.dropped_examples.extend(diversity_drops)
 
-    budget = _INJECTION_BUDGET.get(output_type, 2)
+    budget = INJECTION_BUDGET.get(output_type, 2)
     final = deduped[:budget]
     result.dropped_examples.extend(
         _compact_candidate_dict(
@@ -314,6 +350,12 @@ async def _retrieve_from_backend(
     )
     result.query_text = query_text
 
+    # Generate query-side grammar tags from English sentence structural signals
+    query_tags = extract_grammar_tags_from_sentence(
+        str(query_sentence.get("text", "")),
+    )
+    result.query_tags = query_tags
+
     t0 = time.monotonic()
     embedding_result = await embed_single_with_metadata(
         query_text,
@@ -352,33 +394,14 @@ async def _retrieve_from_backend(
             "label",
             "source_sentence",
             "output_fragment",
-            "grammar_granularity",
+            # retrieval_text is the canonical 6-line colon format produced
+            # by Example Lab / seed ingest; we reuse it for the rerank doc
+            # to keep the doc / query surface format identical.
+            "retrieval_text",
             "quality_score",
             "approved",
         ],
     )
-
-    if not search_results and variant != "default":
-        filter_expr = f'{base_filter} and reading_variant == "default"'
-        logger.info("RAG ANN fallback to default variant: filter=%s", filter_expr)
-        search_results = await zilliz_search(
-            collection_name=collection_name,
-            query_vector=query_vector,
-            top_k=settings.grammar_rag_ann_topk,
-            filter_expr=filter_expr,
-            output_fields=[
-                "example_id",
-                "reading_variant",
-                "output_type",
-                "grammar_tags",
-                "label",
-                "source_sentence",
-                "output_fragment",
-                "grammar_granularity",
-                "quality_score",
-                "approved",
-            ],
-        )
 
     result.ann_latency_ms = (time.monotonic() - t0) * 1000
     result.ann_topk = settings.grammar_rag_ann_topk
@@ -393,12 +416,46 @@ async def _retrieve_from_backend(
 
     rerank_docs = []
     for sr in search_results:
+        entity = sr.entity
+        # Prefer the canonical retrieval_text stored in Zilliz (same 6-line
+        # colon format used by the query side); only fall back to a manual
+        # stitch if it's missing — which should not happen for canonical data
+        # but keeps the path defensive for legacy / partial Zilliz rows.
+        stored_retrieval_text = str(entity.get("retrieval_text", "") or "").strip()
+        if stored_retrieval_text and _validate_canonical_retrieval_text(stored_retrieval_text):
+            rerank_docs.append(stored_retrieval_text)
+            continue
+
+        # Fallback: build the canonical format from the entity fields.
+        # grammar_tags is stored as a JSON-serialized list string in Zilliz;
+        # normalise it to the comma-joined form so the rerank doc matches
+        # the query side surface exactly.
+        grammar_tags_list = _normalize_grammar_tags(entity.get("grammar_tags"))
+        grammar_tags_text = ", ".join(grammar_tags_list)
+
+        output_fragment_raw = entity.get("output_fragment", "")
+        explanation = ""
+        if output_fragment_raw:
+            try:
+                frag = (
+                    json.loads(output_fragment_raw)
+                    if isinstance(output_fragment_raw, str)
+                    else output_fragment_raw
+                )
+            except (json.JSONDecodeError, TypeError):
+                frag = {}
+            if output_type == "grammar_note":
+                explanation = str(frag.get("note_zh", "") or "")
+            elif output_type == "sentence_analysis":
+                explanation = str(frag.get("analysis_zh", "") or "")
+
         doc = (
-            f"variant={sr.entity.get('reading_variant', '')}\n"
-            f"output_type={sr.entity.get('output_type', '')}\n"
-            f"grammar_tags={sr.entity.get('grammar_tags', '')}\n"
-            f"sentence={sr.entity.get('source_sentence', '')}\n"
-            f"label={sr.entity.get('label', '')}"
+            f"variant: {entity.get('reading_variant', '')}\n"
+            f"output_type: {entity.get('output_type', '')}\n"
+            f"grammar_tags: {grammar_tags_text}\n"
+            f"label: {entity.get('label', '')}\n"
+            f"source_sentence: {entity.get('source_sentence', '')}\n"
+            f"explanation: {explanation}"
         )
         rerank_docs.append(doc)
 
@@ -440,6 +497,11 @@ async def _retrieve_from_backend(
         )
 
     result.rerank_hits = rerank_hits
+
+    # Compute tag overlap between query_tags and each candidate's grammar_tags
+    for candidate in candidates:
+        candidate_tags = _normalize_grammar_tags(candidate.entity.get("grammar_tags"))
+        result.tag_overlap[candidate.example_id] = len(set(query_tags) & set(candidate_tags))
 
     return candidates
 
@@ -551,4 +613,6 @@ def build_rag_debug_info(result: RAGQueryResult) -> dict[str, Any]:
         "rerank_hits": result.rerank_hits,
         "dropped_examples": result.dropped_examples,
         "selected_examples": result.selected_examples,
+        "query_tags": result.query_tags,
+        "tag_overlap": result.tag_overlap,
     }

@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.services.analysis.prompting.rag.grammar_retrieval_hints import (
     SentenceSignals,
     build_query_text,
+    extract_grammar_tags_from_sentence,
     extract_signals,
     select_candidate_sentences,
 )
@@ -134,13 +135,16 @@ class TestBuildQueryText:
             sentence="Inspired by the speech, the students decided to start their own project.",
             variant="gaokao",
             output_type="grammar_note",
-            teaching_goal="explicit_exam",
         )
-        assert "output_type=grammar_note" in qt
-        assert "variant=gaokao" in qt
-        assert "teaching_goal=explicit_exam" in qt
-        assert "sentence=Inspired by the speech" in qt
-        assert "possible_signals=" in qt
+        assert "output_type: grammar_note" in qt
+        assert "variant: gaokao" in qt
+        assert "source_sentence: Inspired by the speech" in qt
+        assert "grammar_tags:" in qt
+        # Should not contain old format
+        assert "output_type=" not in qt
+        assert "variant=" not in qt
+        assert "teaching_goal" not in qt
+        assert "possible_signals" not in qt
 
     def test_sentence_analysis_query(self):
         qt = build_query_text(
@@ -148,7 +152,58 @@ class TestBuildQueryText:
             variant="kaoyan",
             output_type="sentence_analysis",
         )
-        assert "output_type=sentence_analysis" in qt
-        assert "variant=kaoyan" in qt
-        assert "sentence=The study suggests" in qt
-        assert "teaching_goal=" not in qt
+        assert "output_type: sentence_analysis" in qt
+        assert "variant: kaoyan" in qt
+        assert "source_sentence: The study suggests" in qt
+        assert "grammar_tags:" in qt
+        assert "teaching_goal" not in qt
+
+    def test_grammar_tags_extracted_from_sentence(self):
+        # Sentence with "who" → relative_clause tag
+        qt = build_query_text(
+            sentence="The boy who is wearing a red hat is my brother.",
+            variant="gaokao",
+            output_type="grammar_note",
+        )
+        assert "relative_clause" in qt
+
+    def test_grammar_tags_unclassified_for_simple_sentence(self):
+        qt = build_query_text(
+            sentence="She runs fast.",
+            variant="gaokao",
+            output_type="grammar_note",
+        )
+        assert "unclassified" in qt
+
+
+class TestExtractGrammarTagsFromSentence:
+    def test_relative_clause_from_who(self):
+        tags = extract_grammar_tags_from_sentence("The boy who is wearing a red hat is my brother.")
+        assert "relative_clause" in tags
+
+    def test_relative_clause_from_which(self):
+        tags = extract_grammar_tags_from_sentence("The study, which was conducted by researchers, found that exercise helps.")
+        assert "relative_clause" in tags
+
+    def test_inversion(self):
+        tags = extract_grammar_tags_from_sentence("Not only did the policy raise costs, but it also reduced supply.")
+        assert "inversion" in tags
+
+    def test_past_participle_adverbial(self):
+        tags = extract_grammar_tags_from_sentence("Inspired by the speech, the students decided to start.")
+        assert "past_participle_adverbial" in tags
+
+    def test_present_participle_adverbial(self):
+        tags = extract_grammar_tags_from_sentence("Walking through the park, she noticed a strange bird.")
+        assert "present_participle_adverbial" in tags
+
+    def test_simple_sentence_falls_back_to_unclassified(self):
+        tags = extract_grammar_tags_from_sentence("She runs fast.")
+        assert tags == ["unclassified"]
+
+    def test_nested_clause(self):
+        tags = extract_grammar_tags_from_sentence(
+            "The study suggests that the approach, which was initially designed "
+            "for urban areas, has failed to address the needs of rural communities."
+        )
+        assert "nested_clause" in tags

@@ -51,7 +51,7 @@ Claread 不应该像应试英语 App、通用词典 App 或 AI dashboard。阅�
 
 - `apps/miniprogram/`：微信小程序，功能子集，受小程序渲染和平台能力限制。
 - `apps/web/`：Web baseline 已接入真实后端，后续推进高保真阅读体验和更强交互。
-- `apps/directus/`：内部数据、运营、评测和样本管理工具。当前先做边界设计与 schema 准备，待首个 AI 能力纵切跑通后再进入正式建设。
+- `apps/directus/`：内部控制面，当前已承接解析观察、Eval Center、Example Lab 和一批治理型工作流，后续继续扩展运营与数据治理能力。
 
 后端服务、数据库、workflow、词典和评测体系应尽量复用。
 
@@ -81,4 +81,4 @@ Claread 不应该像应试英语 App、通用词典 App 或 AI dashboard。阅�
 
 ## 当前状态
 
-微信小程序和 Web baseline 当前共享通用后端、本地 PostgreSQL/Redis 和词典数据。Directus、LLM-as-a-Judge 和 Few-shot RAG 仍是后续建设方向，但优先级低于当前的 AI 能力接入主线。当前状态细节见 `docs/product/current-state.md`。
+微信小程序、Web baseline 和 Directus 控制面当前共享通用后端、本地 PostgreSQL/Redis 和词典数据。LLM-as-a-Judge 与更完整的 RAG 治理仍会继续建设，但 Directus / Eval Center 已不再只是规划项。当前状态细节见 `docs/product/current-state.md`。

@@ -1,6 +1,6 @@
 # Claread 文档管理指南
 
-> **状态**: `CURRENT` | **最后验证**: 2026-05-16 | **下一检查点**: 2026-06-16
+> **状态**: `CURRENT` | **最后验证**: 2026-06-06 | **下一检查点**: 2026-07-06
 >
 > 本文档是 Claread monorepo 的文档管理入口。用户要求"整理文档"、阶段里程碑后，或定时巡检任务触发时，agent 按此检查全库文档，防止过期信息导致开发漂移。
 
@@ -18,8 +18,9 @@
 │   ├── design/       # 跨端设计 Agent 指令（AGENTS.md + README.md）
 │   ├── development/  # 开发主线
 │   ├── operations/   # 本地开发、测试、prompt 版本、模型配置、LangSmith
-│   └── reference/    # 参考资料（非实现规范）
-│       └── differentiated/  # 差异化分析：学术阅读、每日精读、各类考试
+│   ├── reference/    # 参考资料（非实现规范）
+│   │   └── differentiated/  # 差异化分析：学术阅读、每日精读、各类考试
+│   └── tmp/          # 根级 TMP 过程文档（任务后清理）
 │
 ├── apps/miniprogram/ # 小程序：README + AGENTS + PRODUCT + DESIGN
 ├── apps/web/         # Web：README + AGENTS + PRODUCT + DESIGN + docs/
@@ -82,8 +83,22 @@
       验证：逐个点击 `docs/README.md` 真相源表中的文档路径，确认文件存在。
 - [ ] `docs/architecture/monorepo-boundaries.md` 中的目录职责描述是否与实际目录一致。
       验证：文档中列出的每个目录是否实际存在；实际存在的目录是否在文档中有描述。
-- [ ] `docs/development/mainline.md` 中的阶段计划是否仍与当前推进阶段匹配。
-      验证：文档中"当前阶段"描述与 `docs/product/current-state.md` 一致。
+- [ ] `docs/product/current-state.md` 是否仍准确描述当前可运行基线，而不是历史阶段。
+      验证：至少核对以下维度是否与代码事实一致：
+      - 当前可运行客户端范围
+      - 当前后端 / workflow 主链路是否已从“规划中”进入“可运行基线”
+      - 当前内部控制面（如 Directus / Claread Console）是否仍被错误描述为准备阶段
+      - 当前已落地的重要模块是否仍被写成“待建设”
+- [ ] `docs/development/mainline.md` 中的主线/副线是否仍与当前推进阶段匹配。
+      验证：文档中的“当前主线”不能继续停留在已完成或已明显降级为副线的旧任务名；必须能反映当前更接近真实的开发重心（如核心产品能力、质量治理、内部控制面、体验收口等）。
+- [ ] `docs/architecture/directus-console.md` 与 `docs/architecture/eval-center-integration-map.md` 是否仍反映当前控制面事实。
+      验证：至少核对以下维度：
+      - 当前公开模块 / mode / collection 边界
+      - 控制面与执行面的职责划分
+      - Example Lab / grammar RAG / Eval Center 的关键契约是否仍与代码一致
+      - Inspector / Observability / Eval 等模块定位是否仍与当前实现一致
+- [ ] 全局文档中的数据库 bootstrap/migration 口径是否仍和当前仓库一致。
+      验证：不得继续把已删除、已折叠或已失效的 migration / bootstrap 步骤说成当前基线。
 
 ### 2. 客户端文档检查
 - [ ] 各端 `AGENTS.md` 中的验证命令是否仍可用。
@@ -93,8 +108,10 @@
       验证：PRODUCT.md 列出的功能与客户端实际路由/页面匹配。
 - [ ] **小程序**：检查是否有平台专属限制被误写入全局文档。
       验证：搜索 `docs/` 和根目录 `.md` 中出现"小程序"、"微信"的位置，判断是否应移至 `apps/miniprogram/`。
+- [ ] **Web**：`apps/web/README.md` 与 `apps/web/src/app/` 的当前页面范围一致。
+      验证：README 中列出的主要路由分区、启动方式和 BFF / API 接入方式，与当前目录结构和代码实际匹配。
 - [ ] **Web**：`apps/web/docs/implementation-plan.md` 进度是否与代码一致；`apps/web/docs/api-contract-audit.md` 是否跟进后端变更。
-      验证：implementation-plan.md 中的阶段状态与 `apps/web/src/app/` 实际页面匹配。
+      验证：implementation-plan.md 中的阶段状态与当前页面/能力匹配，不继续把已经稳定的主链路写成“待探索/待落地”。
 - [ ] **Web**：`apps/web/docs/` 下的非 tmp 文档（`tech-stack-options.md`、`reader-ia.md`、`implementation-plan.md` 等）是否有标了 TMP 但未放 tmp/ 目录的情况，或内容已过时。
       验证：检查这些文档顶部的状态标记和内容时效性。
 
@@ -118,13 +135,14 @@
       验证：如果已创建目录且有内容，更新 README；如果仍为空，跳过。
 
 ### 5. TMP 与过期清理
-- [ ] 扫描全库 `tmp/` 目录（当前仅 `apps/web/docs/tmp/`），判断任务是否已完成。
+- [ ] 扫描全库 `tmp/` 目录（包括 `docs/tmp/`、`apps/web/docs/tmp/` 等），判断任务是否已完成。
       验证：读取每个 `tmp-*.md` 的内容，检查其描述的任务是否已在代码中落地。
 - [ ] 扫描全库 `.md` 文件中顶部标了 `TMP` 但未放在 `tmp/` 目录的文档。
       验证：grep `TMP` 标记，确认文件位置与标记一致。
 - [ ] 已完成的 TMP 文档：有效结论是否已压缩回正式文档？是则删除。
 - [ ] 检查是否存在超过 2 周未被引用的 TMP 文件，标为 D2 待清理。
-- [ ] 搜索全库 `.md` 中明显过时的日期或阶段描述（如"当前为 2026-04"），更新或删除。
+- [ ] 搜索全库 `.md` 中明显过时的日期、阶段描述、旧主线名称或已失效 bootstrap 口径，更新或删除。
+      验证：重点检查 `current-state.md`、`mainline.md`、架构总览、控制面总览等“总体进度文档”，而不是只搜日期字符串。
 
 **TMP 标记与 tmp/ 目录的关系**：
 - `tmp/` 目录：存放临时过程文档的物理位置，文件名以 `tmp-` 开头。
@@ -145,15 +163,20 @@
 **轻量检查**（每次可执行，约 10-15 个文件）：
 1. 扫描文件存在性：guide 中提到的文档路径是否都存在。
 2. 状态标记扫描：哪些文档有标记、哪些没有。
-3. tmp/ 目录清理：检查 `apps/web/docs/tmp/` 下的文件时效性。
-4. 过期日期扫描：grep 全库 `.md` 中的旧日期。
-5. 命令存在性检查：只确认脚本名存在，不默认执行构建/测试。
+3. 核对“总体进度文档”：
+   - `docs/product/current-state.md`
+   - `docs/development/mainline.md`
+   - `docs/architecture/directus-console.md`
+4. tmp/ 目录清理：检查 `docs/tmp/`、`apps/web/docs/tmp/` 等位置的文件时效性。
+5. 过期日期/旧主线扫描：grep 全库 `.md` 中的旧日期、旧阶段名和已失效 migration / bootstrap 名称。
+6. 命令存在性检查：只确认脚本名存在，不默认执行构建/测试。
 
 **深度检查**（按需执行，需读 30+ 文件做交叉比对）：
-5. 内容一致性：AGENTS.md vs README.md vs 代码实际目录。
-6. API 契约同步：schemas/*.py vs api-contract-audit.md。
-7. 后端边界合规：搜索硬编码的小程序假设。
-8. 运行必要验证命令，如 `pnpm web:typecheck`、`pnpm web:build`、后端核心测试、小程序构建。
+7. 内容一致性：AGENTS.md vs README.md vs 代码实际目录。
+8. API 契约同步：schemas/*.py vs api-contract-audit.md。
+9. 后端边界合规：搜索硬编码的小程序假设。
+10. 控制面事实同步：Directus / Eval Center / Example Lab / grammar RAG 与正式文档是否一致。
+11. 运行必要验证命令，如 `pnpm web:typecheck`、`pnpm web:build`、后端核心测试、小程序构建。
 
 用户未指定时，默认执行轻量检查。
 
@@ -189,7 +212,7 @@
 
 | 级别 | 含义 | 示例 |
 |------|------|------|
-| **D0** | 代码与文档冲突，可能导致开发漂移 | 文档说 Web auth 已落地，但代码没有对应路由；或通用业务核心硬编码小程序平台假设 |
+| **D0** | 代码与文档冲突，可能导致开发漂移 | 文档把已完成旧任务继续写成当前主线；或文档继续引用已删除 migration / 已失效 bootstrap 步骤 |
 | **D1** | 状态标记过期或缺失 | 文档内容已落地但仍标 DRAFT；重点文档无状态标记 |
 | **D2** | TMP 堆积或位置不一致 | 标了 TMP 但未放 tmp/ 目录；tmp/ 下超过 2 周的文件 |
 | **D3** | 措辞优化、链接失效 | README 中的链接 404；描述与实际目录略有偏差 |

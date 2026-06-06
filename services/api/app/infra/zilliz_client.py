@@ -201,6 +201,25 @@ async def zilliz_query(
         return []
 
 
+async def zilliz_drop_collection(name: str) -> None:
+    """Drop a collection if it exists.
+
+    This is primarily used by the grammar seed ingestion script when the
+    RAG schema is intentionally rebuilt from scratch.
+    """
+    if _client is None:
+        logger.warning("Zilliz client not initialized, skipping collection drop")
+        return
+
+    existing = await asyncio.to_thread(_client.list_collections)
+    if name not in existing:
+        logger.info("Collection %s does not exist, skipping drop", name)
+        return
+
+    await asyncio.to_thread(_client.drop_collection, collection_name=name)
+    logger.info("Dropped collection %s", name)
+
+
 async def zilliz_create_collection(
     name: str,
     dimension: int = 1024,
@@ -213,11 +232,10 @@ async def zilliz_create_collection(
     - reading_variant: VARCHAR
     - output_type: VARCHAR
     - grammar_tags: VARCHAR (JSON 序列化)
-    - structure_signals: VARCHAR (JSON 序列化)
     - label: VARCHAR
     - source_sentence: VARCHAR
     - output_fragment: VARCHAR
-    - grammar_granularity: VARCHAR
+    - retrieval_text: VARCHAR
     - quality_score: FLOAT
     - approved: BOOL
 
@@ -265,11 +283,6 @@ async def zilliz_create_collection(
                 max_length=512,
             ),
             FieldSchema(
-                name="structure_signals",
-                dtype=DataType.VARCHAR,
-                max_length=512,
-            ),
-            FieldSchema(
                 name="label",
                 dtype=DataType.VARCHAR,
                 max_length=256,
@@ -285,9 +298,9 @@ async def zilliz_create_collection(
                 max_length=8192,
             ),
             FieldSchema(
-                name="grammar_granularity",
+                name="retrieval_text",
                 dtype=DataType.VARCHAR,
-                max_length=64,
+                max_length=4096,
             ),
             FieldSchema(
                 name="quality_score",

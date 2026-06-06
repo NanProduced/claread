@@ -662,7 +662,9 @@ export function ReaderWorkbench({
   const [notePanelOpen, setNotePanelOpen] = useState(false);
   const [hoveredAnnotationTargetKey, setHoveredAnnotationTargetKey] = useState<string | null>(null);
   const [activeAnnotationTargetKey, setActiveAnnotationTargetKey] = useState<string | null>(null);
-  const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
+  const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(() =>
+    readStoredReaderSettings(),
+  );
   const [immersiveHeaderHidden, setImmersiveHeaderHidden] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
@@ -780,10 +782,7 @@ export function ReaderWorkbench({
   }, [readerSettings, webPreferencesSyncReady]);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      readerSettingsHydratedRef.current = true;
-      setReaderSettings(readStoredReaderSettings());
-    });
+    readerSettingsHydratedRef.current = true;
   }, []);
 
   useEffect(() => {

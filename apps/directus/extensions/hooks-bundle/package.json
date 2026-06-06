@@ -1,0 +1,21 @@
+{
+  "name": "@claread/directus-hooks",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "directus-extension build",
+    "watch": "directus-extension build --watch"
+  },
+  "devDependencies": {
+    "@directus/extensions-sdk": "11.0.10"
+  },
+  "directus:extension": {
+    "type": "hook",
+    "path": "dist/index.js",
+    "source": "src/index.js",
+    "host": "^11.0.0"
+  },
+  "dependencies": {
+    "@directus/errors": "^2.3.1"
+  }
+}
