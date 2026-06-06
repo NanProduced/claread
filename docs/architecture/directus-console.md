@@ -1,5 +1,7 @@
 # Claread Console
 
+> **状态**: `CURRENT` | **最后验证**: 2026-06-06
+
 ## 定位
 
 `Claread Console` 是 Claread 的内部控制面，底层承载为 Directus Data Studio。
@@ -21,6 +23,8 @@
 这些执行职责仍保留在 `services/api/` 与后续 worker。
 
 ## 当前已实现能力
+
+Claread Console 已进入可用控制面阶段，当前承载以下能力：
 
 ### Parse Run Observability
 
@@ -63,7 +67,7 @@ academic policy 下 `content_summary = null` 不能直接判为失败。
 
 ### Eval Center
 
-`Eval Center` 当前已经形成可用基线，采用 `module-first` 承载。
+`Eval Center` 已形成可用基线，采用 `module-first` 承载。
 
 当前用户可见 mode：
 

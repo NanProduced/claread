@@ -1,25 +1,31 @@
 # 当前状态
 
+> **状态**: `CURRENT` | **最后验证**: 2026-06-06
+
 本文给新会话 agent 提供 Claread 当前事实。它不是迁移日志。
 
 ## 当前可运行基线
 
 - 后端：`services/api/`，FastAPI，通用 Claread API。
-- 客户端：`apps/miniprogram/` 微信小程序和 `apps/web/` Web baseline。
+- 客户端：`apps/miniprogram/` 微信小程序和 `apps/web/` Web 产品客户端。
 - 数据库：`infra/docker/` 启动 PostgreSQL / Redis。
-- schema：`infra/migrations/0001_initial_schema.sql` 单一开发基线。
+- schema：两个初始基线 SQL：`infra/migrations/0001_initial_schema.sql`（业务表）和 `infra/migrations/eval-center/0001_eval_center_control_plane.sql`（Eval Center 控制面表）。docker-compose 按序挂载到 initdb.d（分别命名为 0001、0002），但两者都是初始 schema，不是增量 migration。
 - 词典：`dict_entries`、`dict_lookup_targets`、`dict_redirects` 已恢复到 `claread_postgres_data`。
+- 控制面：`apps/directus/` Claread Console，已进入可用控制面阶段。
 
-当前基线已经从“迁移后小程序 + 后端”推进到“双端可回归基线”。小程序是稳定客户端，Web baseline 已通过 Next.js BFF 接入真实后端主链路。两端仍共享同一套后端业务核心和 PostgreSQL 数据。
+当前基线已从"双端可回归基线"推进到"多端产品基线 + 可用控制面"。Web 已形成可用产品基线，不再只是 baseline / 早期探索。小程序是稳定客户端，Web 已通过 Next.js BFF 接入真实后端主链路，两端共享同一套后端业务核心和 PostgreSQL 数据。Claread Console 已承载 Eval Center、Render Scene Inspector、Parse Run Observability 和 Example Lab 等可用能力。
 
 ## 已验证事实
 
-- 2026-05-21 验证：Reader 标注体系的数据层已收口为“文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用”；数据库基线已压回单一 `0001_initial_schema.sql`，Web 与小程序构建通过。
+- 2026-05-21 验证：Reader 标注体系的数据层已收口为"文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用"；数据库基线已压回单一 `0001_initial_schema.sql`，Web 与小程序构建通过。
 - 2026-05-16 验证：Web typecheck / build 通过；本轮通过本地浏览器回归核对 Reader 的 selection toolbar、lookup preview 和 `multi_text` 交互表现；`services/api/tests/test_user_assets.py` 和 `services/api/tests/test_user_annotations.py` 通过。
-- Web baseline 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额；设置页已补齐昵称编辑、积分明细、默认透读和 Web 偏好云端同步，Library 已形成搜索/收藏筛选/排序的基础管理体验。
+- Web 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额；设置页已补齐昵称编辑、积分明细、默认透读和 Web 偏好云端同步，Library 已形成搜索/收藏筛选/排序的基础管理体验；公共区已覆盖首页、每日精读、示例文章和分享页；command palette 已实现。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
-- `Ask Claread` 已完成 Reader 2.0 底座上的重构主线，当前进入冻结校验阶段。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 planner-first runtime、turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期和 current-run hydration。
+- `Ask Claread` 已完成 Reader 2.0 底座上的重构主线，当前处于冻结可用状态。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 planner-first runtime、turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期和 current-run hydration。
+- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路。
+- Eval Center 已落地三个公开 mode：`node-lab`、`workflow-lab`、`run-history`。Node Lab 承载单节点评测与 judge，Workflow Lab 承载候选版本双跑 compare 与 review，Run History 承载统一只读回看。
+- Example Lab 按 Directus 原生 Collection `eval_example_lab_entries` 实现，不在 Eval Center module 导航内。grammar RAG / Example Lab 契约已收口：无 `teaching_goal`、无 `structure_signals`、无 `retrieval_version`；`variant` 是硬边界。
 - ReaderWorkbench 已拆出 Reader canvas、sentence row、annotation overlay 和 selection helper，后续 Reader UI 迭代应优先沿这些边界推进。
 - Docker Compose project 使用 `claread`。
 - 本地 PostgreSQL volume 使用 `claread_postgres_data`。
@@ -53,21 +59,36 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 ## 当前主要方向
 
-1. 当前产品主线是稳定 `analysis record Reader` 的新标注模型：文章收藏、用户高亮、用户笔记和 Ask Claread 显式引用。
-2. Web Reader 仍在进行最后一轮 UI/UX 收口：当前主路径已经是句侧 note marker、selection draft popover 和浮出式 note panel，但评论交互与视觉层级仍在继续打磨。
-3. 小程序已切到“句子级可写、局部/跨句只读回显”的收口目标：结果页读取 `reader_notes` / `user_annotations`，句子级高亮可直接创建或更新；句子级笔记默认先展示预览，再通过二级菜单进入编辑或删除；Web 创建的 `text_range` / `multi_text` 资产只负责回显与 focus，不在小程序端改写锚点；`/vocabulary` 继续保持独立词汇资产入口。
-4. 小程序 Reader 结果页对 `reader_notes` 已补齐本地优先回读：页面进入时先读取本地 `reader_notes` cache，再用云端 `GET /reader-notes?analysis_record_id=...` 结果覆盖，避免 sync queue flush 稍慢时表现成“刚写完就丢失”。
-5. 收紧数据层长期约束：`text_range` / `multi_text` 校验、局部索引、annotations/notes 分页和完整 OpenAPI contracts 生成。
-6. Directus / Claread Console 已进入可用基线阶段：解析观察台、Render Scene Inspector、Eval Center 和 Example Lab 已有一批可用能力；后续重点转向控制面收口、治理链路和运营工作台分层，而不是继续停留在 schema 准备阶段。
+### 主线：workflow 输出质量提升 / 评测治理
+
+workflow 解析主链路已可跑通，当前重心转向输出质量提升和评测治理。Eval Center 已落地 node-lab / workflow-lab / run-history 三个 mode，后续重点是通过评测驱动 workflow 输出质量的持续改进，而不是继续扩展控制面功能。
+
+### 副线：Ask Claread 表现优化
+
+Ask Claread 已冻结到可用正确状态，当前不再扩功能。后续按需优化回答质量、correctness 和用户体验，但保持 article-bound、可回源、可确认写入、统一审计/结算的冻结边界。
+
+### 副线：Web 次要功能补齐与页面设计收口
+
+Web 主产品链路已形成可用基线，公共区、认证区和私有区路由已完整覆盖。后续重点是次要功能补齐、页面设计收口和体验打磨，而不是继续搭建基础框架。
+
+### 副线：Claread Console 控制面治理化
+
+Claread Console 已进入可用控制面阶段，Eval Center、Render Scene Inspector、Parse Run Observability 和 Example Lab 已有可用能力。后续重点转向控制面治理化——按治理价值排序推进，而不是泛化铺开后台功能。
+
+### 维护线：小程序与多端稳定性维护
+
+小程序是稳定客户端，保持回归约束。Reader 2.0 与 Ask 重构都不应破坏当前小程序主链路。多端共享后端和数据库的稳定性是持续维护项。
 
 ## 已知边界
 
 - 真实 `.env`、模型 key、微信 secret、Zilliz token 不提交。
-- `evals/` 和部分 `packages/` 仍有规划位置；`apps/directus/` 已进入真实开发与本地运行阶段，但仍只承担控制面，不承担核心执行面。
+- `packages/shared-utils/` 仍为预留位置；`apps/directus/` 只承担控制面，不承担核心执行面。
 - 小程序 UI/UX 是当前实现，不代表 Web 端体验上限。
 - 模型输出质量和结构化输出稳定性依赖 `services/api/.env` 中的模型 profile；更换模型后需要重新跑解析链路。
 - 旧脚本式 regression suite 不进入新仓库主线；当前评测控制面已落到 Directus / Eval Center，后续仍按 Directus + 自建 eval harness + LLM-as-a-Judge 的路线继续演进。
-- Ask Claread 当前的跨文章稳定主路径以 `record_ref / known title reference / external analysis/supplement asset` 为主；用户高亮与用户笔记只通过显式引用进入 Ask，不存在独立“用户学习资产自由查询”产品面。
+- Ask Claread 当前的跨文章稳定主路径以 `record_ref / known title reference / external analysis/supplement asset` 为主；用户高亮与用户笔记只通过显式引用进入 Ask，不存在独立"用户学习资产自由查询"产品面。
+- Eval Center 当前公开主路径只有 node-lab、workflow-lab、run-history；judge / review 继续锚定 compare 或 trial，不把 Directus 变成执行面。
+- Example Lab 是 Directus Collection，不是 Eval Center 独立 mode；grammar RAG / Example Lab 契约已收口（无 teaching_goal、无 structure_signals、无 retrieval_version；variant 是硬边界）。
 
 ## 文档使用规则
 

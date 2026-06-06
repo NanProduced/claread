@@ -1,4 +1,4 @@
-# Directus Scaffold
+# Claread Console (Directus Runtime)
 
 `apps/directus/` 承载 `Claread Console` 的本地 Directus runtime、扩展 workspace 和当前原生化控制面开发入口。
 

@@ -1,6 +1,6 @@
 # 测试与验证
 
-先验证当前后端、小程序和 Web baseline，再进入大范围产品体验或架构改动。
+先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
 ## 后端核心测试
 
@@ -34,7 +34,7 @@ pnpm --filter @claread/web lint
 pnpm --filter @claread/web build
 ```
 
-Web baseline smoke 应覆盖手机号登录、分析提交、Reader、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
+Web smoke 应覆盖手机号登录、分析提交、Reader、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
 当前仓库未提交稳定的 Reader Playwright 用例。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，需在本地浏览器做交互回归；等 committed e2e 恢复后，再把命令补回本文。
 
