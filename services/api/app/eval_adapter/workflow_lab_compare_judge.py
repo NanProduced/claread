@@ -409,6 +409,13 @@ async def _run_with_bounded_concurrency(
     ``WORKFLOW_COMPARE_JUDGE_TOTAL_TIMEOUT`` instead of starting a new LLM
     call that would just overrun. Per-packet timeouts remain as a final
     safety net for individual slow requests.
+
+    ``asyncio.gather`` is called with ``return_exceptions=True`` so a
+    non-``StructuredCompletionError`` exception in one packet cannot
+    cancel the rest of the batch. The per-packet exception is captured
+    into the same ``_short_circuited_case`` shape used by the timeout
+    short-circuit, so callers always get a fully-populated result list
+    — one entry per input packet.
     """
     if not packets:
         return []
@@ -452,10 +459,25 @@ async def _run_with_bounded_concurrency(
                 timeout_seconds=per_case_timeout,
             )
 
-    await asyncio.gather(
-        *(_run_one(index, packet) for index, packet in enumerate(packets))
+    outcomes = await asyncio.gather(
+        *(_run_one(index, packet) for index, packet in enumerate(packets)),
+        return_exceptions=True,
     )
-    # ``asyncio.gather`` propagates exceptions, so all slots are filled here.
+    # Map any per-packet exception that escaped ``_judge_single_case``'s
+    # ``StructuredCompletionError`` catch into the same case-error shape.
+    # This keeps the contract: every input packet produces exactly one
+    # result entry, and a single bad packet never aborts the batch.
+    for index, outcome in enumerate(outcomes):
+        if isinstance(outcome, BaseException):
+            packet = packets[index]
+            results[index] = _short_circuited_case(
+                packet,
+                code="WORKFLOW_COMPARE_JUDGE_PACKET_EXCEPTION",
+                message=(
+                    f"{type(outcome).__name__}: {outcome}"
+                ),
+            )
+    # All slots are now guaranteed to be filled.
     return [result for result in results if result is not None]
 
 

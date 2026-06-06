@@ -247,7 +247,9 @@ export default {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
       return parsed;
     });
-    const readingVariant = computed(() => String(values?.value?.reading_variant || "intermediate_reading"));
+    // reading_variant is a hard boundary — no default fallback. The API
+    // rejects empty values; the UI also disables Generate when this is blank.
+    const readingVariant = computed(() => String(values?.value?.reading_variant || ""));
     const exampleType = computed(() => String(values?.value?.example_type || ""));
     const exampleId = computed(() => String(values?.value?.example_id || "draft"));
     const collectionName = computed(() => props.collection || unwrapInjectedValue(collectionRef) || "eval_example_lab_entries");
@@ -263,6 +265,7 @@ export default {
       && !Array.isArray(outputFragment.value)
       && String(outputFragment.value.type || "").trim().length > 0
       && String(modelProfile.value || "").trim().length > 0
+      && String(readingVariant.value || "").trim().length > 0
     );
 
     const prereqMessage = computed(() => {
@@ -270,6 +273,7 @@ export default {
       if (!sentenceText.value.trim()) return "Fill sentence text before generating.";
       if (!String(outputFragment.value?.type || "").trim()) return "Choose an output fragment type before generating.";
       if (!String(modelProfile.value || "").trim()) return "Choose a model profile before generating.";
+      if (!String(readingVariant.value || "").trim()) return "Pick a reading variant before generating.";
       return "";
     });
 
@@ -418,6 +422,12 @@ export default {
           reading_variant: readingVariant.value,
           model_profile: modelProfile.value,
         };
+        // reading_variant is a hard boundary. Never coerce empty → default;
+        // drop the key so the API raises a clear missing-field 422 instead
+        // of receiving an empty string. (canGenerate already guards this.)
+        if (!String(payload.reading_variant || "").trim()) {
+          delete payload.reading_variant;
+        }
 
         const response = await api.post("/eval-center/example-lab/ai-generate-rag-fields", payload);
         const data = response?.data?.data;

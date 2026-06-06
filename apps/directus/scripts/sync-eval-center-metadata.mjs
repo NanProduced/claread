@@ -519,8 +519,11 @@ const EXAMPLE_LAB_FIELD_METADATA = [
   ["ai_rag_generator", { interface: "claread-ai-rag-generator-interface", special: ["alias", "no-data"], width: "full", sort: 40, hidden: false, required: false, note: "AI 生成 grammar_tags / retrieval_text / derived_by", conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false }] }],
   ["grammar_tags", { interface: "input-code", width: "full", sort: 41, options: { language: "json" }, note: "AI 生成或手动编辑的语法标签数组；开放词表（hook 层做归一化与去重）", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "语法标签 (grammar_tags)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
   ["retrieval_text", { interface: "input-multiline", width: "full", sort: 42, note: "AI 生成或手动编辑的 RAG 检索文本（embedding 主文本）", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "检索文本 (retrieval_text)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
-  ["derived_at", { interface: "datetime", width: "half", sort: 43, note: "最近一次重建时间", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "派生时间 (derived_at)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
-  ["derived_by", { interface: "input", width: "half", sort: 44, note: "派生来源（模型 / pipeline 标识）", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "派生来源 (derived_by)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
+  // derived_at / derived_by are REAL DB columns (see 0001_eval_center_control_plane.sql);
+  // declaring type + schema.data_type lets sync-eval-center-metadata register them via
+  // POST /fields on a fresh DB instead of leaving them as meta-only orphans.
+  ["derived_at", { type: "dateTime", schema: { data_type: "timestamp" }, interface: "datetime", width: "half", sort: 43, note: "最近一次重建时间", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "派生时间 (derived_at)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
+  ["derived_by", { type: "string", schema: { data_type: "varchar", max_length: 255 }, interface: "input", width: "half", sort: 44, note: "派生来源（模型 / pipeline 标识）", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "派生来源 (derived_by)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false, required: false }] }],
 
   ["quality_score", { interface: "input", width: "half", sort: 50, note: "0.0 - 1.0", translations: [{ language: "zh-CN", translation: "质量评分 (quality_score)" }] }],
   ["approved", { interface: "boolean", width: "half", sort: 51, note: "审批通过后才可写入向量库", hidden: true, required: false, translations: [{ language: "zh-CN", translation: "已审批 (approved)" }], conditions: [{ rule: { example_type: { _in: ["grammar", "sentence_analysis"] } }, hidden: false }] }],
@@ -733,13 +736,21 @@ async function syncCollections(token) {
 
 async function syncFields(token) {
   for (const [collection, fields] of Object.entries(FIELD_METADATA_BY_COLLECTION)) {
-    for (const [field, meta] of fields) {
-      const body = { meta };
-      // Alias fields need type and schema for creation
+    for (const [field, entry] of fields) {
+      // `entry` may be either a flat meta object (legacy shape) or an object
+      // with sibling `type` / `schema` keys (for non-alias fields that need
+      // a real Directus column, e.g. derived_at / derived_by).
+      const { type: declaredType, schema: declaredSchema, ...meta } = entry;
+      const body = { field, meta };
       if (meta.special?.includes("alias")) {
-        body.field = field;
+        // Alias fields need type and schema for creation
         body.type = "alias";
         body.schema = null;
+      } else if (typeof declaredType === "string") {
+        // Real-column fields: pass type + schema so Directus can register
+        // them on a fresh DB (POST /fields requires a type).
+        body.type = declaredType;
+        body.schema = declaredSchema ?? { data_type: declaredType };
       }
       try {
         await request(token, "PATCH", `/fields/${collection}/${field}`, body);

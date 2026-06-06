@@ -117,6 +117,35 @@ def _normalize_grammar_tags(value: Any) -> list[str]:
     return [str(value)]
 
 
+# Canonical retrieval_text (example side) is the 6-line colon format. The
+# query side emits 4 lines (no label / explanation); we only ever need the
+# example-side shape for rerank docs. Each required key MUST be present.
+_RERANK_RETRIEVAL_TEXT_REQUIRED_KEYS = (
+    "variant", "output_type", "grammar_tags", "label", "source_sentence", "explanation",
+)
+
+
+def _validate_canonical_retrieval_text(text: str) -> bool:
+    """Return True iff ``text`` looks like the canonical retrieval_text shape.
+
+    Used as a quick sanity check before we trust a Zilliz-stored
+    ``retrieval_text`` as the rerank doc. The same key set is the contract
+    documented in ``docs/architecture/eval-center-integration-map.md``.
+    """
+    found_keys: set[str] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if ":" not in line:
+            return False
+        key = line.split(":", 1)[0].strip()
+        if not key:
+            return False
+        found_keys.add(key)
+    return all(k in found_keys for k in _RERANK_RETRIEVAL_TEXT_REQUIRED_KEYS)
+
+
 def _compact_candidate_dict(
     *,
     example_id: str,
@@ -365,6 +394,10 @@ async def _retrieve_from_backend(
             "label",
             "source_sentence",
             "output_fragment",
+            # retrieval_text is the canonical 6-line colon format produced
+            # by Example Lab / seed ingest; we reuse it for the rerank doc
+            # to keep the doc / query surface format identical.
+            "retrieval_text",
             "quality_score",
             "approved",
         ],
@@ -384,7 +417,22 @@ async def _retrieve_from_backend(
     rerank_docs = []
     for sr in search_results:
         entity = sr.entity
-        # Extract explanation text from output_fragment based on output_type
+        # Prefer the canonical retrieval_text stored in Zilliz (same 6-line
+        # colon format used by the query side); only fall back to a manual
+        # stitch if it's missing — which should not happen for canonical data
+        # but keeps the path defensive for legacy / partial Zilliz rows.
+        stored_retrieval_text = str(entity.get("retrieval_text", "") or "").strip()
+        if stored_retrieval_text and _validate_canonical_retrieval_text(stored_retrieval_text):
+            rerank_docs.append(stored_retrieval_text)
+            continue
+
+        # Fallback: build the canonical format from the entity fields.
+        # grammar_tags is stored as a JSON-serialized list string in Zilliz;
+        # normalise it to the comma-joined form so the rerank doc matches
+        # the query side surface exactly.
+        grammar_tags_list = _normalize_grammar_tags(entity.get("grammar_tags"))
+        grammar_tags_text = ", ".join(grammar_tags_list)
+
         output_fragment_raw = entity.get("output_fragment", "")
         explanation = ""
         if output_fragment_raw:
@@ -404,7 +452,7 @@ async def _retrieve_from_backend(
         doc = (
             f"variant: {entity.get('reading_variant', '')}\n"
             f"output_type: {entity.get('output_type', '')}\n"
-            f"grammar_tags: {entity.get('grammar_tags', '')}\n"
+            f"grammar_tags: {grammar_tags_text}\n"
             f"label: {entity.get('label', '')}\n"
             f"source_sentence: {entity.get('source_sentence', '')}\n"
             f"explanation: {explanation}"

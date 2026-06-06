@@ -249,12 +249,34 @@ function validateFragmentShape(et, fragment, errors) {
   }
 }
 
+// RAG-eligible example_type set: only these may have approved=true.
+// Mirrors the SQL CHECK constraint
+// `eval_example_lab_entries_approved_rag_eligible_check` so we can fail fast
+// with a clear curator-facing message instead of a raw 500 from PostgreSQL.
+const RAG_ELIGIBLE_EXAMPLE_TYPES = new Set(['grammar', 'sentence_analysis']);
+
 /**
  * Validate an eval_example_lab_entries payload.
+ *
+ * ``resolvedExampleType`` is the effective type after the caller has
+ * resolved it (patch.example_type or, for updates, the existing row's
+ * example_type). It is used to enforce the approved × example_type
+ * invariant even when the patch itself does not include example_type.
  */
-function validatePayload(payload) {
+function validatePayload(payload, resolvedExampleType) {
   const errors = [];
-  const et = payload.example_type;
+  const et = resolvedExampleType || payload.example_type;
+
+  // Pre-validate the approved × example_type invariant. The DB CHECK fires
+  // after SQL; this pre-check produces a curator-friendly error message.
+  // The caller resolves `et` from patch OR existing row so even a bare
+  // `{ approved: true }` patch on a non-RAG row is caught here instead of
+  // surfacing as a 500 from the SQL CHECK.
+  if (payload.approved === true && et && !RAG_ELIGIBLE_EXAMPLE_TYPES.has(et)) {
+    errors.push(
+      `approved=true 仅允许 example_type ∈ {grammar, sentence_analysis}；当前 example_type="${et}"`,
+    );
+  }
 
   const fragment = parseJsonField(payload.output_fragment);
   if (
@@ -306,8 +328,38 @@ function syncTargetNodeFromExampleType(payload) {
   }
 }
 
-export default ({ filter }) => {
-  filter(`${COLLECTION}.items.create`, async (payload) => {
+export default ({ filter, services }) => {
+  /**
+   * Resolve the effective ``example_type`` for the row being written.
+   * Priority: patch.example_type (in this payload) > existing item's
+   * example_type (fetched via items service) > null.
+   *
+   * Returns null if the type cannot be resolved (e.g. create with no
+   * example_type in payload); the SQL CHECK still catches that path.
+   */
+  async function resolveExampleType({ payload, keys }) {
+    if (payload && payload.example_type) {
+      return String(payload.example_type);
+    }
+    if (!services || !Array.isArray(keys) || keys.length === 0) {
+      return null;
+    }
+    try {
+      const itemsService = services.items(COLLECTION);
+      const existing = await itemsService.readOne(keys[0], {
+        fields: ['example_type'],
+      });
+      const t = existing && existing.example_type;
+      return t ? String(t) : null;
+    } catch {
+      // If the existing row can't be read (rare: race, deleted between
+      // patch arrival and our read), fall through to SQL CHECK; better
+      // to surface the DB error than to silently approve a write.
+      return null;
+    }
+  }
+
+  filter(`${COLLECTION}.items.create`, async (payload, meta) => {
     normalizeJsonFields(payload);
     extractGeneratedRagFields(payload);
     normalizeCanonicalFragmentType(payload);
@@ -315,7 +367,8 @@ export default ({ filter }) => {
     syncLabelFromFragment(payload);
     syncTargetNodeFromExampleType(payload);
 
-    const errors = validatePayload(payload);
+    const exampleType = await resolveExampleType({ payload, keys: meta?.keys });
+    const errors = validatePayload(payload, exampleType);
     if (errors.length) {
       throw new InvalidPayloadError({ reason: errors.join('; ') });
     }
@@ -323,7 +376,7 @@ export default ({ filter }) => {
     return payload;
   });
 
-  filter(`${COLLECTION}.items.update`, async (payload) => {
+  filter(`${COLLECTION}.items.update`, async (payload, meta) => {
     normalizeJsonFields(payload);
     extractGeneratedRagFields(payload);
     normalizeCanonicalFragmentType(payload);
@@ -331,7 +384,8 @@ export default ({ filter }) => {
     syncLabelFromFragment(payload);
     syncTargetNodeFromExampleType(payload);
 
-    const errors = validatePayload(payload);
+    const exampleType = await resolveExampleType({ payload, keys: meta?.keys });
+    const errors = validatePayload(payload, exampleType);
     if (errors.length) {
       throw new InvalidPayloadError({ reason: errors.join('; ') });
     }

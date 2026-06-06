@@ -417,6 +417,7 @@ def test_schema_request_validates_grammar_note_fragment() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "grammar_note", "label": "test"},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -426,6 +427,7 @@ def test_schema_request_validates_sentence_analysis_fragment() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "sentence_analysis", "label": "test"},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -435,6 +437,7 @@ def test_schema_request_validates_fragment_type_required() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"label": "test"},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -442,6 +445,7 @@ def test_schema_request_accepts_valid_grammar_note() -> None:
     req = ExampleLabGenerateRagFieldsRequest(
         sentence_text="test",
         output_fragment={"type": "grammar_note", "label": "test", "note_zh": "讲解"},
+        reading_variant="intermediate_reading",
     )
     assert req.output_fragment["type"] == "grammar_note"
 
@@ -450,6 +454,7 @@ def test_schema_request_accepts_valid_sentence_analysis() -> None:
     req = ExampleLabGenerateRagFieldsRequest(
         sentence_text="test",
         output_fragment={"type": "sentence_analysis", "label": "test", "analysis_zh": "分析"},
+        reading_variant="intermediate_reading",
     )
     assert req.output_fragment["type"] == "sentence_analysis"
 
@@ -459,8 +464,28 @@ def test_schema_request_accepts_empty_fragment() -> None:
     req = ExampleLabGenerateRagFieldsRequest(
         sentence_text="test",
         output_fragment={},
+        reading_variant="intermediate_reading",
     )
     assert req.output_fragment == {}
+
+
+def test_schema_request_rejects_missing_reading_variant() -> None:
+    """reading_variant is a hard boundary; missing field must 422 (Pydantic)."""
+    with pytest.raises(Exception, match="reading_variant"):
+        ExampleLabGenerateRagFieldsRequest(
+            sentence_text="test",
+            output_fragment={"type": "grammar_note", "label": "test", "note_zh": "讲解"},
+        )
+
+
+def test_schema_request_rejects_empty_reading_variant() -> None:
+    """Empty string reading_variant must also fail (no default fallback)."""
+    with pytest.raises(Exception, match="reading_variant"):
+        ExampleLabGenerateRagFieldsRequest(
+            sentence_text="test",
+            output_fragment={"type": "grammar_note", "label": "test", "note_zh": "讲解"},
+            reading_variant="",
+        )
 
 
 def test_schema_result_no_old_fields() -> None:
@@ -474,7 +499,8 @@ def test_schema_result_no_old_fields() -> None:
 
 def test_schema_result_rejects_old_fields() -> None:
     """Trying to construct with old fields should fail due to extra='forbid'."""
-    with pytest.raises(Exception):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
         ExampleLabGenerateRagFieldsResult(
             grammar_tags=["inversion"],
             teaching_goal="balanced",
@@ -487,6 +513,7 @@ def test_schema_request_validates_spans_must_be_array() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "grammar_note", "label": "test", "note_zh": "讲解", "spans": "not-array"},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -496,6 +523,7 @@ def test_schema_request_validates_chunks_must_be_array() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "sentence_analysis", "label": "test", "analysis_zh": "分析", "chunks": "not-array"},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -505,6 +533,7 @@ def test_schema_request_validates_spans_element_must_have_text() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "grammar_note", "label": "test", "note_zh": "讲解", "spans": [{}]},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -514,6 +543,7 @@ def test_schema_request_validates_spans_element_text_must_be_string() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "grammar_note", "label": "test", "note_zh": "讲解", "spans": [{"text": 123}]},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -527,6 +557,7 @@ def test_schema_request_accepts_valid_spans() -> None:
             "note_zh": "讲解",
             "spans": [{"text": "Not only"}, {"text": "did"}],
         },
+        reading_variant="intermediate_reading",
     )
     assert len(req.output_fragment["spans"]) == 2
 
@@ -537,6 +568,7 @@ def test_schema_request_validates_chunks_element_must_have_text() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "sentence_analysis", "label": "test", "analysis_zh": "分析", "chunks": [{"order": 1, "label": "主干"}]},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -546,6 +578,7 @@ def test_schema_request_validates_chunks_element_must_have_order() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "sentence_analysis", "label": "test", "analysis_zh": "分析", "chunks": [{"text": "The research", "label": "主干"}]},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -555,6 +588,7 @@ def test_schema_request_validates_chunks_element_must_have_label() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "sentence_analysis", "label": "test", "analysis_zh": "分析", "chunks": [{"text": "The research", "order": 1}]},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -564,6 +598,7 @@ def test_schema_request_validates_chunks_element_order_must_be_int() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "sentence_analysis", "label": "test", "analysis_zh": "分析", "chunks": [{"text": "The research", "order": "1", "label": "主干"}]},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -577,6 +612,7 @@ def test_schema_request_accepts_valid_chunks() -> None:
             "analysis_zh": "分析",
             "chunks": [{"text": "The research", "order": 1, "label": "主干"}],
         },
+        reading_variant="intermediate_reading",
     )
     assert len(req.output_fragment["chunks"]) == 1
 
@@ -587,6 +623,7 @@ def test_schema_request_rejects_unknown_fragment_type() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "translation", "label": "test"},
+            reading_variant="intermediate_reading",
         )
 
 
@@ -596,4 +633,59 @@ def test_schema_request_rejects_vocab_highlight_type() -> None:
         ExampleLabGenerateRagFieldsRequest(
             sentence_text="test",
             output_fragment={"type": "vocab_highlight", "label": "test"},
+            reading_variant="intermediate_reading",
         )
+
+
+# ---------------------------------------------------------------------------
+# Python / JS canonical-form alignment guards
+# ---------------------------------------------------------------------------
+
+def test_normalize_grammar_tags_collapses_repeated_underscores() -> None:
+    """Repeated underscores in raw input must collapse to a single '_' before
+    the alias merge step — matches the JS hook at
+    ``hooks-bundle/src/index.js:normalizeGrammarTag``."""
+    # `participle__adverbial` (double underscore) must collapse + alias to
+    # `past_participle_adverbial` — same path the JS hook takes.
+    result = example_lab.normalize_grammar_tags(["participle__adverbial"])
+    assert result == ["past_participle_adverbial"]
+
+
+def test_normalize_grammar_tags_mixed_separators_collapse() -> None:
+    """Whitespace + hyphen + underscore in the same input collapse to a single '_'."""
+    result = example_lab.normalize_grammar_tags([" passive - voice "])
+    assert result == ["passive_voice"]
+
+
+def test_normalize_grammar_tags_three_underscores_collapse() -> None:
+    """Three or more underscores collapse to a single '_'."""
+    result = example_lab.normalize_grammar_tags(["past___participle_adverbial"])
+    assert result == ["past_participle_adverbial"]
+
+
+def test_normalize_grammar_tags_python_matches_js_known_inputs() -> None:
+    """Pin a table of inputs whose canonical form must match the JS hook.
+
+    These are the inputs most likely to be emitted by an LLM or curator via
+    the two write paths. If either side ever drifts, this test breaks.
+    """
+    pairs = {
+        "participle_adverbial": "past_participle_adverbial",
+        "participle__adverbial": "past_participle_adverbial",
+        "defining_relative_clause": "restrictive_relative_clause",
+        "non_defining_relative_clause": "nonrestrictive_relative_clause",
+        "non-defining_relative_clause": "nonrestrictive_relative_clause",
+        "fronting": "subject_clause_fronting",
+        "Relative Clause": "relative_clause",
+        "general": None,  # rejected (forbidden token)
+        "complex": None,  # rejected
+    }
+    for raw, expected in pairs.items():
+        result = example_lab.normalize_grammar_tags([raw])
+        if expected is None:
+            assert result == [], f"expected '{raw}' to be rejected, got {result}"
+        else:
+            assert result == [expected], (
+                f"expected '{raw}' → '{expected}', got {result} — "
+                "Python / JS canonical form drift"
+            )

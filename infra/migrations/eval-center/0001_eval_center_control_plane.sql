@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS eval_workflow_compares (
         source_kind IN ('single_run_compare', 'history_compare')
     ),
     status TEXT NOT NULL DEFAULT 'complete' CHECK (
-        status IN ('complete', 'failed')
+        status IN ('complete', 'partial_failure', 'failed')
     ),
     baseline_run_id TEXT NOT NULL CHECK (baseline_run_id ~ '^[A-Za-z0-9._-]+$'),
     candidate_run_id TEXT NOT NULL CHECK (candidate_run_id ~ '^[A-Za-z0-9._-]+$'),
@@ -526,14 +526,16 @@ CREATE TABLE IF NOT EXISTS eval_example_lab_entries (
     target_node TEXT CHECK (target_node IN ('grammar', 'vocabulary', 'translation', 'academic')),
 
     -- 向量库预备字段（仅 grammar_note / sentence_analysis 有意义）
-    -- 注：决策 3 (2026-06) 已移除独立 rag_eligible 字段；准入由
-    -- eval_example_lab_entries_approved_rag_eligible_check 强制：
-    -- example_type 必须 ∈ {grammar, sentence_analysis} 才能 approved=true。
-    -- 已在 live DB 直接应用：见 2026-06-04 git log 上下文。
+    -- RAG 准入由 eval_example_lab_entries_approved_rag_eligible_check
+    -- 强制：example_type 必须 ∈ {grammar, sentence_analysis} 才能 approved=true。
+    -- 命名沿用历史（约束原本对应已移除的 rag_eligible 列），语义现在直接由
+    -- example_type 决定；保留旧名以避免对 live DB 做 rename 迁移。
     grammar_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-    structure_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
     retrieval_text TEXT,
-    teaching_goal TEXT,
+    -- 派生时间 / 来源：Directus hook 在 AI regenerate-rag-fields 时写入；
+    -- 真实 DB 列以匹配 sync-eval-center-metadata 中的字段声明。
+    derived_at TIMESTAMPTZ,
+    derived_by TEXT,
 
     -- 质量与审批
     quality_score REAL NOT NULL DEFAULT 0.0 CHECK (quality_score >= 0.0 AND quality_score <= 1.0),
@@ -556,15 +558,6 @@ CREATE TABLE IF NOT EXISTS eval_example_lab_entries (
             OR (example_type = 'phrase' AND output_fragment->>'type' = 'phrase_gloss')
             OR (example_type = 'context' AND output_fragment->>'type' = 'context_gloss')
             OR (example_type = 'translation' AND output_fragment->>'type' IN ('translation', 'academic_translation'))
-        ),
-
-    CONSTRAINT eval_example_lab_entries_teaching_goal_check
-        CHECK (
-            teaching_goal IS NULL
-            OR teaching_goal IN (
-                'focused', 'balanced', 'structural', 'explicit_split', 'structural_logic',
-                'explicit_exam', 'speed_support', 'rhetorical', 'info_extraction'
-            )
         )
 );
 
@@ -578,26 +571,12 @@ COMMENT ON TABLE eval_example_lab_entries IS
     'Example Lab few-shot example entries. Stores manually curated examples with RAG-ready metadata. Only grammar / sentence_analysis entries may be approved (approved=true requires example_type in that set).';
 
 -- Live DB cleanup: keep RAG-eligible types on a canonical 1:1 mapping.
+-- (历史保留：在 0001 之前已存在 example_type='grammar' 但 output_fragment.type='sentence_analysis' 的行；
+--  上线时统一迁到 example_type='sentence_analysis'。在已应用过 0001 的 live DB 上是 no-op。)
 UPDATE eval_example_lab_entries
 SET example_type = 'sentence_analysis'
 WHERE example_type = 'grammar'
   AND output_fragment->>'type' = 'sentence_analysis';
-
-ALTER TABLE eval_example_lab_entries
-    DROP CONSTRAINT IF EXISTS eval_example_lab_entries_fragment_type_check;
-
-ALTER TABLE eval_example_lab_entries
-    ADD CONSTRAINT eval_example_lab_entries_fragment_type_check
-    CHECK (
-        output_fragment->>'type' IS NULL
-        OR output_fragment = '{}'::jsonb
-        OR (example_type = 'grammar' AND output_fragment->>'type' = 'grammar_note')
-        OR (example_type = 'sentence_analysis' AND output_fragment->>'type' = 'sentence_analysis')
-        OR (example_type = 'vocab' AND output_fragment->>'type' IN ('vocab_highlight', 'term_note', 'logic_note'))
-        OR (example_type = 'phrase' AND output_fragment->>'type' = 'phrase_gloss')
-        OR (example_type = 'context' AND output_fragment->>'type' = 'context_gloss')
-        OR (example_type = 'translation' AND output_fragment->>'type' IN ('translation', 'academic_translation'))
-    );
 
 COMMENT ON COLUMN eval_workflow_compares.custom_title IS
     'User-defined display title for the compare record. Nullable; when NULL the UI should fall back to compare_id or a generated summary.';

@@ -68,12 +68,18 @@ def _normalize_tag(raw: str) -> str | None:
 
     - trim whitespace
     - lowercase
-    - replace whitespace / hyphens with underscore
+    - collapse whitespace / hyphens / repeated underscores into a single ``_``
     - apply alias merge
     - reject empty / generic tags
+
+    This pipeline MUST stay aligned with the JS hook normalizer at
+    ``apps/directus/extensions/hooks-bundle/src/index.js:normalizeGrammarTag``
+    — both layers must produce the same canonical form for the same input,
+    otherwise tag overlap / rerank will diverge across the Directus write
+    path and the API rebuild path.
     """
     t = raw.strip().lower()
-    t = re.sub(r"[\s\-]+", "_", t)
+    t = re.sub(r"[\s\-_]+", "_", t)
     t = t.strip("_")
     if not t:
         return None

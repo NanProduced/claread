@@ -474,6 +474,119 @@ async def test_run_workflow_lab_compare_judge_accepts_string_warnings_end_to_end
     assert result.results[0].verdict == "tie"
 
 
+async def test_run_workflow_lab_compare_judge_non_structured_exception_yields_partial_failure() -> None:
+    """Regression: ``asyncio.gather(return_exceptions=True)`` must map any
+    non-``StructuredCompletionError`` exception in one packet into the
+    same case-error shape, and the other packets must still get judged.
+
+    The previous code used default ``return_exceptions=False``, which
+    cancelled every sibling coroutine and broke the
+    ``WORKFLOW_COMPARE_JUDGE_PARTIAL_FAILURE`` contract for mid-flight
+    exceptions.
+    """
+    settings = _settings_with_profile()
+
+    class _SelectiveErrorFake:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def __call__(self, **kwargs: Any) -> Any:
+            from app.llm.structured_completion import StructuredCompletionResult
+
+            packet = kwargs.get("user_prompt") or ""
+            # Distinguish which packet triggered the call by parsing the
+            # user_prompt's case_id. The fake struct keeps this lightweight.
+            # The contract: case-1 raises, case-2 / case-3 succeed.
+            if '"case_id": "case-1"' in packet or '"case_id":"case-1"' in packet:
+                self.calls.append("case-1")
+                raise RuntimeError("simulated downstream fault (not a StructuredCompletionError)")
+
+            self.calls.append(packet[:24])
+            return StructuredCompletionResult(
+                parsed={
+                    "verdict": "tie",
+                    "summary": "ok",
+                    "reasons": [],
+                    "overall_score": 0.5,
+                },
+                raw_text=json.dumps({"verdict": "tie"}),
+                model_name="primary-judge",
+                profile_name="primary",
+                base_url="https://example.invalid/v1",
+                usage={"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            )
+
+    request = _build_request(
+        [_build_packet("case-1"), _build_packet("case-2"), _build_packet("case-3")]
+    )
+    fake = _SelectiveErrorFake()
+
+    with patch(
+        "app.eval_adapter.workflow_lab_compare_judge.run_structured_completion",
+        fake,
+    ):
+        result = await run_workflow_lab_compare_judge(request, settings=settings)
+
+    # Every input packet must produce exactly one output entry.
+    assert len(result.results) == 3
+    assert [case.case_id for case in result.results] == ["case-1", "case-2", "case-3"]
+    # case-1 failed with the packet-exception code, case-2 and case-3
+    # succeeded — proving gather did not cancel siblings.
+    failed = result.results[0]
+    assert failed.status == "error"
+    assert failed.verdict == "needs_review"
+    assert failed.error is not None
+    assert failed.error.code == "WORKFLOW_COMPARE_JUDGE_PACKET_EXCEPTION"
+    assert "RuntimeError" in failed.error.message
+    assert "simulated downstream fault" in failed.error.message
+
+    succeeded = result.results[1:]
+    assert all(case.status == "succeeded" for case in succeeded)
+    assert all(case.error is None for case in succeeded)
+
+
+async def test_run_workflow_lab_compare_judge_value_error_yields_partial_failure() -> None:
+    """Same partial-failure guarantee for non-``StructuredCompletionError``,
+    non-``RuntimeError`` exceptions (e.g. ``ValueError``)."""
+    settings = _settings_with_profile()
+
+    class _ValueErrorOnFirstFake:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def __call__(self, **kwargs: Any) -> Any:
+            from app.llm.structured_completion import StructuredCompletionResult
+
+            packet = kwargs.get("user_prompt") or ""
+            if '"case_id": "case-1"' in packet or '"case_id":"case-1"' in packet:
+                self.calls.append("case-1")
+                raise ValueError("malformed upstream payload")
+
+            return StructuredCompletionResult(
+                parsed={"verdict": "tie", "summary": "ok", "reasons": [], "overall_score": 0.5},
+                raw_text="{}",
+                model_name="primary-judge",
+                profile_name="primary",
+                base_url="https://example.invalid/v1",
+                usage={"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            )
+
+    request = _build_request([_build_packet("case-1"), _build_packet("case-2")])
+    fake = _ValueErrorOnFirstFake()
+
+    with patch(
+        "app.eval_adapter.workflow_lab_compare_judge.run_structured_completion",
+        fake,
+    ):
+        result = await run_workflow_lab_compare_judge(request, settings=settings)
+
+    assert len(result.results) == 2
+    assert result.results[0].status == "error"
+    assert result.results[0].error.code == "WORKFLOW_COMPARE_JUDGE_PACKET_EXCEPTION"
+    assert "ValueError" in result.results[0].error.message
+    assert result.results[1].status == "succeeded"
+
+
 async def test_run_workflow_lab_compare_judge_compacts_heavy_prompt_payload() -> None:
     settings = _settings_with_profile()
     packet = _build_packet("case-heavy")

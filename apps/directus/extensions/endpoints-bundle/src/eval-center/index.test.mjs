@@ -21,6 +21,8 @@ import {
   resolveWorkflowCompareJudgeTotalTimeoutMs,
   buildSingleRunCaseArtifact,
   workflowSingleRunHistoryRunId,
+  deriveWorkflowCompareStatus,
+  workflowCompareIdentityDegenerateReason,
   syntheticSingleRunCompareRunId,
   cancelJudgeRunRequest,
   createWorkflowCompareJudgeRequest,
@@ -3324,6 +3326,477 @@ test("buildWorkflowCompareLlmJudgeCaseResults sends warnings as plain string[]",
     assert.match(packet.baseline.warnings[0], /\[SCHEMA_DRIFT\]/);
   } finally {
     globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// compare status derivation
+// ---------------------------------------------------------------------------
+
+function _minimalBaselineRun({ status = "succeeded", runId = "wf-b" } = {}) {
+  return {
+    run_id: runId,
+    status,
+    reading_goal: "daily_reading",
+    reading_variant: "intermediate_reading",
+    source_type: "user_input",
+  };
+}
+
+function _minimalCandidateRun({ status = "succeeded", runId = "wf-c" } = {}) {
+  return {
+    run_id: runId,
+    status,
+    reading_goal: "daily_reading",
+    reading_variant: "intermediate_reading",
+    source_type: "user_input",
+  };
+}
+
+test("deriveWorkflowCompareStatus returns complete for clean compare", () => {
+  const baseline = {
+    run_id: "wf-b",
+    run: _minimalBaselineRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-b", caseId: "case-1" })],
+  };
+  const candidate = {
+    run_id: "wf-c",
+    run: _minimalCandidateRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-c", caseId: "case-1" })],
+  };
+  const report = {
+    comparisons: [
+      { case_id: "case-1", baseline_hard_failures: 0, candidate_hard_failures: 0, baseline_soft_failures: 0, candidate_soft_failures: 0 },
+    ],
+  };
+  const result = deriveWorkflowCompareStatus({ baseline, candidate, report });
+  assert.equal(result.dbStatus, "complete");
+  assert.equal(result.reportStatus, "complete");
+  assert.deepEqual(result.reasons, []);
+});
+
+test("deriveWorkflowCompareStatus returns partial_failure when any case has hard failures", () => {
+  const baseline = {
+    run_id: "wf-b",
+    run: _minimalBaselineRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-b", caseId: "case-1", hardFailures: 1 })],
+  };
+  const candidate = {
+    run_id: "wf-c",
+    run: _minimalCandidateRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-c", caseId: "case-1" })],
+  };
+  const report = {
+    comparisons: [
+      { case_id: "case-1", baseline_hard_failures: 1, candidate_hard_failures: 0, baseline_soft_failures: 0, candidate_soft_failures: 0 },
+    ],
+  };
+  const result = deriveWorkflowCompareStatus({ baseline, candidate, report });
+  // The DB row status MUST be partial_failure so Run History (which
+  // reads row.status) reflects the same truth as the JSON artifact.
+  assert.equal(result.dbStatus, "partial_failure");
+  assert.equal(result.reportStatus, "partial_failure");
+  assert.ok(result.reasons.length >= 1);
+  assert.ok(result.reasons[0].includes("1 case(s) had at least one hard failure"));
+});
+
+test("deriveWorkflowCompareStatus returns failed when both runs failed with no usable cases", () => {
+  const baseline = {
+    run_id: "wf-b",
+    run: _minimalBaselineRun({ status: "failed" }),
+    artifacts: [],
+  };
+  const candidate = {
+    run_id: "wf-c",
+    run: _minimalCandidateRun({ status: "failed" }),
+    artifacts: [],
+  };
+  const report = { comparisons: [] };
+  const result = deriveWorkflowCompareStatus({ baseline, candidate, report });
+  assert.equal(result.dbStatus, "failed");
+  assert.equal(result.reportStatus, "failed");
+  assert.ok(result.reasons.length >= 1);
+});
+
+test("deriveWorkflowCompareStatus returns failed when no paired cases", () => {
+  const baseline = {
+    run_id: "wf-b",
+    run: _minimalBaselineRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-b", caseId: "case-1" })],
+  };
+  const candidate = {
+    run_id: "wf-c",
+    run: _minimalCandidateRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-c", caseId: "case-2" })],
+  };
+  const report = { comparisons: [] };
+  const result = deriveWorkflowCompareStatus({ baseline, candidate, report });
+  assert.equal(result.dbStatus, "failed");
+  assert.equal(result.reportStatus, "failed");
+  assert.ok(result.reasons.some((reason) => reason.includes("no paired cases")));
+});
+
+test("deriveWorkflowCompareStatus flags cases uninformative on both sides as partial_failure", () => {
+  const baseline = {
+    run_id: "wf-b",
+    run: _minimalBaselineRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-b", caseId: "case-1", hardFailures: 2 })],
+  };
+  const candidate = {
+    run_id: "wf-c",
+    run: _minimalCandidateRun(),
+    artifacts: [workflowCaseArtifact({ runId: "wf-c", caseId: "case-1", hardFailures: 1 })],
+  };
+  const report = {
+    comparisons: [
+      { case_id: "case-1", baseline_hard_failures: 2, candidate_hard_failures: 1, baseline_soft_failures: 0, candidate_soft_failures: 0 },
+    ],
+  };
+  const result = deriveWorkflowCompareStatus({ baseline, candidate, report });
+  assert.equal(result.dbStatus, "partial_failure");
+  assert.equal(result.reportStatus, "partial_failure");
+  assert.ok(result.reasons.some((r) => r.includes("uninformative")));
+});
+
+// ---------------------------------------------------------------------------
+// createOrReuseWorkflowCompare: status persisted to compare.json + DB row
+// ---------------------------------------------------------------------------
+
+test("createOrReuseWorkflowCompare persists derived status into compare.json and DB row", async () => {
+  const { createOrReuseWorkflowCompare } = await import("./index.js");
+  const root = mkdtempSync(join(tmpdir(), "workflow-compare-status-"));
+  const database = createEvalCenterDb();
+  const env = createWorkflowLabEnv(root);
+
+  // Pre-stage two run directories with hard failures on the candidate side.
+  const baselineRunId = "wf-status-baseline";
+  const candidateRunId = "wf-status-candidate";
+  for (const [runId, status] of [[baselineRunId, "succeeded"], [candidateRunId, "succeeded"]]) {
+    const runDir = join(root, runId);
+    mkdirSync(join(runDir, "cases"), { recursive: true });
+    writeFileSync(
+      join(runDir, "run.json"),
+      JSON.stringify({
+        run_id: runId,
+        status,
+        reading_goal: "daily_reading",
+        reading_variant: "intermediate_reading",
+        source_type: "user_input",
+        prompt_variant_id: runId === baselineRunId ? "baseline-prompt" : "candidate-prompt",
+      }),
+      "utf8",
+    );
+    writeFileSync(join(runDir, "report.json"), JSON.stringify({}), "utf8");
+    const hardFailures = runId === candidateRunId ? 2 : 0;
+    const caseArtifact = workflowCaseArtifact({
+      runId,
+      caseId: "case-1",
+      hardFailures,
+      promptVariantId: runId === baselineRunId ? "baseline-prompt" : "candidate-prompt",
+    });
+    writeFileSync(
+      join(runDir, "cases", "case-1.json"),
+      JSON.stringify(caseArtifact),
+      "utf8",
+    );
+  }
+
+  try {
+    const { compare_id, detail } = await createOrReuseWorkflowCompare({
+      database,
+      env,
+      baselineRunId,
+      candidateRunId,
+      sourceKind: "single_run_compare",
+    });
+    const persisted = JSON.parse(
+      readFileSync(join(root, "workflow-compares", compare_id, "compare.json"), "utf8"),
+    );
+    // The compare.json AND the DB row both carry the partial_failure
+    // signal so Run History (which reads row.status) reflects the same
+    // truth as the JSON artifact.
+    assert.equal(persisted.status, "partial_failure");
+    assert.equal(persisted.report_status, "partial_failure");
+    assert.ok(Array.isArray(persisted.status_reasons));
+    assert.ok(persisted.status_reasons.some((r) => r.includes("hard failure")));
+
+    const dbRow = database.tables.eval_workflow_compares.find((r) => r.compare_id === compare_id);
+    assert.ok(dbRow, "DB row must be inserted");
+    assert.equal(dbRow.status, "partial_failure");
+
+    // The detail returned from createOrReuseWorkflowCompare already exposes
+    // the report_status via the same loadWorkflowCompareHistoryDetail path
+    // (whose payload shape folds compare_json into `compare` via spread).
+    // The `record` field is the workflowCompareSummaryFromRow output and
+    // also exposes the rich status + report_status for downstream views.
+    assert.equal(detail.compare.status, "partial_failure");
+    assert.equal(detail.compare.report_status, "partial_failure");
+    assert.equal(detail.record.status, "partial_failure");
+    assert.equal(detail.record.report_status, "partial_failure");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// degenerate single-run-compare
+// ---------------------------------------------------------------------------
+
+test("workflowCompareIdentityDegenerateReason flags null/null with identical post-run identity", () => {
+  const reason = workflowCompareIdentityDegenerateReason({
+    baselineRequest: { prompt_variant_id: null },
+    candidateRequest: { prompt_variant_id: null },
+    baselineResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: "same-hash" },
+      model_identity: { profile_name: "primary", model_name: "primary-judge" },
+    },
+    candidateResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: "same-hash" },
+      model_identity: { profile_name: "primary", model_name: "primary-judge" },
+    },
+  });
+  assert.ok(reason, "expected a degenerate reason");
+  assert.match(reason.message, /prompt_variant_id|prompt_snapshot_hash|model/);
+  assert.equal(reason.field, "candidate.prompt_variant_id");
+});
+
+test("workflowCompareIdentityDegenerateReason accepts a prompt_variant_id difference", () => {
+  const reason = workflowCompareIdentityDegenerateReason({
+    baselineRequest: { prompt_variant_id: null },
+    candidateRequest: { prompt_variant_id: "ready-workflow" },
+    baselineResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: "h" },
+      model_identity: { profile_name: "primary", model_name: "primary-judge" },
+    },
+    candidateResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: "ready-workflow", prompt_snapshot_hash: "h" },
+      model_identity: { profile_name: "primary", model_name: "primary-judge" },
+    },
+  });
+  assert.equal(reason, null);
+});
+
+test("workflowCompareIdentityDegenerateReason accepts a model_name difference", () => {
+  const reason = workflowCompareIdentityDegenerateReason({
+    baselineRequest: {},
+    candidateRequest: {},
+    baselineResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: "h" },
+      model_identity: { profile_name: "primary", model_name: "model-A" },
+    },
+    candidateResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: "h" },
+      model_identity: { profile_name: "primary", model_name: "model-B" },
+    },
+  });
+  assert.equal(reason, null);
+});
+
+test("workflowCompareIdentityDegenerateReason bypasses when both runs produced no identity (real run failure)", () => {
+  // Regression: previously, when both upstream calls failed and returned
+  // null identity, the "all signals equal" reading fired and the
+  // endpoint returned 422 WORKFLOW_LAB_COMPARE_DEGENERATE_INPUT — which
+  // hid a real run failure behind a 422 input error. The check must
+  // bypass when either side lacks the identity surface entirely.
+  const reason = workflowCompareIdentityDegenerateReason({
+    baselineRequest: {},
+    candidateRequest: {},
+    baselineResult: { status: "failed" },
+    candidateResult: { status: "failed" },
+  });
+  assert.equal(reason, null);
+});
+
+test("workflowCompareIdentityDegenerateReason bypasses when only one side produced identity", () => {
+  // If baseline succeeded with identity and candidate failed (no identity),
+  // the check should bypass and let the existing compare-status path
+  // surface the failure.
+  const reason = workflowCompareIdentityDegenerateReason({
+    baselineRequest: {},
+    candidateRequest: {},
+    baselineResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: "ready-workflow", prompt_snapshot_hash: "h" },
+      model_identity: { profile_name: "primary", model_name: "primary-judge" },
+    },
+    candidateResult: { status: "failed" },
+  });
+  assert.equal(reason, null);
+});
+
+test("workflowCompareIdentityDegenerateReason still fires when both sides have identity but everything is null", () => {
+  // If both sides produce identity objects (not absent) but every field
+  // inside is null, that IS a "same experiment" signal: the upstream
+  // returned identity shells with no variation. The check should still
+  // fire and surface the degenerate-input error to the curator.
+  const reason = workflowCompareIdentityDegenerateReason({
+    baselineRequest: { prompt_variant_id: null },
+    candidateRequest: { prompt_variant_id: null },
+    baselineResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: null },
+      model_identity: { profile_name: null, model_name: null },
+    },
+    candidateResult: {
+      status: "succeeded",
+      prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: null },
+      model_identity: { profile_name: null, model_name: null },
+    },
+  });
+  assert.ok(reason, "expected a degenerate reason when identity shells exist but are empty");
+  assert.equal(reason.field, "candidate.prompt_variant_id");
+});
+
+test("createWorkflowLabSingleRunCompare rejects degenerate identity even when prompt_variant_id is null on both sides", async () => {
+  await assert.rejects(
+    createWorkflowLabSingleRunCompare({
+      database: createEvalCenterDb(),
+      env: {},
+      body: {
+        text: "Degenerate input: no prompt variant on either side.",
+        baseline: {},
+        candidate: {},
+        rag_mode: "off",
+      },
+      callUpstream: async () => ({
+        status: "succeeded",
+        prompt_identity: { prompt_variant_id: null, prompt_snapshot_hash: "same-hash" },
+        model_identity: { profile_name: "primary", model_name: "primary-judge" },
+        render_scene: { schema_version: "3.0.0", translations: [], inline_marks: [], sentence_entries: [] },
+      }),
+    }),
+    (error) => {
+      assert.equal(error.status, 422);
+      assert.equal(error.code, "WORKFLOW_LAB_COMPARE_DEGENERATE_INPUT");
+      assert.equal(error.field, "candidate.prompt_variant_id");
+      assert.match(error.message, /prompt_variant_id|model/);
+      return true;
+    },
+  );
+});
+
+test("createWorkflowLabSingleRunCompare still passes the existing same-prompt-variant-id check first", async () => {
+  await assert.rejects(
+    createWorkflowLabSingleRunCompare({
+      database: createEvalCenterDb(),
+      env: {},
+      body: {
+        text: "Both sides carry the same prompt_variant_id explicitly.",
+        baseline: { prompt_variant_id: "ready-workflow" },
+        candidate: { prompt_variant_id: "ready-workflow" },
+        rag_mode: "off",
+      },
+      callUpstream: async () => ({ status: "succeeded" }),
+    }),
+    (error) => {
+      assert.equal(error.status, 422);
+      assert.equal(error.code, "VALIDATION_ERROR");
+      assert.equal(error.field, "candidate.prompt_variant_id");
+      assert.match(error.message, /must differ/);
+      return true;
+    },
+  );
+});
+
+test("createWorkflowLabSingleRunCompare does NOT mislabel both-side run failure as degenerate input", async () => {
+  // Regression: when both upstream calls fail and return no identity,
+  // the endpoint must NOT raise 422 WORKFLOW_LAB_COMPARE_DEGENERATE_INPUT.
+  // The previous code's "all signals equal" reading was the wrong
+  // interpretation; the fix is to let the run-failure propagate to the
+  // existing compare-status path. This test asserts that whatever
+  // happens (success with status='failed' compare, or a downstream
+  // error), the degenerate-input 422 must NOT be raised.
+  let caughtError = null;
+  let successResult = null;
+  try {
+    successResult = await createWorkflowLabSingleRunCompare({
+      database: createEvalCenterDb(),
+      env: {},
+      body: {
+        text: "Both upstream calls fail; identity surfaces are empty.",
+        baseline: {},
+        candidate: {},
+        rag_mode: "off",
+      },
+      callUpstream: async () => ({ status: "failed", render_scene: {} }),
+    });
+  } catch (error) {
+    caughtError = error;
+  }
+  if (caughtError) {
+    assert.notEqual(
+      caughtError.code,
+      "WORKFLOW_LAB_COMPARE_DEGENERATE_INPUT",
+      "degenerate-input check must bypass when both runs failed",
+    );
+  }
+  // If the call succeeded, that's the happy path: the existing
+  // compare-status derivation will mark the persisted compare as
+  // "failed" in the DB / artifact, and Run History will surface that
+  // truthfully. Either outcome is correct; the only thing we forbid
+  // is the 422 "degenerate input" mislabel.
+  assert.ok(
+    caughtError || successResult,
+    "expected either a downstream error or a successful compare run; got neither",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// assertWorkflowLabCompareInputConsistency error.field
+// ---------------------------------------------------------------------------
+
+test("assertWorkflowLabCompareInputConsistency sets error.field on missing reading fields", async () => {
+  // Force the assert path by calling createOrReuseWorkflowCompare with
+  // pre-staged run dirs whose run.json is missing the required fields.
+  const { createOrReuseWorkflowCompare } = await import("./index.js");
+  const database = createEvalCenterDb();
+  const root = mkdtempSync(join(tmpdir(), "workflow-compare-input-consistency-"));
+  const env = createWorkflowLabEnv(root);
+  for (const runId of ["wf-bad-b", "wf-bad-c"]) {
+    const runDir = join(root, runId);
+    mkdirSync(join(runDir, "cases"), { recursive: true });
+    writeFileSync(
+      join(runDir, "run.json"),
+      JSON.stringify({
+        run_id: runId,
+        status: "succeeded",
+        reading_goal: "daily_reading",
+        // reading_variant and source_type are missing.
+      }),
+      "utf8",
+    );
+    writeFileSync(join(runDir, "report.json"), JSON.stringify({}), "utf8");
+    const caseArtifact = workflowCaseArtifact({ runId, caseId: "case-1" });
+    writeFileSync(join(runDir, "cases", "case-1.json"), JSON.stringify(caseArtifact), "utf8");
+  }
+  try {
+    let caught = null;
+    try {
+      await createOrReuseWorkflowCompare({
+        database,
+        env,
+        baselineRunId: "wf-bad-b",
+        candidateRunId: "wf-bad-c",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught, "expected an error to be thrown");
+    assert.equal(caught.status, 422);
+    assert.equal(caught.code, "WORKFLOW_LAB_COMPARE_INPUT_MISSING");
+    assert.ok(
+      ["baseline.reading_variant", "candidate.reading_variant", "baseline.source_type", "candidate.source_type"]
+        .includes(caught.field),
+      `unexpected field: ${caught.field}`,
+    );
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

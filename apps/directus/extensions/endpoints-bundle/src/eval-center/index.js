@@ -1024,6 +1024,11 @@ function assertWorkflowLabCompareInputConsistency(baseline, candidate) {
         );
         error.status = 422;
         error.code = "WORKFLOW_LAB_COMPARE_INPUT_MISSING";
+        // Set error.field to the offending side + field so the FE can
+        // route the toast to the right form input. Single-run-compare
+        // doesn't expose per-side inputs, so the FE is expected to
+        // surface the message generically when field is null.
+        error.field = `${side}.${field}`;
         throw error;
       }
     }
@@ -1036,6 +1041,8 @@ function assertWorkflowLabCompareInputConsistency(baseline, candidate) {
     const error = new Error("Both runs must expose input_snapshot for run-driven compare.");
     error.status = 422;
     error.code = "WORKFLOW_LAB_COMPARE_INPUT_MISSING";
+    // No single field to attribute to; leaving field null keeps the
+    // envelope honest.
     throw error;
   }
   if (baselineInput.input_hash !== candidateInput.input_hash) {
@@ -1044,6 +1051,7 @@ function assertWorkflowLabCompareInputConsistency(baseline, candidate) {
     );
     error.status = 422;
     error.code = "WORKFLOW_LAB_COMPARE_INPUT_MISMATCH";
+    error.field = "input_hash";
     throw error;
   }
 }
@@ -1178,6 +1186,91 @@ function buildWorkflowLabCompareReport(baseline, candidate, now = new Date()) {
   };
 }
 
+// Derive the canonical compare status from the loaded baseline / candidate
+// runs and the freshly-built report. The same string is written to the
+// compare.json artifact, the eval_workflow_compares DB row, and (via the
+// history detail loaders) the history / detail view, so the three views
+// cannot disagree.
+//
+// Signals used (in order of precedence):
+//   1. Both sides run-failed (run.status === "failed" with no usable
+//      case artifacts) → "failed". One side failed and the other did not
+//      is still a useful compare: the verdict is informative, so we keep
+//      "complete" / "partial_failure" instead of throwing the verdict
+//      away.
+//   2. The report has zero shared cases (paired comparisons) → "failed".
+//   3. Any case where both sides had hard failures is "uninformative":
+//      the verdict is meaningless on that case. We still keep the
+//      compare but mark partial_failure when this happens.
+//   4. Any case-level hard or soft failure on either side →
+//      "partial_failure". A "clean" compare (no failures anywhere) is
+//      the only path to "complete".
+function deriveWorkflowCompareStatus({ baseline, candidate, report }) {
+  const reasons = [];
+  const comparisons = Array.isArray(report?.comparisons) ? report.comparisons : [];
+  const baselineArtifacts = Array.isArray(baseline?.artifacts) ? baseline.artifacts : [];
+  const candidateArtifacts = Array.isArray(candidate?.artifacts) ? candidate.artifacts : [];
+
+  const baselineRunFailed = String(baseline?.run?.status || "").toLowerCase() === "failed";
+  const candidateRunFailed = String(candidate?.run?.status || "").toLowerCase() === "failed";
+
+  if (baselineRunFailed && baselineArtifacts.length === 0) {
+    reasons.push("baseline run failed with no usable cases");
+  }
+  if (candidateRunFailed && candidateArtifacts.length === 0) {
+    reasons.push("candidate run failed with no usable cases");
+  }
+  if (
+    (baselineRunFailed && baselineArtifacts.length === 0)
+    || (candidateRunFailed && candidateArtifacts.length === 0)
+  ) {
+    return { dbStatus: "failed", reportStatus: "failed", reasons };
+  }
+
+  if (comparisons.length === 0) {
+    reasons.push("no paired cases between baseline and candidate");
+    return { dbStatus: "failed", reportStatus: "failed", reasons };
+  }
+
+  let uninformativeCaseCount = 0;
+  let hardFailureCaseCount = 0;
+  let softFailureCaseCount = 0;
+  for (const item of comparisons) {
+    const baselineHard = Number(item?.baseline_hard_failures || 0);
+    const candidateHard = Number(item?.candidate_hard_failures || 0);
+    const baselineSoft = Number(item?.baseline_soft_failures || 0);
+    const candidateSoft = Number(item?.candidate_soft_failures || 0);
+    if (baselineHard > 0 && candidateHard > 0) {
+      uninformativeCaseCount += 1;
+    }
+    if (baselineHard > 0 || candidateHard > 0) {
+      hardFailureCaseCount += 1;
+    }
+    if (baselineSoft > 0 || candidateSoft > 0) {
+      softFailureCaseCount += 1;
+    }
+  }
+
+  if (uninformativeCaseCount > 0) {
+    reasons.push(`${uninformativeCaseCount} case(s) had hard failures on both sides and are uninformative`);
+  }
+  if (hardFailureCaseCount > 0) {
+    reasons.push(`${hardFailureCaseCount} case(s) had at least one hard failure`);
+  }
+  if (softFailureCaseCount > 0) {
+    reasons.push(`${softFailureCaseCount} case(s) had at least one soft failure`);
+  }
+
+  if (reasons.length === 0) {
+    return { dbStatus: "complete", reportStatus: "complete", reasons: [] };
+  }
+  // The compare ran and produced a verdict, but with non-fatal issues
+  // somewhere — surface that distinction at both the JSON and DB level
+  // so Run History / list views (which read row.status) reflect the
+  // same truth the JSON artifact carries.
+  return { dbStatus: "partial_failure", reportStatus: "partial_failure", reasons };
+}
+
 function renderWorkflowLabCompareMarkdown(report) {
   const lines = [
     `# A/B Report: ${report.baseline_run_id} vs ${report.candidate_run_id}`,
@@ -1295,6 +1388,12 @@ function workflowCompareSummaryFromRow(row, detail = {}) {
     created_at: row.date_created || compareMeta.created_at || null,
     date_created: row.date_created || compareMeta.created_at || null,
     date_updated: row.date_updated || compareMeta.updated_at || null,
+    // Surface the richer status + reasons from the compare.json artifact
+    // when the row only carries the SQL-allowed subset (complete / failed).
+    // This keeps history / detail views consistent with what
+    // createOrReuseWorkflowCompare wrote.
+    report_status: compareMeta.report_status || row?.status || "complete",
+    status_reasons: Array.isArray(compareMeta.status_reasons) ? compareMeta.status_reasons : [],
     display_title: row.custom_title || `${candidatePromptVariantId || "baseline"} · compare`,
     display_excerpt: `${row.baseline_run_id} vs ${row.candidate_run_id}`,
     custom_title: row.custom_title || null,
@@ -1389,11 +1488,19 @@ async function createOrReuseWorkflowCompare({ database, env, baselineRunId, cand
   );
   const compareRoot = resolveWorkflowCompareRuntimeRoot(env);
   const comparePath = compareDir(compareRoot, compareId);
+  // Derive a single status from the actual baseline / candidate / report
+  // signals — see deriveWorkflowCompareStatus for the rule. The compare.json
+  // artifact carries the richer "partial_failure" vs "complete" signal
+  // while the DB row stores the same value (the SQL CHECK now allows
+  // partial_failure alongside complete / failed).
+  const statusDerived = deriveWorkflowCompareStatus({ baseline, candidate, report });
   const compareMeta = {
     schema_version: "workflow-compare-v1",
     compare_id: compareId,
     source_kind: sourceKind,
-    status: "complete",
+    status: statusDerived.dbStatus,
+    report_status: statusDerived.reportStatus,
+    status_reasons: statusDerived.reasons,
     baseline_run_id: baselineRunId,
     candidate_run_id: candidateRunId,
     input_hash: inputHash,
@@ -1426,7 +1533,7 @@ async function createOrReuseWorkflowCompare({ database, env, baselineRunId, cand
     source_kind: sourceKind,
     baseline_run_id: baselineRunId,
     candidate_run_id: candidateRunId,
-    status: "complete",
+    status: statusDerived.dbStatus,
     input_hash: inputHash,
     reading_goal: baseline.run?.reading_goal || null,
     reading_variant: baseline.run?.reading_variant || null,
@@ -3685,6 +3792,92 @@ function syntheticSingleRunCompareRunId({ body, side, promptVariantId }) {
   return `single-compare-${side}-${digest}`;
 }
 
+// Detect degenerate single-run-compare inputs: the case where both sides
+// would resolve to the same experiment configuration, so any downstream
+// compare report is meaningless. We treat the two sides as "the same
+// experiment" when every compare identity signal is equal (or both
+// missing). The signals, in order of strength:
+//
+//   1. prompt_variant_id (request-level, after null normalization).
+//   2. prompt_snapshot_hash (post-run, from upstream result).
+//   3. model_identity.profile_name (post-run, from upstream result).
+//   4. model_identity.model_name (post-run, from upstream result).
+//
+// Returns a structured reason object when the inputs are degenerate, or
+// null when there is at least one real difference. We do NOT compare
+// the upstream text / reading_variant / source_type / model_selection /
+// rag_mode — those are already equal by construction of the
+// single-run-compare endpoint (shared body fields).
+function workflowCompareIdentityDegenerateReason({
+  baselineRequest,
+  candidateRequest,
+  baselineResult,
+  candidateResult,
+}) {
+  // Bypass the identity-equality check when either side's run actually
+  // failed. Comparing "null === null" in that state would surface as a
+  // 422 input error and hide the real run failure, which is what the
+  // downstream compare-status derivation is for. Let that path do its
+  // job instead.
+  //
+  // We also bypass when either side is missing the identity surface
+  // entirely (no prompt_identity AND no model_identity) — same
+  // reasoning: a missing identity is a run-side failure signal, not a
+  // "the user picked two identical experiments" signal.
+  const baselineRunFailed = String(baselineResult?.status || "").toLowerCase() === "failed";
+  const candidateRunFailed = String(candidateResult?.status || "").toLowerCase() === "failed";
+  if (baselineRunFailed || candidateRunFailed) {
+    return null;
+  }
+  const baselineHasIdentitySurface = Boolean(
+    baselineResult?.prompt_identity || baselineResult?.model_identity,
+  );
+  const candidateHasIdentitySurface = Boolean(
+    candidateResult?.prompt_identity || candidateResult?.model_identity,
+  );
+  if (!baselineHasIdentitySurface || !candidateHasIdentitySurface) {
+    return null;
+  }
+
+  const baselinePromptVariant = baselineRequest?.prompt_variant_id
+    || baselineResult?.prompt_identity?.prompt_variant_id
+    || null;
+  const candidatePromptVariant = candidateRequest?.prompt_variant_id
+    || candidateResult?.prompt_identity?.prompt_variant_id
+    || null;
+  const baselineSnapshot = baselineResult?.prompt_identity?.prompt_snapshot_hash || null;
+  const candidateSnapshot = candidateResult?.prompt_identity?.prompt_snapshot_hash || null;
+  const baselineProfile = baselineResult?.model_identity?.profile_name
+    || baselineResult?.model_identity?.provider
+    || null;
+  const candidateProfile = candidateResult?.model_identity?.profile_name
+    || candidateResult?.model_identity?.provider
+    || null;
+  const baselineModelName = baselineResult?.model_identity?.model_name || null;
+  const candidateModelName = candidateResult?.model_identity?.model_name || null;
+
+  // Pre-call gate: if both prompt_variant_id are present, the earlier
+  // check already rejected equality. This block catches "both null
+  // (or absent) at request level AND identical post-run identity".
+  if (
+    (baselinePromptVariant === candidatePromptVariant)
+    && (baselineSnapshot === candidateSnapshot)
+    && (baselineProfile === candidateProfile)
+    && (baselineModelName === candidateModelName)
+  ) {
+    return {
+      message:
+        "single-run-compare requires baseline and candidate to differ on at least one of: "
+        + "prompt_variant_id, prompt_snapshot_hash, model profile, model name. "
+        + "Both sides resolved to the same compare identity.",
+      // The most actionable field is the candidate prompt_variant_id,
+      // since the launcher always carries a candidate.
+      field: "candidate.prompt_variant_id",
+    };
+  }
+  return null;
+}
+
 // 双跑 single-run compare:同一篇文章并发跑 baseline + candidate,
 // 直接物化成 compare-first workspace;底层 run artifact 私有化,UI 只消费 persisted compare。
 async function createWorkflowLabSingleRunCompare({
@@ -3734,6 +3927,7 @@ async function createWorkflowLabSingleRunCompare({
     const error = new Error("baseline.prompt_variant_id and candidate.prompt_variant_id must differ when both are provided.");
     error.status = 422;
     error.code = "VALIDATION_ERROR";
+    error.field = "candidate.prompt_variant_id";
     throw error;
   }
 
@@ -3757,6 +3951,28 @@ async function createWorkflowLabSingleRunCompare({
     ]);
   } catch (error) {
     // 已经有 status / code 透传
+    throw error;
+  }
+
+  // Defend against degenerate input: if the upstream run pipeline could
+  // not surface any compare identity difference (no prompt_variant_id
+  // difference, no prompt_snapshot_hash difference, no model_identity
+  // difference), the two runs are the same experiment and the
+  // downstream compare report is meaningless. The previous gate only
+  // fired when both prompt_variant_id were non-null and equal; the
+  // launcher requirement is "candidate is required", but the FE
+  // requirement is not mirrored here. Close the gap.
+  const identityReason = workflowCompareIdentityDegenerateReason({
+    baselineRequest: baselineBody,
+    candidateRequest: candidateBody,
+    baselineResult,
+    candidateResult,
+  });
+  if (identityReason) {
+    const error = new Error(identityReason.message);
+    error.status = 422;
+    error.code = "WORKFLOW_LAB_COMPARE_DEGENERATE_INPUT";
+    error.field = identityReason.field;
     throw error;
   }
 
@@ -5507,6 +5723,8 @@ export {
   newWorkflowCompareId,
   buildSingleRunCaseArtifact,
   workflowSingleRunHistoryRunId,
+  deriveWorkflowCompareStatus,
+  workflowCompareIdentityDegenerateReason,
   createOrReuseWorkflowCompare,
   createWorkflowCompareJudgeRequest,
   deleteWorkflowCompareCascade,

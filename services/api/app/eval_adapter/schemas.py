@@ -632,7 +632,11 @@ class ExampleLabGenerateRagFieldsRequest(BaseModel):
 
     sentence_text: str = Field(min_length=1)
     output_fragment: dict[str, Any] = Field(default_factory=dict)
-    reading_variant: str = "intermediate_reading"
+    # reading_variant is a hard boundary with no default fallback. Callers
+    # (Directus AI RAG generator, internal scripts) must supply the exact
+    # variant value the example belongs to. Empty / missing values raise 422
+    # at the Pydantic layer instead of silently coercing to a default.
+    reading_variant: ReadingVariant
     model_profile: str | None = None
     timeout_seconds: float | None = Field(default=None, gt=0.0)
 
