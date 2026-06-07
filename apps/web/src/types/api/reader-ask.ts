@@ -40,8 +40,7 @@ export type ReaderAskEntryActionDto =
   | "ask_about_this"
   | "explain_this"
   | "why_here"
-  | "lookup_in_context"
-  | "compare_translation";
+  | "lookup_in_context";
 export type ReaderAskAttachmentKindDto =
   | "text_selection"
   | "annotation_ref"
@@ -425,33 +424,9 @@ export interface ReaderAskSentenceBreakdownCardDto {
   origin: "ask_ai";
 }
 
-export interface ReaderAskVocabularyInContextCardDto {
-  card_type: "vocabulary_in_context_card";
-  query: string;
-  display_word?: string | null;
-  phonetic?: string | null;
-  meaning_zh?: string | null;
-  why_here?: string | null;
-  translation_zh?: string | null;
-  learning_tip?: string | null;
-  source_sentence?: string | null;
-}
-
-export interface ReaderAskPracticeCardDto {
-  card_type: "practice_card";
-  title: string;
-  prompt: string;
-  expected_focus?: string | null;
-  hints: string[];
-  answer_guidance?: string | null;
-  source_sentence?: string | null;
-}
-
 export type ReaderAskResponseCardDto =
   | ReaderAskGrammarNoteCardDto
-  | ReaderAskSentenceBreakdownCardDto
-  | ReaderAskVocabularyInContextCardDto
-  | ReaderAskPracticeCardDto;
+  | ReaderAskSentenceBreakdownCardDto;
 
 export interface ReaderAskMessageDto {
   id: string;

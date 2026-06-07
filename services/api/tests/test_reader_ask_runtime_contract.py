@@ -502,13 +502,14 @@ class TestAnswerPayloadHistory:
         ]
         contract = self._make_contract(history, max_history=3)
         contract.resolved_intent = "general"
-        contract.entry_action = "compare_translation"
+        contract.entry_action = "ask_about_this"
         payload = build_prompt_payload(contract)
 
         history_list = payload.get("history", [])
         assert history_list[-1]["role"] == "user"
         assert history_list[-1]["resolved_intent"] == "general"
-        assert payload["entry_action_guidance"] is not None
+        # ask_about_this has no special entry_action_guidance
+        assert payload["entry_action_guidance"] is None
 
     def test_assistant_history_truncation_keeps_head_and_tail(self) -> None:
         long_answer = "开头信息 " + ("中间内容" * 220) + " 结尾结论"

@@ -272,7 +272,7 @@ export function askAttachmentFromTranslation(
     metadata: {
       pageIdentity,
       sourceSurface: options.sourceSurface ?? "translation",
-      entryAction: options.entryAction ?? "compare_translation",
+      entryAction: options.entryAction ?? "ask_about_this",
       sentenceId: sentence.sentenceId,
       paragraphId: sentence.paragraphId,
       translationZh,

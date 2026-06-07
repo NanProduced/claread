@@ -58,7 +58,6 @@ from app.schemas.reader_ask import (
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
     ReaderAskPageIdentity,
-    ReaderAskPracticeCard,
     ReaderAskPersistedSupplement,
     ReaderAskReferenceResolutionStatus,
     ReaderAskPlannerDecision,
@@ -79,7 +78,6 @@ from app.schemas.reader_ask import (
     ReaderAskTraceSummary,
     ReaderAskToolTraceEntry,
     ReaderAskUserVisibleOutput,
-    ReaderAskVocabularyInContextCard,
 )
 from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
@@ -934,8 +932,6 @@ def _fallback_semantic_planner_decision(
         resolved_intent = "vocabulary"
     elif entry_action == "why_here":
         resolved_intent = "grammar"
-    elif entry_action == "compare_translation":
-        resolved_intent = "general"
     elif _contains_any(normalized_message, ("拆句", "拆解", "主干", "break down", "breakdown")):
         resolved_intent = "breakdown"
     elif _contains_any(normalized_message, ("练习", "exercise", "practice", "quiz")):
@@ -2583,91 +2579,6 @@ def _grammar_note_card(runtime_state: ReaderAskRuntimeState) -> ReaderAskGrammar
     )
 
 
-def _vocabulary_card(
-    *,
-    runtime_state: ReaderAskRuntimeState,
-    record: _RecordBundle,
-    anchors: list[ReaderAskAnchorRef],
-) -> ReaderAskVocabularyInContextCard | None:
-    dictionary_entry = runtime_state.latest_dictionary_entry
-    if not dictionary_entry:
-        dictionary_anchor = next((anchor for anchor in anchors if anchor.anchor_type == "dictionary_entry"), None)
-        if dictionary_anchor and dictionary_anchor.query:
-            return ReaderAskVocabularyInContextCard(
-                query=dictionary_anchor.query,
-                display_word=dictionary_anchor.query,
-                source_sentence=_render_scene_sentence_text(record, dictionary_anchor.sentence_id) if dictionary_anchor.sentence_id else None,
-            )
-        return None
-
-    meanings = dictionary_entry.get("meanings")
-    meaning_zh = None
-    if isinstance(meanings, list) and meanings:
-        first_meaning = meanings[0]
-        if isinstance(first_meaning, dict):
-            meaning_zh = _truncate_text(first_meaning.get("definition_zh") or first_meaning.get("definition"), 160) or None
-        else:
-            meaning_zh = _truncate_text(str(first_meaning), 160) or None
-
-    ai_context = runtime_state.latest_dictionary_ai
-    source_sentence = None
-    if anchors:
-        source_sentence = _render_scene_sentence_text(record, anchors[0].sentence_id) or _first_anchor_text(anchors[0])
-    return ReaderAskVocabularyInContextCard(
-        query=str(dictionary_entry.get("query") or dictionary_entry.get("word") or ""),
-        display_word=dictionary_entry.get("word") or dictionary_entry.get("base_word"),
-        phonetic=dictionary_entry.get("phonetic"),
-        meaning_zh=meaning_zh,
-        why_here=_truncate_text(ai_context.get("why_here"), 180) if ai_context else None,
-        translation_zh=_truncate_text(ai_context.get("translation"), 120) if ai_context else None,
-        learning_tip=_truncate_text(ai_context.get("learning_tip"), 160) if ai_context else None,
-        source_sentence=source_sentence,
-    )
-
-
-def _practice_card(
-    *,
-    record: _RecordBundle,
-    anchors: list[ReaderAskAnchorRef],
-    runtime_state: ReaderAskRuntimeState,
-) -> ReaderAskPracticeCard | None:
-    sentence_text = None
-    sentence_id = None
-    if anchors:
-        sentence_id = anchors[0].sentence_id
-        sentence_text = _render_scene_sentence_text(record, sentence_id) or _first_anchor_text(anchors[0])
-    if not sentence_text and runtime_state.latest_record_context:
-        windows = runtime_state.latest_record_context.get("sentence_windows")
-        if isinstance(windows, list) and windows:
-            first_window = windows[0]
-            if isinstance(first_window, dict):
-                sentence_text = first_window.get("anchor_text")
-                sentence_id = first_window.get("sentence_id")
-    if not sentence_text:
-        return None
-
-    insights = runtime_state.latest_record_insights
-    insight_labels = [
-        str(item.get("title") or item.get("entry_type"))
-        for item in insights
-        if isinstance(item, dict) and (item.get("title") or item.get("entry_type"))
-    ]
-    hints = [
-        "先用自己的话说出这句话在段落里的意思。",
-        "再指出一个关键结构或修饰关系。",
-    ]
-    if insight_labels:
-        hints.append(f"可以特别留意：{insight_labels[0]}")
-    return ReaderAskPracticeCard(
-        title="围绕当前句做一题",
-        prompt=f"请根据这句话完成练习：\n\n> {sentence_text}\n\n先解释句意，再指出一个关键结构或语法作用。",
-        expected_focus=insight_labels[0] if insight_labels else "句意理解 + 结构识别",
-        hints=hints[:3],
-        answer_guidance="回答时尽量先说整体意思，再补一句你观察到的结构线索。",
-        source_sentence=_render_scene_sentence_text(record, sentence_id) if sentence_id else sentence_text,
-    )
-
-
 def _build_response_cards(
     *,
     task_mode: ReaderAskTaskMode,
@@ -2682,14 +2593,6 @@ def _build_response_cards(
             cards.append(card)
     elif task_mode == "breakdown":
         card = _sentence_analysis_card(record=record, anchors=anchors, runtime_state=runtime_state)
-        if card is not None:
-            cards.append(card)
-    elif task_mode == "vocabulary":
-        card = _vocabulary_card(runtime_state=runtime_state, record=record, anchors=anchors)
-        if card is not None:
-            cards.append(card)
-    elif task_mode == "practice":
-        card = _practice_card(record=record, anchors=anchors, runtime_state=runtime_state)
         if card is not None:
             cards.append(card)
     return cards
@@ -2848,16 +2751,6 @@ async def _ensure_task_card_data(
     anchors: list[ReaderAskAnchorRef],
 ) -> None:
     if task_mode == "breakdown":
-        if not runtime_state.latest_record_insights:
-            runtime_state.latest_record_insights = await get_record_insights_cb()
-            if runtime_state.latest_record_insights:
-                runtime_state.source_labels.add("record_assets")
-        return
-    if task_mode == "practice":
-        if runtime_state.latest_record_context is None:
-            runtime_state.latest_record_context = await get_record_context_cb()
-            if runtime_state.latest_record_context is not None:
-                runtime_state.source_labels.add("current_paragraph")
         if not runtime_state.latest_record_insights:
             runtime_state.latest_record_insights = await get_record_insights_cb()
             if runtime_state.latest_record_insights:

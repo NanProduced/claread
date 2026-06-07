@@ -127,11 +127,11 @@ def test_resolve_intent_prefers_explicit_entry_action_and_content_signal() -> No
                     selected_text="这里的译法",
                     metadata=ReaderAskAttachmentMetadata(
                         source_surface="translation",
-                        entry_action="compare_translation",
+                        entry_action="ask_about_this",
                     ),
                 )
             ],
-            "compare_translation",
+            "ask_about_this",
         )
         == "explain"
     )

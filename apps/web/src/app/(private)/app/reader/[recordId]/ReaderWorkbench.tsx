@@ -672,7 +672,7 @@ export function ReaderWorkbench({
   const [composerTextareaFocused, setComposerTextareaFocused] = useState(false);
   const [pendingAskQuickAction, setPendingAskQuickAction] = useState<{
     content: string;
-    entryAction: "ask_about_this" | "explain_this" | "why_here" | "lookup_in_context" | "compare_translation";
+    entryAction: "ask_about_this" | "explain_this" | "why_here" | "lookup_in_context";
     attachments: ReaderAskAttachment[];
   } | null>(null);
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
@@ -3315,7 +3315,7 @@ export function ReaderWorkbench({
     openAskWithAttachments([
       askAttachmentFromTranslation(pageIdentity, sentence, translationZh, {
         sourceSurface: "translation",
-        entryAction: "compare_translation",
+        entryAction: "ask_about_this",
       }),
     ]);
   }

@@ -1918,50 +1918,7 @@ function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { card
           );
         }
 
-        if (card.card_type === "vocabulary_in_context_card") {
-          return (
-            <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
-              <p className="text-xs font-semibold tracking-[0.16em] text-muted">词义卡</p>
-              <div className="mt-2 flex items-end justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-ink">{card.display_word || card.query}</p>
-                  {card.phonetic ? <p className="mt-1 text-xs text-muted">/{card.phonetic}/</p> : null}
-                </div>
-                <span className="rounded-pill border border-hairline bg-surface dark:bg-[#252a30] px-2 py-0.5 text-[11px] font-medium text-muted">
-                  当前语境
-                </span>
-              </div>
-              {card.meaning_zh ? <p className="mt-3 text-sm text-ink-soft">{card.meaning_zh}</p> : null}
-              {card.why_here ? <p className="mt-2 text-xs leading-5 text-muted">{card.why_here}</p> : null}
-              {card.translation_zh ? <p className="mt-2 text-xs text-ink-soft">译法：{card.translation_zh}</p> : null}
-              {card.learning_tip ? <p className="mt-2 text-xs text-muted">提示：{card.learning_tip}</p> : null}
-              {card.source_sentence ? <p className="mt-3 line-clamp-2 text-xs text-muted">{card.source_sentence}</p> : null}
-            </div>
-          );
-        }
-
-        return (
-          <div key={`${card.card_type}-${index}`} className="rounded-note border border-hairline bg-reader-paper dark:bg-[#1e2227] px-4 py-3">
-            <p className="text-xs font-semibold tracking-[0.16em] text-muted">练习卡</p>
-            <p className="mt-2 text-sm font-semibold text-ink">{card.title}</p>
-            <div className="mt-3 rounded-note border border-hairline bg-surface dark:bg-[#252a30] px-3 py-3 text-sm leading-6 text-ink-soft">
-              <Markdown components={ASK_MARKDOWN_COMPONENTS} className="space-y-3 text-ink-soft">
-                {card.prompt}
-              </Markdown>
-            </div>
-            {card.expected_focus ? <p className="mt-3 text-xs text-ink-soft">关注点：{card.expected_focus}</p> : null}
-            {card.hints.length > 0 ? (
-              <div className="mt-3 space-y-1">
-                {card.hints.map((hint, hintIndex) => (
-                  <p key={hintIndex} className="text-xs text-muted">
-                    {hint}
-                  </p>
-                ))}
-              </div>
-            ) : null}
-            {card.answer_guidance ? <p className="mt-3 text-xs text-muted">{card.answer_guidance}</p> : null}
-          </div>
-        );
+        return null;
       })}
     </div>
   );

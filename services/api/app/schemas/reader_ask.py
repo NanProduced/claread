@@ -38,7 +38,6 @@ ReaderAskEntryAction = Literal[
     "explain_this",
     "why_here",
     "lookup_in_context",
-    "compare_translation",
 ]
 ReaderAskAttachmentKind = Literal[
     "text_selection",
@@ -50,8 +49,6 @@ ReaderAskAttachmentKind = Literal[
 ReaderAskResponseCardType = Literal[
     "grammar_note_card",
     "sentence_breakdown_card",
-    "vocabulary_in_context_card",
-    "practice_card",
 ]
 ReaderAskSubmissionMode = Literal["chat", "quick_action"]
 ReaderAskSupplementType = Literal["grammar_note"]
@@ -628,30 +625,8 @@ class ReaderAskSentenceBreakdownCard(BaseModel):
     origin: Literal["ask_ai"] = "ask_ai"
 
 
-class ReaderAskVocabularyInContextCard(BaseModel):
-    card_type: Literal["vocabulary_in_context_card"] = "vocabulary_in_context_card"
-    query: str
-    display_word: str | None = None
-    phonetic: str | None = None
-    meaning_zh: str | None = None
-    why_here: str | None = None
-    translation_zh: str | None = None
-    learning_tip: str | None = None
-    source_sentence: str | None = None
-
-
-class ReaderAskPracticeCard(BaseModel):
-    card_type: Literal["practice_card"] = "practice_card"
-    title: str
-    prompt: str
-    expected_focus: str | None = None
-    hints: list[str] = Field(default_factory=list)
-    answer_guidance: str | None = None
-    source_sentence: str | None = None
-
-
 ReaderAskResponseCard = Annotated[
-    ReaderAskGrammarNoteCard | ReaderAskSentenceBreakdownCard | ReaderAskVocabularyInContextCard | ReaderAskPracticeCard,
+    ReaderAskGrammarNoteCard | ReaderAskSentenceBreakdownCard,
     Field(discriminator="card_type"),
 ]
 

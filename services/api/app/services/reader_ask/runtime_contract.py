@@ -187,12 +187,6 @@ def _truncate_history_message(content: str | None, *, role: str, limit: int) -> 
 
 
 def _entry_action_guidance(entry_action: ReaderAskEntryAction) -> str | None:
-    if entry_action == "compare_translation":
-        return (
-            "This request came from compare_translation. Prioritize side-by-side comparison "
-            "of wording, meaning shifts, omissions, additions, and tone changes before giving "
-            "any broader summary."
-        )
     if entry_action == "why_here":
         return (
             "This request came from why_here. Prioritize explaining the local grammar or writing "
@@ -612,8 +606,6 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             "structured_cards_available": [
                 "grammar_note_card",
                 "sentence_breakdown_card",
-                "vocabulary_in_context_card",
-                "practice_card",
             ],
         },
         "intent_instructions": {
@@ -621,10 +613,9 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             "breakdown": "优先拆主干、修饰和阅读顺序；需要时调用解析相关工具。",
             "vocabulary": "优先解释词义、短语义和为什么在这里是这个意思；需要时使用词典和词典 AI。",
             "grammar": "优先解释当前句子里的语法作用和句法关系，不要泛化成整节语法课。",
-            "practice": "优先围绕当前句子或段落生成练习，帮助用户主动复述、辨析或判断结构。",
+            "practice": "优先围绕当前句子或段落，用简洁的 Markdown 引导用户主动复述、辨析或判断结构，不生成练习卡。",
             "general": (
-                "若 entry_action_guidance 提示这是 compare_translation，则优先并列比较原文与译文/两段内容的"
-                "对应关系、信息增删和语气变化；否则根据用户具体问题灵活回答，保持简洁，围绕当前文章和已提供的上下文。"
+                "根据用户具体问题灵活回答，保持简洁，围绕当前文章和已提供的上下文。"
             ),
         }[contract.resolved_intent],
     }
