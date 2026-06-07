@@ -6,6 +6,10 @@ import {
   READING_GOAL_OPTIONS,
   READING_VARIANTS_BY_GOAL,
 } from "../composables/useNodeLabConstants";
+import {
+  shortId,
+  statusLabel,
+} from "../../../composables/useEvalFormatting";
 
 // 通用格式化工具（shortId / statusLabel / statusTone / formatDateTime / StatusTone / ShortIdSide）
 // 已被抽到 eval-center 顶层 composable useEvalFormatting.ts。各 node-lab 调用方应从

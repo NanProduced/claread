@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onErrorCaptured, onMounted, provide, watch, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onErrorCaptured, onMounted, provide, watch, ref } from "vue";
 import BaselineReference from "./node-lab/components/BaselineReference.vue";
 import CandidateEditor from "./node-lab/components/CandidateEditor.vue";
 import SingleRunResult from "./node-lab/components/SingleRunResult.vue";
@@ -424,6 +424,16 @@ const renderError = ref("");
 function recoverNodeLabRender() {
   renderError.value = "";
   activeWorkspaceTab.value = "config";
+  scrollNodeLabToTop();
+}
+
+function scrollNodeLabToTop() {
+  nextTick(() => {
+    document.querySelector(".node-lab-container")?.scrollIntoView({
+      block: "start",
+      inline: "nearest",
+    });
+  });
 }
 
 onErrorCaptured((error) => {
@@ -437,6 +447,7 @@ watch(
   ([newCompare, newSingle]) => {
     if (newCompare || newSingle) {
       activeWorkspaceTab.value = "result";
+      scrollNodeLabToTop();
     }
   }
 );
@@ -446,8 +457,13 @@ watch(
   () => state.activeWorkspace,
   () => {
     activeWorkspaceTab.value = "config";
+    scrollNodeLabToTop();
   }
 );
+
+watch(activeWorkspaceTab, () => {
+  scrollNodeLabToTop();
+});
 
 onMounted(async () => {
   loadPersistedState();
