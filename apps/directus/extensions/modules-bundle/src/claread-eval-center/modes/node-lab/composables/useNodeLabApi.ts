@@ -95,7 +95,10 @@ export function createNodeLabApi(deps: NodeLabState) {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const message = payload?.errors?.[0]?.message || `Request failed: ${response.status}`;
-      throw new Error(message);
+      const error = new Error(message);
+      (error as any).status = response.status;
+      (error as any).code = payload?.errors?.[0]?.extensions?.code || "";
+      throw error;
     }
     return payload?.data;
   }
@@ -428,7 +431,24 @@ export function createNodeLabApi(deps: NodeLabState) {
       }
       return detail;
     } catch (error) {
-      setFeedback({ error: error.message });
+      delete state.selectedTrialDetailsById[trialId];
+      if ((error as any).status === 404 || (error as any).code === "NODE_LAB_TRIAL_NOT_FOUND") {
+        const isActiveTrial =
+          activeCompareView.value?.trialId === trialId
+          || activeCompareTrial.value?.trial_id === trialId
+          || currentCompareTrialId.value === trialId;
+        if (isActiveTrial) {
+          clearActiveCompareView(state.activeNode, { preserveLatestTrial: false });
+          selectedJudgeRequestId.value = "";
+          pendingJudgeRequestId.value = "";
+        }
+        if (sessionId && state.selectedTrialIdBySession[sessionId] === trialId) {
+          state.selectedTrialIdBySession[sessionId] = "";
+        }
+        setFeedback({ info: "之前打开的 Compare 已被删除，已自动清理本地恢复状态。" });
+      } else {
+        setFeedback({ error: error.message });
+      }
     }
     return null;
   }
@@ -1131,7 +1151,11 @@ export function createNodeLabApi(deps: NodeLabState) {
     setFeedback();
     try {
       await fetchJson(`${API_ENDPOINTS.trials}/${encodeURIComponent(trialId)}`, { method: "DELETE" });
-      if (activeCompareTrial.value?.trial_id === trialId) {
+      const deletedActiveCompare =
+        activeCompareView.value?.trialId === trialId
+        || activeCompareTrial.value?.trial_id === trialId
+        || currentCompareTrialId.value === trialId;
+      if (deletedActiveCompare) {
         clearActiveCompareView(state.activeNode, { preserveLatestTrial: false });
         selectedJudgeRequestId.value = "";
         pendingJudgeRequestId.value = "";
