@@ -123,6 +123,7 @@ from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner
 from app.services.reader_ask import post_process as post_process_svc
+from app.services.reader_ask import prompt_preparation as prompt_preparation_svc
 from app.services.reader_ask import repository as repo
 from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
@@ -2992,22 +2993,6 @@ def _build_trace_summary(
     )
 
 
-def _inject_compaction_audit(
-    trace_summary: ReaderAskTraceSummary | None,
-    compaction_audit: list[str],
-) -> ReaderAskTraceSummary | None:
-    """Append compaction audit notes to trace_summary for eval / logging.
-
-    The notes use internal layer names (not user-visible). This keeps
-    technical details out of the UI but available in eval traces.
-    """
-    if not compaction_audit or trace_summary is None:
-        return trace_summary
-    audit_note = f"context_compaction:{','.join(compaction_audit)}"
-    updated_notes = list(trace_summary.notes) + [audit_note]
-    return trace_summary.model_copy(update={"notes": updated_notes})
-
-
 async def _fail_context_too_large(
     *,
     user_id: UUID,
@@ -3047,7 +3032,7 @@ async def _fail_context_too_large(
     """
     # Inject compaction audit into trace_summary before persisting
     if compaction_audit:
-        trace_summary = _inject_compaction_audit(trace_summary, compaction_audit)
+        trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, compaction_audit)
 
     # 1. Full refund
     if reservation is not None and reservation.total_points > 0 and record is not None:
@@ -3812,14 +3797,16 @@ async def stream_thread_message(
         )
         # Emit context.compacting *before* compression so the user sees
         # "上下文压缩中" while compaction is in progress, not after.
-        _max_input_budget = (
-            READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
-            - _PROMPT_BUDGET_BUFFER_TOKENS
-            - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+        _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
+            reserved_points=READER_ASK_RESERVED_POINTS,
+            tokens_per_point=TOKENS_PER_POINT,
+            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+            multiplier_output=MULTIPLIER_OUTPUT,
         )
-        if runtime_contract_svc._estimate_token_count(prompt_payload) > _max_input_budget:
+        if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
             yield _sse("context.compacting", {"message_id": assistant_message["id"]})
-        prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = runtime_contract_svc.prepare_prompt_payload(
+        prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = prompt_preparation_svc.prepare_prompt_payload(
             prompt_payload,
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
@@ -3862,7 +3849,7 @@ async def stream_thread_message(
                 "user_message": "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
             })
             return
-        trace_summary = _inject_compaction_audit(trace_summary, _compaction_audit)
+        trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
             max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
@@ -4010,14 +3997,16 @@ async def stream_thread_message(
                             max_message_text=_MAX_MESSAGE_TEXT,
                         )
                     )
-                    _replan_max_input_budget = (
-                        READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
-                        - _PROMPT_BUDGET_BUFFER_TOKENS
-                        - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+                    _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
+                        reserved_points=READER_ASK_RESERVED_POINTS,
+                        tokens_per_point=TOKENS_PER_POINT,
+                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                        multiplier_output=MULTIPLIER_OUTPUT,
                     )
-                    if runtime_contract_svc._estimate_token_count(replan_payload) > _replan_max_input_budget:
+                    if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
                         yield _sse("context.compacting", {"message_id": assistant_message["id"]})
-                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = runtime_contract_svc.prepare_prompt_payload(
+                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
                         replan_payload,
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
@@ -4029,7 +4018,7 @@ async def stream_thread_message(
                     if _replan_context_too_large:
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
                         raise _ReplanContextTooLargeError()
-                    replan_trace_summary = _inject_compaction_audit(trace_summary, _replan_compaction_audit)
+                    replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
                     replan_deps = ReaderAskAgentDeps(
                         payload=replan_payload,
                         event_queue=event_queue,
@@ -4887,14 +4876,16 @@ async def retry_thread_message(
         )
         # Emit context.compacting *before* compression so the user sees
         # "上下文压缩中" while compaction is in progress, not after.
-        _max_input_budget = (
-            READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
-            - _PROMPT_BUDGET_BUFFER_TOKENS
-            - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+        _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
+            reserved_points=READER_ASK_RESERVED_POINTS,
+            tokens_per_point=TOKENS_PER_POINT,
+            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+            multiplier_output=MULTIPLIER_OUTPUT,
         )
-        if runtime_contract_svc._estimate_token_count(prompt_payload) > _max_input_budget:
+        if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
             yield _sse("context.compacting", {"message_id": assistant_message_id})
-        prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = runtime_contract_svc.prepare_prompt_payload(
+        prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = prompt_preparation_svc.prepare_prompt_payload(
             prompt_payload,
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
@@ -4940,7 +4931,7 @@ async def retry_thread_message(
                 "user_message": "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
             })
             return
-        trace_summary = _inject_compaction_audit(trace_summary, _compaction_audit)
+        trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
             max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
@@ -5088,14 +5079,16 @@ async def retry_thread_message(
                             max_message_text=_MAX_MESSAGE_TEXT,
                         )
                     )
-                    _replan_max_input_budget = (
-                        READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
-                        - _PROMPT_BUDGET_BUFFER_TOKENS
-                        - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+                    _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
+                        reserved_points=READER_ASK_RESERVED_POINTS,
+                        tokens_per_point=TOKENS_PER_POINT,
+                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
+                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                        multiplier_output=MULTIPLIER_OUTPUT,
                     )
-                    if runtime_contract_svc._estimate_token_count(replan_payload) > _replan_max_input_budget:
+                    if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
                         yield _sse("context.compacting", {"message_id": assistant_message["id"]})
-                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = runtime_contract_svc.prepare_prompt_payload(
+                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
                         replan_payload,
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
@@ -5107,7 +5100,7 @@ async def retry_thread_message(
                     if _replan_context_too_large:
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
                         raise _ReplanContextTooLargeError()
-                    replan_trace_summary = _inject_compaction_audit(trace_summary, _replan_compaction_audit)
+                    replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
                     replan_deps = ReaderAskAgentDeps(
                         payload=replan_payload,
                         event_queue=event_queue,
