@@ -642,6 +642,7 @@ export function createSseMessageHandler(
                 ...message,
                 content_md: message.regenerate_preview ? delta : `${message.content_md}${delta}`,
                 regenerate_preview: false,
+                compacting: false,
               }
             : message,
         ),
@@ -653,7 +654,7 @@ export function createSseMessageHandler(
       updateMessage((messages) =>
         messages.map((message) =>
           message.id === currentMessageId
-            ? { ...message, reasoning_status: "streaming", reasoning_md: message.reasoning_md ?? "" }
+            ? { ...message, reasoning_status: "streaming", reasoning_md: message.reasoning_md ?? "", compacting: false }
             : message,
         ),
       );
@@ -703,6 +704,17 @@ export function createSseMessageHandler(
         messages.map((message) =>
           message.id === currentMessageId
             ? { ...message, replan_status: "replanning" }
+            : message,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "context.compacting") {
+      updateMessage((messages) =>
+        messages.map((message) =>
+          message.id === currentMessageId
+            ? { ...message, compacting: true }
             : message,
         ),
       );
@@ -768,6 +780,7 @@ export function createSseMessageHandler(
               reasoning_md: nextReasoningMd,
               reasoning_status: nextReasoningStatus,
               replan_status: "idle",
+              compacting: false,
               regenerate_preview: false,
             };
           }
@@ -807,6 +820,7 @@ export function createSseMessageHandler(
                   message.reasoning_status === "streaming" || message.reasoning_md
                     ? "completed"
                     : message.reasoning_status,
+                compacting: false,
                 regenerate_preview: false,
               }
             : message,
@@ -820,7 +834,7 @@ export function createSseMessageHandler(
       updateMessage((messages) =>
         messages.map((message) =>
           message.id === currentMessageId
-            ? { ...message, status: "failed" }
+            ? { ...message, status: "failed", compacting: false, replan_status: "idle" }
             : message,
         ),
       );
@@ -2166,6 +2180,11 @@ function MessageBubble({
                               正在补充上下文后重试...
                             </div>
                           ) : null}
+                          {message.compacting ? (
+                            <div className="mb-2 text-[12px] leading-6 text-muted">
+                              上下文压缩中
+                            </div>
+                          ) : null}
                           <AssistantReasoningBlock reasoningMd={message.reasoning_md} reasoningStatus={message.reasoning_status} />
                           {message.status === "streaming" ? <AssistantStreamingIndicator /> : null}
                           {hasAnswerContent ? (
@@ -2982,6 +3001,7 @@ export function AiWorkspacePanel({
       persisted_supplements: [],
       reasoning_md: "",
       reasoning_status: "idle",
+      compacting: false,
       regenerate_preview: false,
       usage_event_id: null,
       created_at: new Date().toISOString(),
@@ -3096,6 +3116,7 @@ export function AiWorkspacePanel({
               persisted_supplements: message.persisted_supplements,
               reasoning_status: "idle",
               reasoning_md: "",
+              compacting: false,
             }
           : message,
       ),

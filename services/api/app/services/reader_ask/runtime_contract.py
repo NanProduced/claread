@@ -388,37 +388,45 @@ _AGGRESSIVE_LAYERS: list[tuple[str, object]] = [
 ]
 
 
-def _progressive_compact(payload: dict[str, Any], *, budget_tokens: int) -> dict[str, Any]:
+def _progressive_compact(
+    payload: dict[str, Any], *, budget_tokens: int
+) -> tuple[dict[str, Any], list[str]]:
     """Apply compression layers progressively until the payload fits the budget.
 
     Each layer is applied in priority order (lowest first). After each layer,
     we re-estimate token count. If the payload fits, we stop. If not, we
     apply the next layer. This ensures high-priority fields are preserved
     as long as possible.
+
+    Returns (compacted_payload, applied_layers) where applied_layers is a
+    list of layer names that were actually applied (for audit / trace).
     """
     compact = json.loads(json.dumps(payload, ensure_ascii=False))
     current_tokens = _estimate_token_count(compact)
+    applied: list[str] = []
 
     if current_tokens <= budget_tokens:
-        return compact
+        return compact, applied
 
     # Pass 1: apply each compression layer in priority order
-    for _layer_name, layer_fn in _COMPRESSION_LAYERS:
+    for layer_name, layer_fn in _COMPRESSION_LAYERS:
         changed = layer_fn(compact)
         if changed:
+            applied.append(layer_name)
             current_tokens = _estimate_token_count(compact)
             if current_tokens <= budget_tokens:
-                return compact
+                return compact, applied
 
     # Pass 2: aggressive layers — drop low-priority fields entirely
-    for _layer_name, layer_fn in _AGGRESSIVE_LAYERS:
+    for layer_name, layer_fn in _AGGRESSIVE_LAYERS:
         changed = layer_fn(compact)
         if changed:
+            applied.append(layer_name)
             current_tokens = _estimate_token_count(compact)
             if current_tokens <= budget_tokens:
-                return compact
+                return compact, applied
 
-    return compact
+    return compact, applied
 
 
 def prepare_prompt_payload(
@@ -430,9 +438,22 @@ def prepare_prompt_payload(
     budget_buffer_tokens: int,
     default_max_output_tokens: int,
     min_max_output_tokens: int,
-) -> tuple[dict[str, Any], int]:
+) -> tuple[dict[str, Any], int, list[str], bool]:
+    """Prepare prompt payload with budget-aware compaction.
+
+    Returns (prompt_payload, budgeted_output_tokens, compaction_audit, context_too_large)
+    where compaction_audit is a list of applied compression layer names and
+    context_too_large is True when the payload still exceeds the input budget
+    after all compaction layers or when explicit attachments would be lost.
+    """
     prompt_payload = payload
     estimated_input_tokens = _estimate_token_count(prompt_payload)
+    compaction_audit: list[str] = []
+
+    # Record original attachment count for preservation check
+    original_attachment_count = len(
+        payload.get("canonical_context", {}).get("attachments", [])
+    )
 
     # Calculate the real available input budget based on weighted points.
     # The total budget is reserved_points * tokens_per_point. We need to
@@ -446,15 +467,26 @@ def prepare_prompt_payload(
 
     if estimated_input_tokens > max_input_budget:
         # Use progressive compaction to fit within the real input budget
-        prompt_payload = _progressive_compact(payload, budget_tokens=max_input_budget)
+        prompt_payload, compaction_audit = _progressive_compact(payload, budget_tokens=max_input_budget)
         estimated_input_tokens = _estimate_token_count(prompt_payload)
+
+    # Check if compaction still can't fit the budget
+    context_too_large = estimated_input_tokens > max_input_budget
+
+    # Check if explicit attachments were lost during compaction
+    if not context_too_large and original_attachment_count > 0:
+        compacted_attachment_count = len(
+            prompt_payload.get("canonical_context", {}).get("attachments", [])
+        )
+        if compacted_attachment_count < original_attachment_count:
+            context_too_large = True
 
     weighted_remaining = max(weighted_budget - estimated_input_tokens - budget_buffer_tokens, 0)
     budgeted_output_tokens = max(
         min_max_output_tokens,
         min(default_max_output_tokens, weighted_remaining // multiplier_output if weighted_remaining else 0),
     )
-    return prompt_payload, budgeted_output_tokens
+    return prompt_payload, budgeted_output_tokens, compaction_audit, context_too_large
 
 
 def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any]:

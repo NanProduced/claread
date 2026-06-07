@@ -600,7 +600,7 @@ class TestProgressiveCompaction:
         assert original_tokens > 16000  # Verify test setup
 
         budget = 16000
-        result = _progressive_compact(payload, budget_tokens=budget)
+        result, _audit = _progressive_compact(payload, budget_tokens=budget)
         result_tokens = _estimate_token_count(result)
         # Must fit within budget — same estimation function used inside compact
         assert result_tokens <= budget, f"Result {result_tokens} exceeds budget {budget}"
@@ -614,7 +614,7 @@ class TestProgressiveCompaction:
 
         # Tight budget that requires multiple layers
         budget = 10000
-        result = _progressive_compact(payload, budget_tokens=budget)
+        result, _audit = _progressive_compact(payload, budget_tokens=budget)
 
         # External assets should be reduced or gone (low priority)
         ext_assets = result.get("external_asset_contexts", [])
@@ -629,7 +629,7 @@ class TestProgressiveCompaction:
         Only conversation messages should be truncated."""
         payload = self._make_large_payload()
         budget = 10000
-        result = _progressive_compact(payload, budget_tokens=budget)
+        result, _audit = _progressive_compact(payload, budget_tokens=budget)
 
         history = result.get("history", [])
         system_msgs = [m for m in history if isinstance(m, dict) and m.get("role") == "system"]
@@ -645,7 +645,7 @@ class TestProgressiveCompaction:
 
         # Moderate budget — should trim low-priority fields but preserve high-priority
         budget = 14000
-        result = _progressive_compact(payload, budget_tokens=budget)
+        result, _audit = _progressive_compact(payload, budget_tokens=budget)
 
         result_tokens = _estimate_token_count(result)
         # Must fit within budget
@@ -664,7 +664,7 @@ class TestProgressiveCompaction:
 
         # Very tight budget
         budget = 6000
-        result = _progressive_compact(payload, budget_tokens=budget)
+        result, _audit = _progressive_compact(payload, budget_tokens=budget)
         result_tokens = _estimate_token_count(result)
 
         # Must fit within budget
@@ -686,7 +686,7 @@ class TestProgressiveCompaction:
 
         # Moderate budget — should trim low-priority fields first
         budget = 12000
-        result = _progressive_compact(payload, budget_tokens=budget)
+        result, _audit = _progressive_compact(payload, budget_tokens=budget)
 
         overview = result.get("article_overview", "")
         assert len(overview) > 0, "Article overview should still exist"
@@ -697,7 +697,7 @@ class TestProgressiveCompaction:
             "history": [{"role": "user", "content_md": "Hello"}],
             "record_context": {"source_excerpt": "Short text"},
         }
-        result = _progressive_compact(payload, budget_tokens=16000)
+        result, _audit = _progressive_compact(payload, budget_tokens=16000)
         assert result["history"] == payload["history"]
         assert result["record_context"] == payload["record_context"]
 
@@ -744,7 +744,7 @@ class TestPreparePromptPayloadCompaction:
         )
         assert max_input_budget == 15928  # Verify expected budget
 
-        result_payload, output_tokens = prepare_prompt_payload(
+        result_payload, output_tokens, compaction_audit, context_too_large = prepare_prompt_payload(
             large_payload,
             reserved_points=reserved_points,
             tokens_per_point=tokens_per_point,
@@ -761,6 +761,9 @@ class TestPreparePromptPayloadCompaction:
         )
         assert result_tokens < original_tokens, "Payload should have been compacted"
         assert output_tokens >= 1024
+        # Compaction was applied, so audit should be non-empty
+        assert len(compaction_audit) > 0
+        assert context_too_large is False
 
     def test_prepare_prompt_payload_no_compaction_when_within_budget(self) -> None:
         """When payload fits within the real input budget, no compaction occurs."""
@@ -769,7 +772,7 @@ class TestPreparePromptPayloadCompaction:
             "record_context": {"source_excerpt": "Short text"},
         }
 
-        result_payload, output_tokens = prepare_prompt_payload(
+        result_payload, output_tokens, compaction_audit, context_too_large = prepare_prompt_payload(
             small_payload,
             reserved_points=100,
             tokens_per_point=200,
@@ -782,6 +785,8 @@ class TestPreparePromptPayloadCompaction:
         # Should be unchanged
         assert result_payload["history"] == small_payload["history"]
         assert result_payload["record_context"] == small_payload["record_context"]
+        assert compaction_audit == []
+        assert context_too_large is False
 
     def test_prepare_prompt_payload_low_budget_no_floor_inflation(self) -> None:
         """When the real input budget is below 8000, max_input_budget must
@@ -819,7 +824,7 @@ class TestPreparePromptPayloadCompaction:
         assert max_input_budget == 2428  # Well below 8000
         assert max_input_budget < 8000  # Verify this tests the floor-removal
 
-        result_payload, output_tokens = prepare_prompt_payload(
+        result_payload, output_tokens, compaction_audit, context_too_large = prepare_prompt_payload(
             large_payload,
             reserved_points=reserved_points,
             tokens_per_point=tokens_per_point,
@@ -837,3 +842,175 @@ class TestPreparePromptPayloadCompaction:
             f"(would have been inflated to 8000 with old floor)"
         )
         assert result_tokens < original_tokens
+        assert len(compaction_audit) > 0
+        assert context_too_large is False
+
+
+class TestContextCompressionUxContract:
+    """P0-6: Context Compression UX Contract.
+
+    User sees "上下文压缩中" (not token budget / chunk details).
+    Explicit attachments are never silently dropped.
+    context_too_large triggers an actionable error.
+    Compaction audit is recorded for eval trace / logs.
+    """
+
+    def test_compaction_audit_records_applied_layers(self) -> None:
+        """When compaction is applied, the audit list contains the layer names
+        that were actually applied (for eval trace / logs)."""
+        large_payload = {
+            "external_asset_contexts": [
+                {"content_md": "x" * 4000} for _ in range(5)
+            ],
+            "record_assets": [{"title": f"A{i}", "content": "y" * 3000} for i in range(5)],
+            "vocabulary_items": [{"word": f"w{i}", "definition": "z" * 2000} for i in range(5)],
+            "record_insights": [{"insight": "i" * 2000} for _ in range(5)],
+            "history": [{"role": "user", "content_md": "q" * 1000} for _ in range(10)],
+            "record_context": {
+                "sentence_windows": [{"text": "s" * 1500} for _ in range(8)],
+                "source_excerpt": "t" * 40000,
+            },
+            "article_overview": "o" * 20000,
+        }
+
+        _, _, compaction_audit, context_too_large = prepare_prompt_payload(
+            large_payload,
+            reserved_points=100,
+            tokens_per_point=200,
+            multiplier_output=3,
+            budget_buffer_tokens=1000,
+            default_max_output_tokens=4096,
+            min_max_output_tokens=1024,
+        )
+
+        # Audit must be a non-empty list of strings
+        assert isinstance(compaction_audit, list)
+        assert len(compaction_audit) > 0
+        assert all(isinstance(name, str) for name in compaction_audit)
+        # Layer names should come from known compression layers
+        known_layers = {
+            "external_assets", "record_assets", "vocabulary", "insights",
+            "history", "sentence_windows", "source_excerpt", "article_overview",
+            "external_assets_drop", "record_assets_drop", "vocabulary_drop",
+            "insights_drop", "history_aggressive", "sentence_windows_drop",
+            "source_excerpt_aggressive", "article_overview_aggressive",
+        }
+        for name in compaction_audit:
+            assert name in known_layers, f"Unknown compaction layer: {name}"
+        assert context_too_large is False
+
+    def test_no_compaction_audit_when_within_budget(self) -> None:
+        """When no compaction is needed, audit is empty."""
+        small_payload = {
+            "history": [{"role": "user", "content_md": "Hi"}],
+        }
+
+        _, _, compaction_audit, context_too_large = prepare_prompt_payload(
+            small_payload,
+            reserved_points=100,
+            tokens_per_point=200,
+            multiplier_output=3,
+            budget_buffer_tokens=1000,
+            default_max_output_tokens=4096,
+            min_max_output_tokens=1024,
+        )
+
+        assert compaction_audit == []
+        assert context_too_large is False
+
+    def test_context_too_large_when_budget_exceeded_after_compaction(self) -> None:
+        """When the payload still exceeds the budget after all compaction
+        layers, context_too_large is True."""
+        # Build a payload that is so large that even aggressive compaction
+        # cannot bring it within a tiny budget
+        huge_payload = {
+            "history": [
+                {"role": "user", "content_md": "q" * 5000} for _ in range(20)
+            ],
+            "record_context": {
+                "source_excerpt": "t" * 50000,
+            },
+            "article_overview": "o" * 40000,
+        }
+
+        # Tiny budget: 10 * 100 = 1000 total, input = 1000 - 100 - 256*3 = 132
+        _, _, compaction_audit, context_too_large = prepare_prompt_payload(
+            huge_payload,
+            reserved_points=10,
+            tokens_per_point=100,
+            multiplier_output=3,
+            budget_buffer_tokens=100,
+            default_max_output_tokens=1024,
+            min_max_output_tokens=256,
+        )
+
+        assert context_too_large is True
+        # Compaction was attempted
+        assert len(compaction_audit) > 0
+
+    def test_context_too_large_when_attachments_lost(self) -> None:
+        """When explicit attachments would be lost during compaction,
+        context_too_large is True — attachments must not be silently dropped."""
+        payload_with_attachments = {
+            "canonical_context": {
+                "attachments": [
+                    {"kind": "text_selection", "label": "选中的句子"},
+                    {"kind": "record_ref", "label": "相关文章"},
+                ],
+            },
+            "history": [{"role": "user", "content_md": "q" * 8000} for _ in range(10)],
+            "record_context": {
+                "source_excerpt": "t" * 30000,
+            },
+            "article_overview": "o" * 20000,
+        }
+
+        # Budget that forces compaction but not so small that budget is exceeded
+        # Total = 50 * 200 = 10000, input = 10000 - 500 - 512*3 = 7964
+        result_payload, _, compaction_audit, context_too_large = prepare_prompt_payload(
+            payload_with_attachments,
+            reserved_points=50,
+            tokens_per_point=200,
+            multiplier_output=3,
+            budget_buffer_tokens=500,
+            default_max_output_tokens=4096,
+            min_max_output_tokens=512,
+        )
+
+        # If attachments survived, context_too_large should be False
+        result_attachments = result_payload.get("canonical_context", {}).get("attachments", [])
+        if len(result_attachments) < 2:
+            # Attachments were lost → must flag context_too_large
+            assert context_too_large is True
+        else:
+            # Attachments survived → no error
+            assert context_too_large is False
+
+    def test_attachments_preserved_when_within_budget(self) -> None:
+        """When payload with attachments fits within budget, attachments are
+        preserved and context_too_large is False."""
+        payload_with_attachments = {
+            "canonical_context": {
+                "attachments": [
+                    {"kind": "text_selection", "label": "选中的句子"},
+                ],
+            },
+            "history": [{"role": "user", "content_md": "Hello"}],
+        }
+
+        result_payload, _, compaction_audit, context_too_large = prepare_prompt_payload(
+            payload_with_attachments,
+            reserved_points=100,
+            tokens_per_point=200,
+            multiplier_output=3,
+            budget_buffer_tokens=1000,
+            default_max_output_tokens=4096,
+            min_max_output_tokens=1024,
+        )
+
+        # Attachments must be preserved
+        result_attachments = result_payload.get("canonical_context", {}).get("attachments", [])
+        assert len(result_attachments) == 1
+        assert result_attachments[0]["kind"] == "text_selection"
+        assert compaction_audit == []
+        assert context_too_large is False

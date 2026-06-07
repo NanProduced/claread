@@ -454,6 +454,7 @@ export interface ReaderAskMessageDto {
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
   replan_status?: "idle" | "replanning" | null;
+  compacting?: boolean | null;
   regenerate_preview?: boolean | null;
   usage_event_id?: string | null;
   created_at: string;
@@ -556,6 +557,7 @@ export type ReaderAskStreamEventName =
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
+  | "context.compacting"
   | "replan.started"
   | "message.interrupted"
   | "message.completed"

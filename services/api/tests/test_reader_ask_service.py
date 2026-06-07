@@ -3844,3 +3844,107 @@ async def test_confirm_action_create_supplement_grammar_note() -> None:
         "action_audit must contain confirmed decision"
     assert any(s.get("supplement_id") == candidate_id and s.get("event") == "persisted" for s in supplement_audit), \
         "supplement_audit must contain persisted event"
+
+
+async def test_fail_context_too_large_cleans_up_and_preserves_context(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    user_id = uuid4()
+    thread_id = uuid4()
+    record_id = uuid4()
+    assistant_message_id = uuid4()
+    turn_run_id = uuid4()
+    anchor = ReaderAskAnchorRef(
+        anchor_type="text_range",
+        sentence_id="s1",
+        selected_text="selected sentence",
+        text_hash="hash",
+        start_offset=0,
+        end_offset=17,
+    )
+    attachment = ReaderAskAttachment(
+        kind="text_selection",
+        subtype="range",
+        label="Selected sentence",
+        selected_text="selected sentence",
+        anchor_payload=ReaderAskAttachmentPayload(
+            anchor_type="text_range",
+            sentence_id="s1",
+            selected_text="selected sentence",
+            text_hash="hash",
+            start_offset=0,
+            end_offset=17,
+        ),
+        metadata=ReaderAskAttachmentMetadata(source_surface="reader"),
+    )
+    record = reader_ask_service._RecordBundle(
+        record_id=record_id,
+        title="Article",
+        source_text="selected sentence in article",
+        render_scene={},
+        page_state_json={},
+        workflow_version=None,
+        schema_version=None,
+    )
+    reservation = CreditReservation(total_points=10, deducted_from_daily=10, deducted_from_bonus=0)
+    calls: dict[str, object] = {}
+
+    async def fake_refund_reserved_points(_user_id, _reservation, metadata):  # type: ignore[no-untyped-def]
+        calls["refund"] = (_user_id, _reservation, metadata)
+
+    async def fake_update_message(**kwargs):  # type: ignore[no-untyped-def]
+        calls["message"] = kwargs
+        return {"id": str(kwargs["message_id"])}
+
+    async def fake_update_turn_run(**kwargs):  # type: ignore[no-untyped-def]
+        calls["turn_run"] = kwargs
+        return {"id": str(kwargs["turn_run_id"])}
+
+    async def fake_upsert_eval_trace_record(**kwargs):  # type: ignore[no-untyped-def]
+        calls["trace"] = kwargs
+        return None
+
+    async def fake_record_failure_event(**kwargs):  # type: ignore[no-untyped-def]
+        calls["failure"] = kwargs
+
+    monkeypatch.setattr(reader_ask_service, "refund_reserved_points", fake_refund_reserved_points)
+    monkeypatch.setattr(reader_ask_service.repo, "update_message", fake_update_message)
+    monkeypatch.setattr(reader_ask_service.repo, "update_turn_run", fake_update_turn_run)
+    monkeypatch.setattr(reader_ask_service, "_upsert_eval_trace_record", fake_upsert_eval_trace_record)
+    monkeypatch.setattr(reader_ask_service, "_record_failure_event", fake_record_failure_event)
+
+    await reader_ask_service._fail_context_too_large(
+        user_id=user_id,
+        thread_id=thread_id,
+        record=record,
+        thread={"id": str(thread_id)},
+        reservation=reservation,
+        assistant_message_id=assistant_message_id,
+        active_turn_run_id=turn_run_id,
+        runtime_state=ReaderAskRuntimeState(),
+        resolved_intent="explain",
+        resolved_context_input=None,
+        run_info={"run_id": str(turn_run_id), "turn_id": str(uuid4()), "attempt": 1},
+        submission_mode="chat",
+        resolved_anchors=[anchor],
+        attachments=[attachment],
+        anchor_payload=[anchor.model_dump(mode="json")],
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(),
+        disambiguation=None,
+        external_asset_disambiguation=None,
+        planning_snapshot=None,
+        context_plan=None,
+        trace_summary=None,
+        start_perf=0.0,
+        user_message_text="please explain",
+        error_code="reader_ask_failed",
+        compaction_audit=["history"],
+    )
+
+    assert "refund" in calls
+    assert calls["message"]["status"] == "failed"  # type: ignore[index]
+    assert calls["message"]["current_turn_run_id"] == turn_run_id  # type: ignore[index]
+    assert calls["turn_run"]["status"] == "failed"  # type: ignore[index]
+    failed_output = calls["turn_run"]["user_visible_output_json"]  # type: ignore[index]
+    assert failed_output["resolved_context"]["anchor_count"] == 1
+    assert failed_output["resolved_context"]["explicit_attachment_count"] == 1
+    assert calls["trace"]["turn_run_id"] == turn_run_id  # type: ignore[index]
+    assert calls["failure"]["error_code"] == "reader_ask_failed"  # type: ignore[index]

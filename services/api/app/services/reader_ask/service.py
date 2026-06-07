@@ -5,6 +5,7 @@ import logging
 import json
 import re
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
@@ -129,6 +130,12 @@ from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask import utils
 
 logger = logging.getLogger(__name__)
+
+
+class _ReplanContextTooLargeError(Exception):
+    """Raised when replan prompt exceeds budget — skip replan, use original answer."""
+
+
 from app.services.text_anchors import ensure_json_dict, sentence_map
 from app.services.user_assets import vocabulary as vocabulary_svc
 from app.services import reader_notes as reader_notes_svc
@@ -2985,6 +2992,150 @@ def _build_trace_summary(
     )
 
 
+def _inject_compaction_audit(
+    trace_summary: ReaderAskTraceSummary | None,
+    compaction_audit: list[str],
+) -> ReaderAskTraceSummary | None:
+    """Append compaction audit notes to trace_summary for eval / logging.
+
+    The notes use internal layer names (not user-visible). This keeps
+    technical details out of the UI but available in eval traces.
+    """
+    if not compaction_audit or trace_summary is None:
+        return trace_summary
+    audit_note = f"context_compaction:{','.join(compaction_audit)}"
+    updated_notes = list(trace_summary.notes) + [audit_note]
+    return trace_summary.model_copy(update={"notes": updated_notes})
+
+
+async def _fail_context_too_large(
+    *,
+    user_id: UUID,
+    thread_id: UUID,
+    record: _RecordBundle | None,
+    thread: dict[str, Any] | None,
+    reservation: CreditReservation | None,
+    assistant_message_id: UUID,
+    active_turn_run_id: UUID | None,
+    runtime_state: ReaderAskRuntimeState,
+    resolved_intent: ReaderAskResolvedIntent | None,
+    resolved_context_input: ReaderAskResolvedContextInput | None,
+    run_info: dict[str, Any] | None,
+    submission_mode: str,
+    resolved_anchors: list[ReaderAskAnchorRef],
+    attachments: list[ReaderAskAttachment],
+    anchor_payload: list[dict[str, Any]],
+    reference_resolution: planner.ReaderAskReferenceResolution,
+    disambiguation: ReaderAskDisambiguation | None,
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
+    context_plan: ReaderAskContextPlan | None,
+    trace_summary: ReaderAskTraceSummary | None,
+    start_perf: float,
+    user_message_text: str,
+    error_code: str,
+    retry_message_id: UUID | None = None,
+    run_history: list[dict[str, Any]] | None = None,
+    persisted_supplements_json: list[dict[str, Any]] | None = None,
+    compaction_audit: list[str] | None = None,
+) -> None:
+    """Unified failure cleanup for CONTEXT_TOO_LARGE early returns.
+
+    Ensures message/turn_run are marked failed, reservation is refunded,
+    eval trace is recorded, and failure event is logged — mirroring the
+    except-block cleanup that would otherwise be bypassed.
+    """
+    # Inject compaction audit into trace_summary before persisting
+    if compaction_audit:
+        trace_summary = _inject_compaction_audit(trace_summary, compaction_audit)
+
+    # 1. Full refund
+    if reservation is not None and reservation.total_points > 0 and record is not None:
+        refund_metadata: dict[str, Any] = {
+            "reason": error_code,
+            "thread_id": str(thread_id),
+            "record_id": str(record.record_id),
+        }
+        if retry_message_id is not None:
+            refund_metadata["retry_message_id"] = str(retry_message_id)
+        await refund_reserved_points(user_id, reservation, metadata=refund_metadata)
+
+    # 2. Mark assistant message as failed
+    await repo.update_message(
+        message_id=assistant_message_id,
+        status="failed",
+        content_md="",
+        context_anchors=anchor_payload,
+        citations=[c.model_dump(mode="json") for c in runtime_state.citations],
+        action_proposals=[],
+        tool_trace=[e.model_dump(mode="json") for e in runtime_state.tool_trace],
+        metadata=_assistant_message_metadata(
+            resolved_intent=resolved_intent,
+            run_info=run_info,
+            run_history=run_history,
+            resolved_context_input=resolved_context_input,
+            submission_mode=submission_mode,
+        ),
+        usage_event_id=None,
+        current_turn_run_id=active_turn_run_id,
+    )
+
+    # 3. Mark turn_run as failed + upsert eval trace
+    if active_turn_run_id is not None and record is not None:
+        failed_output_json = _build_stream_checkpoint_output_json(
+            content_md="",
+            reasoning_md=None,
+            reasoning_status=None,
+            submission_mode=submission_mode,
+            resolved_intent=resolved_intent,
+            record=record,
+            anchors=resolved_anchors,
+            attachments=attachments,
+            runtime_state=runtime_state,
+            reference_resolution=reference_resolution,
+            disambiguation=disambiguation,
+            external_asset_disambiguation=external_asset_disambiguation,
+            trace_summary=trace_summary,
+            context_plan=context_plan,
+            resolved_context_input=resolved_context_input,
+            run_info=run_info,
+            persisted_supplements=persisted_supplements_json or [],
+        )
+        await repo.update_turn_run(
+            turn_run_id=active_turn_run_id,
+            status="failed",
+            resolved_intent=resolved_intent,
+            user_visible_output_json=failed_output_json,
+            failed_at=datetime.now(UTC),
+        )
+        await _upsert_eval_trace_record(
+            turn_run_id=active_turn_run_id,
+            planning_snapshot=planning_snapshot,
+            runtime_state=runtime_state,
+            context_plan=context_plan,
+            trace_summary=trace_summary,
+        )
+
+    # 4. Record failure event
+    if record is not None and thread is not None:
+        failure_metadata: dict[str, Any] = {
+            "anchor_count": len(anchor_payload),
+            "tool_names": [e.tool_name for e in runtime_state.tool_trace],
+        }
+        if retry_message_id is not None:
+            failure_metadata["retry_message_id"] = str(retry_message_id)
+        await _record_failure_event(
+            user_id=user_id,
+            record_id=record.record_id,
+            thread_id=thread_id,
+            user_message=user_message_text,
+            start_perf=start_perf,
+            error_code=error_code,
+            error_message="CONTEXT_TOO_LARGE",
+            metadata_json=failure_metadata,
+        )
+
+
 def _build_evidence_items(
     *,
     attachments: list[ReaderAskAttachment],
@@ -3659,7 +3810,16 @@ async def stream_thread_message(
                 max_message_text=_MAX_MESSAGE_TEXT,
             )
         )
-        prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
+        # Emit context.compacting *before* compression so the user sees
+        # "上下文压缩中" while compaction is in progress, not after.
+        _max_input_budget = (
+            READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
+            - _PROMPT_BUDGET_BUFFER_TOKENS
+            - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+        )
+        if runtime_contract_svc._estimate_token_count(prompt_payload) > _max_input_budget:
+            yield _sse("context.compacting", {"message_id": assistant_message["id"]})
+        prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = runtime_contract_svc.prepare_prompt_payload(
             prompt_payload,
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
@@ -3668,6 +3828,41 @@ async def stream_thread_message(
             default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
             min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
         )
+        if _context_too_large:
+            await _fail_context_too_large(
+                user_id=user_id,
+                thread_id=thread_id,
+                record=record,
+                thread=thread,
+                reservation=reservation,
+                assistant_message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
+                active_turn_run_id=active_turn_run_id,
+                runtime_state=runtime_state,
+                resolved_intent=resolved_intent,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                submission_mode=submission_mode,
+                resolved_anchors=resolved_anchors,
+                attachments=attachments,
+                anchor_payload=anchor_payload,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                planning_snapshot=planning_snapshot,
+                context_plan=context_plan,
+                trace_summary=trace_summary,
+                start_perf=start_perf,
+                user_message_text=body.content,
+                error_code="reader_ask_failed",
+                compaction_audit=_compaction_audit,
+            )
+            yield _sse("error", {
+                "code": "CONTEXT_TOO_LARGE",
+                "detail": "Context exceeds budget even after aggressive compaction.",
+                "user_message": "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+            })
+            return
+        trace_summary = _inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
             max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
@@ -3764,17 +3959,18 @@ async def stream_thread_message(
                     anchors=resolved_anchors,
                 )
                 if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
-                    planning_snapshot = replan_result.planning_snapshot
-                    resolved_intent = planning_snapshot.resolved_intent
-                    resolved_context_input = planning_snapshot.resolved_context_input
-                    reference_resolution = replan_result.reference_resolution
-                    disambiguation = planning_snapshot.disambiguation_state
-                    external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
-                    resolved_context_input = await _materialize_planned_context(
+                    replan_runtime_state = deepcopy(runtime_state)
+                    replan_planning_snapshot = replan_result.planning_snapshot
+                    replan_resolved_intent = replan_planning_snapshot.resolved_intent
+                    replan_resolved_context_input = replan_planning_snapshot.resolved_context_input
+                    replan_reference_resolution = replan_result.reference_resolution
+                    replan_disambiguation = replan_planning_snapshot.disambiguation_state
+                    replan_external_asset_disambiguation = replan_planning_snapshot.external_asset_disambiguation_state
+                    replan_resolved_context_input = await _materialize_planned_context(
                         user_id=user_id,
                         record=record,
-                        runtime_state=runtime_state,
-                        planning_snapshot=planning_snapshot,
+                        runtime_state=replan_runtime_state,
+                        planning_snapshot=replan_planning_snapshot,
                         page_identity=body.page_identity,
                         entry_action=body.entry_action,
                         attachments=attachments,
@@ -3782,14 +3978,14 @@ async def stream_thread_message(
                         get_record_context_cb=get_record_context_cb,
                         get_record_insights_cb=get_record_insights_cb,
                     )
-                    cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
-                    quick_action_annotation = await _run_explicit_quick_action_annotation(
+                    replan_cross_record_context_allowed = replan_planning_snapshot.retrieval_needs == "known_reference_only"
+                    replan_quick_action_annotation = await _run_explicit_quick_action_annotation(
                         submission_mode=submission_mode,
-                        task_mode=resolved_intent,
+                        task_mode=replan_resolved_intent,
                         entry_action=body.entry_action,
                         record=record,
                         primary_anchor=primary_anchor,
-                        runtime_state=runtime_state,
+                        runtime_state=replan_runtime_state,
                         event_queue=event_queue,
                     )
                     replan_payload = runtime_contract_svc.build_prompt_payload(
@@ -3801,20 +3997,27 @@ async def stream_thread_message(
                             page_identity=body.page_identity,
                             attachments=attachments,
                             anchors=resolved_anchors,
-                            resolved_intent=resolved_intent,
-                            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                            resolved_intent=replan_resolved_intent,
+                            resolved_intent_label=_TASK_MODE_LABELS[replan_resolved_intent],
                             entry_action=body.entry_action,
                             submission_mode=submission_mode,
-                            cross_record_context_allowed=cross_record_context_allowed,
-                            resolved_context_input=resolved_context_input,
-                            quick_action_annotation=quick_action_annotation,
-                            reference_resolution=reference_resolution,
-                            planning_snapshot=planning_snapshot,
+                            cross_record_context_allowed=replan_cross_record_context_allowed,
+                            resolved_context_input=replan_resolved_context_input,
+                            quick_action_annotation=replan_quick_action_annotation,
+                            reference_resolution=replan_reference_resolution,
+                            planning_snapshot=replan_planning_snapshot,
                             max_history_messages=_MAX_HISTORY_MESSAGES,
                             max_message_text=_MAX_MESSAGE_TEXT,
                         )
                     )
-                    replan_payload, replan_max_output = runtime_contract_svc.prepare_prompt_payload(
+                    _replan_max_input_budget = (
+                        READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
+                        - _PROMPT_BUDGET_BUFFER_TOKENS
+                        - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+                    )
+                    if runtime_contract_svc._estimate_token_count(replan_payload) > _replan_max_input_budget:
+                        yield _sse("context.compacting", {"message_id": assistant_message["id"]})
+                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = runtime_contract_svc.prepare_prompt_payload(
                         replan_payload,
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
@@ -3823,12 +4026,16 @@ async def stream_thread_message(
                         default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
                         min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
                     )
+                    if _replan_context_too_large:
+                        logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
+                        raise _ReplanContextTooLargeError()
+                    replan_trace_summary = _inject_compaction_audit(trace_summary, _replan_compaction_audit)
                     replan_deps = ReaderAskAgentDeps(
                         payload=replan_payload,
                         event_queue=event_queue,
-                        state=runtime_state,
+                        state=replan_runtime_state,
                         query_seed=query_seed,
-                        task_mode=resolved_intent,
+                        task_mode=replan_resolved_intent,
                         record_id=str(record.record_id),
                         record_title=record.title,
                         primary_anchor=primary_anchor,
@@ -3858,6 +4065,16 @@ async def stream_thread_message(
                     replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
                     if len(replan_content) >= len(final_content_md.strip()):
                         final_content_md = replan_content
+                        planning_snapshot = replan_planning_snapshot
+                        resolved_intent = replan_resolved_intent
+                        resolved_context_input = replan_resolved_context_input
+                        reference_resolution = replan_reference_resolution
+                        disambiguation = replan_disambiguation
+                        external_asset_disambiguation = replan_external_asset_disambiguation
+                        cross_record_context_allowed = replan_cross_record_context_allowed
+                        quick_action_annotation = replan_quick_action_annotation
+                        runtime_state = replan_runtime_state
+                        trace_summary = replan_trace_summary
             except Exception:
                 logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
 
@@ -4668,7 +4885,16 @@ async def retry_thread_message(
                 max_message_text=_MAX_MESSAGE_TEXT,
             )
         )
-        prompt_payload, max_output_tokens = runtime_contract_svc.prepare_prompt_payload(
+        # Emit context.compacting *before* compression so the user sees
+        # "上下文压缩中" while compaction is in progress, not after.
+        _max_input_budget = (
+            READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
+            - _PROMPT_BUDGET_BUFFER_TOKENS
+            - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+        )
+        if runtime_contract_svc._estimate_token_count(prompt_payload) > _max_input_budget:
+            yield _sse("context.compacting", {"message_id": assistant_message_id})
+        prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = runtime_contract_svc.prepare_prompt_payload(
             prompt_payload,
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
@@ -4677,6 +4903,44 @@ async def retry_thread_message(
             default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
             min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
         )
+        if _context_too_large:
+            await _fail_context_too_large(
+                user_id=user_id,
+                thread_id=thread_id,
+                record=record,
+                thread=thread,
+                reservation=reservation,
+                assistant_message_id=message_id,
+                active_turn_run_id=active_turn_run_id,
+                runtime_state=runtime_state,
+                resolved_intent=resolved_intent,
+                resolved_context_input=resolved_context_input,
+                run_info=run_info,
+                submission_mode=submission_mode,
+                resolved_anchors=resolved_anchors,
+                attachments=attachments,
+                anchor_payload=anchor_payload,
+                reference_resolution=reference_resolution,
+                disambiguation=disambiguation,
+                external_asset_disambiguation=external_asset_disambiguation,
+                planning_snapshot=planning_snapshot,
+                context_plan=context_plan,
+                trace_summary=trace_summary,
+                start_perf=start_perf,
+                user_message_text=original_user_message or (body.content if body else ""),
+                error_code="reader_ask_retry_failed",
+                retry_message_id=message_id,
+                run_history=run_history,
+                persisted_supplements_json=persisted_supplements_json,
+                compaction_audit=_compaction_audit,
+            )
+            yield _sse("error", {
+                "code": "CONTEXT_TOO_LARGE",
+                "detail": "Context exceeds budget even after aggressive compaction.",
+                "user_message": "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+            })
+            return
+        trace_summary = _inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
             max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
@@ -4773,17 +5037,18 @@ async def retry_thread_message(
                     anchors=resolved_anchors,
                 )
                 if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
-                    planning_snapshot = replan_result.planning_snapshot
-                    resolved_intent = planning_snapshot.resolved_intent
-                    resolved_context_input = planning_snapshot.resolved_context_input
-                    reference_resolution = replan_result.reference_resolution
-                    disambiguation = planning_snapshot.disambiguation_state
-                    external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
-                    resolved_context_input = await _materialize_planned_context(
+                    replan_runtime_state = deepcopy(runtime_state)
+                    replan_planning_snapshot = replan_result.planning_snapshot
+                    replan_resolved_intent = replan_planning_snapshot.resolved_intent
+                    replan_resolved_context_input = replan_planning_snapshot.resolved_context_input
+                    replan_reference_resolution = replan_result.reference_resolution
+                    replan_disambiguation = replan_planning_snapshot.disambiguation_state
+                    replan_external_asset_disambiguation = replan_planning_snapshot.external_asset_disambiguation_state
+                    replan_resolved_context_input = await _materialize_planned_context(
                         user_id=user_id,
                         record=record,
-                        runtime_state=runtime_state,
-                        planning_snapshot=planning_snapshot,
+                        runtime_state=replan_runtime_state,
+                        planning_snapshot=replan_planning_snapshot,
                         page_identity=body.page_identity,
                         entry_action=body.entry_action,
                         attachments=attachments,
@@ -4791,14 +5056,14 @@ async def retry_thread_message(
                         get_record_context_cb=get_record_context_cb,
                         get_record_insights_cb=get_record_insights_cb,
                     )
-                    cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
-                    quick_action_annotation = await _run_explicit_quick_action_annotation(
+                    replan_cross_record_context_allowed = replan_planning_snapshot.retrieval_needs == "known_reference_only"
+                    replan_quick_action_annotation = await _run_explicit_quick_action_annotation(
                         submission_mode=submission_mode,
-                        task_mode=resolved_intent,
+                        task_mode=replan_resolved_intent,
                         entry_action=body.entry_action,
                         record=record,
                         primary_anchor=primary_anchor,
-                        runtime_state=runtime_state,
+                        runtime_state=replan_runtime_state,
                         event_queue=event_queue,
                     )
                     replan_payload = runtime_contract_svc.build_prompt_payload(
@@ -4810,20 +5075,27 @@ async def retry_thread_message(
                             page_identity=body.page_identity,
                             attachments=attachments,
                             anchors=resolved_anchors,
-                            resolved_intent=resolved_intent,
-                            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+                            resolved_intent=replan_resolved_intent,
+                            resolved_intent_label=_TASK_MODE_LABELS[replan_resolved_intent],
                             entry_action=body.entry_action,
                             submission_mode=submission_mode,
-                            cross_record_context_allowed=cross_record_context_allowed,
-                            resolved_context_input=resolved_context_input,
-                            quick_action_annotation=quick_action_annotation,
-                            reference_resolution=reference_resolution,
-                            planning_snapshot=planning_snapshot,
+                            cross_record_context_allowed=replan_cross_record_context_allowed,
+                            resolved_context_input=replan_resolved_context_input,
+                            quick_action_annotation=replan_quick_action_annotation,
+                            reference_resolution=replan_reference_resolution,
+                            planning_snapshot=replan_planning_snapshot,
                             max_history_messages=_MAX_HISTORY_MESSAGES,
                             max_message_text=_MAX_MESSAGE_TEXT,
                         )
                     )
-                    replan_payload, replan_max_output = runtime_contract_svc.prepare_prompt_payload(
+                    _replan_max_input_budget = (
+                        READER_ASK_RESERVED_POINTS * TOKENS_PER_POINT
+                        - _PROMPT_BUDGET_BUFFER_TOKENS
+                        - _MIN_MAX_OUTPUT_TOKENS * MULTIPLIER_OUTPUT
+                    )
+                    if runtime_contract_svc._estimate_token_count(replan_payload) > _replan_max_input_budget:
+                        yield _sse("context.compacting", {"message_id": assistant_message["id"]})
+                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = runtime_contract_svc.prepare_prompt_payload(
                         replan_payload,
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
@@ -4832,12 +5104,16 @@ async def retry_thread_message(
                         default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
                         min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
                     )
+                    if _replan_context_too_large:
+                        logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
+                        raise _ReplanContextTooLargeError()
+                    replan_trace_summary = _inject_compaction_audit(trace_summary, _replan_compaction_audit)
                     replan_deps = ReaderAskAgentDeps(
                         payload=replan_payload,
                         event_queue=event_queue,
-                        state=runtime_state,
+                        state=replan_runtime_state,
                         query_seed=query_seed,
-                        task_mode=resolved_intent,
+                        task_mode=replan_resolved_intent,
                         record_id=str(record.record_id),
                         record_title=record.title,
                         primary_anchor=primary_anchor,
@@ -4867,6 +5143,16 @@ async def retry_thread_message(
                     replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
                     if len(replan_content) >= len(final_content_md.strip()):
                         final_content_md = replan_content
+                        planning_snapshot = replan_planning_snapshot
+                        resolved_intent = replan_resolved_intent
+                        resolved_context_input = replan_resolved_context_input
+                        reference_resolution = replan_reference_resolution
+                        disambiguation = replan_disambiguation
+                        external_asset_disambiguation = replan_external_asset_disambiguation
+                        cross_record_context_allowed = replan_cross_record_context_allowed
+                        quick_action_annotation = replan_quick_action_annotation
+                        runtime_state = replan_runtime_state
+                        trace_summary = replan_trace_summary
             except Exception:
                 logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
 

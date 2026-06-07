@@ -2476,3 +2476,144 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
     expect(getMessages()[0].reasoning_status).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// createSseMessageHandler – context.compacting & CONTEXT_TOO_LARGE tests
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – context compression UX", () => {
+  type Msg = ReaderAskMessageDto;
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "msg-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[]) {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, onError);
+    return {
+      getMessages: () => updatedMessages,
+      handler,
+      onError,
+    };
+  }
+
+  it("sets compacting to true on context.compacting event", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "context.compacting", data: { message_id: "msg-1" } });
+
+    expect(getMessages()[0].compacting).toBe(true);
+  });
+
+  it("resets compacting to false on message.delta", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true }),
+    ]);
+
+    handler({ event: "message.delta", data: { message_id: "msg-1", delta: "开始回答" } });
+
+    expect(getMessages()[0].compacting).toBe(false);
+    expect(getMessages()[0].content_md).toBe("开始回答");
+  });
+
+  it("resets compacting to false on message.completed", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true, content_md: "部分回答" }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "最终回答",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+      },
+    });
+
+    expect(getMessages()[0].compacting).toBe(false);
+  });
+
+  it("resets compacting to false on message.interrupted", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true, content_md: "中断的回答" }),
+    ]);
+
+    handler({ event: "message.interrupted", data: { content_md: "中断的回答" } });
+
+    expect(getMessages()[0].compacting).toBe(false);
+    expect(getMessages()[0].status).toBe("interrupted");
+  });
+
+  it("calls onError with user_message for CONTEXT_TOO_LARGE error", () => {
+    const { handler, onError } = setupHandler([makeStreamingAssistant()]);
+
+    handler({
+      event: "error",
+      data: {
+        code: "CONTEXT_TOO_LARGE",
+        detail: "Context exceeds budget even after aggressive compaction.",
+        user_message: "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+      },
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(
+      "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+    );
+  });
+
+  it("clears compacting and replan_status on error event", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true, replan_status: "replanning" }),
+    ]);
+
+    handler({
+      event: "error",
+      data: {
+        code: "CONTEXT_TOO_LARGE",
+        detail: "Context exceeds budget even after aggressive compaction.",
+        user_message: "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+      },
+    });
+
+    expect(getMessages()[0].status).toBe("failed");
+    expect(getMessages()[0].compacting).toBe(false);
+    expect(getMessages()[0].replan_status).toBe("idle");
+  });
+});
