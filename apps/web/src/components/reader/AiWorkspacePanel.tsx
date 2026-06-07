@@ -729,6 +729,20 @@ export function createSseMessageHandler(
           const isStreamingAssistant =
             message.id === currentMessageId;
           if (isStreamingAssistant) {
+            // Preserve streamed reasoning content: payload.reasoning_md may be an
+            // empty string from the server while the frontend has accumulated deltas.
+            // Only fall back to the payload value when the frontend has none.
+            const nextReasoningMd = message.reasoning_md || payload.reasoning_md || null;
+            // Derive terminal status from the final content: if any source
+            // indicates completed/streaming or there is reasoning content, it
+            // must be "completed" — never null when reasoning_md is present.
+            const nextReasoningStatus =
+              payload.reasoning_status === "completed" ||
+              message.reasoning_status === "completed" ||
+              message.reasoning_status === "streaming" ||
+              nextReasoningMd
+                ? "completed"
+                : null;
             return {
               ...message,
               id: payload.id,
@@ -751,8 +765,8 @@ export function createSseMessageHandler(
               run_info: payload.run_info ?? null,
               supplement_candidates: payload.supplement_candidates ?? [],
               persisted_supplements: payload.persisted_supplements ?? [],
-              reasoning_md: payload.reasoning_md ?? message.reasoning_md ?? null,
-              reasoning_status: payload.reasoning_status ?? (message.reasoning_md ? "completed" : null),
+              reasoning_md: nextReasoningMd,
+              reasoning_status: nextReasoningStatus,
               replan_status: "idle",
               regenerate_preview: false,
             };
@@ -785,7 +799,14 @@ export function createSseMessageHandler(
                 ...message,
                 status: "interrupted",
                 content_md: typeof payload.content_md === "string" ? payload.content_md : message.content_md,
-                reasoning_status: message.reasoning_md ? "completed" : message.reasoning_status,
+                // If reasoning was started (streaming or has content), mark it
+                // as completed so it doesn't stay in streaming after interrupt.
+                // An empty reasoning_md after reasoning.started means the model
+                // started thinking but produced no content — still not streaming.
+                reasoning_status:
+                  message.reasoning_status === "streaming" || message.reasoning_md
+                    ? "completed"
+                    : message.reasoning_status,
                 regenerate_preview: false,
               }
             : message,
@@ -2936,7 +2957,14 @@ export function AiWorkspacePanel({
       return;
     }
 
-    const usedAttachments = [...(options?.attachments ?? attachments)];
+    // Only auto-merge liveContextAttachment when the caller does not explicitly
+    // provide attachments. Explicit options.attachments means the caller (quick
+    // action, HITP candidate, etc.) has already defined the complete context set.
+    const includeLiveContext = options?.attachments === undefined;
+    const baseAttachments = options?.attachments ?? attachments;
+    const usedAttachments = includeLiveContext && liveContextAttachment
+      ? mergeAttachments(baseAttachments, [liveContextAttachment])
+      : baseAttachments;
     const entryAction = options?.entryAction ?? defaultEntryAction();
     const submissionMode = options?.submissionMode ?? "chat";
     const now = Date.now();

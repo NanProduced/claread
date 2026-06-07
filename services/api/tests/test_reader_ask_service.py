@@ -378,6 +378,141 @@ def test_terminal_reasoning_status_normalizes_finished_runs() -> None:
     assert _terminal_reasoning_status(False) is None
 
 
+def test_terminal_reasoning_status_completed_even_without_emitted_content() -> None:
+    """When reasoning.started fired but no delta arrived, the run still counts as
+    having started reasoning.  The terminal status must be "completed" (not None
+    or "streaming") so that the frontend can leave the streaming state."""
+    assert _terminal_reasoning_status(True) == "completed"
+
+
+# ---------------------------------------------------------------------------
+# P0-4: Stream Checkpoint Shape Contract
+# ---------------------------------------------------------------------------
+
+
+def test_stream_checkpoint_output_contains_all_contract_fields() -> None:
+    """Streaming checkpoint must contain every field in USER_VISIBLE_OUTPUT_FIELDS."""
+    from app.services.reader_ask.output_contract import USER_VISIBLE_OUTPUT_FIELDS, validate_output_dict_fields
+
+    runtime_state = ReaderAskRuntimeState(
+        latest_generated_annotations=[
+            {
+                "status": "ready",
+                "kind": "grammar_note",
+                "sentence_id": "s1",
+                "focus_text": "compared human behaviour and brain patterns",
+                "analysis_scope": "focus_span",
+                "note_zh": "这里的 compare A with B 用来引出对比对象。",
+                "label": "Compare A with B",
+                "source_sentence": "The researchers compared human behaviour and brain patterns with 41 species of monkeys and apes.",
+                "spans": [
+                    {"text": "compared", "role": "谓语"},
+                    {"text": "with 41 species of monkeys and apes", "role": "比较对象"},
+                ],
+            }
+        ]
+    )
+    record = type("Record", (), {"render_scene": {"article": {"sentences": []}, "translations": []}})()
+    record.record_id = UUID("00000000-0000-0000-0000-000000000001")
+    record.title = "Test"
+    record.source_text = ""
+    anchors = [
+        ReaderAskAnchorRef(
+            anchor_type="sentence",
+            sentence_id="s1",
+            selected_text="The researchers compared human behaviour and brain patterns.",
+        )
+    ]
+
+    output = _build_stream_checkpoint_output_json(
+        content_md="好的，我们来拆解这个句子。",
+        reasoning_md="先判断句子主干。",
+        reasoning_status="streaming",
+        submission_mode="quick_action",
+        resolved_intent="grammar",
+        record=record,
+        anchors=anchors,
+        attachments=[],
+        runtime_state=runtime_state,
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(),
+        disambiguation=None,
+        external_asset_disambiguation=None,
+        trace_summary=None,
+        context_plan=None,
+        resolved_context_input=None,
+        run_info={"turn_id": "turn-1", "run_id": "run-1", "attempt": 1},
+        persisted_supplements=[],
+    )
+
+    missing = validate_output_dict_fields(output)
+    assert missing == [], f"Streaming checkpoint missing contract fields: {missing}"
+
+
+def test_completed_output_contains_all_contract_fields() -> None:
+    """Completed output must contain every field in USER_VISIBLE_OUTPUT_FIELDS."""
+    from app.services.reader_ask.output_contract import USER_VISIBLE_OUTPUT_FIELDS, validate_output_dict_fields
+
+    output = output_contract_svc.build_user_visible_output(
+        content_md="解释完成。",
+        submission_mode="chat",
+        resolved_intent="explain",
+        citations=[],
+        action_proposals=[],
+        tool_trace=[],
+        evidence=[],
+        trace_summary=None,
+        disambiguation=None,
+        external_asset_disambiguation=None,
+        response_cards=[],
+        usage_summary={"input_tokens": 10, "output_tokens": 20},
+        billed_points=3,
+        resolved_context=planner_svc.build_resolved_context_summary(
+            record_id="record-1",
+            record_title="Current",
+            anchors=[],
+            explicit_attachment_count=0,
+            runtime_state=ReaderAskRuntimeState(source_labels={"current_record"}),
+            used_cross_record_context=False,
+            citations=[],
+        ),
+        context_plan=ReaderAskContextPlan(entry_action="ask_about_this"),
+        resolved_context_input=planner_svc.build_resolved_context_input(
+            page_identity=ReaderAskPageIdentity(
+                record_id="record-1",
+                title="Current",
+                available_context_capabilities=["record_context"],
+                has_article_overview=True,
+                has_sentence_entries=True,
+                has_annotations=True,
+                has_reader_notes=True,
+            ),
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[],
+        ),
+        run_info={"turn_id": "turn-1", "run_id": "run-1", "run_attempt": 1},
+        supplement_candidates=[],
+        persisted_supplements=[],
+    )
+
+    output_dict = output.model_dump(mode="json")
+    missing = validate_output_dict_fields(output_dict)
+    assert missing == [], f"Completed output missing contract fields: {missing}"
+
+
+def test_schema_fields_match_contract_constant() -> None:
+    """ReaderAskUserVisibleOutput schema fields must match USER_VISIBLE_OUTPUT_FIELDS."""
+    from app.schemas.reader_ask import ReaderAskUserVisibleOutput
+    from app.services.reader_ask.output_contract import USER_VISIBLE_OUTPUT_FIELDS
+
+    schema_fields = set(ReaderAskUserVisibleOutput.model_fields.keys())
+    assert schema_fields == USER_VISIBLE_OUTPUT_FIELDS, (
+        f"Schema fields != contract constant. "
+        f"Extra in schema: {sorted(schema_fields - USER_VISIBLE_OUTPUT_FIELDS)}, "
+        f"Missing from schema: {sorted(USER_VISIBLE_OUTPUT_FIELDS - schema_fields)}"
+    )
+
+
 def test_submission_mode_uses_toolbar_quick_actions_only() -> None:
     quick_action_attachment = ReaderAskAttachment(
         kind="text_selection",

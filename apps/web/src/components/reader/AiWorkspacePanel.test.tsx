@@ -1422,6 +1422,209 @@ describe("AiWorkspacePanel", () => {
     expect(screen.getByText(/聚焦片段/)).not.toBeNull();
   });
 
+  it("includes liveContextAttachment in request attachments when no other attachments", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        liveContextAttachment={sentenceAttachment}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释这句" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+    expect(bodyAttachments).toHaveLength(1);
+    expect(bodyAttachments[0]).toMatchObject({
+      kind: "text_selection",
+      subtype: "sentence",
+      label: "整句",
+      selected_text: "Climate change presents an existential challenge.",
+    });
+  });
+
+  it("merges liveContextAttachment with existing attachments in request", async () => {
+    const externalRecordAttachment: ReaderAskAttachment = {
+      kind: "record_ref",
+      subtype: "related_record",
+      label: "Climate Policy",
+      targetKey: "record:record-2:record",
+      metadata: {
+        pageIdentity,
+        sourceSurface: "ask_context_picker",
+        entryAction: "ask_about_this",
+        recordId: "record-2",
+        recordTitle: "Climate Policy",
+      },
+    };
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[externalRecordAttachment]}
+        liveContextAttachment={sentenceAttachment}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "结合另一篇文章解释这句" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+    expect(bodyAttachments).toHaveLength(2);
+    expect(bodyAttachments.some((a) => a.kind === "record_ref" && a.subtype === "related_record")).toBe(true);
+    expect(bodyAttachments.some((a) => a.kind === "text_selection" && a.subtype === "sentence")).toBe(true);
+  });
+
+  it("deduplicates liveContextAttachment when same attachment already exists in attachments", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[sentenceAttachment]}
+        liveContextAttachment={sentenceAttachment}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释这句" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+    // Same attachment should appear only once, not duplicated
+    expect(bodyAttachments).toHaveLength(1);
+    expect(bodyAttachments[0]).toMatchObject({
+      kind: "text_selection",
+      subtype: "sentence",
+    });
+  });
+
+  it("does not inject liveContextAttachment into quick action requests", async () => {
+    const quickActionAttachment: ReaderAskAttachment = {
+      kind: "text_selection",
+      subtype: "text_range",
+      label: "选区",
+      selectedText: "quick action text",
+      targetKey: "record:record-1:range:s2:0:16:hash2",
+      metadata: {
+        pageIdentity,
+        sourceSurface: "selection_toolbar",
+        entryAction: "explain_this",
+        sentenceId: "s2",
+        paragraphId: "p1",
+      },
+    };
+
+    const onPendingQuickActionConsumed = vi.fn();
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        liveContextAttachment={sentenceAttachment}
+        pendingQuickActionRequest={{
+          content: "解释这段语法",
+          attachments: [quickActionAttachment],
+          entryAction: "explain_this",
+        }}
+        onPendingQuickActionConsumed={onPendingQuickActionConsumed}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+
+    // Quick action should only have its own attachment, not the liveContextAttachment
+    expect(bodyAttachments).toHaveLength(1);
+    expect(bodyAttachments[0]).toMatchObject({
+      kind: "text_selection",
+      subtype: "text_range",
+      selected_text: "quick action text",
+    });
+  });
+
   it("shows '重新生成' (not '继续生成') for interrupted messages and triggers a full regenerate", async () => {
     vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1820,6 +2023,33 @@ describe("AiWorkspacePanel", () => {
     });
   });
 
+  it("restores completed reasoning from hydration without showing streaming state", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "completed",
+        content_md: "最终答案。",
+        reasoning_md: "这是刷新后恢复的推理内容。",
+        reasoning_status: "completed",
+      }),
+    ]);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("最终答案。")).not.toBeNull();
+    });
+
+    // Completed reasoning must be collapsed, not streaming
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+
+    // User can expand to see the reasoning content
+    fireEvent.click(screen.getByText("解释思路"));
+    await waitFor(() => {
+      expect(screen.getByText("这是刷新后恢复的推理内容。")).not.toBeNull();
+    });
+  });
+
   it("shows the user-facing insufficient credits message from stream errors", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
       onEvent({
@@ -2013,5 +2243,236 @@ describe("createSseMessageHandler – replan.started", () => {
 
     expect(updatedMessages[0].content_md).toBe("新的开头");
     expect(updatedMessages[0].regenerate_preview).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSseMessageHandler – reasoning lifecycle tests
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – reasoning lifecycle", () => {
+  type Msg = ReaderAskMessageDto;
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "msg-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[]) {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, onError);
+    return {
+      getMessages: () => updatedMessages,
+      handler,
+      onError,
+    };
+  }
+
+  it("enters streaming on reasoning.started even when reasoning_md is empty", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "reasoning.started", data: { message_id: "msg-1" } });
+
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    expect(getMessages()[0].reasoning_md).toBe("");
+  });
+
+  it("appends reasoning.delta content without losing prior deltas", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ reasoning_status: "streaming", reasoning_md: "" }),
+    ]);
+
+    handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: "step 1" } });
+    expect(getMessages()[0].reasoning_md).toBe("step 1");
+
+    handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: " step 2" } });
+    expect(getMessages()[0].reasoning_md).toBe("step 1 step 2");
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("transitions to completed on reasoning.completed", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ reasoning_status: "streaming", reasoning_md: "thinking content" }),
+    ]);
+
+    handler({ event: "reasoning.completed", data: { message_id: "msg-1" } });
+
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    // reasoning_md must not be cleared
+    expect(getMessages()[0].reasoning_md).toBe("thinking content");
+  });
+
+  it("preserves streamed reasoning_md when message.completed payload has empty reasoning_md", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "completed",
+        reasoning_md: "accumulated thinking",
+        content_md: "partial answer",
+      }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "final answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        // Server sends empty reasoning_md — frontend must keep its accumulated content
+        reasoning_md: "",
+        reasoning_status: "completed",
+      },
+    });
+
+    expect(getMessages()[0].reasoning_md).toBe("accumulated thinking");
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    expect(getMessages()[0].content_md).toBe("final answer");
+  });
+
+  it("preserves streamed reasoning_md when message.completed payload omits reasoning fields", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "completed",
+        reasoning_md: "accumulated thinking",
+        content_md: "partial answer",
+      }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "final answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        // Server omits reasoning_md and reasoning_status entirely
+      },
+    });
+
+    expect(getMessages()[0].reasoning_md).toBe("accumulated thinking");
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("infers reasoning_status=completed when payload has reasoning_md but no reasoning_status", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: null,
+        reasoning_md: null,
+        content_md: "",
+      }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "final answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        // Server sends reasoning_md but omits reasoning_status
+        reasoning_md: "server-side reasoning content",
+      },
+    });
+
+    expect(getMessages()[0].reasoning_md).toBe("server-side reasoning content");
+    // Must infer "completed" from the presence of reasoning_md
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("does not leave reasoning in streaming after message.interrupted", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "streaming",
+        reasoning_md: "partial thinking",
+        content_md: "partial answer",
+      }),
+    ]);
+
+    handler({ event: "message.interrupted", data: { content_md: "partial answer" } });
+
+    expect(getMessages()[0].status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    expect(getMessages()[0].reasoning_md).toBe("partial thinking");
+  });
+
+  it("does not leave reasoning in streaming after message.interrupted with empty reasoning_md", () => {
+    // reasoning.started fired but no delta arrived yet
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "streaming",
+        reasoning_md: "",
+        content_md: "",
+      }),
+    ]);
+
+    handler({ event: "message.interrupted", data: {} });
+
+    expect(getMessages()[0].status).toBe("interrupted");
+    // Even with empty reasoning_md, streaming status must not persist
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("keeps reasoning_status unchanged on interrupt when reasoning was never started", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: null,
+        reasoning_md: null,
+        content_md: "partial",
+      }),
+    ]);
+
+    handler({ event: "message.interrupted", data: {} });
+
+    expect(getMessages()[0].status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_status).toBeNull();
   });
 });

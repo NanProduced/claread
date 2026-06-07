@@ -24,6 +24,62 @@ from app.schemas.reader_ask import (
     ReaderAskCitation,
 )
 
+# ---------------------------------------------------------------------------
+# Stream Checkpoint Shape Contract (P0-4)
+# ---------------------------------------------------------------------------
+# The stable set of user-visible fields that must be present in every
+# `user_visible_output_json` — whether written by the streaming checkpoint
+# flush or by the completed output builder.  Repository hydration reads the
+# user-facing message fields from this shape; usage/cost fields remain on the
+# output snapshot and are not projected onto the top-level message DTO.
+#
+# Adding a field here requires:
+#   1. Adding it to `ReaderAskUserVisibleOutput` schema
+#   2. Passing it through `build_user_visible_output`
+#   3. Reading it in `repository._message_row_to_dict`
+#   4. Adding a test to verify the field survives the round-trip
+# ---------------------------------------------------------------------------
+
+USER_VISIBLE_OUTPUT_FIELDS: frozenset[str] = frozenset({
+    # content
+    "content_md",
+    "reasoning_md",
+    "reasoning_status",
+    # intent / mode
+    "submission_mode",
+    "resolved_intent",
+    # cards & actions
+    "response_cards",
+    "citations",
+    "action_proposals",
+    "tool_trace",
+    "evidence",
+    "trace_summary",
+    # disambiguation
+    "disambiguation",
+    "external_asset_disambiguation",
+    # context
+    "resolved_context",
+    "context_plan",
+    "resolved_context_input",
+    # run metadata
+    "run_info",
+    "usage_summary",
+    "billed_points",
+    # supplements
+    "supplement_candidates",
+    "persisted_supplements",
+})
+
+# Fields that repository hydration projects from user_visible_output_json onto
+# the top-level message DTO. Usage/cost fields stay available on
+# current_user_visible_output / current_turn_run rather than becoming message
+# fields.
+HYDRATION_READ_FIELDS: frozenset[str] = USER_VISIBLE_OUTPUT_FIELDS - {
+    "usage_summary",
+    "billed_points",
+}
+
 
 def build_user_message_metadata(
     *,
@@ -119,6 +175,14 @@ def build_user_visible_output(
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
     )
+
+
+def validate_output_dict_fields(output_dict: dict[str, Any]) -> list[str]:
+    """Check that *output_dict* contains every field in ``USER_VISIBLE_OUTPUT_FIELDS``.
+
+    Returns a list of missing field names (empty if valid).
+    """
+    return sorted(USER_VISIBLE_OUTPUT_FIELDS - set(output_dict.keys()))
 
 
 def to_completed_payload(
