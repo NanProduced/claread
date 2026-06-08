@@ -39,7 +39,11 @@ from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
 from app.schemas.internal.analysis import PreparedSentence
 from app.schemas.internal.execution_plan import GoalExecutionPlan
-from app.services.analysis.postprocess.draft_validators import validate_grammar_draft
+from app.services.analysis.postprocess.anchor_resolution import resolve_text_anchor
+from app.services.analysis.postprocess.draft_validators import (
+    validate_grammar_draft,
+    validate_vocabulary_draft,
+)
 from app.services.analysis.debug_snapshots import (
     build_preprocess_summary,
     build_runtime_summary,
@@ -239,6 +243,207 @@ def _grammar_quick_validation(
         "warning_count": len(warnings),
         "warnings": warnings,
     }
+
+
+def _parse_vocabulary_validation_warning(message: str) -> dict[str, Any]:
+    text = str(message or "").strip()
+    if not text:
+        return {
+            "code": "vocabulary_validation_warning",
+            "message": "",
+        }
+
+    patterns = [
+        (
+            r"^(?P<annotation_type>vocab_highlight|phrase_gloss|context_gloss): sentence_id (?P<sentence_id>\S+) not found$",
+            "vocabulary_sentence_missing",
+        ),
+        (
+            r"^(?P<annotation_type>vocab_highlight|phrase_gloss|context_gloss): text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
+            "vocabulary_anchor_not_found",
+        ),
+    ]
+
+    for pattern, code in patterns:
+        match = re.match(pattern, text)
+        if match:
+            payload = {"code": code, "message": text}
+            payload.update({key: value for key, value in match.groupdict().items() if value is not None})
+            return payload
+
+    return {
+        "code": "vocabulary_validation_warning",
+        "message": text,
+    }
+
+
+def _span_payload(item: Any, sentence_map: dict[str, PreparedSentence]) -> tuple[int, int] | None:
+    sentence = sentence_map.get(str(getattr(item, "sentence_id", "")))
+    if sentence is None:
+        return None
+    span = resolve_text_anchor(
+        sentence,
+        str(getattr(item, "text", "")),
+        getattr(item, "occurrence", None),
+    )
+    if span is None:
+        return None
+    return (span.start, span.end)
+
+
+def _spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
+    return left[0] < right[1] and right[0] < left[1]
+
+
+def _span_contains(container: tuple[int, int], inner: tuple[int, int]) -> bool:
+    return container[0] <= inner[0] and inner[1] <= container[1]
+
+
+def _vocabulary_duplicate_and_overlap_warnings(
+    draft: VocabularyDraft,
+    sentences: list[PreparedSentence],
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    sentence_map = {sentence.sentence_id: sentence for sentence in sentences}
+    typed_items: list[tuple[str, Any]] = [
+        *[("vocab_highlight", item) for item in draft.vocab_highlights],
+        *[("phrase_gloss", item) for item in draft.phrase_glosses],
+        *[("context_gloss", item) for item in draft.context_glosses],
+    ]
+
+    text_groups: dict[tuple[str, str], list[tuple[str, Any]]] = {}
+    for annotation_type, item in typed_items:
+        sentence_id = str(getattr(item, "sentence_id", ""))
+        text = str(getattr(item, "text", ""))
+        if sentence_id and text:
+            text_groups.setdefault((sentence_id, text.casefold()), []).append((annotation_type, item))
+
+    for (sentence_id, _text_key), items in text_groups.items():
+        annotation_types = sorted({annotation_type for annotation_type, _item in items})
+        if len(annotation_types) <= 1:
+            continue
+        anchor_text = str(getattr(items[0][1], "text", ""))
+        warnings.append({
+            "code": "vocabulary_same_text_cross_type",
+            "message": f"同一句同一文本被多个 vocabulary type 标注: {anchor_text}",
+            "sentence_id": sentence_id,
+            "anchor_text": anchor_text,
+            "annotation_types": annotation_types,
+        })
+
+    rich_items = [
+        (annotation_type, item, span)
+        for annotation_type, item in [
+            *[("phrase_gloss", item) for item in draft.phrase_glosses],
+            *[("context_gloss", item) for item in draft.context_glosses],
+        ]
+        if (span := _span_payload(item, sentence_map)) is not None
+    ]
+    for vocab in draft.vocab_highlights:
+        vocab_span = _span_payload(vocab, sentence_map)
+        if vocab_span is None:
+            continue
+        for annotation_type, rich_item, rich_span in rich_items:
+            if getattr(rich_item, "sentence_id", "") != vocab.sentence_id:
+                continue
+            if _span_contains(rich_span, vocab_span):
+                warnings.append({
+                    "code": f"vocab_highlight_subsumed_by_{annotation_type}",
+                    "message": f"vocab_highlight 被 {annotation_type} 覆盖: {vocab.text}",
+                    "sentence_id": vocab.sentence_id,
+                    "anchor_text": vocab.text,
+                    "container_text": getattr(rich_item, "text", ""),
+                })
+                break
+
+    phrase_spans = [
+        (item, span)
+        for item in draft.phrase_glosses
+        if (span := _span_payload(item, sentence_map)) is not None
+    ]
+    context_spans = [
+        (item, span)
+        for item in draft.context_glosses
+        if (span := _span_payload(item, sentence_map)) is not None
+    ]
+    for phrase, phrase_span in phrase_spans:
+        for context, context_span in context_spans:
+            if phrase.sentence_id != context.sentence_id:
+                continue
+            if _spans_overlap(phrase_span, context_span):
+                warnings.append({
+                    "code": "phrase_context_overlap",
+                    "message": f"phrase_gloss 与 context_gloss 锚点重叠: {phrase.text} / {context.text}",
+                    "sentence_id": phrase.sentence_id,
+                    "anchor_text": phrase.text,
+                    "other_anchor_text": context.text,
+                })
+
+    return warnings
+
+
+def _vocabulary_quick_validation(
+    *,
+    node_name: NodeLabNodeName,
+    node_output: dict[str, Any] | None,
+    prepared_input: Any,
+) -> dict[str, Any] | None:
+    if node_name != "vocabulary" or node_output is None:
+        return None
+
+    try:
+        draft = VocabularyDraft.model_validate(node_output)
+    except Exception as exc:
+        return {
+            "validator": "vocabulary_draft_v1",
+            "status": "error",
+            "warning_count": 1,
+            "warnings": [
+                {
+                    "code": "vocabulary_draft_parse_failed",
+                    "message": str(exc),
+                }
+            ],
+        }
+
+    sentences = [
+        PreparedSentence.model_validate(sentence)
+        if not isinstance(sentence, PreparedSentence)
+        else sentence
+        for sentence in (getattr(prepared_input, "sentences", None) or [])
+    ]
+    warnings = [
+        _parse_vocabulary_validation_warning(message)
+        for message in validate_vocabulary_draft(draft, sentences)
+    ]
+    warnings.extend(_vocabulary_duplicate_and_overlap_warnings(draft, sentences))
+    return {
+        "validator": "vocabulary_draft_v1",
+        "status": "warning" if warnings else "pass",
+        "warning_count": len(warnings),
+        "warnings": warnings,
+    }
+
+
+def _quick_validation(
+    *,
+    node_name: NodeLabNodeName,
+    node_output: dict[str, Any] | None,
+    prepared_input: Any,
+) -> dict[str, Any] | None:
+    if node_name == "grammar":
+        return _grammar_quick_validation(
+            node_name=node_name,
+            node_output=node_output,
+            prepared_input=prepared_input,
+        )
+    if node_name == "vocabulary":
+        return _vocabulary_quick_validation(
+            node_name=node_name,
+            node_output=node_output,
+            prepared_input=prepared_input,
+        )
+    return None
 
 
 def _policy_focus_for_node(plan: GoalExecutionPlan, node_name: NodeLabNodeName) -> str:
@@ -583,7 +788,7 @@ async def _run_node_lab_once(
         example_summary=_example_summary(selection_mode, examples),
         preprocess_summary=build_preprocess_summary(request.text, result_state),
         runtime_summary=_runtime_summary(usage, latency_ms=latency_ms, node_name=request.node_name),
-        quick_validation=_grammar_quick_validation(
+        quick_validation=_quick_validation(
             node_name=request.node_name,
             node_output=node_output,
             prepared_input=prepared_input,

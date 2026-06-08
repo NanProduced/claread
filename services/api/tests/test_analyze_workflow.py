@@ -1,4 +1,6 @@
 import asyncio
+from datetime import datetime
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
@@ -11,9 +13,11 @@ from app.schemas.internal.analysis import (
     VocabHighlight,
 )
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
 from app.services.analysis.preprocess.input_preparation import prepare_input
 from app.services.analysis.postprocess.projection import project_to_render_scene
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
+from app.workflow import learning_workflow
 from app.workflow import analyze_nodes
 
 
@@ -339,3 +343,75 @@ def test_llm_span_sets_usage_metadata_for_langsmith(monkeypatch) -> None:
     )
 
     assert result["usage_metadata"] == {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+
+
+def _drop(reason: str, stage: str = "grounding") -> DropLogEntry:
+    return DropLogEntry(
+        source_agent="vocabulary",
+        annotation_type="vocab_highlight",
+        sentence_id="s1",
+        anchor_text="missing",
+        drop_reason=reason,
+        drop_stage=stage,
+        dropped_at=datetime.now(),
+    )
+
+
+def test_should_repair_ignores_deterministic_cleanup_drops() -> None:
+    normalized_result = NormalizedAnnotationResult(
+        annotations=[],
+        sentence_translations=[],
+        drop_log=[
+            _drop("duplicate", "deduplication"),
+            _drop("subsumed_by_phrase_gloss", "conflict_resolution"),
+            _drop("density_exceeded_max_3", "density_control"),
+        ],
+    )
+
+    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is False
+
+
+def test_should_repair_triggers_for_zero_annotations_with_repair_worthy_drop() -> None:
+    normalized_result = NormalizedAnnotationResult(
+        annotations=[],
+        sentence_translations=[],
+        drop_log=[_drop("anchor_not_substring", "grounding")],
+    )
+
+    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is True
+
+
+def test_repair_agent_node_uses_same_zero_annotation_repair_rule(monkeypatch) -> None:
+    repaired = NormalizedAnnotationResult(annotations=[], sentence_translations=[], drop_log=[])
+    repair_mock = AsyncMock(return_value={"output": repaired, "usage_metadata": {"total_tokens": 1}})
+    monkeypatch.setattr(analyze_nodes, "_run_repair_llm_span", repair_mock)
+    monkeypatch.setattr(analyze_nodes, "_build_agent_trace_metadata", lambda *_args, **_kwargs: {"extra": {}})
+
+    text = "Languages change."
+    state = {
+        "payload": AnalyzeRequest.model_validate(
+            {
+                "request_id": "req-repair",
+                "text": text,
+                "source_type": "user_input",
+                "reading_goal": "daily_reading",
+                "reading_variant": "intermediate_reading",
+            }
+        ),
+        "prepared_input": prepare_input(text),
+        "goal_execution_plan": build_goal_execution_plan("daily_reading", "intermediate_reading"),
+        "vocabulary_draft": VocabularyDraft(vocab_highlights=[], phrase_glosses=[], context_glosses=[]),
+        "grammar_draft": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        "translation_draft": TranslationDraft(title="测试标题", sentence_translations=[]),
+        "normalized_result": NormalizedAnnotationResult(
+            annotations=[],
+            sentence_translations=[],
+            drop_log=[_drop("anchor_not_substring", "grounding")],
+        ),
+    }
+
+    result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))  # type: ignore[arg-type]
+
+    assert result["repair_request"]["repaired"] is True
+    assert "repair_worthy_drops: 1" in result["repair_request"]["error_context"]
+    repair_mock.assert_awaited_once()

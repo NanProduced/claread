@@ -11,6 +11,7 @@ from app.schemas.internal.analysis import (
     is_single_token,
 )
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.services.analysis.postprocess.anchor_resolution import resolve_text_anchor
 from app.services.analysis.postprocess.normalize import is_substring
 
 
@@ -51,6 +52,12 @@ def validate_context_gloss_business_rules(item: ContextGloss) -> list[str]:
     return warnings
 
 
+def _vocabulary_anchor_matches(text: str, sentence: PreparedSentence, occurrence: int | None) -> bool:
+    if is_substring(text, sentence.text):
+        return True
+    return resolve_text_anchor(sentence, text, occurrence) is not None
+
+
 def validate_vocabulary_draft(
     draft: VocabularyDraft,
     sentences: list[PreparedSentence],
@@ -63,8 +70,8 @@ def validate_vocabulary_draft(
         if v.sentence_id not in sentence_map:
             warnings.append(f"vocab_highlight: sentence_id {v.sentence_id} not found")
             continue
-        sent_text = sentence_map[v.sentence_id].text
-        if not is_substring(v.text, sent_text):
+        sentence = sentence_map[v.sentence_id]
+        if not _vocabulary_anchor_matches(v.text, sentence, v.occurrence):
             warnings.append(
                 f"vocab_highlight: text '{v.text}' not found in sentence {v.sentence_id}"
             )
@@ -74,8 +81,8 @@ def validate_vocabulary_draft(
         if p.sentence_id not in sentence_map:
             warnings.append(f"phrase_gloss: sentence_id {p.sentence_id} not found")
             continue
-        sent_text = sentence_map[p.sentence_id].text
-        if not is_substring(p.text, sent_text):
+        sentence = sentence_map[p.sentence_id]
+        if not _vocabulary_anchor_matches(p.text, sentence, p.occurrence):
             warnings.append(
                 f"phrase_gloss: text '{p.text}' not found in sentence {p.sentence_id}"
             )
@@ -85,8 +92,8 @@ def validate_vocabulary_draft(
         if c.sentence_id not in sentence_map:
             warnings.append(f"context_gloss: sentence_id {c.sentence_id} not found")
             continue
-        sent_text = sentence_map[c.sentence_id].text
-        if not is_substring(c.text, sent_text):
+        sentence = sentence_map[c.sentence_id]
+        if not _vocabulary_anchor_matches(c.text, sentence, c.occurrence):
             warnings.append(
                 f"context_gloss: text '{c.text}' not found in sentence {c.sentence_id}"
             )

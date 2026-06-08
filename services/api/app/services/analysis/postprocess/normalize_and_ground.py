@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from app.schemas.common import TextSpan
 from app.schemas.internal.analysis import (
     Annotation,
     ContextGloss,
@@ -26,6 +27,7 @@ from app.services.analysis.postprocess.draft_validators import (
     validate_phrase_gloss_business_rules,
     validate_vocab_highlight_business_rules,
 )
+from app.services.analysis.postprocess.anchor_resolution import resolve_text_anchor
 from app.services.analysis.postprocess.normalize import is_substring
 
 PRIORITY_RANK: dict[str, int] = {
@@ -120,6 +122,61 @@ def _grounding_check(
     return True
 
 
+def _source_substring(sentence_obj: PreparedSentence, span: TextSpan) -> str | None:
+    local_start = span.start - sentence_obj.sentence_span.start
+    local_end = span.end - sentence_obj.sentence_span.start
+    if local_start < 0 or local_end > len(sentence_obj.text) or local_start >= local_end:
+        return None
+    return sentence_obj.text[local_start:local_end]
+
+
+def _canonicalize_vocabulary_anchor(
+    annotation: VocabHighlight | PhraseGloss | ContextGloss,
+    sentence_map: dict[str, PreparedSentence],
+    drop_log: list[DropLogEntry],
+) -> VocabHighlight | PhraseGloss | ContextGloss | None:
+    """Ground vocabulary text, then canonicalize recoverable case/punctuation drift.
+
+    Existing substring behavior is preserved first so repeated exact anchors are
+    not made stricter. The flexible resolver is only used when the raw text does
+    not match the sentence under the normal comparison path.
+    """
+    sentence_obj = sentence_map.get(annotation.sentence_id)
+    if sentence_obj is None:
+        _log_drop(
+            "vocabulary",
+            annotation.type,
+            annotation.sentence_id,
+            annotation.text,
+            "sentence_id_not_found",
+            "grounding",
+            drop_log,
+        )
+        return None
+
+    if annotation.text in sentence_obj.text:
+        return annotation
+
+    comparison_match = is_substring(annotation.text, sentence_obj.text)
+    resolved = resolve_text_anchor(sentence_obj, annotation.text, annotation.occurrence)
+    canonical_text = _source_substring(sentence_obj, resolved) if resolved is not None else None
+    if canonical_text:
+        return annotation.model_copy(update={"text": canonical_text})
+    if comparison_match:
+        return annotation
+
+    _log_drop(
+        "vocabulary",
+        annotation.type,
+        annotation.sentence_id,
+        annotation.text,
+        "anchor_not_substring",
+        "grounding",
+        drop_log,
+    )
+    return None
+
+
 def _check_low_value_word(text: str) -> bool:
     return text.lower() in LOW_VALUE_WORDS
 
@@ -160,8 +217,10 @@ def _normalize_vocab_highlights(
     seen_keys: set[str] = set()
 
     for item in draft.vocab_highlights:
-        if not _grounding_check(item.type, item.text, item.sentence_id, ctx.sentence_map, "vocabulary", drop_log):
+        normalized_item = _canonicalize_vocabulary_anchor(item, ctx.sentence_map, drop_log)
+        if normalized_item is None:
             continue
+        item = normalized_item
         if not _passes_business_rules(item, drop_log):
             continue
         if _check_low_value_word(item.text):
@@ -186,8 +245,10 @@ def _normalize_phrase_glosses(
     seen_keys: set[str] = set()
 
     for item in draft.phrase_glosses:
-        if not _grounding_check(item.type, item.text, item.sentence_id, ctx.sentence_map, "vocabulary", drop_log):
+        normalized_item = _canonicalize_vocabulary_anchor(item, ctx.sentence_map, drop_log)
+        if normalized_item is None:
             continue
+        item = normalized_item
         if not _passes_business_rules(item, drop_log):
             continue
         key = _make_anchor_key(item.type, item.sentence_id, item.text)
@@ -209,8 +270,10 @@ def _normalize_context_glosses(
     seen_keys: set[str] = set()
 
     for item in draft.context_glosses:
-        if not _grounding_check(item.type, item.text, item.sentence_id, ctx.sentence_map, "vocabulary", drop_log):
+        normalized_item = _canonicalize_vocabulary_anchor(item, ctx.sentence_map, drop_log)
+        if normalized_item is None:
             continue
+        item = normalized_item
         if not _passes_business_rules(item, drop_log):
             continue
         key = _make_anchor_key(item.type, item.sentence_id, item.text)
@@ -278,6 +341,7 @@ def _merge_and_resolve_conflicts(
     context_result: list[ContextGloss],
     grammar_result: list[GrammarNote],
     sentence_analysis_result: list[SentenceAnalysis],
+    sentence_map: dict[str, PreparedSentence],
     drop_log: list[DropLogEntry],
 ) -> list[Annotation]:
     merged: list[Annotation] = []
@@ -289,10 +353,11 @@ def _merge_and_resolve_conflicts(
         key = (item.sentence_id, item.text)
         keyed_candidates.setdefault(key, []).append(item)
 
+    vocabulary_winners: list[Annotation] = []
     for (sentence_id, text), candidates in keyed_candidates.items():
         candidates.sort(key=lambda item: PRIORITY_RANK.get(item.type, 0), reverse=True)
         winner = candidates[0]
-        merged.append(winner)
+        vocabulary_winners.append(winner)
         for loser in candidates[1:]:
             _log_drop(
                 "vocabulary",
@@ -304,7 +369,78 @@ def _merge_and_resolve_conflicts(
                 drop_log,
             )
 
+    merged.extend(_drop_subsumed_vocab_highlights(vocabulary_winners, sentence_map, drop_log))
     return merged
+
+
+def _annotation_span(
+    annotation: Annotation,
+    sentence_map: dict[str, PreparedSentence],
+) -> TextSpan | None:
+    if annotation.type not in {"vocab_highlight", "phrase_gloss", "context_gloss"}:
+        return None
+    sentence_obj = sentence_map.get(annotation.sentence_id)
+    if sentence_obj is None:
+        return None
+    return resolve_text_anchor(
+        sentence_obj,
+        getattr(annotation, "text", ""),
+        getattr(annotation, "occurrence", None),
+    )
+
+
+def _span_contains(container: TextSpan, inner: TextSpan) -> bool:
+    return container.start <= inner.start and inner.end <= container.end
+
+
+def _drop_subsumed_vocab_highlights(
+    vocabulary_winners: list[Annotation],
+    sentence_map: dict[str, PreparedSentence],
+    drop_log: list[DropLogEntry],
+) -> list[Annotation]:
+    rich_annotations = sorted(
+        [
+            item for item in vocabulary_winners
+            if item.type in {"context_gloss", "phrase_gloss"}
+        ],
+        key=lambda item: PRIORITY_RANK.get(item.type, 0),
+        reverse=True,
+    )
+    rich_spans = [
+        (item, span)
+        for item in rich_annotations
+        if (span := _annotation_span(item, sentence_map)) is not None
+    ]
+
+    survivors: list[Annotation] = []
+    for item in vocabulary_winners:
+        if item.type != "vocab_highlight":
+            survivors.append(item)
+            continue
+
+        item_span = _annotation_span(item, sentence_map)
+        subsumer = None
+        if item_span is not None:
+            for rich_item, rich_span in rich_spans:
+                if rich_item.sentence_id == item.sentence_id and _span_contains(rich_span, item_span):
+                    subsumer = rich_item
+                    break
+
+        if subsumer is None:
+            survivors.append(item)
+            continue
+
+        _log_drop(
+            "vocabulary",
+            item.type,
+            item.sentence_id,
+            item.text,
+            f"subsumed_by_{subsumer.type}",
+            "conflict_resolution",
+            drop_log,
+        )
+
+    return survivors
 
 
 def _annotation_identity(annotation: Annotation) -> str:
@@ -400,6 +536,7 @@ def normalize_and_ground(
         context_result,
         grammar_result,
         sentence_analysis_result,
+        ctx.sentence_map,
         drop_log,
     )
 

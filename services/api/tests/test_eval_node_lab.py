@@ -37,8 +37,8 @@ from app.eval_adapter.schemas import (
     SchemaIdentity,
     WorkflowIdentity,
 )
-from app.schemas.internal.analysis import GrammarNote, SpanRef
-from app.schemas.internal.drafts import GrammarDraft
+from app.schemas.internal.analysis import ContextGloss, GrammarNote, PhraseGloss, SpanRef, VocabHighlight
+from app.schemas.internal.drafts import GrammarDraft, VocabularyDraft
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 
 
@@ -470,6 +470,58 @@ async def test_node_lab_grammar_quick_validation_reports_anchor_warning(
     assert result.run.quick_validation["status"] == "warning"
     assert result.run.quick_validation["warning_count"] == 1
     assert result.run.quick_validation["warnings"][0]["code"] == "grammar_span_not_found"
+
+
+@pytest.mark.anyio
+async def test_node_lab_vocabulary_quick_validation_reports_duplicates_and_subsumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(node_lab, "get_settings", _settings)
+    dynamic_run_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            output=VocabularyDraft(
+                vocab_highlights=[
+                    VocabHighlight(sentence_id="s1", text="settling"),
+                    VocabHighlight(sentence_id="s1", text="range"),
+                ],
+                phrase_glosses=[
+                    PhraseGloss(
+                        sentence_id="s1",
+                        text="settling down",
+                        phrase_type="phrasal_verb",
+                        zh="安定下来",
+                    )
+                ],
+                context_glosses=[
+                    ContextGloss(
+                        sentence_id="s1",
+                        text="range",
+                        gloss="一系列",
+                        reason="后面语境强调多个选择。",
+                    )
+                ],
+            )
+        )
+    )
+    monkeypatch.setattr(node_lab, "_run_dynamic_agent", dynamic_run_mock)
+
+    result = await node_lab.run_article_analysis_node_lab(
+        node_lab.ArticleAnalysisNodeLabRunRequest(
+            node_name="vocabulary",
+            text="They are settling down with a range of choices.",
+            candidate_override={
+                "candidate_id": "cand-vocab",
+                "node_name": "vocabulary",
+                "model_selection": {"default_profile": "eval-profile"},
+            },
+        )
+    )
+
+    assert result.run.quick_validation is not None
+    assert result.run.quick_validation["status"] == "warning"
+    warning_codes = {item["code"] for item in result.run.quick_validation["warnings"]}
+    assert "vocabulary_same_text_cross_type" in warning_codes
+    assert "vocab_highlight_subsumed_by_phrase_gloss" in warning_codes
 
 
 @pytest.mark.anyio

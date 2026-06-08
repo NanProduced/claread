@@ -37,6 +37,11 @@ from app.services.analysis.planning.goal_planner import build_goal_execution_pla
 from app.services.analysis.postprocess.draft_validators import validate_all_drafts
 from app.services.analysis.postprocess.normalize_and_ground import normalize_and_ground
 from app.services.analysis.postprocess.projection import project_to_render_scene
+from app.services.analysis.postprocess.repair_policy import (
+    deterministic_drop_count,
+    repair_worthy_drop_count,
+    should_trigger_repair,
+)
 from app.services.analysis.preprocess.input_preparation import prepare_input
 from app.services.analysis.prompting.strategy_builder import (
     build_grammar_bundle_async,
@@ -434,17 +439,7 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
     """Repair agent node（条件触发）。"""
     normalized_result = state.get("normalized_result")
 
-    if normalized_result is not None and normalized_result.drop_log:
-        quality_drops = [
-            d for d in normalized_result.drop_log
-            if d.drop_stage != "density_control"
-        ]
-        quality_drop_count = len(quality_drops)
-        annotation_count = len(normalized_result.annotations)
-        failure_ratio = quality_drop_count / (annotation_count + quality_drop_count) if annotation_count > 0 else 0.0
-        if failure_ratio <= ANCHOR_FAILURE_THRESHOLD:
-            return {"repair_request": None}
-    elif normalized_result is not None:
+    if not should_trigger_repair(normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD):
         return {"repair_request": None}
 
     prepared_input = state["prepared_input"]
@@ -455,9 +450,15 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
     if vocabulary_draft is None or grammar_draft is None or translation_draft is None:
         return {"repair_request": None}
 
-    quality_drop_count = len([d for d in (normalized_result.drop_log or []) if d.drop_stage != "density_control"])
+    repair_drop_count = repair_worthy_drop_count(normalized_result.drop_log or [])
+    deterministic_count = deterministic_drop_count(normalized_result.drop_log or [])
     total_drop_count = len(normalized_result.drop_log) if normalized_result else 0
-    error_context = f"normalized_result 锚点失败率过高或结构异常。quality_drops: {quality_drop_count}, density_drops: {total_drop_count - quality_drop_count}"
+    error_context = (
+        "normalized_result 锚点失败率过高或结构异常。"
+        f"repair_worthy_drops: {repair_drop_count}, "
+        f"deterministic_drops: {deterministic_count}, "
+        f"total_drops: {total_drop_count}"
+    )
     repair_deps = RepairAgentDeps(
         sentences=[{"sentence_id": s.sentence_id, "text": s.text} for s in prepared_input.sentences],
         original_drafts={
