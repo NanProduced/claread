@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import json
 import re
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, Callable, Literal, cast
@@ -20,11 +19,6 @@ from app.agents.reader_ask_agent import (
     ReaderAskRuntimeState,
     build_reader_ask_prompt,
     get_reader_ask_agent,
-)
-from app.agents.reader_ask_planner_agent import (
-    ReaderAskPlannerAgentDeps,
-    build_reader_ask_planner_prompt,
-    get_reader_ask_planner_agent,
 )
 from app.config.settings import get_settings
 from app.database import connection as db_connection
@@ -46,22 +40,17 @@ from app.schemas.reader_ask import (
     ReaderAskContextRecordSearchResponse,
     ReaderAskContextPlan,
     ReaderAskCurrentRecordAffordances,
-    ReaderAskCurrentRecordContext,
     ReaderAskDeleteSupplementResponse,
     ReaderAskAssetDisambiguation,
     ReaderAskDisambiguation,
     ReaderAskEvidenceItem,
     ReaderAskEntryAction,
-    ReaderAskExternalAssetContext,
-    ReaderAskExternalRecordContext,
     ReaderAskGrammarNoteCard,
     ReaderAskGrammarNoteCardSpan,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
     ReaderAskPageIdentity,
     ReaderAskPersistedSupplement,
-    ReaderAskReferenceResolutionStatus,
-    ReaderAskPlannerDecision,
     ReaderAskResolvedContextInput,
     ReaderAskResolvedIntent,
     ReaderAskResolvedContextSummary,
@@ -132,6 +121,8 @@ from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
 from app.services.reader_ask import stream_events as stream_events_svc
 from app.services.reader_ask import supplements as supplements_svc
+from app.services.reader_ask import planner_runtime as planner_runtime_svc
+from app.services.reader_ask import config as cfg
 from app.services.reader_ask import stream_checkpoint as stream_checkpoint_svc
 from app.services.reader_ask import utils
 
@@ -144,15 +135,6 @@ from app.services import reader_notes as reader_notes_svc
 from app.services import user_annotations as user_annotations_svc
 
 
-_MAX_HISTORY_MESSAGES = 8
-_MAX_CONTEXT_TEXT = 3200
-_MAX_MESSAGE_TEXT = 1200
-_MAX_PROMPT_ASSET_ITEMS = 5
-_DEFAULT_MAX_OUTPUT_TOKENS = 1600
-_MIN_MAX_OUTPUT_TOKENS = 400
-_PROMPT_BUDGET_BUFFER_TOKENS = 800
-_PLANNER_MAX_HISTORY_MESSAGES = 8
-_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = 500
 _WORKFLOW_NAME = "reader_ask"
 _WORKFLOW_VERSION = "1.0.0"
 _SCHEMA_VERSION = "reader-ask-v2"
@@ -176,15 +158,6 @@ class _RecordBundle:
     page_state_json: dict[str, Any]
     workflow_version: str | None
     schema_version: str | None
-
-
-@dataclass(slots=True)
-class _SemanticPlanningResult:
-    planner_decision: ReaderAskPlannerDecision
-    planner_validation_status: str
-    planner_usage_summary: dict[str, Any] | None
-    reference_resolution: planner.ReaderAskReferenceResolution
-    planning_snapshot: planner.ReaderAskPlanningSnapshot
 
 
 def _iso_now() -> str:
@@ -483,29 +456,6 @@ def _reading_variant_from_record(record: _RecordBundle, reading_goal: ReadingGoa
     return "academic_general" if reading_goal == "academic" else "intermediate_reading"
 
 
-def _annotation_quick_action_kind(
-    task_mode: ReaderAskTaskMode,
-    entry_action: ReaderAskEntryAction,
-) -> Literal["grammar_note", "sentence_analysis"] | None:
-    if task_mode == "grammar" or entry_action == "why_here":
-        return "grammar_note"
-    if task_mode == "breakdown" or entry_action == "explain_this":
-        return "sentence_analysis"
-    return None
-
-
-def _submission_mode(
-    *,
-    entry_action: ReaderAskEntryAction,
-    attachments: list[ReaderAskAttachment],
-) -> ReaderAskSubmissionMode:
-    if entry_action not in {"why_here", "explain_this"}:
-        return "chat"
-    if any(attachment.metadata.source_surface == "selection_toolbar" for attachment in attachments):
-        return "quick_action"
-    return "chat"
-
-
 def _focus_guidance_from_anchor(
     anchor: ReaderAskAnchorRef | None,
     sentence_text: str,
@@ -526,26 +476,6 @@ def _focus_guidance_from_anchor(
         guidance["start_offset"] = anchor.start_offset
         guidance["end_offset"] = anchor.end_offset
     return guidance
-
-
-def _quick_action_not_applicable(
-    *,
-    kind: Literal["grammar_note", "sentence_analysis"],
-    sentence_id: str,
-    sentence_text: str,
-    focus_text: str,
-    reason: str,
-    suggestion: str,
-) -> dict[str, Any]:
-    return {
-        "status": "not_applicable",
-        "kind": kind,
-        "sentence_id": sentence_id,
-        "source_sentence": sentence_text,
-        "focus_text": focus_text,
-        "reason": reason,
-        "suggestion": suggestion,
-    }
 
 
 def _textual_overlap(left: str, right: str) -> bool:
@@ -575,7 +505,7 @@ async def _generate_sentence_annotation(
     selection_mode = anchor.anchor_type if anchor is not None else "sentence"
 
     if kind == "sentence_analysis" and selection_mode != "sentence":
-        return _quick_action_not_applicable(
+        return planner_runtime_svc.quick_action_not_applicable(
             kind=kind,
             sentence_id=sentence_id,
             sentence_text=sentence_text,
@@ -613,7 +543,7 @@ async def _generate_sentence_annotation(
             chosen_note = note
             break
         if chosen_note is None:
-            result = _quick_action_not_applicable(
+            result = planner_runtime_svc.quick_action_not_applicable(
                 kind=kind,
                 sentence_id=sentence_id,
                 sentence_text=sentence_text,
@@ -655,7 +585,7 @@ async def _generate_sentence_annotation(
                 "annotation": analysis.model_dump(mode="json"),
                 "usage_summary": usage_summary,
             }
-    result = _quick_action_not_applicable(
+    result = planner_runtime_svc.quick_action_not_applicable(
         kind=kind,
         sentence_id=sentence_id,
         sentence_text=sentence_text,
@@ -667,363 +597,12 @@ async def _generate_sentence_annotation(
     return result
 
 
-def _planner_history_messages(
-    history_messages: list[dict[str, Any]],
-    *,
-    max_messages: int = _PLANNER_MAX_HISTORY_MESSAGES,
-) -> list[dict[str, object]]:
-    from app.services.reader_ask.runtime_contract import (
-        build_structured_history_summary,
-        format_structured_history_summary,
-    )
-
-    # Build structured summary from messages outside the recent window
-    structured_summary = build_structured_history_summary(
-        history_messages, recent_window=max_messages
-    )
-
-    normalized: list[dict[str, object]] = []
-    # Prepend structured summary as a system-like context message
-    if structured_summary:
-        normalized.append(
-            {
-                "role": "system",
-                "content_md": format_structured_history_summary(structured_summary),
-                "resolved_intent": None,
-            }
-        )
-
-    for item in history_messages[-max_messages:]:
-        role = item.get("role")
-        if role not in {"user", "assistant"}:
-            continue
-        normalized.append(
-            {
-                "role": role,
-                "content_md": _truncate_history_message(
-                    str(item.get("content_md") or ""),
-                    role=str(role),
-                    limit=_MAX_MESSAGE_TEXT,
-                ),
-                "resolved_intent": item.get("resolved_intent"),
-            }
-        )
-    return normalized
-
-
-def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
-    return any(needle in text for needle in needles)
-
-
-
-
-def _fallback_reference_query(user_message: str) -> str | None:
-    normalized = _normalize_text(user_message)
-    if not normalized:
-        return None
-    # Pass 1: explicit title markers (book title marks, quotes)
-    for pattern in (r"《([^》]+)》", r"“([^”]+)”", r"\"([^\"]+)\"", r"'([^']+)'"):
-        match = re.search(pattern, normalized)
-        if not match:
-            continue
-        query = utils.clean_reference_query(match.group(1))
-        if query:
-            return query
-    # Pass 2: weak reference patterns — "之前那篇 X", "讲 X 的文章", "关于 X 的文章",
-    # "the article about X", "that article on X", etc.
-    weak_patterns = (
-        # Chinese: 之前那篇/那篇/那篇关于/讲/关于 + topic + 的?文章/论文/研究
-        # Topic allows spaces (for mixed CN/EN) but stops at punctuation/的
-        r"(?:之前那篇|那篇|那篇关于|讲|关于)([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:的?(?:文章|论文|研究|报道|书|文本))",
-        # Chinese: topic + 那篇/这篇 + 的?文章/论文
-        r"([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:那篇|这篇)(?:的?(?:文章|论文|研究|报道))",
-        # English: that/the article about/on X — capture up to 6 words, stop at verb boundary
-        r"(?:that|the)\s+(?:article|paper|essay|text|piece)\s+(?:about|on|regarding|covering)\s+([\w\-]+(?:\s+(?!also|that|which|who|is|was|were|has|had|did|and|but|or|discussed|mentioned|talked|explained|noted|stated|pointed)[\w\-]+){0,5})",
-    )
-    for pattern in weak_patterns:
-        match = re.search(pattern, normalized, re.IGNORECASE)
-        if not match:
-            continue
-        query = utils.clean_reference_query(match.group(1))
-        if query:
-            return query
-    return None
-
-
-def _fallback_semantic_planner_decision(
-    *,
-    user_message: str,
-    entry_action: ReaderAskEntryAction,
-    page_identity: ReaderAskPageIdentity,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    record: _RecordBundle,
-    failure_reason: str | None,
-) -> ReaderAskPlannerDecision:
-    normalized_message = _normalize_text(user_message).lower()
-    has_external_record_attachment = any(
-        attachment.kind == "record_ref" and attachment.subtype == "related_record"
-        for attachment in attachments
-    )
-    has_external_asset_attachment = any(
-        attachment.kind in {"analysis_ref", "supplement_ref"}
-        and (
-            (attachment.metadata.record_id and attachment.metadata.record_id != page_identity.record_id)
-            or (attachment.target_key and f"record:{page_identity.record_id}:" not in attachment.target_key)
-        )
-        for attachment in attachments
-    )
-    has_dictionary_anchor = any(anchor.anchor_type == "dictionary_entry" for anchor in anchors)
-    has_local_anchor = bool(anchors)
-    fallback_reference_query = _fallback_reference_query(user_message)
-    has_article_overview = context_runtime_svc.render_scene_article_overview(record) is not None
-    has_sentence_entries = _render_scene_has_sentence_entries(record)
-
-    resolved_intent: ReaderAskResolvedIntent = "explain"
-    if entry_action == "lookup_in_context" or has_dictionary_anchor:
-        resolved_intent = "vocabulary"
-    elif entry_action == "why_here":
-        resolved_intent = "grammar"
-    elif _contains_any(normalized_message, ("拆句", "拆解", "主干", "break down", "breakdown")):
-        resolved_intent = "breakdown"
-    elif _contains_any(normalized_message, ("练习", "exercise", "practice", "quiz")):
-        resolved_intent = "practice"
-    elif _contains_any(normalized_message, ("语法", "句法", "时态", "语态", "过去式", "现在式", "将来式", "grammar", "syntax", "tense")):
-        resolved_intent = "grammar"
-    elif _contains_any(normalized_message, ("词义", "词汇", "短语", "单词", "这个词", "那个词", "vocabulary", "phrase", "word", "meaning")):
-        resolved_intent = "vocabulary"
-    elif _contains_any(normalized_message, ("对比", "比较", "不同", "区别", "差异", "compare", "difference", "versus", "vs")):
-        resolved_intent = "general"
-    elif _contains_any(normalized_message, ("总结", "概括", "归纳", "summarize", "summary", "翻译", "translate", "复习", "review", "分析", "analyze")):
-        resolved_intent = "general"
-
-    has_weak_reference = fallback_reference_query is not None
-    clarification_only = False
-    clarification_reason: str | None = None
-    cross_record_context_allowed = (
-        has_external_record_attachment or has_external_asset_attachment or has_weak_reference
-    )
-    article_overview_needed = False
-    local_context_window_needed = False
-    record_insights_needed = False
-    dictionary_needed = resolved_intent == "vocabulary" or entry_action == "lookup_in_context" or has_dictionary_anchor
-    structured_asset_requested = has_external_asset_attachment
-    structured_asset_type = (
-        "supplement"
-        if any(attachment.kind == "supplement_ref" for attachment in attachments)
-        else "analysis"
-        if structured_asset_requested
-        else None
-    )
-
-    if has_local_anchor:
-        local_context_window_needed = True
-        if resolved_intent in {"grammar", "breakdown", "practice"} and has_sentence_entries:
-            record_insights_needed = True
-    elif cross_record_context_allowed:
-        # External context available — no clarification needed
-        if has_article_overview:
-            article_overview_needed = True
-        local_context_window_needed = True
-    elif has_article_overview:
-        article_overview_needed = True
-        local_context_window_needed = True
-    else:
-        local_context_window_needed = True
-
-    # Conservative path: weak reference without anchor → followup so user can confirm
-    if has_weak_reference and not has_local_anchor:
-        clarification_reason = "fallback_weak_reference_without_anchor"
-        # Don't set clarification_only=True (must_clarify) — we can still answer
-        # at article level, but signal that the reference is uncertain.
-
-    return ReaderAskPlannerDecision(
-        resolved_intent=resolved_intent,
-        clarification_only=clarification_only,
-        clarification_reason=clarification_reason,
-        reference_request={
-            "requested": bool(fallback_reference_query),
-            "query": fallback_reference_query,
-            "reason": (
-                "fallback_weak_reference" if has_weak_reference and clarification_reason
-                else "fallback_title_like_reference" if fallback_reference_query
-                else None
-            ),
-        },
-        structured_asset_request={
-            "requested": structured_asset_requested,
-            "requested_asset_type": structured_asset_type,
-            "reason": "fallback_from_explicit_external_asset" if structured_asset_requested else None,
-        },
-        working_set={
-            "local_context_window_needed": local_context_window_needed,
-            "record_insights_needed": record_insights_needed,
-            "article_overview_needed": article_overview_needed,
-            "dictionary_needed": dictionary_needed,
-            "cross_record_context_allowed": cross_record_context_allowed,
-            "external_asset_lookup_needed": structured_asset_requested and has_external_record_attachment,
-        },
-        rationale=(
-            "planner validation failed; used deterministic fallback"
-            + (f": {failure_reason}" if failure_reason else "")
-        ),
-    )
-
-
-
-
-
-
-async def _run_semantic_planner(
-    *,
-    user_message: str,
-    page_identity: ReaderAskPageIdentity,
-    entry_action: ReaderAskEntryAction,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    history_messages: list[dict[str, Any]],
-    record: _RecordBundle,
-) -> tuple[ReaderAskPlannerDecision, str, dict[str, Any] | None]:
-    planner_input = planner.build_planner_input(
-        user_message=user_message,
-        entry_action=entry_action,
-        page_identity=page_identity,
-        current_record_affordances=_current_record_affordances(record=record, page_identity=page_identity),
-        attachments=attachments,
-        anchors=anchors,
-        history_messages=_planner_history_messages(history_messages),
-    )
-    agent = get_reader_ask_planner_agent()
-    model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)
-    if model is None:
-        raise RuntimeError("model route is not configured: reader_ask_planner")
-
-    route_settings = RunModelSettings(
-        max_tokens=_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
-        temperature=0.1,
-        timeout=25.0,
-    )
-    if model_config and model_config.model_settings is not None:
-        route_settings = route_settings.merged_with(model_config.model_settings)
-    route_settings = RunModelSettings(
-        max_tokens=route_settings.max_tokens or _DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
-        temperature=route_settings.temperature,
-        timeout=route_settings.timeout,
-    )
-
-    last_error: Exception | None = None
-    for attempt in range(2):
-        try:
-            result = await agent.run(
-                build_reader_ask_planner_prompt(
-                    ReaderAskPlannerAgentDeps(planner_input=planner_input)
-                ),
-                deps=ReaderAskPlannerAgentDeps(planner_input=planner_input),
-                model=model,
-                model_settings=route_settings.to_pydantic_ai(),
-            )
-            validation_status = "valid" if attempt == 0 else "retry_succeeded"
-            return result.output, validation_status, extract_run_usage(result)
-        except Exception as exc:
-            last_error = exc
-    logger.warning(
-        "reader_ask planner agent failed after retries, using deterministic fallback: %s",
-        last_error,
-        extra={"failure_reason": str(last_error) if last_error else None},
-    )
-    return (
-        _fallback_semantic_planner_decision(
-            user_message=user_message,
-            entry_action=entry_action,
-            page_identity=page_identity,
-            attachments=attachments,
-            anchors=anchors,
-            record=record,
-            failure_reason=str(last_error) if last_error else None,
-        ),
-        "fallback_deterministic",
-        None,
-    )
-
-
-async def _resolve_semantic_planning(
-    *,
-    user_id: UUID,
-    record: _RecordBundle,
-    history_messages: list[dict[str, Any]],
-    user_message: str,
-    page_identity: ReaderAskPageIdentity,
-    entry_action: ReaderAskEntryAction,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-) -> _SemanticPlanningResult:
-    planner_decision, planner_validation_status, planner_usage_summary = await _run_semantic_planner(
-        user_message=user_message,
-        page_identity=page_identity,
-        entry_action=entry_action,
-        attachments=attachments,
-        anchors=anchors,
-        history_messages=history_messages,
-        record=record,
-    )
-
-    reference_resolution = await resolver_svc.resolve_known_references(
-        user_id=user_id,
-        current_record_id=record.record_id,
-        reference_needs=planner.reference_needs_from_decision(planner_decision),
-    )
-    pre_planning_snapshot = planner.plan_request(
-        content=user_message,
-        page_identity=page_identity,
-        entry_action=entry_action,
-        attachments=attachments,
-        anchors=anchors,
-        planner_decision=planner_decision,
-        planner_validation_status=planner_validation_status,
-        reference_resolution=reference_resolution,
-        skip_expensive_fields=True,
-    )
-
-    async def _bundle_loader(lookup_user_id: UUID, lookup_record_id: UUID) -> dict[str, Any]:
-        bundle = await _load_record_bundle(lookup_user_id, lookup_record_id)
-        return {
-            "title": bundle.title,
-            "render_scene": bundle.render_scene,
-        }
-
-    structured_asset_resolution = await resolver_svc.resolve_structured_asset_references(
-        user_id=user_id,
-        current_record_id=record.record_id,
-        external_record_refs=pre_planning_snapshot.working_set.external_record_refs,
-        structured_asset_needs=pre_planning_snapshot.structured_asset_needs,
-        explicit_asset_refs=pre_planning_snapshot.working_set.external_asset_refs,
-        bundle_loader=_bundle_loader,
-        supplement_loader=supplements_svc.list_supplements_for_record,
-    )
-    planning_snapshot = planner.plan_request(
-        content=user_message,
-        page_identity=page_identity,
-        entry_action=entry_action,
-        attachments=attachments,
-        anchors=anchors,
-        planner_decision=planner_decision,
-        planner_validation_status=planner_validation_status,
-        reference_resolution=reference_resolution,
-        structured_asset_resolution=structured_asset_resolution,
-    )
-    return _SemanticPlanningResult(
-        planner_decision=planner_decision,
-        planner_validation_status=planner_validation_status,
-        planner_usage_summary=planner_usage_summary,
-        reference_resolution=reference_resolution,
-        planning_snapshot=planning_snapshot,
-    )
-
 
 
 async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
     if not anchor.anchor_id and not anchor.target_key:
         return anchor
+
 
     row = await conn.fetchrow(
         """
@@ -1288,7 +867,7 @@ def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnch
                 "content": _truncate_text(entry.get("content"), 220),
             }
         )
-    return results[:_MAX_PROMPT_ASSET_ITEMS]
+    return results[:cfg.MAX_PROMPT_ASSET_ITEMS]
 
 
 async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[str, Any]]:
@@ -1318,7 +897,7 @@ async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[s
                 "mastery_status": item.get("mastery_status"),
             }
         )
-    return matches[:_MAX_PROMPT_ASSET_ITEMS]
+    return matches[:cfg.MAX_PROMPT_ASSET_ITEMS]
 
 
 async def _tool_lookup_dictionary_entry(
@@ -1635,8 +1214,9 @@ def _build_stream_checkpoint_output_json(
         response_cards=response_cards,
         usage_summary=None,
         billed_points=0,
-        resolved_context=_resolved_context_summary(
-            record=record,
+        resolved_context=planner.build_resolved_context_summary(
+            record_id=str(record.record_id),
+            record_title=record.title,
             anchors=anchors,
             explicit_attachment_count=len(attachments),
             runtime_state=runtime_state,
@@ -2071,58 +1651,6 @@ def _build_supplement_candidates_from_runtime(
     )
 
 
-def _quick_action_label(entry_action: ReaderAskEntryAction) -> str:
-    if entry_action == "why_here":
-        return "语法解析"
-    if entry_action == "explain_this":
-        return "句子拆分"
-    return "快捷分析"
-
-
-def _quick_action_content(
-    *,
-    entry_action: ReaderAskEntryAction,
-    generated_annotation: dict[str, Any] | None,
-) -> str:
-    if generated_annotation is None:
-        return f"{_quick_action_label(entry_action)}暂时无法完成。"
-    if generated_annotation.get("status") == "not_applicable":
-        reason = str(generated_annotation.get("reason") or "").strip()
-        suggestion = str(generated_annotation.get("suggestion") or "").strip()
-        pieces = [f"这次没有直接生成{_quick_action_label(entry_action)}卡。"]
-        if reason:
-            pieces.append(reason)
-        if suggestion:
-            pieces.append(suggestion)
-        return "\n\n".join(pieces)
-
-    label = str(generated_annotation.get("label") or "").strip()
-    focus_text = str(generated_annotation.get("focus_text") or "").strip()
-    if generated_annotation.get("kind") == "grammar_note":
-        note = str(generated_annotation.get("note_zh") or generated_annotation.get("content") or "").strip()
-        scope_hint = (
-            "我先基于整句理解，再聚焦你选中的片段。"
-            if generated_annotation.get("analysis_scope") == "focus_span"
-            else "我直接围绕这句话的关键结构来解释。"
-        )
-        pieces = [scope_hint]
-        if label:
-            pieces.append(f"关键语法点：**{label}**")
-        if focus_text and generated_annotation.get("analysis_scope") == "focus_span":
-            pieces.append(f"聚焦片段：`{focus_text}`")
-        if note:
-            pieces.append(note)
-        return "\n\n".join(pieces)
-
-    analysis = str(generated_annotation.get("analysis_zh") or generated_annotation.get("content") or "").strip()
-    pieces = ["我先给你一个结构拆解卡，再补一句阅读顺序说明。"]
-    if label:
-        pieces.append(f"句型概述：**{label}**")
-    if analysis:
-        pieces.append(analysis)
-    return "\n\n".join(pieces)
-
-
 def _tool_trace_entry(
     *,
     tool_name: str,
@@ -2153,7 +1681,7 @@ async def _run_explicit_quick_action_annotation(
 ) -> dict[str, Any] | None:
     if submission_mode != "quick_action":
         return None
-    kind = _annotation_quick_action_kind(task_mode, entry_action)
+    kind = planner_runtime_svc.annotation_quick_action_kind(task_mode, entry_action)
     if kind is None or primary_anchor is None:
         return None
 
@@ -2348,81 +1876,7 @@ def _merge_usage_summaries(base_usage: dict[str, Any] | None, extra_usages: list
     return {"aggregate": aggregate, **details}
 
 
-def _build_context_plan(
-    *,
-    entry_action: ReaderAskEntryAction,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    runtime_state: ReaderAskRuntimeState,
-    citations: list[ReaderAskCitation],
-    reference_resolution: planner.ReaderAskReferenceResolution | None = None,
-    planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None,
-) -> ReaderAskContextPlan:
-    return planner.build_context_plan(
-        entry_action=entry_action,
-        attachments=attachments,
-        anchors=anchors,
-        runtime_state=runtime_state,
-        citations=citations,
-        reference_resolution=reference_resolution,
-        planning_snapshot=planning_snapshot,
-    )
 
-
-def _build_resolved_context_input(
-    *,
-    page_identity: ReaderAskPageIdentity,
-    entry_action: ReaderAskEntryAction,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    current_record_context: ReaderAskCurrentRecordContext | None = None,
-    external_record_contexts: list[ReaderAskExternalRecordContext] | None = None,
-    external_asset_contexts: list[ReaderAskExternalAssetContext] | None = None,
-) -> ReaderAskResolvedContextInput:
-    return planner.build_resolved_context_input(
-        page_identity=page_identity,
-        entry_action=entry_action,
-        attachments=attachments,
-        anchors=anchors,
-        current_record_context=current_record_context,
-        external_record_contexts=external_record_contexts,
-        external_asset_contexts=external_asset_contexts,
-    )
-
-
-def _resolved_context_summary(
-    *,
-    record: _RecordBundle,
-    anchors: list[ReaderAskAnchorRef],
-    explicit_attachment_count: int,
-    runtime_state: ReaderAskRuntimeState,
-    used_cross_record_context: bool,
-    citations: list[ReaderAskCitation],
-) -> ReaderAskResolvedContextSummary:
-    return planner.build_resolved_context_summary(
-        record_id=str(record.record_id),
-        record_title=record.title,
-        anchors=anchors,
-        explicit_attachment_count=explicit_attachment_count,
-        runtime_state=runtime_state,
-        used_cross_record_context=used_cross_record_context,
-        citations=citations,
-    )
-
-
-def _build_trace_summary(
-    *,
-    runtime_state: ReaderAskRuntimeState,
-    context_plan: ReaderAskContextPlan,
-    planning_snapshot: planner.ReaderAskPlanningSnapshot | None = None,
-    clarification_mode: planner.ReaderAskClarificationMode = "none",
-) -> ReaderAskTraceSummary:
-    return planner.build_trace_summary(
-        runtime_state=runtime_state,
-        context_plan=context_plan,
-        planning_snapshot=planning_snapshot,
-        clarification_mode=clarification_mode,
-    )
 
 
 
@@ -2661,7 +2115,7 @@ async def stream_thread_message(
             yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
             return
 
-        planning_result = await _resolve_semantic_planning(
+        planning_result = await planner_runtime_svc.resolve_semantic_planning(
             user_id=user_id,
             record=record,
             history_messages=history_messages,
@@ -2670,6 +2124,17 @@ async def stream_thread_message(
             entry_action=body.entry_action,
             attachments=attachments,
             anchors=resolved_anchors,
+            deps=planner_runtime_svc.ResolvePlanningDeps(
+                run_planner_deps=planner_runtime_svc.RunPlannerDeps(
+                    current_record_affordances_cb=_current_record_affordances,
+                    build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
+                ),
+                resolve_known_references_cb=resolver_svc.resolve_known_references,
+                load_record_bundle_cb=_load_record_bundle,
+                resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
+                list_supplements_cb=supplements_svc.list_supplements_for_record,
+            ),
+            truncate_history_message_cb=_truncate_history_message,
         )
         planner_usage_summary = planning_result.planner_usage_summary
         reference_resolution = planning_result.reference_resolution
@@ -2680,7 +2145,7 @@ async def stream_thread_message(
         external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
         clarification_only = planning_snapshot.clarification_only
         clarification_mode = planning_snapshot.clarification_mode
-        submission_mode = _submission_mode(entry_action=body.entry_action, attachments=attachments)
+        submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
         if clarification_only and clarification_mode == "must_clarify":
             user_message = await repo.create_message(
                 thread_id=thread_id,
@@ -2733,7 +2198,7 @@ async def stream_thread_message(
                 citations=list(citations),
                 source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
             )
-            context_plan = _build_context_plan(
+            context_plan = planner.build_context_plan(
                 entry_action=body.entry_action,
                 attachments=attachments,
                 anchors=resolved_anchors,
@@ -2752,7 +2217,7 @@ async def stream_thread_message(
                 external_asset_disambiguation=external_asset_disambiguation,
                 include_clarification=True,
             )
-            trace_summary = _build_trace_summary(
+            trace_summary = planner.build_trace_summary(
                 runtime_state=runtime_state,
                 context_plan=context_plan,
                 planning_snapshot=planning_snapshot,
@@ -2815,8 +2280,9 @@ async def stream_thread_message(
                 response_cards=[],
                 usage_summary=planner_usage_summary,
                 billed_points=billed_points,
-                resolved_context=_resolved_context_summary(
-                    record=record,
+                resolved_context=planner.build_resolved_context_summary(
+                    record_id=str(record.record_id),
+                    record_title=record.title,
                     anchors=resolved_anchors,
                     explicit_attachment_count=len(attachments),
                     runtime_state=runtime_state,
@@ -2949,11 +2415,11 @@ async def stream_thread_message(
         if model is None:
             raise RuntimeError("model route is not configured: reader_ask")
 
-        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=90.0)
+        route_settings = RunModelSettings(max_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS, temperature=cfg.AGENT_TEMPERATURE, timeout=cfg.AGENT_TIMEOUT_S)
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
         route_settings = RunModelSettings(
-            max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
+            max_tokens=route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
             top_p=route_settings.top_p,
@@ -2973,7 +2439,7 @@ async def stream_thread_message(
         async def get_record_context_cb() -> dict[str, Any]:
             return {
                 "title": record.title,
-                "source_excerpt": _truncate_text(record.source_text, _MAX_CONTEXT_TEXT),
+                "source_excerpt": _truncate_text(record.source_text, cfg.MAX_CONTEXT_TEXT),
                 "sentence_windows": _collect_sentence_windows(record, resolved_anchors),
             }
 
@@ -3058,7 +2524,7 @@ async def stream_thread_message(
                     "usage_summary": quick_action_annotation["usage_summary"],
                 }
             )
-        context_plan = _build_context_plan(
+        context_plan = planner.build_context_plan(
             entry_action=body.entry_action,
             attachments=attachments,
             anchors=resolved_anchors,
@@ -3067,7 +2533,7 @@ async def stream_thread_message(
             reference_resolution=reference_resolution,
             planning_snapshot=planning_snapshot,
         )
-        trace_summary = _build_trace_summary(
+        trace_summary = planner.build_trace_summary(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
@@ -3098,8 +2564,8 @@ async def stream_thread_message(
                 quick_action_annotation=quick_action_annotation,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
-                max_history_messages=_MAX_HISTORY_MESSAGES,
-                max_message_text=_MAX_MESSAGE_TEXT,
+                max_history_messages=cfg.MAX_HISTORY_MESSAGES,
+                max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
         )
         # Emit context.compacting *before* compression so the user sees
@@ -3107,8 +2573,8 @@ async def stream_thread_message(
         _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
-            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+            min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
             multiplier_output=MULTIPLIER_OUTPUT,
         )
         if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
@@ -3118,9 +2584,9 @@ async def stream_thread_message(
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
             multiplier_output=MULTIPLIER_OUTPUT,
-            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-            default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
-            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+            default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+            min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
         )
         if _context_too_large:
             cleanup_plan = recovery_svc.build_context_too_large_cleanup_plan(
@@ -3201,7 +2667,7 @@ async def stream_thread_message(
             return
         trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
-            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
         )
@@ -3288,7 +2754,7 @@ async def stream_thread_message(
         replan_triggered = replan_event is not None
         if replan_triggered:
             try:
-                replan_result = await _resolve_semantic_planning(
+                replan_result = await planner_runtime_svc.resolve_semantic_planning(
                     user_id=user_id,
                     record=record,
                     history_messages=history_messages,
@@ -3297,6 +2763,17 @@ async def stream_thread_message(
                     entry_action=body.entry_action,
                     attachments=attachments,
                     anchors=resolved_anchors,
+                    deps=planner_runtime_svc.ResolvePlanningDeps(
+                        run_planner_deps=planner_runtime_svc.RunPlannerDeps(
+                            current_record_affordances_cb=_current_record_affordances,
+                            build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
+                        ),
+                        resolve_known_references_cb=resolver_svc.resolve_known_references,
+                        load_record_bundle_cb=_load_record_bundle,
+                        resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
+                        list_supplements_cb=supplements_svc.list_supplements_for_record,
+                    ),
+                    truncate_history_message_cb=_truncate_history_message,
                 )
                 if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
                     replan_runtime_state = deepcopy(runtime_state)
@@ -3347,15 +2824,15 @@ async def stream_thread_message(
                             quick_action_annotation=replan_quick_action_annotation,
                             reference_resolution=replan_reference_resolution,
                             planning_snapshot=replan_planning_snapshot,
-                            max_history_messages=_MAX_HISTORY_MESSAGES,
-                            max_message_text=_MAX_MESSAGE_TEXT,
+                            max_history_messages=cfg.MAX_HISTORY_MESSAGES,
+                            max_message_text=cfg.MAX_MESSAGE_TEXT,
                         )
                     )
                     _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
-                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
                         multiplier_output=MULTIPLIER_OUTPUT,
                     )
                     if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
@@ -3365,9 +2842,9 @@ async def stream_thread_message(
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
                         multiplier_output=MULTIPLIER_OUTPUT,
-                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-                        default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
-                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+                        default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
                     )
                     if _replan_context_too_large:
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
@@ -3395,7 +2872,7 @@ async def stream_thread_message(
                     replan_agent = get_reader_ask_agent()
                     replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
                     replan_route = RunModelSettings(
-                        max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
+                        max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
                         temperature=route_settings.temperature,
                         timeout=route_settings.timeout,
                     )
@@ -3456,8 +2933,9 @@ async def stream_thread_message(
             anchors=resolved_anchors,
             runtime_state=runtime_state,
         )
-        resolved_context = _resolved_context_summary(
-            record=record,
+        resolved_context = planner.build_resolved_context_summary(
+            record_id=str(record.record_id),
+            record_title=record.title,
             anchors=resolved_anchors,
             explicit_attachment_count=len(attachments),
             runtime_state=runtime_state,
@@ -3839,7 +3317,7 @@ async def retry_thread_message(
             yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
             return
 
-        planning_result = await _resolve_semantic_planning(
+        planning_result = await planner_runtime_svc.resolve_semantic_planning(
             user_id=user_id,
             record=record,
             history_messages=history_messages,
@@ -3848,6 +3326,17 @@ async def retry_thread_message(
             entry_action=body.entry_action,
             attachments=attachments,
             anchors=resolved_anchors,
+            deps=planner_runtime_svc.ResolvePlanningDeps(
+                run_planner_deps=planner_runtime_svc.RunPlannerDeps(
+                    current_record_affordances_cb=_current_record_affordances,
+                    build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
+                ),
+                resolve_known_references_cb=resolver_svc.resolve_known_references,
+                load_record_bundle_cb=_load_record_bundle,
+                resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
+                list_supplements_cb=supplements_svc.list_supplements_for_record,
+            ),
+            truncate_history_message_cb=_truncate_history_message,
         )
         planner_usage_summary = planning_result.planner_usage_summary
         reference_resolution = planning_result.reference_resolution
@@ -3856,7 +3345,7 @@ async def retry_thread_message(
         resolved_context_input = planning_snapshot.resolved_context_input
         disambiguation = planning_snapshot.disambiguation_state
         external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
-        submission_mode = _submission_mode(entry_action=body.entry_action, attachments=attachments)
+        submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
         run_info, run_history = _next_run_info(assistant_message)
         turn_run = await repo.create_turn_run(
             message_id=message_id,
@@ -3894,15 +3383,16 @@ async def retry_thread_message(
                 citations=list(citations),
                 source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
             )
-            resolved_context = _resolved_context_summary(
-                record=record,
+            resolved_context = planner.build_resolved_context_summary(
+                record_id=str(record.record_id),
+                record_title=record.title,
                 anchors=resolved_anchors,
                 explicit_attachment_count=len(attachments),
                 runtime_state=runtime_state,
                 used_cross_record_context=False,
                 citations=citations,
             )
-            context_plan = _build_context_plan(
+            context_plan = planner.build_context_plan(
                 entry_action=body.entry_action,
                 attachments=attachments,
                 anchors=resolved_anchors,
@@ -3921,7 +3411,7 @@ async def retry_thread_message(
                 external_asset_disambiguation=external_asset_disambiguation,
                 include_clarification=True,
             )
-            trace_summary = _build_trace_summary(
+            trace_summary = planner.build_trace_summary(
                 runtime_state=runtime_state,
                 context_plan=context_plan,
                 planning_snapshot=planning_snapshot,
@@ -4076,11 +3566,11 @@ async def retry_thread_message(
         if model is None:
             raise RuntimeError("model route is not configured: reader_ask")
 
-        route_settings = RunModelSettings(max_tokens=_DEFAULT_MAX_OUTPUT_TOKENS, temperature=0.3, timeout=90.0)
+        route_settings = RunModelSettings(max_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS, temperature=cfg.AGENT_TEMPERATURE, timeout=cfg.AGENT_TIMEOUT_S)
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
         route_settings = RunModelSettings(
-            max_tokens=route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS,
+            max_tokens=route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
             top_p=route_settings.top_p,
@@ -4100,7 +3590,7 @@ async def retry_thread_message(
         async def get_record_context_cb() -> dict[str, Any]:
             return {
                 "title": record.title,
-                "source_excerpt": _truncate_text(record.source_text, _MAX_CONTEXT_TEXT),
+                "source_excerpt": _truncate_text(record.source_text, cfg.MAX_CONTEXT_TEXT),
                 "sentence_windows": _collect_sentence_windows(record, resolved_anchors),
             }
 
@@ -4185,7 +3675,7 @@ async def retry_thread_message(
                     "usage_summary": quick_action_annotation["usage_summary"],
                 }
             )
-        context_plan = _build_context_plan(
+        context_plan = planner.build_context_plan(
             entry_action=body.entry_action,
             attachments=attachments,
             anchors=resolved_anchors,
@@ -4194,7 +3684,7 @@ async def retry_thread_message(
             reference_resolution=reference_resolution,
             planning_snapshot=planning_snapshot,
         )
-        trace_summary = _build_trace_summary(
+        trace_summary = planner.build_trace_summary(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
@@ -4225,8 +3715,8 @@ async def retry_thread_message(
                 quick_action_annotation=quick_action_annotation,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
-                max_history_messages=_MAX_HISTORY_MESSAGES,
-                max_message_text=_MAX_MESSAGE_TEXT,
+                max_history_messages=cfg.MAX_HISTORY_MESSAGES,
+                max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
         )
         # Emit context.compacting *before* compression so the user sees
@@ -4234,8 +3724,8 @@ async def retry_thread_message(
         _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
-            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+            min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
             multiplier_output=MULTIPLIER_OUTPUT,
         )
         if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
@@ -4245,9 +3735,9 @@ async def retry_thread_message(
             reserved_points=READER_ASK_RESERVED_POINTS,
             tokens_per_point=TOKENS_PER_POINT,
             multiplier_output=MULTIPLIER_OUTPUT,
-            budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-            default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
-            min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+            default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+            min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
         )
         if _context_too_large:
             cleanup_plan = recovery_svc.build_context_too_large_cleanup_plan(
@@ -4329,7 +3819,7 @@ async def retry_thread_message(
             return
         trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
-            max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
+            max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
             temperature=route_settings.temperature,
             timeout=route_settings.timeout,
         )
@@ -4416,7 +3906,7 @@ async def retry_thread_message(
         replan_triggered = replan_event is not None
         if replan_triggered:
             try:
-                replan_result = await _resolve_semantic_planning(
+                replan_result = await planner_runtime_svc.resolve_semantic_planning(
                     user_id=user_id,
                     record=record,
                     history_messages=history_messages,
@@ -4425,6 +3915,17 @@ async def retry_thread_message(
                     entry_action=body.entry_action,
                     attachments=attachments,
                     anchors=resolved_anchors,
+                    deps=planner_runtime_svc.ResolvePlanningDeps(
+                        run_planner_deps=planner_runtime_svc.RunPlannerDeps(
+                            current_record_affordances_cb=_current_record_affordances,
+                            build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
+                        ),
+                        resolve_known_references_cb=resolver_svc.resolve_known_references,
+                        load_record_bundle_cb=_load_record_bundle,
+                        resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
+                        list_supplements_cb=supplements_svc.list_supplements_for_record,
+                    ),
+                    truncate_history_message_cb=_truncate_history_message,
                 )
                 if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
                     replan_runtime_state = deepcopy(runtime_state)
@@ -4475,15 +3976,15 @@ async def retry_thread_message(
                             quick_action_annotation=replan_quick_action_annotation,
                             reference_resolution=replan_reference_resolution,
                             planning_snapshot=replan_planning_snapshot,
-                            max_history_messages=_MAX_HISTORY_MESSAGES,
-                            max_message_text=_MAX_MESSAGE_TEXT,
+                            max_history_messages=cfg.MAX_HISTORY_MESSAGES,
+                            max_message_text=cfg.MAX_MESSAGE_TEXT,
                         )
                     )
                     _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
-                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
                         multiplier_output=MULTIPLIER_OUTPUT,
                     )
                     if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
@@ -4493,9 +3994,9 @@ async def retry_thread_message(
                         reserved_points=READER_ASK_RESERVED_POINTS,
                         tokens_per_point=TOKENS_PER_POINT,
                         multiplier_output=MULTIPLIER_OUTPUT,
-                        budget_buffer_tokens=_PROMPT_BUDGET_BUFFER_TOKENS,
-                        default_max_output_tokens=_DEFAULT_MAX_OUTPUT_TOKENS,
-                        min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
+                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+                        default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
                     )
                     if _replan_context_too_large:
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
@@ -4523,7 +4024,7 @@ async def retry_thread_message(
                     replan_agent = get_reader_ask_agent()
                     replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
                     replan_route = RunModelSettings(
-                        max_tokens=min(route_settings.max_tokens or _DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
+                        max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
                         temperature=route_settings.temperature,
                         timeout=route_settings.timeout,
                     )
@@ -4584,8 +4085,9 @@ async def retry_thread_message(
             anchors=resolved_anchors,
             runtime_state=runtime_state,
         )
-        resolved_context = _resolved_context_summary(
-            record=record,
+        resolved_context = planner.build_resolved_context_summary(
+            record_id=str(record.record_id),
+            record_title=record.title,
             anchors=resolved_anchors,
             explicit_attachment_count=len(attachments),
             runtime_state=runtime_state,

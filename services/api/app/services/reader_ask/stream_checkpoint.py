@@ -14,6 +14,7 @@ from time import perf_counter
 from typing import Any, Awaitable, Callable, Literal
 from uuid import UUID
 
+from app.services.reader_ask import config as cfg
 from app.services.reader_ask.agent_runner import AgentStreamRuntime
 
 logger = logging.getLogger(__name__)
@@ -26,9 +27,9 @@ class TurnRunStreamCheckpoint:
     turn_run_id: UUID
     build_output_json: Callable[[str, str | None, str | None], dict[str, Any]]
     update_turn_run_cb: Callable[..., Awaitable[None]]
-    min_flush_interval_s: float = 0.8
-    min_content_chars: int = 48
-    min_reasoning_chars: int = 48
+    min_flush_interval_s: float = cfg.CHECKPOINT_MIN_FLUSH_INTERVAL_S
+    min_content_chars: int = cfg.CHECKPOINT_MIN_CONTENT_CHARS
+    min_reasoning_chars: int = cfg.CHECKPOINT_MIN_REASONING_CHARS
     last_flushed_at: float = 0.0
     last_flushed_content_len: int = 0
     last_flushed_reasoning_len: int = 0

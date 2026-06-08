@@ -18,6 +18,7 @@ import json
 from typing import Any
 
 from app.schemas.reader_ask import ReaderAskTraceSummary
+from app.services.reader_ask import config as cfg
 from app.services.reader_ask import utils
 
 
@@ -99,14 +100,14 @@ def inject_compaction_audit(
 def _compact_prompt_payload(
     payload: dict[str, Any],
     *,
-    max_history: int = 6,
-    max_record_assets: int = 3,
-    max_external_assets: int = 3,
-    max_vocabulary: int = 3,
-    max_insights: int = 3,
-    max_sentence_windows: int = 5,
-    max_source_excerpt: int = 2400,
-    max_article_overview: int = 1200,
+    max_history: int = cfg.COMPACTION_MAX_HISTORY,
+    max_record_assets: int = cfg.COMPACTION_MAX_RECORD_ASSETS,
+    max_external_assets: int = cfg.COMPACTION_MAX_EXTERNAL_ASSETS,
+    max_vocabulary: int = cfg.COMPACTION_MAX_VOCABULARY,
+    max_insights: int = cfg.COMPACTION_MAX_INSIGHTS,
+    max_sentence_windows: int = cfg.COMPACTION_MAX_SENTENCE_WINDOWS,
+    max_source_excerpt: int = cfg.COMPACTION_MAX_SOURCE_EXCERPT,
+    max_article_overview: int = cfg.COMPACTION_MAX_ARTICLE_OVERVIEW,
 ) -> dict[str, Any]:
     compact = json.loads(json.dumps(payload, ensure_ascii=False))
     history = compact.get("history")
@@ -128,8 +129,8 @@ def _compact_prompt_payload(
             if not isinstance(item, dict):
                 continue
             content_md = item.get("content_md")
-            if isinstance(content_md, str) and len(content_md) > 900:
-                item["content_md"] = utils.truncate_text(content_md, 900)
+            if isinstance(content_md, str) and len(content_md) > cfg.COMPACTION_EXTERNAL_ASSET_CONTENT_LIMIT:
+                item["content_md"] = utils.truncate_text(content_md, cfg.COMPACTION_EXTERNAL_ASSET_CONTENT_LIMIT)
 
     vocabulary_items = compact.get("vocabulary_items")
     if isinstance(vocabulary_items, list) and len(vocabulary_items) > max_vocabulary:
@@ -275,10 +276,10 @@ _AGGRESSIVE_LAYERS: list[tuple[str, object]] = [
     ("record_assets_drop", lambda p: _layer_trim_record_assets(p, limit=0)),
     ("vocabulary_drop", lambda p: _layer_trim_vocabulary(p, limit=0)),
     ("insights_drop", lambda p: _layer_trim_insights(p, limit=0)),
-    ("history_aggressive", lambda p: _layer_trim_history(p, limit=2)),
+    ("history_aggressive", lambda p: _layer_trim_history(p, limit=cfg.AGGRESSIVE_HISTORY_LIMIT)),
     ("sentence_windows_drop", lambda p: _layer_trim_sentence_windows(p, limit=0)),
-    ("source_excerpt_aggressive", lambda p: _layer_trim_source_excerpt(p, limit=800)),
-    ("article_overview_aggressive", lambda p: _layer_trim_article_overview(p, limit=400)),
+    ("source_excerpt_aggressive", lambda p: _layer_trim_source_excerpt(p, limit=cfg.AGGRESSIVE_SOURCE_EXCERPT_LIMIT)),
+    ("article_overview_aggressive", lambda p: _layer_trim_article_overview(p, limit=cfg.AGGRESSIVE_ARTICLE_OVERVIEW_LIMIT)),
 ]
 
 

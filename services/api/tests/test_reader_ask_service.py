@@ -36,6 +36,7 @@ from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import service as reader_ask_service
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask import utils as reader_ask_utils
+from app.services.reader_ask import planner_runtime as planner_runtime_svc
 from app.services.reader_ask.service import (
     _attachment_to_anchor,
     _attachments_to_anchor_refs,
@@ -43,20 +44,14 @@ from app.services.reader_ask.service import (
     _build_stream_checkpoint_output_json,
     _capability_trace_json,
     _build_action_proposals,
-    _build_context_plan,
     _planning_snapshot_json,
-    _build_resolved_context_input,
     _build_response_cards,
     _build_supplement_candidates_from_runtime,
     _dictionary_ai_to_citation,
-    _fallback_reference_query,
-    _fallback_semantic_planner_decision,
     _merge_usage_summaries,
     _needs_clarification,
     _next_run_info,
     _resolve_intent,
-    _resolved_context_summary,
-    _submission_mode,
 )
 from app.services.reader_ask.supplements import build_grammar_note_candidate
 
@@ -527,10 +522,10 @@ def test_submission_mode_uses_toolbar_quick_actions_only() -> None:
         ),
     )
 
-    assert _submission_mode(entry_action="why_here", attachments=[quick_action_attachment]) == "quick_action"
-    assert _submission_mode(entry_action="explain_this", attachments=[quick_action_attachment]) == "quick_action"
-    assert _submission_mode(entry_action="why_here", attachments=[ordinary_attachment]) == "chat"
-    assert _submission_mode(entry_action="ask_about_this", attachments=[quick_action_attachment]) == "chat"
+    assert planner_runtime_svc.submission_mode(entry_action="why_here", attachments=[quick_action_attachment]) == "quick_action"
+    assert planner_runtime_svc.submission_mode(entry_action="explain_this", attachments=[quick_action_attachment]) == "quick_action"
+    assert planner_runtime_svc.submission_mode(entry_action="why_here", attachments=[ordinary_attachment]) == "chat"
+    assert planner_runtime_svc.submission_mode(entry_action="ask_about_this", attachments=[quick_action_attachment]) == "chat"
 
 
 def test_build_supplement_candidates_ignores_not_applicable_quick_action_result() -> None:
@@ -662,7 +657,7 @@ def test_fallback_semantic_planner_decision_handles_article_level_question() -> 
         has_reader_notes=False,
     )
 
-    decision = reader_ask_service._fallback_semantic_planner_decision(
+    decision = planner_runtime_svc.fallback_semantic_planner_decision(
         user_message="这篇文章是怎么展开论证的？",
         entry_action="ask_about_this",
         page_identity=page_identity,
@@ -670,6 +665,8 @@ def test_fallback_semantic_planner_decision_handles_article_level_question() -> 
         anchors=[],
         record=record,
         failure_reason="validation failed",
+        render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+        has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
     )
 
     assert decision.clarification_only is False
@@ -727,7 +724,7 @@ def test_fallback_semantic_planner_decision_preserves_title_like_reference_reque
         has_reader_notes=False,
     )
 
-    decision = reader_ask_service._fallback_semantic_planner_decision(
+    decision = planner_runtime_svc.fallback_semantic_planner_decision(
         user_message='我之前那篇《Climate Policy》里也提过这个吗？',
         entry_action="ask_about_this",
         page_identity=page_identity,
@@ -735,6 +732,8 @@ def test_fallback_semantic_planner_decision_preserves_title_like_reference_reque
         anchors=[],
         record=record,
         failure_reason="validation failed",
+        render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+        has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
     )
 
     assert decision.reference_request.requested is True
@@ -747,8 +746,9 @@ def test_resolved_context_summary_marks_article_assets_and_history_usage() -> No
         latest_record_context={"sentence_windows": []},
         latest_record_insights=[{"entry_type": "sentence_analysis"}],
     )
-    summary = _resolved_context_summary(
-        record=record,
+    summary = planner_svc.build_resolved_context_summary(
+        record_id=str(record.record_id),
+        record_title=record.title,
         anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
         explicit_attachment_count=2,
         runtime_state=runtime_state,
@@ -779,7 +779,7 @@ def test_build_resolved_context_input_preserves_explicit_attachments_only() -> N
         ),
     )
 
-    context_input = _build_resolved_context_input(
+    context_input = planner_svc.build_resolved_context_input(
         page_identity=ReaderAskPageIdentity(
             record_id="00000000-0000-0000-0000-000000000001",
             title="Test",
@@ -804,7 +804,7 @@ def test_build_resolved_context_input_preserves_explicit_attachments_only() -> N
 
 
 def test_build_resolved_context_input_distinguishes_current_and_external_records() -> None:
-    context_input = _build_resolved_context_input(
+    context_input = planner_svc.build_resolved_context_input(
         page_identity=ReaderAskPageIdentity(
             record_id="00000000-0000-0000-0000-000000000001",
             title="Test",
@@ -852,7 +852,7 @@ def test_build_context_plan_records_history_and_dictionary_usage() -> None:
         source_labels={"current_record", "external_record_context", "dictionary"},
     )
 
-    context_plan = _build_context_plan(
+    context_plan = planner_svc.build_context_plan(
         entry_action="ask_about_this",
         attachments=[],
         anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
@@ -1253,7 +1253,7 @@ def test_build_context_plan_records_reference_resolution_reason() -> None:
     runtime_state = ReaderAskRuntimeState(
         source_labels={"current_record", "external_record_context"},
     )
-    context_plan = _build_context_plan(
+    context_plan = planner_svc.build_context_plan(
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
@@ -1343,7 +1343,7 @@ def test_build_context_plan_carries_clarification_reason_from_planning_snapshot(
     assert snapshot.clarification_mode == "can_answer_with_followup"
     assert snapshot.clarification_only is False
 
-    context_plan = _build_context_plan(
+    context_plan = planner_svc.build_context_plan(
         entry_action="ask_about_this",
         attachments=[],
         anchors=[],
@@ -3016,38 +3016,38 @@ class TestFallbackReferenceQuery:
     """Test _fallback_reference_query with explicit and weak patterns."""
 
     def test_book_title_marks(self) -> None:
-        assert _fallback_reference_query("之前那篇《Climate Policy》里也提过") == "Climate Policy"
+        assert planner_runtime_svc.fallback_reference_query("之前那篇《Climate Policy》里也提过") == "Climate Policy"
 
     def test_double_quotes(self) -> None:
-        assert _fallback_reference_query('关于"AI Ethics"那篇文章') == "AI Ethics"
+        assert planner_runtime_svc.fallback_reference_query('关于"AI Ethics"那篇文章') == "AI Ethics"
 
     def test_weak_chinese_之前那篇(self) -> None:
-        assert _fallback_reference_query("之前那篇climate policy的文章也提过吗？") == "climate policy"
+        assert planner_runtime_svc.fallback_reference_query("之前那篇climate policy的文章也提过吗？") == "climate policy"
 
     def test_weak_chinese_讲(self) -> None:
-        assert _fallback_reference_query("讲AI伦理的文章怎么说？") == "AI伦理"
+        assert planner_runtime_svc.fallback_reference_query("讲AI伦理的文章怎么说？") == "AI伦理"
 
     def test_weak_chinese_关于(self) -> None:
-        assert _fallback_reference_query("关于climate change的研究有提到吗？") == "climate change"
+        assert planner_runtime_svc.fallback_reference_query("关于climate change的研究有提到吗？") == "climate change"
 
     def test_weak_english_article_about(self) -> None:
-        assert _fallback_reference_query("that article about climate policy also mentioned this") == "climate policy"
+        assert planner_runtime_svc.fallback_reference_query("that article about climate policy also mentioned this") == "climate policy"
 
     def test_weak_english_the_paper_on(self) -> None:
-        assert _fallback_reference_query("the paper on AI ethics discussed this") == "AI ethics"
+        assert planner_runtime_svc.fallback_reference_query("the paper on AI ethics discussed this") == "AI ethics"
 
     def test_no_reference_returns_none(self) -> None:
-        assert _fallback_reference_query("这句话什么意思？") is None
+        assert planner_runtime_svc.fallback_reference_query("这句话什么意思？") is None
 
     def test_explicit_title_takes_priority_over_weak(self) -> None:
         """When both explicit (book marks) and weak patterns match,
         explicit pattern wins because it's checked first."""
-        result = _fallback_reference_query("之前那篇《Climate Policy》的文章")
+        result = planner_runtime_svc.fallback_reference_query("之前那篇《Climate Policy》的文章")
         assert result == "Climate Policy"
 
     def test_short_topic_ignored(self) -> None:
         """Weak patterns require at least 2 characters for the topic."""
-        result = _fallback_reference_query("讲X的文章")
+        result = planner_runtime_svc.fallback_reference_query("讲X的文章")
         # "X" is only 1 char, below the {2,30} minimum — should not match
         assert result is None
 
@@ -3075,7 +3075,7 @@ class TestFallbackIntentCoverage:
         ],
     )
     def test_fallback_intent_recognition(self, message: str, expected_intent: str) -> None:
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message=message,
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3083,13 +3083,15 @@ class TestFallbackIntentCoverage:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.resolved_intent == expected_intent
 
     def test_entry_action_lookup_in_context_overrides_message(self) -> None:
         """entry_action=lookup_in_context should force vocabulary intent
         even if the message contains grammar keywords."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="这里的语法结构",
             entry_action="lookup_in_context",
             page_identity=_fallback_page_identity(),
@@ -3097,12 +3099,14 @@ class TestFallbackIntentCoverage:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.resolved_intent == "vocabulary"
 
     def test_entry_action_why_here_overrides_message(self) -> None:
         """entry_action=why_here should force grammar intent."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="这个词什么意思",
             entry_action="why_here",
             page_identity=_fallback_page_identity(),
@@ -3110,12 +3114,14 @@ class TestFallbackIntentCoverage:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.resolved_intent == "grammar"
 
     def test_compare_not_misclassified_as_explain(self) -> None:
         """Compare/difference questions should resolve to 'general', not 'explain'."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="这两篇文章的观点有什么区别？",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3123,11 +3129,13 @@ class TestFallbackIntentCoverage:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.resolved_intent == "general"
 
     def test_vs_pattern_recognized_as_general(self) -> None:
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="democracy vs authoritarianism",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3135,6 +3143,8 @@ class TestFallbackIntentCoverage:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.resolved_intent == "general"
 
@@ -3144,7 +3154,7 @@ class TestFallbackWeakReferenceConservativePath:
 
     def test_weak_reference_enables_cross_record_context(self) -> None:
         """When a weak reference is detected, cross_record_context_allowed should be True."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="之前那篇climate policy的文章也提过这个吗？",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3152,6 +3162,8 @@ class TestFallbackWeakReferenceConservativePath:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.reference_request.requested is True
         assert decision.reference_request.query is not None
@@ -3160,7 +3172,7 @@ class TestFallbackWeakReferenceConservativePath:
     def test_weak_reference_without_anchor_sets_conservative_reason(self) -> None:
         """Weak reference without anchor should set clarification_reason
         to signal uncertainty (conservative path)."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="之前那篇climate policy的文章也提过这个吗？",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3168,6 +3180,8 @@ class TestFallbackWeakReferenceConservativePath:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.clarification_reason == "fallback_weak_reference_without_anchor"
         # Should NOT be must_clarify — we can still answer at article level
@@ -3175,7 +3189,7 @@ class TestFallbackWeakReferenceConservativePath:
 
     def test_weak_reference_with_anchor_no_conservative_reason(self) -> None:
         """Weak reference WITH anchor should NOT trigger conservative path."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="之前那篇climate policy的文章也提过这个吗？",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3183,13 +3197,15 @@ class TestFallbackWeakReferenceConservativePath:
             anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.clarification_reason is None
         assert decision.reference_request.requested is True
 
     def test_explicit_title_reference_no_conservative_reason(self) -> None:
         """Explicit title (book marks) with anchor should NOT trigger conservative path."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message='之前那篇《Climate Policy》里也提过这个吗？',
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3197,12 +3213,14 @@ class TestFallbackWeakReferenceConservativePath:
             anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.clarification_reason is None
 
     def test_no_reference_no_cross_record(self) -> None:
         """Without any reference, cross_record_context_allowed should be False."""
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="这句话什么意思？",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3210,6 +3228,8 @@ class TestFallbackWeakReferenceConservativePath:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.reference_request.requested is False
         assert decision.working_set.cross_record_context_allowed is False
@@ -3226,7 +3246,7 @@ class TestFallbackWeakReferenceConservativePath:
                 record_id="00000000-0000-0000-0000-000000000002",
             ),
         )
-        decision = _fallback_semantic_planner_decision(
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="这篇文章讲了什么？",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
@@ -3234,6 +3254,8 @@ class TestFallbackWeakReferenceConservativePath:
             anchors=[],
             record=_fallback_record(),
             failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.working_set.cross_record_context_allowed is True
 
