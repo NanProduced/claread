@@ -1,0 +1,296 @@
+"""Agent runner: stream execution, replan detection, and outcome handling.
+
+This module owns the agent run lifecycle — starting the stream, consuming
+events, detecting degenerate answers, and assembling the final outcome.
+It does NOT touch repo/credits/persistence; checkpoint flushing is injected
+via an optional callback.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any, Callable, Awaitable, cast
+
+from app.agents.reader_ask_agent import (
+    ReaderAskAgentDeps,
+    build_reader_ask_prompt,
+)
+from app.llm.types import RunModelSettings
+from app.services.reader_ask import stream_events as stream_events_svc
+from app.workflow.tracing import build_usage_metadata
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Degenerate answer detection
+# ---------------------------------------------------------------------------
+
+_REFUSAL_PATTERNS: tuple[str, ...] = (
+    "i cannot",
+    "i can't",
+    "i'm unable",
+    "i am unable",
+    "无法回答",
+    "不能回答",
+    "无法提供",
+    "我无法",
+    "我不能",
+    "as an ai",
+    "as a language model",
+    "no information",
+    "没有相关信息",
+    "没有足够的信息",
+    "not enough information",
+    "i don't have",
+    "i do not have",
+)
+
+
+def is_degenerate_answer(content: str) -> bool:
+    """Determine if an answer is degenerate (empty, refusal, or clearly invalid).
+
+    This replaces the previous `len(content) < 20` heuristic with pattern-based
+    detection that distinguishes between:
+    - Short but valid answers (e.g. "Yes.", "Present perfect.") -> NOT degenerate
+    - Empty/near-empty answers -> degenerate
+    - Refusal/non-answer patterns -> degenerate
+    - Very short answers that are not recognizable words -> degenerate
+    """
+    stripped = content.strip()
+    if not stripped:
+        return True
+    lower = stripped.lower()
+    if any(pattern in lower for pattern in _REFUSAL_PATTERNS):
+        return True
+    if len(stripped) < 5:
+        if stripped.rstrip(".!?,;:") and len(stripped.rstrip(".!?,;:")) <= 3:
+            has_cjk = any("\u4e00" <= c <= "\u9fff" for c in stripped)
+            has_alpha_word = any(c.isalpha() for c in stripped)
+            if has_cjk or has_alpha_word:
+                return False
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+@dataclass(slots=True)
+class AgentStreamOutcome:
+    content_md: str
+    usage_summary: dict[str, Any] | None
+    interrupted: bool
+    interruption_detail: str | None = None
+
+
+@dataclass(slots=True)
+class AgentStreamRuntime:
+    content_parts: list[str] = field(default_factory=list)
+    usage_summary: dict[str, Any] | None = None
+    producer_done: asyncio.Event = field(default_factory=asyncio.Event)
+    producer_error: Exception | None = None
+    emitted_text: str = ""
+    emitted_reasoning: str = ""
+    reasoning_started: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Reasoning settings helper
+# ---------------------------------------------------------------------------
+
+def reasoning_enabled_settings(
+    route_settings: RunModelSettings,
+    *,
+    base_url: str = "",
+) -> RunModelSettings:
+    extra_body = dict(route_settings.extra_body or {})
+    extra_headers = dict(route_settings.extra_headers or {})
+    if "thinking" in extra_body and isinstance(extra_body["thinking"], dict):
+        thinking = dict(cast(dict[str, Any], extra_body["thinking"]))
+        if thinking.get("type") == "disabled":
+            thinking["type"] = "enabled"
+        extra_body["thinking"] = thinking
+    elif extra_body.get("enable_thinking") is False:
+        extra_body["enable_thinking"] = True
+    elif "enable_thinking" not in extra_body:
+        extra_body["enable_thinking"] = True
+
+    if extra_body.get("preserve_thinking") is True:
+        extra_body["preserve_thinking"] = False
+
+    if "dashscope.aliyuncs.com" in base_url.lower():
+        extra_headers.setdefault("X-DashScope-SSE", "enable")
+        extra_body.setdefault("incremental_output", True)
+    return RunModelSettings(
+        max_tokens=route_settings.max_tokens,
+        temperature=route_settings.temperature,
+        top_p=route_settings.top_p,
+        timeout=route_settings.timeout,
+        parallel_tool_calls=route_settings.parallel_tool_calls,
+        seed=route_settings.seed,
+        presence_penalty=route_settings.presence_penalty,
+        frequency_penalty=route_settings.frequency_penalty,
+        stop_sequences=route_settings.stop_sequences,
+        extra_headers=extra_headers or None,
+        extra_body=extra_body or None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent stream lifecycle
+# ---------------------------------------------------------------------------
+
+def build_replan_event(
+    *,
+    final_content_md: str,
+    planning_snapshot: Any,
+    assistant_message_id: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Check if replan should be triggered and return the replan.started event.
+
+    Returns the (event_name, event_payload) tuple if replan is triggered,
+    None otherwise.
+
+    The caller is responsible for yielding the event via SSE — this function
+    does NOT put anything on the event_queue because it is called after the
+    stream consumer has already exited.
+    """
+    if (
+        is_degenerate_answer(final_content_md)
+        and planning_snapshot is not None
+        and planning_snapshot.clarification_mode == "none"
+        and planning_snapshot.clarification_only is False
+    ):
+        logger.warning(
+            "reader_ask_replan_triggered: Degenerate answer detected (%d chars), attempting replan",
+            len(final_content_md.strip()),
+        )
+        return (
+            stream_events_svc.EVENT_REPLAN_STARTED,
+            stream_events_svc.replan_started_payload(assistant_message_id, "degenerate_answer"),
+        )
+    return None
+
+
+def start_reader_ask_agent_stream(
+    *,
+    agent: Any,
+    deps: ReaderAskAgentDeps,
+    model: Any,
+    route_settings: RunModelSettings,
+    assistant_message_id: str,
+    base_url: str,
+    checkpoint_flush: Callable[..., Awaitable[None]] | None = None,
+) -> tuple[asyncio.Task[None], AgentStreamRuntime]:
+    """Start the agent stream as a background task.
+
+    Args:
+        checkpoint_flush: Optional async callback for flushing stream checkpoints.
+            Called as ``await checkpoint_flush(runtime, force=False)`` after each
+            response iteration and ``await checkpoint_flush(runtime, force=True)``
+            on completion or error.  When *None*, no checkpoint flushing occurs.
+    """
+    event_queue = deps.event_queue
+    runtime = AgentStreamRuntime()
+
+    async def run_agent_stream() -> None:
+        try:
+            async with agent.run_stream(
+                build_reader_ask_prompt(deps),
+                deps=deps,
+                model=model,
+                model_settings=reasoning_enabled_settings(
+                    route_settings,
+                    base_url=base_url,
+                ).to_pydantic_ai(),
+            ) as result:
+                async for response, _last in result.stream_responses(debounce_by=None):
+                    thinking_text = response.thinking or ""
+                    if thinking_text and not runtime.reasoning_started:
+                        runtime.reasoning_started = True
+                        await event_queue.put((stream_events_svc.EVENT_REASONING_STARTED, stream_events_svc.reasoning_started_payload(assistant_message_id)))
+                    if thinking_text.startswith(runtime.emitted_reasoning):
+                        reasoning_delta = thinking_text[len(runtime.emitted_reasoning):]
+                    else:
+                        reasoning_delta = thinking_text
+                    if reasoning_delta:
+                        runtime.emitted_reasoning = thinking_text
+                        await event_queue.put(
+                            (stream_events_svc.EVENT_REASONING_DELTA, stream_events_svc.reasoning_delta_payload(assistant_message_id, reasoning_delta))
+                        )
+
+                    text_value = response.text or ""
+                    if text_value.startswith(runtime.emitted_text):
+                        text_delta = text_value[len(runtime.emitted_text):]
+                    else:
+                        text_delta = text_value
+                    if text_delta:
+                        runtime.emitted_text = text_value
+                        runtime.content_parts.append(text_delta)
+                        await event_queue.put(
+                            (stream_events_svc.EVENT_MESSAGE_DELTA, stream_events_svc.message_delta_payload(assistant_message_id, text_delta))
+                        )
+                    if checkpoint_flush is not None:
+                        await checkpoint_flush(runtime, force=False)
+                if checkpoint_flush is not None:
+                    await checkpoint_flush(runtime, force=True)
+                if runtime.reasoning_started:
+                    await event_queue.put((stream_events_svc.EVENT_REASONING_COMPLETED, stream_events_svc.reasoning_completed_payload(assistant_message_id)))
+                runtime.usage_summary = build_usage_metadata(result.usage())
+        except Exception as exc:
+            if checkpoint_flush is not None:
+                await checkpoint_flush(runtime, force=True)
+            runtime.producer_error = exc
+        finally:
+            runtime.producer_done.set()
+
+    return asyncio.create_task(run_agent_stream()), runtime
+
+
+async def stream_reader_ask_events(
+    *,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    producer_done: asyncio.Event,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    while not producer_done.is_set() or not event_queue.empty():
+        try:
+            event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+        except TimeoutError:
+            continue
+        yield event_name, event_payload
+
+
+def finish_reader_ask_agent_stream(
+    *,
+    runtime: AgentStreamRuntime,
+    assistant_message_id: str,
+) -> tuple[AgentStreamOutcome, tuple[str, dict[str, Any]] | None]:
+    final_content_md = "".join(runtime.content_parts).strip()
+    if runtime.producer_error is not None:
+        if final_content_md:
+            return (
+                AgentStreamOutcome(
+                    content_md=final_content_md,
+                    usage_summary=runtime.usage_summary,
+                    interrupted=True,
+                    interruption_detail=str(runtime.producer_error) or "输出中断",
+                ),
+                (
+                    stream_events_svc.EVENT_MESSAGE_INTERRUPTED,
+                    stream_events_svc.message_interrupted_payload(
+                        message_id=assistant_message_id,
+                        content_md=final_content_md,
+                        detail=str(runtime.producer_error) or "输出中断",
+                    ),
+                ),
+            )
+        raise runtime.producer_error
+    return (
+        AgentStreamOutcome(content_md=final_content_md, usage_summary=runtime.usage_summary, interrupted=False),
+        None,
+    )

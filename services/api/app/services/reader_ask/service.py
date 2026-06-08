@@ -125,23 +125,24 @@ from app.services.reader_ask import planner
 from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import prompt_preparation as prompt_preparation_svc
 from app.services.reader_ask import repository as repo
+from app.services.reader_ask import agent_runner as agent_runner_svc
+from app.services.reader_ask import context_runtime as context_runtime_svc
+from app.services.reader_ask import recovery as recovery_svc
 from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
+from app.services.reader_ask import stream_events as stream_events_svc
 from app.services.reader_ask import supplements as supplements_svc
+from app.services.reader_ask import stream_checkpoint as stream_checkpoint_svc
 from app.services.reader_ask import utils
 
 logger = logging.getLogger(__name__)
-
-
-class _ReplanContextTooLargeError(Exception):
-    """Raised when replan prompt exceeds budget — skip replan, use original answer."""
 
 
 from app.services.text_anchors import ensure_json_dict, sentence_map
 from app.services.user_assets import vocabulary as vocabulary_svc
 from app.services import reader_notes as reader_notes_svc
 from app.services import user_annotations as user_annotations_svc
-from app.workflow.tracing import build_usage_metadata
+
 
 _MAX_HISTORY_MESSAGES = 8
 _MAX_CONTEXT_TEXT = 3200
@@ -186,37 +187,6 @@ class _SemanticPlanningResult:
     planning_snapshot: planner.ReaderAskPlanningSnapshot
 
 
-@dataclass(slots=True)
-class _AgentStreamOutcome:
-    content_md: str
-    usage_summary: dict[str, Any] | None
-    interrupted: bool
-    interruption_detail: str | None = None
-
-
-@dataclass(slots=True)
-class _AgentStreamRuntime:
-    content_parts: list[str] = field(default_factory=list)
-    usage_summary: dict[str, Any] | None = None
-    producer_done: asyncio.Event = field(default_factory=asyncio.Event)
-    producer_error: Exception | None = None
-    emitted_text: str = ""
-    emitted_reasoning: str = ""
-    reasoning_started: bool = False
-
-
-@dataclass(slots=True)
-class _TurnRunStreamCheckpoint:
-    turn_run_id: UUID
-    build_output_json: Callable[[str, str | None, str | None], dict[str, Any]]
-    min_flush_interval_s: float = 0.8
-    min_content_chars: int = 48
-    min_reasoning_chars: int = 48
-    last_flushed_at: float = 0.0
-    last_flushed_content_len: int = 0
-    last_flushed_reasoning_len: int = 0
-
-
 def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -248,24 +218,6 @@ def _parse_uuid(value: str, detail: str) -> UUID:
         return UUID(value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=detail) from exc
-
-
-def _sse(event: str, data: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _insufficient_credits_payload(remaining_points: int) -> dict[str, Any]:
-    user_message = (
-        f"当前积分不足：剩余 {remaining_points} 点，本次 Ask Claread 至少需要 "
-        f"{READER_ASK_RESERVED_POINTS} 点。本轮请求未发送给模型。"
-    )
-    return {
-        "code": "INSUFFICIENT_CREDITS",
-        "detail": "Not enough credits for this Ask Claread request.",
-        "user_message": user_message,
-        "remaining_points": remaining_points,
-        "required_points": READER_ASK_RESERVED_POINTS,
-    }
 
 
 def _anchor_to_citation(anchor: ReaderAskAnchorRef, *, record_id: str, record_title: str | None) -> ReaderAskCitation:
@@ -413,22 +365,6 @@ def _query_seed(content: str, anchors: list[ReaderAskAnchorRef]) -> str:
     return _truncate_text(content, 80)
 
 
-def _build_unused_reservation(reservation: CreditReservation, actual_cost_points: int) -> CreditReservation:
-    if actual_cost_points >= reservation.total_points:
-        return CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
-
-    used_daily = min(actual_cost_points, reservation.deducted_from_daily)
-    used_bonus = max(actual_cost_points - used_daily, 0)
-    refund_daily = reservation.deducted_from_daily - used_daily
-    refund_bonus = reservation.deducted_from_bonus - used_bonus
-    refund_total = max(refund_daily, 0) + max(refund_bonus, 0)
-    return CreditReservation(
-        total_points=refund_total,
-        deducted_from_daily=max(refund_daily, 0),
-        deducted_from_bonus=max(refund_bonus, 0),
-    )
-
-
 def _make_tool_trace(tool_name: str, status: str, *, summary: str | None = None, metadata: dict[str, Any] | None = None) -> ReaderAskToolTraceEntry:
     now = _iso_now()
     if status == "started":
@@ -500,14 +436,6 @@ def _translations_map(record: _RecordBundle) -> dict[str, str]:
     return translations
 
 
-def _render_scene_article_overview(record: _RecordBundle) -> str | None:
-    resolved = utils.resolve_record_overview(
-        render_scene=record.render_scene,
-        page_state_json=getattr(record, "page_state_json", None),
-    )
-    overview = resolved.get("overview")
-    return str(overview).strip() or None if isinstance(overview, str) else None
-
 
 def _render_scene_has_sentence_entries(record: _RecordBundle) -> bool:
     entries = record.render_scene.get("sentence_entries") or record.render_scene.get("sentenceEntries")
@@ -522,7 +450,7 @@ def _current_record_affordances(
     return ReaderAskCurrentRecordAffordances(
         title=record.title or page_identity.title,
         available_context_capabilities=list(page_identity.available_context_capabilities),
-        has_article_overview=_render_scene_article_overview(record) is not None,
+        has_article_overview=context_runtime_svc.render_scene_article_overview(record) is not None,
         has_sentence_entries=_render_scene_has_sentence_entries(record),
         has_annotations=page_identity.has_annotations,
         has_reader_notes=page_identity.has_reader_notes,
@@ -787,90 +715,6 @@ def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
 
 
-async def _maybe_emit_replan_event(
-    *,
-    final_content_md: str,
-    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
-    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
-    assistant_message_id: str,
-) -> bool:
-    """Check if replan should be triggered and emit the replan.started event.
-
-    Returns True if replan is triggered, False otherwise.
-    This encapsulates the replan trigger condition and event emission so it
-    can be tested independently of the full streaming pipeline.
-    """
-    if (
-        _is_degenerate_answer(final_content_md)
-        and planning_snapshot is not None
-        and planning_snapshot.clarification_mode == "none"
-        and planning_snapshot.clarification_only is False
-    ):
-        logger.warning(
-            "reader_ask_replan_triggered: Degenerate answer detected (%d chars), attempting replan",
-            len(final_content_md.strip()),
-        )
-        await event_queue.put(("replan.started", {"message_id": assistant_message_id, "reason": "degenerate_answer"}))
-        return True
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Degenerate answer detection for replan trigger
-# ---------------------------------------------------------------------------
-
-# Patterns that indicate the model refused or gave a non-answer
-_REFUSAL_PATTERNS: tuple[str, ...] = (
-    "i cannot",
-    "i can't",
-    "i'm unable",
-    "i am unable",
-    "无法回答",
-    "不能回答",
-    "无法提供",
-    "我无法",
-    "我不能",
-    "as an ai",
-    "as a language model",
-    "no information",
-    "没有相关信息",
-    "没有足够的信息",
-    "not enough information",
-    "i don't have",
-    "i do not have",
-)
-
-
-def _is_degenerate_answer(content: str) -> bool:
-    """Determine if an answer is degenerate (empty, refusal, or clearly invalid).
-
-    This replaces the previous `len(content) < 20` heuristic with pattern-based
-    detection that distinguishes between:
-    - Short but valid answers (e.g. "Yes.", "Present perfect.") → NOT degenerate
-    - Empty/near-empty answers → degenerate
-    - Refusal/non-answer patterns → degenerate
-    - Very short answers that are not recognizable words → degenerate
-    """
-    stripped = content.strip()
-    if not stripped:
-        return True
-    # Check for refusal patterns
-    lower = stripped.lower()
-    if any(pattern in lower for pattern in _REFUSAL_PATTERNS):
-        return True
-    # Very short content (< 5 chars) that doesn't look like a real answer
-    # (e.g. "..." or single punctuation or model artifacts)
-    if len(stripped) < 5:
-        # Allow short but meaningful answers like "Yes.", "No.", "OK."
-        if stripped.rstrip(".!?,;:") and len(stripped.rstrip(".!?,;:")) <= 3:
-            # Could be a valid short answer — check if it contains at least
-            # one CJK character or one alphabetic word
-            has_cjk = any("\u4e00" <= c <= "\u9fff" for c in stripped)
-            has_alpha_word = any(c.isalpha() for c in stripped)
-            if has_cjk or has_alpha_word:
-                return False
-        return True
-    return False
 
 
 def _fallback_reference_query(user_message: str) -> str | None:
@@ -932,7 +776,7 @@ def _fallback_semantic_planner_decision(
     has_dictionary_anchor = any(anchor.anchor_type == "dictionary_entry" for anchor in anchors)
     has_local_anchor = bool(anchors)
     fallback_reference_query = _fallback_reference_query(user_message)
-    has_article_overview = _render_scene_article_overview(record) is not None
+    has_article_overview = context_runtime_svc.render_scene_article_overview(record) is not None
     has_sentence_entries = _render_scene_has_sentence_entries(record)
 
     resolved_intent: ReaderAskResolvedIntent = "explain"
@@ -1026,117 +870,8 @@ def _fallback_semantic_planner_decision(
     )
 
 
-def _current_record_source_labels(runtime_state: ReaderAskRuntimeState) -> list[str]:
-    labels: list[str] = []
-    if runtime_state.latest_record_context is not None:
-        labels.append("current_paragraph")
-    if runtime_state.latest_record_insights:
-        labels.append("record_assets")
-    if runtime_state.latest_article_overview:
-        labels.append("article_overview")
-    if runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai:
-        labels.append("dictionary")
-    return labels
 
 
-def _external_context_has_structured_assets(items: list[dict[str, Any]] | None) -> bool:
-    return bool(
-        items
-        and any(item.get("article_overview") or item.get("record_insights") for item in items)
-    )
-
-
-def _external_asset_context_has_items(items: list[dict[str, Any]] | None) -> bool:
-    return bool(items and any(item.get("asset_id") for item in items))
-
-
-async def _load_external_record_contexts(
-    user_id: UUID,
-    *,
-    current_record_id: UUID,
-    planned_external_refs: list[dict[str, str]],
-) -> list[ReaderAskExternalRecordContext]:
-    unique_refs: list[tuple[str, UUID, dict[str, str]]] = []
-    seen: set[str] = set()
-    for item in planned_external_refs:
-        record_id = str(item.get("record_id") or "").strip()
-        if not record_id or record_id in seen:
-            continue
-        seen.add(record_id)
-        record_uuid = _parse_uuid(record_id, "external record id is invalid")
-        if record_uuid == current_record_id:
-            continue
-        unique_refs.append((record_id, record_uuid, item))
-
-    bundles = await asyncio.gather(*[
-        _load_record_bundle(user_id, record_uuid)
-        for _, record_uuid, _ in unique_refs
-    ])
-
-    contexts: list[ReaderAskExternalRecordContext] = []
-    for (_, record_uuid, item), bundle in zip(unique_refs, bundles):
-        structured_assets = resolver_svc.lookup_structured_record_assets(
-            record_id=str(bundle.record_id),
-            record_title=bundle.title or item.get("title"),
-            render_scene=bundle.render_scene,
-            page_state_json=bundle.page_state_json,
-            reason=str(item.get("reason") or "explicit_attachment"),
-            updated_at=item.get("updated_at"),
-        )
-        contexts.append(
-            ReaderAskExternalRecordContext(
-                record_id=str(structured_assets["record_id"]),
-                record_title=structured_assets.get("record_title"),
-                article_overview=structured_assets.get("article_overview"),
-                article_overview_status=structured_assets.get("article_overview_status"),
-                article_overview_source=structured_assets.get("article_overview_source"),
-                article_overview_confidence=structured_assets.get("article_overview_confidence"),
-                record_insights=list(structured_assets.get("record_insights") or []),
-                source_labels=list(structured_assets.get("source_labels") or []),
-                reason=str(structured_assets.get("reason") or "explicit_attachment"),
-            )
-        )
-    return contexts
-
-
-def _load_external_asset_contexts(
-    *,
-    current_record_id: UUID,
-    planned_external_assets: list[dict[str, object]],
-) -> list[ReaderAskExternalAssetContext]:
-    contexts: list[ReaderAskExternalAssetContext] = []
-    seen: set[tuple[str, str]] = set()
-    for item in planned_external_assets:
-        record_id = str(item.get("record_id") or "").strip()
-        asset_id = str(item.get("asset_id") or "").strip()
-        if not record_id or not asset_id:
-            continue
-        key = (record_id, asset_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        record_uuid = _parse_uuid(record_id, "external asset record id is invalid")
-        if record_uuid == current_record_id:
-            continue
-        contexts.append(
-            ReaderAskExternalAssetContext(
-                record_id=record_id,
-                record_title=str(item.get("record_title") or "") or None,
-                asset_type=str(item.get("asset_type") or "analysis"),  # type: ignore[arg-type]
-                asset_id=asset_id,
-                entry_type=str(item.get("entry_type") or "") or None,
-                asset_title=str(item.get("asset_title") or "") or None,
-                content_md=str(item.get("content_md") or "") or None,
-                content_summary=str(item.get("content_summary") or "") or None,
-                source_labels=[
-                    str(label).strip()
-                    for label in (item.get("source_labels") or [])
-                    if str(label).strip()
-                ],
-                reason=str(item.get("reason") or "structured_asset_resolved"),
-            )
-        )
-    return contexts
 
 
 async def _run_semantic_planner(
@@ -1284,83 +1019,6 @@ async def _resolve_semantic_planning(
         planning_snapshot=planning_snapshot,
     )
 
-
-async def _materialize_planned_context(
-    *,
-    user_id: UUID,
-    record: _RecordBundle,
-    runtime_state: ReaderAskRuntimeState,
-    planning_snapshot: planner.ReaderAskPlanningSnapshot,
-    page_identity: ReaderAskPageIdentity,
-    entry_action: ReaderAskEntryAction,
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    get_record_context_cb: Callable[[], Any],
-    get_record_insights_cb: Callable[[], Any],
-) -> ReaderAskResolvedContextInput:
-    working_set = planning_snapshot.working_set
-    resolved_overview = utils.resolve_record_overview(
-        render_scene=record.render_scene,
-        page_state_json=record.page_state_json,
-    )
-    if working_set.local_context_window_needed and runtime_state.latest_record_context is None:
-        runtime_state.latest_record_context = await get_record_context_cb()
-        if runtime_state.latest_record_context is not None:
-            runtime_state.source_labels.update({"current_record", "current_anchor", "current_paragraph"})
-    if working_set.record_insights_needed and not runtime_state.latest_record_insights:
-        runtime_state.latest_record_insights = await get_record_insights_cb()
-        if runtime_state.latest_record_insights:
-            runtime_state.source_labels.add("record_assets")
-    if working_set.article_overview_needed and not runtime_state.latest_article_overview:
-        article_overview = _render_scene_article_overview(record)
-        if article_overview:
-            runtime_state.latest_article_overview = article_overview
-            runtime_state.source_labels.add(str(resolved_overview.get("source") or "article_overview"))
-
-    external_record_contexts = await _load_external_record_contexts(
-        user_id,
-        current_record_id=record.record_id,
-        planned_external_refs=working_set.external_record_refs,
-    )
-    if external_record_contexts:
-        runtime_state.latest_external_record_contexts = [
-            item.model_dump(mode="json") for item in external_record_contexts
-        ]
-        runtime_state.used_cross_record_context = True
-        runtime_state.source_labels.add("external_record_context")
-        for item in external_record_contexts:
-            runtime_state.source_labels.update(item.source_labels)
-    external_asset_contexts = _load_external_asset_contexts(
-        current_record_id=record.record_id,
-        planned_external_assets=working_set.external_asset_refs,
-    )
-    if external_asset_contexts:
-        runtime_state.latest_external_asset_contexts = [
-            item.model_dump(mode="json") for item in external_asset_contexts
-        ]
-        runtime_state.used_cross_record_context = True
-        runtime_state.source_labels.update({"external_record_context", "external_assets"})
-
-    current_record_context = ReaderAskCurrentRecordContext(
-        record_id=str(record.record_id),
-        record_title=record.title,
-        local_context=runtime_state.latest_record_context,
-        record_insights=runtime_state.latest_record_insights,
-        article_overview=runtime_state.latest_article_overview,
-        article_overview_status=str(resolved_overview.get("status") or "") or None,
-        article_overview_source=str(resolved_overview.get("source") or "") or None,
-        article_overview_confidence=str(resolved_overview.get("confidence") or "") or None,
-        source_labels=_current_record_source_labels(runtime_state),
-    )
-    return planner.build_resolved_context_input(
-        page_identity=page_identity,
-        entry_action=entry_action,
-        attachments=attachments,
-        anchors=anchors,
-        current_record_context=current_record_context,
-        external_record_contexts=external_record_contexts,
-        external_asset_contexts=external_asset_contexts,
-    )
 
 
 async def _resolve_annotation_anchor(conn: Any, user_id: UUID, anchor: ReaderAskAnchorRef) -> ReaderAskAnchorRef:
@@ -1909,10 +1567,6 @@ def _build_completed_payload(
     )
 
 
-def _terminal_reasoning_status(reasoning_started: bool) -> Literal["completed"] | None:
-    return "completed" if reasoning_started else None
-
-
 def _build_stream_checkpoint_output_json(
     *,
     content_md: str,
@@ -2100,10 +1754,10 @@ def _capability_trace_json(
             "source_labels": ["external_record_context"] if runtime_state.latest_external_record_contexts else [],
         },
         "structured_asset_lookup": {
-            "used": _external_context_has_structured_assets(runtime_state.latest_external_record_contexts),
+            "used": context_runtime_svc.external_context_has_structured_assets(runtime_state.latest_external_record_contexts),
             "reason": context_plan.structured_asset_lookup_reason if context_plan else None,
             "source_labels": ["article_overview", "record_assets"]
-            if _external_context_has_structured_assets(runtime_state.latest_external_record_contexts)
+            if context_runtime_svc.external_context_has_structured_assets(runtime_state.latest_external_record_contexts)
             else [],
         },
         "external_asset_context": {
@@ -2170,228 +1824,6 @@ async def _upsert_eval_trace_record(
         else (existing or {}).get("metrics_json") or {},
     )
 
-
-def _reasoning_enabled_settings(
-    route_settings: RunModelSettings,
-    *,
-    base_url: str = "",
-) -> RunModelSettings:
-    extra_body = dict(route_settings.extra_body or {})
-    extra_headers = dict(route_settings.extra_headers or {})
-    if "thinking" in extra_body and isinstance(extra_body["thinking"], dict):
-        thinking = dict(cast(dict[str, Any], extra_body["thinking"]))
-        if thinking.get("type") == "disabled":
-            thinking["type"] = "enabled"
-        extra_body["thinking"] = thinking
-    elif extra_body.get("enable_thinking") is False:
-        extra_body["enable_thinking"] = True
-    elif "enable_thinking" not in extra_body:
-        extra_body["enable_thinking"] = True
-
-    if extra_body.get("preserve_thinking") is True:
-        # DashScope streaming suppresses current-round reasoning output when
-        # preserve_thinking=true, which breaks the visible thinking UX.
-        extra_body["preserve_thinking"] = False
-
-    if "dashscope.aliyuncs.com" in base_url.lower():
-        # DashScope compatible-mode requires this header for HTTP SSE streaming.
-        # Without it, reasoning_content may only appear at the end instead of
-        # arriving incrementally.
-        extra_headers.setdefault("X-DashScope-SSE", "enable")
-        extra_body.setdefault("incremental_output", True)
-    return RunModelSettings(
-        max_tokens=route_settings.max_tokens,
-        temperature=route_settings.temperature,
-        top_p=route_settings.top_p,
-        timeout=route_settings.timeout,
-        parallel_tool_calls=route_settings.parallel_tool_calls,
-        seed=route_settings.seed,
-        presence_penalty=route_settings.presence_penalty,
-        frequency_penalty=route_settings.frequency_penalty,
-        stop_sequences=route_settings.stop_sequences,
-        extra_headers=extra_headers or None,
-        extra_body=extra_body or None,
-    )
-
-
-async def _maybe_flush_turn_run_stream_checkpoint(
-    *,
-    checkpoint: _TurnRunStreamCheckpoint | None,
-    runtime: _AgentStreamRuntime,
-    force: bool = False,
-) -> None:
-    if checkpoint is None:
-        return
-
-    content_text = runtime.emitted_text
-    reasoning_text = runtime.emitted_reasoning
-    content_len = len(content_text)
-    reasoning_len = len(reasoning_text)
-
-    if content_len == 0 and reasoning_len == 0 and not (force and runtime.reasoning_started):
-        return
-
-    grew_content = content_len - checkpoint.last_flushed_content_len
-    grew_reasoning = reasoning_len - checkpoint.last_flushed_reasoning_len
-    now = perf_counter()
-    has_new_content = grew_content > 0 or grew_reasoning > 0
-    interval_elapsed = (
-        checkpoint.last_flushed_at > 0
-        and has_new_content
-        and (now - checkpoint.last_flushed_at) >= checkpoint.min_flush_interval_s
-    )
-    should_flush = (
-        force
-        or checkpoint.last_flushed_at == 0
-        or grew_content >= checkpoint.min_content_chars
-        or grew_reasoning >= checkpoint.min_reasoning_chars
-        or interval_elapsed
-    )
-
-    if not should_flush:
-        return
-
-    reasoning_status = "streaming" if runtime.reasoning_started else None
-    reasoning_md = reasoning_text or None
-    snapshot = checkpoint.build_output_json(content_text, reasoning_md, reasoning_status)
-
-    try:
-        await repo.update_turn_run(
-            turn_run_id=checkpoint.turn_run_id,
-            status="streaming",
-            user_visible_output_json=snapshot,
-        )
-    except Exception:
-        logger.warning(
-            "reader_ask_stream_checkpoint_flush_failed",
-            exc_info=True,
-            extra={"turn_run_id": str(checkpoint.turn_run_id)},
-        )
-        return
-
-    checkpoint.last_flushed_at = now
-    checkpoint.last_flushed_content_len = content_len
-    checkpoint.last_flushed_reasoning_len = reasoning_len
-
-
-def _start_reader_ask_agent_stream(
-    *,
-    agent: Any,
-    deps: ReaderAskAgentDeps,
-    model: Any,
-    route_settings: RunModelSettings,
-    assistant_message_id: str,
-    base_url: str,
-    checkpoint: _TurnRunStreamCheckpoint | None = None,
-) -> tuple[asyncio.Task[None], _AgentStreamRuntime]:
-    event_queue = deps.event_queue
-    runtime = _AgentStreamRuntime()
-
-    async def run_agent_stream() -> None:
-        try:
-            async with agent.run_stream(
-                build_reader_ask_prompt(deps),
-                deps=deps,
-                model=model,
-                model_settings=_reasoning_enabled_settings(
-                    route_settings,
-                    base_url=base_url,
-                ).to_pydantic_ai(),
-            ) as result:
-                async for response, _last in result.stream_responses(debounce_by=None):
-                    thinking_text = response.thinking or ""
-                    if thinking_text and not runtime.reasoning_started:
-                        runtime.reasoning_started = True
-                        await event_queue.put(("reasoning.started", {"message_id": assistant_message_id}))
-                    if thinking_text.startswith(runtime.emitted_reasoning):
-                        reasoning_delta = thinking_text[len(runtime.emitted_reasoning):]
-                    else:
-                        reasoning_delta = thinking_text
-                    if reasoning_delta:
-                        runtime.emitted_reasoning = thinking_text
-                        await event_queue.put(
-                            ("reasoning.delta", {"message_id": assistant_message_id, "delta": reasoning_delta})
-                        )
-
-                    text_value = response.text or ""
-                    if text_value.startswith(runtime.emitted_text):
-                        text_delta = text_value[len(runtime.emitted_text):]
-                    else:
-                        text_delta = text_value
-                    if text_delta:
-                        runtime.emitted_text = text_value
-                        runtime.content_parts.append(text_delta)
-                        await event_queue.put(
-                            ("message.delta", {"message_id": assistant_message_id, "delta": text_delta})
-                        )
-                    await _maybe_flush_turn_run_stream_checkpoint(
-                        checkpoint=checkpoint,
-                        runtime=runtime,
-                    )
-                await _maybe_flush_turn_run_stream_checkpoint(
-                    checkpoint=checkpoint,
-                    runtime=runtime,
-                    force=True,
-                )
-                if runtime.reasoning_started:
-                    await event_queue.put(("reasoning.completed", {"message_id": assistant_message_id}))
-                runtime.usage_summary = build_usage_metadata(result.usage())
-        except Exception as exc:
-            await _maybe_flush_turn_run_stream_checkpoint(
-                checkpoint=checkpoint,
-                runtime=runtime,
-                force=True,
-            )
-            runtime.producer_error = exc
-        finally:
-            runtime.producer_done.set()
-
-    return asyncio.create_task(run_agent_stream()), runtime
-
-
-async def _stream_reader_ask_events(
-    *,
-    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
-    producer_done: asyncio.Event,
-) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    while not producer_done.is_set() or not event_queue.empty():
-        try:
-            event_name, event_payload = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-        except TimeoutError:
-            continue
-        yield event_name, event_payload
-
-
-def _finish_reader_ask_agent_stream(
-    *,
-    runtime: _AgentStreamRuntime,
-    assistant_message_id: str,
-) -> tuple[_AgentStreamOutcome, tuple[str, dict[str, Any]] | None]:
-    final_content_md = "".join(runtime.content_parts).strip()
-    if runtime.producer_error is not None:
-        if final_content_md:
-            return (
-                _AgentStreamOutcome(
-                    content_md=final_content_md,
-                    usage_summary=runtime.usage_summary,
-                    interrupted=True,
-                    interruption_detail=str(runtime.producer_error) or "输出中断",
-                ),
-                (
-                    "message.interrupted",
-                    {
-                        "message_id": assistant_message_id,
-                        "content_md": final_content_md,
-                        "detail": str(runtime.producer_error) or "输出中断",
-                        "can_retry": True,
-                    },
-                ),
-            )
-        raise runtime.producer_error
-    return (
-        _AgentStreamOutcome(content_md=final_content_md, usage_summary=runtime.usage_summary, interrupted=False),
-        None,
-    )
 
 
 def _normalize_persisted_supplements(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -2727,7 +2159,7 @@ async def _run_explicit_quick_action_annotation(
 
     runtime_state.tool_trace.append(_tool_trace_entry(tool_name="generate_sentence_annotation", status="started"))
     if event_queue is not None:
-        await event_queue.put(("tool.started", {"tool_name": "generate_sentence_annotation"}))
+        await event_queue.put((stream_events_svc.EVENT_TOOL_STARTED, stream_events_svc.tool_started_payload("generate_sentence_annotation")))
     generated = await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
     if generated is not None:
         runtime_state.latest_generated_annotations.append(generated)
@@ -2743,7 +2175,7 @@ async def _run_explicit_quick_action_annotation(
         _tool_trace_entry(tool_name="generate_sentence_annotation", status="completed", summary=summary)
     )
     if event_queue is not None:
-        await event_queue.put(("tool.completed", {"tool_name": "generate_sentence_annotation", "summary": summary}))
+        await event_queue.put((stream_events_svc.EVENT_TOOL_COMPLETED, stream_events_svc.tool_completed_payload("generate_sentence_annotation", summary)))
     return generated
 
 
@@ -2993,132 +2425,6 @@ def _build_trace_summary(
     )
 
 
-async def _fail_context_too_large(
-    *,
-    user_id: UUID,
-    thread_id: UUID,
-    record: _RecordBundle | None,
-    thread: dict[str, Any] | None,
-    reservation: CreditReservation | None,
-    assistant_message_id: UUID,
-    active_turn_run_id: UUID | None,
-    runtime_state: ReaderAskRuntimeState,
-    resolved_intent: ReaderAskResolvedIntent | None,
-    resolved_context_input: ReaderAskResolvedContextInput | None,
-    run_info: dict[str, Any] | None,
-    submission_mode: str,
-    resolved_anchors: list[ReaderAskAnchorRef],
-    attachments: list[ReaderAskAttachment],
-    anchor_payload: list[dict[str, Any]],
-    reference_resolution: planner.ReaderAskReferenceResolution,
-    disambiguation: ReaderAskDisambiguation | None,
-    external_asset_disambiguation: ReaderAskAssetDisambiguation | None,
-    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
-    context_plan: ReaderAskContextPlan | None,
-    trace_summary: ReaderAskTraceSummary | None,
-    start_perf: float,
-    user_message_text: str,
-    error_code: str,
-    retry_message_id: UUID | None = None,
-    run_history: list[dict[str, Any]] | None = None,
-    persisted_supplements_json: list[dict[str, Any]] | None = None,
-    compaction_audit: list[str] | None = None,
-) -> None:
-    """Unified failure cleanup for CONTEXT_TOO_LARGE early returns.
-
-    Ensures message/turn_run are marked failed, reservation is refunded,
-    eval trace is recorded, and failure event is logged — mirroring the
-    except-block cleanup that would otherwise be bypassed.
-    """
-    # Inject compaction audit into trace_summary before persisting
-    if compaction_audit:
-        trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, compaction_audit)
-
-    # 1. Full refund
-    if reservation is not None and reservation.total_points > 0 and record is not None:
-        refund_metadata: dict[str, Any] = {
-            "reason": error_code,
-            "thread_id": str(thread_id),
-            "record_id": str(record.record_id),
-        }
-        if retry_message_id is not None:
-            refund_metadata["retry_message_id"] = str(retry_message_id)
-        await refund_reserved_points(user_id, reservation, metadata=refund_metadata)
-
-    # 2. Mark assistant message as failed
-    await repo.update_message(
-        message_id=assistant_message_id,
-        status="failed",
-        content_md="",
-        context_anchors=anchor_payload,
-        citations=[c.model_dump(mode="json") for c in runtime_state.citations],
-        action_proposals=[],
-        tool_trace=[e.model_dump(mode="json") for e in runtime_state.tool_trace],
-        metadata=_assistant_message_metadata(
-            resolved_intent=resolved_intent,
-            run_info=run_info,
-            run_history=run_history,
-            resolved_context_input=resolved_context_input,
-            submission_mode=submission_mode,
-        ),
-        usage_event_id=None,
-        current_turn_run_id=active_turn_run_id,
-    )
-
-    # 3. Mark turn_run as failed + upsert eval trace
-    if active_turn_run_id is not None and record is not None:
-        failed_output_json = _build_stream_checkpoint_output_json(
-            content_md="",
-            reasoning_md=None,
-            reasoning_status=None,
-            submission_mode=submission_mode,
-            resolved_intent=resolved_intent,
-            record=record,
-            anchors=resolved_anchors,
-            attachments=attachments,
-            runtime_state=runtime_state,
-            reference_resolution=reference_resolution,
-            disambiguation=disambiguation,
-            external_asset_disambiguation=external_asset_disambiguation,
-            trace_summary=trace_summary,
-            context_plan=context_plan,
-            resolved_context_input=resolved_context_input,
-            run_info=run_info,
-            persisted_supplements=persisted_supplements_json or [],
-        )
-        await repo.update_turn_run(
-            turn_run_id=active_turn_run_id,
-            status="failed",
-            resolved_intent=resolved_intent,
-            user_visible_output_json=failed_output_json,
-            failed_at=datetime.now(UTC),
-        )
-        await _upsert_eval_trace_record(
-            turn_run_id=active_turn_run_id,
-            planning_snapshot=planning_snapshot,
-            runtime_state=runtime_state,
-            context_plan=context_plan,
-            trace_summary=trace_summary,
-        )
-
-    # 4. Record failure event
-    if record is not None and thread is not None:
-        failure_metadata: dict[str, Any] = {
-            "anchor_count": len(anchor_payload),
-            "tool_names": [e.tool_name for e in runtime_state.tool_trace],
-        }
-        if retry_message_id is not None:
-            failure_metadata["retry_message_id"] = str(retry_message_id)
-        await _record_failure_event(
-            user_id=user_id,
-            record_id=record.record_id,
-            thread_id=thread_id,
-            user_message=user_message_text,
-            start_perf=start_perf,
-            error_code=error_code,
-            error_message="CONTEXT_TOO_LARGE",
-            metadata_json=failure_metadata,
-        )
 
 
 def _build_evidence_items(
@@ -3307,7 +2613,7 @@ async def stream_thread_message(
     reference_resolution = planner.ReaderAskReferenceResolution()
     final_content_md = ""
     persisted_supplements_json: list[dict[str, Any]] = []
-    stream_runtime: _AgentStreamRuntime | None = None
+    stream_runtime: agent_runner_svc.AgentStreamRuntime | None = None
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -3332,7 +2638,7 @@ async def stream_thread_message(
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
         if remaining < READER_ASK_RESERVED_POINTS:
-            yield _sse("error", _insufficient_credits_payload(remaining))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
             return
 
         reservation_metadata = {
@@ -3352,7 +2658,7 @@ async def stream_thread_message(
         )
         if reservation is None:
             remaining = await check_quota(user_id)
-            yield _sse("error", _insufficient_credits_payload(remaining))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
             return
 
         planning_result = await _resolve_semantic_planning(
@@ -3388,7 +2694,7 @@ async def stream_thread_message(
                     submission_mode=submission_mode,
                 ),
             )
-            yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_THREAD_READY, stream_events_svc.thread_ready_payload(str(thread_id), str(record.record_id)))
 
             assistant_md = post_process_svc.build_clarification_message(
                 local_anchor_required=planning_snapshot.context_plan.clarification_reason == "missing_required_context",
@@ -3454,7 +2760,7 @@ async def stream_thread_message(
             )
             computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
             billed_points = min(computed_cost_points, reservation.total_points)
-            unused_reservation = _build_unused_reservation(reservation, billed_points)
+            unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
             if unused_reservation.total_points > 0:
                 await refund_reserved_points(
                     user_id,
@@ -3534,8 +2840,8 @@ async def stream_thread_message(
                 resolved_context_input=resolved_context_input,
                 submission_mode=submission_mode,
             )
-            yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
-            yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_STARTED, stream_events_svc.message_started_payload(assistant_message["id"], user_message["id"]))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_DELTA, stream_events_svc.message_delta_payload(assistant_message["id"], assistant_md))
             await repo.update_message(
                 message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
                 status="completed",
@@ -3564,7 +2870,7 @@ async def stream_thread_message(
                 context_plan=context_plan,
                 trace_summary=trace_summary,
             )
-            yield _sse("message.completed", payload.model_dump(mode="json"))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_COMPLETED, payload.model_dump(mode="json"))
             return
 
         user_message = await repo.create_message(
@@ -3579,7 +2885,7 @@ async def stream_thread_message(
                 submission_mode=submission_mode,
             ),
         )
-        yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
+        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_THREAD_READY, stream_events_svc.thread_ready_payload(str(thread_id), str(record.record_id)))
 
         assistant_message = await repo.create_message(
             thread_id=thread_id,
@@ -3623,7 +2929,7 @@ async def stream_thread_message(
             usage_event_id=None,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
-        yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
+        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_STARTED, stream_events_svc.message_started_payload(assistant_message["id"], user_message["id"]))
 
         base_citations = [
             _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
@@ -3723,7 +3029,7 @@ async def stream_thread_message(
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
-        resolved_context_input = await _materialize_planned_context(
+        resolved_context_input = await context_runtime_svc.materialize_planned_context(
             user_id=user_id,
             record=record,
             runtime_state=runtime_state,
@@ -3734,6 +3040,7 @@ async def stream_thread_message(
             anchors=resolved_anchors,
             get_record_context_cb=get_record_context_cb,
             get_record_insights_cb=get_record_insights_cb,
+            load_record_bundle_cb=_load_record_bundle,
         )
         quick_action_annotation = await _run_explicit_quick_action_annotation(
             submission_mode=submission_mode,
@@ -3805,7 +3112,7 @@ async def stream_thread_message(
             multiplier_output=MULTIPLIER_OUTPUT,
         )
         if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
-            yield _sse("context.compacting", {"message_id": assistant_message["id"]})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
         prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = prompt_preparation_svc.prepare_prompt_payload(
             prompt_payload,
             reserved_points=READER_ASK_RESERVED_POINTS,
@@ -3816,11 +3123,10 @@ async def stream_thread_message(
             min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
         )
         if _context_too_large:
-            await _fail_context_too_large(
+            cleanup_plan = recovery_svc.build_context_too_large_cleanup_plan(
                 user_id=user_id,
                 thread_id=thread_id,
-                record=record,
-                thread=thread,
+                record_id=record.record_id if record else None,
                 reservation=reservation,
                 assistant_message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
                 active_turn_run_id=active_turn_run_id,
@@ -3829,25 +3135,69 @@ async def stream_thread_message(
                 resolved_context_input=resolved_context_input,
                 run_info=run_info,
                 submission_mode=submission_mode,
+                anchor_payload=anchor_payload,
+                error_code="reader_ask_failed",
+                compaction_audit=_compaction_audit,
+                trace_summary=trace_summary,
+                build_message_metadata_cb=_assistant_message_metadata,
+                build_turn_run_output_cb=_build_stream_checkpoint_output_json if active_turn_run_id and record else None,
+                run_history=None,
+                record_bundle=record,
                 resolved_anchors=resolved_anchors,
                 attachments=attachments,
-                anchor_payload=anchor_payload,
                 reference_resolution=reference_resolution,
                 disambiguation=disambiguation,
                 external_asset_disambiguation=external_asset_disambiguation,
                 planning_snapshot=planning_snapshot,
                 context_plan=context_plan,
-                trace_summary=trace_summary,
-                start_perf=start_perf,
+                persisted_supplements_json=None,
                 user_message_text=body.content,
-                error_code="reader_ask_failed",
-                compaction_audit=_compaction_audit,
+                start_perf=start_perf,
+                thread=thread,
             )
-            yield _sse("error", {
-                "code": "CONTEXT_TOO_LARGE",
-                "detail": "Context exceeds budget even after aggressive compaction.",
-                "user_message": "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
-            })
+            # Execute cleanup plan
+            if cleanup_plan.refund is not None:
+                await refund_reserved_points(user_id, cleanup_plan.refund.reservation, metadata=cleanup_plan.refund.metadata)
+            await repo.update_message(
+                message_id=cleanup_plan.message_failed.message_id,
+                status="failed",
+                content_md=cleanup_plan.message_failed.content_md,
+                context_anchors=anchor_payload,
+                citations=[c.model_dump(mode="json") for c in runtime_state.citations],
+                action_proposals=[],
+                tool_trace=[e.model_dump(mode="json") for e in runtime_state.tool_trace],
+                metadata=cleanup_plan.message_failed.metadata,
+                usage_event_id=None,
+                current_turn_run_id=cleanup_plan.message_failed.current_turn_run_id,
+            )
+            if cleanup_plan.turn_run_failed is not None:
+                await repo.update_turn_run(
+                    turn_run_id=cleanup_plan.turn_run_failed.turn_run_id,
+                    status="failed",
+                    resolved_intent=resolved_intent,
+                    user_visible_output_json=cleanup_plan.turn_run_failed.user_visible_output_json,
+                    failed_at=datetime.now(UTC),
+                )
+            if cleanup_plan.eval_trace is not None:
+                await _upsert_eval_trace_record(
+                    turn_run_id=cleanup_plan.eval_trace.turn_run_id,
+                    planning_snapshot=cleanup_plan.eval_trace.planning_snapshot,
+                    runtime_state=cleanup_plan.eval_trace.runtime_state,
+                    context_plan=cleanup_plan.eval_trace.context_plan,
+                    trace_summary=cleanup_plan.eval_trace.trace_summary,
+                )
+            if cleanup_plan.failure_event is not None:
+                await _record_failure_event(
+                    user_id=cleanup_plan.failure_event.user_id,
+                    record_id=cleanup_plan.failure_event.record_id,
+                    thread_id=cleanup_plan.failure_event.thread_id,
+                    user_message=cleanup_plan.failure_event.user_message,
+                    start_perf=cleanup_plan.failure_event.start_perf,
+                    error_code=cleanup_plan.failure_event.error_code,
+                    error_message=cleanup_plan.failure_event.error_message,
+                    metadata_json=cleanup_plan.failure_event.metadata_json,
+                )
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.context_too_large_payload())
             return
         trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
@@ -3875,7 +3225,7 @@ async def stream_thread_message(
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
-        checkpoint = _TurnRunStreamCheckpoint(
+        checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
             build_output_json=lambda content_md, reasoning_md, reasoning_status: _build_stream_checkpoint_output_json(
                 content_md=content_md,
@@ -3896,43 +3246,46 @@ async def stream_thread_message(
                 run_info=run_info,
                 persisted_supplements=[],
             ),
+            update_turn_run_cb=repo.update_turn_run,
         )
-        producer_task, stream_runtime = _start_reader_ask_agent_stream(
+        producer_task, stream_runtime = agent_runner_svc.start_reader_ask_agent_stream(
             agent=agent,
             deps=deps,
             model=model,
             route_settings=route_settings,
             assistant_message_id=assistant_message["id"],
             base_url=model_config.base_url if model_config else "",
-            checkpoint=checkpoint,
+            checkpoint_flush=stream_checkpoint_svc.make_checkpoint_flush(checkpoint),
         )
         try:
-            async for event_name, event_payload in _stream_reader_ask_events(
+            async for event_name, event_payload in agent_runner_svc.stream_reader_ask_events(
                 event_queue=event_queue,
                 producer_done=stream_runtime.producer_done,
             ):
-                yield _sse(event_name, event_payload)
+                yield stream_events_svc.encode_sse(event_name, event_payload)
         finally:
             await producer_task
 
-        stream_outcome, interrupted_event = _finish_reader_ask_agent_stream(
+        stream_outcome, interrupted_event = agent_runner_svc.finish_reader_ask_agent_stream(
             runtime=stream_runtime,
             assistant_message_id=assistant_message["id"],
         )
         if interrupted_event is not None:
-            yield _sse(interrupted_event[0], interrupted_event[1])
+            yield stream_events_svc.encode_sse(interrupted_event[0], interrupted_event[1])
 
         final_content_md = stream_outcome.content_md
         usage_summary = stream_outcome.usage_summary
 
         # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
         # not already clarified, attempt a single replan with expanded context
-        replan_triggered = await _maybe_emit_replan_event(
+        replan_event = agent_runner_svc.build_replan_event(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
-            event_queue=event_queue,
             assistant_message_id=assistant_message["id"],
         )
+        if replan_event is not None:
+            yield stream_events_svc.encode_sse(replan_event[0], replan_event[1])
+        replan_triggered = replan_event is not None
         if replan_triggered:
             try:
                 replan_result = await _resolve_semantic_planning(
@@ -3953,7 +3306,7 @@ async def stream_thread_message(
                     replan_reference_resolution = replan_result.reference_resolution
                     replan_disambiguation = replan_planning_snapshot.disambiguation_state
                     replan_external_asset_disambiguation = replan_planning_snapshot.external_asset_disambiguation_state
-                    replan_resolved_context_input = await _materialize_planned_context(
+                    replan_resolved_context_input = await context_runtime_svc.materialize_planned_context(
                         user_id=user_id,
                         record=record,
                         runtime_state=replan_runtime_state,
@@ -3964,6 +3317,7 @@ async def stream_thread_message(
                         anchors=resolved_anchors,
                         get_record_context_cb=get_record_context_cb,
                         get_record_insights_cb=get_record_insights_cb,
+                        load_record_bundle_cb=_load_record_bundle,
                     )
                     replan_cross_record_context_allowed = replan_planning_snapshot.retrieval_needs == "known_reference_only"
                     replan_quick_action_annotation = await _run_explicit_quick_action_annotation(
@@ -4005,7 +3359,7 @@ async def stream_thread_message(
                         multiplier_output=MULTIPLIER_OUTPUT,
                     )
                     if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
-                        yield _sse("context.compacting", {"message_id": assistant_message["id"]})
+                        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
                     replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
                         replan_payload,
                         reserved_points=READER_ASK_RESERVED_POINTS,
@@ -4017,7 +3371,7 @@ async def stream_thread_message(
                     )
                     if _replan_context_too_large:
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
-                        raise _ReplanContextTooLargeError()
+                        raise recovery_svc.ReplanContextTooLargeError()
                     replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
                     replan_deps = ReaderAskAgentDeps(
                         payload=replan_payload,
@@ -4144,7 +3498,7 @@ async def stream_thread_message(
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
         billed_points = min(computed_cost_points, reservation.total_points)
-        unused_reservation = _build_unused_reservation(reservation, billed_points)
+        unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
         if unused_reservation.total_points > 0:
             await refund_reserved_points(
                 user_id,
@@ -4215,7 +3569,7 @@ async def stream_thread_message(
             supplement_candidates=typed_supplement_candidates,
             persisted_supplements=[],
             reasoning_md=stream_runtime.emitted_reasoning or None,
-            reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started),
+            reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         updated = await repo.update_message(
@@ -4266,7 +3620,7 @@ async def stream_thread_message(
             usage_event_id=usage_event_id,
         )
         if not stream_outcome.interrupted:
-            yield _sse("message.completed", payload.model_dump(mode="json"))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_COMPLETED, payload.model_dump(mode="json"))
     except Exception as exc:
         if reservation is not None and reservation.total_points > 0 and record is not None:
             await refund_reserved_points(
@@ -4301,7 +3655,7 @@ async def stream_thread_message(
                     _build_stream_checkpoint_output_json(
                         content_md=final_content_md,
                         reasoning_md=(stream_runtime.emitted_reasoning or None) if stream_runtime is not None else None,
-                        reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started)
+                        reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started)
                         if stream_runtime is not None
                         else None,
                         submission_mode=submission_mode,
@@ -4351,13 +3705,13 @@ async def stream_thread_message(
                 },
             )
         if isinstance(exc, HTTPException):
-            yield _sse("error", {"code": str(exc.status_code), "detail": exc.detail})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.http_exception_payload(exc.status_code, exc.detail))
             return
         if "model route is not configured" in str(exc):
-            yield _sse("error", {"code": "MODEL_UNAVAILABLE", "detail": "Ask Claread is temporarily unavailable."})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.model_unavailable_payload())
             return
         detail = str(exc) if get_settings().app_env != "production" else "Ask Claread is temporarily unavailable."
-        yield _sse("error", {"code": "READER_ASK_FAILED", "detail": detail})
+        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.reader_ask_failed_payload(detail))
 
 
 async def retry_thread_message(
@@ -4399,7 +3753,7 @@ async def retry_thread_message(
     reference_resolution = planner.ReaderAskReferenceResolution()
     final_content_md = ""
     persisted_supplements_json: list[dict[str, Any]] = []
-    stream_runtime: _AgentStreamRuntime | None = None
+    stream_runtime: agent_runner_svc.AgentStreamRuntime | None = None
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -4461,7 +3815,7 @@ async def retry_thread_message(
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
         if remaining < READER_ASK_RESERVED_POINTS:
-            yield _sse("error", _insufficient_credits_payload(remaining))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
             return
 
         reservation_metadata = {
@@ -4482,7 +3836,7 @@ async def retry_thread_message(
         )
         if reservation is None:
             remaining = await check_quota(user_id)
-            yield _sse("error", _insufficient_credits_payload(remaining))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
             return
 
         planning_result = await _resolve_semantic_planning(
@@ -4575,7 +3929,7 @@ async def retry_thread_message(
             )
             computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
             billed_points = min(computed_cost_points, reservation.total_points)
-            unused_reservation = _build_unused_reservation(reservation, billed_points)
+            unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
             if unused_reservation.total_points > 0:
                 await refund_reserved_points(
                     user_id,
@@ -4617,9 +3971,9 @@ async def retry_thread_message(
                     },
                 )
             )
-            yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
-            yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
-            yield _sse("message.delta", {"message_id": assistant_message["id"], "delta": assistant_md})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_THREAD_READY, stream_events_svc.thread_ready_payload(str(thread_id), str(record.record_id)))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_STARTED, stream_events_svc.message_started_payload(assistant_message["id"], user_message["id"]))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_DELTA, stream_events_svc.message_delta_payload(assistant_message["id"], assistant_md))
             await repo.update_message(
                 message_id=message_id,
                 status="completed",
@@ -4680,7 +4034,7 @@ async def retry_thread_message(
                 context_plan=context_plan,
                 trace_summary=trace_summary,
             )
-            yield _sse("message.completed", payload.model_dump(mode="json"))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_COMPLETED, payload.model_dump(mode="json"))
             return
 
         assistant_message = await repo.update_message(
@@ -4701,8 +4055,8 @@ async def retry_thread_message(
             usage_event_id=None,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
-        yield _sse("thread.ready", {"thread_id": str(thread_id), "record_id": str(record.record_id)})
-        yield _sse("message.started", {"message_id": assistant_message["id"], "reply_to": user_message["id"]})
+        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_THREAD_READY, stream_events_svc.thread_ready_payload(str(thread_id), str(record.record_id)))
+        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_STARTED, stream_events_svc.message_started_payload(assistant_message["id"], user_message["id"]))
 
         base_citations = [
             _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
@@ -4802,7 +4156,7 @@ async def retry_thread_message(
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
-        resolved_context_input = await _materialize_planned_context(
+        resolved_context_input = await context_runtime_svc.materialize_planned_context(
             user_id=user_id,
             record=record,
             runtime_state=runtime_state,
@@ -4813,6 +4167,7 @@ async def retry_thread_message(
             anchors=resolved_anchors,
             get_record_context_cb=get_record_context_cb,
             get_record_insights_cb=get_record_insights_cb,
+            load_record_bundle_cb=_load_record_bundle,
         )
         quick_action_annotation = await _run_explicit_quick_action_annotation(
             submission_mode=submission_mode,
@@ -4884,7 +4239,7 @@ async def retry_thread_message(
             multiplier_output=MULTIPLIER_OUTPUT,
         )
         if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
-            yield _sse("context.compacting", {"message_id": assistant_message_id})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(message_id))
         prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = prompt_preparation_svc.prepare_prompt_payload(
             prompt_payload,
             reserved_points=READER_ASK_RESERVED_POINTS,
@@ -4895,11 +4250,10 @@ async def retry_thread_message(
             min_max_output_tokens=_MIN_MAX_OUTPUT_TOKENS,
         )
         if _context_too_large:
-            await _fail_context_too_large(
+            cleanup_plan = recovery_svc.build_context_too_large_cleanup_plan(
                 user_id=user_id,
                 thread_id=thread_id,
-                record=record,
-                thread=thread,
+                record_id=record.record_id if record else None,
                 reservation=reservation,
                 assistant_message_id=message_id,
                 active_turn_run_id=active_turn_run_id,
@@ -4908,28 +4262,70 @@ async def retry_thread_message(
                 resolved_context_input=resolved_context_input,
                 run_info=run_info,
                 submission_mode=submission_mode,
+                anchor_payload=anchor_payload,
+                error_code="reader_ask_retry_failed",
+                retry_message_id=message_id,
+                compaction_audit=_compaction_audit,
+                trace_summary=trace_summary,
+                build_message_metadata_cb=_assistant_message_metadata,
+                build_turn_run_output_cb=_build_stream_checkpoint_output_json if active_turn_run_id and record else None,
+                run_history=run_history,
+                record_bundle=record,
                 resolved_anchors=resolved_anchors,
                 attachments=attachments,
-                anchor_payload=anchor_payload,
                 reference_resolution=reference_resolution,
                 disambiguation=disambiguation,
                 external_asset_disambiguation=external_asset_disambiguation,
                 planning_snapshot=planning_snapshot,
                 context_plan=context_plan,
-                trace_summary=trace_summary,
-                start_perf=start_perf,
-                user_message_text=original_user_message or (body.content if body else ""),
-                error_code="reader_ask_retry_failed",
-                retry_message_id=message_id,
-                run_history=run_history,
                 persisted_supplements_json=persisted_supplements_json,
-                compaction_audit=_compaction_audit,
+                user_message_text=original_user_message or (body.content if body else ""),
+                start_perf=start_perf,
+                thread=thread,
             )
-            yield _sse("error", {
-                "code": "CONTEXT_TOO_LARGE",
-                "detail": "Context exceeds budget even after aggressive compaction.",
-                "user_message": "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
-            })
+            # Execute cleanup plan
+            if cleanup_plan.refund is not None:
+                await refund_reserved_points(user_id, cleanup_plan.refund.reservation, metadata=cleanup_plan.refund.metadata)
+            await repo.update_message(
+                message_id=cleanup_plan.message_failed.message_id,
+                status="failed",
+                content_md=cleanup_plan.message_failed.content_md,
+                context_anchors=anchor_payload,
+                citations=[c.model_dump(mode="json") for c in runtime_state.citations],
+                action_proposals=[],
+                tool_trace=[e.model_dump(mode="json") for e in runtime_state.tool_trace],
+                metadata=cleanup_plan.message_failed.metadata,
+                usage_event_id=None,
+                current_turn_run_id=cleanup_plan.message_failed.current_turn_run_id,
+            )
+            if cleanup_plan.turn_run_failed is not None:
+                await repo.update_turn_run(
+                    turn_run_id=cleanup_plan.turn_run_failed.turn_run_id,
+                    status="failed",
+                    resolved_intent=resolved_intent,
+                    user_visible_output_json=cleanup_plan.turn_run_failed.user_visible_output_json,
+                    failed_at=datetime.now(UTC),
+                )
+            if cleanup_plan.eval_trace is not None:
+                await _upsert_eval_trace_record(
+                    turn_run_id=cleanup_plan.eval_trace.turn_run_id,
+                    planning_snapshot=cleanup_plan.eval_trace.planning_snapshot,
+                    runtime_state=cleanup_plan.eval_trace.runtime_state,
+                    context_plan=cleanup_plan.eval_trace.context_plan,
+                    trace_summary=cleanup_plan.eval_trace.trace_summary,
+                )
+            if cleanup_plan.failure_event is not None:
+                await _record_failure_event(
+                    user_id=cleanup_plan.failure_event.user_id,
+                    record_id=cleanup_plan.failure_event.record_id,
+                    thread_id=cleanup_plan.failure_event.thread_id,
+                    user_message=cleanup_plan.failure_event.user_message,
+                    start_perf=cleanup_plan.failure_event.start_perf,
+                    error_code=cleanup_plan.failure_event.error_code,
+                    error_message=cleanup_plan.failure_event.error_message,
+                    metadata_json=cleanup_plan.failure_event.metadata_json,
+                )
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.context_too_large_payload())
             return
         trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
         route_settings = RunModelSettings(
@@ -4957,7 +4353,7 @@ async def retry_thread_message(
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
-        checkpoint = _TurnRunStreamCheckpoint(
+        checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
             build_output_json=lambda content_md, reasoning_md, reasoning_status: _build_stream_checkpoint_output_json(
                 content_md=content_md,
@@ -4978,43 +4374,46 @@ async def retry_thread_message(
                 run_info=run_info,
                 persisted_supplements=persisted_supplements_json,
             ),
+            update_turn_run_cb=repo.update_turn_run,
         )
-        producer_task, stream_runtime = _start_reader_ask_agent_stream(
+        producer_task, stream_runtime = agent_runner_svc.start_reader_ask_agent_stream(
             agent=agent,
             deps=deps,
             model=model,
             route_settings=route_settings,
             assistant_message_id=assistant_message["id"],
             base_url=model_config.base_url if model_config else "",
-            checkpoint=checkpoint,
+            checkpoint_flush=stream_checkpoint_svc.make_checkpoint_flush(checkpoint),
         )
         try:
-            async for event_name, event_payload in _stream_reader_ask_events(
+            async for event_name, event_payload in agent_runner_svc.stream_reader_ask_events(
                 event_queue=event_queue,
                 producer_done=stream_runtime.producer_done,
             ):
-                yield _sse(event_name, event_payload)
+                yield stream_events_svc.encode_sse(event_name, event_payload)
         finally:
             await producer_task
 
-        stream_outcome, interrupted_event = _finish_reader_ask_agent_stream(
+        stream_outcome, interrupted_event = agent_runner_svc.finish_reader_ask_agent_stream(
             runtime=stream_runtime,
             assistant_message_id=assistant_message["id"],
         )
         if interrupted_event is not None:
-            yield _sse(interrupted_event[0], interrupted_event[1])
+            yield stream_events_svc.encode_sse(interrupted_event[0], interrupted_event[1])
 
         final_content_md = stream_outcome.content_md
         usage_summary = stream_outcome.usage_summary
 
         # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
         # not already clarified, attempt a single replan with expanded context
-        replan_triggered = await _maybe_emit_replan_event(
+        replan_event = agent_runner_svc.build_replan_event(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
-            event_queue=event_queue,
             assistant_message_id=assistant_message["id"],
         )
+        if replan_event is not None:
+            yield stream_events_svc.encode_sse(replan_event[0], replan_event[1])
+        replan_triggered = replan_event is not None
         if replan_triggered:
             try:
                 replan_result = await _resolve_semantic_planning(
@@ -5035,7 +4434,7 @@ async def retry_thread_message(
                     replan_reference_resolution = replan_result.reference_resolution
                     replan_disambiguation = replan_planning_snapshot.disambiguation_state
                     replan_external_asset_disambiguation = replan_planning_snapshot.external_asset_disambiguation_state
-                    replan_resolved_context_input = await _materialize_planned_context(
+                    replan_resolved_context_input = await context_runtime_svc.materialize_planned_context(
                         user_id=user_id,
                         record=record,
                         runtime_state=replan_runtime_state,
@@ -5046,6 +4445,7 @@ async def retry_thread_message(
                         anchors=resolved_anchors,
                         get_record_context_cb=get_record_context_cb,
                         get_record_insights_cb=get_record_insights_cb,
+                        load_record_bundle_cb=_load_record_bundle,
                     )
                     replan_cross_record_context_allowed = replan_planning_snapshot.retrieval_needs == "known_reference_only"
                     replan_quick_action_annotation = await _run_explicit_quick_action_annotation(
@@ -5087,7 +4487,7 @@ async def retry_thread_message(
                         multiplier_output=MULTIPLIER_OUTPUT,
                     )
                     if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
-                        yield _sse("context.compacting", {"message_id": assistant_message["id"]})
+                        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
                     replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
                         replan_payload,
                         reserved_points=READER_ASK_RESERVED_POINTS,
@@ -5099,7 +4499,7 @@ async def retry_thread_message(
                     )
                     if _replan_context_too_large:
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
-                        raise _ReplanContextTooLargeError()
+                        raise recovery_svc.ReplanContextTooLargeError()
                     replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
                     replan_deps = ReaderAskAgentDeps(
                         payload=replan_payload,
@@ -5226,7 +4626,7 @@ async def retry_thread_message(
 
         computed_cost_points = compute_reader_ask_cost_points(usage_summary)
         billed_points = min(computed_cost_points, reservation.total_points)
-        unused_reservation = _build_unused_reservation(reservation, billed_points)
+        unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
         if unused_reservation.total_points > 0:
             await refund_reserved_points(
                 user_id,
@@ -5298,7 +4698,7 @@ async def retry_thread_message(
             supplement_candidates=typed_supplement_candidates,
             persisted_supplements=persisted_supplements_json,
             reasoning_md=stream_runtime.emitted_reasoning or None,
-            reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started),
+            reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         await repo.update_message(
@@ -5354,7 +4754,7 @@ async def retry_thread_message(
             usage_event_id=usage_event_id,
         )
         if not stream_outcome.interrupted:
-            yield _sse("message.completed", payload.model_dump(mode="json"))
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_COMPLETED, payload.model_dump(mode="json"))
     except Exception as exc:
         if reservation is not None and reservation.total_points > 0 and record is not None:
             await refund_reserved_points(
@@ -5391,7 +4791,7 @@ async def retry_thread_message(
                     _build_stream_checkpoint_output_json(
                         content_md=final_content_md,
                         reasoning_md=(stream_runtime.emitted_reasoning or None) if stream_runtime is not None else None,
-                        reasoning_status=_terminal_reasoning_status(stream_runtime.reasoning_started)
+                        reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started)
                         if stream_runtime is not None
                         else None,
                         submission_mode=submission_mode,
@@ -5442,13 +4842,13 @@ async def retry_thread_message(
                 },
             )
         if isinstance(exc, HTTPException):
-            yield _sse("error", {"code": str(exc.status_code), "detail": exc.detail})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.http_exception_payload(exc.status_code, exc.detail))
             return
         if "model route is not configured" in str(exc):
-            yield _sse("error", {"code": "MODEL_UNAVAILABLE", "detail": "Ask Claread is temporarily unavailable."})
+            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.model_unavailable_payload())
             return
         detail = str(exc) if get_settings().app_env != "production" else "Ask Claread is temporarily unavailable."
-        yield _sse("error", {"code": "READER_ASK_FAILED", "detail": detail})
+        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.reader_ask_failed_payload(detail))
 
 
 def _annotation_request_from_anchor(

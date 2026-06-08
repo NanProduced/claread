@@ -12,6 +12,12 @@ from pydantic_ai import Agent, RunContext
 from app.schemas.reader_ask import ReaderAskAnchorRef, ReaderAskCitation, ReaderAskToolTraceEntry
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
 
+# Lazy import to avoid circular dependency:
+# reader_ask_agent -> stream_events -> __init__ -> service -> reader_ask_agent
+# We import only the module-level constants at class definition time via a
+# deferred import inside _emit_tool_event.
+
+
 _ToolEventName = Literal["tool.started", "tool.completed", "tool.failed"]
 
 
@@ -123,11 +129,23 @@ async def _emit_tool_event(
     summary: str | None = None,
     detail: str | None = None,
 ) -> None:
-    payload: dict[str, Any] = {"tool_name": tool_name}
-    if summary is not None:
-        payload["summary"] = summary
-    if detail is not None:
-        payload["detail"] = detail
+    from app.services.reader_ask.stream_events import (
+        EVENT_TOOL_COMPLETED,
+        EVENT_TOOL_FAILED,
+        EVENT_TOOL_STARTED,
+        tool_completed_payload,
+        tool_failed_payload,
+        tool_started_payload,
+    )
+
+    if event == EVENT_TOOL_FAILED:
+        payload = tool_failed_payload(tool_name, detail or "Tool failed")
+    elif event == EVENT_TOOL_STARTED:
+        payload = tool_started_payload(tool_name)
+    elif event == EVENT_TOOL_COMPLETED:
+        payload = tool_completed_payload(tool_name, summary or "")
+    else:
+        payload = {"tool_name": tool_name}
     await deps.event_queue.put((event, payload))
 
 

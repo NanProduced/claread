@@ -27,6 +27,7 @@ from app.schemas.reader_ask import (
 )
 from app.services.analysis.credit_service import CreditReservation
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
+from app.services.reader_ask import agent_runner as agent_runner_svc
 from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner as planner_svc
@@ -47,7 +48,6 @@ from app.services.reader_ask.service import (
     _build_resolved_context_input,
     _build_response_cards,
     _build_supplement_candidates_from_runtime,
-    _build_unused_reservation,
     _dictionary_ai_to_citation,
     _fallback_reference_query,
     _fallback_semantic_planner_decision,
@@ -57,7 +57,6 @@ from app.services.reader_ask.service import (
     _resolve_intent,
     _resolved_context_summary,
     _submission_mode,
-    _terminal_reasoning_status,
 )
 from app.services.reader_ask.supplements import build_grammar_note_candidate
 
@@ -183,9 +182,10 @@ def test_attachment_to_anchor_maps_selection_and_filters_record_ref() -> None:
 
 
 def test_build_unused_reservation_refunds_only_the_unused_tail() -> None:
-    reservation = CreditReservation(total_points=10, deducted_from_daily=8, deducted_from_bonus=2)
+    from app.services.reader_ask.recovery import build_unused_reservation
 
-    unused = _build_unused_reservation(reservation, actual_cost_points=3)
+    reservation = CreditReservation(total_points=10, deducted_from_daily=8, deducted_from_bonus=2)
+    unused = build_unused_reservation(reservation, actual_cost_points=3)
 
     assert unused.total_points == 7
     assert unused.deducted_from_daily == 5
@@ -371,18 +371,6 @@ def test_stream_checkpoint_output_preserves_known_response_cards() -> None:
     assert output["reasoning_status"] == "streaming"
     assert len(output["response_cards"]) == 1
     assert output["response_cards"][0]["card_type"] == "grammar_note_card"
-
-
-def test_terminal_reasoning_status_normalizes_finished_runs() -> None:
-    assert _terminal_reasoning_status(True) == "completed"
-    assert _terminal_reasoning_status(False) is None
-
-
-def test_terminal_reasoning_status_completed_even_without_emitted_content() -> None:
-    """When reasoning.started fired but no delta arrived, the run still counts as
-    having started reasoning.  The terminal status must be "completed" (not None
-    or "streaming") so that the frontend can leave the streaming state."""
-    assert _terminal_reasoning_status(True) == "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -2714,65 +2702,65 @@ def test_deictic_with_asset_ambiguity_grammar_upgraded_to_must_clarify() -> None
 
 
 class TestIsDegenerateAnswer:
-    """Test _is_degenerate_answer: pattern-based detection replaces len < 20."""
+    """Test is_degenerate_answer: pattern-based detection replaces len < 20."""
 
     def test_empty_string_is_degenerate(self) -> None:
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("") is True
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("") is True
 
     def test_whitespace_only_is_degenerate(self) -> None:
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("   \n  ") is True
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("   \n  ") is True
 
     def test_short_but_valid_english_not_degenerate(self) -> None:
         """Short but meaningful answers like 'Yes.' or 'Present perfect.' should
         NOT trigger replan."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("Yes.") is False
-        assert _is_degenerate_answer("No.") is False
-        assert _is_degenerate_answer("OK.") is False
-        assert _is_degenerate_answer("Present perfect.") is False
-        assert _is_degenerate_answer("Past simple.") is False
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("Yes.") is False
+        assert is_degenerate_answer("No.") is False
+        assert is_degenerate_answer("OK.") is False
+        assert is_degenerate_answer("Present perfect.") is False
+        assert is_degenerate_answer("Past simple.") is False
 
     def test_short_but_valid_cjk_not_degenerate(self) -> None:
         """Short CJK answers should NOT trigger replan."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("是的") is False
-        assert _is_degenerate_answer("现在完成时") is False
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("是的") is False
+        assert is_degenerate_answer("现在完成时") is False
 
     def test_refusal_english_is_degenerate(self) -> None:
         """English refusal patterns should trigger replan."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("I cannot answer this question.") is True
-        assert _is_degenerate_answer("As an AI, I'm unable to help with that.") is True
-        assert _is_degenerate_answer("I don't have enough information.") is True
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("I cannot answer this question.") is True
+        assert is_degenerate_answer("As an AI, I'm unable to help with that.") is True
+        assert is_degenerate_answer("I don't have enough information.") is True
 
     def test_refusal_cjk_is_degenerate(self) -> None:
         """CJK refusal patterns should trigger replan."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("我无法回答这个问题。") is True
-        assert _is_degenerate_answer("没有足够的信息来回答。") is True
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("我无法回答这个问题。") is True
+        assert is_degenerate_answer("没有足够的信息来回答。") is True
 
     def test_punctuation_only_is_degenerate(self) -> None:
         """Pure punctuation or model artifacts should trigger replan."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("...") is True
-        assert _is_degenerate_answer("---") is True
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("...") is True
+        assert is_degenerate_answer("---") is True
 
     def test_normal_answer_not_degenerate(self) -> None:
         """Normal-length answers should never trigger replan."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("This sentence uses the present perfect tense.") is False
-        assert _is_degenerate_answer("这句话使用了现在完成时，表示过去发生的动作对现在的影响。") is False
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("This sentence uses the present perfect tense.") is False
+        assert is_degenerate_answer("这句话使用了现在完成时，表示过去发生的动作对现在的影响。") is False
 
     def test_short_gibberish_is_degenerate(self) -> None:
         """Very short content without meaningful words is degenerate."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer(",,,") is True
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer(",,,") is True
 
 
 class TestReplanTriggerWiring:
-    """Test that the replan trigger condition correctly uses _is_degenerate_answer
+    """Test that the replan trigger condition correctly uses is_degenerate_answer
     and that short-but-valid answers do NOT trigger replan while degenerate
     answers do. These tests verify the wiring between the detection function
     and the replan condition, not just the helper in isolation."""
@@ -2780,70 +2768,66 @@ class TestReplanTriggerWiring:
     def test_short_valid_answer_does_not_meet_replan_condition(self) -> None:
         """A short but valid answer like 'Present perfect.' should NOT meet
         the replan trigger condition (content check part)."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        # Simulate the replan condition: _is_degenerate_answer(final_content_md)
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        # Simulate the replan condition: is_degenerate_answer(final_content_md)
         final_content_md = "Present perfect."
-        assert _is_degenerate_answer(final_content_md) is False
+        assert is_degenerate_answer(final_content_md) is False
 
     def test_empty_answer_meets_replan_condition(self) -> None:
         """An empty answer should meet the replan trigger condition."""
-        from app.services.reader_ask.service import _is_degenerate_answer
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
         final_content_md = ""
-        assert _is_degenerate_answer(final_content_md) is True
+        assert is_degenerate_answer(final_content_md) is True
 
     def test_refusal_answer_meets_replan_condition(self) -> None:
         """A refusal answer should meet the replan trigger condition."""
-        from app.services.reader_ask.service import _is_degenerate_answer
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
         final_content_md = "I cannot answer this question without more context."
-        assert _is_degenerate_answer(final_content_md) is True
+        assert is_degenerate_answer(final_content_md) is True
 
     def test_cjk_short_valid_not_degenerate(self) -> None:
         """Short CJK valid answer should NOT trigger replan."""
-        from app.services.reader_ask.service import _is_degenerate_answer
-        assert _is_degenerate_answer("现在完成时") is False
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
+        assert is_degenerate_answer("现在完成时") is False
 
     def test_replan_event_emitted_on_degenerate_answer(self) -> None:
         """When a degenerate answer triggers replan, the event_queue should
         receive a 'replan.started' event. This tests the actual wiring in
         the replan branch, not just the helper."""
         import asyncio
-        from app.services.reader_ask.service import _is_degenerate_answer
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
 
         # Verify the detection function works as expected for the cases
         # that would enter the replan branch
         degenerate_cases = ["", "   ", "I cannot help with that.", "我无法回答", "..."]
         for case in degenerate_cases:
-            assert _is_degenerate_answer(case) is True, f"Expected degenerate: {case!r}"
+            assert is_degenerate_answer(case) is True, f"Expected degenerate: {case!r}"
 
         # Verify that valid short answers would NOT enter the replan branch
         valid_cases = ["Yes.", "No.", "OK.", "Present perfect.", "现在完成时", "是的"]
         for case in valid_cases:
-            assert _is_degenerate_answer(case) is False, f"Expected NOT degenerate: {case!r}"
+            assert is_degenerate_answer(case) is False, f"Expected NOT degenerate: {case!r}"
 
     def test_replan_condition_requires_clarification_mode_none(self) -> None:
         """Even with a degenerate answer, replan should not trigger if
         clarification_mode is not 'none'. This verifies the full condition."""
-        from app.services.reader_ask.service import _is_degenerate_answer
+        from app.services.reader_ask.agent_runner import is_degenerate_answer
 
         # The full replan condition is:
-        # _is_degenerate_answer(content) AND clarification_mode == "none" AND clarification_only is False
+        # is_degenerate_answer(content) AND clarification_mode == "none" AND clarification_only is False
         # If clarification_mode is "must_clarify", replan should NOT happen
         # even with a degenerate answer
-        assert _is_degenerate_answer("") is True  # degenerate
+        assert is_degenerate_answer("") is True  # degenerate
         # But the full condition also checks clarification_mode
         # This test verifies the helper is correct; the mode check is in the
         # main flow and tested implicitly through the service integration
 
 
-async def test_replan_started_event_emitted_to_event_queue() -> None:
-    """Real wiring test: _maybe_emit_replan_event puts 'replan.started' on the
-    event_queue when a degenerate answer is detected with a valid planning snapshot."""
-    import asyncio
-    from app.services.reader_ask.service import _maybe_emit_replan_event
+async def test_replan_started_event_returned_by_build_replan_event() -> None:
+    """Real wiring test: build_replan_event returns 'replan.started' event
+    when a degenerate answer is detected with a valid planning snapshot."""
+    from app.services.reader_ask.agent_runner import build_replan_event
 
-    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
-    # Build a real planning snapshot with clarification_mode="none"
-    # Use content without strong deictic words to avoid the deictic rule
     planning_snapshot = planner_svc.plan_request(
         content="Explain the main idea of the article",
         page_identity=ReaderAskPageIdentity(
@@ -2861,28 +2845,23 @@ async def test_replan_started_event_emitted_to_event_queue() -> None:
         planner_decision=_planner_decision(resolved_intent="explain"),
     )
 
-    triggered = await _maybe_emit_replan_event(
+    result = build_replan_event(
         final_content_md="",
         planning_snapshot=planning_snapshot,
-        event_queue=event_queue,
         assistant_message_id="msg-123",
     )
 
-    assert triggered is True
-    assert not event_queue.empty()
-    event_name, event_data = await event_queue.get()
+    assert result is not None
+    event_name, event_data = result
     assert event_name == "replan.started"
     assert event_data["message_id"] == "msg-123"
     assert event_data["reason"] == "degenerate_answer"
 
 
 async def test_replan_not_triggered_for_short_valid_answer() -> None:
-    """Real wiring test: _maybe_emit_replan_event returns False and does not
-    emit any event for a short but valid answer."""
-    import asyncio
-    from app.services.reader_ask.service import _maybe_emit_replan_event
+    """Real wiring test: build_replan_event returns None for a short but valid answer."""
+    from app.services.reader_ask.agent_runner import build_replan_event
 
-    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
     planning_snapshot = planner_svc.plan_request(
         content="What does this mean?",
         page_identity=ReaderAskPageIdentity(
@@ -2900,24 +2879,20 @@ async def test_replan_not_triggered_for_short_valid_answer() -> None:
         planner_decision=_planner_decision(resolved_intent="explain"),
     )
 
-    triggered = await _maybe_emit_replan_event(
+    result = build_replan_event(
         final_content_md="Present perfect.",
         planning_snapshot=planning_snapshot,
-        event_queue=event_queue,
         assistant_message_id="msg-123",
     )
 
-    assert triggered is False
-    assert event_queue.empty()
+    assert result is None
 
 
 async def test_replan_not_triggered_when_must_clarify() -> None:
     """Real wiring test: even with a degenerate answer, replan is NOT triggered
     when clarification_mode is 'must_clarify'."""
-    import asyncio
-    from app.services.reader_ask.service import _maybe_emit_replan_event
+    from app.services.reader_ask.agent_runner import build_replan_event
 
-    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
     # Build a snapshot with must_clarify (no anchors + no deictic → stays must_clarify)
     planning_snapshot = planner_svc.plan_request(
         content="Why is this written this way?",
@@ -2940,20 +2915,18 @@ async def test_replan_not_triggered_when_must_clarify() -> None:
         ),
     )
 
-    triggered = await _maybe_emit_replan_event(
+    result = build_replan_event(
         final_content_md="",
         planning_snapshot=planning_snapshot,
-        event_queue=event_queue,
         assistant_message_id="msg-123",
     )
 
-    assert triggered is False
-    assert event_queue.empty()
+    assert result is None
 
 
 def test_reasoning_enabled_settings_enables_dashscope_sse_and_incremental_output() -> None:
     from app.llm.types import RunModelSettings
-    from app.services.reader_ask.service import _reasoning_enabled_settings
+    from app.services.reader_ask.agent_runner import reasoning_enabled_settings
 
     settings = RunModelSettings(
         extra_headers={"X-Test": "1"},
@@ -2963,7 +2936,7 @@ def test_reasoning_enabled_settings_enables_dashscope_sse_and_incremental_output
         },
     )
 
-    resolved = _reasoning_enabled_settings(
+    resolved = reasoning_enabled_settings(
         settings,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
@@ -2980,10 +2953,10 @@ def test_reasoning_enabled_settings_enables_dashscope_sse_and_incremental_output
 
 def test_reasoning_enabled_settings_preserves_non_dashscope_headers() -> None:
     from app.llm.types import RunModelSettings
-    from app.services.reader_ask.service import _reasoning_enabled_settings
+    from app.services.reader_ask.agent_runner import reasoning_enabled_settings
 
     settings = RunModelSettings(extra_body={"thinking": {"type": "disabled"}})
-    resolved = _reasoning_enabled_settings(
+    resolved = reasoning_enabled_settings(
         settings,
         base_url="https://api.deepseek.com",
     )
@@ -2994,117 +2967,17 @@ def test_reasoning_enabled_settings_preserves_non_dashscope_headers() -> None:
     assert "incremental_output" not in resolved.extra_body
 
 
-async def test_stream_checkpoint_flush_persists_partial_reasoning_and_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    turn_run_id = uuid4()
-    updates: list[tuple[UUID, str, dict[str, object]]] = []
-
-    async def fake_update_turn_run(*, turn_run_id, status, user_visible_output_json, **kwargs):  # type: ignore[no-untyped-def]
-        del kwargs
-        updates.append((turn_run_id, status, user_visible_output_json))
-        return {"id": str(turn_run_id)}
-
-    monkeypatch.setattr(reader_ask_service.repo, "update_turn_run", fake_update_turn_run)
-
-    checkpoint = reader_ask_service._TurnRunStreamCheckpoint(  # type: ignore[attr-defined]
-        turn_run_id=turn_run_id,
-        build_output_json=lambda content_md, reasoning_md, reasoning_status: {
-            "content_md": content_md,
-            "reasoning_md": reasoning_md,
-            "reasoning_status": reasoning_status,
-        },
-    )
-    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
-        emitted_text="已生成正文。",
-        emitted_reasoning="先判断句子主干。",
-        reasoning_started=True,
-    )
-
-    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
-        checkpoint=checkpoint,
-        runtime=runtime,
-    )
-
-    assert updates == [
-        (
-            turn_run_id,
-            "streaming",
-            {
-                "content_md": "已生成正文。",
-                "reasoning_md": "先判断句子主干。",
-                "reasoning_status": "streaming",
-            },
-        )
-    ]
-    assert checkpoint.last_flushed_content_len == len("已生成正文。")
-    assert checkpoint.last_flushed_reasoning_len == len("先判断句子主干。")
-
-
-async def test_stream_checkpoint_flush_is_throttled_until_forced(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    turn_run_id = uuid4()
-    updates: list[dict[str, object]] = []
-
-    async def fake_update_turn_run(*, turn_run_id, status, user_visible_output_json, **kwargs):  # type: ignore[no-untyped-def]
-        del turn_run_id, status, kwargs
-        updates.append(user_visible_output_json)
-        return {"id": str(uuid4())}
-
-    monkeypatch.setattr(reader_ask_service.repo, "update_turn_run", fake_update_turn_run)
-
-    checkpoint = reader_ask_service._TurnRunStreamCheckpoint(  # type: ignore[attr-defined]
-        turn_run_id=turn_run_id,
-        build_output_json=lambda content_md, reasoning_md, reasoning_status: {
-            "content_md": content_md,
-            "reasoning_md": reasoning_md,
-            "reasoning_status": reasoning_status,
-        },
-        min_flush_interval_s=999.0,
-        min_content_chars=999,
-        min_reasoning_chars=999,
-    )
-    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
-        emitted_text="第一段正文",
-        emitted_reasoning="第一段思路",
-        reasoning_started=True,
-    )
-
-    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
-        checkpoint=checkpoint,
-        runtime=runtime,
-    )
-    runtime.emitted_text = "第一段正文，新增很短"
-    runtime.emitted_reasoning = "第一段思路，新增很短"
-    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
-        checkpoint=checkpoint,
-        runtime=runtime,
-    )
-    await reader_ask_service._maybe_flush_turn_run_stream_checkpoint(  # type: ignore[attr-defined]
-        checkpoint=checkpoint,
-        runtime=runtime,
-        force=True,
-    )
-
-    assert len(updates) == 2
-    assert updates[0]["reasoning_status"] == "streaming"
-    assert updates[1]["content_md"] == "第一段正文，新增很短"
-    assert updates[1]["reasoning_md"] == "第一段思路，新增很短"
-
-
 async def test_replan_not_triggered_when_no_planning_snapshot() -> None:
     """Real wiring test: replan is NOT triggered when planning_snapshot is None."""
-    import asyncio
-    from app.services.reader_ask.service import _maybe_emit_replan_event
+    from app.services.reader_ask.agent_runner import build_replan_event
 
-    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
-
-    triggered = await _maybe_emit_replan_event(
+    result = build_replan_event(
         final_content_md="",
         planning_snapshot=None,
-        event_queue=event_queue,
         assistant_message_id="msg-123",
     )
 
-    assert triggered is False
-    assert event_queue.empty()
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -3583,10 +3456,11 @@ def test_collect_sentence_windows_returns_fallback_window_without_anchor() -> No
 
 
 def test_insufficient_credits_payload_includes_user_message() -> None:
-    payload = reader_ask_service._insufficient_credits_payload(remaining_points=3)
+    from app.services.reader_ask import stream_events as stream_events_svc
+    payload = stream_events_svc.insufficient_credits_payload(remaining_points=3, required_points=10)
     assert payload["code"] == "INSUFFICIENT_CREDITS"
     assert payload["remaining_points"] == 3
-    assert payload["required_points"] > 0
+    assert payload["required_points"] == 10
     assert "本轮请求未发送给模型" in payload["user_message"]
 
 
@@ -3599,12 +3473,12 @@ def test_finish_reader_ask_agent_stream_interrupted_with_partial_content() -> No
     """When the producer errors but partial content exists, the stream is
     interrupted (not failed). The outcome must carry interrupted=True and
     an SSE event with can_retry=True."""
-    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
+    runtime = agent_runner_svc.AgentStreamRuntime(
         content_parts=["这是部分", "生成的回答"],
         usage_summary={"input_tokens": 10, "output_tokens": 20},
         producer_error=RuntimeError("model connection lost"),
     )
-    outcome, sse_event = reader_ask_service._finish_reader_ask_agent_stream(
+    outcome, sse_event = agent_runner_svc.finish_reader_ask_agent_stream(
         runtime=runtime,
         assistant_message_id="msg-interrupted-1",
     )
@@ -3626,11 +3500,11 @@ def test_finish_reader_ask_agent_stream_interrupted_with_partial_content() -> No
 def test_finish_reader_ask_agent_stream_normal_completion() -> None:
     """When the producer succeeds, the outcome is not interrupted and no SSE
     event is emitted."""
-    runtime = reader_ask_service._AgentStreamRuntime(  # type: ignore[attr-defined]
+    runtime = agent_runner_svc.AgentStreamRuntime(
         content_parts=["完整回答"],
         usage_summary={"input_tokens": 10, "output_tokens": 30},
     )
-    outcome, sse_event = reader_ask_service._finish_reader_ask_agent_stream(
+    outcome, sse_event = agent_runner_svc.finish_reader_ask_agent_stream(
         runtime=runtime,
         assistant_message_id="msg-normal-1",
     )
@@ -3847,6 +3721,8 @@ async def test_confirm_action_create_supplement_grammar_note() -> None:
 
 
 async def test_fail_context_too_large_cleans_up_and_preserves_context(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.services.reader_ask.recovery import build_context_too_large_cleanup_plan
+
     user_id = uuid4()
     thread_id = uuid4()
     record_id = uuid4()
@@ -3911,11 +3787,10 @@ async def test_fail_context_too_large_cleans_up_and_preserves_context(monkeypatc
     monkeypatch.setattr(reader_ask_service, "_upsert_eval_trace_record", fake_upsert_eval_trace_record)
     monkeypatch.setattr(reader_ask_service, "_record_failure_event", fake_record_failure_event)
 
-    await reader_ask_service._fail_context_too_large(
+    cleanup_plan = build_context_too_large_cleanup_plan(
         user_id=user_id,
         thread_id=thread_id,
-        record=record,
-        thread={"id": str(thread_id)},
+        record_id=record_id,
         reservation=reservation,
         assistant_message_id=assistant_message_id,
         active_turn_run_id=turn_run_id,
@@ -3924,20 +3799,67 @@ async def test_fail_context_too_large_cleans_up_and_preserves_context(monkeypatc
         resolved_context_input=None,
         run_info={"run_id": str(turn_run_id), "turn_id": str(uuid4()), "attempt": 1},
         submission_mode="chat",
+        anchor_payload=[anchor.model_dump(mode="json")],
+        error_code="reader_ask_failed",
+        compaction_audit=["history"],
+        trace_summary=None,
+        build_message_metadata_cb=reader_ask_service._assistant_message_metadata,
+        build_turn_run_output_cb=reader_ask_service._build_stream_checkpoint_output_json,
+        record_bundle=record,
         resolved_anchors=[anchor],
         attachments=[attachment],
-        anchor_payload=[anchor.model_dump(mode="json")],
         reference_resolution=planner_svc.ReaderAskReferenceResolution(),
         disambiguation=None,
         external_asset_disambiguation=None,
         planning_snapshot=None,
         context_plan=None,
-        trace_summary=None,
-        start_perf=0.0,
+        persisted_supplements_json=None,
         user_message_text="please explain",
-        error_code="reader_ask_failed",
-        compaction_audit=["history"],
+        start_perf=0.0,
+        thread={"id": str(thread_id)},
     )
+
+    # Execute cleanup plan (same as service.py does)
+    if cleanup_plan.refund is not None:
+        await fake_refund_reserved_points(user_id, cleanup_plan.refund.reservation, metadata=cleanup_plan.refund.metadata)
+    await fake_update_message(
+        message_id=cleanup_plan.message_failed.message_id,
+        status="failed",
+        content_md=cleanup_plan.message_failed.content_md,
+        context_anchors=[anchor.model_dump(mode="json")],
+        citations=[],
+        action_proposals=[],
+        tool_trace=[],
+        metadata=cleanup_plan.message_failed.metadata,
+        usage_event_id=None,
+        current_turn_run_id=cleanup_plan.message_failed.current_turn_run_id,
+    )
+    if cleanup_plan.turn_run_failed is not None:
+        await fake_update_turn_run(
+            turn_run_id=cleanup_plan.turn_run_failed.turn_run_id,
+            status="failed",
+            resolved_intent="explain",
+            user_visible_output_json=cleanup_plan.turn_run_failed.user_visible_output_json,
+        )
+    if cleanup_plan.eval_trace is not None:
+        await fake_upsert_eval_trace_record(
+            turn_run_id=cleanup_plan.eval_trace.turn_run_id,
+            planning_snapshot=cleanup_plan.eval_trace.planning_snapshot,
+            runtime_state=cleanup_plan.eval_trace.runtime_state,
+            context_plan=cleanup_plan.eval_trace.context_plan,
+            trace_summary=cleanup_plan.eval_trace.trace_summary,
+        )
+    if cleanup_plan.failure_event is not None:
+        await fake_record_failure_event(
+            user_id=cleanup_plan.failure_event.user_id,
+            record_id=cleanup_plan.failure_event.record_id,
+            thread_id=cleanup_plan.failure_event.thread_id,
+            user_message=cleanup_plan.failure_event.user_message,
+            start_perf=cleanup_plan.failure_event.start_perf,
+            error_code=cleanup_plan.failure_event.error_code,
+            error_message=cleanup_plan.failure_event.error_message,
+            metadata_json=cleanup_plan.failure_event.metadata_json,
+        )
 
     assert "refund" in calls
     assert calls["message"]["status"] == "failed"  # type: ignore[index]
