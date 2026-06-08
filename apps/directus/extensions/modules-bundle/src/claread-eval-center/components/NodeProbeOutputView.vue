@@ -92,6 +92,21 @@ function roleLabel(role) {
   return map[normalized] || normalized;
 }
 
+function phraseTypeLabel(phraseType) {
+  const normalized = String(phraseType || "").trim().toLowerCase();
+  if (!normalized) return "—";
+  const map = {
+    collocation: "固定搭配",
+    idiom: "习语",
+    phrasal_verb: "短语动词",
+    fixed_expression: "固定表达",
+    discourse_marker: "话语标记",
+    compound: "复合词",
+    set_phrase: "固定短语",
+  };
+  return map[normalized] || phraseType;
+}
+
 function highlightSegments(text, fragments) {
   const source = String(text || "");
   const anchors = Array.isArray(fragments)
@@ -341,7 +356,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
           </div>
           <div class="evidence-summary">
             <span class="evidence-label">类型</span>
-            <span class="eval-mark-type tone-phrase">{{ dash(item.phrase_type) }}</span>
+            <span class="eval-mark-type tone-phrase">{{ phraseTypeLabel(item.phrase_type) }}</span>
           </div>
         </div>
         <ul v-if="simpleAnchorStatus(item.sentence_id, [item.text]).missing?.length" class="warning-list">
