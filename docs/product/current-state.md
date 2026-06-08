@@ -9,7 +9,7 @@
 - 后端：`services/api/`，FastAPI，通用 Claread API。
 - 客户端：`apps/miniprogram/` 微信小程序和 `apps/web/` Web 产品客户端。
 - 数据库：`infra/docker/` 启动 PostgreSQL / Redis。
-- schema：两个初始基线 SQL：`infra/migrations/0001_initial_schema.sql`（业务表）和 `infra/migrations/eval-center/0001_eval_center_control_plane.sql`（Eval Center 控制面表）。docker-compose 按序挂载到 initdb.d（分别命名为 0001、0002），但两者都是初始 schema，不是增量 migration。
+- schema：两份 `0001` 初始基线 SQL：`infra/migrations/0001_initial_schema.sql` 负责 Claread 业务表，`infra/migrations/eval-center/0001_eval_center_control_plane.sql` 负责 Eval Center 控制面表。两者都是各自边界内的 initial schema，不是增量 migration。
 - 词典：`dict_entries`、`dict_lookup_targets`、`dict_redirects` 已恢复到 `claread_postgres_data`。
 - 控制面：`apps/directus/` Claread Console，已进入可用控制面阶段。
 
