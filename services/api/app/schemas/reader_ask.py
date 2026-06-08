@@ -70,6 +70,8 @@ ReaderAskWorkingSetMode = Literal[
     "clarification",
 ]
 ReaderAskPlannerAssetType = Literal["analysis", "supplement"]
+ReaderAskContextScope = Literal["sentence", "paragraph", "article", "cross_article"]
+ReaderAskAnswerPolicy = Literal["concise", "detailed", "step_by_step", "comparative"]
 
 
 class ReaderAskAnchorSegment(BaseModel):
@@ -461,6 +463,11 @@ class ReaderAskPlannerDecision(BaseModel):
     )
     working_set: ReaderAskPlannerWorkingSetDecision = Field(default_factory=ReaderAskPlannerWorkingSetDecision)
     rationale: str | None = None
+    context_scope: ReaderAskContextScope | None = None
+    decision_confidence: Literal["high", "medium", "low"] | None = None
+    requires_local_anchor: bool | None = None
+    answer_policy: ReaderAskAnswerPolicy | None = None
+    tool_hints: list[str] | None = None
 
     @field_validator("resolved_intent", mode="before")
     @classmethod

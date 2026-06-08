@@ -2,8 +2,6 @@
 disambiguation, and low-confidence rejection."""
 
 from __future__ import annotations
-
-import asyncio
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -62,10 +60,10 @@ class TestScoreTitleMatch:
 
     def test_low_confidence_not_mistakenly_matched(self) -> None:
         """A very weak cross-lang match (single generic word) should not
-        produce a high score that would bypass the <70 threshold."""
+        produce a high score that would auto-resolve."""
         score = resolver._score_title_match("问题", "The Problem of Evil")
         # "问题" maps to "problem"/"issue" — this IS a valid cross-lang match
-        # but should score in the 50-55 range, below the 70 resolved threshold
+        # but should score in the 50-55 range, below auto-resolve policy.
         assert 50 <= score <= 55, f"Expected moderate cross-lang score, got {score}"
 
 
@@ -274,3 +272,248 @@ async def test_resolve_ai_query_excludes_asia_title() -> None:
     assert any("AI" in t for t in candidate_titles), f"Expected 'AI' in candidates, got {candidate_titles}"
     # "Economic Growth in Asia" must NOT be in candidates (no token-level match)
     assert not any("Asia" in t for t in candidate_titles), f"Unexpected 'Asia' in candidates: {candidate_titles}"
+
+
+# ---------------------------------------------------------------------------
+# P3-S6A: Resolver contract freeze tests
+# ---------------------------------------------------------------------------
+
+
+class TestCrossLangScoreCannotAutoResolve:
+    """P3-S6A: Cross-language matches stay far below the 90+ auto-resolve
+    policy, so they can only produce 'ambiguous', never 'resolved'."""
+
+    @pytest.mark.parametrize(
+        "query,title",
+        [
+            ("气候", "Climate Change Impact"),
+            ("人工智能", "AI and the Future of Work"),
+            ("经济", "Economic Growth in Asia"),
+            ("AI", "人工智能的未来"),
+            ("machine learning", "机器学习入门指南"),
+        ],
+    )
+    def test_cross_lang_score_stays_ambiguous_range(self, query: str, title: str) -> None:
+        score = resolver._cross_lang_score(query, title)
+        assert 40 <= score <= 55, f"Cross-lang score should be 40-55, got {score}"
+
+
+class TestGenericMappingCannotAutoResolve:
+    """P3-S6A: Generic words like '问题'/problem produce low-confidence
+    cross-lang matches that can only be ambiguous, never auto-resolved."""
+
+    def test_generic_wenti_scores_ambiguous_range(self) -> None:
+        """'问题' maps to 'problem'/'issue' — generic, not specific enough."""
+        score = resolver._score_title_match("问题", "The Problem of Evil")
+        assert 50 <= score <= 55, f"Generic mapping score should be 50-55, got {score}"
+
+    def test_generic_fazhan_scores_ambiguous_range(self) -> None:
+        """'发展' maps to 'development' — generic."""
+        score = resolver._score_title_match("发展", "Sustainable Development Goals")
+        assert 50 <= score <= 55, f"Generic mapping score should be 50-55, got {score}"
+
+    def test_generic_yingxiang_scores_ambiguous_range(self) -> None:
+        """'影响' maps to 'impact' — generic."""
+        score = resolver._score_title_match("影响", "The Impact of Technology")
+        assert 50 <= score <= 55, f"Generic mapping score should be 50-55, got {score}"
+
+
+class TestScoreTitleMatchContract:
+    """P3-S6A: Freeze _score_title_match scoring tiers as contract."""
+
+    def test_exact_match_100(self) -> None:
+        assert resolver._score_title_match("Climate Policy", "Climate Policy") == 100
+
+    def test_prefix_match_90(self) -> None:
+        assert resolver._score_title_match("Climate", "Climate Policy") == 90
+
+    def test_substring_match_80(self) -> None:
+        assert resolver._score_title_match("Policy", "Climate Policy") == 80
+
+    def test_all_tokens_match_70(self) -> None:
+        """All query tokens present in title (but not as substring) → 70."""
+        # "climate policy" is NOT a substring of "The climate policy review report"
+        # because of the extra words, so it falls to token matching at 70.
+        # But "climate policy" IS a substring of "The Climate Policy Review"
+        # because "climate policy" appears in "the climate policy review".
+        # Use a title where the query is not a contiguous substring.
+        assert resolver._score_title_match("climate policy", "climate and policy analysis") == 70
+
+    def test_fuzzy_match_60_exists(self) -> None:
+        """Fuzzy stripped punctuation match returns exactly 60."""
+        assert resolver._score_title_match("climatepolicy", "Climate-Policy") == 60
+
+    def test_no_match_0(self) -> None:
+        assert resolver._score_title_match("烹饪技巧", "Quantum Computing Basics") == 0
+
+
+class TestResolutionPolicyContract:
+    """P3-S6A: Freeze resolution policy separately from raw scoring."""
+
+    async def test_substring_score_80_returns_ambiguous_not_resolved(self) -> None:
+        user_id = uuid4()
+        current_record_id = uuid4()
+        target_record_id = uuid4()
+        finder = AsyncMock(
+            return_value=[
+                {"id": str(target_record_id), "title": "Climate Policy", "updated_at": "2026-05-01"}
+            ]
+        )
+
+        result = await resolver.resolve_known_references(
+            user_id=user_id,
+            current_record_id=current_record_id,
+            reference_needs=_make_reference_needs("Policy"),
+            finder=finder,
+        )
+
+        assert resolver._score_title_match("Policy", "Climate Policy") == 80
+        assert result.status == "ambiguous"
+        assert not result.resolved_records
+
+    async def test_all_tokens_score_70_returns_ambiguous_not_resolved(self) -> None:
+        user_id = uuid4()
+        current_record_id = uuid4()
+        target_record_id = uuid4()
+        finder = AsyncMock(
+            return_value=[
+                {
+                    "id": str(target_record_id),
+                    "title": "climate and policy analysis",
+                    "updated_at": "2026-05-01",
+                }
+            ]
+        )
+
+        result = await resolver.resolve_known_references(
+            user_id=user_id,
+            current_record_id=current_record_id,
+            reference_needs=_make_reference_needs("climate policy"),
+            finder=finder,
+        )
+
+        assert resolver._score_title_match("climate policy", "climate and policy analysis") == 70
+        assert result.status == "ambiguous"
+        assert not result.resolved_records
+
+
+class TestRecentRecordsFallbackContract:
+    """P3-S6A: Recent records fallback is only a candidate pool,
+    not semantic success."""
+
+    async def test_recent_records_no_score_match_returns_not_found(self) -> None:
+        """When ILIKE returns nothing and recent records have no
+        _score_title_match ≥ 50, result is not_found."""
+        user_id = uuid4()
+        current_record_id = uuid4()
+
+        ilike_finder = AsyncMock(return_value=[])
+        recent_rows = [
+            {"id": str(uuid4()), "title": "Quantum Computing Basics", "updated_at": "2026-05-01"},
+            {"id": str(uuid4()), "title": "Introduction to HTML and XML", "updated_at": "2026-05-02"},
+        ]
+
+        with (
+            patch.object(resolver.repo, "list_recent_records", new=AsyncMock(return_value=recent_rows)),
+        ):
+            result = await resolver.resolve_known_references(
+                user_id=user_id,
+                current_record_id=current_record_id,
+                reference_needs=_make_reference_needs("烹饪技巧"),
+                finder=ilike_finder,
+            )
+
+        assert result.status == "not_found"
+
+    async def test_recent_records_with_cross_lang_match_returns_ambiguous(self) -> None:
+        """When ILIKE returns nothing but recent records have cross-lang
+        matches, result is ambiguous (not resolved)."""
+        user_id = uuid4()
+        current_record_id = uuid4()
+        target_record_id = uuid4()
+
+        ilike_finder = AsyncMock(return_value=[])
+        recent_rows = [
+            {"id": str(target_record_id), "title": "Climate Change Impact", "updated_at": "2026-05-01"},
+        ]
+
+        with (
+            patch.object(resolver.repo, "list_recent_records", new=AsyncMock(return_value=recent_rows)),
+        ):
+            result = await resolver.resolve_known_references(
+                user_id=user_id,
+                current_record_id=current_record_id,
+                reference_needs=_make_reference_needs("气候"),
+                finder=ilike_finder,
+            )
+
+        # Cross-lang score 55 → ambiguous, not resolved
+        assert result.status == "ambiguous"
+        assert result.ambiguous_records is not None
+        assert len(result.ambiguous_records) >= 1
+
+
+class TestNoQueryContract:
+    """P3-S6A: When no query is provided, return recent candidates
+    as ambiguous — never guess or auto-resolve."""
+
+    async def test_no_query_returns_ambiguous_with_recent(self) -> None:
+        user_id = uuid4()
+        current_record_id = uuid4()
+
+        recent_rows = [
+            {"id": str(uuid4()), "title": "Climate Change Impact", "updated_at": "2026-05-01"},
+            {"id": str(uuid4()), "title": "AI and the Future", "updated_at": "2026-05-02"},
+        ]
+
+        with (
+            patch.object(resolver.repo, "list_recent_records", new=AsyncMock(return_value=recent_rows)),
+        ):
+            result = await resolver.resolve_known_references(
+                user_id=user_id,
+                current_record_id=current_record_id,
+                reference_needs=planner.ReaderAskReferenceNeeds(requested=True, query=None),
+            )
+
+        assert result.status == "ambiguous"
+        assert result.ambiguous_records is not None
+        assert len(result.ambiguous_records) == 2
+
+    async def test_no_query_no_recent_returns_ambiguous(self) -> None:
+        """When no query and no recent records, still ambiguous (not not_found)."""
+        user_id = uuid4()
+        current_record_id = uuid4()
+
+        with (
+            patch.object(resolver.repo, "list_recent_records", new=AsyncMock(return_value=[])),
+        ):
+            result = await resolver.resolve_known_references(
+                user_id=user_id,
+                current_record_id=current_record_id,
+                reference_needs=planner.ReaderAskReferenceNeeds(requested=True, query=None),
+            )
+
+        assert result.status == "ambiguous"
+
+
+class TestUnrelatedQueryContract:
+    """P3-S6A: Completely unrelated query must return not_found."""
+
+    async def test_unrelated_query_not_found(self) -> None:
+        user_id = uuid4()
+        current_record_id = uuid4()
+
+        rows = [
+            {"id": str(uuid4()), "title": "Quantum Computing Basics", "updated_at": "2026-05-01"},
+            {"id": str(uuid4()), "title": "Introduction to Cooking", "updated_at": "2026-05-02"},
+        ]
+        finder = AsyncMock(return_value=rows)
+
+        result = await resolver.resolve_known_references(
+            user_id=user_id,
+            current_record_id=current_record_id,
+            reference_needs=_make_reference_needs("太空探索的历史"),
+            finder=finder,
+        )
+
+        assert result.status == "not_found"

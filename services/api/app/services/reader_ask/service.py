@@ -308,28 +308,6 @@ def _attachments_to_anchor_refs(attachments: list[ReaderAskAttachment]) -> list[
     return resolved
 
 
-def _resolve_intent(
-    content: str,
-    attachments: list[ReaderAskAttachment],
-    entry_action: ReaderAskEntryAction,
-) -> ReaderAskResolvedIntent:
-    # DEPRECATED: 不再被主流程调用，intent 解析由 planner agent + fallback 完成。
-    # 保留仅供现有测试兼容。
-    del content, attachments
-    if entry_action == "lookup_in_context":
-        return "vocabulary"
-    if entry_action == "why_here":
-        return "grammar"
-    return "explain"
-
-
-def _needs_clarification(content: str, anchors: list[ReaderAskAnchorRef]) -> bool:
-    # DEPRECATED: 不再被主流程调用，clarification 由 planning_snapshot.clarification_only 决定。
-    # 保留仅供现有测试兼容。
-    del content
-    return not anchors
-
-
 def _query_seed(content: str, anchors: list[ReaderAskAnchorRef]) -> str:
     for anchor in anchors:
         selected = _first_anchor_text(anchor)
@@ -2066,7 +2044,6 @@ async def stream_thread_message(
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
     final_content_md = ""
-    persisted_supplements_json: list[dict[str, Any]] = []
     stream_runtime: agent_runner_svc.AgentStreamRuntime | None = None
 
     try:

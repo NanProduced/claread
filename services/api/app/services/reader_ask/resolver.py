@@ -27,9 +27,22 @@ def _normalize_title_for_matching(value: str | None) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-# Common Chinese→English keyword mappings for cross-language title matching.
-# These are high-confidence, domain-agnostic mappings that help bridge the gap
-# when users describe an English-titled article in Chinese.
+# Legacy semantic fallback: cross-language title matching.
+#
+# This is a deterministic keyword mapping, NOT a semantic resolver.
+# It bridges the gap when users describe an English-titled article in
+# Chinese (or vice versa). It will be replaced by an LLM-based
+# resolver in Phase 4 (Resolver / Retrieval).
+#
+# Known limitations:
+# - Only covers domain-agnostic high-frequency terms
+# - Generic words (e.g. "问题"/problem, "发展"/development) produce
+#   low-confidence matches that can only be ambiguous, never auto-resolved
+# - No understanding of context, domain, or user intent
+#
+# Contract: cross-lang scores are always in the 50-55 range, which
+# stays below the 90+ unique-and-margin auto-resolve policy. They can
+# only produce "ambiguous" results, never "resolved".
 _CROSS_LANG_MAP: dict[str, list[str]] = {
     "气候": ["climate"],
     "环境": ["environment", "environmental"],
@@ -124,6 +137,10 @@ def _token_match(en_word: str, title_tokens: list[str], title_lower: str) -> boo
 
 def _cross_lang_score(query: str, title: str) -> int:
     """Score cross-language matches between query and title.
+
+    Legacy semantic fallback — deterministic keyword mapping, not an LLM
+    resolver. Returns scores in the 40-55 range (always below the 90+
+    unique-and-margin auto-resolve policy). Will be replaced in Phase 4.
 
     Handles:
     - Chinese query describing an English-titled article (e.g. "气候" ↔ "Climate")
@@ -229,6 +246,23 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
 
 
 def _score_title_match(query: str, title: str) -> int:
+    """Score a query against a record title.
+
+    Scoring tiers (deterministic title matching):
+    - 100: exact match
+    - 90: prefix match (query starts the title)
+    - 80: substring match (query contained in title)
+    - 70: all query tokens present in title
+    - 60: fuzzy match (stripped articles/punctuation)
+    - 50-55: cross-language keyword match (legacy semantic fallback)
+    - 50: partial token match (≥50% tokens hit)
+    - 40: levenshtein fuzzy or partial English token overlap
+    - 0: no match
+
+    Contract: scores < 50 → not_found; scores 50-69 → ambiguous only;
+    scores 70-89 → ambiguous only; scores ≥ 90 with a single top hit and
+    clear margin → auto-resolve.
+    """
     normalized_query = _normalize_title(query)
     normalized_title = _normalize_title(title)
     if not normalized_query or not normalized_title:
@@ -589,7 +623,11 @@ async def resolve_known_references(
 
     # When ILIKE returns no results, fall back to recent records for
     # cross-language / weak-semantic matching. The _score_title_match
-    # function (which includes _cross_lang_score) will rank them.
+    # function (which includes legacy _cross_lang_score) will rank them.
+    #
+    # NOTE: recent records are only a candidate pool — they do NOT
+    # represent semantic success. If _score_title_match doesn't find
+    # a meaningful match (score ≥ 50), the result is still not_found.
     if not rows:
         recent_rows = await repo.list_recent_records(
             user_id,

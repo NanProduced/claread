@@ -1,5 +1,6 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -49,9 +50,7 @@ from app.services.reader_ask.service import (
     _build_supplement_candidates_from_runtime,
     _dictionary_ai_to_citation,
     _merge_usage_summaries,
-    _needs_clarification,
     _next_run_info,
-    _resolve_intent,
 )
 from app.services.reader_ask.supplements import build_grammar_note_candidate
 
@@ -71,6 +70,9 @@ def _planner_decision(
     dictionary_needed: bool = False,
     cross_record_context_allowed: bool = False,
     external_asset_lookup_needed: bool = False,
+    requires_local_anchor: bool | None = None,
+    context_scope: str | None = None,
+    tool_hints: list[str] | None = None,
     rationale: str = "test planner decision",
 ) -> ReaderAskPlannerDecision:
     return ReaderAskPlannerDecision(
@@ -95,39 +97,10 @@ def _planner_decision(
             cross_record_context_allowed=cross_record_context_allowed,
             external_asset_lookup_needed=external_asset_lookup_needed,
         ),
+        requires_local_anchor=requires_local_anchor,
+        context_scope=context_scope,  # type: ignore[arg-type]
+        tool_hints=tool_hints,
         rationale=rationale,
-    )
-
-
-def test_needs_clarification_for_ambiguous_local_reference_without_anchor() -> None:
-    assert _needs_clarification("这里为什么这样写？", []) is True
-    assert _needs_clarification(
-        "这里为什么这样写？",
-        [ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
-    ) is False
-
-
-def test_resolve_intent_prefers_explicit_entry_action_and_content_signal() -> None:
-    assert _resolve_intent("为什么这里是这个意思？", [], "lookup_in_context") == "vocabulary"
-    assert _resolve_intent("为什么这里这样写", [], "why_here") == "grammar"
-    assert (
-        _resolve_intent(
-            "看看译文和原句差在哪",
-            [
-                ReaderAskAttachment(
-                    kind="analysis_ref",
-                    subtype="translation",
-                    label="译文",
-                    selected_text="这里的译法",
-                    metadata=ReaderAskAttachmentMetadata(
-                        source_surface="translation",
-                        entry_action="ask_about_this",
-                    ),
-                )
-            ],
-            "ask_about_this",
-        )
-        == "explain"
     )
 
 
@@ -375,7 +348,7 @@ def test_stream_checkpoint_output_preserves_known_response_cards() -> None:
 
 def test_stream_checkpoint_output_contains_all_contract_fields() -> None:
     """Streaming checkpoint must contain every field in USER_VISIBLE_OUTPUT_FIELDS."""
-    from app.services.reader_ask.output_contract import USER_VISIBLE_OUTPUT_FIELDS, validate_output_dict_fields
+    from app.services.reader_ask.output_contract import validate_output_dict_fields
 
     runtime_state = ReaderAskRuntimeState(
         latest_generated_annotations=[
@@ -433,7 +406,7 @@ def test_stream_checkpoint_output_contains_all_contract_fields() -> None:
 
 def test_completed_output_contains_all_contract_fields() -> None:
     """Completed output must contain every field in USER_VISIBLE_OUTPUT_FIELDS."""
-    from app.services.reader_ask.output_contract import USER_VISIBLE_OUTPUT_FIELDS, validate_output_dict_fields
+    from app.services.reader_ask.output_contract import validate_output_dict_fields
 
     output = output_contract_svc.build_user_visible_output(
         content_md="解释完成。",
@@ -2794,7 +2767,6 @@ class TestReplanTriggerWiring:
         """When a degenerate answer triggers replan, the event_queue should
         receive a 'replan.started' event. This tests the actual wiring in
         the replan branch, not just the helper."""
-        import asyncio
         from app.services.reader_ask.agent_runner import is_degenerate_answer
 
         # Verify the detection function works as expected for the cases
@@ -3013,7 +2985,11 @@ def _fallback_page_identity(**overrides: object) -> ReaderAskPageIdentity:
 
 
 class TestFallbackReferenceQuery:
-    """Test _fallback_reference_query with explicit and weak patterns."""
+    """Test fallback_reference_query with explicit title markers only.
+
+    P3-S3: Weak reference regex patterns removed. Only explicit structural
+    markers (《》, "", quotes) are extracted by fallback.
+    """
 
     def test_book_title_marks(self) -> None:
         assert planner_runtime_svc.fallback_reference_query("之前那篇《Climate Policy》里也提过") == "Climate Policy"
@@ -3021,55 +2997,47 @@ class TestFallbackReferenceQuery:
     def test_double_quotes(self) -> None:
         assert planner_runtime_svc.fallback_reference_query('关于"AI Ethics"那篇文章') == "AI Ethics"
 
-    def test_weak_chinese_之前那篇(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query("之前那篇climate policy的文章也提过吗？") == "climate policy"
+    def test_weak_chinese_no_longer_matches(self) -> None:
+        """P3-S3: Natural language weak references no longer extracted."""
+        assert planner_runtime_svc.fallback_reference_query("之前那篇climate policy的文章也提过吗？") is None
 
-    def test_weak_chinese_讲(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query("讲AI伦理的文章怎么说？") == "AI伦理"
-
-    def test_weak_chinese_关于(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query("关于climate change的研究有提到吗？") == "climate change"
-
-    def test_weak_english_article_about(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query("that article about climate policy also mentioned this") == "climate policy"
-
-    def test_weak_english_the_paper_on(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query("the paper on AI ethics discussed this") == "AI ethics"
+    def test_weak_english_no_longer_matches(self) -> None:
+        """P3-S3: 'that article about X' no longer extracted."""
+        assert planner_runtime_svc.fallback_reference_query("that article about climate policy also mentioned this") is None
 
     def test_no_reference_returns_none(self) -> None:
         assert planner_runtime_svc.fallback_reference_query("这句话什么意思？") is None
 
-    def test_explicit_title_takes_priority_over_weak(self) -> None:
-        """When both explicit (book marks) and weak patterns match,
-        explicit pattern wins because it's checked first."""
+    def test_explicit_title_takes_priority(self) -> None:
+        """Explicit title markers are still extracted."""
         result = planner_runtime_svc.fallback_reference_query("之前那篇《Climate Policy》的文章")
         assert result == "Climate Policy"
 
-    def test_short_topic_ignored(self) -> None:
-        """Weak patterns require at least 2 characters for the topic."""
-        result = planner_runtime_svc.fallback_reference_query("讲X的文章")
-        # "X" is only 1 char, below the {2,30} minimum — should not match
-        assert result is None
-
 
 class TestFallbackIntentCoverage:
-    """Test that fallback planner recognizes common intents."""
+    """Test that fallback planner only uses explicit signals for intent.
+
+    P3-S2: Fallback no longer uses keyword matching. Natural language
+    messages default to 'explain' unless an explicit signal (entry_action
+    or dictionary anchor) overrides.
+    """
 
     @pytest.mark.parametrize(
         "message,expected_intent",
         [
-            ("这句话的语法结构是什么？", "grammar"),
-            ("为什么这里用过去式？", "grammar"),
-            ("帮我拆解这个长句", "breakdown"),
-            ("break down this sentence", "breakdown"),
-            ("这个词什么意思？", "vocabulary"),
-            ("phrase的含义", "vocabulary"),
-            ("这篇文章和之前那篇有什么不同？", "general"),
-            ("对比一下这两篇文章", "general"),
-            ("比较两者的观点", "general"),
-            ("总结一下这篇文章", "general"),
-            ("translate this paragraph", "general"),
-            ("帮我复习一下", "general"),
+            # Natural language → explain (no keyword matching)
+            ("这句话的语法结构是什么？", "explain"),
+            ("为什么这里用过去式？", "explain"),
+            ("帮我拆解这个长句", "explain"),
+            ("break down this sentence", "explain"),
+            ("这个词什么意思？", "explain"),
+            ("phrase的含义", "explain"),
+            ("这篇文章和之前那篇有什么不同？", "explain"),
+            ("对比一下这两篇文章", "explain"),
+            ("比较两者的观点", "explain"),
+            ("总结一下这篇文章", "explain"),
+            ("translate this paragraph", "explain"),
+            ("帮我复习一下", "explain"),
             ("这篇文章讲了什么？", "explain"),
             ("What is this about?", "explain"),
         ],
@@ -3119,8 +3087,9 @@ class TestFallbackIntentCoverage:
         )
         assert decision.resolved_intent == "grammar"
 
-    def test_compare_not_misclassified_as_explain(self) -> None:
-        """Compare/difference questions should resolve to 'general', not 'explain'."""
+    def test_compare_defaults_to_explain(self) -> None:
+        """Compare/difference questions now default to 'explain' in fallback.
+        LLM planner should resolve these to 'general' when available."""
         decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="这两篇文章的观点有什么区别？",
             entry_action="ask_about_this",
@@ -3132,9 +3101,9 @@ class TestFallbackIntentCoverage:
             render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
             has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
-        assert decision.resolved_intent == "general"
+        assert decision.resolved_intent == "explain"
 
-    def test_vs_pattern_recognized_as_general(self) -> None:
+    def test_vs_pattern_defaults_to_explain(self) -> None:
         decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="democracy vs authoritarianism",
             entry_action="ask_about_this",
@@ -3146,16 +3115,37 @@ class TestFallbackIntentCoverage:
             render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
             has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
-        assert decision.resolved_intent == "general"
+        assert decision.resolved_intent == "explain"
 
 
 class TestFallbackWeakReferenceConservativePath:
-    """Test that weak references trigger cross-record context and conservative path."""
+    """Test fallback reference behavior after P3-S3.
 
-    def test_weak_reference_enables_cross_record_context(self) -> None:
-        """When a weak reference is detected, cross_record_context_allowed should be True."""
+    P3-S3: Weak natural language references no longer trigger cross_record
+    or reference_request in fallback. Only explicit title markers (《》/"")
+    and explicit attachments trigger these.
+    """
+
+    def test_weak_natural_language_no_cross_record(self) -> None:
+        """P3-S3: Natural language weak references no longer trigger cross_record."""
         decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message="之前那篇climate policy的文章也提过这个吗？",
+            entry_action="ask_about_this",
+            page_identity=_fallback_page_identity(),
+            attachments=[],
+            anchors=[],
+            record=_fallback_record(),
+            failure_reason="test",
+            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
+            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
+        )
+        assert decision.reference_request.requested is False
+        assert decision.working_set.cross_record_context_allowed is False
+
+    def test_title_marker_enables_cross_record(self) -> None:
+        """Explicit title markers (《》) still trigger cross_record."""
+        decision = planner_runtime_svc.fallback_semantic_planner_decision(
+            user_message="之前那篇《Climate Policy》里也提过这个吗？",
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
             attachments=[],
@@ -3169,11 +3159,11 @@ class TestFallbackWeakReferenceConservativePath:
         assert decision.reference_request.query is not None
         assert decision.working_set.cross_record_context_allowed is True
 
-    def test_weak_reference_without_anchor_sets_conservative_reason(self) -> None:
-        """Weak reference without anchor should set clarification_reason
+    def test_title_reference_without_anchor_sets_conservative_reason(self) -> None:
+        """Title reference without anchor should set clarification_reason
         to signal uncertainty (conservative path)."""
         decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="之前那篇climate policy的文章也提过这个吗？",
+            user_message='关于"AI Ethics"那篇文章也提过这个吗？',
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
             attachments=[],
@@ -3183,28 +3173,12 @@ class TestFallbackWeakReferenceConservativePath:
             render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
             has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
-        assert decision.clarification_reason == "fallback_weak_reference_without_anchor"
+        assert decision.clarification_reason == "fallback_title_reference_without_anchor"
         # Should NOT be must_clarify — we can still answer at article level
         assert decision.clarification_only is False
 
-    def test_weak_reference_with_anchor_no_conservative_reason(self) -> None:
-        """Weak reference WITH anchor should NOT trigger conservative path."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="之前那篇climate policy的文章也提过这个吗？",
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.clarification_reason is None
-        assert decision.reference_request.requested is True
-
-    def test_explicit_title_reference_no_conservative_reason(self) -> None:
-        """Explicit title (book marks) with anchor should NOT trigger conservative path."""
+    def test_title_reference_with_anchor_no_conservative_reason(self) -> None:
+        """Title reference WITH anchor should NOT trigger conservative path."""
         decision = planner_runtime_svc.fallback_semantic_planner_decision(
             user_message='之前那篇《Climate Policy》里也提过这个吗？',
             entry_action="ask_about_this",
@@ -3217,6 +3191,7 @@ class TestFallbackWeakReferenceConservativePath:
             has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
         )
         assert decision.clarification_reason is None
+        assert decision.reference_request.requested is True
 
     def test_no_reference_no_cross_record(self) -> None:
         """Without any reference, cross_record_context_allowed should be False."""
@@ -3269,12 +3244,12 @@ class TestFallbackPlannerConservativeReasonPromotion:
         plan_request should promote clarification_mode to can_answer_with_followup."""
         decision = _planner_decision(
             resolved_intent="explain",
-            clarification_reason="fallback_weak_reference_without_anchor",
+            clarification_reason="fallback_title_reference_without_anchor",
             local_context_window_needed=True,
         )
         snapshot = planner_svc.plan_request(
             planner_decision=decision,
-            content="之前那篇climate policy的文章也提过这个吗？",
+            content='关于"AI Ethics"那篇文章也提过这个吗？',
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
             anchors=[],
@@ -3283,7 +3258,7 @@ class TestFallbackPlannerConservativeReasonPromotion:
             attachments=[],
         )
         assert snapshot.clarification_mode == "can_answer_with_followup"
-        assert snapshot.context_plan.clarification_reason == "fallback_weak_reference_without_anchor"
+        assert snapshot.context_plan.clarification_reason == "fallback_title_reference_without_anchor"
 
     def test_non_fallback_reason_not_promoted(self) -> None:
         """A non-fallback clarification_reason with clarification_mode=none
@@ -3311,24 +3286,24 @@ class TestFallbackPlannerConservativeReasonPromotion:
         the result should still be can_answer_with_followup (not must_clarify)."""
         decision = _planner_decision(
             resolved_intent="explain",
-            clarification_reason="fallback_weak_reference_without_anchor",
+            clarification_reason="fallback_title_reference_without_anchor",
             local_context_window_needed=True,
             reference_requested=True,
-            reference_query="climate policy",
+            reference_query="AI Ethics",
         )
         snapshot = planner_svc.plan_request(
             planner_decision=decision,
-            content="之前那篇climate policy的文章也提过这个吗？",
+            content='关于"AI Ethics"那篇文章也提过这个吗？',
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
             anchors=[],
             reference_resolution=planner_svc.ReaderAskReferenceResolution(
                 attempted=True,
                 status="ambiguous",
-                query="climate policy",
+                query="AI Ethics",
                 ambiguous_records=[
-                    {"record_id": "r1", "title": "Climate Policy A"},
-                    {"record_id": "r2", "title": "Climate Policy B"},
+                    {"record_id": "r1", "title": "AI Ethics A"},
+                    {"record_id": "r2", "title": "AI Ethics B"},
                 ],
             ),
             structured_asset_resolution=planner_svc.ReaderAskStructuredAssetResolution(),
@@ -3341,26 +3316,26 @@ class TestFallbackPlannerConservativeReasonPromotion:
     def test_fallback_reason_with_not_found_reference_stays_followup(self) -> None:
         """When fallback reason is set AND reference resolution is not_found,
         the result should still be can_answer_with_followup (not must_clarify).
-        This is the key scenario: weak reference without anchor, resolver can't
+        This is the key scenario: title reference without anchor, resolver can't
         find the record — we should still answer at article level with a hint,
         not force the user to clarify."""
         decision = _planner_decision(
             resolved_intent="explain",
-            clarification_reason="fallback_weak_reference_without_anchor",
+            clarification_reason="fallback_title_reference_without_anchor",
             local_context_window_needed=True,
             reference_requested=True,
-            reference_query="climate policy",
+            reference_query="AI Ethics",
         )
         snapshot = planner_svc.plan_request(
             planner_decision=decision,
-            content="之前那篇climate policy的文章也提过这个吗？",
+            content='关于"AI Ethics"那篇文章也提过这个吗？',
             entry_action="ask_about_this",
             page_identity=_fallback_page_identity(),
             anchors=[],
             reference_resolution=planner_svc.ReaderAskReferenceResolution(
                 attempted=True,
                 status="not_found",
-                query="climate policy",
+                query="AI Ethics",
             ),
             structured_asset_resolution=planner_svc.ReaderAskStructuredAssetResolution(),
             attachments=[],
@@ -3368,7 +3343,7 @@ class TestFallbackPlannerConservativeReasonPromotion:
         # not_found + no anchor normally → must_clarify,
         # but fallback_ reason protects the can_answer_with_followup path
         assert snapshot.clarification_mode == "can_answer_with_followup"
-        assert snapshot.context_plan.clarification_reason == "fallback_weak_reference_without_anchor"
+        assert snapshot.context_plan.clarification_reason == "fallback_title_reference_without_anchor"
 
     def test_non_fallback_not_found_without_anchor_still_must_clarify(self) -> None:
         """Without a fallback_ reason, not_found + no anchor should still
@@ -3549,7 +3524,6 @@ async def test_confirm_action_create_supplement_grammar_note() -> None:
     """
     from app.schemas.reader_ask import (
         ReaderAskActionConfirmRequest,
-        ReaderAskPersistedSupplement,
         ReaderAskSupplementCandidate,
     )
 

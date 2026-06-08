@@ -8,8 +8,8 @@ based on the returned plans.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any, Callable
 from uuid import UUID
 
 from app.agents.reader_ask_agent import ReaderAskRuntimeState

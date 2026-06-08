@@ -27,6 +27,7 @@ from app.agents.reader_ask_planner_agent import (
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
     ReaderAskAttachment,
+    ReaderAskContextScope,
     ReaderAskCurrentRecordAffordances,
     ReaderAskEntryAction,
     ReaderAskPageIdentity,
@@ -241,30 +242,20 @@ def planner_history_messages(
     return normalized
 
 
-def contains_any(text: str, needles: tuple[str, ...]) -> bool:
-    return any(needle in text for needle in needles)
-
-
 def fallback_reference_query(user_message: str) -> str | None:
+    """Extract a reference query from explicit title markers only.
+
+    P3-S3: Weak reference regex patterns removed. Natural language
+    references like "之前那篇/that article about" are now handled
+    by the LLM planner's reference_request. This function only
+    extracts from explicit structural markers: book title marks (《》),
+    curly quotes (""), and straight quotes.
+    """
     normalized = utils.normalize_text(user_message)
     if not normalized:
         return None
-    # Pass 1: explicit title markers (book title marks, quotes)
     for pattern in (r"《([^》]+)》", r"\u201c([^\u201d]+)\u201d", r"\"([^\"]+)\"", r"'([^']+)'"):
         match = re.search(pattern, normalized)
-        if not match:
-            continue
-        query = utils.clean_reference_query(match.group(1))
-        if query:
-            return query
-    # Pass 2: weak reference patterns
-    weak_patterns = (
-        r"(?:之前那篇|那篇|那篇关于|讲|关于)([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:的?(?:文章|论文|研究|报道|书|文本))",
-        r"([^\s，。？！、的]{2,30}(?:\s+[^\s，。？！、的]{2,30})*)(?:那篇|这篇)(?:的?(?:文章|论文|研究|报道))",
-        r"(?:that|the)\s+(?:article|paper|essay|text|piece)\s+(?:about|on|regarding|covering)\s+([\w\-]+(?:\s+(?!also|that|which|who|is|was|were|has|had|did|and|but|or|discussed|mentioned|talked|explained|noted|stated|pointed)[\w\-]+){0,5})",
-    )
-    for pattern in weak_patterns:
-        match = re.search(pattern, normalized, re.IGNORECASE)
         if not match:
             continue
         query = utils.clean_reference_query(match.group(1))
@@ -290,7 +281,6 @@ def fallback_semantic_planner_decision(
     has_sentence_entries_cb: Callable[[_RecordBundle], bool],
 ) -> ReaderAskPlannerDecision:
     """Produce a deterministic fallback planner decision when the LLM fails."""
-    normalized_message = utils.normalize_text(user_message).lower()
     has_external_record_attachment = any(
         attachment.kind == "record_ref" and attachment.subtype == "related_record"
         for attachment in attachments
@@ -314,24 +304,12 @@ def fallback_semantic_planner_decision(
         resolved_intent = "vocabulary"
     elif entry_action == "why_here":
         resolved_intent = "grammar"
-    elif contains_any(normalized_message, ("拆句", "拆解", "主干", "break down", "breakdown")):
-        resolved_intent = "breakdown"
-    elif contains_any(normalized_message, ("练习", "exercise", "practice", "quiz")):
-        resolved_intent = "practice"
-    elif contains_any(normalized_message, ("语法", "句法", "时态", "语态", "过去式", "现在式", "将来式", "grammar", "syntax", "tense")):
-        resolved_intent = "grammar"
-    elif contains_any(normalized_message, ("词义", "词汇", "短语", "单词", "这个词", "那个词", "vocabulary", "phrase", "word", "meaning")):
-        resolved_intent = "vocabulary"
-    elif contains_any(normalized_message, ("对比", "比较", "不同", "区别", "差异", "compare", "difference", "versus", "vs")):
-        resolved_intent = "general"
-    elif contains_any(normalized_message, ("总结", "概括", "归纳", "summarize", "summary", "翻译", "translate", "复习", "review", "分析", "analyze")):
-        resolved_intent = "general"
 
-    has_weak_reference = ref_query is not None
+    has_title_reference = ref_query is not None
     clarification_only = False
     clarification_reason: str | None = None
     cross_record_context_allowed = (
-        has_external_record_attachment or has_external_asset_attachment or has_weak_reference
+        has_external_record_attachment or has_external_asset_attachment or has_title_reference
     )
     article_overview_needed = False
     local_context_window_needed = False
@@ -350,18 +328,22 @@ def fallback_semantic_planner_decision(
         local_context_window_needed = True
         if resolved_intent in {"grammar", "breakdown", "practice"} and has_sentence_entries:
             record_insights_needed = True
+        context_scope: ReaderAskContextScope = "sentence"
     elif cross_record_context_allowed:
         if has_article_overview:
             article_overview_needed = True
         local_context_window_needed = True
+        context_scope = "cross_article"
     elif has_article_overview:
         article_overview_needed = True
         local_context_window_needed = True
+        context_scope = "article"
     else:
         local_context_window_needed = True
+        context_scope = "article"
 
-    if has_weak_reference and not has_local_anchor:
-        clarification_reason = "fallback_weak_reference_without_anchor"
+    if has_title_reference and not has_local_anchor:
+        clarification_reason = "fallback_title_reference_without_anchor"
 
     return ReaderAskPlannerDecision(
         resolved_intent=resolved_intent,
@@ -371,7 +353,7 @@ def fallback_semantic_planner_decision(
             "requested": bool(ref_query),
             "query": ref_query,
             "reason": (
-                "fallback_weak_reference" if has_weak_reference and clarification_reason
+                "fallback_title_reference_without_anchor" if has_title_reference and clarification_reason
                 else "fallback_title_like_reference" if ref_query
                 else None
             ),
@@ -393,6 +375,8 @@ def fallback_semantic_planner_decision(
             "planner validation failed; used deterministic fallback"
             + (f": {failure_reason}" if failure_reason else "")
         ),
+        context_scope=context_scope,
+        decision_confidence="low",
     )
 
 

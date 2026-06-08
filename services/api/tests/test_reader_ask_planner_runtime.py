@@ -199,21 +199,6 @@ class TestQuickActionContent:
 
 
 # ---------------------------------------------------------------------------
-# TestContainsAny
-# ---------------------------------------------------------------------------
-
-class TestContainsAny:
-    def test_match(self) -> None:
-        assert planner_runtime.contains_any("语法分析", ("语法", "句法")) is True
-
-    def test_no_match(self) -> None:
-        assert planner_runtime.contains_any("翻译", ("语法", "句法")) is False
-
-    def test_empty_needles(self) -> None:
-        assert planner_runtime.contains_any("anything", ()) is False
-
-
-# ---------------------------------------------------------------------------
 # TestFallbackReferenceQuery
 # ---------------------------------------------------------------------------
 
@@ -224,18 +209,22 @@ class TestFallbackReferenceQuery:
     def test_double_quotes(self) -> None:
         assert planner_runtime.fallback_reference_query('关于"AI Ethics"那篇文章') == "AI Ethics"
 
-    def test_weak_chinese_pattern(self) -> None:
-        assert planner_runtime.fallback_reference_query("之前那篇climate policy的文章也提过吗？") == "climate policy"
+    def test_weak_chinese_pattern_no_longer_matches(self) -> None:
+        """P3-S3: Weak reference regex removed; natural language patterns
+        like '之前那篇...的文章' no longer extract a reference query."""
+        assert planner_runtime.fallback_reference_query("之前那篇climate policy的文章也提过吗？") is None
 
-    def test_weak_english_pattern(self) -> None:
-        assert planner_runtime.fallback_reference_query("that article about climate policy also mentioned this") == "climate policy"
+    def test_weak_english_pattern_no_longer_matches(self) -> None:
+        """P3-S3: Weak reference regex removed; 'that article about X'
+        no longer extracts a reference query."""
+        assert planner_runtime.fallback_reference_query("that article about climate policy also mentioned this") is None
 
     def test_no_reference_returns_none(self) -> None:
         assert planner_runtime.fallback_reference_query("这句话什么意思？") is None
 
-    def test_short_topic_ignored(self) -> None:
-        result = planner_runtime.fallback_reference_query("讲X的文章")
-        assert result is None
+    def test_short_topic_in_title_marks_still_works(self) -> None:
+        """Short topics inside explicit title markers should still be extracted."""
+        assert planner_runtime.fallback_reference_query("关于《AI》的文章") == "AI"
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +321,7 @@ class TestFallbackSemanticPlannerDecision:
         )
         assert decision.resolved_intent == "grammar"
 
-    def test_keyword_breakdown(self) -> None:
+    def test_natural_language_defaults_to_explain_breakdown(self) -> None:
         decision = planner_runtime.fallback_semantic_planner_decision(
             user_message="帮我拆解这个长句",
             entry_action="ask_about_this",
@@ -344,9 +333,9 @@ class TestFallbackSemanticPlannerDecision:
             render_overview_cb=_render_overview_cb,
             has_sentence_entries_cb=_has_sentence_entries_cb,
         )
-        assert decision.resolved_intent == "breakdown"
+        assert decision.resolved_intent == "explain"
 
-    def test_keyword_compare_is_general(self) -> None:
+    def test_natural_language_defaults_to_explain_compare(self) -> None:
         decision = planner_runtime.fallback_semantic_planner_decision(
             user_message="这两篇文章的观点有什么区别？",
             entry_action="ask_about_this",
@@ -358,11 +347,71 @@ class TestFallbackSemanticPlannerDecision:
             render_overview_cb=_render_overview_cb,
             has_sentence_entries_cb=_has_sentence_entries_cb,
         )
-        assert decision.resolved_intent == "general"
+        assert decision.resolved_intent == "explain"
 
-    def test_weak_reference_enables_cross_record(self) -> None:
+    def test_natural_language_defaults_to_explain_grammar_keyword(self) -> None:
+        decision = planner_runtime.fallback_semantic_planner_decision(
+            user_message="这里的语法是什么",
+            entry_action="ask_about_this",
+            page_identity=_page_identity(),
+            attachments=[],
+            anchors=[],
+            record=_record(),
+            failure_reason="test",
+            render_overview_cb=_render_overview_cb,
+            has_sentence_entries_cb=_has_sentence_entries_cb,
+        )
+        assert decision.resolved_intent == "explain"
+
+    def test_natural_language_defaults_to_explain_vocabulary_keyword(self) -> None:
+        decision = planner_runtime.fallback_semantic_planner_decision(
+            user_message="What does this word mean here?",
+            entry_action="ask_about_this",
+            page_identity=_page_identity(),
+            attachments=[],
+            anchors=[],
+            record=_record(),
+            failure_reason="test",
+            render_overview_cb=_render_overview_cb,
+            has_sentence_entries_cb=_has_sentence_entries_cb,
+        )
+        assert decision.resolved_intent == "explain"
+
+    def test_natural_language_defaults_to_explain_difference(self) -> None:
+        decision = planner_runtime.fallback_semantic_planner_decision(
+            user_message="这两篇文章有什么区别",
+            entry_action="ask_about_this",
+            page_identity=_page_identity(),
+            attachments=[],
+            anchors=[],
+            record=_record(),
+            failure_reason="test",
+            render_overview_cb=_render_overview_cb,
+            has_sentence_entries_cb=_has_sentence_entries_cb,
+        )
+        assert decision.resolved_intent == "explain"
+
+    def test_weak_natural_language_no_cross_record(self) -> None:
+        """P3-S3: Weak natural language references no longer trigger
+        cross_record in fallback. LLM planner handles these."""
         decision = planner_runtime.fallback_semantic_planner_decision(
             user_message="之前那篇climate policy的文章也提过这个吗？",
+            entry_action="ask_about_this",
+            page_identity=_page_identity(),
+            attachments=[],
+            anchors=[],
+            record=_record(),
+            failure_reason="test",
+            render_overview_cb=_render_overview_cb,
+            has_sentence_entries_cb=_has_sentence_entries_cb,
+        )
+        assert decision.working_set.cross_record_context_allowed is False
+        assert decision.reference_request.requested is False
+
+    def test_title_marker_reference_enables_cross_record(self) -> None:
+        """Explicit title markers (《》) still trigger cross_record."""
+        decision = planner_runtime.fallback_semantic_planner_decision(
+            user_message="之前那篇《Climate Policy》里也提过这个吗？",
             entry_action="ask_about_this",
             page_identity=_page_identity(),
             attachments=[],
@@ -375,9 +424,9 @@ class TestFallbackSemanticPlannerDecision:
         assert decision.working_set.cross_record_context_allowed is True
         assert decision.reference_request.requested is True
 
-    def test_weak_reference_without_anchor_sets_conservative_reason(self) -> None:
+    def test_title_reference_without_anchor_sets_conservative_reason(self) -> None:
         decision = planner_runtime.fallback_semantic_planner_decision(
-            user_message="之前那篇climate policy的文章也提过这个吗？",
+            user_message='关于"AI Ethics"那篇文章也提过这个吗？',
             entry_action="ask_about_this",
             page_identity=_page_identity(),
             attachments=[],
@@ -387,12 +436,12 @@ class TestFallbackSemanticPlannerDecision:
             render_overview_cb=_render_overview_cb,
             has_sentence_entries_cb=_has_sentence_entries_cb,
         )
-        assert decision.clarification_reason == "fallback_weak_reference_without_anchor"
+        assert decision.clarification_reason == "fallback_title_reference_without_anchor"
         assert decision.clarification_only is False
 
-    def test_weak_reference_with_anchor_no_conservative_reason(self) -> None:
+    def test_title_reference_with_anchor_no_conservative_reason(self) -> None:
         decision = planner_runtime.fallback_semantic_planner_decision(
-            user_message="之前那篇climate policy的文章也提过这个吗？",
+            user_message="之前那篇《Climate Policy》里也提过这个吗？",
             entry_action="ask_about_this",
             page_identity=_page_identity(),
             attachments=[],
@@ -456,7 +505,9 @@ class TestFallbackSemanticPlannerDecision:
         )
         assert "timeout" in decision.rationale
 
-    def test_local_anchor_with_sentence_entries_needs_insights(self) -> None:
+    def test_local_anchor_with_sentence_entries_no_insights_without_explicit_intent(self) -> None:
+        """Fallback no longer infers grammar/breakdown from keywords, so
+        record_insights_needed is not set for natural language with local anchor."""
         decision = planner_runtime.fallback_semantic_planner_decision(
             user_message="这里的语法结构",
             entry_action="ask_about_this",
@@ -468,6 +519,24 @@ class TestFallbackSemanticPlannerDecision:
             render_overview_cb=_render_overview_cb,
             has_sentence_entries_cb=_has_sentence_entries_cb,
         )
+        assert decision.working_set.local_context_window_needed is True
+        assert decision.working_set.record_insights_needed is False
+
+    def test_why_here_with_sentence_entries_needs_insights(self) -> None:
+        """Explicit why_here entry_action forces grammar intent, which
+        triggers record_insights_needed when sentence entries exist."""
+        decision = planner_runtime.fallback_semantic_planner_decision(
+            user_message="为什么这里这样写",
+            entry_action="why_here",
+            page_identity=_page_identity(),
+            attachments=[],
+            anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
+            record=_record(sentence_entries=[{"id": "s1"}]),
+            failure_reason="test",
+            render_overview_cb=_render_overview_cb,
+            has_sentence_entries_cb=_has_sentence_entries_cb,
+        )
+        assert decision.resolved_intent == "grammar"
         assert decision.working_set.local_context_window_needed is True
         assert decision.working_set.record_insights_needed is True
 

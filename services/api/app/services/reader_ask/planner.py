@@ -24,9 +24,6 @@ from app.schemas.reader_ask import (
     ReaderAskPlannerDecision,
     ReaderAskPlannerHistoryMessage,
     ReaderAskPlannerInput,
-    ReaderAskPlannerReferenceRequest,
-    ReaderAskPlannerStructuredAssetRequest,
-    ReaderAskPlannerWorkingSetDecision,
     ReaderAskReferenceResolutionStatus,
     ReaderAskResolvedContextInput,
     ReaderAskResolvedContextSummary,
@@ -656,6 +653,7 @@ def plan_request(
     if clarification_mode == "none" and clarification_reason and clarification_reason.startswith("fallback_"):
         clarification_mode = "can_answer_with_followup"
 
+    reference_guard_requires_clarification = False
     if resolved_reference.status in {"ambiguous", "not_found"}:
         if anchors or (resolved_reference.status == "ambiguous" and planner_decision.working_set.local_context_window_needed):
             clarification_mode = "can_answer_with_followup"
@@ -674,28 +672,30 @@ def plan_request(
             clarification_reason = clarification_reason or "reference_ambiguous_article_level"
         else:
             clarification_mode = "must_clarify"
+            reference_guard_requires_clarification = True
     if resolved_asset_resolution.status == "ambiguous":
         # Asset ambiguity does not block answer generation; always downgrade to followup
         clarification_mode = "can_answer_with_followup"
 
-    # Deterministic rule: strong deictic + no anchor → final convergence
-    # based on intent. This rule overrides any prior clarification_mode
-    # (none / must_clarify / can_answer_with_followup) because:
-    # - "none" + deictic without anchor → pretending to answer precisely
-    # - "must_clarify" + deictic + non-sentence intent → too aggressive
-    # - "can_answer_with_followup" + deictic + sentence-level intent → too lenient
-    if not anchors and _has_strong_deictic(content):
-        if _requires_sentence_level(planner_decision.resolved_intent):
-            # Grammar/breakdown/practice genuinely need a specific sentence.
-            clarification_mode = "must_clarify"
-            clarification_reason = "deictic_requires_sentence_anchor"
-        else:
-            # Non-sentence intent: always can_answer_with_followup.
-            # Even if prior logic set must_clarify (e.g. from ambiguous
-            # reference resolution), a deictic question with explain/
-            # vocabulary/general intent can be answered at article level.
-            clarification_mode = "can_answer_with_followup"
-            clarification_reason = "deictic_without_anchor"
+    # Deictic / anchor guard: when user points at specific text without
+    # selecting it, we must protect against misleading answers.
+    #
+    # Priority: planner's requires_local_anchor > deictic regex fallback.
+    # - requires_local_anchor=True + no anchor → must_clarify
+    # - requires_local_anchor=False → deictic regex can only trigger followup,
+    #   never must_clarify
+    # - requires_local_anchor=None → legacy deictic + sentence-level intent guard
+    needs_anchor = planner_decision.requires_local_anchor
+    if needs_anchor is None:
+        needs_anchor = not anchors and _has_strong_deictic(content) and _requires_sentence_level(planner_decision.resolved_intent)
+
+    if not anchors and needs_anchor:
+        clarification_mode = "must_clarify"
+        clarification_reason = "deictic_requires_sentence_anchor"
+    elif not anchors and not reference_guard_requires_clarification and _has_strong_deictic(content):
+        # Deictic without anchor but not sentence-level → followup
+        clarification_mode = "can_answer_with_followup"
+        clarification_reason = "deictic_without_anchor"
 
     # Derive clarification_only from clarification_mode for backward compat
     if clarification_mode == "must_clarify":
@@ -705,7 +705,6 @@ def plan_request(
 
     decision_working_set = planner_decision.working_set
     cross_record_context_allowed = bool(merged_external_record_refs) or decision_working_set.cross_record_context_allowed
-    retrieval_needs: ReaderAskRetrievalNeeds = "known_reference_only" if cross_record_context_allowed else "none"
     working_set = ReaderAskWorkingSet(
         primary_anchor=anchors[0] if anchors else None,
         local_context_window_needed=decision_working_set.local_context_window_needed and clarification_mode != "must_clarify",
@@ -724,6 +723,37 @@ def plan_request(
             and merged_external_record_refs
             and not merged_external_asset_refs
         ),
+    )
+
+    # P3-S4: Enhance working_set from planner-owned context_scope.
+    # context_scope is additive — it cannot reopen resources closed by
+    # the must_clarify guard above.
+    context_scope = planner_decision.context_scope
+    if context_scope is not None and clarification_mode != "must_clarify":
+        if context_scope == "article":
+            working_set.article_overview_needed = True
+            working_set.record_insights_needed = False
+        elif context_scope == "sentence":
+            working_set.local_context_window_needed = True
+        elif context_scope == "paragraph":
+            working_set.local_context_window_needed = True
+        elif context_scope == "cross_article":
+            working_set.article_overview_needed = True
+
+    # P3-S4: Enhance working_set from planner-owned tool_hints.
+    # tool_hints can only enable resources, never disable guard-closed ones.
+    tool_hints = planner_decision.tool_hints
+    if tool_hints is not None and clarification_mode != "must_clarify":
+        if "record_insights" in tool_hints:
+            working_set.record_insights_needed = True
+        if "dictionary_lookup" in tool_hints:
+            working_set.dictionary_needed = True
+        if "record_context" in tool_hints:
+            working_set.local_context_window_needed = True
+        if "external_record_context" in tool_hints:
+            working_set.cross_record_context_allowed = True
+    retrieval_needs: ReaderAskRetrievalNeeds = (
+        "known_reference_only" if working_set.cross_record_context_allowed else "none"
     )
     resolved_context_input = build_resolved_context_input(
         page_identity=page_identity,
