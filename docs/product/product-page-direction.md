@@ -26,19 +26,22 @@
 
 - 首屏主卖 **语法级理解能力**，但用完整、安静的 **阅读体验** 承接。
 - Claread 面向的是“需要读懂英文材料的人”，不是泛英语学习 App。
-- 可以弱化提及中文母语者视角，但不要把它做成页面视觉中心。
+- 产品页第一版优先做中文页面。英文 slogan 保持不翻译，后续有需要再做英文适配。
+- Claread 的中文名是 **透读**。产品页中文表达应围绕“透读英文文章”建立记忆点。
+- 可以提及中文母语者视角，但不要把它做成页面视觉中心。
 - 入口是文章，记忆点是句子。
 - AI 对话能力 `Ask Claread` 可以出现，但不能主导页面。
-- 产品页必须尽早展示 Claread 如何把一句英文讲清楚。
+- 产品页应尽早展示 Claread 如何把一句英文讲清楚，但不要在 Hero 下立刻进入复杂 Demo。冷用户需要先理解“透读”是什么。
 - 不做 Grammar X-Ray 承诺。该能力当前没有排期，后续实现后再更新产品页。
 - 核心产品哲学是：Claread 不是替你跳过句子，而是帮你看清句子如何工作。
 
 ## 核心定位
 
-Claread 是面向英文深读的阅读产品。它主动帮用户把英文文章读懂、讲清楚，核心能力是句子层面的语法级理解。
+Claread 是面向英文深读的阅读产品，中文名为“透读”。它主动帮用户把英文文章读懂、讲清楚，核心能力是句子层面的语法级理解。
 
 对外品牌口径：
 
+- **中文名**: **透读**。中文表达围绕“透读英文文章”：不止翻译，不止查词，而是把词、句、段、篇都读透。
 - **Name story**: `Cla = Clarify`。Claread 主动帮你把英文读懂、讲清楚。
 - **Product slogan**: **Read Deeply, Understand Clearly**。
 - **叙事关系**: `Clarify` 是产品做的事，`Clearly` 是用户得到的结果。
@@ -47,17 +50,27 @@ Claread 是面向英文深读的阅读产品。它主动帮用户把英文文章
 
 > Claread clarifies English articles sentence by sentence, so you can see the grammar, structure, and meaning behind the words.
 
-中文表达可以是：
+中文主表达可以是：
 
-> Claread 帮你一句一句看清英文文章的语法、结构和意思。
+> 透读英文文章，一句一句看清语法、结构和意思。
 
 这比“AI 阅读助手”“AI 翻译工具”“英语学习 App”更准确。
+
+## 页面语言策略
+
+第一版产品页优先做中文页面，因为当前主要用户是中国英语学习者。英文保留在三个位置：
+
+- 品牌名 `Claread`。
+- Product slogan: `Read Deeply, Understand Clearly`。
+- 少量产品动作或能力名，例如 `Ask Claread`、`Daily`。
+
+中文负责讲清楚产品是什么，英文负责形成品牌记忆。不要把整页做成英文产品页后再附中文解释。
 
 ## 页面大想法
 
 产品页本身应该成为一次轻量 Claread Reader 体验。
 
-用户不是先读一堆功能介绍，再被要求相信 Claread 有用；用户应该在页面早期直接看到 Claread 如何处理一句英文。最有记忆点的设计是：
+用户不是先读一堆功能介绍，再被要求相信 Claread 有用；用户应该在页面早期先理解“透读”的意思，再看到 Claread 如何处理一句英文。最有记忆点的设计是：
 
 1. 页面先出现一段正常的英文产品描述。
 2. 这段英文描述随后被 Claread Reader 化。
@@ -70,18 +83,30 @@ Claread 是面向英文深读的阅读产品。它主动帮用户把英文文章
 
 ### 位置
 
-签名 Demo 不放在首屏主视觉中央。首屏应负责建立品牌、定位和行动入口。Demo 应放在首屏之后的第一块核心内容区，成为用户向下滚动后立即看到的产品现场。
+签名 Demo 不放在首屏主视觉中央，也不应紧贴 Hero 直接出现。首屏应负责建立品牌、定位和行动入口；Hero 后应先用一段轻量中文承接解释“透读”是什么，再进入 Demo。
 
 推荐节奏：
 
 ```text
 Hero
+  -> What “透读” means
   -> Signature Reader Demo
   -> Reader workflow
   -> What Claread is not
   -> Daily / public reading
   -> Closing CTA
 ```
+
+### 前置承接
+
+Hero 与 Signature Demo 之间建议增加一个轻量解释区，帮助冷用户理解“透读”：
+
+```text
+透读不是把英文交给 AI 总结。
+它是围绕原文，把词汇、语法、句子结构和自然理解一层一层展开。
+```
+
+这一段应短、安静、中文优先。它的目标不是新增功能介绍，而是降低用户进入 Demo 前的理解成本。
 
 ### Demo 内容
 
@@ -129,11 +154,26 @@ Demo 使用产品页自身的一段英文描述，例如：
 
 - 明确的 Claread 品牌信号。
 - Product slogan: `Read Deeply, Understand Clearly`。
-- 一句承接语法级理解的说明。
-- 主 CTA: `Clarify your first article`。
-- 副 CTA: `Open Daily` 或中文对应入口。
+- “透读”中文名与“透读英文文章”的主表达。
+- 一句承接语法级理解的中文说明。
+- 主 CTA: `解读我的第一篇文章`。
+- 副 CTA: `打开 Daily`。
 
 推荐文案结构：
+
+```text
+Claread 透读
+
+Read Deeply,
+Understand Clearly.
+
+透读英文文章，一句一句看清语法、结构和意思。
+不是替你跳过原文，而是帮你真正读懂它。
+
+[解读我的第一篇文章] [打开 Daily]
+```
+
+英文适配页后续可以转为：
 
 ```text
 Read Deeply,
@@ -141,21 +181,22 @@ Understand Clearly.
 
 Claread clarifies English articles sentence by sentence,
 so you can see the grammar, structure, and meaning behind the words.
-
-[Clarify your first article] [Open Daily]
 ```
 
-中文页可以保留关键英文品牌表达，再用中文讲清楚：
+### 2. What “透读” Means
+
+目标：让用户在进入 Demo 前先明白产品名和核心动作。
+
+推荐表达：
 
 ```text
-Read Deeply,
-Understand Clearly.
-
-Claread 帮你一句一句看清英文文章的语法、结构和意思。
-不是替你跳过原文，而是帮你真正读懂它。
+透读，不是更快跳过一篇英文。
+透读，是把原文里的词、句、段、篇关系看清楚。
 ```
 
-### 2. Signature Reader Demo
+这个区块可以很短，视觉上承接 Hero，不做成 feature list。它应解释产品页接下来为什么要把一段英文拿出来拆。
+
+### 3. Signature Reader Demo
 
 目标：让用户一眼看到 Claread 的核心能力。
 
@@ -178,7 +219,7 @@ See the sentence, not just the translation.
 Claread 不只给你一句翻译。它把句子的结构、关系和意思放回原文旁边。
 ```
 
-### 3. Reader Workflow
+### 4. Reader Workflow
 
 目标：说明用户如何从文章进入深读。
 
@@ -199,7 +240,7 @@ Keep what matters.
 
 该模块可以展示流程，但不要变成 feature grid。每一步都应围绕文章和句子，不围绕按钮和工具。
 
-### 4. What Claread Is Not
+### 5. What Claread Is Not
 
 目标：建立差异化，避免被用户误归类为普通 AI chat、翻译工具或打卡学习 App。
 
@@ -220,7 +261,7 @@ Claread 是一个阅读器。它围绕文章本身工作，不抢文章的位置
 
 这一段可以放在页面中后段。它不是首屏主卖点，而是用户已经看过 Demo 后的定位校准。
 
-### 5. Daily / Public Reading
+### 6. Daily / Public Reading
 
 目标：给未登录用户一个低门槛体验入口。
 
@@ -242,7 +283,7 @@ Open today's reading.
 先读一篇公开精读，再决定是否把自己的英文文章交给 Claread。
 ```
 
-### 6. Closing CTA
+### 7. Closing CTA
 
 目标：收束到一个清楚动作。
 
@@ -386,4 +427,3 @@ Open today's reading.
 - `apps/web/DESIGN.md`: 定义 Web 视觉系统、token、组件角色和设计禁区。
 - `docs/product/current-state.md`: 校验当前能承诺哪些真实能力。
 - 本文：把上述判断压缩成 public product page 的叙事和方向。
-
