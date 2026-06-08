@@ -335,6 +335,12 @@ def _make_tool_trace(tool_name: str, status: str, *, summary: str | None = None,
     )
 
 
+def _build_reference_reranker() -> Any:
+    """Build reference reranker based on config. Returns None by default."""
+    from app.services.reader_ask.known_reference_resolver import build_reference_reranker
+    return build_reference_reranker(enabled=cfg.REFERENCE_RERANKER_ENABLED)
+
+
 async def _load_record_bundle(user_id: UUID, record_id: UUID) -> _RecordBundle:
     pool = db_connection.DB_POOL
     if pool is None:
@@ -1236,6 +1242,7 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
             "reason": planning_snapshot.resolved_references.reason,
             "resolved_records": planning_snapshot.resolved_references.resolved_records,
             "ambiguous_records": planning_snapshot.resolved_references.ambiguous_records,
+            "resolution_meta": planning_snapshot.resolved_references.resolution_meta,
         },
         "structured_asset_needs": {
             "requested": planning_snapshot.structured_asset_needs.requested,
@@ -2110,6 +2117,7 @@ async def stream_thread_message(
                 load_record_bundle_cb=_load_record_bundle,
                 resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
                 list_supplements_cb=supplements_svc.list_supplements_for_record,
+                reference_reranker=_build_reference_reranker(),
             ),
             truncate_history_message_cb=_truncate_history_message,
         )
@@ -2749,6 +2757,7 @@ async def stream_thread_message(
                         load_record_bundle_cb=_load_record_bundle,
                         resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
                         list_supplements_cb=supplements_svc.list_supplements_for_record,
+                        reference_reranker=_build_reference_reranker(),
                     ),
                     truncate_history_message_cb=_truncate_history_message,
                 )
@@ -3312,6 +3321,7 @@ async def retry_thread_message(
                 load_record_bundle_cb=_load_record_bundle,
                 resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
                 list_supplements_cb=supplements_svc.list_supplements_for_record,
+                reference_reranker=_build_reference_reranker(),
             ),
             truncate_history_message_cb=_truncate_history_message,
         )
@@ -3901,6 +3911,7 @@ async def retry_thread_message(
                         load_record_bundle_cb=_load_record_bundle,
                         resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
                         list_supplements_cb=supplements_svc.list_supplements_for_record,
+                        reference_reranker=_build_reference_reranker(),
                     ),
                     truncate_history_message_cb=_truncate_history_message,
                 )

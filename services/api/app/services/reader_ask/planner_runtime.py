@@ -88,6 +88,7 @@ class ResolvePlanningDeps:
     load_record_bundle_cb: Callable[[UUID, UUID], Awaitable[_RecordBundle]]
     resolve_structured_asset_refs_cb: Callable[..., Awaitable[planner.ReaderAskStructuredAssetResolution]]
     list_supplements_cb: Callable[..., Awaitable[list[Any]]]
+    reference_reranker: Any | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +499,7 @@ async def resolve_semantic_planning(
         user_id=user_id,
         current_record_id=record.record_id,
         reference_needs=planner.reference_needs_from_decision(planner_decision),
+        reranker=deps.reference_reranker,
     )
     pre_planning_snapshot = planner.plan_request(
         content=user_message,

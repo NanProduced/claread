@@ -1002,6 +1002,95 @@ def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
     assert data["retrieval_needs"] == "known_reference_only"
     assert data["resolved_references"]["status"] == "resolved"
     assert data["working_set"]["external_record_refs"][0]["record_id"] == "r-2"
+    # Phase 4 Round 2: planning_snapshot_json preserves resolution_meta
+    assert "resolution_meta" in data["resolved_references"]
+
+
+def test_planning_snapshot_json_preserves_resolution_meta_all_paths() -> None:
+    """resolution_meta is present in planning_snapshot_json for all status paths."""
+    from app.services.reader_ask.planner import (
+        RESOLUTION_META_FIELDS,
+        RESOLUTION_META_CANDIDATE_COUNT,
+        RESOLUTION_META_FALLBACK_REASON,
+        RESOLUTION_META_RUNNER_UP_SCORE,
+        RESOLUTION_META_SCORED_CANDIDATE_COUNT,
+        RESOLUTION_META_STRATEGY,
+        RESOLUTION_META_TOP_SCORE,
+        RESOLUTION_STRATEGY_NOT_REQUESTED,
+        RESOLUTION_STRATEGY_TITLE_SEARCH,
+    )
+
+    # not_requested path
+    snapshot_not_requested = planner_svc.plan_request(
+        content="explain this",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=False,
+            has_reader_notes=False,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        planner_decision=_planner_decision(resolved_intent="explain"),
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(
+            resolution_meta={
+                RESOLUTION_META_STRATEGY: RESOLUTION_STRATEGY_NOT_REQUESTED,
+                RESOLUTION_META_CANDIDATE_COUNT: 0,
+                RESOLUTION_META_SCORED_CANDIDATE_COUNT: 0,
+                RESOLUTION_META_TOP_SCORE: None,
+                RESOLUTION_META_RUNNER_UP_SCORE: None,
+                RESOLUTION_META_FALLBACK_REASON: None,
+            },
+        ),
+    )
+    data = _planning_snapshot_json(snapshot_not_requested)
+    assert "resolution_meta" in data["resolved_references"]
+    assert set(data["resolved_references"]["resolution_meta"].keys()) == RESOLUTION_META_FIELDS
+
+    # resolved path
+    snapshot_resolved = planner_svc.plan_request(
+        content="我之前那篇 climate policy 也提过这个吗？",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_reader_notes=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        planner_decision=_planner_decision(
+            resolved_intent="explain",
+            reference_requested=True,
+            reference_query="Climate Policy",
+            cross_record_context_allowed=True,
+        ),
+        reference_resolution=planner_svc.ReaderAskReferenceResolution(
+            attempted=True,
+            status="resolved",
+            query="Climate Policy",
+            reason="已命中历史文章\u201cClimate Policy\u201d。",
+            resolved_records=[{"record_id": "r-2", "title": "Climate Policy"}],
+            resolution_meta={
+                RESOLUTION_META_STRATEGY: RESOLUTION_STRATEGY_TITLE_SEARCH,
+                RESOLUTION_META_CANDIDATE_COUNT: 1,
+                RESOLUTION_META_SCORED_CANDIDATE_COUNT: 1,
+                RESOLUTION_META_TOP_SCORE: 100,
+                RESOLUTION_META_RUNNER_UP_SCORE: None,
+                RESOLUTION_META_FALLBACK_REASON: None,
+            },
+        ),
+    )
+    data = _planning_snapshot_json(snapshot_resolved)
+    assert data["resolved_references"]["resolution_meta"][RESOLUTION_META_STRATEGY] == RESOLUTION_STRATEGY_TITLE_SEARCH
+    assert data["resolved_references"]["resolution_meta"][RESOLUTION_META_TOP_SCORE] == 100
 
 
 def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
@@ -3866,3 +3955,153 @@ async def test_fail_context_too_large_cleans_up_and_preserves_context(monkeypatc
     assert failed_output["resolved_context"]["explicit_attachment_count"] == 1
     assert calls["trace"]["turn_run_id"] == turn_run_id  # type: ignore[index]
     assert calls["failure"]["error_code"] == "reader_ask_failed"  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 Round 7: Reference reranker wiring tests
+# ---------------------------------------------------------------------------
+
+
+class TestReferenceRerankerWiring:
+    """Round 7: Verify reranker wiring from service through planner_runtime."""
+
+    def test_default_config_does_not_construct_llm_reranker(self) -> None:
+        """Default config: build_reference_reranker returns None."""
+        from app.services.reader_ask.known_reference_resolver import build_reference_reranker
+        result = build_reference_reranker(enabled=False)
+        assert result is None
+
+    def test_service_does_not_import_reranker_internal_types(self) -> None:
+        """service.py must not reference SemanticRerankInput/Output/LlmReferenceReranker."""
+        import importlib.util
+
+        spec = importlib.util.find_spec("app.services.reader_ask.service")
+        assert spec is not None and spec.origin is not None
+        with open(spec.origin, encoding="utf-8") as f:
+            content = f.read()
+        assert "SemanticRerankInput" not in content
+        assert "SemanticRerankOutput" not in content
+        assert "LlmReferenceReranker" not in content
+
+    async def test_resolve_semantic_planning_passes_reranker_to_callback(self) -> None:
+        """resolve_semantic_planning passes deps.reference_reranker to
+        resolve_known_references_cb as the reranker kwarg."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.services.reader_ask import planner_runtime as planner_runtime_svc
+        from app.services.reader_ask import planner as planner_svc
+
+        fake_reranker = object()
+
+        captured_reranker: list[object] = []
+
+        async def fake_resolve_known_references_cb(**kwargs):  # type: ignore[no-untyped-def]
+            captured_reranker.append(kwargs.get("reranker"))
+            return planner_svc.ReaderAskReferenceResolution()
+
+        deps = planner_runtime_svc.ResolvePlanningDeps(
+            run_planner_deps=planner_runtime_svc.RunPlannerDeps(
+                current_record_affordances_cb=MagicMock(return_value=planner_svc.ReaderAskCurrentRecordAffordances()),
+                build_model_route_cb=MagicMock(return_value=(MagicMock(), MagicMock())),
+            ),
+            resolve_known_references_cb=fake_resolve_known_references_cb,
+            load_record_bundle_cb=AsyncMock(return_value=MagicMock(record_id=uuid4(), title="Test", render_scene={})),
+            resolve_structured_asset_refs_cb=AsyncMock(return_value=planner_svc.ReaderAskStructuredAssetResolution()),
+            list_supplements_cb=AsyncMock(return_value=[]),
+            reference_reranker=fake_reranker,
+        )
+
+        planner_decision = planner_svc.ReaderAskPlannerDecision(
+            resolved_intent="general",
+            local_context_window_needed=True,
+            reference_requested=True,
+            reference_query="climate policy",
+        )
+
+        page_identity = ReaderAskPageIdentity(
+            record_id=str(uuid4()),
+            title="Test Article",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+        )
+
+        # Patch run_semantic_planner to return a tuple (decision, status, usage)
+        with patch.object(
+            planner_runtime_svc, "run_semantic_planner",
+            new=AsyncMock(return_value=(planner_decision, "valid", None)),
+        ):
+            await planner_runtime_svc.resolve_semantic_planning(
+                user_id=uuid4(),
+                record=MagicMock(record_id=uuid4()),
+                history_messages=[],
+                user_message="test",
+                page_identity=page_identity,
+                entry_action="ask_about_this",
+                attachments=[],
+                anchors=[],
+                deps=deps,
+                truncate_history_message_cb=lambda msg, **kw: msg,
+            )
+
+        assert len(captured_reranker) == 1
+        assert captured_reranker[0] is fake_reranker
+
+    async def test_resolve_semantic_planning_default_reranker_is_none(self) -> None:
+        """When reference_reranker is not provided, callback receives None."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.services.reader_ask import planner_runtime as planner_runtime_svc
+        from app.services.reader_ask import planner as planner_svc
+
+        captured_reranker: list[object] = []
+
+        async def fake_resolve_known_references_cb(**kwargs):  # type: ignore[no-untyped-def]
+            captured_reranker.append(kwargs.get("reranker"))
+            return planner_svc.ReaderAskReferenceResolution()
+
+        deps = planner_runtime_svc.ResolvePlanningDeps(
+            run_planner_deps=planner_runtime_svc.RunPlannerDeps(
+                current_record_affordances_cb=MagicMock(return_value=planner_svc.ReaderAskCurrentRecordAffordances()),
+                build_model_route_cb=MagicMock(return_value=(MagicMock(), MagicMock())),
+            ),
+            resolve_known_references_cb=fake_resolve_known_references_cb,
+            load_record_bundle_cb=AsyncMock(return_value=MagicMock(record_id=uuid4(), title="Test", render_scene={})),
+            resolve_structured_asset_refs_cb=AsyncMock(return_value=planner_svc.ReaderAskStructuredAssetResolution()),
+            list_supplements_cb=AsyncMock(return_value=[]),
+        )
+
+        planner_decision = planner_svc.ReaderAskPlannerDecision(
+            resolved_intent="general",
+            local_context_window_needed=True,
+            reference_requested=True,
+            reference_query="climate policy",
+        )
+
+        page_identity = ReaderAskPageIdentity(
+            record_id=str(uuid4()),
+            title="Test Article",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+        )
+
+        with patch.object(
+            planner_runtime_svc, "run_semantic_planner",
+            new=AsyncMock(return_value=(planner_decision, "valid", None)),
+        ):
+            await planner_runtime_svc.resolve_semantic_planning(
+                user_id=uuid4(),
+                record=MagicMock(record_id=uuid4()),
+                history_messages=[],
+                user_message="test",
+                page_identity=page_identity,
+                entry_action="ask_about_this",
+                attachments=[],
+                anchors=[],
+                deps=deps,
+                truncate_history_message_cb=lambda msg, **kw: msg,
+            )
+
+        assert len(captured_reranker) == 1
+        assert captured_reranker[0] is None

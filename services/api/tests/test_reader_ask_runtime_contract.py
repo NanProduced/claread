@@ -10,11 +10,9 @@ from app.services.reader_ask.runtime_contract import (
     build_structured_history_summary,
     format_structured_history_summary,
 )
+from app.services.reader_ask import planner as planner_svc
 from app.services.reader_ask.planner_runtime import planner_history_messages
 from app.schemas.reader_ask import (
-    ReaderAskAnchorRef,
-    ReaderAskAttachment,
-    ReaderAskEntryAction,
     ReaderAskPageIdentity,
 )
 
@@ -515,3 +513,105 @@ class TestAnswerPayloadHistory:
         assert "开头信息" in assistant_message["content_md"]
         assert "结尾结论" in assistant_message["content_md"]
         assert "\n...\n" in assistant_message["content_md"]
+
+
+class TestResolutionMetaObservationContract:
+    """Phase 4 Round 2: resolution_meta is observation-only metadata.
+
+    It must appear in planning_snapshot / eval trace, but NOT in the
+    answer agent prompt payload (build_prompt_payload).
+    """
+
+    def _make_contract_with_reference_resolution(
+        self,
+        resolution_status: str = "resolved",
+        resolution_meta: dict | None = None,
+    ) -> ReaderAskAnswerRuntimeInput:
+        from app.services.reader_ask.planner import ReaderAskReferenceResolution
+        from app.services.reader_ask.service import _RecordBundle
+
+        record = _RecordBundle(
+            record_id=uuid4(),
+            title="Test Article",
+            source_text="Test source text content.",
+            render_scene={},
+            page_state_json={},
+            workflow_version="1",
+            schema_version="1",
+        )
+        ref_resolution = ReaderAskReferenceResolution(
+            attempted=True,
+            status=resolution_status,
+            query="Climate Policy",
+            reason="已命中历史文章\u201cClimate Policy\u201d。",
+            resolved_records=[{"record_id": "r-2", "title": "Climate Policy"}] if resolution_status == "resolved" else [],
+            ambiguous_records=[] if resolution_status == "resolved" else [{"record_id": "r-3", "title": "Climate Change"}],
+            resolution_meta=resolution_meta or {
+                planner_svc.RESOLUTION_META_STRATEGY: planner_svc.RESOLUTION_STRATEGY_TITLE_SEARCH,
+                planner_svc.RESOLUTION_META_CANDIDATE_COUNT: 1,
+                planner_svc.RESOLUTION_META_SCORED_CANDIDATE_COUNT: 1,
+                planner_svc.RESOLUTION_META_TOP_SCORE: 100,
+                planner_svc.RESOLUTION_META_RUNNER_UP_SCORE: None,
+                planner_svc.RESOLUTION_META_FALLBACK_REASON: None,
+            },
+        )
+        return ReaderAskAnswerRuntimeInput(
+            thread={"id": "t-1", "record_id": "r-1", "title": "Test"},
+            record=record,
+            user_message="test question",
+            history_messages=[],
+            page_identity=ReaderAskPageIdentity(
+                record_id="r-1",
+                title="Test",
+                available_context_capabilities=["record_context"],
+                has_article_overview=True,
+                has_sentence_entries=True,
+                has_annotations=False,
+                has_reader_notes=False,
+            ),
+            attachments=[],
+            anchors=[],
+            resolved_intent="explain",
+            resolved_intent_label="Explain",
+            entry_action="ask_about_this",
+            submission_mode="chat",
+            cross_record_context_allowed=False,
+            resolved_context_input=None,
+            quick_action_annotation=None,
+            reference_resolution=ref_resolution,
+            planning_snapshot=None,
+            max_history_messages=8,
+            max_message_text=800,
+        )
+
+    def test_prompt_payload_excludes_resolution_meta(self) -> None:
+        """build_prompt_payload must NOT include resolution_meta in reference_resolution."""
+        contract = self._make_contract_with_reference_resolution()
+        payload = build_prompt_payload(contract)
+
+        assert "reference_resolution" in payload
+        ref_res = payload["reference_resolution"]
+        # Standard fields present
+        assert "status" in ref_res
+        assert "query" in ref_res
+        assert "reason" in ref_res
+        assert "resolved_records" in ref_res
+        assert "ambiguous_records" in ref_res
+        # resolution_meta must NOT be in the prompt payload
+        assert "resolution_meta" not in ref_res
+
+    def test_prompt_payload_excludes_meta_for_ambiguous(self) -> None:
+        """Even for ambiguous results, resolution_meta must not leak into prompt."""
+        contract = self._make_contract_with_reference_resolution(
+            resolution_status="ambiguous",
+            resolution_meta={
+                planner_svc.RESOLUTION_META_STRATEGY: planner_svc.RESOLUTION_STRATEGY_RECENT_FALLBACK,
+                planner_svc.RESOLUTION_META_CANDIDATE_COUNT: 5,
+                planner_svc.RESOLUTION_META_SCORED_CANDIDATE_COUNT: 2,
+                planner_svc.RESOLUTION_META_TOP_SCORE: 55,
+                planner_svc.RESOLUTION_META_RUNNER_UP_SCORE: 50,
+                planner_svc.RESOLUTION_META_FALLBACK_REASON: planner_svc.RESOLUTION_FALLBACK_ILIKE_EMPTY,
+            },
+        )
+        payload = build_prompt_payload(contract)
+        assert "resolution_meta" not in payload["reference_resolution"]

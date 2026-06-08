@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
 from app.schemas.reader_ask import (
@@ -51,6 +51,55 @@ class ReaderAskReferenceResolution:
     reason: str | None = None
     resolved_records: list[dict[str, str]] = field(default_factory=list)
     ambiguous_records: list[dict[str, str]] = field(default_factory=list)
+    resolution_meta: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Resolution meta observation contract (Phase 4 Round 2)
+#
+# Stable field names for eval trace / planning snapshot observability.
+# These are NOT consumed by the answer agent prompt — they exist only
+# in planning_snapshot_json and eval trace for offline analysis.
+# ---------------------------------------------------------------------------
+
+RESOLUTION_META_STRATEGY: Literal["strategy"] = "strategy"
+RESOLUTION_META_CANDIDATE_COUNT: Literal["candidate_count"] = "candidate_count"
+RESOLUTION_META_SCORED_CANDIDATE_COUNT: Literal["scored_candidate_count"] = "scored_candidate_count"
+RESOLUTION_META_TOP_SCORE: Literal["top_score"] = "top_score"
+RESOLUTION_META_RUNNER_UP_SCORE: Literal["runner_up_score"] = "runner_up_score"
+RESOLUTION_META_FALLBACK_REASON: Literal["fallback_reason"] = "fallback_reason"
+
+RESOLUTION_META_FIELDS: frozenset[str] = frozenset({
+    RESOLUTION_META_STRATEGY,
+    RESOLUTION_META_CANDIDATE_COUNT,
+    RESOLUTION_META_SCORED_CANDIDATE_COUNT,
+    RESOLUTION_META_TOP_SCORE,
+    RESOLUTION_META_RUNNER_UP_SCORE,
+    RESOLUTION_META_FALLBACK_REASON,
+})
+
+# Strategy values
+RESOLUTION_STRATEGY_NOT_REQUESTED: Literal["not_requested"] = "not_requested"
+RESOLUTION_STRATEGY_NO_QUERY_RECENT: Literal["no_query_recent"] = "no_query_recent"
+RESOLUTION_STRATEGY_TITLE_SEARCH: Literal["title_search"] = "title_search"
+RESOLUTION_STRATEGY_RECENT_FALLBACK: Literal["recent_fallback"] = "recent_fallback"
+
+RESOLUTION_STRATEGIES: frozenset[str] = frozenset({
+    RESOLUTION_STRATEGY_NOT_REQUESTED,
+    RESOLUTION_STRATEGY_NO_QUERY_RECENT,
+    RESOLUTION_STRATEGY_TITLE_SEARCH,
+    RESOLUTION_STRATEGY_RECENT_FALLBACK,
+})
+
+# Fallback reason values
+RESOLUTION_FALLBACK_ILIKE_EMPTY: Literal["ilike_empty"] = "ilike_empty"
+
+ReaderAskResolutionStrategy = Literal[
+    "not_requested",
+    "no_query_recent",
+    "title_search",
+    "recent_fallback",
+]
 
 
 @dataclass(slots=True)

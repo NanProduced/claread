@@ -60,3 +60,10 @@ COMPACTION_EXTERNAL_ASSET_CONTENT_LIMIT: int = 900
 AGGRESSIVE_HISTORY_LIMIT: int = 2
 AGGRESSIVE_SOURCE_EXCERPT_LIMIT: int = 800
 AGGRESSIVE_ARTICLE_OVERVIEW_LIMIT: int = 400
+
+# ---------------------------------------------------------------------------
+# Reference reranker settings (Phase 4 Round 7)
+# ---------------------------------------------------------------------------
+REFERENCE_RERANKER_ENABLED: bool = False
+REFERENCE_RERANKER_TIMEOUT_S: float = 5.0
+REFERENCE_RERANKER_MAX_CANDIDATES: int = 8
