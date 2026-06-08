@@ -31,12 +31,16 @@ const hasStructuredContent = computed(() => {
   if (props.nodeName === "vocabulary") {
     return vocabHighlights.value.length > 0 || phraseGlosses.value.length > 0 || contextGlosses.value.length > 0;
   }
-  if (props.nodeName === "translation") return sentenceTranslations.value.length > 0 || Boolean(props.output?.title);
+  if (props.nodeName === "translation") return sentenceTranslations.value.length > 0 || hasText(props.output?.title);
   return false;
 });
 
 function dash(value) {
   return value === null || value === undefined || value === "" ? "—" : value;
+}
+
+function hasText(value) {
+  return String(value ?? "").trim().length > 0;
 }
 
 function spansText(spans) {
@@ -409,7 +413,7 @@ function simpleAnchorStatus(sentenceId, fragments) {
         <h4>Translation Draft</h4>
         <small>{{ sentenceTranslations.length }} 句</small>
       </header>
-      <article class="output-card">
+      <article v-if="hasText(output.title)" class="output-card">
         <div class="card-head">
           <strong>{{ dash(output.title) }}</strong>
           <span>标题</span>
