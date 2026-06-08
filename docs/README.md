@@ -23,6 +23,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/product/overview.md` | 产品定位、用户、核心链路 |
 | `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
 | `docs/product/competitive-landscape.md` | 阅读、笔记、英语学习和 AI 竞品格局，以及 Claread 差异化 |
+| `docs/product/product-page-direction.md` | Claread public product page 的定位、信息架构、签名 Demo、文案和视觉方向 |
 | `docs/development/mainline.md` | 当前开发主线和近期方向 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
 | `docs/product/ask-claread.md` | Ask Claread 当前正式产品说明与冻结边界 |
