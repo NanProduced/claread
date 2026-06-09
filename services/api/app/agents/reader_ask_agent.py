@@ -21,7 +21,6 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_SEARCH_USER_VOCABULARY,
 )
 from app.agents.reader_ask_tool_runtime import (
-    ToolEventName,
     run_tool,
     truncate_tool_arg,
 )
@@ -65,7 +64,7 @@ class ReaderAskRuntimeState:
 @dataclass(slots=True)
 class ReaderAskAgentDeps:
     payload: dict[str, Any]
-    event_queue: asyncio.Queue[tuple[ToolEventName, dict[str, Any]]]
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]]
     state: ReaderAskRuntimeState
     query_seed: str
     task_mode: Literal["explain", "breakdown", "vocabulary", "grammar", "practice", "general"]

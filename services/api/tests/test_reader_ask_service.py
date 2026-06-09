@@ -66,34 +66,157 @@ def _call_name(node: ast.AST) -> str | None:
 
 
 def test_service_agent_deps_wires_tool_availability_all_paths() -> None:
+    # Verify service.py uses build_reader_ask_agent_deps for all deps construction
     source = inspect.getsource(reader_ask_service)
     module = ast.parse(source)
-    deps_calls = [
+
+    # No direct ReaderAskAgentDeps(...) construction allowed — must go through factory
+    direct_deps_calls = [
         node
         for node in ast.walk(module)
         if isinstance(node, ast.Call) and _call_name(node.func) == "ReaderAskAgentDeps"
     ]
+    assert len(direct_deps_calls) == 0, (
+        "service.py must not construct ReaderAskAgentDeps directly; use build_reader_ask_agent_deps"
+    )
 
-    assert len(deps_calls) == 4
-    for call in deps_calls:
+    factory_calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "build_reader_ask_agent_deps"
+    ]
+
+    assert len(factory_calls) == 4
+    for call in factory_calls:
         keyword_by_name = {keyword.arg: keyword.value for keyword in call.keywords}
-        tool_availability = keyword_by_name.get("tool_availability")
-        assert tool_availability is not None
-        assert isinstance(tool_availability, ast.Call)
-        assert _call_name(tool_availability.func) == "build_tool_availability"
-        assert len(tool_availability.args) == 1
+        # Factory must receive entry_action (which it uses to build ToolAvailabilityInput)
+        assert "entry_action" in keyword_by_name
 
-        availability_input = tool_availability.args[0]
-        assert isinstance(availability_input, ast.Call)
-        assert _call_name(availability_input.func) == "ToolAvailabilityInput"
-        availability_input_keywords = {keyword.arg for keyword in availability_input.keywords}
-        assert {
-            "task_mode",
-            "entry_action",
-            "has_primary_anchor",
-            "has_dictionary_anchor",
-            "has_generated_annotation_cache",
-        }.issubset(availability_input_keywords)
+    # Verify the factory module constructs ToolAvailabilityInput with all 5 fields
+    from app.services.reader_ask import agent_deps_factory as factory_mod
+
+    factory_source = inspect.getsource(factory_mod)
+    factory_module = ast.parse(factory_source)
+
+    ta_calls = [
+        node
+        for node in ast.walk(factory_module)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "ToolAvailabilityInput"
+    ]
+    assert len(ta_calls) == 1
+    ta_keywords = {keyword.arg for keyword in ta_calls[0].keywords}
+    assert {
+        "task_mode",
+        "entry_action",
+        "has_primary_anchor",
+        "has_dictionary_anchor",
+        "has_generated_annotation_cache",
+    }.issubset(ta_keywords)
+
+    # Stream lifecycle: service.py must not call agent_runner stream functions directly
+    for fn_name in (
+        "start_reader_ask_agent_stream",
+        "stream_reader_ask_events",
+        "finish_reader_ask_agent_stream",
+    ):
+        direct_calls = [
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.Call) and _call_name(node.func) == fn_name
+        ]
+        assert len(direct_calls) == 0, (
+            f"service.py must not call {fn_name} directly; use stream_reader_ask_agent_run"
+        )
+
+    # service.py must call stream_reader_ask_agent_run exactly twice (main + retry)
+    stream_helper_calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "stream_reader_ask_agent_run"
+    ]
+    assert len(stream_helper_calls) == 2
+
+    # service.py must not reference agent_runner_svc directly
+    agent_runner_attr_calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "agent_runner_svc"
+    ]
+    assert len(agent_runner_attr_calls) == 0, (
+        "service.py must not reference agent_runner_svc directly"
+    )
+
+    # service.py must call build_reader_ask_replan_event exactly twice
+    replan_event_calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and _call_name(node.func) == "build_reader_ask_replan_event"
+    ]
+    assert len(replan_event_calls) == 2
+
+    # service.py must not reference MODEL_ROUTE_READER_ASK_PLANNER directly
+    direct_planner_route_refs = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and node.id == "MODEL_ROUTE_READER_ASK_PLANNER"
+    ]
+    assert len(direct_planner_route_refs) == 0, (
+        "service.py must not reference MODEL_ROUTE_READER_ASK_PLANNER directly"
+    )
+
+    # service.py must not reference build_reader_ask_planner_model_route directly
+    # (moved to planning_deps_factory in P6-6)
+    planner_cb_refs = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and node.id == "build_reader_ask_planner_model_route"
+    ]
+    assert len(planner_cb_refs) == 0, (
+        "service.py must not reference build_reader_ask_planner_model_route; use planning_deps_factory"
+    )
+
+    # service.py must not construct ResolvePlanningDeps directly
+    direct_resolve_planning_deps_calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "ResolvePlanningDeps"
+    ]
+    assert len(direct_resolve_planning_deps_calls) == 0, (
+        "service.py must not construct ResolvePlanningDeps directly; use build_reader_ask_resolve_planning_deps"
+    )
+
+    # service.py must not construct RunPlannerDeps directly
+    direct_run_planner_deps_calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "RunPlannerDeps"
+    ]
+    assert len(direct_run_planner_deps_calls) == 0, (
+        "service.py must not construct RunPlannerDeps directly; use build_reader_ask_resolve_planning_deps"
+    )
+
+    # service.py must reference build_reader_ask_resolve_planning_deps exactly 4 times
+    planning_deps_factory_refs = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and node.id == "build_reader_ask_resolve_planning_deps"
+    ]
+    assert len(planning_deps_factory_refs) == 4, (
+        "service.py must use build_reader_ask_resolve_planning_deps for all 4 planning deps constructions"
+    )
+
+    # service.py must not reference resolver_svc (removed import)
+    resolver_svc_refs = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and node.id == "resolver_svc"
+    ]
+    assert len(resolver_svc_refs) == 0, (
+        "service.py must not reference resolver_svc; use planning_deps_factory instead"
+    )
 
 
 def _planner_decision(

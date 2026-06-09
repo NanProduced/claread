@@ -42,7 +42,7 @@ class _ToolRuntimeState(Protocol):
 class _ToolRuntimeDeps(Protocol):
     """Minimal protocol that run_tool / _emit_tool_event need from deps."""
 
-    event_queue: asyncio.Queue[tuple[ToolEventName, dict[str, Any]]]
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]]
     tool_availability: ToolAvailabilityResult | None
 
     @property

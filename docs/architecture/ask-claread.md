@@ -154,6 +154,26 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 - `note_text` 缺失属于 tool 内部校验，会经过 `run_tool`，消耗一次 tool budget，并返回稳定 error observation。
 - grammar supplement 的 `create_supplement_grammar_note` 仍是 confirmation path 的 action type，不是 agent-callable tool，不进入上述 8 个 tool registry。
 
+### Facade / Invocation Wiring
+
+`service.py` 当前仍是 Ask Claread 的入口编排层，但不再直接构造 agent deps、planner deps、reader-ask model route 或 agent stream lifecycle。
+
+稳定 wiring 边界为：
+
+- `agent_deps_factory.py` 是 `ReaderAskAgentDeps` 的唯一 service 路径构造入口，并统一注入 `tool_availability`。
+- `agent_invocation.py` 负责 reader-ask agent/model resolution、non-streaming replan 调用、agent stream lifecycle facade、replan event facade，以及 planner model route callback。
+- `planning_deps_factory.py` 负责构造 `ResolvePlanningDeps` / `RunPlannerDeps`，固定接线 resolver、structured asset resolver、supplements listing 与 planner model route callback。
+- `ReaderAskAgentDeps.event_queue` 是 stream-wide event bus，类型语义为 `Queue[tuple[str, dict[str, Any]]]`；`ToolEventName` 只约束 tool runtime 内部 `_emit_tool_event(...)` 的 `tool.started / tool.completed / tool.failed`。
+
+`service.py` 不应重新直接调用：
+
+- `ReaderAskAgentDeps(...)`
+- `build_tool_availability(...)` / `ToolAvailabilityInput(...)`
+- `get_reader_ask_agent()` / `build_reader_ask_prompt(...)`
+- reader-ask route 常量或 `build_model_for_route(...)`
+- `agent_runner_svc` 的 stream lifecycle 函数
+- `ResolvePlanningDeps(...)` / `RunPlannerDeps(...)`
+
 ### Output Contract
 
 `output_contract.py` 当前定义 Ask 的正式内部输出模型。新运行的正式产品输出统一来自 `turn_run.user_visible_output_json`，而不是 assistant message metadata。

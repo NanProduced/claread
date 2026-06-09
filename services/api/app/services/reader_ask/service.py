@@ -14,18 +14,25 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 
 from app.agents.reader_ask_agent import (
-    ReaderAskAgentDeps,
     ReaderAskRuntimeActionRequest,
     ReaderAskRuntimeState,
-    build_reader_ask_prompt,
-    get_reader_ask_agent,
 )
-from app.agents.reader_ask_tool_policy import ToolAvailabilityInput, build_tool_availability
+from app.services.reader_ask.agent_deps_factory import build_reader_ask_agent_deps
+from app.services.reader_ask.agent_invocation import (
+    AgentStreamRuntime,
+    ReaderAskStreamCompleted,
+    ReaderAskStreamSseEvent,
+    build_reader_ask_replan_event,
+    resolve_reader_ask_agent,
+    run_reader_ask_replan,
+    stream_reader_ask_agent_run,
+)
+from app.services.reader_ask.planning_deps_factory import (
+    build_reader_ask_resolve_planning_deps,
+)
 from app.config.settings import get_settings
 from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
-from app.llm.router import build_model_for_route
-from app.llm.routes import MODEL_ROUTE_READER_ASK, MODEL_ROUTE_READER_ASK_PLANNER
 from app.llm.types import RunModelSettings
 from app.agents.grammar_agent import GrammarAgentDeps
 from app.schemas.reader_ask import (
@@ -115,10 +122,8 @@ from app.services.reader_ask import planner
 from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import prompt_preparation as prompt_preparation_svc
 from app.services.reader_ask import repository as repo
-from app.services.reader_ask import agent_runner as agent_runner_svc
 from app.services.reader_ask import context_runtime as context_runtime_svc
 from app.services.reader_ask import recovery as recovery_svc
-from app.services.reader_ask import resolver as resolver_svc
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
 from app.services.reader_ask import stream_events as stream_events_svc
 from app.services.reader_ask import supplements as supplements_svc
@@ -2052,7 +2057,7 @@ async def stream_thread_message(
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
     final_content_md = ""
-    stream_runtime: agent_runner_svc.AgentStreamRuntime | None = None
+    stream_runtime: AgentStreamRuntime | None = None
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -2109,15 +2114,9 @@ async def stream_thread_message(
             entry_action=body.entry_action,
             attachments=attachments,
             anchors=resolved_anchors,
-            deps=planner_runtime_svc.ResolvePlanningDeps(
-                run_planner_deps=planner_runtime_svc.RunPlannerDeps(
-                    current_record_affordances_cb=_current_record_affordances,
-                    build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
-                ),
-                resolve_known_references_cb=resolver_svc.resolve_known_references,
+            deps=build_reader_ask_resolve_planning_deps(
+                current_record_affordances_cb=_current_record_affordances,
                 load_record_bundle_cb=_load_record_bundle,
-                resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
-                list_supplements_cb=supplements_svc.list_supplements_for_record,
                 reference_reranker=_build_reference_reranker(),
             ),
             truncate_history_message_cb=_truncate_history_message,
@@ -2396,10 +2395,10 @@ async def stream_thread_message(
             raise RuntimeError("planning snapshot is required")
         cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
-        agent = get_reader_ask_agent()
-        model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
-        if model is None:
-            raise RuntimeError("model route is not configured: reader_ask")
+        resolved = resolve_reader_ask_agent()
+        agent = resolved.agent
+        model = resolved.model
+        model_config = resolved.model_config
 
         route_settings = RunModelSettings(max_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS, temperature=cfg.AGENT_TEMPERATURE, timeout=cfg.AGENT_TIMEOUT_S)
         if model_config and model_config.model_settings is not None:
@@ -2658,12 +2657,13 @@ async def stream_thread_message(
             timeout=route_settings.timeout,
         )
 
-        deps = ReaderAskAgentDeps(
+        deps = build_reader_ask_agent_deps(
             payload=prompt_payload,
             event_queue=event_queue,
             state=runtime_state,
             query_seed=query_seed,
             task_mode=resolved_intent,
+            entry_action=body.entry_action,
             record_id=str(record.record_id),
             record_title=record.title,
             primary_anchor=primary_anchor,
@@ -2676,16 +2676,6 @@ async def stream_thread_message(
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
-            tool_availability=build_tool_availability(
-                ToolAvailabilityInput(
-                    task_mode=resolved_intent,
-                    entry_action=body.entry_action,
-                    has_primary_anchor=primary_anchor is not None,
-                    # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
-                    has_dictionary_anchor=False,
-                    has_generated_annotation_cache=False,
-                )
-            ),
         )
         checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
@@ -2710,7 +2700,7 @@ async def stream_thread_message(
             ),
             update_turn_run_cb=repo.update_turn_run,
         )
-        producer_task, stream_runtime = agent_runner_svc.start_reader_ask_agent_stream(
+        async for stream_item in stream_reader_ask_agent_run(
             agent=agent,
             deps=deps,
             model=model,
@@ -2718,29 +2708,18 @@ async def stream_thread_message(
             assistant_message_id=assistant_message["id"],
             base_url=model_config.base_url if model_config else "",
             checkpoint_flush=stream_checkpoint_svc.make_checkpoint_flush(checkpoint),
-        )
-        try:
-            async for event_name, event_payload in agent_runner_svc.stream_reader_ask_events(
-                event_queue=event_queue,
-                producer_done=stream_runtime.producer_done,
-            ):
-                yield stream_events_svc.encode_sse(event_name, event_payload)
-        finally:
-            await producer_task
-
-        stream_outcome, interrupted_event = agent_runner_svc.finish_reader_ask_agent_stream(
-            runtime=stream_runtime,
-            assistant_message_id=assistant_message["id"],
-        )
-        if interrupted_event is not None:
-            yield stream_events_svc.encode_sse(interrupted_event[0], interrupted_event[1])
-
-        final_content_md = stream_outcome.content_md
-        usage_summary = stream_outcome.usage_summary
+        ):
+            if isinstance(stream_item, ReaderAskStreamSseEvent):
+                yield stream_item.encoded_sse
+            elif isinstance(stream_item, ReaderAskStreamCompleted):
+                stream_outcome = stream_item.outcome
+                final_content_md = stream_outcome.content_md
+                usage_summary = stream_outcome.usage_summary
+                stream_runtime = stream_item.stream_runtime
 
         # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
         # not already clarified, attempt a single replan with expanded context
-        replan_event = agent_runner_svc.build_replan_event(
+        replan_event = build_reader_ask_replan_event(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
             assistant_message_id=assistant_message["id"],
@@ -2759,15 +2738,9 @@ async def stream_thread_message(
                     entry_action=body.entry_action,
                     attachments=attachments,
                     anchors=resolved_anchors,
-                    deps=planner_runtime_svc.ResolvePlanningDeps(
-                        run_planner_deps=planner_runtime_svc.RunPlannerDeps(
-                            current_record_affordances_cb=_current_record_affordances,
-                            build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
-                        ),
-                        resolve_known_references_cb=resolver_svc.resolve_known_references,
+                    deps=build_reader_ask_resolve_planning_deps(
+                        current_record_affordances_cb=_current_record_affordances,
                         load_record_bundle_cb=_load_record_bundle,
-                        resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
-                        list_supplements_cb=supplements_svc.list_supplements_for_record,
                         reference_reranker=_build_reference_reranker(),
                     ),
                     truncate_history_message_cb=_truncate_history_message,
@@ -2847,12 +2820,13 @@ async def stream_thread_message(
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
                         raise recovery_svc.ReplanContextTooLargeError()
                     replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
-                    replan_deps = ReaderAskAgentDeps(
+                    replan_deps = build_reader_ask_agent_deps(
                         payload=replan_payload,
                         event_queue=event_queue,
                         state=replan_runtime_state,
                         query_seed=query_seed,
                         task_mode=replan_resolved_intent,
+                        entry_action=body.entry_action,
                         record_id=str(record.record_id),
                         record_title=record.title,
                         primary_anchor=primary_anchor,
@@ -2865,31 +2839,12 @@ async def stream_thread_message(
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
                         dictionary_item_to_citation_fn=_dictionary_item_to_citation,
                         dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
-                        tool_availability=build_tool_availability(
-                            ToolAvailabilityInput(
-                                task_mode=replan_resolved_intent,
-                                entry_action=body.entry_action,
-                                has_primary_anchor=primary_anchor is not None,
-                                # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
-                                has_dictionary_anchor=False,
-                                has_generated_annotation_cache=False,
-                            )
-                        ),
                     )
-                    replan_agent = get_reader_ask_agent()
-                    replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
-                    replan_route = RunModelSettings(
-                        max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
-                        temperature=route_settings.temperature,
-                        timeout=route_settings.timeout,
+                    replan_content = await run_reader_ask_replan(
+                        replan_deps=replan_deps,
+                        replan_max_output=replan_max_output,
+                        route_settings=route_settings,
                     )
-                    replan_result_text = await replan_agent.run(
-                        build_reader_ask_prompt(replan_deps),
-                        deps=replan_deps,
-                        model=replan_model,
-                        model_settings=replan_route.to_pydantic_ai(),
-                    )
-                    replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
                     if len(replan_content) >= len(final_content_md.strip()):
                         final_content_md = replan_content
                         planning_snapshot = replan_planning_snapshot
@@ -3238,7 +3193,7 @@ async def retry_thread_message(
     reference_resolution = planner.ReaderAskReferenceResolution()
     final_content_md = ""
     persisted_supplements_json: list[dict[str, Any]] = []
-    stream_runtime: agent_runner_svc.AgentStreamRuntime | None = None
+    stream_runtime: AgentStreamRuntime | None = None
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -3333,15 +3288,9 @@ async def retry_thread_message(
             entry_action=body.entry_action,
             attachments=attachments,
             anchors=resolved_anchors,
-            deps=planner_runtime_svc.ResolvePlanningDeps(
-                run_planner_deps=planner_runtime_svc.RunPlannerDeps(
-                    current_record_affordances_cb=_current_record_affordances,
-                    build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
-                ),
-                resolve_known_references_cb=resolver_svc.resolve_known_references,
+            deps=build_reader_ask_resolve_planning_deps(
+                current_record_affordances_cb=_current_record_affordances,
                 load_record_bundle_cb=_load_record_bundle,
-                resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
-                list_supplements_cb=supplements_svc.list_supplements_for_record,
                 reference_reranker=_build_reference_reranker(),
             ),
             truncate_history_message_cb=_truncate_history_message,
@@ -3569,10 +3518,10 @@ async def retry_thread_message(
             raise RuntimeError("planning snapshot is required")
         cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
-        agent = get_reader_ask_agent()
-        model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
-        if model is None:
-            raise RuntimeError("model route is not configured: reader_ask")
+        resolved = resolve_reader_ask_agent()
+        agent = resolved.agent
+        model = resolved.model
+        model_config = resolved.model_config
 
         route_settings = RunModelSettings(max_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS, temperature=cfg.AGENT_TEMPERATURE, timeout=cfg.AGENT_TIMEOUT_S)
         if model_config and model_config.model_settings is not None:
@@ -3832,12 +3781,13 @@ async def retry_thread_message(
             timeout=route_settings.timeout,
         )
 
-        deps = ReaderAskAgentDeps(
+        deps = build_reader_ask_agent_deps(
             payload=prompt_payload,
             event_queue=event_queue,
             state=runtime_state,
             query_seed=query_seed,
             task_mode=resolved_intent,
+            entry_action=body.entry_action,
             record_id=str(record.record_id),
             record_title=record.title,
             primary_anchor=primary_anchor,
@@ -3850,16 +3800,6 @@ async def retry_thread_message(
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
-            tool_availability=build_tool_availability(
-                ToolAvailabilityInput(
-                    task_mode=resolved_intent,
-                    entry_action=body.entry_action,
-                    has_primary_anchor=primary_anchor is not None,
-                    # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
-                    has_dictionary_anchor=False,
-                    has_generated_annotation_cache=False,
-                )
-            ),
         )
         checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
@@ -3884,7 +3824,7 @@ async def retry_thread_message(
             ),
             update_turn_run_cb=repo.update_turn_run,
         )
-        producer_task, stream_runtime = agent_runner_svc.start_reader_ask_agent_stream(
+        async for stream_item in stream_reader_ask_agent_run(
             agent=agent,
             deps=deps,
             model=model,
@@ -3892,29 +3832,18 @@ async def retry_thread_message(
             assistant_message_id=assistant_message["id"],
             base_url=model_config.base_url if model_config else "",
             checkpoint_flush=stream_checkpoint_svc.make_checkpoint_flush(checkpoint),
-        )
-        try:
-            async for event_name, event_payload in agent_runner_svc.stream_reader_ask_events(
-                event_queue=event_queue,
-                producer_done=stream_runtime.producer_done,
-            ):
-                yield stream_events_svc.encode_sse(event_name, event_payload)
-        finally:
-            await producer_task
-
-        stream_outcome, interrupted_event = agent_runner_svc.finish_reader_ask_agent_stream(
-            runtime=stream_runtime,
-            assistant_message_id=assistant_message["id"],
-        )
-        if interrupted_event is not None:
-            yield stream_events_svc.encode_sse(interrupted_event[0], interrupted_event[1])
-
-        final_content_md = stream_outcome.content_md
-        usage_summary = stream_outcome.usage_summary
+        ):
+            if isinstance(stream_item, ReaderAskStreamSseEvent):
+                yield stream_item.encoded_sse
+            elif isinstance(stream_item, ReaderAskStreamCompleted):
+                stream_outcome = stream_item.outcome
+                final_content_md = stream_outcome.content_md
+                usage_summary = stream_outcome.usage_summary
+                stream_runtime = stream_item.stream_runtime
 
         # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
         # not already clarified, attempt a single replan with expanded context
-        replan_event = agent_runner_svc.build_replan_event(
+        replan_event = build_reader_ask_replan_event(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
             assistant_message_id=assistant_message["id"],
@@ -3933,15 +3862,9 @@ async def retry_thread_message(
                     entry_action=body.entry_action,
                     attachments=attachments,
                     anchors=resolved_anchors,
-                    deps=planner_runtime_svc.ResolvePlanningDeps(
-                        run_planner_deps=planner_runtime_svc.RunPlannerDeps(
-                            current_record_affordances_cb=_current_record_affordances,
-                            build_model_route_cb=lambda: (build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)),
-                        ),
-                        resolve_known_references_cb=resolver_svc.resolve_known_references,
+                    deps=build_reader_ask_resolve_planning_deps(
+                        current_record_affordances_cb=_current_record_affordances,
                         load_record_bundle_cb=_load_record_bundle,
-                        resolve_structured_asset_refs_cb=resolver_svc.resolve_structured_asset_references,
-                        list_supplements_cb=supplements_svc.list_supplements_for_record,
                         reference_reranker=_build_reference_reranker(),
                     ),
                     truncate_history_message_cb=_truncate_history_message,
@@ -4021,12 +3944,13 @@ async def retry_thread_message(
                         logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
                         raise recovery_svc.ReplanContextTooLargeError()
                     replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
-                    replan_deps = ReaderAskAgentDeps(
+                    replan_deps = build_reader_ask_agent_deps(
                         payload=replan_payload,
                         event_queue=event_queue,
                         state=replan_runtime_state,
                         query_seed=query_seed,
                         task_mode=replan_resolved_intent,
+                        entry_action=body.entry_action,
                         record_id=str(record.record_id),
                         record_title=record.title,
                         primary_anchor=primary_anchor,
@@ -4039,31 +3963,12 @@ async def retry_thread_message(
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
                         dictionary_item_to_citation_fn=_dictionary_item_to_citation,
                         dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
-                        tool_availability=build_tool_availability(
-                            ToolAvailabilityInput(
-                                task_mode=replan_resolved_intent,
-                                entry_action=body.entry_action,
-                                has_primary_anchor=primary_anchor is not None,
-                                # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
-                                has_dictionary_anchor=False,
-                                has_generated_annotation_cache=False,
-                            )
-                        ),
                     )
-                    replan_agent = get_reader_ask_agent()
-                    replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
-                    replan_route = RunModelSettings(
-                        max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, replan_max_output),
-                        temperature=route_settings.temperature,
-                        timeout=route_settings.timeout,
+                    replan_content = await run_reader_ask_replan(
+                        replan_deps=replan_deps,
+                        replan_max_output=replan_max_output,
+                        route_settings=route_settings,
                     )
-                    replan_result_text = await replan_agent.run(
-                        build_reader_ask_prompt(replan_deps),
-                        deps=replan_deps,
-                        model=replan_model,
-                        model_settings=replan_route.to_pydantic_ai(),
-                    )
-                    replan_content = str(replan_result_text.data).strip() if replan_result_text.data else ""
                     if len(replan_content) >= len(final_content_md.strip()):
                         final_content_md = replan_content
                         planning_snapshot = replan_planning_snapshot
