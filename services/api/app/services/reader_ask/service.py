@@ -20,6 +20,7 @@ from app.agents.reader_ask_agent import (
     build_reader_ask_prompt,
     get_reader_ask_agent,
 )
+from app.agents.reader_ask_tool_policy import ToolAvailabilityInput, build_tool_availability
 from app.config.settings import get_settings
 from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
@@ -2675,6 +2676,16 @@ async def stream_thread_message(
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+            tool_availability=build_tool_availability(
+                ToolAvailabilityInput(
+                    task_mode=resolved_intent,
+                    entry_action=body.entry_action,
+                    has_primary_anchor=primary_anchor is not None,
+                    # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
+                    has_dictionary_anchor=False,
+                    has_generated_annotation_cache=False,
+                )
+            ),
         )
         checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
@@ -2854,6 +2865,16 @@ async def stream_thread_message(
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
                         dictionary_item_to_citation_fn=_dictionary_item_to_citation,
                         dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+                        tool_availability=build_tool_availability(
+                            ToolAvailabilityInput(
+                                task_mode=replan_resolved_intent,
+                                entry_action=body.entry_action,
+                                has_primary_anchor=primary_anchor is not None,
+                                # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
+                                has_dictionary_anchor=False,
+                                has_generated_annotation_cache=False,
+                            )
+                        ),
                     )
                     replan_agent = get_reader_ask_agent()
                     replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
@@ -3829,6 +3850,16 @@ async def retry_thread_message(
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
             dictionary_item_to_citation_fn=_dictionary_item_to_citation,
             dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+            tool_availability=build_tool_availability(
+                ToolAvailabilityInput(
+                    task_mode=resolved_intent,
+                    entry_action=body.entry_action,
+                    has_primary_anchor=primary_anchor is not None,
+                    # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
+                    has_dictionary_anchor=False,
+                    has_generated_annotation_cache=False,
+                )
+            ),
         )
         checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
@@ -4008,6 +4039,16 @@ async def retry_thread_message(
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
                         dictionary_item_to_citation_fn=_dictionary_item_to_citation,
                         dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
+                        tool_availability=build_tool_availability(
+                            ToolAvailabilityInput(
+                                task_mode=replan_resolved_intent,
+                                entry_action=body.entry_action,
+                                has_primary_anchor=primary_anchor is not None,
+                                # P5-6 baseline: dictionary_anchor / annotation_cache not yet wired
+                                has_dictionary_anchor=False,
+                                has_generated_annotation_cache=False,
+                            )
+                        ),
                     )
                     replan_agent = get_reader_ask_agent()
                     replan_model, _ = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)

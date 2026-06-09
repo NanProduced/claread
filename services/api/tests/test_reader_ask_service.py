@@ -1,4 +1,6 @@
+import ast
 import asyncio
+import inspect
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
@@ -53,6 +55,45 @@ from app.services.reader_ask.service import (
     _next_run_info,
 )
 from app.services.reader_ask.supplements import build_grammar_note_candidate
+
+
+def _call_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def test_service_agent_deps_wires_tool_availability_all_paths() -> None:
+    source = inspect.getsource(reader_ask_service)
+    module = ast.parse(source)
+    deps_calls = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "ReaderAskAgentDeps"
+    ]
+
+    assert len(deps_calls) == 4
+    for call in deps_calls:
+        keyword_by_name = {keyword.arg: keyword.value for keyword in call.keywords}
+        tool_availability = keyword_by_name.get("tool_availability")
+        assert tool_availability is not None
+        assert isinstance(tool_availability, ast.Call)
+        assert _call_name(tool_availability.func) == "build_tool_availability"
+        assert len(tool_availability.args) == 1
+
+        availability_input = tool_availability.args[0]
+        assert isinstance(availability_input, ast.Call)
+        assert _call_name(availability_input.func) == "ToolAvailabilityInput"
+        availability_input_keywords = {keyword.arg for keyword in availability_input.keywords}
+        assert {
+            "task_mode",
+            "entry_action",
+            "has_primary_anchor",
+            "has_dictionary_anchor",
+            "has_generated_annotation_cache",
+        }.issubset(availability_input_keywords)
 
 
 def _planner_decision(
