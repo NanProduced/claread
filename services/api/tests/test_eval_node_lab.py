@@ -469,7 +469,10 @@ async def test_node_lab_grammar_quick_validation_reports_anchor_warning(
     assert result.run.quick_validation is not None
     assert result.run.quick_validation["status"] == "warning"
     assert result.run.quick_validation["warning_count"] == 1
+    assert result.run.quick_validation["hard_warning_count"] == 1
+    assert result.run.quick_validation["soft_warning_count"] == 0
     assert result.run.quick_validation["warnings"][0]["code"] == "grammar_span_not_found"
+    assert result.run.quick_validation["warnings"][0]["severity"] == "hard"
 
 
 @pytest.mark.anyio
@@ -517,10 +520,60 @@ async def test_node_lab_grammar_quick_validation_reports_anchor_quality_warnings
 
     assert result.run.quick_validation is not None
     assert result.run.quick_validation["status"] == "warning"
-    warning_codes = {item["code"] for item in result.run.quick_validation["warnings"]}
-    assert "boundary_punctuation_grammar_anchor" in warning_codes
-    assert "schematic_ellipsis_grammar_anchor" in warning_codes
-    assert "grammar_span_not_found" in warning_codes
+    assert result.run.quick_validation["warning_count"] == 0
+    assert result.run.quick_validation["hard_warning_count"] == 0
+    assert result.run.quick_validation["soft_warning_count"] >= 2
+    assert result.run.quick_validation["warnings"] == []
+    soft_warning_codes = {item["code"] for item in result.run.quick_validation["soft_warnings"]}
+    assert "boundary_punctuation_grammar_anchor" in soft_warning_codes
+    assert "recovered_schematic_ellipsis_grammar_anchor" in soft_warning_codes
+
+
+@pytest.mark.anyio
+async def test_node_lab_grammar_quick_validation_keeps_unrecoverable_ellipsis_as_hard_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(node_lab, "get_settings", _settings)
+    dynamic_run_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            output=GrammarDraft(
+                grammar_notes=[
+                    GrammarNote(
+                        sentence_id="s1",
+                        spans=[SpanRef(text="at which ... wildlife")],
+                        label="介词 + which 引导定语从句",
+                        note_zh="测试",
+                    )
+                ],
+                sentence_analyses=[],
+            )
+        )
+    )
+    monkeypatch.setattr(node_lab, "_run_dynamic_agent", dynamic_run_mock)
+
+    result = await node_lab.run_article_analysis_node_lab(
+        node_lab.ArticleAnalysisNodeLabRunRequest(
+            node_name="grammar",
+            text=(
+                "We discussed the stage at which the plan changed and the stage at which "
+                "the data shifted in reports from wildlife experts."
+            ),
+            candidate_override={
+                "candidate_id": "cand-ellipsis-hard-warning",
+                "node_name": "grammar",
+                "model_selection": {"default_profile": "eval-profile"},
+            },
+        )
+    )
+
+    assert result.run.quick_validation is not None
+    assert result.run.quick_validation["status"] == "warning"
+    assert result.run.quick_validation["warning_count"] == 1
+    assert result.run.quick_validation["hard_warning_count"] == 1
+    assert result.run.quick_validation["soft_warning_count"] >= 1
+    assert result.run.quick_validation["warnings"][0]["code"] == "grammar_span_not_found"
+    soft_warning_codes = {item["code"] for item in result.run.quick_validation["soft_warnings"]}
+    assert "schematic_ellipsis_grammar_anchor" in soft_warning_codes
 
 
 @pytest.mark.anyio

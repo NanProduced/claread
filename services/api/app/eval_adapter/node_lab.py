@@ -39,7 +39,10 @@ from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
 from app.schemas.internal.analysis import PreparedSentence
 from app.schemas.internal.execution_plan import GoalExecutionPlan
-from app.services.analysis.postprocess.anchor_resolution import resolve_text_anchor
+from app.services.analysis.postprocess.anchor_resolution import (
+    resolve_grammar_anchor_to_source,
+    resolve_text_anchor,
+)
 from app.services.analysis.postprocess.draft_validators import (
     validate_grammar_draft,
     validate_vocabulary_draft,
@@ -222,12 +225,16 @@ def _grammar_quick_validation(
             "validator": "grammar_draft_v1",
             "status": "error",
             "warning_count": 1,
+            "hard_warning_count": 1,
+            "soft_warning_count": 0,
             "warnings": [
                 {
                     "code": "grammar_draft_parse_failed",
                     "message": str(exc),
+                    "severity": "hard",
                 }
             ],
+            "soft_warnings": [],
         }
 
     sentences = [
@@ -236,13 +243,20 @@ def _grammar_quick_validation(
         else sentence
         for sentence in (getattr(prepared_input, "sentences", None) or [])
     ]
-    warnings = [_parse_grammar_validation_warning(message) for message in validate_grammar_draft(draft, sentences)]
-    warnings.extend(_grammar_anchor_quality_warnings(draft, sentences))
+    hard_warnings = []
+    for message in validate_grammar_draft(draft, sentences):
+        warning = _parse_grammar_validation_warning(message)
+        warning["severity"] = "hard"
+        hard_warnings.append(warning)
+    soft_warnings = _grammar_anchor_quality_warnings(draft, sentences)
     return {
         "validator": "grammar_draft_v1",
-        "status": "warning" if warnings else "pass",
-        "warning_count": len(warnings),
-        "warnings": warnings,
+        "status": "warning" if hard_warnings or soft_warnings else "pass",
+        "warning_count": len(hard_warnings),
+        "hard_warning_count": len(hard_warnings),
+        "soft_warning_count": len(soft_warnings),
+        "warnings": hard_warnings,
+        "soft_warnings": soft_warnings,
     }
 
 
@@ -264,22 +278,51 @@ def _grammar_anchor_quality_warnings(
 
     for item in draft.grammar_notes:
         sentence = sentence_map.get(item.sentence_id)
-        sentence_text = sentence.text if sentence is not None else ""
+        if sentence is None:
+            continue
+
+        sentence_text = sentence.text
         sentence_len = max(1, len(sentence_text.strip()))
         total_anchor_len = 0
 
         for span in item.spans:
             anchor_text = str(span.text or "")
             stripped_anchor = anchor_text.strip(_GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
-            total_anchor_len += len(anchor_text.strip())
+            resolved_anchor = resolve_grammar_anchor_to_source(
+                sentence,
+                anchor_text,
+                span.occurrence,
+            )
+            comparable_anchor_text = (
+                resolved_anchor.text if resolved_anchor is not None else stripped_anchor or anchor_text
+            )
+            total_anchor_len += len(comparable_anchor_text.strip())
 
-            if "..." in anchor_text:
-                warnings.append({
-                    "code": "schematic_ellipsis_grammar_anchor",
-                    "message": f"grammar_note span 使用了讲义式省略号模板: {anchor_text}",
+            if "..." in anchor_text and "..." not in sentence_text:
+                ellipsis_warning = {
                     "sentence_id": item.sentence_id,
                     "anchor_text": anchor_text,
-                })
+                    "severity": "soft",
+                }
+                if (
+                    resolved_anchor is not None
+                    and resolved_anchor.resolution_kind == "schematic_ellipsis_expanded"
+                ):
+                    warnings.append({
+                        "code": "recovered_schematic_ellipsis_grammar_anchor",
+                        "message": (
+                            "grammar_note span 使用了讲义式省略号模板，但可被恢复为原句真实子串: "
+                            f"{anchor_text}"
+                        ),
+                        "resolved_anchor_text": resolved_anchor.text,
+                        **ellipsis_warning,
+                    })
+                else:
+                    warnings.append({
+                        "code": "schematic_ellipsis_grammar_anchor",
+                        "message": f"grammar_note span 使用了讲义式省略号模板: {anchor_text}",
+                        **ellipsis_warning,
+                    })
 
             if stripped_anchor and stripped_anchor != anchor_text:
                 warnings.append({
@@ -287,33 +330,38 @@ def _grammar_anchor_quality_warnings(
                     "message": f"grammar_note span 包含首尾无关标点或空格: {anchor_text}",
                     "sentence_id": item.sentence_id,
                     "anchor_text": anchor_text,
+                    "resolved_anchor_text": comparable_anchor_text,
+                    "severity": "soft",
                 })
 
-            comparable_anchor = anchor_text.strip().rstrip(".!?")
+            comparable_anchor = comparable_anchor_text.strip().rstrip(".!?")
             comparable_sentence = sentence_text.strip().rstrip(".!?")
             if comparable_anchor and comparable_sentence and comparable_anchor == comparable_sentence:
                 warnings.append({
                     "code": "full_sentence_grammar_anchor",
-                    "message": f"grammar_note span 覆盖整句: {anchor_text}",
+                    "message": f"grammar_note span 覆盖整句: {comparable_anchor_text}",
                     "sentence_id": item.sentence_id,
-                    "anchor_text": anchor_text,
+                    "anchor_text": comparable_anchor_text,
+                    "severity": "soft",
                 })
 
-            anchor_words = re.findall(r"[A-Za-z]+", anchor_text)
+            anchor_words = re.findall(r"[A-Za-z]+", comparable_anchor_text)
             if len(anchor_words) == 1 and anchor_words[0].casefold() in _WEAK_SINGLE_GRAMMAR_ANCHORS:
                 warnings.append({
                     "code": "weak_short_grammar_anchor",
-                    "message": f"grammar_note span 只有低信息量关系词: {anchor_text}",
+                    "message": f"grammar_note span 只有低信息量关系词: {comparable_anchor_text}",
                     "sentence_id": item.sentence_id,
-                    "anchor_text": anchor_text,
+                    "anchor_text": comparable_anchor_text,
+                    "severity": "soft",
                 })
 
-            if len(anchor_text.strip()) > _GRAMMAR_ANCHOR_MAX_CHARS:
+            if len(comparable_anchor_text.strip()) > _GRAMMAR_ANCHOR_MAX_CHARS:
                 warnings.append({
                     "code": "long_grammar_anchor",
-                    "message": f"grammar_note span 过长，不适合作为原文行内锚点: {anchor_text}",
+                    "message": f"grammar_note span 过长，不适合作为原文行内锚点: {comparable_anchor_text}",
                     "sentence_id": item.sentence_id,
-                    "anchor_text": anchor_text,
+                    "anchor_text": comparable_anchor_text,
+                    "severity": "soft",
                 })
 
         if total_anchor_len / sentence_len > _GRAMMAR_ANCHOR_MAX_SENTENCE_RATIO:
@@ -322,6 +370,7 @@ def _grammar_anchor_quality_warnings(
                 "message": f"grammar_note spans 覆盖原句比例过高: {item.sentence_id}",
                 "sentence_id": item.sentence_id,
                 "anchor_text": " || ".join(span.text for span in item.spans),
+                "severity": "soft",
             })
 
     return warnings

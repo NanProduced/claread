@@ -75,14 +75,16 @@ cet:
 - example_type: grammar
   sentence_text: The study, which was conducted by researchers from Harvard, found
     that regular exercise can reduce stress.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which"}, {"text":
-    "found"}], "label": "非限制性定语从句", "note_zh": "which 引导非限制性定语从句，补充说明 the study。快速阅读时可先跳过逗号之间的从句，抓住主干
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which was conducted
+    by researchers from Harvard"}, {"text": "found"}], "label": "非限制性定语从句", "note_zh": "which
+    引导非限制性定语从句，补充说明 the study。快速阅读时可先跳过逗号之间的从句，抓住主干
     The study found that...（研究发现……）"}'
 - example_type: grammar
   sentence_text: Influenced by social media, young people tend to spend more time
     online.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Influenced"}, {"text":
-    "tend"}], "label": "过去分词作状语", "note_zh": "Influenced by social media 是过去分词短语作原因状语，表示“受社交媒体影响”。快速阅读时，看到句首的过去分词，先找主语和谓语（young
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Influenced by social
+    media"}, {"text": "tend to spend"}], "label": "过去分词作状语", "note_zh": "Influenced
+    by social media 是过去分词短语作原因状语，表示“受社交媒体影响”。快速阅读时，看到句首的过去分词，先找主语和谓语（young
     people tend to...），再回头看分词短语补充的信息"}'
 - example_type: sentence_analysis
   sentence_text: A recent study conducted by the University of Oxford has found that
@@ -101,14 +103,16 @@ kaoyan:
 - example_type: grammar
   sentence_text: The approach, which was initially designed for urban areas, has failed
     to address the needs of rural communities.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which"}, {"text":
-    "has failed"}], "label": "非限制性定语从句 + 主谓分离", "note_zh": "which 引导非限制性定语从句修饰 the
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which was initially
+    designed for urban areas"}, {"text": "has failed"}], "label": "非限制性定语从句 + 主谓分离", "note_zh": "which
+    引导非限制性定语从句修饰 the
     approach，可先跳过。主干是 The approach has failed to address...（这种方法未能解决……）。主语和谓语被从句拆开了，阅读时先跳过逗号之间的从句抓主干"}'
 - example_type: grammar
   sentence_text: The findings, the researchers argue, challenge the prevailing assumption
     that economic growth inevitably reduces poverty.
   output_fragment: '{"type": "grammar_note", "spans": [{"text": "the researchers argue"},
-    {"text": "that"}], "label": "插入语 + 同位语从句", "note_zh": "the researchers argue 是插入语，可先跳过。主干是
+    {"text": "that economic growth inevitably reduces poverty"}], "label": "插入语 + 同位语从句", "note_zh": "the
+    researchers argue 是插入语，可先跳过。主干是
     The findings challenge the assumption（发现挑战了假设）。that 引导同位语从句解释 assumption 的内容。这种“插入语打断主谓”的结构在考研文本中很常见"}'
 - example_type: sentence_analysis
   sentence_text: The study suggests that the approach, which was initially designed
@@ -152,8 +156,9 @@ ielts_toefl:
 - example_type: grammar
   sentence_text: The factor that contributed most significantly to the decline was
     habitat loss.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "that"}, {"text":
-    "contributed"}], "label": "限制性定语从句", "note_zh": "that 引导限制性定语从句，限定了是“哪个” factor——是导致衰退最显著的那个因素。这类限定信息在雅思
+  output_fragment: '{"type": "grammar_note", "spans": [{"text": "that contributed
+    most significantly to the decline"}], "label": "限制性定语从句", "note_zh": "that 引导限制性定语从句，限定了是“哪个”
+    factor——是导致衰退最显著的那个因素。这类限定信息在雅思
     T/F/NG 题中常被改写为判断对象，如果题目说“Habitat loss was the primary factor”，答案取决于原文的限定是否精确"}'
 - example_type: grammar
   sentence_text: The mechanism by which the drug operates has not been fully elucidated.

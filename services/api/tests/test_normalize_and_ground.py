@@ -166,7 +166,7 @@ def test_grammar_anchor_boundary_punctuation_is_trimmed() -> None:
     assert result.drop_log == []
 
 
-def test_grammar_anchor_schematic_ellipsis_is_dropped() -> None:
+def test_grammar_anchor_schematic_ellipsis_is_expanded_when_unique() -> None:
     result = normalize_and_ground(
         vocabulary_draft=VocabularyDraft(vocab_highlights=[], phrase_glosses=[], context_glosses=[]),
         grammar_draft=GrammarDraft(
@@ -185,6 +185,39 @@ def test_grammar_anchor_schematic_ellipsis_is_dropped() -> None:
             sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
         ),
         sentences=[_sentence("s1", "It wasn't until I began to research this advice that I understood the problem.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "grammar_note"
+    assert result.annotations[0].spans[0].text == "It wasn't until I began to research this advice that"
+    assert result.drop_log == []
+
+
+def test_grammar_anchor_schematic_ellipsis_is_dropped_when_not_unique() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(vocab_highlights=[], phrase_glosses=[], context_glosses=[]),
+        grammar_draft=GrammarDraft(
+            grammar_notes=[
+                GrammarNote(
+                    sentence_id="s1",
+                    spans=[SpanRef(text="at which ... wildlife")],
+                    label="介词 + which 引导定语从句",
+                    note_zh="这是 at which 引导的结构。",
+                )
+            ],
+            sentence_analyses=[],
+        ),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[
+            _sentence(
+                "s1",
+                "We discussed the stage at which the plan changed and the stage at which the data shifted in reports from wildlife experts.",
+            )
+        ],
         policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
     )
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import cast
+from typing import Literal
 
 from app.schemas.common import TextSpan
 from app.schemas.internal.analysis import PreparedSentence
@@ -24,6 +26,19 @@ _ANCHOR_ELLIPSIS_PATTERN = re.compile(r"\u2026")
 QUOTE_CLASS = r"[\"'""'']"
 HYPHEN_CLASS = r"[-–—]"
 SEPARATOR_CLASS = r"[\s–—-]"
+GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION = " \t\r\n,.;:!?，。；：！？"
+
+
+@dataclass(frozen=True)
+class ResolvedAnchorText:
+    text: str
+    span: TextSpan
+    resolution_kind: Literal[
+        "exact",
+        "canonicalized",
+        "boundary_trimmed",
+        "schematic_ellipsis_expanded",
+    ]
 
 
 def _find_all(text: str, needle: str) -> list[tuple[int, int]]:
@@ -35,6 +50,54 @@ def _find_all(text: str, needle: str) -> list[tuple[int, int]]:
             return results
         results.append((index, index + len(needle)))
         start = index + len(needle)
+
+
+def _normalize_anchor_input(anchor_text: str) -> str:
+    anchor_text = anchor_text.translate(_ANCHOR_PUNCTUATION_MAP)
+    return _ANCHOR_ELLIPSIS_PATTERN.sub("...", anchor_text)
+
+
+def _resolve_exact_or_flexible_matches(
+    sentence: PreparedSentence,
+    anchor_text: str,
+) -> list[tuple[int, int]]:
+    normalized_anchor = _normalize_anchor_input(anchor_text)
+
+    exact_matches = _find_all(sentence.text, normalized_anchor)
+    if exact_matches:
+        return exact_matches
+
+    casefold_matches = [
+        (match.start(), match.end())
+        for match in re.finditer(re.escape(normalized_anchor), sentence.text, flags=re.IGNORECASE)
+    ]
+    if casefold_matches:
+        return casefold_matches
+
+    flexible_matches = [
+        (match.start(), match.end())
+        for match in re.finditer(
+            _build_flexible_pattern(normalized_anchor),
+            sentence.text,
+            flags=re.IGNORECASE,
+        )
+    ]
+    if flexible_matches:
+        return flexible_matches
+
+    normalized_text, index_map = _normalize_for_matching(sentence.text)
+    normalized_anchor_text, _ = _normalize_for_matching(normalized_anchor)
+    if not normalized_anchor_text:
+        return []
+
+    normalized_matches = _find_all(normalized_text, normalized_anchor_text)
+    if not normalized_matches:
+        return []
+
+    return [
+        (index_map[start], index_map[end - 1] + 1)
+        for start, end in normalized_matches
+    ]
 
 
 def _build_flexible_pattern(anchor_text: str) -> str:
@@ -93,6 +156,120 @@ def _resolve_candidate(
     return None
 
 
+def source_substring_from_span(
+    sentence: PreparedSentence,
+    span: TextSpan,
+) -> str | None:
+    local_start = span.start - sentence.sentence_span.start
+    local_end = span.end - sentence.sentence_span.start
+    if local_start < 0 or local_end > len(sentence.text) or local_start >= local_end:
+        return None
+    return sentence.text[local_start:local_end]
+
+
+def canonicalize_text_anchor_to_source(
+    sentence: PreparedSentence,
+    anchor_text: str,
+    anchor_occurrence: int | None = None,
+) -> ResolvedAnchorText | None:
+    span = resolve_text_anchor(sentence, anchor_text, anchor_occurrence)
+    if span is None:
+        return None
+    canonical_text = source_substring_from_span(sentence, span)
+    if canonical_text is None:
+        return None
+    resolution_kind: Literal["exact", "canonicalized"] = (
+        "exact" if canonical_text == anchor_text else "canonicalized"
+    )
+    return ResolvedAnchorText(
+        text=canonical_text,
+        span=span,
+        resolution_kind=resolution_kind,
+    )
+
+
+def recover_schematic_ellipsis_anchor_text(
+    sentence: PreparedSentence,
+    anchor_text: str,
+) -> ResolvedAnchorText | None:
+    normalized_anchor = _normalize_anchor_input(anchor_text)
+    if "..." not in normalized_anchor or normalized_anchor in sentence.text:
+        return None
+
+    segments = [
+        segment.strip(GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
+        for segment in normalized_anchor.split("...")
+        if segment.strip(GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
+    ]
+    if len(segments) < 2:
+        return None
+
+    candidate_groups = [
+        _resolve_exact_or_flexible_matches(sentence, segment)
+        for segment in segments
+    ]
+    if any(not group for group in candidate_groups):
+        return None
+
+    chains: list[list[tuple[int, int]]] = []
+
+    def _search(idx: int, prev_end: int, chosen: list[tuple[int, int]]) -> None:
+        if len(chains) > 1:
+            return
+        if idx == len(candidate_groups):
+            chains.append(chosen.copy())
+            return
+        for start, end in candidate_groups[idx]:
+            if start < prev_end:
+                continue
+            chosen.append((start, end))
+            _search(idx + 1, end, chosen)
+            chosen.pop()
+            if len(chains) > 1:
+                return
+
+    _search(0, 0, [])
+    if len(chains) != 1:
+        return None
+
+    start, _ = chains[0][0]
+    _, end = chains[0][-1]
+    span = TextSpan(
+        start=sentence.sentence_span.start + start,
+        end=sentence.sentence_span.start + end,
+    )
+    canonical_text = source_substring_from_span(sentence, span)
+    if canonical_text is None:
+        return None
+    return ResolvedAnchorText(
+        text=canonical_text,
+        span=span,
+        resolution_kind="schematic_ellipsis_expanded",
+    )
+
+
+def resolve_grammar_anchor_to_source(
+    sentence: PreparedSentence,
+    anchor_text: str,
+    anchor_occurrence: int | None = None,
+) -> ResolvedAnchorText | None:
+    trimmed_anchor = anchor_text.strip(GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
+    if trimmed_anchor and trimmed_anchor != anchor_text:
+        trimmed = canonicalize_text_anchor_to_source(sentence, trimmed_anchor, anchor_occurrence)
+        if trimmed is not None:
+            return ResolvedAnchorText(
+                text=trimmed.text,
+                span=trimmed.span,
+                resolution_kind="boundary_trimmed",
+            )
+
+    canonical = canonicalize_text_anchor_to_source(sentence, anchor_text, anchor_occurrence)
+    if canonical is not None:
+        return canonical
+
+    return recover_schematic_ellipsis_anchor_text(sentence, anchor_text)
+
+
 def resolve_text_anchor(
     sentence: PreparedSentence,
     anchor_text: str,
@@ -105,8 +282,7 @@ def resolve_text_anchor(
     # 对 anchor_text 做标点归一化，与 sanitize_text 保持一致。
     # sentence_text 已在预处理阶段归一化，但 LLM 输出的 anchor_text
     # 可能包含弯引号、en/em dash、省略号等标点变体。
-    anchor_text = anchor_text.translate(_ANCHOR_PUNCTUATION_MAP)
-    anchor_text = _ANCHOR_ELLIPSIS_PATTERN.sub("...", anchor_text)
+    anchor_text = _normalize_anchor_input(anchor_text)
 
     exact = _resolve_candidate(_find_all(sentence.text, anchor_text), anchor_occurrence)
     if exact is not None:

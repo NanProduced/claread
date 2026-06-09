@@ -11,7 +11,10 @@ from app.schemas.internal.analysis import (
     is_single_token,
 )
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
-from app.services.analysis.postprocess.anchor_resolution import resolve_text_anchor
+from app.services.analysis.postprocess.anchor_resolution import (
+    resolve_grammar_anchor_to_source,
+    resolve_text_anchor,
+)
 from app.services.analysis.postprocess.normalize import is_substring
 
 
@@ -56,6 +59,10 @@ def _vocabulary_anchor_matches(text: str, sentence: PreparedSentence, occurrence
     if is_substring(text, sentence.text):
         return True
     return resolve_text_anchor(sentence, text, occurrence) is not None
+
+
+def _grammar_anchor_matches(text: str, sentence: PreparedSentence, occurrence: int | None) -> bool:
+    return resolve_grammar_anchor_to_source(sentence, text, occurrence) is not None
 
 
 def validate_vocabulary_draft(
@@ -112,9 +119,9 @@ def validate_grammar_draft(
         if g.sentence_id not in sentence_map:
             warnings.append(f"grammar_note: sentence_id {g.sentence_id} not found")
             continue
-        sent_text = sentence_map[g.sentence_id].text
+        sentence = sentence_map[g.sentence_id]
         for span in g.spans:
-            if not is_substring(span.text, sent_text):
+            if not _grammar_anchor_matches(span.text, sentence, span.occurrence):
                 warnings.append(
                     f"grammar_note: span text '{span.text}' not found in sentence {g.sentence_id}"
                 )

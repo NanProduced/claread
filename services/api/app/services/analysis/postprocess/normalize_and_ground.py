@@ -23,12 +23,17 @@ from app.schemas.internal.analysis import (
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
 from app.schemas.internal.execution_plan import GoalPolicy
 from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
+from app.services.analysis.postprocess.anchor_resolution import (
+    canonicalize_text_anchor_to_source,
+    resolve_grammar_anchor_to_source,
+    resolve_text_anchor,
+    source_substring_from_span,
+)
 from app.services.analysis.postprocess.draft_validators import (
     validate_context_gloss_business_rules,
     validate_phrase_gloss_business_rules,
     validate_vocab_highlight_business_rules,
 )
-from app.services.analysis.postprocess.anchor_resolution import resolve_text_anchor
 from app.services.analysis.postprocess.normalize import is_substring
 
 PRIORITY_RANK: dict[str, int] = {
@@ -58,8 +63,6 @@ LOW_VALUE_WORDS: set[str] = {
     "year", "week", "day", "hour", "minute", "second",
     "number", "percent", "type", "kind", "sort", "class",
 }
-
-GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION = " \t\r\n,.;:!?，。；：！？"
 
 @dataclass
 class NormalizationContext:
@@ -125,16 +128,6 @@ def _grounding_check(
     return True
 
 
-def _contains_schematic_ellipsis(text: str, sentence_text: str) -> bool:
-    """Return true when the anchor uses a didactic ellipsis pattern, not source text."""
-    return "..." in text and text not in sentence_text
-
-
-def _trim_grammar_anchor_boundary(text: str) -> str:
-    """Trim punctuation that should not be part of a grammar visual anchor."""
-    return text.strip(GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
-
-
 def _canonicalize_grammar_span(
     span: SpanRef,
     item: GrammarNote,
@@ -154,46 +147,29 @@ def _canonicalize_grammar_span(
         )
         return None
 
-    if _contains_schematic_ellipsis(span.text, sentence_obj.text):
-        _log_drop(
-            "grammar",
-            item.type,
-            item.sentence_id,
-            span.text,
-            "schematic_anchor_not_groundable",
-            "grounding",
-            drop_log,
-        )
-        return None
+    resolved_anchor = resolve_grammar_anchor_to_source(
+        sentence_obj,
+        span.text,
+        span.occurrence,
+    )
+    if resolved_anchor is not None:
+        return span.model_copy(update={"text": resolved_anchor.text})
 
-    if is_substring(span.text, sentence_obj.text):
-        trimmed = _trim_grammar_anchor_boundary(span.text)
-        if trimmed and trimmed != span.text:
-            # Only apply deterministic boundary cleanup when the trimmed anchor
-            # still resolves uniquely in the source sentence.
-            resolved = resolve_text_anchor(sentence_obj, trimmed, span.occurrence)
-            if resolved is not None:
-                return span.model_copy(update={"text": trimmed})
-        return span
-
+    drop_reason = (
+        "schematic_anchor_not_groundable"
+        if "..." in span.text and span.text not in sentence_obj.text
+        else "anchor_not_substring"
+    )
     _log_drop(
         "grammar",
         item.type,
         item.sentence_id,
         span.text,
-        "anchor_not_substring",
+        drop_reason,
         "grounding",
         drop_log,
     )
     return None
-
-
-def _source_substring(sentence_obj: PreparedSentence, span: TextSpan) -> str | None:
-    local_start = span.start - sentence_obj.sentence_span.start
-    local_end = span.end - sentence_obj.sentence_span.start
-    if local_start < 0 or local_end > len(sentence_obj.text) or local_start >= local_end:
-        return None
-    return sentence_obj.text[local_start:local_end]
 
 
 def _canonicalize_vocabulary_anchor(
@@ -224,10 +200,13 @@ def _canonicalize_vocabulary_anchor(
         return annotation
 
     comparison_match = is_substring(annotation.text, sentence_obj.text)
-    resolved = resolve_text_anchor(sentence_obj, annotation.text, annotation.occurrence)
-    canonical_text = _source_substring(sentence_obj, resolved) if resolved is not None else None
-    if canonical_text:
-        return annotation.model_copy(update={"text": canonical_text})
+    resolved = canonicalize_text_anchor_to_source(
+        sentence_obj,
+        annotation.text,
+        annotation.occurrence,
+    )
+    if resolved is not None:
+        return annotation.model_copy(update={"text": resolved.text})
     if comparison_match:
         return annotation
 

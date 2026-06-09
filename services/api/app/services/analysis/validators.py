@@ -34,14 +34,17 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from app.schemas.common import TextSpan
 from app.schemas.internal.analysis import (
     AnnotationOutput,
     ContextGloss,
     GrammarNote,
     PhraseGloss,
+    PreparedSentence,
     SentenceAnalysis,
     VocabHighlight,
 )
+from app.services.analysis.postprocess.anchor_resolution import resolve_grammar_anchor_to_source
 
 if TYPE_CHECKING:
     from app.services.analysis.preprocess.input_preparation import PreparedInput
@@ -63,6 +66,15 @@ def _is_chinese(text: str) -> bool:
 def _is_substring(text: str, sentence_text: str) -> bool:
     """检查 text 是否为 sentence_text 的子串"""
     return text in sentence_text
+
+
+def _as_prepared_sentence(sentence_id: str, sentence_text: str) -> PreparedSentence:
+    return PreparedSentence(
+        sentence_id=sentence_id,
+        paragraph_id="validation",
+        text=sentence_text,
+        sentence_span=TextSpan(start=0, end=len(sentence_text)),
+    )
 
 
 class ValidationResult:
@@ -198,8 +210,9 @@ def validate_grammar_note(
         )
         return result
 
+    prepared_sentence = _as_prepared_sentence(annotation.sentence_id, sentence_text)
     for i, span in enumerate(annotation.spans):
-        if not _is_substring(span.text, sentence_text):
+        if resolve_grammar_anchor_to_source(prepared_sentence, span.text, span.occurrence) is None:
             result.add_error(
                 "anchor_not_substring",
                 f"GrammarNote.spans[{i}].text 不是句子真实子串: '{span.text}'",

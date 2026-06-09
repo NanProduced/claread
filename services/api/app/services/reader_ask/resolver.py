@@ -56,6 +56,17 @@ from app.services.reader_ask.known_reference_resolver import (  # noqa: F401
     score_reference_candidates,
 )
 
+__all__ = [
+    "ReferenceCandidate",
+    "ScoredReferenceCandidate",
+    "apply_reference_resolution_policy",
+    "build_reference_candidate_pool",
+    "lookup_structured_record_assets",
+    "resolve_known_references",
+    "resolve_structured_asset_references",
+    "score_reference_candidates",
+]
+
 
 # ---------------------------------------------------------------------------
 # Structured asset resolution (primary code in this module)
