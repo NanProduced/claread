@@ -3,7 +3,7 @@
 ## 文档状态
 
 - 状态：current implementation architecture
-- 日期：2026-06-09
+- 日期：2026-06-10
 - 适用范围：Claread Web Reader 内当前 Ask Claread 模块
 - 文档关系：
   - 当前产品边界见 `docs/product/ask-claread.md`
@@ -107,6 +107,9 @@ Ask Claread 当前采用四层真相源：
 
 - external `analysis_ref / supplement_ref` 的 resolved asset 现在必须带正文级 `content_md` 与 compact summary，供 Ask runtime 直接回答
 - explicit asset ref 与 resolver 命中同一对象时，以 resolver 返回的富上下文对象为准，不保留摘要级占位 ref
+- known reference resolution 当前 pipeline 是 candidate pool -> deterministic title scoring -> optional semantic rerank -> deterministic resolution policy
+- semantic rerank 边界已经可注入，但生产默认 `REFERENCE_RERANKER_ENABLED=False`，不启用真实 LLM rerank
+- `resolution_meta` 是 planning snapshot / eval 观察数据，不进入 answer agent prompt
 
 当前不支持：
 
@@ -114,6 +117,8 @@ Ask Claread 当前采用四层真相源：
 - external sentence window
 - external dictionary path
 - 自由的 excerpt / favorite / annotation 跨文章检索
+
+后续如果启用真实 LLM / embedding rerank，必须先补齐 timeout、candidate limit、成本控制、trace/eval 样本和 fallback 策略。`_CROSS_LANG_MAP` / `_cross_lang_score()` 作为 legacy semantic fallback 保留，只有能证明中文用户标题引用能力不回退时才评估移除。
 
 ### Runtime Contract
 
@@ -125,6 +130,8 @@ Ask Claread 当前采用四层真相源：
 - 必要的 history / attachment / citation 摘要
 - `submission_mode`
 - `quick_action_annotation`
+
+planner schema 中的 `answer_policy` 当前属于可评估的后续输入，不等同于 answer prompt 的强约束。若要接入 answer agent，必须先明确它是硬约束、软偏好，还是可被 answer agent 覆盖的策略建议，并补对应 eval。
 
 ### Agent Tools / Write Gate
 
@@ -177,6 +184,16 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 ### Output Contract
 
 `output_contract.py` 当前定义 Ask 的正式内部输出模型。新运行的正式产品输出统一来自 `turn_run.user_visible_output_json`，而不是 assistant message metadata。
+
+### Retry / Regenerate
+
+`retry / regenerate` 当前统一视为同一 user turn 下的新 assistant run：
+
+- 不新增 user turn。
+- 新 run 会 supersede 被 retry 的旧 run。
+- 当前用户可见输出始终以最新 run 的 `turn_run.user_visible_output_json` 为准。
+- interrupted run 可以保留 partial output 作为历史状态，但前端入口文案是“重新生成”，不承诺从断点续写。
+- 刷新页面只恢复已持久化的正文与 thinking 快照，不自动恢复原 SSE 连接，也不继续跑同一个未完成 run。
 
 ### Repository
 
@@ -392,6 +409,8 @@ assistant message 当前只保留：
 - 独立 AI 工作台
 - 直接保存整条 assistant 回答为笔记
 - 把用户高亮 / 用户笔记当作独立可检索资产中心
+- 开放式 `plan -> act/tool -> observe -> revise` agent loop
+- 新 tracing backend 或通用 checkpoint 表，除非有明确 eval、恢复或运维需求
 
 ## 当前边界说明
 
@@ -407,6 +426,8 @@ Reader 标注体系完成重构后，Ask Claread 已不再依赖“用户学习�
 - planner 的 history expansion 条件
 - resolver 的 future structured lookup 扩展点
 - agent tools 中是否需要新增受控的跨文章引用入口
+
+Ask Claread 短期保持 bounded reader-agent harness：semantic planner -> bounded context/runtime preparation -> answer agent with controlled tools -> stream/checkpoint/recovery。后续若评估受限 multi-step reader loop，必须先限定最大 step 数、稳定每步 tool observation、接入 eval trace，并保证 UI 只表达用户能理解的处理状态。
 
 ### 当前 Attachment 类型与 Anchor 类型
 

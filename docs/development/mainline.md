@@ -1,6 +1,6 @@
 # 开发主线
 
-> **状态**: `CURRENT` | **最后验证**: 2026-06-06
+> **状态**: `CURRENT` | **最后验证**: 2026-06-10
 
 本文说明 Claread 当前主线方向。它不是任务流水账；已完成的阶段只保留结论，具体实现细节回到代码、测试和对应目录文档。
 
@@ -39,6 +39,7 @@ Ask Claread 已完成 Reader 2.0 底座上的重构主线，当前处于冻结�
 近期重点：
 - 修正 correctness 问题，确保 regenerate、supplement lifecycle、known reference resolution 和写动作边界符合当前规范
 - 保持 Ask Claread 正式文档口径统一，以 `docs/product/ask-claread.md` 和 `docs/architecture/ask-claread.md` 作为当前真相源
+- 已完成的 Ask Claread P0-P6 重构结论只保留在正式文档和测试中；对应 TMP 过程文档已清理
 
 ### 副线：Web 次要功能补齐与页面设计收口
 
@@ -71,6 +72,9 @@ Claread Console 已进入可用控制面阶段，后续重点转向控制面治�
 以下事项仍需产品、业务和技术评估，不在本文做决定性描述：
 
 - Ask Claread 在显式引用模型上是否还需要更强的跨文章扩展，以及 planner / resolver / product contract 应如何继续演进。
+- Ask Claread semantic resolver / retrieval rerank 是否启用真实 LLM 或 embedding rerank；启用前必须先评估 timeout、candidate limit、成本、trace/eval 样本和 fallback。
+- Ask Claread planner 的 `answer_policy` 是否进入 answer agent prompt，以及它应作为硬约束、软偏好还是可覆盖策略。
+- Ask Claread 是否需要受限 multi-step reader loop；短期不进入开放式 agent loop，只有在 tool observation、resolver trace 和 eval 都稳定后再评估。
 - 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG。
 - Grammar X-Ray、分享页、导出和其他 AI 能力的优先级。
 - 是否在 Ask Claread 之外单独产品化"AI 整合总结用户历史数据"能力，以及是否做跨文章/跨资产的长期学习画像。
