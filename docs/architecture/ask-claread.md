@@ -3,7 +3,7 @@
 ## 文档状态
 
 - 状态：current implementation architecture
-- 日期：2026-05-23
+- 日期：2026-06-09
 - 适用范围：Claread Web Reader 内当前 Ask Claread 模块
 - 文档关系：
   - 当前产品边界见 `docs/product/ask-claread.md`
@@ -125,6 +125,34 @@ Ask Claread 当前采用四层真相源：
 - 必要的 history / attachment / citation 摘要
 - `submission_mode`
 - `quick_action_annotation`
+
+### Agent Tools / Write Gate
+
+Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` 统一定义。当前固定为 8 个工具：
+
+- `get_record_context`
+- `get_record_insights`
+- `search_user_vocabulary`
+- `lookup_dictionary_entry`
+- `run_dictionary_ai_context_explain`
+- `generate_sentence_annotation`
+- `propose_save_note`
+- `propose_save_highlight`
+
+工具契约的稳定边界：
+
+- tool name 必须来自 registry 常量；`@agent.tool(name=...)` 与 `run_tool(...)` 不允许回退为硬编码字符串。
+- tool observation 经 `reader_ask_tool_observation.py` 规范化为 `status`、`summary`、`next_actions`、`artifacts`。
+- `reader_ask_tool_runtime.py` 负责 budget、trace、SSE `tool.started / tool.completed / tool.failed` 事件，以及 availability hard enforcement。
+- `reader_ask_tool_policy.py` 负责构造 tool availability。当前默认 policy 仍允许全部 8 个 agent-callable tools，以保持生产行为不变；后续收紧可用工具必须经由该 policy，不由 planner 直接越权。
+- `reader_ask_tool_registry.py` 中的 `output_kind` / `observation_statuses` 描述 tool implementation 自身的 IO contract；runtime wrapper 注入的 policy error 另由 runtime contract 测试覆盖。
+
+写动作采用 proposal-only 模型：
+
+- `propose_save_note` / `propose_save_highlight` 只创建 runtime `action_request`，且 `requires_confirmation=True`。
+- 无 primary anchor 时由 write gate 直接返回稳定 error payload，不消耗 tool budget，也不创建 action request。
+- `note_text` 缺失属于 tool 内部校验，会经过 `run_tool`，消耗一次 tool budget，并返回稳定 error observation。
+- grammar supplement 的 `create_supplement_grammar_note` 仍是 confirmation path 的 action type，不是 agent-callable tool，不进入上述 8 个 tool registry。
 
 ### Output Contract
 
