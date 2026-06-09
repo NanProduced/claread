@@ -55,7 +55,8 @@ export async function PublicSiteHeader({
         {showCta ? (
           <Link
             href={cta.href}
-            className="focus-ring inline-flex min-h-10 items-center rounded-pill bg-ink px-4 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
+            className="focus-ring inline-flex min-h-10 items-center rounded-pill bg-ink px-4 text-sm font-semibold text-[rgb(255,255,255)] transition-opacity hover:opacity-90"
+            style={{ color: "#ffffff" }}
           >
             {cta.label}
           </Link>
