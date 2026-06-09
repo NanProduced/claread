@@ -24,11 +24,14 @@ intensive_reading:
   output_fragment: '{"sentence_id": "s2", "translation_zh": "这项政策与其说是改革，不如说是装点门面。"}'
 gaokao:
 - example_type: translation
-  sentence_text: The book that was written by him has become a bestseller.
-  output_fragment: '{"sentence_id": "s1", "translation_zh": "他写的那本书已经成为了一本畅销书。"}'
+  sentence_text: The team's data only went up to 2007, but the researchers also explored
+    what would happen if consumers replaced old products with new electronics that
+    serve more than one function.
+  output_fragment: '{"sentence_id":"s1","translation_zh":"该团队的数据仅更新到2007年，但研究人员还探讨了如果消费者用具有多种功能的新电子产品替换旧产品会发生什么。"}'
 - example_type: translation
-  sentence_text: Inspired by the speech, the students decided to start their own project.
-  output_fragment: '{"sentence_id": "s2", "translation_zh": "（被）演讲所激励，学生们决定开始他们自己的项目。"}'
+  sentence_text: 'The website said: "The collected plastic is safely turned into small
+    useful items...'
+  output_fragment: '{"sentence_id":"s2","translation_zh":"网站称：“收集到的塑料会被安全地转化成小型实用物品……"}'
 cet:
 - example_type: translation
   sentence_text: The study, which was conducted by researchers from Harvard, found

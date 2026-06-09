@@ -30,26 +30,47 @@ intensive_reading:
     "label": "核心判断", "text": "reveals more about the audience than the content"}]}'
 gaokao:
 - example_type: grammar
-  sentence_text: The book that was written by him has become a bestseller.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "that"}, {"text":
-    "was written"}], "label": "定语从句", "note_zh": "that 引导定语从句修饰 the book。that 在从句中作主语，指代先行词
-    the book，所以从句用被动语态 was written。高考语法填空常考：① 判断用哪个关系词（that/which/who/where） ② 从句的时态和语态。"}'
+  sentence_text: With several key questions still unanswered, the researchers were
+    careful not to draw a final conclusion.
+  output_fragment: '{"type":"grammar_note","spans":[{"text":"With several key questions
+    still unanswered"}],"label":"with 复合结构","note_zh":"这是 with + 宾语 + 宾补 的复合结构，在句中作背景状语。several
+    key questions 是宾语，still unanswered 是过去分词/形容词性成分作宾补，表示“问题仍未得到回答”。这种结构常用来交代主句动作发生的原因或背景，阅读时可先理解为“由于还有几个关键问题未解决”。"}'
 - example_type: grammar
-  sentence_text: Inspired by the speech, the students decided to start their own project.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Inspired"}, {"text":
-    "decided"}], "label": "过去分词作状语", "note_zh": "Inspired by the speech 是过去分词短语作原因状语，逻辑主语是
-    the students（学生被演讲激励）。过去分词表被动关系，说明主语是动作的承受者。高考语法填空常考：判断用现在分词（-ing，表主动）还是过去分词（-ed，表被动）。"}'
+  sentence_text: The report describes a point at which small changes in temperature
+    can lead to serious effects on local wildlife.
+  output_fragment: '{"type":"grammar_note","spans":[{"text":"at which small changes
+    in temperature can lead to serious effects on local wildlife"}],"label":"介词 +
+    which 引导定语从句","note_zh":"这是“介词 + which”引导的定语从句，修饰先行词 a point。at which 相当于 at
+    the point，表示“在这个点上”。高考中这类结构常考介词和关系代词的搭配；阅读时要把从句理解为对 point 的具体解释：温度的小变化会在这个临界点产生严重影响。"}'
+- example_type: grammar
+  sentence_text: It was not the cost of the program but the lack of public trust that
+    made the plan difficult to carry out.
+  output_fragment: '{"type":"grammar_note","spans":[{"text":"It was"},{"text":"that
+    made the plan difficult to carry out"}],"label":"强调句型","note_zh":"这是强调句型 It is/was...that...，被强调部分是
+    not the cost of the program but the lack of public trust。这个结构用来突出真正导致计划难以实施的原因不是成本，而是公众信任不足。高考常考强调句型的识别：去掉
+    It was 和 that 后，句子仍能还原为 The lack of public trust made the plan difficult to carry
+    out。"}'
 - example_type: sentence_analysis
-  sentence_text: The research conducted by scientists from different countries shows
-    that climate change has affected the lives of millions of people.
-  output_fragment: '{"type": "sentence_analysis", "label": "过去分词后置定语 + 宾语从句", "analysis_zh":
-    "主干：The research shows that...（这项研究表明……）。conducted by scientists from different
-    countries 是过去分词短语作后置定语，修饰 the research，说明是“来自不同国家的科学家所进行的”研究。that 引导宾语从句，作 shows
-    的宾语，说明研究的结果。高考阅读中遇到长句，先找主干（谁做了什么），再看修饰成分。", "chunks": [{"order": 1, "label": "主干主语",
-    "text": "The research"}, {"order": 2, "label": "后置定语", "text": "conducted by scientists
-    from different countries"}, {"order": 3, "label": "主干谓语", "text": "shows"}, {"order":
-    4, "label": "宾语从句", "text": "that climate change has affected the lives of millions
-    of people"}]}'
+  sentence_text: We often enter public spaces surrounded by strangers who are busy
+    checking messages, reading news, or simply avoiding eye contact.
+  output_fragment: '{"type":"sentence_analysis","label":"分词状语 + 定语从句 + 并列动作","analysis_zh":"句子主干是
+    We often enter public spaces。surrounded by strangers 是过去分词短语，说明进入公共空间时的伴随状态；who
+    引导定语从句修饰 strangers，从句中 checking, reading, avoiding 是并列动作。阅读时先抓“我们进入公共空间”，再把后面的分词和定语从句看作对场景的层层补充。","chunks":[{"order":1,"label":"主句主干","text":"We
+    often enter public spaces"},{"order":2,"label":"伴随状态","text":"surrounded by strangers"},{"order":3,"label":"定语从句主干","text":"who
+    are busy checking messages"},{"order":4,"label":"并列动作","text":"reading news, or
+    simply avoiding eye contact."}]}'
+- example_type: sentence_analysis
+  sentence_text: Although the study was designed to measure how much time teenagers
+    spent reading for pleasure, its most important finding was that students who discussed
+    books with their parents were more likely to keep reading as they grew older.
+  output_fragment: '{"type":"sentence_analysis","label":"让步状语从句 + 表语从句 + 定语从句","analysis_zh":"句子主干是
+    its most important finding was that...，真正的信息重点在 that 引导的表语从句中。句首 Although 从句只是交代研究原本的设计目的，其中
+    how much time... 是 measure 的宾语从句。阅读时先抓主句“最重要的发现是什么”，再处理 who 定语从句和 as 时间状语，理解为：和父母讨论书的学生长大后更可能继续阅读。","chunks":[{"order":1,"label":"让步状语从句","text":"Although
+    the study was designed to measure how much time teenagers spent reading for pleasure,"},{"order":2,"label":"主句主语+系动词","text":"its
+    most important finding was"},{"order":3,"label":"表语从句主语","text":"that students"},{"order":4,"label":"定语从句","text":"who
+    discussed books with their parents"},{"order":5,"label":"表语从句谓语","text":"were
+    more likely to keep reading"},{"order":6,"label":"时间状语从句","text":"as they grew
+    older."}]}'
 cet:
 - example_type: grammar
   sentence_text: The study, which was conducted by researchers from Harvard, found

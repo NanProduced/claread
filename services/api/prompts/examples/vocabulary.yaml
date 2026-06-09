@@ -37,23 +37,25 @@ intensive_reading:
   output_fragment: '{"type": "context_gloss", "text": "cosmetic", "gloss": "表面上的；装点门面的",
     "reason": "cosmetic 本义"化妆品的"，此处隐喻政策改动只是表面功夫，未触及实质。选词本身带有讽刺意味"}'
 gaokao:
-- example_type: vocab
-  sentence_text: The government has adopted new measures to protect the environment.
-  output_fragment: '{"type": "vocab_highlight", "text": "adopted"}'
 - example_type: phrase
-  sentence_text: She is looking forward to hearing from her pen pal.
-  output_fragment: '{"type": "phrase_gloss", "text": "looking forward to", "phrase_type":
-    "collocation", "zh": "期待；盼望。注意 to 是介词，后面接动词-ing 形式：look forward to doing sth.
-    期待做某事"}'
-- example_type: phrase
-  sentence_text: The team carried out the experiment successfully.
-  output_fragment: '{"type": "phrase_gloss", "text": "carried out", "phrase_type":
-    "phrasal_verb", "zh": "执行；实施。高考常考短语，如 carry out a plan/experiment/survey"}'
+  sentence_text: Soon afterwards, many of those people started settling down to become
+    farmers.
+  output_fragment: '{"type":"phrase_gloss","text":"settling down","phrase_type":"phrasal_verb","zh":"定居；安顿下来"}'
 - example_type: context
-  sentence_text: The government has been slow to address the issue of air pollution.
-  output_fragment: '{"type": "context_gloss", "text": "address", "gloss": "处理；应对",
-    "reason": "address 常见义为"地址"或"演讲"，此处作动词表示"着手处理问题"。高考词义猜测题常考这类熟词僻义，解题关键是看词性和上下文：此处后面接了
-    the issue（问题），说明是动词"处理""}'
+  sentence_text: It's possible that we all have compromised conversational intelligence.
+  output_fragment: '{"type":"context_gloss","text":"compromised","gloss":"受损的；削弱的","reason":"这里修饰
+    conversational intelligence，不是常见的‘妥协’，而是说交谈能力下降或受影响；上下文提到人们专注手机或陷入沉默，支持这个负面语境义。"}'
+- example_type: phrase
+  sentence_text: Old desktop monitors and box TVs with cathode ray tubes are the worst
+    devices for energy consumption.
+  output_fragment: '{"type":"phrase_gloss","text":"cathode ray tubes","phrase_type":"compound","zh":"阴极射线管；老式显像管"}'
+- example_type: vocab
+  sentence_text: Consequently, many small languages are now close to extinction.
+  output_fragment: '{"type":"vocab_highlight","text":"Consequently"}'
+- example_type: context
+  sentence_text: Small talk is the grease for social communication.
+  output_fragment: '{"type":"context_gloss","text":"grease","gloss":"润滑剂","reason":"grease
+    本义是‘油脂’，这里是比喻义：small talk 像润滑剂一样减少社交阻力，让 social communication 更顺畅。"}'
 cet:
 - example_type: vocab
   sentence_text: The economic growth has slowed down significantly this year.
