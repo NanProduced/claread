@@ -67,6 +67,38 @@ def test_grammar_note_projects_to_inline_mark_and_entry() -> None:
     assert outcome.result.sentence_entries[0].content == "so...that 结构，主语较长时使用部分倒装。"
 
 
+def test_grammar_note_with_broad_anchor_still_projects_inline_mark() -> None:
+    sentence = "It wasn't until I began to research this widely accepted career advice that I understood how problematic it really was."
+    prepared = prepare_input(sentence)
+    plan = build_goal_execution_plan("exam", "gaokao")
+    output = AnnotationOutput(
+        annotations=[
+            GrammarNote(
+                sentence_id="s1",
+                spans=[SpanRef(text=sentence)],
+                label="强调句型",
+                note_zh="这是 not until 强调句型。",
+            )
+        ],
+        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="直到开始研究这条建议，我才意识到它的问题。")],
+    )
+    outcome = project_to_render_scene(
+        annotation_output=output,
+        prepared_input=prepared,
+        source_type="user_input",
+        reading_goal="exam",
+        reading_variant="gaokao",
+        profile_id=plan.prompt_profile,
+        request_id="test-grammar-broad-anchor",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    assert outcome.result.inline_marks[0].annotation_type == "grammar_note"
+    assert len(outcome.result.sentence_entries) == 1
+    assert outcome.result.sentence_entries[0].entry_type == "grammar_note"
+    assert outcome.warnings == []
+
+
 def test_sentence_analysis_projects_to_entry_only() -> None:
     prepared = prepare_input("They recognize that sustainable success requires a fundamental rethinking of core business models.")
     plan = build_goal_execution_plan("daily_reading", "intermediate_reading")

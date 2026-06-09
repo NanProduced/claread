@@ -138,6 +138,60 @@ def test_sentence_analysis_with_result_in_being_done_survives_normalize() -> Non
     assert result.annotations[0].type == "sentence_analysis"
 
 
+def test_grammar_anchor_boundary_punctuation_is_trimmed() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(vocab_highlights=[], phrase_glosses=[], context_glosses=[]),
+        grammar_draft=GrammarDraft(
+            grammar_notes=[
+                GrammarNote(
+                    sentence_id="s1",
+                    spans=[SpanRef(text=", which does not depend on GDP growth")],
+                    label="非限制性定语从句",
+                    note_zh="which 引导非限制性定语从句。",
+                )
+            ],
+            sentence_analyses=[],
+        ),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", 'We should focus on "real wealth", which does not depend on GDP growth.')],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "grammar_note"
+    assert result.annotations[0].spans[0].text == "which does not depend on GDP growth"
+    assert result.drop_log == []
+
+
+def test_grammar_anchor_schematic_ellipsis_is_dropped() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(vocab_highlights=[], phrase_glosses=[], context_glosses=[]),
+        grammar_draft=GrammarDraft(
+            grammar_notes=[
+                GrammarNote(
+                    sentence_id="s1",
+                    spans=[SpanRef(text="It wasn't until ... that ...")],
+                    label="强调句型",
+                    note_zh="这是 not until 的强调句型。",
+                )
+            ],
+            sentence_analyses=[],
+        ),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", "It wasn't until I began to research this advice that I understood the problem.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert result.annotations == []
+    assert any(item.drop_reason == "schematic_anchor_not_groundable" for item in result.drop_log)
+
+
 def test_vocabulary_anchor_case_mismatch_is_canonicalized_to_source_text() -> None:
     result = normalize_and_ground(
         vocabulary_draft=VocabularyDraft(

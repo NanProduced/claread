@@ -237,12 +237,94 @@ def _grammar_quick_validation(
         for sentence in (getattr(prepared_input, "sentences", None) or [])
     ]
     warnings = [_parse_grammar_validation_warning(message) for message in validate_grammar_draft(draft, sentences)]
+    warnings.extend(_grammar_anchor_quality_warnings(draft, sentences))
     return {
         "validator": "grammar_draft_v1",
         "status": "warning" if warnings else "pass",
         "warning_count": len(warnings),
         "warnings": warnings,
     }
+
+
+_GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION = " \t\r\n,.;:!?，。；：！？"
+_GRAMMAR_ANCHOR_MAX_CHARS = 72
+_GRAMMAR_ANCHOR_MAX_SENTENCE_RATIO = 0.6
+_WEAK_SINGLE_GRAMMAR_ANCHORS = {
+    "which", "that", "who", "whom", "whose", "where", "when", "why",
+    "but", "and", "or", "than",
+}
+
+
+def _grammar_anchor_quality_warnings(
+    draft: GrammarDraft,
+    sentences: list[PreparedSentence],
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    sentence_map = {sentence.sentence_id: sentence for sentence in sentences}
+
+    for item in draft.grammar_notes:
+        sentence = sentence_map.get(item.sentence_id)
+        sentence_text = sentence.text if sentence is not None else ""
+        sentence_len = max(1, len(sentence_text.strip()))
+        total_anchor_len = 0
+
+        for span in item.spans:
+            anchor_text = str(span.text or "")
+            stripped_anchor = anchor_text.strip(_GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
+            total_anchor_len += len(anchor_text.strip())
+
+            if "..." in anchor_text:
+                warnings.append({
+                    "code": "schematic_ellipsis_grammar_anchor",
+                    "message": f"grammar_note span 使用了讲义式省略号模板: {anchor_text}",
+                    "sentence_id": item.sentence_id,
+                    "anchor_text": anchor_text,
+                })
+
+            if stripped_anchor and stripped_anchor != anchor_text:
+                warnings.append({
+                    "code": "boundary_punctuation_grammar_anchor",
+                    "message": f"grammar_note span 包含首尾无关标点或空格: {anchor_text}",
+                    "sentence_id": item.sentence_id,
+                    "anchor_text": anchor_text,
+                })
+
+            comparable_anchor = anchor_text.strip().rstrip(".!?")
+            comparable_sentence = sentence_text.strip().rstrip(".!?")
+            if comparable_anchor and comparable_sentence and comparable_anchor == comparable_sentence:
+                warnings.append({
+                    "code": "full_sentence_grammar_anchor",
+                    "message": f"grammar_note span 覆盖整句: {anchor_text}",
+                    "sentence_id": item.sentence_id,
+                    "anchor_text": anchor_text,
+                })
+
+            anchor_words = re.findall(r"[A-Za-z]+", anchor_text)
+            if len(anchor_words) == 1 and anchor_words[0].casefold() in _WEAK_SINGLE_GRAMMAR_ANCHORS:
+                warnings.append({
+                    "code": "weak_short_grammar_anchor",
+                    "message": f"grammar_note span 只有低信息量关系词: {anchor_text}",
+                    "sentence_id": item.sentence_id,
+                    "anchor_text": anchor_text,
+                })
+
+            if len(anchor_text.strip()) > _GRAMMAR_ANCHOR_MAX_CHARS:
+                warnings.append({
+                    "code": "long_grammar_anchor",
+                    "message": f"grammar_note span 过长，不适合作为原文行内锚点: {anchor_text}",
+                    "sentence_id": item.sentence_id,
+                    "anchor_text": anchor_text,
+                })
+
+        if total_anchor_len / sentence_len > _GRAMMAR_ANCHOR_MAX_SENTENCE_RATIO:
+            warnings.append({
+                "code": "broad_grammar_anchor",
+                "message": f"grammar_note spans 覆盖原句比例过高: {item.sentence_id}",
+                "sentence_id": item.sentence_id,
+                "anchor_text": " || ".join(span.text for span in item.spans),
+            })
+
+    return warnings
 
 
 def _parse_vocabulary_validation_warning(message: str) -> dict[str, Any]:

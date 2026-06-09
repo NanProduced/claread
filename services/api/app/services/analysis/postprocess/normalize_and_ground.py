@@ -17,6 +17,7 @@ from app.schemas.internal.analysis import (
     PreparedSentence,
     SentenceAnalysis,
     SentenceTranslation,
+    SpanRef,
     VocabHighlight,
 )
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
@@ -57,6 +58,8 @@ LOW_VALUE_WORDS: set[str] = {
     "year", "week", "day", "hour", "minute", "second",
     "number", "percent", "type", "kind", "sort", "class",
 }
+
+GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION = " \t\r\n,.;:!?，。；：！？"
 
 @dataclass
 class NormalizationContext:
@@ -120,6 +123,69 @@ def _grounding_check(
         )
         return False
     return True
+
+
+def _contains_schematic_ellipsis(text: str, sentence_text: str) -> bool:
+    """Return true when the anchor uses a didactic ellipsis pattern, not source text."""
+    return "..." in text and text not in sentence_text
+
+
+def _trim_grammar_anchor_boundary(text: str) -> str:
+    """Trim punctuation that should not be part of a grammar visual anchor."""
+    return text.strip(GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
+
+
+def _canonicalize_grammar_span(
+    span: SpanRef,
+    item: GrammarNote,
+    sentence_map: dict[str, PreparedSentence],
+    drop_log: list[DropLogEntry],
+) -> SpanRef | None:
+    sentence_obj = sentence_map.get(item.sentence_id)
+    if sentence_obj is None:
+        _log_drop(
+            "grammar",
+            item.type,
+            item.sentence_id,
+            span.text,
+            "sentence_id_not_found",
+            "grounding",
+            drop_log,
+        )
+        return None
+
+    if _contains_schematic_ellipsis(span.text, sentence_obj.text):
+        _log_drop(
+            "grammar",
+            item.type,
+            item.sentence_id,
+            span.text,
+            "schematic_anchor_not_groundable",
+            "grounding",
+            drop_log,
+        )
+        return None
+
+    if is_substring(span.text, sentence_obj.text):
+        trimmed = _trim_grammar_anchor_boundary(span.text)
+        if trimmed and trimmed != span.text:
+            # Only apply deterministic boundary cleanup when the trimmed anchor
+            # still resolves uniquely in the source sentence.
+            resolved = resolve_text_anchor(sentence_obj, trimmed, span.occurrence)
+            if resolved is not None:
+                return span.model_copy(update={"text": trimmed})
+        return span
+
+    _log_drop(
+        "grammar",
+        item.type,
+        item.sentence_id,
+        span.text,
+        "anchor_not_substring",
+        "grounding",
+        drop_log,
+    )
+    return None
 
 
 def _source_substring(sentence_obj: PreparedSentence, span: TextSpan) -> str | None:
@@ -295,11 +361,17 @@ def _normalize_grammar_notes(
     seen_keys: set[str] = set()
 
     for item in draft.grammar_notes:
-        if any(
-            not _grounding_check(item.type, span.text, item.sentence_id, ctx.sentence_map, "grammar", drop_log)
-            for span in item.spans
-        ):
+        normalized_spans: list[SpanRef] = []
+        failed = False
+        for span in item.spans:
+            normalized_span = _canonicalize_grammar_span(span, item, ctx.sentence_map, drop_log)
+            if normalized_span is None:
+                failed = True
+                break
+            normalized_spans.append(normalized_span)
+        if failed:
             continue
+        item = item.model_copy(update={"spans": normalized_spans})
         primary_text = item.spans[0].text if item.spans else ""
         key = _make_anchor_key(item.type, item.sentence_id, primary_text)
         if key in seen_keys:

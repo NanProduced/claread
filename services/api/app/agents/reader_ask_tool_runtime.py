@@ -14,11 +14,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 from app.agents.reader_ask_tool_observation import normalize_tool_observation
 from app.agents.reader_ask_tool_policy import ToolAvailabilityResult
 from app.schemas.reader_ask import ReaderAskToolTraceEntry
+
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
+
+ToolEventName = Literal["tool.started", "tool.completed", "tool.failed"]
+ToolResultT = TypeVar("ToolResultT")
 
 # ---------------------------------------------------------------------------
 # Protocol for runtime deps (avoids circular import)
@@ -35,18 +42,11 @@ class _ToolRuntimeState(Protocol):
 class _ToolRuntimeDeps(Protocol):
     """Minimal protocol that run_tool / _emit_tool_event need from deps."""
 
-    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]]
+    event_queue: asyncio.Queue[tuple[ToolEventName, dict[str, Any]]]
     tool_availability: ToolAvailabilityResult | None
 
     @property
     def state(self) -> _ToolRuntimeState: ...
-
-
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-
-ToolEventName = Literal["tool.started", "tool.completed", "tool.failed"]
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +134,10 @@ async def _emit_tool_event(
 async def run_tool(
     deps: _ToolRuntimeDeps,
     tool_name: str,
-    runner: Callable[[], Awaitable[Any]],
+    runner: Callable[[], Awaitable[ToolResultT]],
     *,
     input_summary: str | None = None,
-) -> Any:
+) -> ToolResultT:
     # -- Availability hard enforcement --
     if (
         deps.tool_availability is not None
@@ -154,13 +154,16 @@ async def run_tool(
             )
         )
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
-        return {
-            "status": "error",
-            "summary": detail,
-            "reason": "tool_not_available",
-            "next_actions": ["Use only tools available in the current context."],
-            "artifacts": [],
-        }
+        return cast(
+            ToolResultT,
+            {
+                "status": "error",
+                "summary": detail,
+                "reason": "tool_not_available",
+                "next_actions": ["Use only tools available in the current context."],
+                "artifacts": [],
+            },
+        )
 
     deps.state.tool_call_count += 1
     if deps.state.tool_call_count > deps.state.max_tool_calls:

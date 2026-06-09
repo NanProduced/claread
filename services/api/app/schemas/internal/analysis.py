@@ -124,11 +124,21 @@ class SentenceTranslation(BaseModel):
 
 
 class SpanRef(BaseModel):
-    """语法锚点片段。"""
+    """语法旁注的原文定位锚点。
+
+    该字段用于把 grammar_note 绑定到原句中的可见短片段，不等于语法点的完整讲解范围。
+    完整结构关系应由 GrammarNote.note_zh 说明。
+    """
 
     model_config = BASE_MODEL_CONFIG
 
-    text: str = Field(min_length=1, description="对应句子中的精确子串")
+    text: str = Field(
+        min_length=1,
+        description=(
+            "原句中的精确可见子串，用作 grammar_note 的定位锚点；不是完整讲解范围。"
+            "应选择自然短片段，不使用省略号模板，不包含首尾无关标点或空格。"
+        ),
+    )
     occurrence: int | None = Field(
         default=None, ge=1, description="同一句中该文本第几次出现"
     )
@@ -222,7 +232,14 @@ class GrammarNote(BaseModel):
 
     type: Literal["grammar_note"] = "grammar_note"
     sentence_id: str = Field(description="句子ID")
-    spans: list[SpanRef] = Field(min_length=1, max_length=4, description="语法锚点片段")
+    spans: list[SpanRef] = Field(
+        min_length=1,
+        max_length=4,
+        description=(
+            "语法旁注在原文中的定位锚点列表。spans 只负责 UI 定位，不负责覆盖完整语法关系；"
+            "不连续结构可使用多个短锚点。"
+        ),
+    )
     label: str = Field(min_length=1, description="语法点名称")
     note_zh: str = Field(min_length=1, description="中文说明")
 

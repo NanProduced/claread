@@ -162,7 +162,10 @@ async def _propose_save_note_tool(
         has_primary_anchor=ctx.deps.primary_anchor is not None,
     )
     if not precondition.allowed:
-        return precondition.error_payload  # type: ignore[return-value]
+        assert precondition.error_payload is not None
+        return precondition.error_payload
+    anchor = ctx.deps.primary_anchor
+    assert anchor is not None
 
     async def runner() -> dict[str, Any]:
         if not isinstance(note_text, str) or not note_text.strip():
@@ -174,7 +177,7 @@ async def _propose_save_note_tool(
                 description="把当前解释或补充内容保存到当前锚点笔记",
                 payload_json={
                     "record_id": ctx.deps.record_id,
-                    "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
+                    "anchor": anchor.model_dump(mode="json"),
                     "note_text": note_text,
                 },
             )
@@ -185,7 +188,7 @@ async def _propose_save_note_tool(
             "next_actions": ["Wait for user confirmation before writing the note."],
             "artifacts": [
                 f"record:{ctx.deps.record_id}",
-                f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}",
+                f"anchor:{anchor.target_key or 'selected'}",
             ],
             "ok": True,
             "action_type": "save_note",
@@ -211,7 +214,10 @@ async def _propose_save_highlight_tool(
         has_primary_anchor=ctx.deps.primary_anchor is not None,
     )
     if not precondition.allowed:
-        return precondition.error_payload  # type: ignore[return-value]
+        assert precondition.error_payload is not None
+        return precondition.error_payload
+    anchor = ctx.deps.primary_anchor
+    assert anchor is not None
 
     async def runner() -> dict[str, Any]:
         ctx.deps.state.action_requests.append(
@@ -221,7 +227,7 @@ async def _propose_save_highlight_tool(
                 description="把当前锚点保存成高亮/摘录",
                 payload_json={
                     "record_id": ctx.deps.record_id,
-                    "anchor": ctx.deps.primary_anchor.model_dump(mode="json"),
+                    "anchor": anchor.model_dump(mode="json"),
                 },
             )
         )
@@ -231,7 +237,7 @@ async def _propose_save_highlight_tool(
             "next_actions": ["Wait for user confirmation before saving the highlight."],
             "artifacts": [
                 f"record:{ctx.deps.record_id}",
-                f"anchor:{ctx.deps.primary_anchor.target_key or 'selected'}",
+                f"anchor:{anchor.target_key or 'selected'}",
             ],
             "ok": True,
             "action_type": "save_highlight",

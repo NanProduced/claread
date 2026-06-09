@@ -473,6 +473,57 @@ async def test_node_lab_grammar_quick_validation_reports_anchor_warning(
 
 
 @pytest.mark.anyio
+async def test_node_lab_grammar_quick_validation_reports_anchor_quality_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(node_lab, "get_settings", _settings)
+    dynamic_run_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            output=GrammarDraft(
+                grammar_notes=[
+                    GrammarNote(
+                        sentence_id="s1",
+                        spans=[SpanRef(text=", which does not depend on GDP growth")],
+                        label="非限制性定语从句",
+                        note_zh="测试",
+                    ),
+                    GrammarNote(
+                        sentence_id="s2",
+                        spans=[SpanRef(text="It wasn't until ... that ...")],
+                        label="强调句型",
+                        note_zh="测试",
+                    ),
+                ],
+                sentence_analyses=[],
+            )
+        )
+    )
+    monkeypatch.setattr(node_lab, "_run_dynamic_agent", dynamic_run_mock)
+
+    result = await node_lab.run_article_analysis_node_lab(
+        node_lab.ArticleAnalysisNodeLabRunRequest(
+            node_name="grammar",
+            text=(
+                'We should focus on "real wealth", which does not depend on GDP growth. '
+                "It wasn't until I began to research this advice that I understood the problem."
+            ),
+            candidate_override={
+                "candidate_id": "cand-anchor-quality",
+                "node_name": "grammar",
+                "model_selection": {"default_profile": "eval-profile"},
+            },
+        )
+    )
+
+    assert result.run.quick_validation is not None
+    assert result.run.quick_validation["status"] == "warning"
+    warning_codes = {item["code"] for item in result.run.quick_validation["warnings"]}
+    assert "boundary_punctuation_grammar_anchor" in warning_codes
+    assert "schematic_ellipsis_grammar_anchor" in warning_codes
+    assert "grammar_span_not_found" in warning_codes
+
+
+@pytest.mark.anyio
 async def test_node_lab_vocabulary_quick_validation_reports_duplicates_and_subsumption(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
