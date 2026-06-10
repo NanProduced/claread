@@ -14,11 +14,11 @@
 
 - 本仓库是 monorepo，不把仓库根目录注册或激活为单一 TypeScript / Python Serena 项目。
 - 使用 Serena 做符号级检索、引用分析或重构时，按当前任务激活对应子项目。
-- `services/api/`：Python 后端项目。
-- `evals/`：Python 评测项目。
-- `apps/web/`：Web TypeScript 项目。
-- `apps/miniprogram/`：微信小程序 TypeScript 项目。
-- `apps/directus/`：按 Directus 根项目或具体 extension package 激活，取决于任务范围。
+- `services/api/`：Python 后端项目，Serena 项目名 `claread-api`。
+- `evals/`：Python 评测项目，Serena 项目名 `claread-evals`。
+- `apps/web/`：Web TypeScript 项目，Serena 项目名 `claread-web`。
+- `apps/miniprogram/`：微信小程序 TypeScript 项目，Serena 项目名 `claread-miniprogram`。
+- `apps/directus/`：Directus TypeScript 项目，Serena 项目名 `claread-directus`；如任务只涉及具体 extension package，可进一步收窄范围。
 - 跨多个子项目的任务，优先用 RTK / shell / git diff 做仓库级检索；只有确实需要跨项目符号能力时，才专门配置 root Serena monorepo project，并显式配置多语言，不使用自动推断出的单一语言项目。
 
 ## 目录边界

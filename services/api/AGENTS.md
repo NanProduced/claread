@@ -9,6 +9,11 @@
 - PostgreSQL 是用户资产、分析记录、任务、词典和未来评测数据的事实来源。
 - Redis、队列、worker、Directus、RAG 都是扩展层，不应破坏当前 API 基线。
 
+## Serena
+
+- 需要 Serena 做符号级检索、引用分析或重构时，只激活当前子项目 `claread-api`。
+- 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
+
 ## Workflow
 
 - 当前基线是 v3 思路：preprocess、reading goal strategy、multi-agent generation、normalize/ground/repair、canonical result、render projection。

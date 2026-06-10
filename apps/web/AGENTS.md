@@ -8,6 +8,11 @@
 - Web 端共享 `services/api/`，不单独复制一套后端。
 - Web 可以拥有更丰富的 render profile，但 canonical result 仍由后端统一产生。
 
+## Serena
+
+- 需要 Serena 做符号级检索、引用分析或重构时，只激活当前子项目 `claread-web`。
+- 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
+
 ## 开发原则
 
 - 不被小程序 UI 限制反向约束。
