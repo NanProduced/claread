@@ -2,7 +2,6 @@ import type { Route } from "next";
 import Link from "next/link";
 import { BrandLockup } from "@/components/brand/BrandMarks";
 import {
-  aboutRoute,
   blogRoute,
   dailyRoute,
   examplesRoute,
@@ -14,8 +13,7 @@ import { appCtaForSession, getProjectedWebSession } from "@/services/bff/session
 const navItems: Array<{ href: Route; label: string }> = [
   { href: dailyRoute, label: "每日精读" },
   { href: examplesRoute, label: "公开示例" },
-  { href: aboutRoute, label: "About" },
-  { href: helpRoute, label: "Help" },
+  { href: helpRoute, label: "透读方法" },
   { href: blogRoute, label: "Blog" },
 ];
 
@@ -23,16 +21,20 @@ export async function PublicSiteHeader({
   currentHref,
   showCta = true,
   priority = false,
+  ctaLabelOverride,
+  wide = false,
 }: {
   currentHref?: Route;
   showCta?: boolean;
   priority?: boolean;
+  ctaLabelOverride?: string;
+  wide?: boolean;
 }) {
   const session = await getProjectedWebSession();
   const cta = appCtaForSession(session);
 
   return (
-    <header className="mx-auto flex max-w-7xl items-center justify-between gap-6">
+    <header className={`mx-auto flex items-center justify-between gap-6 ${wide ? "max-w-[98rem]" : "max-w-7xl"}`}>
       <BrandLockup href={homeRoute} priority={priority} />
       <div className="flex items-center gap-3">
         <nav className="hidden items-center gap-2 text-sm font-semibold text-muted md:flex">
@@ -55,10 +57,10 @@ export async function PublicSiteHeader({
         {showCta ? (
           <Link
             href={cta.href}
-            className="focus-ring inline-flex min-h-10 items-center rounded-pill bg-ink px-4 text-sm font-semibold text-[rgb(255,255,255)] transition-opacity hover:opacity-90"
+            className="focus-ring inline-flex min-h-10 items-center whitespace-nowrap rounded-pill bg-ink px-4 text-sm font-semibold text-[rgb(255,255,255)] transition-opacity hover:opacity-90"
             style={{ color: "#ffffff" }}
           >
-            {cta.label}
+            {ctaLabelOverride ?? cta.label}
           </Link>
         ) : null}
       </div>

@@ -10,7 +10,7 @@ const {
   modelProfiles, state, loading, feedback,
 } = useNodeLabState();
 
-const { saveCandidateDraft, selectSavedCandidate, resetDraftToBaseline } = useNodeLabApi();
+const { saveCandidateDraft, deleteCandidateDraft, selectSavedCandidate, resetDraftToBaseline } = useNodeLabApi();
 
 const candidateDiffFacts = computed(() => {
   const baseline = baselineConfig.value;
@@ -87,6 +87,11 @@ const savedCandidatesMapped = computed(() => [
   ...(currentSavedCandidates.value || []).map((c) => ({ text: c.label, value: c.candidate_id })),
 ]);
 
+const hasSavedCurrentCandidate = computed(() => (
+  !!currentDraft.value.candidate_id
+  && (currentSavedCandidates.value || []).some((item) => item.candidate_id === currentDraft.value.candidate_id)
+));
+
 const exampleEditModesMapped = [
   { text: '结构化列表', value: 'structured' },
   { text: 'Raw JSON', value: 'raw' },
@@ -121,6 +126,14 @@ function scrollToSection(id) {
       <v-select class="toolbar-select" v-model="selectedCandidateValue" :items="savedCandidatesMapped" @update:modelValue="selectSavedCandidate($event)" placeholder="载入已保存 Candidate" />
       <div class="toolbar-actions">
         <v-button class="btn-ghost" small @click="resetDraftToBaseline">重置草稿</v-button>
+        <v-button
+          class="btn-danger-text"
+          small
+          :disabled="!hasSavedCurrentCandidate || loading.deleteCandidate || loading.saveCandidate"
+          @click="deleteCandidateDraft()"
+        >
+          删除草稿
+        </v-button>
         <v-button secondary small :disabled="loading.saveCandidate" @click="saveCandidateDraft">保存草稿</v-button>
       </div>
     </div>

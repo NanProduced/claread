@@ -75,6 +75,7 @@ export function createNodeLabState() {
     run: false,
     compare: false,
     saveCandidate: false,
+    deleteCandidate: false,
     saveJudgeConfig: false,
     saveRunHistory: false,
     queueJudge: false,

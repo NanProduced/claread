@@ -41,15 +41,17 @@ const comparisonPoints = [
 export default async function HomePage() {
   const session = await getProjectedWebSession();
   const cta = appCtaForSession(session);
-  const primaryLabel = session.hasAppAccess ? "解读我的第一篇文章" : "登录后开始透读";
+  const primaryLabel = "打开 Claread";
 
   return (
     <main className="min-h-screen overflow-hidden bg-web-canvas text-ink">
-      <div className="px-5 pt-5 sm:px-6">
-        <PublicSiteHeader currentHref={homeRoute} priority />
+      <div className="px-5 pt-5 sm:px-6 lg:px-10">
+        <div className="mx-auto max-w-[98rem] border-b border-hairline pb-5">
+          <PublicSiteHeader currentHref={homeRoute} priority ctaLabelOverride="打开 Claread" wide />
+        </div>
       </div>
 
-      <ProductHero primaryHref={cta.href} primaryLabel={primaryLabel} secondaryHref={dailyRoute} />
+      <ProductHero primaryHref={cta.href} primaryLabel={primaryLabel} secondaryHref={examplesRoute} />
 
       <section className="border-y border-hairline bg-surface/45">
         <div className="mx-auto grid max-w-7xl gap-8 px-5 py-14 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">

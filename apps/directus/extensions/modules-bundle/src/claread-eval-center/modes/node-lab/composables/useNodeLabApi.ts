@@ -572,6 +572,45 @@ export function createNodeLabApi(deps: NodeLabState) {
     }
   }
 
+  async function deleteCandidateDraft(candidateId = currentDraft.value.candidate_id) {
+    const normalizedCandidateId = String(candidateId || "").trim();
+    if (!normalizedCandidateId) {
+      setFeedback({ error: "当前没有可删除的 Candidate Draft。" });
+      return null;
+    }
+    const selected = currentSavedCandidates.value.find((item) => item.candidate_id === normalizedCandidateId);
+    if (!selected) {
+      setFeedback({ error: "这条 Candidate Draft 不在当前列表中，可能已被删除。" });
+      return null;
+    }
+    const confirmed = window.confirm(`确认删除 Candidate Draft「${selected.label || normalizedCandidateId}」？此操作不可撤销。`);
+    if (!confirmed) return null;
+
+    loading.deleteCandidate = true;
+    setFeedback();
+    try {
+      const data = await fetchJson(`${API_ENDPOINTS.candidates}/${encodeURIComponent(normalizedCandidateId)}`, {
+        method: "DELETE",
+      });
+      const isActiveDraft = currentDraft.value.candidate_id === normalizedCandidateId;
+      await loadCandidates();
+      if (isActiveDraft) {
+        resetDraftToBaseline();
+      }
+      setFeedback({
+        info: isActiveDraft
+          ? `已删除 Candidate Draft：${data.label}，编辑器已重置为 baseline。`
+          : `已删除 Candidate Draft：${data.label}`,
+      });
+      return data;
+    } catch (error) {
+      setFeedback({ error: error.message });
+    } finally {
+      loading.deleteCandidate = false;
+    }
+    return null;
+  }
+
   async function saveJudgeConfig() {
     loading.saveJudgeConfig = true;
     setFeedback();
@@ -1250,7 +1289,7 @@ export function createNodeLabApi(deps: NodeLabState) {
     loadSessions, loadRecentTrials, loadSessionDetail, loadTrialDetail,
     openCompareTrialInWorkbench, goStartCompareFromEmpty,
     openCurrentSessionWorkspace, clearSessionAttachment, selectSession, updateSession,
-    saveCandidateDraft, saveJudgeConfig, runSingle, saveSingleRunToHistory,
+    saveCandidateDraft, deleteCandidateDraft, saveJudgeConfig, runSingle, saveSingleRunToHistory,
     buildCandidateRegistryEntryFromResult, attachCurrentCompareToSession,
     addCurrentCompareToSession, createSessionAndAddCurrentCompare,
     stopJudgeRequestPolling, startJudgeRequestPolling,
