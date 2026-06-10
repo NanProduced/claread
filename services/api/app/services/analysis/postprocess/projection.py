@@ -28,7 +28,11 @@ from app.schemas.internal.analysis import (
     AnnotationOutput,
     VocabHighlight,
 )
-from app.services.analysis.postprocess.anchor_resolution import resolve_multi_text_anchor, resolve_text_anchor
+from app.services.analysis.postprocess.anchor_resolution import (
+    resolve_explicit_anchor_parts,
+    resolve_text_anchor,
+    resolve_vocabulary_anchor_binding,
+)
 from app.services.analysis.postprocess.normalize import is_substring
 from app.services.analysis.preprocess.input_preparation import PreparedInput
 
@@ -89,6 +93,48 @@ def _resolve_span_ref(
     return TextAnchor(kind="text", sentence_id=sentence_id, anchor_text=text, occurrence=occurrence)
 
 
+def _resolve_vocabulary_anchor_ref(
+    sentence_obj: PreparedSentence,
+    sentence_id: str,
+    text: str,
+    occurrence: int | None,
+) -> TextAnchor | MultiTextAnchor | None:
+    resolved = resolve_vocabulary_anchor_binding(sentence_obj, text, occurrence)
+    if resolved is None:
+        return None
+    if resolved.kind == "text":
+        if resolved.text is None:
+            return None
+        return TextAnchor(
+            kind="text",
+            sentence_id=sentence_id,
+            anchor_text=resolved.text,
+            occurrence=occurrence,
+        )
+    return MultiTextAnchor(
+        kind="multi_text",
+        sentence_id=sentence_id,
+        parts=[
+            SpanRefPart(
+                anchor_text=part.text,
+                occurrence=part.occurrence,
+            )
+            for part in resolved.parts
+        ],
+    )
+
+
+def _lookup_kind_for_context_gloss(
+    lookup_text: str,
+    anchor: TextAnchor | MultiTextAnchor,
+) -> str:
+    if anchor.kind == "multi_text":
+        return "phrase"
+    if any(char.isspace() for char in lookup_text.strip()):
+        return "phrase"
+    return "word"
+
+
 def _resolve_multi_span_refs(
     sentence_obj: PreparedSentence,
     sentence_id: str,
@@ -98,7 +144,7 @@ def _resolve_multi_span_refs(
         {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
         for span in spans
     ]
-    resolved = resolve_multi_text_anchor(sentence_obj, parts)
+    resolved = resolve_explicit_anchor_parts(sentence_obj, parts)
     if resolved is None:
         return None
     return MultiTextAnchor(
@@ -106,11 +152,11 @@ def _resolve_multi_span_refs(
         sentence_id=sentence_id,
         parts=[
             SpanRefPart(
-                anchor_text=part["anchor_text"],
-                occurrence=part.get("occurrence"),
-                role=part.get("role"),
+                anchor_text=resolved_part.text,
+                occurrence=resolved_part.occurrence,
+                role=original_span.role,
             )
-            for part in parts
+            for original_span, resolved_part in zip(spans, resolved, strict=False)
         ],
     )
 
@@ -150,9 +196,45 @@ def _project_phrase_gloss(
     sentence_obj: PreparedSentence,
 ) -> tuple[InlineMark | None, list[dict[str, object]]]:
     warnings: list[dict[str, object]] = []
-    resolved_anchor = _resolve_span_ref(
-        sentence_obj, annotation.sentence_id, annotation.text, annotation.occurrence
-    )
+    if annotation.spans:
+        parts = [
+            {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
+            for span in annotation.spans
+        ]
+        resolved_parts = resolve_explicit_anchor_parts(sentence_obj, parts)
+        if resolved_parts is None:
+            warnings.append({
+                "code": "anchor_resolve_failed",
+                "level": "warning",
+                "message": f"PhraseGloss 锚点解析失败: {annotation.text}",
+                "sentence_id": annotation.sentence_id,
+            })
+            return None, warnings
+        if len(resolved_parts) == 1:
+            resolved_part = resolved_parts[0]
+            resolved_anchor: TextAnchor | MultiTextAnchor | None = TextAnchor(
+                kind="text",
+                sentence_id=annotation.sentence_id,
+                anchor_text=resolved_part.text,
+                occurrence=resolved_part.occurrence,
+            )
+        else:
+            resolved_anchor = MultiTextAnchor(
+                kind="multi_text",
+                sentence_id=annotation.sentence_id,
+                parts=[
+                    SpanRefPart(
+                        anchor_text=resolved_part.text,
+                        occurrence=resolved_part.occurrence,
+                        role=original_span.role,
+                    )
+                    for original_span, resolved_part in zip(annotation.spans, resolved_parts, strict=False)
+                ],
+            )
+    else:
+        resolved_anchor = _resolve_vocabulary_anchor_ref(
+            sentence_obj, annotation.sentence_id, annotation.text, annotation.occurrence
+        )
     if resolved_anchor is None:
         warnings.append({
             "code": "anchor_resolve_failed",
@@ -180,7 +262,7 @@ def _project_context_gloss(
     sentence_obj: PreparedSentence,
 ) -> tuple[InlineMark | None, list[dict[str, object]]]:
     warnings: list[dict[str, object]] = []
-    resolved_anchor = _resolve_span_ref(
+    resolved_anchor = _resolve_vocabulary_anchor_ref(
         sentence_obj, annotation.sentence_id, annotation.text, annotation.occurrence
     )
     if resolved_anchor is None:
@@ -199,7 +281,7 @@ def _project_context_gloss(
         visual_tone="context",
         clickable=True,
         lookup_text=annotation.text,
-        lookup_kind="word",
+        lookup_kind=_lookup_kind_for_context_gloss(annotation.text, resolved_anchor),
         glossary=InlineGlossary(gloss=annotation.gloss, reason=annotation.reason),
     )
     return inline_mark, warnings

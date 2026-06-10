@@ -446,6 +446,15 @@ function renderTextWithMarks(
     return wordOccurrenceMap[w]
   }
 
+  const getMarkLookupText = (mark: AnyInlineMarkModel, surfaceText: string) => {
+    const lookupText = typeof mark.lookupText === 'string' ? mark.lookupText.trim() : ''
+    return lookupText || surfaceText
+  }
+
+  const sameLookupSurfaceText = (left: string, right: string) => (
+    left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase()
+  )
+
   // 沉浸模式下只保留词汇相关的标记（vocab, phrase, context）
   const visibleMarks = isImmersive
     ? marks.filter(m => ['vocab', 'phrase', 'context', 'term', 'logic'].includes(m.visualTone))
@@ -598,9 +607,17 @@ function renderTextWithMarks(
       || (item.mark.parentId && normalizeId(activeMarkId) === normalizeId(item.mark.parentId))
       || (groupActiveIds && (groupActiveIds.has(item.mark.id) || (item.mark.parentId && groupActiveIds.has(item.mark.parentId))))
     )
-    const isSaved = vocabSet?.has(item.text.toLowerCase())
-    const savedStatus = vocabSavedMap?.[item.text.toLowerCase()]
-    const markOcc = getNextOccurrence(item.text)
+    const markLookupText = getMarkLookupText(item.mark, item.text)
+    const lookupKey = markLookupText.toLocaleLowerCase()
+    const isSaved = vocabSet?.has(lookupKey)
+    const savedStatus = vocabSavedMap?.[lookupKey]
+    const markOcc = item.mark.anchor.kind === 'text'
+      ? item.mark.anchor.occurrence ?? (
+        sameLookupSurfaceText(markLookupText, item.text)
+          ? getNextOccurrence(item.text)
+          : undefined
+      )
+      : undefined
     const markInSelection = selectionRange
       ? item.start < selectionRange.end && item.end > selectionRange.start
       : false

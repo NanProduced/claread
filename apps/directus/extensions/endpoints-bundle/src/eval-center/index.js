@@ -798,11 +798,69 @@ function artifactTranslationMap(artifact) {
   return map;
 }
 
+function normalizeInlineMarkText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function inlineMarkAnchorText(mark) {
+  if (!mark || typeof mark !== "object") return "";
+  const anchor = mark.anchor;
+  if (typeof anchor === "string" && anchor.trim()) return anchor.trim();
+  if (anchor && typeof anchor === "object") {
+    if (anchor.kind === "multi_text" && Array.isArray(anchor.parts)) {
+      const parts = anchor.parts
+        .map((item) => normalizeInlineMarkText(item?.anchor_text || item?.anchorText || item?.text))
+        .filter(Boolean);
+      if (parts.length) return parts.join(" / ");
+    }
+    const single = normalizeInlineMarkText(anchor.anchor_text || anchor.anchorText || anchor.text);
+    if (single) return single;
+  }
+  return normalizeInlineMarkText(mark.anchor_text || mark.anchorText);
+}
+
+function inlineMarkTitleText(mark) {
+  if (!mark || typeof mark !== "object") return "";
+  const title = normalizeInlineMarkText(
+    mark.title
+    || mark.lookup_text
+    || mark.lookupText
+    || mark.text,
+  );
+  return title || inlineMarkAnchorText(mark);
+}
+
+function inlineMarkLookupKind(mark) {
+  if (!mark || typeof mark !== "object") return "";
+  const glossary = mark.glossary && typeof mark.glossary === "object" ? mark.glossary : null;
+  return normalizeInlineMarkText(
+    mark.lookup_kind
+    || mark.lookupKind
+    || glossary?.phrase_type
+    || glossary?.phraseType,
+  );
+}
+
+function inlineMarkExtraText(mark) {
+  if (!mark || typeof mark !== "object") return "";
+  const glossary = mark.glossary && typeof mark.glossary === "object" ? mark.glossary : null;
+  return normalizeInlineMarkText(
+    mark.extra
+    || glossary?.zh
+    || glossary?.gloss
+    || glossary?.reason
+    || glossary?.phrase_type
+    || glossary?.phraseType,
+  );
+}
+
 function normalizeSentenceMark(mark) {
   return {
-    anchor: String(mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || ""),
-    type: String(mark?.annotation_type || mark?.visual_tone || ""),
-    extra: String(mark?.glossary?.zh || mark?.glossary?.gloss || mark?.glossary?.phrase_type || ""),
+    title: inlineMarkTitleText(mark),
+    anchor: inlineMarkAnchorText(mark),
+    type: normalizeInlineMarkText(mark?.annotation_type || mark?.visual_tone || mark?.type),
+    lookup_kind: inlineMarkLookupKind(mark),
+    extra: inlineMarkExtraText(mark),
   };
 }
 
@@ -2035,11 +2093,14 @@ function compactCompareJudgeInlineMarks(marks) {
   if (!Array.isArray(marks)) return [];
   return marks.slice(0, 6).map((mark) => {
     if (!mark || typeof mark !== "object" || Array.isArray(mark)) return null;
-    return {
-      anchor: truncateJudgeText(mark.anchor || mark.anchor_text || mark.text || "", 80) || null,
+    const compact = {
+      title: truncateJudgeText(inlineMarkTitleText(mark), 80) || null,
+      anchor: truncateJudgeText(inlineMarkAnchorText(mark), 80) || null,
       type: truncateJudgeText(mark.type || mark.annotation_type || mark.visual_tone || "", 40) || null,
-      extra: truncateJudgeText(mark.extra || mark.glossary?.zh || mark.glossary?.gloss || mark.zh || mark.gloss || mark.label || "", 80) || null,
+      lookup_kind: truncateJudgeText(inlineMarkLookupKind(mark), 40) || null,
+      extra: truncateJudgeText(inlineMarkExtraText(mark) || mark.zh || mark.gloss || mark.label || "", 80) || null,
     };
+    return Object.fromEntries(Object.entries(compact).filter(([, value]) => value));
   }).filter(Boolean);
 }
 

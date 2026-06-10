@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import asdict
 from hashlib import sha256
@@ -40,8 +41,9 @@ from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, Vocabula
 from app.schemas.internal.analysis import PreparedSentence
 from app.schemas.internal.execution_plan import GoalExecutionPlan
 from app.services.analysis.postprocess.anchor_resolution import (
+    resolve_explicit_anchor_parts,
     resolve_grammar_anchor_to_source,
-    resolve_text_anchor,
+    resolve_vocabulary_anchor_spans,
 )
 from app.services.analysis.postprocess.draft_validators import (
     validate_grammar_draft,
@@ -393,6 +395,14 @@ def _parse_vocabulary_validation_warning(message: str) -> dict[str, Any]:
             r"^(?P<annotation_type>vocab_highlight|phrase_gloss|context_gloss): text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
             "vocabulary_anchor_not_found",
         ),
+        (
+            r"^(?P<annotation_type>phrase_gloss): span text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
+            "vocabulary_anchor_not_found",
+        ),
+        (
+            r"^(?P<annotation_type>phrase_gloss): spans out of source order in sentence (?P<sentence_id>\S+)$",
+            "phrase_gloss_spans_out_of_order",
+        ),
     ]
 
     for pattern, code in patterns:
@@ -408,18 +418,31 @@ def _parse_vocabulary_validation_warning(message: str) -> dict[str, Any]:
     }
 
 
-def _span_payload(item: Any, sentence_map: dict[str, PreparedSentence]) -> tuple[int, int] | None:
+def _span_payloads(
+    item: Any,
+    sentence_map: dict[str, PreparedSentence],
+) -> list[tuple[int, int]] | None:
     sentence = sentence_map.get(str(getattr(item, "sentence_id", "")))
     if sentence is None:
         return None
-    span = resolve_text_anchor(
+    spans = getattr(item, "spans", None)
+    if spans:
+        parts = [
+            {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
+            for span in spans
+        ]
+        resolved_parts = resolve_explicit_anchor_parts(sentence, parts)
+        if resolved_parts is None:
+            return None
+        return [(part.span.start, part.span.end) for part in resolved_parts]
+    resolved = resolve_vocabulary_anchor_spans(
         sentence,
         str(getattr(item, "text", "")),
         getattr(item, "occurrence", None),
     )
-    if span is None:
+    if resolved is None:
         return None
-    return (span.start, span.end)
+    return [(span.start, span.end) for span in resolved]
 
 
 def _spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
@@ -428,6 +451,20 @@ def _spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
 
 def _span_contains(container: tuple[int, int], inner: tuple[int, int]) -> bool:
     return container[0] <= inner[0] and inner[1] <= container[1]
+
+
+def _span_group_contains(
+    container_group: list[tuple[int, int]],
+    inner: tuple[int, int],
+) -> bool:
+    return any(_span_contains(container, inner) for container in container_group)
+
+
+def _span_groups_overlap(
+    left: list[tuple[int, int]],
+    right: list[tuple[int, int]],
+) -> bool:
+    return any(_spans_overlap(left_span, right_span) for left_span in left for right_span in right)
 
 
 def _vocabulary_duplicate_and_overlap_warnings(
@@ -446,8 +483,14 @@ def _vocabulary_duplicate_and_overlap_warnings(
     for annotation_type, item in typed_items:
         sentence_id = str(getattr(item, "sentence_id", ""))
         text = str(getattr(item, "text", ""))
-        if sentence_id and text:
-            text_groups.setdefault((sentence_id, text.casefold()), []).append((annotation_type, item))
+        spans = _span_payloads(item, sentence_map)
+        anchor_signature = (
+            json.dumps(spans, ensure_ascii=False, separators=(",", ":"))
+            if spans is not None
+            else text.casefold()
+        )
+        if sentence_id and anchor_signature:
+            text_groups.setdefault((sentence_id, anchor_signature), []).append((annotation_type, item))
 
     for (sentence_id, _text_key), items in text_groups.items():
         annotation_types = sorted({annotation_type for annotation_type, _item in items})
@@ -463,21 +506,22 @@ def _vocabulary_duplicate_and_overlap_warnings(
         })
 
     rich_items = [
-        (annotation_type, item, span)
+        (annotation_type, item, spans)
         for annotation_type, item in [
             *[("phrase_gloss", item) for item in draft.phrase_glosses],
             *[("context_gloss", item) for item in draft.context_glosses],
         ]
-        if (span := _span_payload(item, sentence_map)) is not None
+        if (spans := _span_payloads(item, sentence_map)) is not None
     ]
     for vocab in draft.vocab_highlights:
-        vocab_span = _span_payload(vocab, sentence_map)
-        if vocab_span is None:
+        vocab_spans = _span_payloads(vocab, sentence_map)
+        if not vocab_spans:
             continue
+        vocab_span = vocab_spans[0]
         for annotation_type, rich_item, rich_span in rich_items:
             if getattr(rich_item, "sentence_id", "") != vocab.sentence_id:
                 continue
-            if _span_contains(rich_span, vocab_span):
+            if _span_group_contains(rich_span, vocab_span):
                 warnings.append({
                     "code": f"vocab_highlight_subsumed_by_{annotation_type}",
                     "message": f"vocab_highlight 被 {annotation_type} 覆盖: {vocab.text}",
@@ -488,20 +532,20 @@ def _vocabulary_duplicate_and_overlap_warnings(
                 break
 
     phrase_spans = [
-        (item, span)
+        (item, spans)
         for item in draft.phrase_glosses
-        if (span := _span_payload(item, sentence_map)) is not None
+        if (spans := _span_payloads(item, sentence_map)) is not None
     ]
     context_spans = [
-        (item, span)
+        (item, spans)
         for item in draft.context_glosses
-        if (span := _span_payload(item, sentence_map)) is not None
+        if (spans := _span_payloads(item, sentence_map)) is not None
     ]
     for phrase, phrase_span in phrase_spans:
         for context, context_span in context_spans:
             if phrase.sentence_id != context.sentence_id:
                 continue
-            if _spans_overlap(phrase_span, context_span):
+            if _span_groups_overlap(phrase_span, context_span):
                 warnings.append({
                     "code": "phrase_context_overlap",
                     "message": f"phrase_gloss 与 context_gloss 锚点重叠: {phrase.text} / {context.text}",

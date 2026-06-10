@@ -175,6 +175,174 @@ def test_mixed_annotations_project_correctly() -> None:
     assert len(outcome.result.inline_marks) == 3
 
 
+def test_phrase_gloss_schematic_anchor_projects_to_multi_text() -> None:
+    prepared = prepare_input("People often refer to this pattern as a shortcut.")
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+    output = AnnotationOutput(
+        annotations=[
+            PhraseGloss(
+                sentence_id="s1",
+                text="refer to ... as",
+                phrase_type="collocation",
+                zh="把……称作……",
+            )
+        ],
+        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="人们常把这种模式称作捷径。")],
+    )
+
+    outcome = project_to_render_scene(
+        annotation_output=output,
+        prepared_input=prepared,
+        source_type="user_input",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        profile_id=plan.prompt_profile,
+        request_id="test-phrase-multi",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    inline_mark = outcome.result.inline_marks[0]
+    assert inline_mark.annotation_type == "phrase_gloss"
+    assert inline_mark.lookup_text == "refer to ... as"
+    assert inline_mark.anchor.kind == "multi_text"
+    assert [part.anchor_text for part in inline_mark.anchor.parts] == ["refer to", "as"]
+
+
+def test_phrase_gloss_single_explicit_span_projects_to_text_anchor() -> None:
+    prepared = prepare_input("They settled down in the village.")
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+    output = AnnotationOutput(
+        annotations=[
+            PhraseGloss(
+                sentence_id="s1",
+                text="settled down",
+                spans=[SpanRef(text="settled down")],
+                phrase_type="phrasal_verb",
+                zh="安顿下来",
+            )
+        ],
+        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="他们在村里安顿下来。")],
+    )
+
+    outcome = project_to_render_scene(
+        annotation_output=output,
+        prepared_input=prepared,
+        source_type="user_input",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        profile_id=plan.prompt_profile,
+        request_id="test-phrase-single-span",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    inline_mark = outcome.result.inline_marks[0]
+    assert inline_mark.annotation_type == "phrase_gloss"
+    assert inline_mark.lookup_text == "settled down"
+    assert inline_mark.anchor.kind == "text"
+    assert inline_mark.anchor.anchor_text == "settled down"
+
+
+def test_phrase_gloss_explicit_spans_project_to_multi_text() -> None:
+    prepared = prepare_input("People can turn their passion into progress.")
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+    output = AnnotationOutput(
+        annotations=[
+            PhraseGloss(
+                sentence_id="s1",
+                text="turn ... into",
+                spans=[SpanRef(text="turn"), SpanRef(text="into")],
+                phrase_type="phrasal_verb",
+                zh="把……变成……",
+            )
+        ],
+        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="人们可以把热情转化为进步。")],
+    )
+
+    outcome = project_to_render_scene(
+        annotation_output=output,
+        prepared_input=prepared,
+        source_type="user_input",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        profile_id=plan.prompt_profile,
+        request_id="test-phrase-explicit-multi",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    inline_mark = outcome.result.inline_marks[0]
+    assert inline_mark.annotation_type == "phrase_gloss"
+    assert inline_mark.lookup_text == "turn ... into"
+    assert inline_mark.anchor.kind == "multi_text"
+    assert [part.anchor_text for part in inline_mark.anchor.parts] == ["turn", "into"]
+
+
+def test_context_gloss_schematic_anchor_projects_to_multi_text_with_phrase_lookup() -> None:
+    prepared = prepare_input("They apply the rule to unfamiliar cases.")
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+    output = AnnotationOutput(
+        annotations=[
+            ContextGloss(
+                sentence_id="s1",
+                text="apply ... to",
+                gloss="把……应用到……",
+                reason="这里强调把规则迁移到新情境中的用法。",
+            )
+        ],
+        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="他们把这条规则应用到不熟悉的案例中。")],
+    )
+
+    outcome = project_to_render_scene(
+        annotation_output=output,
+        prepared_input=prepared,
+        source_type="user_input",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        profile_id=plan.prompt_profile,
+        request_id="test-context-multi",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    inline_mark = outcome.result.inline_marks[0]
+    assert inline_mark.annotation_type == "context_gloss"
+    assert inline_mark.lookup_text == "apply ... to"
+    assert inline_mark.lookup_kind == "phrase"
+    assert inline_mark.anchor.kind == "multi_text"
+    assert [part.anchor_text for part in inline_mark.anchor.parts] == ["apply", "to"]
+
+
+def test_context_gloss_single_token_keeps_word_lookup() -> None:
+    prepared = prepare_input("The proposal requires careful review.")
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+    output = AnnotationOutput(
+        annotations=[
+            ContextGloss(
+                sentence_id="s1",
+                text="requires",
+                gloss="这里表示“需要”",
+                reason="强调后面动作是必要条件。",
+            )
+        ],
+        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="这项提案需要仔细审查。")],
+    )
+
+    outcome = project_to_render_scene(
+        annotation_output=output,
+        prepared_input=prepared,
+        source_type="user_input",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        profile_id=plan.prompt_profile,
+        request_id="test-context-word",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    inline_mark = outcome.result.inline_marks[0]
+    assert inline_mark.annotation_type == "context_gloss"
+    assert inline_mark.lookup_text == "requires"
+    assert inline_mark.lookup_kind == "word"
+    assert inline_mark.anchor.kind == "text"
+
+
 def test_missing_translation_adds_warning() -> None:
     prepared = prepare_input("First sentence. Second sentence.")
     plan = build_goal_execution_plan("daily_reading", "intermediate_reading")

@@ -12,8 +12,9 @@ from app.schemas.internal.analysis import (
 )
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
 from app.services.analysis.postprocess.anchor_resolution import (
+    resolve_explicit_anchor_parts,
     resolve_grammar_anchor_to_source,
-    resolve_text_anchor,
+    resolve_vocabulary_anchor_binding,
 )
 from app.services.analysis.postprocess.normalize import is_substring
 
@@ -58,11 +59,41 @@ def validate_context_gloss_business_rules(item: ContextGloss) -> list[str]:
 def _vocabulary_anchor_matches(text: str, sentence: PreparedSentence, occurrence: int | None) -> bool:
     if is_substring(text, sentence.text):
         return True
-    return resolve_text_anchor(sentence, text, occurrence) is not None
+    return resolve_vocabulary_anchor_binding(sentence, text, occurrence) is not None
 
 
 def _grammar_anchor_matches(text: str, sentence: PreparedSentence, occurrence: int | None) -> bool:
     return resolve_grammar_anchor_to_source(sentence, text, occurrence) is not None
+
+
+def _phrase_gloss_spans_match(
+    item: PhraseGloss,
+    sentence: PreparedSentence,
+) -> list[str]:
+    if not item.spans:
+        return []
+
+    warnings: list[str] = []
+    previous_end: int | None = None
+    for span in item.spans:
+        parts = [
+            {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
+        ]
+        resolved_parts = resolve_explicit_anchor_parts(sentence, parts)
+        if resolved_parts is None:
+            warnings.append(
+                f"phrase_gloss: span text '{span.text}' not found in sentence {item.sentence_id}"
+            )
+            continue
+        resolved_part = resolved_parts[0]
+        if previous_end is not None and resolved_part.span.start < previous_end:
+            warnings.append(
+                f"phrase_gloss: spans out of source order in sentence {item.sentence_id}"
+            )
+            break
+        previous_end = resolved_part.span.end
+
+    return warnings
 
 
 def validate_vocabulary_draft(
@@ -89,7 +120,9 @@ def validate_vocabulary_draft(
             warnings.append(f"phrase_gloss: sentence_id {p.sentence_id} not found")
             continue
         sentence = sentence_map[p.sentence_id]
-        if not _vocabulary_anchor_matches(p.text, sentence, p.occurrence):
+        if p.spans:
+            warnings.extend(_phrase_gloss_spans_match(p, sentence))
+        elif not _vocabulary_anchor_matches(p.text, sentence, p.occurrence):
             warnings.append(
                 f"phrase_gloss: text '{p.text}' not found in sentence {p.sentence_id}"
             )

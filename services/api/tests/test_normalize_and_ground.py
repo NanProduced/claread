@@ -274,6 +274,175 @@ def test_vocabulary_anchor_punctuation_variant_is_canonicalized_to_source_text()
     assert result.annotations[0].text == "long-term"
 
 
+def test_vocabulary_anchor_schematic_ellipsis_is_preserved_for_multi_text_projection() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                PhraseGloss(
+                    sentence_id="s1",
+                    text="apply ... to",
+                    phrase_type="collocation",
+                    zh="将……应用于……",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", "Participants should immediately apply their learning to a specific intervention.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "phrase_gloss"
+    assert result.annotations[0].text == "apply ... to"
+
+
+def test_phrase_gloss_explicit_spans_are_grounded_without_rewriting_title_text() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                PhraseGloss(
+                    sentence_id="s1",
+                    text="turn ... into",
+                    spans=[SpanRef(text="turn"), SpanRef(text="into")],
+                    phrase_type="phrasal_verb",
+                    zh="把……变成……",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", "Turn their passion into a stable income.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert len(result.annotations) == 1
+    phrase = result.annotations[0]
+    assert phrase.type == "phrase_gloss"
+    assert phrase.text == "turn ... into"
+    assert [span.text for span in phrase.spans or []] == ["Turn", "into"]
+
+
+def test_vocabulary_anchor_without_schematic_notation_is_not_recovered() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                PhraseGloss(
+                    sentence_id="s1",
+                    text="forge a link between",
+                    phrase_type="collocation",
+                    zh="建立联系",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", "They hope to forge a smooth link between learning and doing.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert result.annotations == []
+    assert any(item.drop_reason == "anchor_not_substring" for item in result.drop_log)
+
+
+def test_vocabulary_anchor_pedagogical_pattern_is_preserved_for_multi_text_projection() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                PhraseGloss(
+                    sentence_id="s1",
+                    text="prompt sb to do sth",
+                    phrase_type="collocation",
+                    zh="促使某人做某事",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", "Alternative realities can prompt them to rethink their current beliefs.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "phrase_gloss"
+    assert result.annotations[0].text == "prompt sb to do sth"
+
+
+def test_vocab_highlight_between_schematic_phrase_parts_is_not_dropped() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[VocabHighlight(sentence_id="s1", text="learning")],
+            phrase_glosses=[
+                PhraseGloss(
+                    sentence_id="s1",
+                    text="apply ... to",
+                    phrase_type="collocation",
+                    zh="将……应用于……",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", "Participants should immediately apply their learning to a specific intervention.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert sorted(item.type for item in result.annotations) == ["phrase_gloss", "vocab_highlight"]
+    assert not any(item.drop_reason.startswith("subsumed_by_") for item in result.drop_log)
+
+
+def test_vocab_highlight_between_explicit_phrase_spans_is_not_dropped() -> None:
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[VocabHighlight(sentence_id="s1", text="passion")],
+            phrase_glosses=[
+                PhraseGloss(
+                    sentence_id="s1",
+                    text="turn ... into",
+                    spans=[SpanRef(text="turn"), SpanRef(text="into")],
+                    phrase_type="phrasal_verb",
+                    zh="把……变成……",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        translation_draft=TranslationDraft(
+            title="测试标题",
+            sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="翻译")]
+        ),
+        sentences=[_sentence("s1", "People can turn passion into progress.")],
+        policy=GoalPolicy(annotation_density=3, vocabulary_focus="high_value_only", grammar_focus="balanced", translation_focus="natural"),
+    )
+
+    assert sorted(item.type for item in result.annotations) == ["phrase_gloss", "vocab_highlight"]
+    assert not any(item.drop_reason.startswith("subsumed_by_") for item in result.drop_log)
+
+
 def test_vocabulary_anchor_ambiguous_case_mismatch_is_not_canonicalized() -> None:
     result = normalize_and_ground(
         vocabulary_draft=VocabularyDraft(

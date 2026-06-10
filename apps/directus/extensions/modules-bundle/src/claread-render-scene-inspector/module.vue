@@ -207,7 +207,7 @@ const sentenceRows = computed(() => {
       row.primaryIssue.label,
       row.topWarning,
       row.warnings.map((item) => item.message).join(" "),
-      row.vocabularyMarks.map((item) => describeMarkContent(item)).join(" "),
+      row.vocabularyMarks.map((item) => `${describeMarkTitle(item)} ${describeAnchor(item.anchor)} ${describeMarkContent(item)}`).join(" "),
       row.grammarEvidenceRows.map((item) => `${item.label} ${item.content}`).join(" "),
     ];
     return haystacks.some((value) => String(value || "").toLowerCase().includes(query));
@@ -1374,12 +1374,33 @@ function issueLevelTone(level) {
   return map[level] || "neutral";
 }
 
+function normalizeDisplayText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
 function describeAnchor(anchor) {
   if (!anchor || typeof anchor !== "object") return "未记录";
   if (anchor.kind === "multi_text" && Array.isArray(anchor.parts)) {
     return anchor.parts.map((item) => item?.anchor_text).filter(Boolean).join(" / ") || "未记录";
   }
   return anchor.anchor_text || "未记录";
+}
+
+function describeMarkTitle(mark) {
+  if (!mark || typeof mark !== "object") return "未记录";
+  const lookupText = normalizeDisplayText(mark.lookup_text || mark.lookupText);
+  if (lookupText) return lookupText;
+  return describeAnchor(mark.anchor);
+}
+
+function markShowsDistinctAnchor(mark) {
+  const title = describeMarkTitle(mark);
+  const anchor = describeAnchor(mark?.anchor);
+  return (
+    title !== "未记录"
+    && anchor !== "未记录"
+    && normalizeDisplayText(title).toLocaleLowerCase() !== normalizeDisplayText(anchor).toLocaleLowerCase()
+  );
 }
 
 function describeMarkContent(mark) {
@@ -2439,7 +2460,11 @@ onBeforeUnmount(() => {
                       <li v-for="item in selectedSentence.vocabularyMarks" :key="item.id" class="detail-list-item">
                         <div class="detail-item-top">
                           <span class="badge tone-success">{{ translateMarkType(item.annotation_type || item.visual_tone) }}</span>
-                          <strong class="detail-anchor">{{ describeAnchor(item.anchor) }}</strong>
+                          <strong class="detail-anchor">{{ describeMarkTitle(item) }}</strong>
+                        </div>
+                        <div v-if="markShowsDistinctAnchor(item)" class="detail-content detail-item-copy">
+                          <strong class="detail-inline-label">原文锚点</strong>
+                          <span>{{ describeAnchor(item.anchor) }}</span>
                         </div>
                         <div v-if="describeMarkContent(item)" class="detail-content detail-item-copy">{{ describeMarkContent(item) }}</div>
                       </li>

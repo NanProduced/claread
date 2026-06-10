@@ -130,6 +130,7 @@ function phraseTypeLabel(phraseType) {
     collocation: "固定搭配",
     idiom: "习语",
     phrasal_verb: "短语动词",
+    proper_noun: "专有名词",
     fixed_expression: "固定表达",
     discourse_marker: "话语标记",
     compound: "复合词",

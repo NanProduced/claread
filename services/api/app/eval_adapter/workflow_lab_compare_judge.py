@@ -62,6 +62,44 @@ def _truncate_prompt_text(value: Any, max_chars: int) -> str:
     return " ".join(text.split())[:max_chars]
 
 
+def _inline_mark_anchor_text(item: dict[str, Any]) -> str:
+    anchor = item.get("anchor")
+    if isinstance(anchor, dict):
+        if anchor.get("kind") == "multi_text" and isinstance(anchor.get("parts"), list):
+            parts = [
+                _truncate_prompt_text(
+                    part.get("anchor_text") or part.get("anchorText") or part.get("text") or "",
+                    PROMPT_MAX_MARK_TEXT_CHARS,
+                )
+                for part in anchor["parts"]
+                if isinstance(part, dict)
+            ]
+            parts = [part for part in parts if part]
+            if parts:
+                return " / ".join(parts)
+        return _truncate_prompt_text(
+            anchor.get("anchor_text") or anchor.get("anchorText") or anchor.get("text") or "",
+            PROMPT_MAX_MARK_TEXT_CHARS,
+        )
+    if isinstance(anchor, str) and anchor.strip():
+        return _truncate_prompt_text(anchor, PROMPT_MAX_MARK_TEXT_CHARS)
+    return _truncate_prompt_text(
+        item.get("anchor_text") or item.get("anchorText") or item.get("text") or "",
+        PROMPT_MAX_MARK_TEXT_CHARS,
+    )
+
+
+def _inline_mark_title_text(item: dict[str, Any]) -> str:
+    return _truncate_prompt_text(
+        item.get("title")
+        or item.get("lookup_text")
+        or item.get("lookupText")
+        or item.get("text")
+        or _inline_mark_anchor_text(item),
+        PROMPT_MAX_MARK_TEXT_CHARS,
+    )
+
+
 def _compact_inline_marks(raw_marks: Any) -> list[dict[str, str]]:
     if not isinstance(raw_marks, list):
         return []
@@ -70,14 +108,8 @@ def _compact_inline_marks(raw_marks: Any) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         entry = {
-            "anchor": _truncate_prompt_text(
-                (item.get("anchor") if isinstance(item.get("anchor"), dict) else {}).get("anchor_text")
-                or item.get("anchor_text")
-                or (item.get("anchor") if isinstance(item.get("anchor"), str) else "")
-                or item.get("text")
-                or "",
-                PROMPT_MAX_MARK_TEXT_CHARS,
-            ),
+            "title": _inline_mark_title_text(item),
+            "anchor": _inline_mark_anchor_text(item),
             "type": _truncate_prompt_text(
                 item.get("annotation_type")
                 or item.get("type")
@@ -85,9 +117,18 @@ def _compact_inline_marks(raw_marks: Any) -> list[dict[str, str]]:
                 or "",
                 40,
             ),
+            "lookup_kind": _truncate_prompt_text(
+                item.get("lookup_kind")
+                or item.get("lookupKind")
+                or (item.get("glossary") if isinstance(item.get("glossary"), dict) else {}).get("phrase_type")
+                or (item.get("glossary") if isinstance(item.get("glossary"), dict) else {}).get("phraseType")
+                or "",
+                40,
+            ),
             "extra": _truncate_prompt_text(
                 (item.get("glossary") if isinstance(item.get("glossary"), dict) else {}).get("zh")
                 or (item.get("glossary") if isinstance(item.get("glossary"), dict) else {}).get("gloss")
+                or (item.get("glossary") if isinstance(item.get("glossary"), dict) else {}).get("reason")
                 or item.get("extra")
                 or item.get("zh")
                 or item.get("gloss")

@@ -99,7 +99,7 @@ export default {
         grammar_note: { type: "grammar_note", spans: [], label: "", note_zh: "" },
         sentence_analysis: { type: "sentence_analysis", label: "", analysis_zh: "", chunks: [] },
         vocab_highlight: { type: "vocab_highlight", text: "" },
-        phrase_gloss: { type: "phrase_gloss", text: "", phrase_type: "", zh: "" },
+        phrase_gloss: { type: "phrase_gloss", text: "", spans: [], phrase_type: "", zh: "" },
         context_gloss: { type: "context_gloss", text: "", gloss: "", reason: "" },
         translation: { type: "translation", sentence_id: "", translation_zh: "" },
         academic_translation: { type: "translation", sentence_id: "", translation_zh: "", translation_notes: [] },
@@ -414,12 +414,15 @@ export default {
       };
 
       // --- Spans editor ---
-      const renderSpansEditor = () => {
+      const renderSpansEditor = (options = {}) => {
+        const labelZh = options.labelZh || "高亮锚点";
+        const emptyText = options.emptyText || "暂无 span，点击上方按钮添加";
+        const placeholder = options.placeholder || "锚点文本（如 Not only、did）";
         const spans = formData.value.spans || [];
         return h("div", { style: sectionStyle }, [
           h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, [
             h("label", { style: labelStyle }, [
-              "高亮锚点 ",
+              `${labelZh} `,
               h("span", { style: fieldCodeStyle }, "spans"),
             ]),
             !props.disabled && h("button", {
@@ -434,13 +437,13 @@ export default {
           ]),
           spans.length === 0 && h("div", {
             style: { fontSize: "12px", color: "var(--theme--foreground-subdued, #6B7280)", padding: "4px 0" },
-          }, "暂无 span，点击上方按钮添加"),
+          }, emptyText),
           ...spans.map((span, i) =>
             h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginBottom: "4px" } }, [
               h("span", { style: { fontSize: "11px", color: "var(--theme--foreground-subdued)", minWidth: "20px" } }, `${i + 1}.`),
               h("input", {
                 type: "text", value: span.text || "", disabled: props.disabled,
-                placeholder: "锚点文本（如 Not only、did）",
+                placeholder,
                 style: { ...inputStyle, flex: "1 1 auto" },
                 onInput: (e) => updateArrayItem("spans", i, "text", e.target.value),
               }),
@@ -578,11 +581,18 @@ export default {
       ];
 
       const renderPhraseGlossForm = () => [
-        renderTextField("text", "短语文本", "text", "如 give up、account for"),
+        renderTextField("text", "短语标题 / lookup", "text", "如 turn ... into、cross one's path"),
+        renderSpansEditor({
+          labelZh: "原文锚点",
+          emptyText: "连续短语通常填 1 段；不连续短语填 2-4 段原文证据",
+          placeholder: "原文中的连续片段（如 turn、into）",
+        }),
         renderSelectField("phrase_type", "短语类型", "phrase_type", [
           { text: "phrasal_verb — 动词短语", value: "phrasal_verb" },
           { text: "collocation — 搭配", value: "collocation" },
           { text: "idiom — 习语", value: "idiom" },
+          { text: "proper_noun — 专有名词", value: "proper_noun" },
+          { text: "compound — 复合概念", value: "compound" },
         ], { placeholder: "-- 选择短语类型 --" }),
         renderTextareaField("zh", "中文释义", "zh", "短语的中文释义和用法说明", 3),
       ];
