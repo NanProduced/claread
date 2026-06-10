@@ -208,6 +208,7 @@ function emptyTextForNode(nodeName) {
               :node-name="state.activeNode"
               :output="scopedOutputForRow(row.baseline, state.activeNode)"
               :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+              :quick-validation="compareResult?.baseline?.quick_validation || null"
               empty-text="该句没有词汇标注。"
             />
           </template>
@@ -294,6 +295,7 @@ function emptyTextForNode(nodeName) {
               :node-name="state.activeNode"
               :output="scopedOutputForRow(row.baseline, state.activeNode)"
               :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+              :quick-validation="compareResult?.baseline?.quick_validation || null"
               empty-text="该句在 Baseline 中没有词汇标注。"
             />
             <div v-else class="compare-empty">该句在 Baseline 中没有词汇标注。</div>
@@ -367,6 +369,7 @@ function emptyTextForNode(nodeName) {
               :node-name="state.activeNode"
               :output="scopedOutputForRow(row.candidate, state.activeNode)"
               :prepared-sentences="scopedPreparedSentences(compareResult?.candidate, row.sentenceId)"
+              :quick-validation="compareResult?.candidate?.quick_validation || null"
               empty-text="该句在 Candidate 中没有词汇标注。"
             />
             <div v-else class="compare-empty">该句在 Candidate 中没有词汇标注。</div>

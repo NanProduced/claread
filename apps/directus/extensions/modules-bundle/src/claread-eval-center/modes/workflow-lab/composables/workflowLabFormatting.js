@@ -87,6 +87,67 @@ export function sceneWarnings(scene) {
   return Array.isArray(scene?.warnings) ? scene.warnings : [];
 }
 
+function normalizeDisplayText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
+    .trim()
+    .toLowerCase();
+}
+
+export function inlineMarkAnchorParts(mark) {
+  const anchor = mark?.anchor;
+  if (!anchor || typeof anchor !== "object") return [];
+  if (anchor.kind === "multi_text" && Array.isArray(anchor.parts)) {
+    return anchor.parts
+      .map((part) => ({
+        text: String(part?.anchor_text ?? part?.anchorText ?? "").trim(),
+        occurrence: Number(part?.occurrence) || 1,
+        role: String(part?.role || "").trim(),
+      }))
+      .filter((part) => part.text);
+  }
+  const text = String(anchor.anchor_text ?? anchor.anchorText ?? anchor.text ?? "").trim();
+  if (!text) return [];
+  return [{
+    text,
+    occurrence: Number(anchor.occurrence) || 1,
+    role: String(anchor.role || "").trim(),
+  }];
+}
+
+export function inlineMarkAnchorText(mark, separator = " / ") {
+  const parts = inlineMarkAnchorParts(mark);
+  return parts.map((part) => part.text).join(separator).trim();
+}
+
+export function inlineMarkLookupText(mark) {
+  return String(mark?.lookup_text ?? mark?.lookupText ?? "").trim();
+}
+
+export function inlineMarkDisplayTitle(mark) {
+  const lookup = inlineMarkLookupText(mark);
+  const anchor = inlineMarkAnchorText(mark);
+  const fallback = String(mark?.label || mark?.title || "").trim();
+  return lookup || anchor || fallback || "—";
+}
+
+export function inlineMarkShowsDistinctAnchor(mark) {
+  const title = inlineMarkDisplayTitle(mark);
+  const anchor = inlineMarkAnchorText(mark);
+  if (!anchor) return false;
+  return normalizeDisplayText(title) !== normalizeDisplayText(anchor);
+}
+
+export function inlineMarkPrimarySummary(mark) {
+  return String(mark?.glossary?.zh || mark?.glossary?.gloss || "").trim();
+}
+
+export function inlineMarkSecondarySummary(mark) {
+  return String(mark?.glossary?.reason || mark?.glossary?.phrase_type || "").trim();
+}
+
 export function formatRunIdentity(run) {
   const variant = run?.prompt_variant_id || "baseline";
   const totalCases = run?.learning_case_count ?? run?.total_cases ?? 0;

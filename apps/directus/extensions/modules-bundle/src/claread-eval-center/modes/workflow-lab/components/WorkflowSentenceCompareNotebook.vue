@@ -4,6 +4,11 @@ import {
   chipSideLabel,
   chipTooltip,
   extractHealthSignals,
+  inlineMarkAnchorText,
+  inlineMarkDisplayTitle,
+  inlineMarkPrimarySummary,
+  inlineMarkSecondarySummary,
+  inlineMarkShowsDistinctAnchor,
   mergeSentenceWarningChips,
   normalizeWorkflowScene,
   sceneInlineMarks,
@@ -118,10 +123,6 @@ const MARK_TYPES = {
   sentence_analysis: { label: "句法", tone: "analysis" },
 };
 
-function noteAnchorText(item) {
-  return item?.anchor?.anchor_text || item?.anchor?.text || item?.lookup_text || item?.label || item?.title || "—";
-}
-
 function linkedIdKey(rawId) {
   const value = String(rawId || "").trim();
   return value ? value.replace(/^[a-z]+_/, "") : "";
@@ -173,13 +174,16 @@ function renderSimpleMarkdown(value) {
 }
 
 function formatMark(mark) {
-  const anchor = noteAnchorText(mark);
+  const anchor = inlineMarkAnchorText(mark);
+  const title = inlineMarkDisplayTitle(mark);
   const rawType = mark?.annotation_type || mark?.visual_tone || "mark";
   const typeInfo = MARK_TYPES[rawType] || { label: String(rawType).toUpperCase(), tone: "neutral" };
-  const primary = mark?.glossary?.zh || mark?.glossary?.gloss || mark?.lookup_text || "";
-  const detail = mark?.glossary?.reason || mark?.glossary?.phrase_type || "";
+  const primary = inlineMarkPrimarySummary(mark);
+  const detail = inlineMarkSecondarySummary(mark);
   return {
+    title: String(title),
     anchor: String(anchor),
+    showAnchor: inlineMarkShowsDistinctAnchor(mark),
     type: typeInfo.label,
     tone: typeInfo.tone,
     primary: primary ? String(primary) : "",
@@ -196,7 +200,7 @@ function formatEntry(entry, marks = []) {
   return {
     label: String(label),
     content: content ? String(content) : "—",
-    anchor: linkedMark ? noteAnchorText(linkedMark) : "",
+    anchor: linkedMark ? inlineMarkAnchorText(linkedMark) : "",
     tone: entryType === "sentence_analysis" ? "analysis" : entryType === "grammar_note" ? "grammar" : "neutral",
     isSentenceAnalysis: entryType === "sentence_analysis",
     html: entryType === "sentence_analysis" ? renderSimpleMarkdown(content) : "",
@@ -631,7 +635,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">词解</span>
                       <ul class="subgroup-items">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).vocab" :key="`bm-vocab-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-vocab">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-vocab">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -642,7 +647,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">短语</span>
                       <ul class="subgroup-items">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).phrase" :key="`bm-phrase-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-phrase">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-phrase">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -653,7 +659,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">语境</span>
                       <ul class="subgroup-items">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).context" :key="`bm-context-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-context">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-context">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -670,7 +677,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">词解</span>
                       <ul class="subgroup-items">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.candidate).vocab" :key="`cm-vocab-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-vocab">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-vocab">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -681,7 +689,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">短语</span>
                       <ul class="subgroup-items">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.candidate).phrase" :key="`cm-phrase-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-phrase">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-phrase">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -692,7 +701,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">语境</span>
                       <ul class="subgroup-items">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.candidate).context" :key="`cm-context-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-context">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-context">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -711,7 +721,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">词解</span>
                       <ul class="subgroup-items inline-list">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).vocab" :key="`bm-vocab-unified-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-vocab">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-vocab">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -722,7 +733,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">短语</span>
                       <ul class="subgroup-items inline-list">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).phrase" :key="`bm-phrase-unified-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-phrase">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-phrase">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -733,7 +745,8 @@ function verdictLabel(verdict) {
                       <span class="subgroup-badge">语境</span>
                       <ul class="subgroup-items inline-list">
                         <li v-for="(mark, i) in getGroupedMarks(row.marks.baseline).context" :key="`bm-context-unified-${row.sid}-${i}`">
-                          <span class="eval-anchor-chip tone-context">{{ mark.anchor }}</span>
+                          <strong class="mark-title">{{ mark.title }}</strong>
+                          <span v-if="mark.showAnchor" class="eval-anchor-chip tone-context">原文: {{ mark.anchor }}</span>
                           <span v-if="mark.primary" class="mark-extra">{{ mark.primary }}</span>
                           <span v-if="mark.detail" class="mark-detail">{{ mark.detail }}</span>
                         </li>
@@ -1266,6 +1279,11 @@ function verdictLabel(verdict) {
 .mark-extra,
 .entry-content {
   color: var(--theme--foreground);
+}
+.mark-title {
+  color: var(--theme--foreground);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .mark-detail {

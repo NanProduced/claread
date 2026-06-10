@@ -90,7 +90,14 @@ export function isStructuredJsonValue(value) {
 export function quickValidationLabel(validation) {
   if (!validation) return "未校验";
   if (validation.status === "pass") return "通过";
-  if (validation.status === "warning") return `${validation.warning_count || 0} 条警告`;
+  if (validation.status === "warning") {
+    const hardCount = Number(validation.hard_warning_count ?? validation.warning_count ?? 0);
+    const softCount = Number(validation.soft_warning_count ?? validation.soft_warnings?.length ?? 0);
+    if (hardCount > 0 && softCount > 0) return `${hardCount} 条硬警告 / ${softCount} 条观察`;
+    if (hardCount > 0) return `${hardCount} 条硬警告`;
+    if (softCount > 0) return `${softCount} 条观察`;
+    return `${validation.warning_count || 0} 条警告`;
+  }
   if (validation.status === "error") return "校验异常";
   return validation.status || "未校验";
 }

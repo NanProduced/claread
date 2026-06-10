@@ -3,6 +3,12 @@ import { computed } from "vue";
 import {
   dash,
   extractHealthSignals,
+  inlineMarkAnchorParts,
+  inlineMarkAnchorText,
+  inlineMarkDisplayTitle,
+  inlineMarkPrimarySummary,
+  inlineMarkSecondarySummary,
+  inlineMarkShowsDistinctAnchor,
   normalizeWorkflowScene,
   sceneInlineMarks,
   sceneSentenceEntries,
@@ -96,20 +102,12 @@ function grammarEntryTypeLabel(entry) {
   }
 }
 
-function noteAnchorText(item) {
-  return item?.anchor?.anchor_text || item?.anchor?.text || item?.lookup_text || item?.label || item?.title || "—";
-}
-
 function lexicalMarkSummary(mark) {
-  return mark?.glossary?.zh
-    || mark?.glossary?.gloss
-    || mark?.lookup_text
-    || mark?.anchor?.anchor_text
-    || "未提供释义";
+  return inlineMarkPrimarySummary(mark) || "未提供释义";
 }
 
 function lexicalMarkDetail(mark) {
-  return mark?.glossary?.reason || mark?.glossary?.phrase_type || "";
+  return inlineMarkSecondarySummary(mark);
 }
 
 function parseSentenceAnalysisContent(content) {
@@ -174,17 +172,19 @@ function orderKey(sentenceId) {
 function buildAnchorGroups(marks = []) {
   const groups = new Map();
   for (const mark of marks) {
-    const anchorText = noteAnchorText(mark);
-    const occurrence = Number(mark?.anchor?.occurrence) || 1;
-    const key = `${anchorText}::${occurrence}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        anchorText,
-        occurrence,
-        types: new Set(),
-      });
+    for (const part of inlineMarkAnchorParts(mark)) {
+      const anchorText = part.text;
+      const occurrence = Number(part.occurrence) || 1;
+      const key = `${anchorText}::${occurrence}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          anchorText,
+          occurrence,
+          types: new Set(),
+        });
+      }
+      groups.get(key).types.add(String(mark?.annotation_type || ""));
     }
-    groups.get(key).types.add(String(mark?.annotation_type || ""));
   }
   return Array.from(groups.values()).map((group) => {
     const types = [...group.types];
@@ -318,7 +318,9 @@ const sentenceRows = computed(() => {
       const lexicalMarks = marks
         .filter((item) => item?.annotation_type !== "grammar_note")
         .map((item) => ({
-          anchor: noteAnchorText(item),
+          anchor: inlineMarkAnchorText(item),
+          title: inlineMarkDisplayTitle(item),
+          showAnchor: inlineMarkShowsDistinctAnchor(item),
           typeLabel: lexicalMarkTypeLabel(item),
           summary: lexicalMarkSummary(item),
           detail: lexicalMarkDetail(item),
@@ -351,7 +353,7 @@ const sentenceRows = computed(() => {
             .filter(Boolean)
             .filter((chunkText) => !originalText || !originalText.includes(chunkText));
           return {
-            anchor: linkedMark ? noteAnchorText(linkedMark) : noteAnchorText(item),
+            anchor: linkedMark ? inlineMarkAnchorText(linkedMark) : inlineMarkAnchorText(item),
             label: grammarEntryTypeLabel(item),
             title: item?.label || item?.title || grammarEntryTypeLabel(item),
             content: String(item?.content || "—"),
@@ -370,18 +372,18 @@ const sentenceRows = computed(() => {
       );
       const grammarMarks = marks
         .filter((item) => item?.annotation_type === "grammar_note")
-        .filter((item) => !linkedGrammarMarkKeys.has(linkedIdKey(item?.id)))
-        .map((item) => ({
-          anchor: noteAnchorText(item),
-          label: "语法",
-          content: lexicalMarkSummary(item),
-          detail: lexicalMarkDetail(item),
+          .filter((item) => !linkedGrammarMarkKeys.has(linkedIdKey(item?.id)))
+          .map((item) => ({
+            anchor: inlineMarkAnchorText(item),
+            label: "语法",
+            content: lexicalMarkSummary(item),
+            detail: lexicalMarkDetail(item),
           tone: "tone-grammar-note",
         }));
       const supplementalEntries = entries
         .filter((item) => item?.entry_type !== "grammar_note" && item?.entry_type !== "sentence_analysis")
         .map((item) => ({
-          anchor: noteAnchorText(item),
+          anchor: inlineMarkAnchorText(item),
           label: grammarEntryTypeLabel(item),
           title: item?.label || item?.title || grammarEntryTypeLabel(item),
           content: String(item?.content || "—"),
@@ -458,7 +460,8 @@ const sentenceRows = computed(() => {
                 <div class="note-head">
                   <span class="type-stripe" :class="mark.tone" aria-hidden="true"></span>
                   <span class="eval-mark-type" :class="mark.tone">{{ mark.typeLabel }}</span>
-                  <span class="eval-anchor-chip" :class="mark.tone">{{ mark.anchor }}</span>
+                  <strong class="mark-title">{{ mark.title }}</strong>
+                  <span v-if="mark.showAnchor" class="eval-anchor-chip" :class="mark.tone">原文: {{ mark.anchor }}</span>
                 </div>
                 <p class="note-body">{{ mark.summary }}</p>
                 <p v-if="mark.detail" class="note-detail">{{ mark.detail }}</p>
@@ -1160,6 +1163,12 @@ const sentenceRows = computed(() => {
 .entry-title {
   color: var(--theme--foreground);
   font-size: 13px;
+}
+
+.mark-title {
+  color: var(--theme--foreground);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .note-body {

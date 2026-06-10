@@ -4,6 +4,11 @@ import ResultBlock from "../../../components/ResultBlock.vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
 import {
   dash,
+  inlineMarkAnchorText,
+  inlineMarkDisplayTitle,
+  inlineMarkPrimarySummary,
+  inlineMarkSecondarySummary,
+  inlineMarkShowsDistinctAnchor,
   normalizeWorkflowScene,
   sceneInlineMarks,
   sceneSentenceEntries,
@@ -26,8 +31,39 @@ const sentenceEntries = computed(() => sceneSentenceEntries(scene.value));
 const warnings = computed(() => sceneWarnings(scene.value));
 const dropLog = computed(() => Array.isArray(props.payload?.drop_log) ? props.payload.drop_log : []);
 
-function anchorText(mark) {
-  return mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || "-";
+function annotationTypeLabel(mark) {
+  switch (mark?.annotation_type) {
+    case "vocab_highlight":
+      return "词汇";
+    case "phrase_gloss":
+      return "短语";
+    case "context_gloss":
+      return "语境";
+    case "grammar_note":
+      return "语法";
+    default:
+      return mark?.annotation_type || "标注";
+  }
+}
+
+function markTitle(mark) {
+  return inlineMarkDisplayTitle(mark);
+}
+
+function markAnchor(mark) {
+  return inlineMarkAnchorText(mark);
+}
+
+function markShowAnchor(mark) {
+  return inlineMarkShowsDistinctAnchor(mark);
+}
+
+function markSummary(mark) {
+  return inlineMarkPrimarySummary(mark) || mark?.visual_tone || "未提供说明";
+}
+
+function markDetail(mark) {
+  return inlineMarkSecondarySummary(mark);
 }
 </script>
 
@@ -73,10 +109,12 @@ function anchorText(mark) {
           <div v-if="inlineMarks.length" class="card-list">
             <article v-for="(item, index) in inlineMarks" :key="`mark-${index}`" class="scene-card">
               <div class="card-row">
-                <strong>{{ dash(anchorText(item)) }}</strong>
-                <span>{{ dash(item.annotation_type) }}</span>
+                <strong>{{ dash(markTitle(item)) }}</strong>
+                <span>{{ dash(annotationTypeLabel(item)) }}</span>
               </div>
-              <p>{{ dash(item.visual_tone, "未提供 visual tone") }}</p>
+              <p v-if="markShowAnchor(item)" class="anchor-line">原文锚点：{{ markAnchor(item) }}</p>
+              <p>{{ dash(markSummary(item), "未提供说明") }}</p>
+              <p v-if="markDetail(item)" class="card-detail">{{ markDetail(item) }}</p>
             </article>
           </div>
           <p v-else class="empty-line">暂无行内标注。</p>
@@ -240,6 +278,12 @@ function anchorText(mark) {
 .scene-card p {
   margin: 0;
   line-height: 1.55;
+}
+
+.scene-card .anchor-line,
+.scene-card .card-detail {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
 }
 
 .quality-strip {
