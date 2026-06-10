@@ -38,10 +38,9 @@ gaokao:
 - example_type: grammar
   sentence_text: The report describes a point at which small changes in temperature
     can lead to serious effects on local wildlife.
-  output_fragment: '{"type":"grammar_note","spans":[{"text":"at which small changes
-    in temperature can lead to serious effects on local wildlife"}],"label":"介词 +
-    which 引导定语从句","note_zh":"这是“介词 + which”引导的定语从句，修饰先行词 a point。at which 相当于 at
-    the point，表示“在这个点上”。高考中这类结构常考介词和关系代词的搭配；阅读时要把从句理解为对 point 的具体解释：温度的小变化会在这个临界点产生严重影响。"}'
+  output_fragment: '{"type":"grammar_note","spans":[{"text":"a point"},{"text":"at
+    which"}],"label":"介词 + which 引导定语从句","note_zh":"a point 是先行词，at which 引导定语从句，相当于
+    at the point where，表示“在这个点上”。后面的从句具体说明：在这个临界点上，温度的小变化会对当地野生动物产生严重影响。高考常考介词和关系代词的搭配，也常考先行词与从句含义的对应。"}'
 - example_type: grammar
   sentence_text: It was not the cost of the program but the lack of public trust that
     made the plan difficult to carry out.

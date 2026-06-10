@@ -126,8 +126,7 @@ class SentenceTranslation(BaseModel):
 class SpanRef(BaseModel):
     """语法旁注的原文定位锚点。
 
-    该字段用于把 grammar_note 绑定到原句中的可见证据文本，不等于语法点的完整讲解范围。
-    完整结构关系、阅读提示和考试提示应由 GrammarNote.note_zh 说明。
+    用于把 grammar_note 绑定到原句中的原文证据。
     """
 
     model_config = BASE_MODEL_CONFIG
@@ -135,11 +134,9 @@ class SpanRef(BaseModel):
     text: str = Field(
         min_length=1,
         description=(
-            "原句中的精确可见子串，用作 grammar_note 的原文证据文本；不是完整讲解范围。"
-            "可以是局部证据，也可以是完整结构，只要最终能对应到原句中的真实文本；"
-            "不要用 ... 或省略号代替原文中间内容。"
+            "原句中的精确连续可见子串，用作 grammar_note 的原文证据文本。"
+            "必须对应原句中的真实文本；禁止使用省略号或改写后的概括性文本。"
         ),
-        examples=["which was conducted by researchers from Harvard", "at which small changes in temperature can lead to serious effects on local wildlife"],
     )
     occurrence: int | None = Field(
         default=None, ge=1, description="同一句中该文本第几次出现"
@@ -238,8 +235,7 @@ class GrammarNote(BaseModel):
         min_length=1,
         max_length=4,
         description=(
-            "语法旁注在原文中的证据文本列表。spans 只负责 UI 原文绑定，不负责覆盖完整语法关系；"
-            "连续结构可用 1 个 span，不连续结构可用多个 span。"
+            "1-4 个原文证据锚点列表，连续结构通常使用 1 个 span。"
         ),
     )
     label: str = Field(min_length=1, description="语法点名称")
