@@ -20,6 +20,7 @@
 - `apps/miniprogram/`：微信小程序 TypeScript 项目，Serena 项目名 `claread-miniprogram`。
 - `apps/directus/`：Directus TypeScript 项目，Serena 项目名 `claread-directus`；如任务只涉及具体 extension package，可进一步收窄范围。
 - 跨多个子项目的任务，优先用 RTK / shell / git diff 做仓库级检索；只有确实需要跨项目符号能力时，才专门配置 root Serena monorepo project，并显式配置多语言，不使用自动推断出的单一语言项目。
+- 未经用户明确要求，不写 Serena memory；需要沉淀长期事实时更新正式文档或对应 `AGENTS.md`。如果 Serena memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
 
 ## 目录边界
 

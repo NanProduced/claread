@@ -13,6 +13,7 @@
 
 - 需要 Serena 做符号级检索、引用分析或重构时，只激活当前子项目 `claread-api`。
 - 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
+- 未经用户明确要求，不写 Serena memory；长期事实应更新正式文档或本 `AGENTS.md`。如果 memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
 
 ## Workflow
 
@@ -24,6 +25,8 @@
 
 - prompt 继续使用 `prompts/registry.yaml` 管理版本。
 - 模型配置继续使用 profile / preset / request-level `model_selection`。
+- `MODEL_PROFILES_JSON` 当前固定为 `providers / models / profiles` 三层；provider 负责兼容性与鉴权，model 负责远端模型名，profile 负责场景设置。
+- Ask Claread 的 thinking 开关必须由 profile 或 route settings 决定，不能在业务代码里强制改写。
 - LangSmith 主要依赖 `@traceable(run_type="llm")` 子 span；PydanticAI agent 当前为 `instrument=False`。
 - 新增 LLM 节点时必须补 provider/model metadata 和 usage metadata。
 

@@ -12,6 +12,7 @@
 
 - 需要 Serena 做符号级检索、引用分析或重构时，只激活当前子项目 `claread-miniprogram`。
 - 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
+- 未经用户明确要求，不写 Serena memory；长期事实应更新正式文档或本 `AGENTS.md`。如果 memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
 
 ## 当前基线
 
