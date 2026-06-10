@@ -3981,6 +3981,7 @@ export function ReaderWorkbench({
                   selectionFocusRangesBySentence={selectionFocusRangesBySentence}
                   contextFocusRangesBySentence={contextFocusRangesBySentence}
                   hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+                  activeInlineMarkKey={activeInspect?.markId ?? null}
                   assetProjection={assetProjection}
                   readerNotesBySentence={readerNotesBySentence}
                   onAnnotationJump={jumpToAnnotation}
@@ -4013,6 +4014,7 @@ export function ReaderWorkbench({
                   selectionFocusRangesBySentence={selectionFocusRangesBySentence}
                   contextFocusRangesBySentence={contextFocusRangesBySentence}
                   hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+                  activeInlineMarkKey={activeInspect?.markId ?? null}
                   assetProjection={assetProjection}
                   readerNotesBySentence={readerNotesBySentence}
                   activeReaderNoteId={activeReaderNoteId}

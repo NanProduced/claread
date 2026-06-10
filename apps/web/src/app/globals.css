@@ -1597,7 +1597,10 @@ select {
 }
 
 .reader-mark--vocab.reader-mark--interactive:hover,
-.reader-mark--vocab.reader-mark--interactive:focus-visible {
+.reader-mark--vocab.reader-mark--interactive:focus-visible,
+.reader-mark--vocab.reader-mark--group-hovered,
+.reader-mark--vocab.reader-mark--group-focused,
+.reader-mark--vocab.reader-mark--group-active {
   color: var(--reader-mark-vocab-hover-ink);
   background: var(--reader-mark-vocab-hover-fill);
   box-shadow: none;
@@ -1613,7 +1616,10 @@ select {
 }
 
 .reader-mark--phrase.reader-mark--interactive:hover,
-.reader-mark--phrase.reader-mark--interactive:focus-visible {
+.reader-mark--phrase.reader-mark--interactive:focus-visible,
+.reader-mark--phrase.reader-mark--group-hovered,
+.reader-mark--phrase.reader-mark--group-focused,
+.reader-mark--phrase.reader-mark--group-active {
   color: var(--reader-mark-phrase-hover-ink);
   background: var(--reader-mark-phrase-hover-fill);
   box-shadow: none;
@@ -1629,7 +1635,10 @@ select {
 }
 
 .reader-mark--context.reader-mark--interactive:hover,
-.reader-mark--context.reader-mark--interactive:focus-visible {
+.reader-mark--context.reader-mark--interactive:focus-visible,
+.reader-mark--context.reader-mark--group-hovered,
+.reader-mark--context.reader-mark--group-focused,
+.reader-mark--context.reader-mark--group-active {
   color: var(--reader-mark-context-hover-ink);
   background: var(--reader-mark-context-hover-fill);
   box-shadow: none;
@@ -1681,8 +1690,14 @@ select {
 
 .reader-mark--grammar.reader-mark--interactive:hover,
 .reader-mark--grammar.reader-mark--interactive:focus-visible,
+.reader-mark--grammar.reader-mark--group-hovered,
+.reader-mark--grammar.reader-mark--group-focused,
+.reader-mark--grammar.reader-mark--group-active,
 .reader-mark--interactive:hover .reader-mark--grammar-segment,
 .reader-mark--interactive:focus-visible .reader-mark--grammar-segment,
+.reader-mark--group-hovered .reader-mark--grammar-segment,
+.reader-mark--group-focused .reader-mark--grammar-segment,
+.reader-mark--group-active .reader-mark--grammar-segment,
 .reader-mark--grammar-linked {
   background-image: linear-gradient(
     to right,
@@ -1752,7 +1767,10 @@ select {
   transition: background 160ms ease, color 160ms ease;
 }
 
-.reader-mark--term.reader-mark--interactive:hover {
+.reader-mark--term.reader-mark--interactive:hover,
+.reader-mark--term.reader-mark--group-hovered,
+.reader-mark--term.reader-mark--group-focused,
+.reader-mark--term.reader-mark--group-active {
   color: var(--reader-mark-term-hover-ink);
   background:
     repeating-linear-gradient(
@@ -1772,7 +1790,10 @@ select {
   transition: background 160ms ease, color 160ms ease;
 }
 
-.reader-mark--logic.reader-mark--interactive:hover {
+.reader-mark--logic.reader-mark--interactive:hover,
+.reader-mark--logic.reader-mark--group-hovered,
+.reader-mark--logic.reader-mark--group-focused,
+.reader-mark--logic.reader-mark--group-active {
   color: var(--reader-mark-logic-hover-ink);
   background:
     linear-gradient(to right, var(--reader-mark-logic-hover-line-strong), var(--reader-mark-logic-hover-line-soft)) 0 calc(100% - 0.14em) / 100% 0.08em no-repeat,
@@ -1805,6 +1826,13 @@ select {
 
 .reader-mark--active {
   background-color: var(--reader-mark-active-surface);
+  box-shadow:
+    0 0 0 1px var(--reader-mark-active-outline),
+    0 0.22em 0.82em var(--reader-mark-active-shadow);
+}
+
+.reader-mark--group-active {
+  border-radius: 0.18em;
   box-shadow:
     0 0 0 1px var(--reader-mark-active-outline),
     0 0.22em 0.82em var(--reader-mark-active-shadow);

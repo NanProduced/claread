@@ -28,11 +28,16 @@ interface ReaderMarkLeafProps {
   jumpFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   noteFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   hoveredAnnotationTargetKey?: string | null;
+  hoveredInlineMarkKey?: string | null;
+  focusedInlineMarkKey?: string | null;
+  activeInlineMarkKey?: string | null;
   activeAnalysisEntryId?: string | null;
   expandedAnalysisEntryIds?: Set<string>;
   sentenceTextBySentence?: Map<string, string>;
   sourceContextBySentence?: Map<string, string | undefined>;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
+  onHoverInlineMarkKeyChange?: (markKey: string | null) => void;
+  onFocusInlineMarkKeyChange?: (markKey: string | null) => void;
   onLookupIntent?: (
     intent: ReaderLookupIntent,
     anchor: ReaderLookupPreviewAnchor | null,
@@ -376,16 +381,21 @@ function analysisSegmentsForLeaf(
 
 export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
   activeAnalysisEntryId = null,
+  activeInlineMarkKey = null,
   analysisSegmentsBySentence,
   annotationRangesBySentence,
   annotationVisibilityGroups,
   hoveredAnnotationTargetKey = null,
+  hoveredInlineMarkKey = null,
+  focusedInlineMarkKey = null,
   expandedAnalysisEntryIds,
   jumpFocusRangesBySentence,
   selectionFocusRangesBySentence,
   contextFocusRangesBySentence,
   noteFocusRangesBySentence,
   onHoverAnnotationTargetKeyChange,
+  onHoverInlineMarkKeyChange,
+  onFocusInlineMarkKeyChange,
   onInspectIntent,
   onLookupIntent,
   props,
@@ -623,6 +633,9 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     const markClassName = readerMarkClassName(visualTone, annotationVisibilityGroups);
 
     const markKey = mark.parentId ?? mark.id ?? null;
+    const isInlineMarkGroupHovered = Boolean(markKey && hoveredInlineMarkKey === markKey);
+    const isInlineMarkGroupFocused = Boolean(markKey && focusedInlineMarkKey === markKey);
+    const isInlineMarkGroupActive = Boolean(markKey && activeInlineMarkKey === markKey);
     const resolvedGrammarEntryId =
       leaf.readerSentenceId && markKey
         ? grammarEntryIdByMarkKeyBySentence?.get(leaf.readerSentenceId)?.get(markKey)
@@ -682,6 +695,9 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
         className={[
           useSegmentedGrammarMark ? "" : markClassName,
           isClickable ? "reader-mark--interactive" : "",
+          isInlineMarkGroupHovered ? "reader-mark--group-hovered" : "",
+          isInlineMarkGroupFocused ? "reader-mark--group-focused" : "",
+          isInlineMarkGroupActive ? "reader-mark--group-active" : "",
           selectionMutedClass,
           contextMutedClass,
           entryActiveClass,
@@ -693,6 +709,26 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
         data-reader-mark-tone={visualTone}
         data-reader-mark-active={entryActiveClass ? "true" : undefined}
         tabIndex={isClickable ? -1 : undefined}
+        onMouseEnter={() => {
+          if (isClickable && markKey) {
+            onHoverInlineMarkKeyChange?.(markKey);
+          }
+        }}
+        onMouseLeave={() => {
+          if (isClickable && markKey) {
+            onHoverInlineMarkKeyChange?.(null);
+          }
+        }}
+        onFocus={() => {
+          if (isClickable && markKey) {
+            onFocusInlineMarkKeyChange?.(markKey);
+          }
+        }}
+        onBlur={() => {
+          if (isClickable && markKey) {
+            onFocusInlineMarkKeyChange?.(null);
+          }
+        }}
         onClick={(event) => {
           if (!isClickable || !leaf.readerSentenceId || leaf.readerTextStartOffset === undefined || leaf.readerTextEndOffset === undefined) {
             return;
