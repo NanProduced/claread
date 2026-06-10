@@ -4,7 +4,25 @@ from typing import Any
 
 import pytest
 
-from app.services.reader_ask.repository import _message_row_to_dict
+from app.services.reader_ask.repository import _message_row_to_dict, _thread_row_to_dict
+
+
+def test_thread_row_hydrates_selected_model_key() -> None:
+    row = {
+        "id": "thread-1",
+        "record_id": "record-1",
+        "title": "Ask Claread",
+        "is_default": True,
+        "selected_model_key": "glm-fast",
+        "archived_at": None,
+        "created_at": None,
+        "updated_at": None,
+        "last_message_at": None,
+    }
+
+    thread = _thread_row_to_dict(row)
+
+    assert thread["selected_model_key"] == "glm-fast"
 
 
 def test_message_row_hydrates_persisted_reasoning_from_user_visible_output() -> None:

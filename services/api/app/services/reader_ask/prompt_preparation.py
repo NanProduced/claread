@@ -46,16 +46,22 @@ def estimate_token_count(payload: dict[str, Any]) -> int:
 
 def compute_max_input_budget(
     *,
-    reserved_points: int,
-    tokens_per_point: int,
-    budget_buffer_tokens: int,
-    min_max_output_tokens: int,
-    multiplier_output: int,
+    max_input_tokens: int | None = None,
+    reserved_points: int | None = None,
+    tokens_per_point: int | None = None,
+    budget_buffer_tokens: int = cfg.PROMPT_BUDGET_BUFFER_TOKENS,
+    min_max_output_tokens: int = cfg.MIN_MAX_OUTPUT_TOKENS,
+    multiplier_output: int = 0,
 ) -> int:
-    """Compute the maximum input token budget from billing parameters.
+    """Compute the maximum input token budget.
 
-    Formula: reserved_points * tokens_per_point - buffer - min_output * multiplier
+    Preferred mode is explicit ``max_input_tokens``. Legacy callers may still
+    derive the budget from billing-like parameters.
     """
+    if max_input_tokens is not None:
+        return max_input_tokens
+    if reserved_points is None or tokens_per_point is None:
+        raise ValueError("Either max_input_tokens or reserved_points/tokens_per_point must be provided")
     weighted_budget = reserved_points * tokens_per_point
     return weighted_budget - budget_buffer_tokens - min_max_output_tokens * multiplier_output
 
@@ -331,9 +337,10 @@ def _progressive_compact(
 def prepare_prompt_payload(
     payload: dict[str, Any],
     *,
-    reserved_points: int,
-    tokens_per_point: int,
-    multiplier_output: int,
+    max_input_tokens: int | None = None,
+    reserved_points: int | None = None,
+    tokens_per_point: int | None = None,
+    multiplier_output: int = 0,
     budget_buffer_tokens: int,
     default_max_output_tokens: int,
     min_max_output_tokens: int,
@@ -354,12 +361,11 @@ def prepare_prompt_payload(
         payload.get("canonical_context", {}).get("attachments", [])
     )
 
-    # Calculate the real available input budget based on weighted points.
-    # The total budget is reserved_points * tokens_per_point. We need to
-    # reserve budget_buffer_tokens + at least min_max_output_tokens for output.
-    # So the maximum input tokens = total - buffer - min_output * multiplier.
-    # No artificial floor — if the real budget is small, we compact harder.
+    # Preferred mode: use an explicit runtime input budget. Legacy callers can
+    # still derive a budget from billing-like parameters until all call sites
+    # are migrated.
     max_input_budget = compute_max_input_budget(
+        max_input_tokens=max_input_tokens,
         reserved_points=reserved_points,
         tokens_per_point=tokens_per_point,
         budget_buffer_tokens=budget_buffer_tokens,
@@ -383,10 +389,15 @@ def prepare_prompt_payload(
         if compacted_attachment_count < original_attachment_count:
             context_too_large = True
 
-    weighted_budget = reserved_points * tokens_per_point
-    weighted_remaining = max(weighted_budget - estimated_input_tokens - budget_buffer_tokens, 0)
-    budgeted_output_tokens = max(
-        min_max_output_tokens,
-        min(default_max_output_tokens, weighted_remaining // multiplier_output if weighted_remaining else 0),
-    )
+    if max_input_tokens is not None:
+        budgeted_output_tokens = default_max_output_tokens
+    else:
+        assert reserved_points is not None
+        assert tokens_per_point is not None
+        weighted_budget = reserved_points * tokens_per_point
+        weighted_remaining = max(weighted_budget - estimated_input_tokens - budget_buffer_tokens, 0)
+        budgeted_output_tokens = max(
+            min_max_output_tokens,
+            min(default_max_output_tokens, weighted_remaining // multiplier_output if weighted_remaining else 0),
+        )
     return prompt_payload, budgeted_output_tokens, compaction_audit, context_too_large

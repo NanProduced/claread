@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import inspect
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
@@ -1120,6 +1121,7 @@ def test_user_visible_output_round_trips_to_completed_payload() -> None:
         message_id="msg-1",
         thread_id="thread-1",
         output=output,
+        usage_event_id="usage-1",
     )
 
     assert payload.id == "msg-1"
@@ -1127,6 +1129,7 @@ def test_user_visible_output_round_trips_to_completed_payload() -> None:
     assert payload.content_md == "解释完成。"
     assert payload.billed_points == 3
     assert payload.usage_summary == {"input_tokens": 10, "output_tokens": 20}
+    assert payload.usage_event_id == "usage-1"
 
 
 def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
@@ -2327,6 +2330,122 @@ async def test_generate_sentence_annotation_breakdown_cache_hit_skips_run_tool()
     annotation_fn.assert_not_called()
 
 
+async def test_generate_sentence_annotation_uses_example_strategy_examples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.internal.analysis import GrammarNote, SpanRef
+    from app.services.analysis.prompting.example_strategy import ExampleEntry
+
+    example_entry = ExampleEntry(
+        example_type="grammar",
+        sentence_text="For almost a decade",
+        output_fragment="示例输出",
+    )
+    grammar_bundle = SimpleNamespace(
+        prompt_strategy=object(),
+        example_strategy=SimpleNamespace(examples=[example_entry]),
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_build_grammar_bundle_async(plan: object, *, sentences: list[dict[str, str]]) -> object:
+        captured["plan"] = plan
+        captured["sentences"] = sentences
+        return grammar_bundle
+
+    async def fake_run_grammar_agent(deps: object) -> object:
+        captured["deps"] = deps
+        return SimpleNamespace(
+            output=SimpleNamespace(
+                grammar_notes=[
+                    GrammarNote(
+                        sentence_id="s1",
+                        spans=[SpanRef(text="For almost a decade")],
+                        label="时间状语",
+                        note_zh="这里作时间状语。",
+                    )
+                ],
+                sentence_analyses=[],
+            )
+        )
+
+    monkeypatch.setattr(
+        reader_ask_service,
+        "_reading_goal_from_record",
+        lambda _record: object(),
+    )
+    monkeypatch.setattr(
+        reader_ask_service,
+        "_reading_variant_from_record",
+        lambda _record, _goal: object(),
+    )
+    monkeypatch.setattr(
+        reader_ask_service,
+        "build_goal_execution_plan",
+        lambda _goal, _variant: object(),
+    )
+    monkeypatch.setattr(
+        reader_ask_service,
+        "build_grammar_bundle_async",
+        fake_build_grammar_bundle_async,
+    )
+    monkeypatch.setattr(
+        reader_ask_service,
+        "run_grammar_agent",
+        fake_run_grammar_agent,
+    )
+    monkeypatch.setattr(
+        reader_ask_service,
+        "extract_run_usage",
+        lambda _result: {"total_tokens": 7},
+    )
+    monkeypatch.setattr(
+        reader_ask_service,
+        "validate_grammar_note",
+        lambda _note, _sentence_map: SimpleNamespace(is_valid=True),
+    )
+
+    record = reader_ask_service._RecordBundle(
+        record_id=uuid4(),
+        title="Test Article",
+        source_text="For almost a decade, I told everyone I encountered ...",
+        render_scene={
+            "article": {
+                "sentences": [
+                    {
+                        "sentence_id": "s1",
+                        "text": "For almost a decade, I told everyone I encountered ...",
+                    }
+                ]
+            }
+        },
+        page_state_json={},
+        workflow_version="v1",
+        schema_version="v1",
+    )
+    anchor = ReaderAskAnchorRef(
+        anchor_type="sentence",
+        sentence_id="s1",
+        selected_text="For almost a decade",
+    )
+
+    result = await reader_ask_service._generate_sentence_annotation(
+        record=record,
+        anchor=anchor,
+        kind="grammar_note",
+    )
+
+    assert captured["sentences"] == [
+        {
+            "sentence_id": "s1",
+            "text": "For almost a decade, I told everyone I encountered ...",
+        }
+    ]
+    assert captured["deps"].examples == [example_entry]
+    assert result is not None
+    assert result["status"] == "ready"
+    assert result["usage_summary"] == {"total_tokens": 7}
+
+
 def _make_agent_deps(
     *,
     primary_anchor: object = None,
@@ -3149,9 +3268,9 @@ async def test_replan_not_triggered_when_must_clarify() -> None:
     assert result is None
 
 
-def test_reasoning_enabled_settings_enables_dashscope_sse_and_incremental_output() -> None:
+def test_prepare_stream_model_settings_preserves_thinking_flags_and_enables_dashscope_sse() -> None:
     from app.llm.types import RunModelSettings
-    from app.services.reader_ask.agent_runner import reasoning_enabled_settings
+    from app.services.reader_ask.agent_runner import prepare_stream_model_settings
 
     settings = RunModelSettings(
         extra_headers={"X-Test": "1"},
@@ -3161,7 +3280,7 @@ def test_reasoning_enabled_settings_enables_dashscope_sse_and_incremental_output
         },
     )
 
-    resolved = reasoning_enabled_settings(
+    resolved = prepare_stream_model_settings(
         settings,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
@@ -3171,25 +3290,147 @@ def test_reasoning_enabled_settings_enables_dashscope_sse_and_incremental_output
         "X-DashScope-SSE": "enable",
     }
     assert resolved.extra_body is not None
-    assert resolved.extra_body["enable_thinking"] is True
-    assert resolved.extra_body["preserve_thinking"] is False
+    assert resolved.extra_body["enable_thinking"] is False
+    assert resolved.extra_body["preserve_thinking"] is True
     assert resolved.extra_body["incremental_output"] is True
 
 
-def test_reasoning_enabled_settings_preserves_non_dashscope_headers() -> None:
+def test_prepare_stream_model_settings_preserves_non_dashscope_body() -> None:
     from app.llm.types import RunModelSettings
-    from app.services.reader_ask.agent_runner import reasoning_enabled_settings
+    from app.services.reader_ask.agent_runner import prepare_stream_model_settings
 
     settings = RunModelSettings(extra_body={"thinking": {"type": "disabled"}})
-    resolved = reasoning_enabled_settings(
+    resolved = prepare_stream_model_settings(
         settings,
         base_url="https://api.deepseek.com",
     )
 
     assert resolved.extra_headers is None
     assert resolved.extra_body is not None
-    assert resolved.extra_body["thinking"] == {"type": "enabled"}
+    assert resolved.extra_body["thinking"] == {"type": "disabled"}
     assert "incremental_output" not in resolved.extra_body
+
+
+def test_run_model_settings_with_max_tokens_preserves_extra_body_and_headers() -> None:
+    from app.llm.types import RunModelSettings
+
+    settings = RunModelSettings(
+        max_tokens=2048,
+        temperature=0.3,
+        timeout=45.0,
+        extra_headers={"X-Test": "1"},
+        extra_body={"enable_thinking": True},
+    )
+
+    resolved = settings.with_max_tokens(512)
+
+    assert resolved.max_tokens == 512
+    assert resolved.temperature == 0.3
+    assert resolved.timeout == 45.0
+    assert resolved.extra_headers == {"X-Test": "1"}
+    assert resolved.extra_body == {"enable_thinking": True}
+
+
+def test_run_model_settings_thinking_enabled_detects_supported_payloads() -> None:
+    from app.llm.types import RunModelSettings
+
+    assert RunModelSettings(extra_body={"enable_thinking": True}).thinking_enabled() is True
+    assert RunModelSettings(extra_body={"thinking": {"type": "enabled"}}).thinking_enabled() is True
+    assert RunModelSettings(extra_body={"enable_thinking": False}).thinking_enabled() is False
+    assert RunModelSettings(extra_body={"thinking": {"type": "disabled"}}).thinking_enabled() is False
+    assert RunModelSettings().thinking_enabled() is False
+
+
+def test_runtime_budget_kwargs_uses_resolved_option_budget() -> None:
+    from app.services.reader_ask.model_options import ReaderAskRuntimeBudgetConfig, ResolvedReaderAskModelOption
+    from app.services.reader_ask.service import _runtime_budget_kwargs
+    from app.services.ai_usage.billing import WeightedTokensBillingConfig
+
+    option = ResolvedReaderAskModelOption(
+        key="glm",
+        label="GLM-5.1",
+        description=None,
+        selection=None,
+        billing=WeightedTokensBillingConfig(),
+        runtime_budget=ReaderAskRuntimeBudgetConfig(
+            max_input_tokens=28000,
+            max_output_tokens=3600,
+            prompt_buffer_tokens=900,
+        ),
+        main_model_name="glm-5.1",
+        planner_model_name="qwen3.6-plus",
+        replan_model_name="glm-5.1",
+        is_default=True,
+    )
+
+    assert _runtime_budget_kwargs(option) == {
+        "max_input_tokens": 28000,
+        "max_output_tokens": 3600,
+        "prompt_buffer_tokens": 900,
+    }
+
+
+async def test_settle_reader_ask_reservation_refunds_unused_balance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.analysis.credit_service import CreditReservation
+    from app.services.reader_ask.service import _settle_reader_ask_reservation
+
+    refund_calls: list[tuple[CreditReservation, dict[str, Any]]] = []
+
+    async def fake_refund(_user_id: UUID, reservation: CreditReservation, *, metadata: dict[str, Any] | None = None, task_id: UUID | None = None) -> int:
+        _ = task_id
+        refund_calls.append((reservation, metadata or {}))
+        return reservation.total_points
+
+    async def fake_deduct(*args: Any, **kwargs: Any) -> int:
+        raise AssertionError("deduct_points should not be called when actual cost is below reservation")
+
+    monkeypatch.setattr(reader_ask_service, "refund_reserved_points", fake_refund)
+    monkeypatch.setattr(reader_ask_service, "deduct_points", fake_deduct)
+
+    billed_points, under_collected = await _settle_reader_ask_reservation(
+        user_id=uuid4(),
+        reservation=CreditReservation(total_points=10, deducted_from_daily=6, deducted_from_bonus=4),
+        actual_cost_points=7,
+        metadata={"reason": "test"},
+    )
+
+    assert billed_points == 7
+    assert under_collected == 0
+    assert len(refund_calls) == 1
+    assert refund_calls[0][0].total_points == 3
+
+
+async def test_settle_reader_ask_reservation_deducts_overage_when_actual_cost_exceeds_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.analysis.credit_service import CreditReservation
+    from app.services.reader_ask.service import _settle_reader_ask_reservation
+
+    deduct_calls: list[tuple[int, dict[str, Any]]] = []
+
+    async def fake_refund(*args: Any, **kwargs: Any) -> int:
+        raise AssertionError("refund_reserved_points should not be called when actual cost exceeds reservation")
+
+    async def fake_deduct(_user_id: UUID, cost_points: int, *, entry_type: str, metadata: dict[str, Any] | None = None, task_id: UUID | None = None) -> int:
+        _ = entry_type, task_id
+        deduct_calls.append((cost_points, metadata or {}))
+        return cost_points
+
+    monkeypatch.setattr(reader_ask_service, "refund_reserved_points", fake_refund)
+    monkeypatch.setattr(reader_ask_service, "deduct_points", fake_deduct)
+
+    billed_points, under_collected = await _settle_reader_ask_reservation(
+        user_id=uuid4(),
+        reservation=CreditReservation(total_points=10, deducted_from_daily=10, deducted_from_bonus=0),
+        actual_cost_points=14,
+        metadata={"reason": "test"},
+    )
+
+    assert billed_points == 14
+    assert under_collected == 0
+    assert deduct_calls == [(4, {"reason": "test"})]
 
 
 async def test_replan_not_triggered_when_no_planning_snapshot() -> None:

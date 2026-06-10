@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from pydantic_ai import Agent
@@ -21,8 +22,12 @@ from app.agents.reader_ask_agent import (
 )
 from app.config.settings import get_settings
 from app.llm.router import build_model_for_route
-from app.llm.routes import MODEL_ROUTE_READER_ASK, MODEL_ROUTE_READER_ASK_PLANNER
-from app.llm.types import ResolvedModelConfig, RunModelSettings
+from app.llm.routes import (
+    MODEL_ROUTE_READER_ASK,
+    MODEL_ROUTE_READER_ASK_PLANNER,
+    MODEL_ROUTE_READER_ASK_REPLAN,
+)
+from app.llm.types import ModelSelection, ResolvedModelConfig, RunModelSettings
 from app.services.reader_ask import agent_runner as agent_runner_svc
 from app.services.reader_ask import config as cfg
 from app.services.reader_ask import stream_events as stream_events_svc
@@ -40,13 +45,19 @@ class ResolvedReaderAskAgent:
     model_config: ResolvedModelConfig | None
 
 
-def resolve_reader_ask_agent() -> ResolvedReaderAskAgent:
+def resolve_reader_ask_agent(
+    model_selection: ModelSelection | None = None,
+) -> ResolvedReaderAskAgent:
     """Resolve the reader-ask agent and its model for the current settings.
 
     Raises ``RuntimeError`` if the model route is not configured.
     """
     agent = get_reader_ask_agent()
-    model, model_config = build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK)
+    model, model_config = build_model_for_route(
+        get_settings(),
+        MODEL_ROUTE_READER_ASK,
+        model_selection,
+    )
     if model is None:
         raise RuntimeError("model route is not configured: reader_ask")
     return ResolvedReaderAskAgent(agent=agent, model=model, model_config=model_config)
@@ -57,25 +68,27 @@ async def run_reader_ask_replan(
     replan_deps: ReaderAskAgentDeps,
     replan_max_output: int,
     route_settings: RunModelSettings,
+    model_selection: ModelSelection | None = None,
 ) -> str:
     """Run a non-streaming replan with the given deps and return the result text.
 
     This encapsulates the repeated pattern of resolving a fresh agent/model,
     constructing a capped ``RunModelSettings``, and calling ``agent.run()``.
     """
-    replan_resolved = resolve_reader_ask_agent()
-    replan_route = RunModelSettings(
-        max_tokens=min(
+    replan_resolved = resolve_reader_ask_agent(model_selection)
+    replan_model, _replan_model_config = build_reader_ask_replan_model_route(model_selection)
+    if replan_model is None:
+        raise RuntimeError("model route is not configured: reader_ask_replan")
+    replan_route = route_settings.with_max_tokens(
+        min(
             route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS,
             replan_max_output,
-        ),
-        temperature=route_settings.temperature,
-        timeout=route_settings.timeout,
+        )
     )
     result = await replan_resolved.agent.run(
         build_reader_ask_prompt(replan_deps),
         deps=replan_deps,
-        model=replan_resolved.model,
+        model=replan_model,
         model_settings=replan_route.to_pydantic_ai(),
     )
     return str(result.output).strip() if result.output else ""
@@ -175,10 +188,32 @@ def build_reader_ask_replan_event(
 # Planner model route callback facade
 # ---------------------------------------------------------------------------
 
-def build_reader_ask_planner_model_route() -> tuple[Any, ResolvedModelConfig | None]:
+def build_reader_ask_planner_model_route(
+    model_selection: ModelSelection | None = None,
+) -> tuple[Any, ResolvedModelConfig | None]:
     """Return the model and config for the READER_ASK_PLANNER route.
 
     Thin wrapper so service.py does not need to import
     ``build_model_for_route`` / ``MODEL_ROUTE_READER_ASK_PLANNER`` directly.
     """
-    return build_model_for_route(get_settings(), MODEL_ROUTE_READER_ASK_PLANNER)
+    return build_model_for_route(
+        get_settings(),
+        MODEL_ROUTE_READER_ASK_PLANNER,
+        model_selection,
+    )
+
+
+def build_reader_ask_replan_model_route(
+    model_selection: ModelSelection | None = None,
+) -> tuple[Any, ResolvedModelConfig | None]:
+    return build_model_for_route(
+        get_settings(),
+        MODEL_ROUTE_READER_ASK_REPLAN,
+        model_selection,
+    )
+
+
+def make_reader_ask_planner_model_route_cb(
+    model_selection: ModelSelection | None = None,
+) -> Callable[[], tuple[Any, ResolvedModelConfig | None]]:
+    return partial(build_reader_ask_planner_model_route, model_selection)

@@ -57,6 +57,8 @@ from app.schemas.reader_ask import (
     ReaderAskGrammarNoteCardSpan,
     ReaderAskMessage,
     ReaderAskMessageStreamRequest,
+    ReaderAskModelOptionListResponse,
+    ReaderAskModelOptionSummary,
     ReaderAskPageIdentity,
     ReaderAskPersistedSupplement,
     ReaderAskResolvedContextInput,
@@ -66,6 +68,7 @@ from app.schemas.reader_ask import (
     ReaderAskRunInfo,
     ReaderAskSentenceBreakdownCard,
     ReaderAskSentenceBreakdownPart,
+    ReaderAskSelectedModel,
     ReaderAskSubmissionMode,
     ReaderAskSupplementCandidate,
     ReaderAskThreadCreateRequest,
@@ -99,13 +102,12 @@ from app.services.ai_usage import (
     build_reader_ask_billing_metadata,
     compute_reader_ask_cost_points,
     record_ai_usage_event,
-    READER_ASK_RESERVED_POINTS,
 )
-from app.services.ai_usage.billing import MULTIPLIER_OUTPUT, TOKENS_PER_POINT
 from app.services.analysis.credit_service import (
     CreditReservation,
     LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
     check_quota,
+    deduct_points,
     ensure_credit_account,
     refund_reserved_points,
     reserve_points,
@@ -129,6 +131,7 @@ from app.services.reader_ask import stream_events as stream_events_svc
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask import planner_runtime as planner_runtime_svc
 from app.services.reader_ask import config as cfg
+from app.services.reader_ask import model_options as model_options_svc
 from app.services.reader_ask import stream_checkpoint as stream_checkpoint_svc
 from app.services.reader_ask import utils
 
@@ -513,7 +516,7 @@ async def _generate_sentence_annotation(
         GrammarAgentDeps(
             sentences=sentences,
             prompt_strategy=grammar_bundle.prompt_strategy,
-            examples=grammar_bundle.example_strategy.entries,
+            examples=grammar_bundle.example_strategy.examples,
             focus_guidance=focus_guidance,
         )
     )
@@ -1128,11 +1131,13 @@ def _build_completed_payload(
     message_id: str,
     thread_id: str,
     output: ReaderAskUserVisibleOutput,
+    usage_event_id: UUID | None = None,
 ) -> ReaderAskCompletedPayload:
     return output_contract_svc.to_completed_payload(
         message_id=message_id,
         thread_id=thread_id,
         output=output,
+        usage_event_id=str(usage_event_id) if usage_event_id else None,
     )
 
 
@@ -1901,11 +1906,157 @@ def _build_evidence_items(
     )
 
 
+def _selected_model_payload(
+    option: model_options_svc.ResolvedReaderAskModelOption,
+) -> dict[str, Any]:
+    return ReaderAskSelectedModel(
+        key=option.key,
+        label=option.label,
+        description=option.description,
+        model_name=option.main_model_name,
+        planner_model_name=option.planner_model_name,
+        replan_model_name=option.replan_model_name,
+        price_multiplier=option.billing.price_multiplier,
+    ).model_dump(mode="json")
+
+
+def _model_option_summary_payload(
+    option: model_options_svc.ResolvedReaderAskModelOption,
+) -> dict[str, Any]:
+    return ReaderAskModelOptionSummary(
+        **_selected_model_payload(option),
+        is_default=option.is_default,
+    ).model_dump(mode="json")
+
+
+def _thread_summary_payload(thread: dict[str, Any]) -> dict[str, Any]:
+    option = model_options_svc.resolve_reader_ask_model_option(
+        get_settings(),
+        cast(str | None, thread.get("selected_model_key")),
+        strict=False,
+    )
+    return {
+        **thread,
+        "selected_model": _selected_model_payload(option),
+    }
+
+
+def _runtime_budget_kwargs(
+    option: model_options_svc.ResolvedReaderAskModelOption,
+) -> dict[str, int]:
+    return {
+        "max_input_tokens": option.runtime_budget.max_input_tokens,
+        "max_output_tokens": option.runtime_budget.max_output_tokens,
+        "prompt_buffer_tokens": option.runtime_budget.prompt_buffer_tokens,
+    }
+
+
+async def _settle_reader_ask_reservation(
+    *,
+    user_id: UUID,
+    reservation: CreditReservation,
+    actual_cost_points: int,
+    metadata: dict[str, Any],
+) -> tuple[int, int]:
+    if actual_cost_points <= 0:
+        unused = recovery_svc.build_unused_reservation(reservation, 0)
+        if unused.total_points > 0:
+            await refund_reserved_points(user_id, unused, metadata=metadata)
+        return 0, 0
+
+    if actual_cost_points <= reservation.total_points:
+        unused = recovery_svc.build_unused_reservation(reservation, actual_cost_points)
+        if unused.total_points > 0:
+            await refund_reserved_points(user_id, unused, metadata=metadata)
+        return actual_cost_points, 0
+
+    extra_needed = actual_cost_points - reservation.total_points
+    extra_deducted = await deduct_points(
+        user_id,
+        extra_needed,
+        entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+        metadata=metadata,
+    )
+    return reservation.total_points + extra_deducted, max(extra_needed - extra_deducted, 0)
+
+
+def _reader_ask_model_metadata(
+    option: model_options_svc.ResolvedReaderAskModelOption,
+) -> dict[str, Any]:
+    selection = option.selection
+    return {
+        "ask_model_option_key": option.key,
+        "ask_model_option_label": option.label,
+        "ask_model_price_multiplier": option.billing.price_multiplier,
+        "ask_model_preset": selection.preset if selection is not None else None,
+        "ask_model_used_fallback": option.used_fallback,
+        "ask_model_requested_key": option.requested_key,
+        "ask_runtime_max_input_tokens": option.runtime_budget.max_input_tokens,
+        "ask_runtime_max_output_tokens": option.runtime_budget.max_output_tokens,
+        "ask_runtime_prompt_buffer_tokens": option.runtime_budget.prompt_buffer_tokens,
+    }
+
+
+def _resolve_reader_ask_model_option_or_422(
+    *,
+    selected_key: str | None,
+    strict: bool,
+) -> model_options_svc.ResolvedReaderAskModelOption:
+    try:
+        return model_options_svc.resolve_reader_ask_model_option(
+            get_settings(),
+            selected_key,
+            strict=strict,
+        )
+    except model_options_svc.ReaderAskModelOptionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _resolve_thread_model_option(
+    *,
+    user_id: UUID,
+    thread_id: UUID,
+    thread: dict[str, Any],
+    requested_key: str | None,
+) -> tuple[dict[str, Any], model_options_svc.ResolvedReaderAskModelOption]:
+    requested = requested_key or None
+    current_key = cast(str | None, thread.get("selected_model_key"))
+    selected_key = requested or current_key
+    option = _resolve_reader_ask_model_option_or_422(
+        selected_key=selected_key,
+        strict=requested is not None,
+    )
+    should_persist = (
+        requested is not None
+        or option.used_fallback
+        or current_key is None
+    ) and current_key != option.key
+    if should_persist:
+        updated_thread = await repo.update_thread_selected_model(
+            user_id,
+            thread_id,
+            selected_model_key=option.key,
+        )
+        if updated_thread is not None:
+            thread = updated_thread
+    return thread, option
+
+
 async def list_threads(user_id: UUID, record_id: str) -> ReaderAskThreadListResponse:
     record_uuid = _parse_uuid(record_id, "record_id must be a UUID")
     await repo.ensure_record_access(user_id, record_uuid)
     items = await repo.list_threads(user_id, record_uuid)
-    return ReaderAskThreadListResponse(items=[ReaderAskThreadSummary.model_validate(item) for item in items])
+    return ReaderAskThreadListResponse(
+        items=[ReaderAskThreadSummary.model_validate(_thread_summary_payload(item)) for item in items]
+    )
+
+
+async def list_model_options() -> ReaderAskModelOptionListResponse:
+    items, default_key = model_options_svc.list_reader_ask_model_options(get_settings())
+    return ReaderAskModelOptionListResponse(
+        default_key=default_key,
+        items=[ReaderAskModelOptionSummary.model_validate(_model_option_summary_payload(item)) for item in items],
+    )
 
 
 async def list_context_records(
@@ -1956,12 +2107,25 @@ async def list_context_records(
 async def create_thread(user_id: UUID, body: ReaderAskThreadCreateRequest) -> ReaderAskThreadSummary:
     record_uuid = _parse_uuid(body.record_id, "record_id must be a UUID")
     record = await repo.ensure_record_access(user_id, record_uuid)
+    selected_option = _resolve_reader_ask_model_option_or_422(
+        selected_key=body.model,
+        strict=body.model is not None,
+    )
     thread = await repo.get_or_create_default_thread(
         user_id,
         record_uuid,
         title=body.title or record.get("title") or "Ask Claread",
+        selected_model_key=selected_option.key if body.model is not None else None,
     )
-    return ReaderAskThreadSummary.model_validate(thread)
+    if thread.get("selected_model_key") is None:
+        updated_thread = await repo.update_thread_selected_model(
+            user_id,
+            _parse_uuid(thread["id"], "thread id is invalid"),
+            selected_model_key=selected_option.key,
+        )
+        if updated_thread is not None:
+            thread = updated_thread
+    return ReaderAskThreadSummary.model_validate(_thread_summary_payload(thread))
 
 
 async def get_thread_detail(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
@@ -1969,7 +2133,7 @@ async def get_thread_detail(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDe
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
     messages = await repo.list_messages(thread_id, limit=100)
-    return ReaderAskThreadDetail.model_validate({**thread, "messages": messages})
+    return ReaderAskThreadDetail.model_validate({**_thread_summary_payload(thread), "messages": messages})
 
 
 async def reset_thread(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
@@ -1981,14 +2145,19 @@ async def reset_thread(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
     archived = await repo.archive_thread(user_id, thread_id)
     if archived is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
+    next_thread_option = _resolve_reader_ask_model_option_or_422(
+        selected_key=cast(str | None, thread.get("selected_model_key")),
+        strict=False,
+    )
 
     next_thread = await repo.get_or_create_default_thread(
         user_id,
         record_id,
         title=thread.get("title") or "Ask Claread",
+        selected_model_key=next_thread_option.key,
     )
     messages = await repo.list_messages(_parse_uuid(next_thread["id"], "thread id is invalid"), limit=100)
-    return ReaderAskThreadDetail.model_validate({**next_thread, "messages": messages})
+    return ReaderAskThreadDetail.model_validate({**_thread_summary_payload(next_thread), "messages": messages})
 
 
 async def _record_failure_event(
@@ -2056,6 +2225,7 @@ async def stream_thread_message(
     disambiguation: ReaderAskDisambiguation | None = None
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
+    selected_model_option: model_options_svc.ResolvedReaderAskModelOption | None = None
     final_content_md = ""
     stream_runtime: AgentStreamRuntime | None = None
 
@@ -2069,6 +2239,13 @@ async def stream_thread_message(
         history_messages = await repo.list_messages(thread_id, limit=100)
         if _parse_uuid(body.page_identity.record_id, "page_identity.record_id must be a UUID") != record.record_id:
             raise HTTPException(status_code=400, detail="page_identity.record_id does not match thread record")
+        thread, selected_model_option = await _resolve_thread_model_option(
+            user_id=user_id,
+            thread_id=thread_id,
+            thread=thread,
+            requested_key=body.model,
+        )
+        runtime_budget_kwargs = _runtime_budget_kwargs(selected_model_option)
 
         attachments = body.attachments
         incoming_anchors = _attachments_to_anchor_refs(attachments)
@@ -2081,28 +2258,40 @@ async def stream_thread_message(
 
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
-        if remaining < READER_ASK_RESERVED_POINTS:
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
+        if remaining < selected_model_option.billing.reserved_points:
+            yield stream_events_svc.encode_sse(
+                stream_events_svc.EVENT_ERROR,
+                stream_events_svc.insufficient_credits_payload(
+                    remaining,
+                    required_points=selected_model_option.billing.reserved_points,
+                ),
+            )
             return
 
         reservation_metadata = {
             "capability_code": CAPABILITY_READER_ASK,
             "thread_id": str(thread_id),
             "record_id": str(record.record_id),
-            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
-            "reserved_points": READER_ASK_RESERVED_POINTS,
+            **build_reader_ask_billing_metadata(None, selected_model_option.billing),
+            **_reader_ask_model_metadata(selected_model_option),
             "user_message": _truncate_text(body.content, 200),
         }
         reservation = await reserve_points(
             user_id,
-            READER_ASK_RESERVED_POINTS,
+            selected_model_option.billing.reserved_points,
             task_id=None,
             entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
             metadata=reservation_metadata,
         )
         if reservation is None:
             remaining = await check_quota(user_id)
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
+            yield stream_events_svc.encode_sse(
+                stream_events_svc.EVENT_ERROR,
+                stream_events_svc.insufficient_credits_payload(
+                    remaining,
+                    required_points=selected_model_option.billing.reserved_points,
+                ),
+            )
             return
 
         planning_result = await planner_runtime_svc.resolve_semantic_planning(
@@ -2118,6 +2307,7 @@ async def stream_thread_message(
                 current_record_affordances_cb=_current_record_affordances,
                 load_record_bundle_cb=_load_record_bundle,
                 reference_reranker=_build_reference_reranker(),
+                model_selection=selected_model_option.selection,
             ),
             truncate_history_message_cb=_truncate_history_message,
         )
@@ -2208,7 +2398,10 @@ async def stream_thread_message(
                 planning_snapshot=planning_snapshot,
                 clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
             )
-            computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
+            computed_cost_points = compute_reader_ask_cost_points(
+                planner_usage_summary,
+                selected_model_option.billing,
+            )
             billed_points = min(computed_cost_points, reservation.total_points)
             unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
             if unused_reservation.total_points > 0:
@@ -2236,7 +2429,10 @@ async def stream_thread_message(
                     usage_data=planner_usage_summary,
                     latency_ms=int((perf_counter() - start_perf) * 1000),
                     billed_points=billed_points,
-                    billing_policy_version=build_reader_ask_billing_metadata(planner_usage_summary).get(
+                    billing_policy_version=build_reader_ask_billing_metadata(
+                        planner_usage_summary,
+                        selected_model_option.billing,
+                    ).get(
                         "billing_policy_version"
                     ),
                     metadata_json={
@@ -2246,8 +2442,9 @@ async def stream_thread_message(
                         "cross_record_context_used": False,
                         "anchor_count": len(resolved_anchors),
                         "clarification_only": True,
-                        "reservation_points": READER_ASK_RESERVED_POINTS,
+                        "reservation_points": selected_model_option.billing.reserved_points,
                         "computed_cost_points": computed_cost_points,
+                        **_reader_ask_model_metadata(selected_model_option),
                     },
                 )
             )
@@ -2284,6 +2481,7 @@ async def stream_thread_message(
                 message_id=assistant_message["id"],
                 thread_id=str(thread_id),
                 output=output,
+                usage_event_id=usage_event_id,
             )
             assistant_metadata = _assistant_message_metadata(
                 resolved_intent=resolved_intent,
@@ -2395,26 +2593,23 @@ async def stream_thread_message(
             raise RuntimeError("planning snapshot is required")
         cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
-        resolved = resolve_reader_ask_agent()
+        resolved = resolve_reader_ask_agent(selected_model_option.selection)
         agent = resolved.agent
         model = resolved.model
         model_config = resolved.model_config
 
-        route_settings = RunModelSettings(max_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS, temperature=cfg.AGENT_TEMPERATURE, timeout=cfg.AGENT_TIMEOUT_S)
+        route_settings = RunModelSettings(
+            max_tokens=runtime_budget_kwargs["max_output_tokens"],
+            temperature=cfg.AGENT_TEMPERATURE,
+            timeout=cfg.AGENT_TIMEOUT_S,
+        )
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
-        route_settings = RunModelSettings(
-            max_tokens=route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS,
-            temperature=route_settings.temperature,
-            timeout=route_settings.timeout,
-            top_p=route_settings.top_p,
-            parallel_tool_calls=route_settings.parallel_tool_calls,
-            seed=route_settings.seed,
-            presence_penalty=route_settings.presence_penalty,
-            frequency_penalty=route_settings.frequency_penalty,
-            stop_sequences=route_settings.stop_sequences,
-            extra_headers=route_settings.extra_headers,
-            extra_body=route_settings.extra_body,
+        route_settings = route_settings.with_max_tokens(
+            min(
+                route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
+                runtime_budget_kwargs["max_output_tokens"],
+            )
         )
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -2556,21 +2751,15 @@ async def stream_thread_message(
         # Emit context.compacting *before* compression so the user sees
         # "上下文压缩中" while compaction is in progress, not after.
         _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
-            reserved_points=READER_ASK_RESERVED_POINTS,
-            tokens_per_point=TOKENS_PER_POINT,
-            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-            min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
-            multiplier_output=MULTIPLIER_OUTPUT,
+            max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
         )
         if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
             yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
         prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = prompt_preparation_svc.prepare_prompt_payload(
             prompt_payload,
-            reserved_points=READER_ASK_RESERVED_POINTS,
-            tokens_per_point=TOKENS_PER_POINT,
-            multiplier_output=MULTIPLIER_OUTPUT,
-            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-            default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+            max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
+            budget_buffer_tokens=runtime_budget_kwargs["prompt_buffer_tokens"],
+            default_max_output_tokens=route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
             min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
         )
         if _context_too_large:
@@ -2651,10 +2840,8 @@ async def stream_thread_message(
             yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.context_too_large_payload())
             return
         trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
-        route_settings = RunModelSettings(
-            max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
-            temperature=route_settings.temperature,
-            timeout=route_settings.timeout,
+        route_settings = route_settings.with_max_tokens(
+            min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens)
         )
 
         deps = build_reader_ask_agent_deps(
@@ -2742,6 +2929,7 @@ async def stream_thread_message(
                         current_record_affordances_cb=_current_record_affordances,
                         load_record_bundle_cb=_load_record_bundle,
                         reference_reranker=_build_reference_reranker(),
+                        model_selection=selected_model_option.selection,
                     ),
                     truncate_history_message_cb=_truncate_history_message,
                 )
@@ -2799,21 +2987,15 @@ async def stream_thread_message(
                         )
                     )
                     _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
-                        reserved_points=READER_ASK_RESERVED_POINTS,
-                        tokens_per_point=TOKENS_PER_POINT,
-                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
-                        multiplier_output=MULTIPLIER_OUTPUT,
+                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
                     )
                     if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
                         yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
                     replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
                         replan_payload,
-                        reserved_points=READER_ASK_RESERVED_POINTS,
-                        tokens_per_point=TOKENS_PER_POINT,
-                        multiplier_output=MULTIPLIER_OUTPUT,
-                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-                        default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
+                        budget_buffer_tokens=runtime_budget_kwargs["prompt_buffer_tokens"],
+                        default_max_output_tokens=route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
                         min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
                     )
                     if _replan_context_too_large:
@@ -2844,6 +3026,7 @@ async def stream_thread_message(
                         replan_deps=replan_deps,
                         replan_max_output=replan_max_output,
                         route_settings=route_settings,
+                        model_selection=selected_model_option.selection,
                     )
                     if len(replan_content) >= len(final_content_md.strip()):
                         final_content_md = replan_content
@@ -2936,26 +3119,23 @@ async def stream_thread_message(
             }
         )
 
-        computed_cost_points = compute_reader_ask_cost_points(usage_summary)
-        billed_points = min(computed_cost_points, reservation.total_points)
-        unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
-        if unused_reservation.total_points > 0:
-            await refund_reserved_points(
-                user_id,
-                unused_reservation,
-                metadata={
-                    "reason": "reader_ask_unused_reservation",
-                    "thread_id": str(thread_id),
-                    "record_id": str(record.record_id),
-                },
-            )
-            reservation = billed_points and CreditReservation(
-                total_points=billed_points,
-                deducted_from_daily=min(billed_points, reservation.deducted_from_daily),
-                deducted_from_bonus=max(billed_points - min(billed_points, reservation.deducted_from_daily), 0),
-            ) or CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
-        else:
-            reservation = CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+        computed_cost_points = compute_reader_ask_cost_points(
+            usage_summary,
+            selected_model_option.billing,
+        )
+        billed_points, under_collected_points = await _settle_reader_ask_reservation(
+            user_id=user_id,
+            reservation=reservation,
+            actual_cost_points=computed_cost_points,
+            metadata={
+                "reason": "reader_ask_settlement",
+                "thread_id": str(thread_id),
+                "record_id": str(record.record_id),
+                "computed_cost_points": computed_cost_points,
+                **_reader_ask_model_metadata(selected_model_option),
+            },
+        )
+        reservation = CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
 
         usage_event_id = await record_ai_usage_event(
             AIUsageEventCreate(
@@ -2972,7 +3152,10 @@ async def stream_thread_message(
                 usage_data=usage_summary,
                 latency_ms=int((perf_counter() - start_perf) * 1000),
                 billed_points=billed_points,
-                billing_policy_version=build_reader_ask_billing_metadata(usage_summary).get("billing_policy_version"),
+                billing_policy_version=build_reader_ask_billing_metadata(
+                    usage_summary,
+                    selected_model_option.billing,
+                ).get("billing_policy_version"),
                 metadata_json={
                     "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
                     "thread_id": str(thread_id),
@@ -2980,9 +3163,10 @@ async def stream_thread_message(
                     "cross_record_context_used": runtime_state.used_cross_record_context,
                     "anchor_count": len(resolved_anchors),
                     "tool_names": [entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
-                    "reservation_points": READER_ASK_RESERVED_POINTS,
+                    "reservation_points": selected_model_option.billing.reserved_points,
                     "computed_cost_points": computed_cost_points,
-                    "clamped_to_reservation": computed_cost_points > READER_ASK_RESERVED_POINTS,
+                    "under_collected_points": under_collected_points,
+                    **_reader_ask_model_metadata(selected_model_option),
                 },
                 **build_model_metadata(model_config),
             )
@@ -3029,7 +3213,12 @@ async def stream_thread_message(
             usage_event_id=usage_event_id,
             current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
         )
-        payload = _build_completed_payload(message_id=updated["id"], thread_id=str(thread_id), output=output)
+        payload = _build_completed_payload(
+            message_id=updated["id"],
+            thread_id=str(thread_id),
+            output=output,
+            usage_event_id=usage_event_id,
+        )
         await repo.update_turn_run(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
             status="interrupted" if stream_outcome.interrupted else "completed",
@@ -3142,6 +3331,7 @@ async def stream_thread_message(
                 metadata_json={
                     "anchor_count": len(resolved_anchors),
                     "tool_names": [entry.tool_name for entry in runtime_state.tool_trace],
+                    **(_reader_ask_model_metadata(selected_model_option) if selected_model_option is not None else {}),
                 },
             )
         if isinstance(exc, HTTPException):
@@ -3158,6 +3348,7 @@ async def retry_thread_message(
     user_id: UUID,
     thread_id: UUID,
     message_id: UUID,
+    retry_body: ReaderAskMessageRetryRequest | None = None,
 ) -> AsyncIterator[str]:
     """Regenerate (not resume/continue) the assistant answer for a message.
 
@@ -3191,6 +3382,7 @@ async def retry_thread_message(
     disambiguation: ReaderAskDisambiguation | None = None
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
     reference_resolution = planner.ReaderAskReferenceResolution()
+    selected_model_option: model_options_svc.ResolvedReaderAskModelOption | None = None
     final_content_md = ""
     persisted_supplements_json: list[dict[str, Any]] = []
     stream_runtime: AgentStreamRuntime | None = None
@@ -3236,12 +3428,20 @@ async def retry_thread_message(
             page_identity=user_message_model.resolved_context_input.page_identity,
             attachments=user_message_model.resolved_context_input.attachments,
             entry_action=user_message_model.resolved_context_input.entry_action,
+            model=retry_body.model if retry_body is not None else None,
         )
 
         record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
         record = await _load_record_bundle(user_id, record_id)
         if _parse_uuid(body.page_identity.record_id, "page_identity.record_id must be a UUID") != record.record_id:
             raise HTTPException(status_code=400, detail="page_identity.record_id does not match thread record")
+        thread, selected_model_option = await _resolve_thread_model_option(
+            user_id=user_id,
+            thread_id=thread_id,
+            thread=thread,
+            requested_key=body.model,
+        )
+        runtime_budget_kwargs = _runtime_budget_kwargs(selected_model_option)
 
         attachments = body.attachments
         incoming_anchors = _attachments_to_anchor_refs(attachments)
@@ -3254,29 +3454,41 @@ async def retry_thread_message(
 
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
-        if remaining < READER_ASK_RESERVED_POINTS:
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
+        if remaining < selected_model_option.billing.reserved_points:
+            yield stream_events_svc.encode_sse(
+                stream_events_svc.EVENT_ERROR,
+                stream_events_svc.insufficient_credits_payload(
+                    remaining,
+                    required_points=selected_model_option.billing.reserved_points,
+                ),
+            )
             return
 
         reservation_metadata = {
             "capability_code": CAPABILITY_READER_ASK,
             "thread_id": str(thread_id),
             "record_id": str(record.record_id),
-            "billing_policy_version": build_reader_ask_billing_metadata(None)["billing_policy_version"],
-            "reserved_points": READER_ASK_RESERVED_POINTS,
+            **build_reader_ask_billing_metadata(None, selected_model_option.billing),
+            **_reader_ask_model_metadata(selected_model_option),
             "user_message": _truncate_text(body.content, 200),
             "retry_message_id": str(message_id),
         }
         reservation = await reserve_points(
             user_id,
-            READER_ASK_RESERVED_POINTS,
+            selected_model_option.billing.reserved_points,
             task_id=None,
             entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
             metadata=reservation_metadata,
         )
         if reservation is None:
             remaining = await check_quota(user_id)
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.insufficient_credits_payload(remaining, required_points=READER_ASK_RESERVED_POINTS))
+            yield stream_events_svc.encode_sse(
+                stream_events_svc.EVENT_ERROR,
+                stream_events_svc.insufficient_credits_payload(
+                    remaining,
+                    required_points=selected_model_option.billing.reserved_points,
+                ),
+            )
             return
 
         planning_result = await planner_runtime_svc.resolve_semantic_planning(
@@ -3292,6 +3504,7 @@ async def retry_thread_message(
                 current_record_affordances_cb=_current_record_affordances,
                 load_record_bundle_cb=_load_record_bundle,
                 reference_reranker=_build_reference_reranker(),
+                model_selection=selected_model_option.selection,
             ),
             truncate_history_message_cb=_truncate_history_message,
         )
@@ -3374,7 +3587,10 @@ async def retry_thread_message(
                 planning_snapshot=planning_snapshot,
                 clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
             )
-            computed_cost_points = compute_reader_ask_cost_points(planner_usage_summary)
+            computed_cost_points = compute_reader_ask_cost_points(
+                planner_usage_summary,
+                selected_model_option.billing,
+            )
             billed_points = min(computed_cost_points, reservation.total_points)
             unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
             if unused_reservation.total_points > 0:
@@ -3402,7 +3618,10 @@ async def retry_thread_message(
                     usage_data=planner_usage_summary,
                     latency_ms=int((perf_counter() - start_perf) * 1000),
                     billed_points=billed_points,
-                    billing_policy_version=build_reader_ask_billing_metadata(planner_usage_summary).get(
+                    billing_policy_version=build_reader_ask_billing_metadata(
+                        planner_usage_summary,
+                        selected_model_option.billing,
+                    ).get(
                         "billing_policy_version"
                     ),
                     metadata_json={
@@ -3413,8 +3632,9 @@ async def retry_thread_message(
                         "anchor_count": len(resolved_anchors),
                         "clarification_only": True,
                         "retry_message_id": str(message_id),
-                        "reservation_points": READER_ASK_RESERVED_POINTS,
+                        "reservation_points": selected_model_option.billing.reserved_points,
                         "computed_cost_points": computed_cost_points,
+                        **_reader_ask_model_metadata(selected_model_option),
                     },
                 )
             )
@@ -3464,6 +3684,7 @@ async def retry_thread_message(
                 message_id=str(message_id),
                 thread_id=str(thread_id),
                 output=output,
+                usage_event_id=usage_event_id,
             )
             await repo.update_turn_run(
                 turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3518,26 +3739,23 @@ async def retry_thread_message(
             raise RuntimeError("planning snapshot is required")
         cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
-        resolved = resolve_reader_ask_agent()
+        resolved = resolve_reader_ask_agent(selected_model_option.selection)
         agent = resolved.agent
         model = resolved.model
         model_config = resolved.model_config
 
-        route_settings = RunModelSettings(max_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS, temperature=cfg.AGENT_TEMPERATURE, timeout=cfg.AGENT_TIMEOUT_S)
+        route_settings = RunModelSettings(
+            max_tokens=runtime_budget_kwargs["max_output_tokens"],
+            temperature=cfg.AGENT_TEMPERATURE,
+            timeout=cfg.AGENT_TIMEOUT_S,
+        )
         if model_config and model_config.model_settings is not None:
             route_settings = route_settings.merged_with(model_config.model_settings)
-        route_settings = RunModelSettings(
-            max_tokens=route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS,
-            temperature=route_settings.temperature,
-            timeout=route_settings.timeout,
-            top_p=route_settings.top_p,
-            parallel_tool_calls=route_settings.parallel_tool_calls,
-            seed=route_settings.seed,
-            presence_penalty=route_settings.presence_penalty,
-            frequency_penalty=route_settings.frequency_penalty,
-            stop_sequences=route_settings.stop_sequences,
-            extra_headers=route_settings.extra_headers,
-            extra_body=route_settings.extra_body,
+        route_settings = route_settings.with_max_tokens(
+            min(
+                route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
+                runtime_budget_kwargs["max_output_tokens"],
+            )
         )
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -3679,21 +3897,15 @@ async def retry_thread_message(
         # Emit context.compacting *before* compression so the user sees
         # "上下文压缩中" while compaction is in progress, not after.
         _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
-            reserved_points=READER_ASK_RESERVED_POINTS,
-            tokens_per_point=TOKENS_PER_POINT,
-            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-            min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
-            multiplier_output=MULTIPLIER_OUTPUT,
+            max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
         )
         if prompt_preparation_svc.should_emit_compacting(prompt_payload, max_input_budget=_max_input_budget):
             yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(message_id))
         prompt_payload, max_output_tokens, _compaction_audit, _context_too_large = prompt_preparation_svc.prepare_prompt_payload(
             prompt_payload,
-            reserved_points=READER_ASK_RESERVED_POINTS,
-            tokens_per_point=TOKENS_PER_POINT,
-            multiplier_output=MULTIPLIER_OUTPUT,
-            budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-            default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+            max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
+            budget_buffer_tokens=runtime_budget_kwargs["prompt_buffer_tokens"],
+            default_max_output_tokens=route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
             min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
         )
         if _context_too_large:
@@ -3775,10 +3987,8 @@ async def retry_thread_message(
             yield stream_events_svc.encode_sse(stream_events_svc.EVENT_ERROR, stream_events_svc.context_too_large_payload())
             return
         trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _compaction_audit)
-        route_settings = RunModelSettings(
-            max_tokens=min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens),
-            temperature=route_settings.temperature,
-            timeout=route_settings.timeout,
+        route_settings = route_settings.with_max_tokens(
+            min(route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS, max_output_tokens)
         )
 
         deps = build_reader_ask_agent_deps(
@@ -3866,6 +4076,7 @@ async def retry_thread_message(
                         current_record_affordances_cb=_current_record_affordances,
                         load_record_bundle_cb=_load_record_bundle,
                         reference_reranker=_build_reference_reranker(),
+                        model_selection=selected_model_option.selection,
                     ),
                     truncate_history_message_cb=_truncate_history_message,
                 )
@@ -3923,21 +4134,15 @@ async def retry_thread_message(
                         )
                     )
                     _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
-                        reserved_points=READER_ASK_RESERVED_POINTS,
-                        tokens_per_point=TOKENS_PER_POINT,
-                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
-                        multiplier_output=MULTIPLIER_OUTPUT,
+                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
                     )
                     if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
                         yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
                     replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
                         replan_payload,
-                        reserved_points=READER_ASK_RESERVED_POINTS,
-                        tokens_per_point=TOKENS_PER_POINT,
-                        multiplier_output=MULTIPLIER_OUTPUT,
-                        budget_buffer_tokens=cfg.PROMPT_BUDGET_BUFFER_TOKENS,
-                        default_max_output_tokens=cfg.DEFAULT_MAX_OUTPUT_TOKENS,
+                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
+                        budget_buffer_tokens=runtime_budget_kwargs["prompt_buffer_tokens"],
+                        default_max_output_tokens=route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
                         min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
                     )
                     if _replan_context_too_large:
@@ -3968,6 +4173,7 @@ async def retry_thread_message(
                         replan_deps=replan_deps,
                         replan_max_output=replan_max_output,
                         route_settings=route_settings,
+                        model_selection=selected_model_option.selection,
                     )
                     if len(replan_content) >= len(final_content_md.strip()):
                         final_content_md = replan_content
@@ -4060,27 +4266,24 @@ async def retry_thread_message(
             }
         )
 
-        computed_cost_points = compute_reader_ask_cost_points(usage_summary)
-        billed_points = min(computed_cost_points, reservation.total_points)
-        unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
-        if unused_reservation.total_points > 0:
-            await refund_reserved_points(
-                user_id,
-                unused_reservation,
-                metadata={
-                    "reason": "reader_ask_unused_reservation",
-                    "thread_id": str(thread_id),
-                    "record_id": str(record.record_id),
-                    "retry_message_id": str(message_id),
-                },
-            )
-            reservation = billed_points and CreditReservation(
-                total_points=billed_points,
-                deducted_from_daily=min(billed_points, reservation.deducted_from_daily),
-                deducted_from_bonus=max(billed_points - min(billed_points, reservation.deducted_from_daily), 0),
-            ) or CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
-        else:
-            reservation = CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
+        computed_cost_points = compute_reader_ask_cost_points(
+            usage_summary,
+            selected_model_option.billing,
+        )
+        billed_points, under_collected_points = await _settle_reader_ask_reservation(
+            user_id=user_id,
+            reservation=reservation,
+            actual_cost_points=computed_cost_points,
+            metadata={
+                "reason": "reader_ask_retry_settlement",
+                "thread_id": str(thread_id),
+                "record_id": str(record.record_id),
+                "retry_message_id": str(message_id),
+                "computed_cost_points": computed_cost_points,
+                **_reader_ask_model_metadata(selected_model_option),
+            },
+        )
+        reservation = CreditReservation(total_points=0, deducted_from_daily=0, deducted_from_bonus=0)
 
         usage_event_id = await record_ai_usage_event(
             AIUsageEventCreate(
@@ -4097,7 +4300,10 @@ async def retry_thread_message(
                 usage_data=usage_summary,
                 latency_ms=int((perf_counter() - start_perf) * 1000),
                 billed_points=billed_points,
-                billing_policy_version=build_reader_ask_billing_metadata(usage_summary).get("billing_policy_version"),
+                billing_policy_version=build_reader_ask_billing_metadata(
+                    usage_summary,
+                    selected_model_option.billing,
+                ).get("billing_policy_version"),
                 metadata_json={
                     "entrypoint": "/reader-ask/threads/{thread_id}/messages/{message_id}/retry/stream",
                     "thread_id": str(thread_id),
@@ -4105,9 +4311,10 @@ async def retry_thread_message(
                     "cross_record_context_used": runtime_state.used_cross_record_context,
                     "anchor_count": len(resolved_anchors),
                     "tool_names": [entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
-                    "reservation_points": READER_ASK_RESERVED_POINTS,
+                    "reservation_points": selected_model_option.billing.reserved_points,
                     "computed_cost_points": computed_cost_points,
-                    "clamped_to_reservation": computed_cost_points > READER_ASK_RESERVED_POINTS,
+                    "under_collected_points": under_collected_points,
+                    **_reader_ask_model_metadata(selected_model_option),
                 },
                 **build_model_metadata(model_config),
             )
@@ -4159,6 +4366,7 @@ async def retry_thread_message(
             message_id=str(message_id),
             thread_id=str(thread_id),
             output=output,
+            usage_event_id=usage_event_id,
         )
         await repo.update_turn_run(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -4275,6 +4483,7 @@ async def retry_thread_message(
                     "anchor_count": len(resolved_anchors),
                     "tool_names": [entry.tool_name for entry in runtime_state.tool_trace],
                     "retry_message_id": str(message_id),
+                    **(_reader_ask_model_metadata(selected_model_option) if selected_model_option is not None else {}),
                 },
             )
         if isinstance(exc, HTTPException):

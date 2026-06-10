@@ -1,11 +1,273 @@
 {
+  "_comment": [
+    "这是字段说明版 example，不可直接作为运行时配置加载。",
+    "复制到正式配置前，请删除所有以下划线开头的注释键，例如 _comment / _field_notes。",
+    "真实可加载文件必须严格符合 providers / models / profiles 三层 schema，且不能包含额外字段。"
+  ],
+  "providers": {
+    "_comment": "provider 负责适配器、鉴权、兼容性默认值。一个 provider 可以复用给多个 model。",
+    "dashscope": {
+      "_field_notes": {
+        "adapter": "适配器类型。当前后端主要使用 openai_compatible。",
+        "base_url": "该 provider 的 OpenAI 兼容入口。",
+        "api_key": "可选，直接内联 key；生产不建议，优先用 api_key_env。",
+        "api_key_env": "推荐写环境变量名，后端会优先从环境变量或 services/api/.env 解析。",
+        "model_settings": "provider 级默认参数。会被 model 级和 profile 级继续覆盖。",
+        "provider_options": "预留扩展位，用于放 provider 工厂将来可能消费的附加配置。",
+        "openai_profile": "OpenAI 兼容层能力声明，用来描述 tool_choice、thinking、structured output 等兼容差异。"
+      },
+      "adapter": "openai_compatible",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key": "",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "model_settings": {
+        "_field_notes": {
+          "max_tokens": "provider 级默认最大输出 token。",
+          "temperature": "采样温度。",
+          "top_p": "nucleus sampling。",
+          "timeout": "单次请求超时秒数。",
+          "parallel_tool_calls": "是否允许并行工具调用。",
+          "seed": "固定随机种子，便于调试复现。",
+          "presence_penalty": "presence penalty。",
+          "frequency_penalty": "frequency penalty。",
+          "stop_sequences": "停止词数组。",
+          "extra_headers": "额外 HTTP 头。",
+          "extra_body": "额外请求体字段。不同 provider 的 thinking/流式开关通常在这里配。"
+        },
+        "max_tokens": 16000,
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "timeout": 120.0,
+        "parallel_tool_calls": false,
+        "seed": 42,
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "stop_sequences": [
+          "<END>"
+        ],
+        "extra_headers": {
+          "X-DashScope-SSE": "enable"
+        },
+        "extra_body": {
+          "incremental_output": true
+        }
+      },
+      "provider_options": {
+        "transport": "sse",
+        "notes": "示例扩展位；当前并非所有 provider_options 都会被业务代码主动消费。"
+      },
+      "openai_profile": {
+        "_field_notes": {
+          "supports_json_object_output": "是否支持 response_format=json_object。",
+          "supports_json_schema_output": "是否支持 response_format=json_schema。",
+          "default_structured_output_mode": "默认结构化输出策略，例如 json_schema / json_object / prompted。",
+          "openai_supports_tool_choice_required": "是否支持 tool_choice=required。",
+          "openai_supports_strict_tool_definition": "是否支持 strict tool schema。",
+          "openai_chat_thinking_field": "thinking 文本从哪个响应字段读取。",
+          "openai_chat_send_back_thinking_parts": "是否把 thinking 作为 field 回传给上层。"
+        },
+        "supports_json_object_output": true,
+        "supports_json_schema_output": true,
+        "default_structured_output_mode": "json_schema",
+        "openai_supports_tool_choice_required": false,
+        "openai_supports_strict_tool_definition": false,
+        "openai_chat_thinking_field": "reasoning_content",
+        "openai_chat_send_back_thinking_parts": "field"
+      }
+    },
+    "deepseek": {
+      "adapter": "openai_compatible",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "provider_options": {
+        "transport": "https"
+      },
+      "openai_profile": {
+        "supports_json_object_output": true,
+        "supports_json_schema_output": false,
+        "default_structured_output_mode": "prompted",
+        "openai_supports_tool_choice_required": false,
+        "openai_supports_strict_tool_definition": false,
+        "openai_chat_thinking_field": "reasoning_content",
+        "openai_chat_send_back_thinking_parts": "field"
+      }
+    }
+  },
+  "models": {
+    "_comment": "model 负责声明远端模型名；同一 provider 下可以定义多个 model，并覆盖 provider 默认参数。",
+    "qwen36-plus": {
+      "_field_notes": {
+        "provider": "引用 providers 中的 key。",
+        "model_name": "远端 provider 实际识别的模型名。",
+        "model_settings": "model 级默认参数。",
+        "provider_options": "model 级附加扩展位。",
+        "openai_profile": "model 级兼容性覆盖；优先级高于 provider 级。"
+      },
+      "provider": "dashscope",
+      "model_name": "qwen3.6-plus-2026-04-02",
+      "model_settings": {
+        "temperature": 0.2,
+        "timeout": 90.0
+      },
+      "provider_options": {
+        "tier": "balanced"
+      },
+      "openai_profile": {
+        "supports_json_object_output": true,
+        "supports_json_schema_output": true,
+        "default_structured_output_mode": "json_schema"
+      }
+    },
+    "qwen37-max": {
+      "provider": "dashscope",
+      "model_name": "qwen3.7-max",
+      "model_settings": {
+        "max_tokens": 32000,
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "timeout": 180.0,
+        "parallel_tool_calls": false,
+        "seed": 7,
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "stop_sequences": [],
+        "extra_headers": {
+          "X-Model-Tier": "premium"
+        },
+        "extra_body": {
+          "enable_thinking": true
+        }
+      },
+      "provider_options": {
+        "tier": "premium"
+      },
+      "openai_profile": {
+        "supports_json_object_output": true,
+        "supports_json_schema_output": false,
+        "default_structured_output_mode": "prompted",
+        "openai_supports_tool_choice_required": false,
+        "openai_supports_strict_tool_definition": false,
+        "openai_chat_thinking_field": "reasoning_content",
+        "openai_chat_send_back_thinking_parts": "field"
+      }
+    },
+    "glm51": {
+      "provider": "dashscope",
+      "model_name": "glm-5.1"
+    },
+    "deepseek-v4-pro": {
+      "provider": "deepseek",
+      "model_name": "deepseek-v4-pro",
+      "model_settings": {
+        "temperature": 0.2,
+        "timeout": 120.0
+      }
+    }
+  },
   "profiles": {
-    "example": {
-      "provider": "openai-compatible",
-      "model": "example-model",
-      "base_url": "https://api.example.com/v1",
-      "api_key": "replace-with-local-key",
-      "temperature": 0.2
+    "_comment": "profile 绑定业务场景。最终优先级是 provider < model < profile < route/request override。",
+    "workflow-qwen36-plus": {
+      "_field_notes": {
+        "model": "引用 models 中的 key。",
+        "model_settings": "业务场景最终覆盖。workflow/Ask 能否 thinking，应该主要在这里体现。"
+      },
+      "model": "qwen36-plus",
+      "model_settings": {
+        "temperature": 0.2,
+        "timeout": 90.0,
+        "extra_body": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "workflow-qwen37-max": {
+      "model": "qwen37-max",
+      "model_settings": {
+        "timeout": 120.0,
+        "extra_body": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "workflow-deepseek-v4-pro": {
+      "model": "deepseek-v4-pro",
+      "model_settings": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      }
+    },
+    "ask-main-glm51": {
+      "model": "glm51",
+      "model_settings": {
+        "timeout": 180.0,
+        "extra_body": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        }
+      }
+    },
+    "ask-replan-glm51": {
+      "model": "glm51",
+      "model_settings": {
+        "timeout": 180.0,
+        "extra_body": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        }
+      }
+    },
+    "ask-planner-qwen36-plus": {
+      "model": "qwen36-plus",
+      "model_settings": {
+        "timeout": 60.0,
+        "extra_body": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "ask-main-qwen37-max": {
+      "model": "qwen37-max",
+      "model_settings": {
+        "timeout": 180.0,
+        "extra_body": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        }
+      }
+    },
+    "ask-replan-qwen37-max": {
+      "model": "qwen37-max",
+      "model_settings": {
+        "timeout": 180.0,
+        "extra_body": {
+          "enable_thinking": true,
+          "preserve_thinking": true
+        }
+      }
+    },
+    "ask-main-deepseek-v4-pro": {
+      "model": "deepseek-v4-pro",
+      "model_settings": {
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      }
+    },
+    "ask-replan-deepseek-v4-pro": {
+      "model": "deepseek-v4-pro",
+      "model_settings": {
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      }
     }
   }
 }

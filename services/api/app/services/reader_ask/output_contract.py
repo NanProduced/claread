@@ -190,10 +190,12 @@ def to_completed_payload(
     message_id: str,
     thread_id: str,
     output: ReaderAskUserVisibleOutput,
+    usage_event_id: str | None = None,
 ) -> ReaderAskCompletedPayload:
     return ReaderAskCompletedPayload(
         id=message_id,
         thread_id=thread_id,
+        usage_event_id=usage_event_id,
         **output.model_dump(mode="python"),
     )
 

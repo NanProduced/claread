@@ -2,11 +2,8 @@
 
 from uuid import uuid4
 
-import pytest
-
 from app.services.reader_ask import agent_runner as agent_runner_svc
 from app.services.reader_ask import stream_checkpoint
-
 
 # ---------------------------------------------------------------------------
 # TestBuildCheckpoint
@@ -26,6 +23,29 @@ class TestTerminalReasoningStatus:
         "completed" (not None or "streaming") so that the frontend can leave
         the streaming state."""
         assert stream_checkpoint.terminal_reasoning_status(True) == "completed"
+
+
+class TestCurrentReasoningStatus:
+    def test_streaming_when_reasoning_is_active(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime(
+            reasoning_started=True,
+            reasoning_active=True,
+        )
+        assert stream_checkpoint.current_reasoning_status(runtime) == "streaming"
+
+    def test_completed_when_reasoning_already_finished(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime(
+            reasoning_started=True,
+            reasoning_active=False,
+        )
+        assert stream_checkpoint.current_reasoning_status(runtime) == "completed"
+
+    def test_none_when_reasoning_never_started(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime(
+            reasoning_started=False,
+            reasoning_active=False,
+        )
+        assert stream_checkpoint.current_reasoning_status(runtime) is None
 
 
 class TestMaybeFlushTurnRunStreamCheckpoint:
@@ -63,6 +83,7 @@ class TestMaybeFlushTurnRunStreamCheckpoint:
             emitted_text="初始正文",
             emitted_reasoning="初始思路",
             reasoning_started=True,
+            reasoning_active=True,
         )
         # First flush (initial, last_flushed_at == 0)
         await stream_checkpoint.maybe_flush_turn_run_stream_checkpoint(
@@ -103,6 +124,7 @@ class TestMaybeFlushTurnRunStreamCheckpoint:
             emitted_text="正文",
             emitted_reasoning="初始思路",
             reasoning_started=True,
+            reasoning_active=True,
         )
         # Initial flush
         await stream_checkpoint.maybe_flush_turn_run_stream_checkpoint(
@@ -128,6 +150,7 @@ class TestMaybeFlushTurnRunStreamCheckpoint:
             emitted_text="",
             emitted_reasoning="",
             reasoning_started=True,
+            reasoning_active=True,
         )
         # Not forced, empty → no flush
         await stream_checkpoint.maybe_flush_turn_run_stream_checkpoint(
@@ -149,6 +172,7 @@ class TestMaybeFlushTurnRunStreamCheckpoint:
             emitted_text="已生成正文。",
             emitted_reasoning="先判断句子主干。",
             reasoning_started=True,
+            reasoning_active=True,
         )
 
         await stream_checkpoint.maybe_flush_turn_run_stream_checkpoint(
@@ -179,6 +203,7 @@ class TestMaybeFlushTurnRunStreamCheckpoint:
             emitted_text="已生成正文。",
             emitted_reasoning="先判断句子主干。",
             reasoning_started=True,
+            reasoning_active=True,
         )
 
         await stream_checkpoint.maybe_flush_turn_run_stream_checkpoint(
@@ -218,6 +243,7 @@ class TestMaybeFlushTurnRunStreamCheckpoint:
             emitted_text="第一段正文",
             emitted_reasoning="第一段思路",
             reasoning_started=True,
+            reasoning_active=True,
         )
 
         # Initial flush (last_flushed_at == 0)
@@ -241,6 +267,22 @@ class TestMaybeFlushTurnRunStreamCheckpoint:
         assert len(updates) == 2
         assert updates[1]["user_visible_output_json"]["content_md"] == "第一段正文，新增很短"
         assert updates[1]["user_visible_output_json"]["reasoning_md"] == "第一段思路，新增很短"
+
+    async def test_flush_marks_reasoning_completed_after_thinking_phase_ends(self) -> None:
+        checkpoint = self._make_checkpoint()
+        runtime = agent_runner_svc.AgentStreamRuntime(
+            emitted_text="正文继续输出",
+            emitted_reasoning="思路已经完整",
+            reasoning_started=True,
+            reasoning_active=False,
+        )
+
+        await stream_checkpoint.maybe_flush_turn_run_stream_checkpoint(
+            checkpoint=checkpoint, runtime=runtime,
+        )
+
+        assert len(self._updates) == 1
+        assert self._updates[0]["user_visible_output_json"]["reasoning_status"] == "completed"
 
 
 class TestMakeCheckpointFlush:

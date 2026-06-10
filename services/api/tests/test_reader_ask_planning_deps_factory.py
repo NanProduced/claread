@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from app.schemas.reader_ask import ReaderAskCurrentRecordAffordances
 from app.services.reader_ask import planner_runtime as planner_runtime_svc
 from app.services.reader_ask import resolver as resolver_svc
@@ -48,13 +50,16 @@ class TestRunPlannerDepsWiring:
         )
         assert deps.run_planner_deps.current_record_affordances_cb is _affordances_cb
 
-    def test_build_model_route_cb_is_planner_model_route(self) -> None:
+    def test_build_model_route_cb_delegates_to_planner_model_route(self) -> None:
         deps = build_reader_ask_resolve_planning_deps(
             current_record_affordances_cb=_affordances_cb,
             load_record_bundle_cb=_load_bundle_cb,
             reference_reranker=None,
         )
-        assert deps.run_planner_deps.build_model_route_cb is build_reader_ask_planner_model_route
+        callback = deps.run_planner_deps.build_model_route_cb
+        assert isinstance(callback, partial)
+        assert callback.func is build_reader_ask_planner_model_route
+        assert callback.args == (None,)
 
 
 class TestPassthroughCallbacks:

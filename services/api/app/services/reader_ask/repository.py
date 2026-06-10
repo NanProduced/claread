@@ -112,6 +112,7 @@ def _thread_row_to_dict(row: Any) -> dict[str, Any]:
         "record_id": str(row["record_id"]),
         "title": row["title"],
         "is_default": bool(row["is_default"]),
+        "selected_model_key": row.get("selected_model_key"),
         "archived_at": _iso(row["archived_at"]),
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),
@@ -314,7 +315,7 @@ async def list_threads(user_id: UUID, record_id: UUID) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, record_id, title, is_default, archived_at, created_at, updated_at, last_message_at
+            SELECT id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
             FROM reader_ask_threads
             WHERE user_id = $1 AND record_id = $2 AND archived_at IS NULL
             ORDER BY is_default DESC, COALESCE(last_message_at, created_at) DESC, created_at DESC
@@ -333,7 +334,7 @@ async def get_thread(user_id: UUID, thread_id: UUID) -> dict[str, Any] | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT id, record_id, title, is_default, archived_at, created_at, updated_at, last_message_at
+            SELECT id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
             FROM reader_ask_threads
             WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
             """,
@@ -348,6 +349,7 @@ async def get_or_create_default_thread(
     record_id: UUID,
     *,
     title: str | None = None,
+    selected_model_key: str | None = None,
 ) -> dict[str, Any]:
     pool = db_connection.DB_POOL
     if pool is None:
@@ -357,18 +359,20 @@ async def get_or_create_default_thread(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO reader_ask_threads (user_id, record_id, title, is_default, created_at, updated_at)
-            VALUES ($1, $2, $3, TRUE, $4, $4)
+            INSERT INTO reader_ask_threads (user_id, record_id, title, selected_model_key, is_default, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, TRUE, $5, $5)
             ON CONFLICT (user_id, record_id)
             WHERE is_default = TRUE AND archived_at IS NULL
             DO UPDATE SET
                 title = COALESCE(reader_ask_threads.title, EXCLUDED.title),
+                selected_model_key = COALESCE(EXCLUDED.selected_model_key, reader_ask_threads.selected_model_key),
                 updated_at = EXCLUDED.updated_at
-            RETURNING id, record_id, title, is_default, archived_at, created_at, updated_at, last_message_at
+            RETURNING id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
             """,
             user_id,
             record_id,
             title,
+            selected_model_key,
             now,
         )
     assert row is not None
@@ -387,10 +391,38 @@ async def archive_thread(user_id: UUID, thread_id: UUID) -> dict[str, Any] | Non
             UPDATE reader_ask_threads
             SET archived_at = $3, updated_at = $3
             WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
-            RETURNING id, record_id, title, is_default, archived_at, created_at, updated_at, last_message_at
+            RETURNING id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
             """,
             thread_id,
             user_id,
+            now,
+        )
+    return _thread_row_to_dict(row) if row else None
+
+
+async def update_thread_selected_model(
+    user_id: UUID,
+    thread_id: UUID,
+    *,
+    selected_model_key: str | None,
+) -> dict[str, Any] | None:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    now = datetime.now(UTC)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE reader_ask_threads
+            SET selected_model_key = $3,
+                updated_at = $4
+            WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
+            RETURNING id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
+            """,
+            thread_id,
+            user_id,
+            selected_model_key,
             now,
         )
     return _thread_row_to_dict(row) if row else None

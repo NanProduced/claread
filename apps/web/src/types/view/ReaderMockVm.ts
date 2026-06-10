@@ -93,7 +93,7 @@ export interface InlineGlossary {
   zh?: string
   gloss?: string
   reason?: string
-  phraseType?: 'collocation' | 'phrasal_verb' | 'idiom' | 'proper_noun' | 'compound'
+  phraseType?: PhraseType
 }
 
 export type AnnotationType =
@@ -106,14 +106,16 @@ export type AnnotationType =
 
 export type VisualTone = 'vocab' | 'phrase' | 'context' | 'grammar' | 'term' | 'logic'
 
-export type PhraseKind =
-  | 'word'
-  | 'phrase'
+export type PhraseType =
   | 'collocation'
   | 'phrasal_verb'
   | 'idiom'
   | 'proper_noun'
   | 'compound'
+
+export type PhraseKind =
+  | 'word'
+  | 'phrase'
 
 export interface InlineMarkModel {
   id: string

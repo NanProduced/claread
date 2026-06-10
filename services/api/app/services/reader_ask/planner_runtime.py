@@ -422,10 +422,8 @@ async def run_semantic_planner(
     )
     if model_config and model_config.model_settings is not None:
         route_settings = route_settings.merged_with(model_config.model_settings)
-    route_settings = RunModelSettings(
-        max_tokens=route_settings.max_tokens or cfg.DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
-        temperature=route_settings.temperature,
-        timeout=route_settings.timeout,
+    route_settings = route_settings.with_max_tokens(
+        route_settings.max_tokens or cfg.DEFAULT_PLANNER_MAX_OUTPUT_TOKENS
     )
 
     last_error: Exception | None = None

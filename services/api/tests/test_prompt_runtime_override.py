@@ -87,6 +87,14 @@ def test_grammar_instructions_define_source_evidence_span_contract() -> None:
     assert "自然短片段" not in instructions
 
 
+def test_vocabulary_instructions_define_phrase_title_and_explicit_spans_contract() -> None:
+    instructions = load_agent_instructions("vocabulary")
+
+    assert "phrase_gloss.text 是短语卡片标题 / lookup_text / 教学短语名" in instructions
+    assert "默认每条 phrase_gloss 都提供 spans" in instructions
+    assert "兼作旧式锚点" not in instructions
+
+
 def test_workflow_lab_baseline_bundle_returns_learning_prompt_layers() -> None:
     bundle = get_workflow_lab_baseline_bundle(
         WorkflowLabBaselineBundleRequest(
@@ -158,6 +166,53 @@ def test_grammar_examples_use_exact_visible_text_anchors() -> None:
                 span_text = span["text"]
                 assert "..." not in span_text
                 assert span_text in sentence_text
+
+
+def test_vocabulary_phrase_examples_use_explicit_source_spans() -> None:
+    variants = [
+        "beginner_reading",
+        "default",
+        "intensive_reading",
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+    ]
+
+    for variant in variants:
+        for example in load_examples("vocabulary", variant):
+            if example.get("example_type") != "phrase":
+                continue
+            payload = json.loads(example["output_fragment"])
+            if payload.get("type") != "phrase_gloss":
+                continue
+            sentence_text = example["sentence_text"]
+            spans = payload.get("spans")
+            assert spans, f"{variant} phrase_gloss example missing spans"
+            assert 1 <= len(spans) <= 4
+            for span in spans:
+                span_text = span["text"]
+                assert "..." not in span_text
+                assert span_text in sentence_text
+
+
+def test_vocabulary_examples_output_fragments_are_valid_json() -> None:
+    variants = [
+        "beginner_reading",
+        "default",
+        "intensive_reading",
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+    ]
+
+    for variant in variants:
+        for example in load_examples("vocabulary", variant):
+            payload = json.loads(example["output_fragment"])
+            assert isinstance(payload, dict), f"{variant} output_fragment must decode to an object"
 
 
 def test_grammar_policy_lines_focus_on_teaching_strategy_not_anchor_shape() -> None:

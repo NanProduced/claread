@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
-import type { ReaderAskMessageDto } from "@/types/api/reader-ask";
+import type { ReaderAskUiMessageDto } from "@/types/api/reader-ask";
 import { consumeReaderAskSse } from "./ask/sse";
 import { AiWorkspacePanel, createSseMessageHandler } from "./AiWorkspacePanel";
 
@@ -123,6 +123,7 @@ const completedPayload = {
   run_info: null,
   supplement_candidates: [],
   persisted_supplements: [],
+  usage_event_id: "usage-1",
   disambiguation: null,
   external_asset_disambiguation: null,
 };
@@ -190,6 +191,33 @@ function jsonResponse(payload: unknown, status = 200) {
 function mockFetch() {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith("/api/web/reader-ask/model-options")) {
+      return jsonResponse({
+        default_key: "ask-clarity",
+        items: [
+          {
+            key: "ask-clarity",
+            label: "Qwen 3.7 Max",
+            description: "适合带 reasoning 的 Ask 问答。",
+            model_name: "qwen3.7-max",
+            planner_model_name: "qwen3.7-max",
+            replan_model_name: "qwen3.7-max",
+            price_multiplier: 1,
+            is_default: true,
+          },
+          {
+            key: "ask-fast",
+            label: "DeepSeek Chat",
+            description: "更快的直接回答。",
+            model_name: "deepseek-chat",
+            planner_model_name: "deepseek-chat",
+            replan_model_name: "deepseek-chat",
+            price_multiplier: 0.8,
+            is_default: false,
+          },
+        ],
+      });
+    }
     if (url.includes("/api/web/reader-ask/threads?record_id=")) {
       return jsonResponse({
         items: [
@@ -198,6 +226,15 @@ function mockFetch() {
             record_id: "record-1",
             title: "Ask Claread",
             is_default: true,
+            selected_model: {
+              key: "ask-clarity",
+              label: "Qwen 3.7 Max",
+              description: "适合带 reasoning 的 Ask 问答。",
+              model_name: "qwen3.7-max",
+              planner_model_name: "qwen3.7-max",
+              replan_model_name: "qwen3.7-max",
+              price_multiplier: 1,
+            },
             archived_at: null,
             created_at: "2026-05-20T00:00:00Z",
             updated_at: "2026-05-20T00:00:00Z",
@@ -212,6 +249,15 @@ function mockFetch() {
         record_id: "record-1",
         title: "Ask Claread",
         is_default: true,
+        selected_model: {
+          key: "ask-clarity",
+          label: "Qwen 3.7 Max",
+          description: "适合带 reasoning 的 Ask 问答。",
+          model_name: "qwen3.7-max",
+          planner_model_name: "qwen3.7-max",
+          replan_model_name: "qwen3.7-max",
+          price_multiplier: 1,
+        },
         archived_at: null,
         created_at: "2026-05-20T00:00:00Z",
         updated_at: "2026-05-20T00:00:00Z",
@@ -225,6 +271,15 @@ function mockFetch() {
         record_id: "record-1",
         title: "Ask Claread",
         is_default: true,
+        selected_model: {
+          key: "ask-clarity",
+          label: "Qwen 3.7 Max",
+          description: "适合带 reasoning 的 Ask 问答。",
+          model_name: "qwen3.7-max",
+          planner_model_name: "qwen3.7-max",
+          replan_model_name: "qwen3.7-max",
+          price_multiplier: 1,
+        },
         archived_at: null,
         created_at: "2026-05-20T00:00:00Z",
         updated_at: "2026-05-20T00:00:00Z",
@@ -315,7 +370,7 @@ function mockFetch() {
   });
 }
 
-function createAssistantMessage(overrides: Partial<ReaderAskMessageDto> = {}): ReaderAskMessageDto {
+function createAssistantMessage(overrides: Partial<ReaderAskUiMessageDto> = {}): ReaderAskUiMessageDto {
   return {
     id: "msg-assistant-1",
     thread_id: "thread-1",
@@ -350,7 +405,7 @@ function createAssistantMessage(overrides: Partial<ReaderAskMessageDto> = {}): R
   };
 }
 
-function mockThreadMessages(messages: ReaderAskMessageDto[]) {
+function mockThreadMessages(messages: ReaderAskUiMessageDto[]) {
   vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
@@ -359,6 +414,15 @@ function mockThreadMessages(messages: ReaderAskMessageDto[]) {
         record_id: "record-1",
         title: "Ask Claread",
         is_default: true,
+        selected_model: {
+          key: "ask-clarity",
+          label: "Qwen 3.7 Max",
+          description: "适合带 reasoning 的 Ask 问答。",
+          model_name: "qwen3.7-max",
+          planner_model_name: "qwen3.7-max",
+          replan_model_name: "qwen3.7-max",
+          price_multiplier: 1,
+        },
         archived_at: null,
         created_at: "2026-05-20T00:00:00Z",
         updated_at: "2026-05-20T00:00:00Z",
@@ -1887,9 +1951,10 @@ describe("AiWorkspacePanel", () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("正在生成解释")).not.toBeNull();
+      expect(screen.getByText("正在读取当前文章与附件上下文，准备本轮解释。")).not.toBeNull();
     });
 
+    expect(screen.queryByText("思考中")).toBeNull();
     expect(screen.queryByText("…")).toBeNull();
   });
 
@@ -1904,7 +1969,7 @@ describe("AiWorkspacePanel", () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("正在生成解释")).not.toBeNull();
+      expect(screen.getByText("正在组织回答")).not.toBeNull();
       expect(screen.getByText("已生成第一句。")).not.toBeNull();
     });
   });
@@ -1923,7 +1988,8 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("解释完成。")).not.toBeNull();
     });
 
-    expect(screen.queryByText("正在生成解释")).toBeNull();
+    expect(screen.queryByText("正在整理问题")).toBeNull();
+    expect(screen.queryByText("正在组织回答")).toBeNull();
   });
 
   it("shows reasoning while streaming even before reasoning markdown arrives", async () => {
@@ -1939,13 +2005,231 @@ describe("AiWorkspacePanel", () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(screen.getAllByText("正在梳理解释思路").length).toBeGreaterThan(0);
+      expect(screen.getByText("思考中")).not.toBeNull();
+      expect(screen.getByText("正在流式生成思路")).not.toBeNull();
     });
 
     const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
     const content = container.querySelector('[data-slot="reasoning-content"]');
-    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
-    expect(content?.getAttribute("data-state")).toBe("open");
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(content?.getAttribute("data-state")).toBe("closed");
+
+    fireEvent.click(screen.getByText("思考中"));
+
+    await waitFor(() => {
+      expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+      expect(content?.getAttribute("data-state")).toBe("open");
+    });
+  });
+
+  it("uses the active Ask model for new turns and retry requests", async () => {
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/model-options")) {
+        return jsonResponse({
+          default_key: "ask-clarity",
+          items: [
+            {
+              key: "ask-clarity",
+              label: "Qwen 3.7 Max",
+              description: "适合带 reasoning 的 Ask 问答。",
+              model_name: "qwen3.7-max",
+              planner_model_name: "qwen3.7-max",
+              replan_model_name: "qwen3.7-max",
+              price_multiplier: 1,
+              is_default: true,
+            },
+            {
+              key: "ask-fast",
+              label: "DeepSeek Chat",
+              description: "更快的直接回答。",
+              model_name: "deepseek-chat",
+              planner_model_name: "deepseek-chat",
+              replan_model_name: "deepseek-chat",
+              price_multiplier: 0.8,
+              is_default: false,
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/web/reader-ask/threads?record_id=")) {
+        return jsonResponse({
+          items: [
+            {
+              id: "thread-1",
+              record_id: "record-1",
+              title: "Ask Claread",
+              is_default: true,
+              selected_model: {
+                key: "ask-fast",
+                label: "DeepSeek Chat",
+                description: "更快的直接回答。",
+                model_name: "deepseek-chat",
+                planner_model_name: "deepseek-chat",
+                replan_model_name: "deepseek-chat",
+                price_multiplier: 0.8,
+              },
+              archived_at: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+              last_message_at: null,
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          selected_model: {
+            key: "ask-fast",
+            label: "DeepSeek Chat",
+            description: "更快的直接回答。",
+            model_name: "deepseek-chat",
+            planner_model_name: "deepseek-chat",
+            replan_model_name: "deepseek-chat",
+            price_multiplier: 0.8,
+          },
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [],
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      const modelSelect = screen.getByLabelText("切换 Ask Claread 模型");
+      expect(modelSelect.textContent ?? "").toContain("DeepSeek Chat");
+    });
+    expect(screen.queryByText("当前模型 · DeepSeek Chat")).toBeNull();
+    expect(screen.queryByText("更快的直接回答。")).toBeNull();
+
+    const composer = screen.getByRole("textbox");
+    fireEvent.change(composer, { target: { value: "帮我解释这一句。" } });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+      expect(streamCall?.[1]?.body).toContain('"model":"ask-fast"');
+    });
+
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/model-options")) {
+        return jsonResponse({
+          default_key: "ask-clarity",
+          items: [
+            {
+              key: "ask-clarity",
+              label: "Qwen 3.7 Max",
+              description: "适合带 reasoning 的 Ask 问答。",
+              model_name: "qwen3.7-max",
+              planner_model_name: "qwen3.7-max",
+              replan_model_name: "qwen3.7-max",
+              price_multiplier: 1,
+              is_default: true,
+            },
+            {
+              key: "ask-fast",
+              label: "DeepSeek Chat",
+              description: "更快的直接回答。",
+              model_name: "deepseek-chat",
+              planner_model_name: "deepseek-chat",
+              replan_model_name: "deepseek-chat",
+              price_multiplier: 0.8,
+              is_default: false,
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/web/reader-ask/threads?record_id=")) {
+        return jsonResponse({
+          items: [
+            {
+              id: "thread-1",
+              record_id: "record-1",
+              title: "Ask Claread",
+              is_default: true,
+              selected_model: {
+                key: "ask-fast",
+                label: "DeepSeek Chat",
+                description: "更快的直接回答。",
+                model_name: "deepseek-chat",
+                planner_model_name: "deepseek-chat",
+                replan_model_name: "deepseek-chat",
+                price_multiplier: 0.8,
+              },
+              archived_at: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+              last_message_at: null,
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          selected_model: {
+            key: "ask-fast",
+            label: "DeepSeek Chat",
+            description: "更快的直接回答。",
+            model_name: "deepseek-chat",
+            planner_model_name: "deepseek-chat",
+            replan_model_name: "deepseek-chat",
+            price_multiplier: 0.8,
+          },
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            createAssistantMessage({
+              id: "msg-retry-target",
+              status: "interrupted",
+              content_md: "已有部分答案。",
+            }),
+          ],
+        });
+      }
+      if (url.includes("/retry/stream")) {
+        return new Response("", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    cleanup();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "重新生成" })).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+
+    await waitFor(() => {
+      const retryCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/retry/stream"));
+      expect(retryCall).toBeTruthy();
+      expect(retryCall?.[1]?.body).toBe(JSON.stringify({ model: "ask-fast" }));
+    });
   });
 
   it("renders reasoning deltas immediately while the answer is still streaming", async () => {
@@ -2005,7 +2289,7 @@ describe("AiWorkspacePanel", () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("解释思路")).not.toBeNull();
+      expect(screen.getByText("思考过程")).not.toBeNull();
       expect(screen.getByText("这里是答案正文。")).not.toBeNull();
     });
 
@@ -2014,7 +2298,7 @@ describe("AiWorkspacePanel", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(content?.getAttribute("data-state")).toBe("closed");
 
-    fireEvent.click(screen.getByText("解释思路"));
+    fireEvent.click(screen.getByText("思考过程"));
 
     await waitFor(() => {
       expect(trigger?.getAttribute("aria-expanded")).toBe("true");
@@ -2044,9 +2328,36 @@ describe("AiWorkspacePanel", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
 
     // User can expand to see the reasoning content
-    fireEvent.click(screen.getByText("解释思路"));
+    fireEvent.click(screen.getByText("思考过程"));
     await waitFor(() => {
       expect(screen.getByText("这是刷新后恢复的推理内容。")).not.toBeNull();
+    });
+  });
+
+  it("keeps a completed reasoning trigger visible even when the model returned no reasoning text", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "completed",
+        content_md: "这是直接回答。",
+        reasoning_md: "",
+        reasoning_status: "completed",
+      }),
+    ]);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("这是直接回答。")).not.toBeNull();
+      expect(screen.getByText("思考过程")).not.toBeNull();
+    });
+
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(screen.getByText("思考过程"));
+
+    await waitFor(() => {
+      expect(screen.getByText("本轮模型未返回可展示的思考内容。")).not.toBeNull();
     });
   });
 
@@ -2096,7 +2407,7 @@ describe("AiWorkspacePanel", () => {
 
 describe("createSseMessageHandler – replan.started", () => {
   it("sets replan_status to 'replanning' on replan.started event", () => {
-    type Msg = ReaderAskMessageDto;
+    type Msg = ReaderAskUiMessageDto;
     const targetId = "msg-1";
     const messages: Msg[] = [
       {
@@ -2142,7 +2453,7 @@ describe("createSseMessageHandler – replan.started", () => {
   });
 
   it("resets replan_status to 'idle' on message.completed event", () => {
-    type Msg = ReaderAskMessageDto;
+    type Msg = ReaderAskUiMessageDto;
     const targetId = "msg-1";
     const messages: Msg[] = [
       {
@@ -2195,15 +2506,17 @@ describe("createSseMessageHandler – replan.started", () => {
         response_cards: [],
         supplement_candidates: [],
         persisted_supplements: [],
+        usage_event_id: "usage-1",
       },
     });
 
     expect(updatedMessages[0].replan_status).toBe("idle");
     expect(updatedMessages[0].content_md).toBe("This is the replanned answer.");
+    expect(updatedMessages[0].usage_event_id).toBe("usage-1");
   });
 
   it("replaces interrupted preview content on the first regenerate delta", () => {
-    type Msg = ReaderAskMessageDto;
+    type Msg = ReaderAskUiMessageDto;
     const targetId = "msg-1";
     const messages: Msg[] = [
       {
@@ -2251,7 +2564,7 @@ describe("createSseMessageHandler – replan.started", () => {
 // ---------------------------------------------------------------------------
 
 describe("createSseMessageHandler – reasoning lifecycle", () => {
-  type Msg = ReaderAskMessageDto;
+  type Msg = ReaderAskUiMessageDto;
 
   function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
     return {
@@ -2482,7 +2795,7 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
 // ---------------------------------------------------------------------------
 
 describe("createSseMessageHandler – context compression UX", () => {
-  type Msg = ReaderAskMessageDto;
+  type Msg = ReaderAskUiMessageDto;
 
   function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
     return {

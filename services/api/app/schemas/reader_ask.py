@@ -668,11 +668,31 @@ class ReaderAskMessage(BaseModel):
     updated_at: str
 
 
+class ReaderAskSelectedModel(BaseModel):
+    key: str
+    label: str
+    description: str | None = None
+    model_name: str | None = None
+    planner_model_name: str | None = None
+    replan_model_name: str | None = None
+    price_multiplier: float = 1.0
+
+
+class ReaderAskModelOptionSummary(ReaderAskSelectedModel):
+    is_default: bool = False
+
+
+class ReaderAskModelOptionListResponse(BaseModel):
+    default_key: str
+    items: list[ReaderAskModelOptionSummary]
+
+
 class ReaderAskThreadSummary(BaseModel):
     id: str
     record_id: str
     title: str | None = None
     is_default: bool
+    selected_model: ReaderAskSelectedModel | None = None
     archived_at: str | None = None
     created_at: str
     updated_at: str
@@ -692,6 +712,7 @@ class ReaderAskThreadCreateRequest(BaseModel):
 
     record_id: str
     title: str | None = Field(default=None, max_length=120)
+    model: str | None = None
 
 
 class ReaderAskActionConfirmResult(BaseModel):
@@ -734,6 +755,12 @@ class ReaderAskMessageStreamRequest(BaseModel):
     model: str | None = None
 
 
+class ReaderAskMessageRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    model: str | None = None
+
+
 class ReaderAskUserVisibleOutput(BaseModel):
     content_md: str
     submission_mode: ReaderAskSubmissionMode = "chat"
@@ -761,6 +788,7 @@ class ReaderAskUserVisibleOutput(BaseModel):
 class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):
     id: str
     thread_id: str
+    usage_event_id: str | None = None
 
 
 class ReaderAskStreamEnvelope(BaseModel):

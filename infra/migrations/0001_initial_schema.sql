@@ -500,6 +500,7 @@ CREATE TABLE reader_ask_threads (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   record_id UUID NOT NULL REFERENCES analysis_records(id) ON DELETE CASCADE,
   title TEXT,
+  selected_model_key TEXT,
   is_default BOOLEAN NOT NULL DEFAULT FALSE,
   archived_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1041,6 +1042,7 @@ COMMENT ON COLUMN reader_notes.note_text IS '用户笔记正文。';
 COMMENT ON COLUMN reader_notes.payload_json IS '笔记引用附加信息 JSON，至少包含 quoted_text 与 segments。';
 
 COMMENT ON TABLE reader_ask_threads IS 'Reader 内 Ask Claread 会话线程。按用户和文章绑定，支持默认线程与 New chat。';
+COMMENT ON COLUMN reader_ask_threads.selected_model_key IS '线程当前生效的 Ask Claread 模型选项键。用户在线程中切换后，后续消息默认沿用该键。';
 COMMENT ON COLUMN reader_ask_threads.is_default IS '是否为当前文章的默认线程。一个用户在同一篇文章下仅允许一个未归档默认线程。';
 COMMENT ON COLUMN reader_ask_threads.last_message_at IS '最近一条消息时间，用于线程排序与续聊。';
 

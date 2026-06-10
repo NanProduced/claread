@@ -456,6 +456,31 @@ class TestPreparePromptPayloadCompaction:
         assert len(compaction_audit) > 0
         assert context_too_large is False
 
+    def test_prepare_prompt_payload_uses_explicit_runtime_input_budget(self) -> None:
+        payload = {
+            "history": [{"role": "user", "content_md": "q" * 1500} for _ in range(4)],
+            "record_context": {
+                "source_excerpt": "t" * 16000,
+            },
+            "article_overview": "o" * 6000,
+        }
+
+        original_tokens = estimate_token_count(payload)
+        assert original_tokens > 4000
+
+        result_payload, output_tokens, compaction_audit, context_too_large = prepare_prompt_payload(
+            payload,
+            max_input_tokens=24000,
+            budget_buffer_tokens=800,
+            default_max_output_tokens=3200,
+            min_max_output_tokens=400,
+        )
+
+        assert result_payload == payload
+        assert output_tokens == 3200
+        assert compaction_audit == []
+        assert context_too_large is False
+
 
 class TestContextCompressionUxContract:
     """P0-6: Context Compression UX Contract."""

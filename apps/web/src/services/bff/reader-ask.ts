@@ -7,6 +7,7 @@ import {
   deleteUpstreamReaderAskSupplement,
   getUpstreamReaderAskThread,
   listUpstreamReaderAskContextRecords,
+  listUpstreamReaderAskModelOptions,
   listUpstreamReaderAskThreads,
   resetUpstreamReaderAskThread,
   retryUpstreamReaderAskMessage,
@@ -17,7 +18,9 @@ import type {
   ReaderAskActionConfirmResponseDto,
   ReaderAskContextRecordSearchResponseDto,
   ReaderAskDeleteSupplementResponseDto,
+  ReaderAskMessageRetryRequestDto,
   ReaderAskMessageStreamRequestDto,
+  ReaderAskModelOptionListResponseDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
   ReaderAskThreadListResponseDto,
@@ -63,6 +66,30 @@ function normalizeUpstreamError(
     return { code: fallbackCode, detail: payload.trim() };
   }
   return { code: fallbackCode, detail: fallbackDetail };
+}
+
+export async function listReaderAskModelOptionsForWeb(): Promise<Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return authError("请先登录后再使用 Ask Claread。");
+  }
+
+  const upstream = await listUpstreamReaderAskModelOptions(session.sessionToken);
+  if (!upstream.ok) {
+    const fallbackDetail = upstream.status === 401 ? "请先登录后再使用 Ask Claread。" : "Ask Claread 模型列表暂时不可用。";
+    const { code, detail } = normalizeUpstreamError(
+      upstream.payload,
+      "READER_ASK_MODEL_OPTIONS_FAILED",
+      fallbackDetail,
+    );
+    return new Response(JSON.stringify({ code, detail }), {
+      status: upstream.status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const data: ReaderAskModelOptionListResponseDto = upstream.data;
+  return Response.json(data);
 }
 
 async function buildStreamErrorResponse(upstream: Response): Promise<Response> {
@@ -255,6 +282,7 @@ export async function createReaderAskStreamForWeb(
 export async function retryReaderAskMessageForWeb(
   threadId: string,
   messageId: string,
+  body: ReaderAskMessageRetryRequestDto,
 ): Promise<Response> {
   const session = await requireUpstreamSession();
   if (!session) {
@@ -271,7 +299,7 @@ export async function retryReaderAskMessageForWeb(
     );
   }
 
-  const upstream = await retryUpstreamReaderAskMessage(threadId, messageId, session.sessionToken);
+  const upstream = await retryUpstreamReaderAskMessage(threadId, messageId, body, session.sessionToken);
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }

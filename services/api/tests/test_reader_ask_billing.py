@@ -4,6 +4,7 @@ from app.services.ai_usage import (
     build_reader_ask_billing_metadata,
     compute_reader_ask_cost_points,
 )
+from app.services.ai_usage.billing import WeightedTokensBillingConfig
 
 
 def test_compute_reader_ask_cost_points_uses_weighted_tokens() -> None:
@@ -34,3 +35,26 @@ def test_build_reader_ask_billing_metadata_exposes_policy_and_reservation() -> N
     assert metadata["total_tokens"] == 30
     assert metadata["reserved_points"] == READER_ASK_RESERVED_POINTS
     assert metadata["billing_policy_version"] == READER_ASK_WEIGHTED_TOKENS_POLICY_VERSION
+
+
+def test_compute_reader_ask_cost_points_supports_price_multiplier() -> None:
+    usage_summary = {
+        "aggregate": {
+            "input_tokens": 500,
+            "output_tokens": 100,
+            "total_tokens": 600,
+        }
+    }
+    config = WeightedTokensBillingConfig(
+        reserved_points=12,
+        tokens_per_point=1000,
+        price_multiplier=2.0,
+        billing_policy_version=READER_ASK_WEIGHTED_TOKENS_POLICY_VERSION,
+    )
+
+    points = compute_reader_ask_cost_points(usage_summary, config)
+    metadata = build_reader_ask_billing_metadata(usage_summary, config)
+
+    assert points == 2
+    assert metadata["price_multiplier"] == 2.0
+    assert metadata["reserved_points"] == 12

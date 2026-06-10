@@ -35,6 +35,7 @@ import {
 import { Loader } from "@/components/ui/loader";
 import { Markdown } from "@/components/ui/markdown";
 import { Message as ChatMessage, MessageContent } from "@/components/ui/message";
+import { Select } from "@/components/primitives/select";
 import {
   PromptInput,
   PromptInputActions,
@@ -76,18 +77,23 @@ import type {
   ReaderAskEntryActionDto,
   ReaderAskEvidenceItemDto,
   ReaderAskMessageDto,
+  ReaderAskMessageUiStateDto,
+  ReaderAskModelOptionListResponseDto,
+  ReaderAskModelOptionSummaryDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskPageIdentityDto,
   ReaderAskPersistedSupplementDto,
   ReaderAskResolvedContextInputDto,
   ReaderAskResolvedContextSummaryDto,
   ReaderAskResponseCardDto,
+  ReaderAskSelectedModelDto,
   ReaderAskSupplementCandidateDto,
   ReaderAskStreamEnvelopeDto,
   ReaderAskTraceSummaryDto,
   ReaderAskThreadDetailDto,
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
+  ReaderAskUiMessageDto,
 } from "@/types/api/reader-ask";
 import type { SentenceEntryModel } from "@/types/view/ReaderMockVm";
 import { consumeReaderAskSse } from "./ask/sse";
@@ -201,7 +207,7 @@ type AskPanelConversationItem = {
   id: string;
   role: ReaderAskMessageDto["role"];
   status: ReaderAskMessageDto["status"];
-  message: ReaderAskMessageDto;
+  message: ReaderAskUiMessageDto;
   blocks: AskPanelBlock[];
 };
 
@@ -444,7 +450,7 @@ function mergeAttachments(
 }
 
 function attachmentsFromResolvedContext(
-  message: ReaderAskMessageDto | null | undefined,
+  message: ReaderAskUiMessageDto | null | undefined,
   fallbackPageIdentity: ReaderAskPageIdentity,
 ): ReaderAskAttachment[] {
   if (!message?.resolved_context_input?.attachments?.length) {
@@ -477,9 +483,56 @@ function toThreadSummary(detail: ReaderAskThreadDetailDto): ReaderAskThreadSumma
     record_id: detail.record_id,
     title: detail.title,
     is_default: detail.is_default,
+    selected_model: detail.selected_model ?? null,
+    archived_at: detail.archived_at ?? null,
     created_at: detail.created_at,
     updated_at: detail.updated_at,
     last_message_at: detail.last_message_at,
+  };
+}
+
+function replaceThreadSummary(
+  threads: ReaderAskThreadSummaryDto[],
+  nextThread: ReaderAskThreadSummaryDto,
+): ReaderAskThreadSummaryDto[] {
+  const index = threads.findIndex((thread) => thread.id === nextThread.id);
+  if (index < 0) {
+    return [nextThread, ...threads];
+  }
+  return threads.map((thread) => (thread.id === nextThread.id ? nextThread : thread));
+}
+
+function isKnownModelOptionKey(
+  items: ReaderAskModelOptionSummaryDto[],
+  key: string | null | undefined,
+): key is string {
+  return Boolean(key && items.some((item) => item.key === key));
+}
+
+function findModelOptionSummary(
+  items: ReaderAskModelOptionSummaryDto[],
+  key: string | null | undefined,
+): ReaderAskModelOptionSummaryDto | null {
+  if (!key) {
+    return null;
+  }
+  return items.find((item) => item.key === key) ?? null;
+}
+
+function toSelectedModelSummary(
+  option: ReaderAskModelOptionSummaryDto | null | undefined,
+): ReaderAskSelectedModelDto | null {
+  if (!option) {
+    return null;
+  }
+  return {
+    key: option.key,
+    label: option.label,
+    description: option.description ?? null,
+    model_name: option.model_name ?? null,
+    planner_model_name: option.planner_model_name ?? null,
+    replan_model_name: option.replan_model_name ?? null,
+    price_multiplier: option.price_multiplier,
   };
 }
 
@@ -615,7 +668,7 @@ function syncToolTrace(
   ];
 }
 
-type MessageUpdater = ( updater: (messages: ReaderAskMessageDto[]) => ReaderAskMessageDto[] ) => void;
+type MessageUpdater = ( updater: (messages: ReaderAskUiMessageDto[]) => ReaderAskUiMessageDto[] ) => void;
 
 export function createSseMessageHandler(
   initialMessageId: string,
@@ -782,6 +835,7 @@ export function createSseMessageHandler(
               replan_status: "idle",
               compacting: false,
               regenerate_preview: false,
+              usage_event_id: payload.usage_event_id ?? message.usage_event_id ?? null,
             };
           }
           const isPriorUser =
@@ -1162,6 +1216,8 @@ function plannerModeLabel(mode: ReaderAskTraceSummaryDto["planner_mode"]) {
       return "直接回答";
     case "needs_local_clarification":
       return "需要局部澄清";
+    case "partial_answer_with_followup":
+      return "先答复再追问";
     case "known_reference_resolved":
       return "已命中历史文章";
     case "known_reference_ambiguous":
@@ -1202,7 +1258,7 @@ function supplementCandidateIdFromProposal(proposal: ReaderAskActionProposalDto)
   return typeof candidateId === "string" && candidateId.trim() ? candidateId : null;
 }
 
-function pendingSupplementCandidates(message: ReaderAskMessageDto | null): ReaderAskSupplementCandidateDto[] {
+function pendingSupplementCandidates(message: ReaderAskUiMessageDto | null): ReaderAskSupplementCandidateDto[] {
   if (!message) {
     return [];
   }
@@ -1214,7 +1270,7 @@ function pendingSupplementCandidates(message: ReaderAskMessageDto | null): Reade
   });
 }
 
-function messageOperationSummary(message: ReaderAskMessageDto) {
+function messageOperationSummary(message: ReaderAskUiMessageDto) {
   const entryAction = message.resolved_context_input?.entry_action ?? null;
   const firstAttachment =
     message.resolved_context_input?.attachments[0]?.selected_text ??
@@ -1226,7 +1282,7 @@ function messageOperationSummary(message: ReaderAskMessageDto) {
     : quickActionLabel(entryAction);
 }
 
-function buildAssistantBlocks(message: ReaderAskMessageDto): AskPanelBlock[] {
+function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   const blocks: AskPanelBlock[] = [];
 
   if (submissionModeOf(message) === "quick_action" && message.response_cards.length > 0) {
@@ -2053,10 +2109,107 @@ function ConfirmActionCard({
   );
 }
 
-function AssistantStreamingIndicator() {
+function AssistantStreamingIndicator({
+  hasAnswerContent,
+  reasoningStatus,
+  compacting,
+  replanStatus,
+}: {
+  hasAnswerContent: boolean;
+  reasoningStatus: ReaderAskMessageDto["reasoning_status"];
+  compacting?: boolean;
+  replanStatus?: ReaderAskMessageUiStateDto["replan_status"];
+}) {
+  const title = compacting
+    ? "正在压缩上下文"
+    : replanStatus === "replanning"
+      ? "正在补充上下文"
+      : hasAnswerContent
+        ? "正在组织回答"
+        : reasoningStatus === "streaming"
+          ? "正在思考"
+          : "正在整理问题";
+  const detail = compacting
+    ? "Claread 正在收束这轮上下文，随后继续输出答案。"
+    : replanStatus === "replanning"
+      ? "已经识别到需要补充上下文，会在补充后重新组织答案。"
+      : hasAnswerContent
+        ? "正文已经开始输出，剩余内容仍在继续生成。"
+        : reasoningStatus === "streaming"
+          ? "模型正在流式产出思路，随后继续输出正文。"
+          : "正在读取当前文章与附件上下文，准备本轮解释。";
+
+  if (
+    !hasAnswerContent &&
+    reasoningStatus === "streaming" &&
+    !compacting &&
+    replanStatus !== "replanning"
+  ) {
+    return null;
+  }
+
   return (
     <div className="mb-2 px-0.5 text-[11px] leading-5 text-muted">
-      <Loader variant="loading-dots" size="sm" text="正在生成解释" />
+      <Loader variant="loading-dots" size="sm" text={hasAnswerContent ? title : detail} />
+    </div>
+  );
+}
+
+function AskPanelLoadingState({
+  title,
+  detail,
+}: {
+  title: string;
+  detail: string;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center px-5">
+      <div className="w-full max-w-[22rem] rounded-[24px] border border-hairline/80 bg-reader-paper/88 px-4 py-4 shadow-[0_20px_46px_rgba(17,17,17,0.06)] dark:bg-[#1f2429]/88 dark:shadow-[0_20px_46px_rgba(0,0,0,0.24)]">
+        <div className="flex items-start gap-3">
+          <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-hairline/70 bg-surface text-lens-blue shadow-[0_10px_24px_rgba(17,17,17,0.05)]">
+            <Sparkles className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <Loader variant="text-shimmer" size="md" text={title} />
+            <p className="mt-1.5 text-[13px] leading-6 text-muted">{detail}</p>
+            <div className="mt-2.5">
+              <Loader variant="loading-dots" size="sm" text="请稍候" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AskComposerModelSelect({
+  disabled,
+  items,
+  loading,
+  selectedKey,
+  selectedModel,
+  onValueChange,
+}: {
+  disabled: boolean;
+  items: { label: string; value: string | null }[];
+  loading: boolean;
+  selectedKey: string | null;
+  selectedModel: ReaderAskSelectedModelDto | null;
+  onValueChange: (value: string | null) => void;
+}) {
+  return (
+    <div className="min-w-[7.5rem] max-w-[10rem]">
+      <Select
+        aria-label="切换 Ask Claread 模型"
+        items={items}
+        value={selectedKey}
+        onValueChange={onValueChange}
+        placeholder={loading ? "加载模型…" : selectedModel?.label ?? "选择模型"}
+        disabled={disabled}
+        size="sm"
+        tone="quiet"
+        className="min-h-8 rounded-full border-hairline/70 bg-reader-paper/68 px-3 text-[12px] shadow-none"
+      />
     </div>
   );
 }
@@ -2070,34 +2223,58 @@ function AssistantReasoningBlock({
 }) {
   const hasReasoningContent = Boolean(reasoningMd?.trim());
   const isStreaming = reasoningStatus === "streaming";
-  const [open, setOpen] = useState(isStreaming);
-  const previousStreamingRef = useRef(isStreaming);
+  const isCompleted = reasoningStatus === "completed";
+  const isActive = isStreaming;
+  const shouldRender = isActive || isCompleted || hasReasoningContent;
 
-  useEffect(() => {
-    if (isStreaming && !previousStreamingRef.current) {
-      setOpen(true);
-    }
-    if (!isStreaming && previousStreamingRef.current) {
-      setOpen(false);
-    }
-    previousStreamingRef.current = isStreaming;
-  }, [isStreaming]);
-
-  if (!isStreaming && !hasReasoningContent) {
+  if (!shouldRender) {
     return null;
   }
 
   return (
-    <Reasoning open={open} onOpenChange={setOpen} className="mb-3">
-      <ReasoningTrigger className="w-full justify-between py-0.5 text-left text-[11px] font-medium text-muted transition-colors hover:text-ink-soft">
-        <span>{isStreaming ? "解释思路" : "解释思路"}</span>
+    <Reasoning
+      isStreaming={isActive}
+      className={cn(
+        "mb-3 transition-all",
+        isActive
+          ? "rounded-[18px] border border-hairline/70 bg-reader-paper/58 px-3.5 py-3"
+          : "px-0.5 py-0.5",
+      )}
+    >
+      <ReasoningTrigger className="w-full justify-between gap-2 py-0 text-left text-[11px] font-medium text-muted transition-colors hover:text-ink-soft">
+        <span className="inline-flex items-center gap-2">
+          <span
+            className={cn(
+              "inline-flex size-5 shrink-0 items-center justify-center rounded-full text-lens-blue",
+              isActive ? "bg-surface/85" : "bg-reader-paper/80",
+            )}
+          >
+            <Sparkles className="h-3 w-3" />
+          </span>
+          <span>{isActive ? "思考中" : "思考过程"}</span>
+          {isActive ? <Loader variant="dots" size="sm" /> : null}
+        </span>
       </ReasoningTrigger>
-      <ReasoningContent className="pt-1.5" contentClassName="border-l border-hairline/90 pl-3 text-[12px] leading-6 text-muted">
+      <ReasoningContent
+        className="pt-2.5"
+        contentClassName="border-l border-hairline/80 pl-3 text-[12px] leading-6 text-muted"
+      >
         {hasReasoningContent ? (
           <Markdown components={ASK_MARKDOWN_COMPONENTS}>{reasoningMd ?? ""}</Markdown>
         ) : (
-          <div className="py-0.5 text-[12px] leading-6 text-muted">
-            <Loader variant="loading-dots" size="sm" text="正在梳理解释思路" />
+          <div className="flex items-center gap-2 py-0.5 text-[12px] leading-6 text-muted">
+            {isActive ? (
+              <>
+                <span className="inline-flex size-1.5 shrink-0 rounded-full bg-current/70" />
+                <Loader
+                  variant="loading-dots"
+                  size="sm"
+                  text={isStreaming ? "正在流式生成思路" : "正在读取上下文并组织思路"}
+                />
+              </>
+            ) : (
+              <span>本轮模型未返回可展示的思考内容。</span>
+            )}
           </div>
         )}
       </ReasoningContent>
@@ -2185,8 +2362,18 @@ function MessageBubble({
                               上下文压缩中
                             </div>
                           ) : null}
-                          <AssistantReasoningBlock reasoningMd={message.reasoning_md} reasoningStatus={message.reasoning_status} />
-                          {message.status === "streaming" ? <AssistantStreamingIndicator /> : null}
+                          <AssistantReasoningBlock
+                            reasoningMd={message.reasoning_md}
+                            reasoningStatus={message.reasoning_status}
+                          />
+                          {message.status === "streaming" ? (
+                            <AssistantStreamingIndicator
+                              hasAnswerContent={hasAnswerContent}
+                              reasoningStatus={message.reasoning_status}
+                              compacting={message.compacting ?? false}
+                              replanStatus={message.replan_status}
+                            />
+                          ) : null}
                           {hasAnswerContent ? (
                             <Markdown
                               components={ASK_MARKDOWN_COMPONENTS}
@@ -2516,7 +2703,12 @@ export function AiWorkspacePanel({
 
   const [threads, setThreads] = useState<ReaderAskThreadSummaryDto[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ReaderAskMessageDto[]>([]);
+  const [messages, setMessages] = useState<ReaderAskUiMessageDto[]>([]);
+  const [modelOptions, setModelOptions] = useState<ReaderAskModelOptionSummaryDto[]>([]);
+  const [defaultModelKey, setDefaultModelKey] = useState<string | null>(null);
+  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
+  const [, setModelOptionsError] = useState<string | null>(null);
   const [composer, setComposer] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -2550,6 +2742,29 @@ export function AiWorkspacePanel({
     status: message.status,
     message,
     blocks: message.role === "assistant" ? buildAssistantBlocks(message) : [],
+  }));
+  const activeThread = activeThreadId ? threads.find((thread) => thread.id === activeThreadId) ?? null : null;
+  const effectiveSelectedModelKey = (() => {
+    if (isKnownModelOptionKey(modelOptions, selectedModelKey)) {
+      return selectedModelKey;
+    }
+    const threadKey = activeThread?.selected_model?.key ?? null;
+    if (isKnownModelOptionKey(modelOptions, threadKey)) {
+      return threadKey;
+    }
+    if (isKnownModelOptionKey(modelOptions, defaultModelKey)) {
+      return defaultModelKey;
+    }
+    return selectedModelKey ?? threadKey ?? defaultModelKey ?? null;
+  })();
+  const selectedModelOption = findModelOptionSummary(modelOptions, effectiveSelectedModelKey);
+  const selectedModelSummary =
+    toSelectedModelSummary(selectedModelOption) ??
+    activeThread?.selected_model ??
+    toSelectedModelSummary(findModelOptionSummary(modelOptions, defaultModelKey));
+  const modelSelectItems = modelOptions.map((item) => ({
+    label: item.label,
+    value: item.key,
   }));
   const visibleContextAttachments = attachments.filter(
     (attachment) => !(attachment.kind === "record_ref" && attachment.metadata.recordId === recordId),
@@ -2587,13 +2802,25 @@ export function AiWorkspacePanel({
     );
   }
 
+  async function fetchModelOptions() {
+    return fetchJson<ReaderAskModelOptionListResponseDto>(
+      "/api/web/reader-ask/model-options",
+      undefined,
+      "Ask Claread 模型列表加载失败。",
+    );
+  }
+
   async function createThread(title: string) {
     return fetchJson<ReaderAskThreadSummaryDto>(
       "/api/web/reader-ask/threads",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ record_id: recordId, title }),
+        body: JSON.stringify({
+          record_id: recordId,
+          title,
+          model: effectiveSelectedModelKey,
+        }),
       },
       "Ask Claread 初始化失败。",
     );
@@ -2604,9 +2831,9 @@ export function AiWorkspacePanel({
     setActiveThreadId(threadId);
     setMessages(detail.messages);
     setSupplementNotice(null);
-    if (nextThreads) {
-      setThreads(nextThreads);
-    }
+    const nextSummary = toThreadSummary(detail);
+    setSelectedModelKey(detail.selected_model?.key ?? defaultModelKey ?? null);
+    setThreads((current) => replaceThreadSummary(nextThreads ?? current, nextSummary));
   }
 
   useEffect(() => {
@@ -2644,6 +2871,61 @@ export function AiWorkspacePanel({
     };
   }, [contextPickerOpen, contextSearch.query, recordId]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    let cancelled = false;
+    setModelOptionsLoading(true);
+    setModelOptionsError(null);
+
+    void fetchModelOptions()
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setModelOptions(payload.items ?? []);
+        setDefaultModelKey(payload.default_key ?? null);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setModelOptions([]);
+        setDefaultModelKey(null);
+        setModelOptionsError(error instanceof Error ? error.message : "Ask Claread 模型列表加载失败。");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setModelOptionsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (modelOptions.length === 0) {
+      return;
+    }
+    setSelectedModelKey((current) => {
+      if (isKnownModelOptionKey(modelOptions, current)) {
+        return current;
+      }
+      const threadKey = activeThread?.selected_model?.key ?? null;
+      if (isKnownModelOptionKey(modelOptions, threadKey)) {
+        return threadKey;
+      }
+      if (isKnownModelOptionKey(modelOptions, defaultModelKey)) {
+        return defaultModelKey;
+      }
+      return current;
+    });
+  }, [activeThread?.selected_model?.key, defaultModelKey, modelOptions]);
+
   async function ensureThreadReady(): Promise<string | null> {
     setLoading(true);
     setErrorMessage(null);
@@ -2678,6 +2960,7 @@ export function AiWorkspacePanel({
     hydrationRef.current += 1;
     const currentHydration = hydrationRef.current;
     initInProgressRef.current = true;
+    setSelectedModelKey(null);
     void (async () => {
       try {
         const threadId = await ensureThreadReady();
@@ -2724,6 +3007,7 @@ export function AiWorkspacePanel({
       );
       setActiveThreadId(detail.id);
       setMessages(detail.messages);
+      setSelectedModelKey(detail.selected_model?.key ?? defaultModelKey ?? null);
       setThreads([toThreadSummary(detail)]);
       setComposer("");
       setSupplementNotice(null);
@@ -2946,7 +3230,7 @@ export function AiWorkspacePanel({
     const now = Date.now();
     const tempUserId = `local-user-${now}`;
     const tempAssistantId = `local-assistant-${now}`;
-    const userMessage: ReaderAskMessageDto = {
+    const userMessage: ReaderAskUiMessageDto = {
       id: tempUserId,
       thread_id: threadId,
       role: "user",
@@ -2976,7 +3260,7 @@ export function AiWorkspacePanel({
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    const assistantMessage: ReaderAskMessageDto = {
+    const assistantMessage: ReaderAskUiMessageDto = {
       id: tempAssistantId,
       thread_id: threadId,
       role: "assistant",
@@ -3021,7 +3305,12 @@ export function AiWorkspacePanel({
     setThreads((current) =>
       current.map((thread) =>
         thread.id === threadId
-          ? { ...thread, last_message_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+          ? {
+              ...thread,
+              selected_model: selectedModelSummary ?? thread.selected_model ?? null,
+              last_message_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }
           : thread,
       ),
     );
@@ -3032,6 +3321,7 @@ export function AiWorkspacePanel({
         page_identity: serializePageIdentity(pageIdentity),
         attachments: usedAttachments.map(serializeAttachment),
         entry_action: entryAction,
+        model: effectiveSelectedModelKey,
       };
       const response = await fetch(`/api/web/reader-ask/threads/${threadId}/messages/stream`, {
         method: "POST",
@@ -3127,6 +3417,8 @@ export function AiWorkspacePanel({
         `/api/web/reader-ask/threads/${activeThreadId}/messages/${messageId}/retry/stream`,
         {
           method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: effectiveSelectedModelKey }),
           signal: controller.signal,
         },
       );
@@ -3219,11 +3511,9 @@ export function AiWorkspacePanel({
             <div className="inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-hairline/80 bg-surface shadow-[0_10px_22px_rgba(17,17,17,0.04)]">
               <Sparkles className="h-3.5 w-3.5 text-lens-blue" />
             </div>
-            <div className="min-w-0">
-              <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-ink">Ask Claread</h2>
-            </div>
+            <h2 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-ink">Ask Claread</h2>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-2">
             <IconButton
               variant="quiet"
               size="sm"
@@ -3244,9 +3534,10 @@ export function AiWorkspacePanel({
 
       <div className="min-h-0 flex-1 pb-3 pt-4">
         {loading ? (
-          <div className="flex h-full items-center justify-center">
-            <LoaderCircle className="h-5 w-5 animate-spin text-lens-blue" />
-          </div>
+          <AskPanelLoadingState
+            title="正在准备 Ask Claread"
+            detail="正在恢复当前对话、同步模型设置并准备本轮上下文。"
+          />
         ) : (
           <ChatContainerRoot className="min-h-0 h-full w-full">
             <ChatContainerContent className={cn("px-5", messages.length === 0 ? "gap-0" : "gap-6")}>
@@ -3337,7 +3628,7 @@ export function AiWorkspacePanel({
             />
           </div>
 
-          <div className="flex items-center justify-between px-3 pb-2 pt-1">
+          <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-1">
             <div className="flex items-center gap-2">
               <Popover open={contextPickerOpen} onOpenChange={setContextPickerOpen}>
                 <PopoverTrigger asChild>
@@ -3377,7 +3668,15 @@ export function AiWorkspacePanel({
               </Popover>
             </div>
 
-            <PromptInputActions>
+            <PromptInputActions className="justify-end gap-2">
+              <AskComposerModelSelect
+                disabled={loading || sending || modelOptionsLoading || modelSelectItems.length === 0}
+                items={modelSelectItems}
+                loading={modelOptionsLoading}
+                selectedKey={effectiveSelectedModelKey}
+                selectedModel={selectedModelSummary}
+                onValueChange={(value) => setSelectedModelKey(value)}
+              />
               <button
                 type="button"
                 className={workspaceSendButtonClassName}

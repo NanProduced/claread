@@ -84,6 +84,7 @@ class TranslationItem(BaseModel):
 
 InlineMarkRenderType = Literal["background", "underline"]
 VisualTone = Literal["vocab", "phrase", "context", "grammar"]
+SentenceEntrySourceKind = Literal["workflow", "ask_supplement"]
 
 
 class InlineGlossary(BaseModel):
@@ -103,7 +104,9 @@ class InlineGlossary(BaseModel):
 class TextAnchor(BaseModel):
     kind: Literal["text"] = Field(default="text", description="锚点类型为单段文本")
     sentence_id: str = Field(description="所属句子标识")
-    anchor_text: str = Field(description="锚点文本，必须直接摘自对应句子")
+    anchor_text: str = Field(
+        description="投影后的锚点文本，必须是对应句子中的连续字面子串，不得包含省略号或讲解模板"
+    )
     occurrence: int | None = Field(
         default=None, ge=1, description="同一句中 anchor_text 多次出现时，指明要命中的第几次"
     )
@@ -158,6 +161,17 @@ class SentenceEntry(BaseModel):
         default="",
         description="详情内容，支持 Markdown 格式（**粗体**, *斜体*, `行内代码`, - 列表）",
     )
+    source_kind: SentenceEntrySourceKind = Field(
+        default="workflow",
+        description="入口来源。workflow 为分析工作流生成；ask_supplement 为 Ask Claread 追加的补充入口。",
+    )
+    supplement_id: str | None = Field(default=None, description="当 source_kind=ask_supplement 时的补充标识。")
+    deletable: bool = Field(default=False, description="该入口是否允许在前端删除。")
+    target_key: str | None = Field(default=None, description="补充或入口关联的目标 key。")
+    paragraph_id: str | None = Field(default=None, description="关联的段落标识。")
+    created_from_turn_run_id: str | None = Field(default=None, description="生成该入口的 Ask turn run 标识。")
+    schema_version: str | None = Field(default=None, description="入口投影数据的 schema 版本。")
+    lifecycle_status: str | None = Field(default=None, description="Ask supplement 的生命周期状态。")
 
 
 class Warning(BaseModel):

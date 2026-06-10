@@ -129,15 +129,7 @@ function inferLookupKind(annotationType: AnnotationType, value: unknown): Phrase
 }
 
 function toPhraseKind(value: unknown): PhraseKind | undefined {
-  if (
-    value === "word" ||
-    value === "phrase" ||
-    value === "collocation" ||
-    value === "phrasal_verb" ||
-    value === "idiom" ||
-    value === "proper_noun" ||
-    value === "compound"
-  ) {
+  if (value === "word" || value === "phrase") {
     return value;
   }
 

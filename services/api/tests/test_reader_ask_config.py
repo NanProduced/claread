@@ -7,6 +7,8 @@ def test_prompt_budget_constants() -> None:
     assert cfg.DEFAULT_MAX_OUTPUT_TOKENS == 1600
     assert cfg.MIN_MAX_OUTPUT_TOKENS == 400
     assert cfg.PROMPT_BUDGET_BUFFER_TOKENS == 800
+    assert cfg.DEFAULT_RUNTIME_MAX_INPUT_TOKENS == 24000
+    assert cfg.DEFAULT_RUNTIME_MAX_OUTPUT_TOKENS == 3200
 
 
 def test_history_and_context_limits() -> None:

@@ -14,6 +14,7 @@ from app.services.reader_ask.agent_invocation import (
     ReaderAskStreamCompleted,
     ReaderAskStreamSseEvent,
     build_reader_ask_planner_model_route,
+    build_reader_ask_replan_model_route,
     build_reader_ask_replan_event,
     resolve_reader_ask_agent,
     run_reader_ask_replan,
@@ -115,8 +116,13 @@ class TestResolveReaderAskAgent:
 class TestRunReaderAskReplan:
     """run_reader_ask_replan delegates to agent.run with correct params."""
 
+    @patch("app.services.reader_ask.agent_invocation.build_reader_ask_replan_model_route")
     @patch("app.services.reader_ask.agent_invocation.resolve_reader_ask_agent")
-    async def test_passes_deps_model_and_settings(self, mock_resolve: AsyncMock) -> None:
+    async def test_passes_deps_model_and_settings(
+        self,
+        mock_resolve: AsyncMock,
+        mock_replan_route: MagicMock,
+    ) -> None:
         fake_agent = AsyncMock()
         fake_result = MagicMock()
         fake_result.output = "replanned answer"
@@ -127,6 +133,7 @@ class TestRunReaderAskReplan:
         mock_resolved.agent = fake_agent
         mock_resolved.model = fake_model
         mock_resolve.return_value = mock_resolved
+        mock_replan_route.return_value = (fake_model, MagicMock())
 
         deps = _make_deps()
         route_settings = RunModelSettings(
@@ -150,7 +157,12 @@ class TestRunReaderAskReplan:
         assert call_kwargs.kwargs["model_settings"] is not None
 
     @patch("app.services.reader_ask.agent_invocation.resolve_reader_ask_agent")
-    async def test_returns_empty_string_when_output_is_none(self, mock_resolve: AsyncMock) -> None:
+    @patch("app.services.reader_ask.agent_invocation.build_reader_ask_replan_model_route")
+    async def test_returns_empty_string_when_output_is_none(
+        self,
+        mock_replan_route: MagicMock,
+        mock_resolve: AsyncMock,
+    ) -> None:
         fake_agent = AsyncMock()
         fake_result = MagicMock()
         fake_result.output = None
@@ -160,6 +172,7 @@ class TestRunReaderAskReplan:
         mock_resolved.agent = fake_agent
         mock_resolved.model = MagicMock()
         mock_resolve.return_value = mock_resolved
+        mock_replan_route.return_value = (MagicMock(), MagicMock())
 
         deps = _make_deps()
         route_settings = RunModelSettings(
@@ -177,7 +190,12 @@ class TestRunReaderAskReplan:
         assert result == ""
 
     @patch("app.services.reader_ask.agent_invocation.resolve_reader_ask_agent")
-    async def test_caps_max_tokens_to_replan_max_output(self, mock_resolve: AsyncMock) -> None:
+    @patch("app.services.reader_ask.agent_invocation.build_reader_ask_replan_model_route")
+    async def test_caps_max_tokens_to_replan_max_output(
+        self,
+        mock_replan_route: MagicMock,
+        mock_resolve: AsyncMock,
+    ) -> None:
         fake_agent = AsyncMock()
         fake_result = MagicMock()
         fake_result.output = "answer"
@@ -187,6 +205,7 @@ class TestRunReaderAskReplan:
         mock_resolved.agent = fake_agent
         mock_resolved.model = MagicMock()
         mock_resolve.return_value = mock_resolved
+        mock_replan_route.return_value = (MagicMock(), MagicMock())
 
         deps = _make_deps()
         # route_settings.max_tokens is larger than replan_max_output
@@ -206,6 +225,44 @@ class TestRunReaderAskReplan:
         model_settings = call_kwargs.kwargs["model_settings"]
         # max_tokens should be capped at replan_max_output (800)
         assert model_settings["max_tokens"] == 800
+
+    @patch("app.services.reader_ask.agent_invocation.resolve_reader_ask_agent")
+    @patch("app.services.reader_ask.agent_invocation.build_reader_ask_replan_model_route")
+    async def test_preserves_thinking_settings_when_capping_replan_tokens(
+        self,
+        mock_replan_route: MagicMock,
+        mock_resolve: AsyncMock,
+    ) -> None:
+        fake_agent = AsyncMock()
+        fake_result = MagicMock()
+        fake_result.output = "answer"
+        fake_agent.run.return_value = fake_result
+
+        mock_resolved = MagicMock()
+        mock_resolved.agent = fake_agent
+        mock_resolved.model = MagicMock()
+        mock_resolve.return_value = mock_resolved
+        mock_replan_route.return_value = (MagicMock(), MagicMock())
+
+        deps = _make_deps()
+        route_settings = RunModelSettings(
+            max_tokens=2000,
+            temperature=0.5,
+            timeout=30,
+            extra_headers={"X-Test": "1"},
+            extra_body={"enable_thinking": True},
+        )
+
+        await run_reader_ask_replan(
+            replan_deps=deps,
+            replan_max_output=800,
+            route_settings=route_settings,
+        )
+
+        model_settings = fake_agent.run.call_args.kwargs["model_settings"]
+        assert model_settings["max_tokens"] == 800
+        assert model_settings["extra_headers"] == {"X-Test": "1"}
+        assert model_settings["extra_body"] == {"enable_thinking": True}
 
 
 class TestStreamReaderAskAgentRun:
@@ -487,6 +544,28 @@ class TestBuildReaderAskPlannerModelRoute:
         result = build_reader_ask_planner_model_route()
 
         mock_build.assert_called_once_with(
-            mock_settings.return_value, MODEL_ROUTE_READER_ASK_PLANNER
+            mock_settings.return_value, MODEL_ROUTE_READER_ASK_PLANNER, None
+        )
+        assert result == (fake_model, fake_config)
+
+
+class TestBuildReaderAskReplanModelRoute:
+    @patch("app.services.reader_ask.agent_invocation.build_model_for_route")
+    @patch("app.services.reader_ask.agent_invocation.get_settings")
+    def test_uses_replan_route(
+        self,
+        mock_settings: MagicMock,
+        mock_build: MagicMock,
+    ) -> None:
+        from app.llm.routes import MODEL_ROUTE_READER_ASK_REPLAN
+
+        fake_model = MagicMock()
+        fake_config = MagicMock()
+        mock_build.return_value = (fake_model, fake_config)
+
+        result = build_reader_ask_replan_model_route()
+
+        mock_build.assert_called_once_with(
+            mock_settings.return_value, MODEL_ROUTE_READER_ASK_REPLAN, None
         )
         assert result == (fake_model, fake_config)

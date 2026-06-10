@@ -4270,7 +4270,7 @@ export function ReaderWorkbench({
                 annotationType: inspect.annotationType,
                 clientSurface: "reader",
                 entryPoint: "dictionary_inspect_feedback",
-                contextSummary: inspect.label ?? inspect.anchorText ?? inspect.lookupText ?? "标注反馈",
+                contextSummary: inspect.label ?? inspect.lookupText ?? inspect.anchorText ?? "标注反馈",
                 contextJson: {
                   mark_id: inspect.markId,
                   annotation_type: inspect.annotationType,
@@ -4360,7 +4360,7 @@ export function ReaderWorkbench({
                 annotationType: inspect.annotationType,
                 clientSurface: "reader",
                 entryPoint: "dictionary_inspect_feedback",
-                contextSummary: inspect.label ?? inspect.anchorText ?? inspect.lookupText ?? "标注反馈",
+                contextSummary: inspect.label ?? inspect.lookupText ?? inspect.anchorText ?? "标注反馈",
                 contextJson: {
                   mark_id: inspect.markId,
                   annotation_type: inspect.annotationType,

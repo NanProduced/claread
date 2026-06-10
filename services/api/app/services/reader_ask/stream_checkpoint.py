@@ -9,9 +9,10 @@ via callback so the module stays free of repo dependencies.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from app.services.reader_ask import config as cfg
@@ -40,10 +41,21 @@ def terminal_reasoning_status(reasoning_started: bool) -> Literal["completed"] |
     return "completed" if reasoning_started else None
 
 
+def current_reasoning_status(
+    runtime: AgentStreamRuntime,
+) -> Literal["streaming", "completed"] | None:
+    """Return the persisted reasoning status for the current stream snapshot."""
+    if runtime.reasoning_active:
+        return "streaming"
+    if runtime.reasoning_started:
+        return "completed"
+    return None
+
+
 def make_checkpoint_flush(
     checkpoint: TurnRunStreamCheckpoint | None,
 ) -> Callable[..., Awaitable[None]] | None:
-    """Create a checkpoint flush callback suitable for agent_runner.start_reader_ask_agent_stream."""
+    """Create a checkpoint flush callback for `start_reader_ask_agent_stream`."""
     if checkpoint is None:
         return None
 
@@ -92,7 +104,7 @@ async def maybe_flush_turn_run_stream_checkpoint(
     if not should_flush:
         return
 
-    reasoning_status = "streaming" if runtime.reasoning_started else None
+    reasoning_status = current_reasoning_status(runtime)
     reasoning_md = reasoning_text or None
     snapshot = checkpoint.build_output_json(content_text, reasoning_md, reasoning_status)
 

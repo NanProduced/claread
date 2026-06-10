@@ -327,6 +327,7 @@ export interface ReaderAskTraceSummaryDto {
   planner_mode:
     | "direct_answer"
     | "needs_local_clarification"
+    | "partial_answer_with_followup"
     | "known_reference_resolved"
     | "known_reference_ambiguous"
     | "known_reference_not_found";
@@ -453,19 +454,25 @@ export interface ReaderAskMessageDto {
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
-  replan_status?: "idle" | "replanning" | null;
-  compacting?: boolean | null;
-  regenerate_preview?: boolean | null;
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface ReaderAskMessageUiStateDto {
+  replan_status?: "idle" | "replanning" | null;
+  compacting?: boolean | null;
+  regenerate_preview?: boolean | null;
+}
+
+export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
 
 export interface ReaderAskThreadSummaryDto {
   id: string;
   record_id: string;
   title?: string | null;
   is_default: boolean;
+  selected_model?: ReaderAskSelectedModelDto | null;
   archived_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -478,6 +485,25 @@ export interface ReaderAskThreadDetailDto extends ReaderAskThreadSummaryDto {
 
 export interface ReaderAskThreadListResponseDto {
   items: ReaderAskThreadSummaryDto[];
+}
+
+export interface ReaderAskSelectedModelDto {
+  key: string;
+  label: string;
+  description?: string | null;
+  model_name?: string | null;
+  planner_model_name?: string | null;
+  replan_model_name?: string | null;
+  price_multiplier: number;
+}
+
+export interface ReaderAskModelOptionSummaryDto extends ReaderAskSelectedModelDto {
+  is_default: boolean;
+}
+
+export interface ReaderAskModelOptionListResponseDto {
+  default_key: string;
+  items: ReaderAskModelOptionSummaryDto[];
 }
 
 export interface ReaderAskActionConfirmResponseDto {
@@ -528,11 +554,13 @@ export interface ReaderAskCompletedPayloadDto {
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
+  usage_event_id?: string | null;
 }
 
 export interface ReaderAskThreadCreateRequestDto {
   record_id: string;
   title?: string | null;
+  model?: string | null;
 }
 
 export interface ReaderAskMessageStreamRequestDto {
@@ -540,6 +568,10 @@ export interface ReaderAskMessageStreamRequestDto {
   page_identity: ReaderAskPageIdentityDto;
   attachments: ReaderAskAttachmentDto[];
   entry_action: ReaderAskEntryActionDto;
+  model?: string | null;
+}
+
+export interface ReaderAskMessageRetryRequestDto {
   model?: string | null;
 }
 

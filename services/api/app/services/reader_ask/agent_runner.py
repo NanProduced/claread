@@ -10,9 +10,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, cast
+from typing import Any
+
+from pydantic_ai.messages import (
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+)
 
 from app.agents.reader_ask_agent import (
     ReaderAskAgentDeps,
@@ -20,6 +30,8 @@ from app.agents.reader_ask_agent import (
 )
 from app.llm.types import RunModelSettings
 from app.services.reader_ask import stream_events as stream_events_svc
+
+logger = logging.getLogger(__name__)
 from app.workflow.tracing import build_usage_metadata
 
 logger = logging.getLogger(__name__)
@@ -97,31 +109,20 @@ class AgentStreamRuntime:
     emitted_text: str = ""
     emitted_reasoning: str = ""
     reasoning_started: bool = False
+    reasoning_active: bool = False
 
 
 # ---------------------------------------------------------------------------
 # Reasoning settings helper
 # ---------------------------------------------------------------------------
 
-def reasoning_enabled_settings(
+def prepare_stream_model_settings(
     route_settings: RunModelSettings,
     *,
     base_url: str = "",
 ) -> RunModelSettings:
     extra_body = dict(route_settings.extra_body or {})
     extra_headers = dict(route_settings.extra_headers or {})
-    if "thinking" in extra_body and isinstance(extra_body["thinking"], dict):
-        thinking = dict(cast(dict[str, Any], extra_body["thinking"]))
-        if thinking.get("type") == "disabled":
-            thinking["type"] = "enabled"
-        extra_body["thinking"] = thinking
-    elif extra_body.get("enable_thinking") is False:
-        extra_body["enable_thinking"] = True
-    elif "enable_thinking" not in extra_body:
-        extra_body["enable_thinking"] = True
-
-    if extra_body.get("preserve_thinking") is True:
-        extra_body["preserve_thinking"] = False
 
     if "dashscope.aliyuncs.com" in base_url.lower():
         extra_headers.setdefault("X-DashScope-SSE", "enable")
@@ -177,6 +178,204 @@ def build_replan_event(
     return None
 
 
+async def _start_reasoning(
+    *,
+    runtime: AgentStreamRuntime,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+) -> None:
+    if runtime.reasoning_active:
+        return
+    runtime.reasoning_started = True
+    runtime.reasoning_active = True
+    await event_queue.put(
+        (
+            stream_events_svc.EVENT_REASONING_STARTED,
+            stream_events_svc.reasoning_started_payload(assistant_message_id),
+        )
+    )
+
+
+async def _append_reasoning_delta(
+    *,
+    runtime: AgentStreamRuntime,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+    reasoning_delta: str,
+) -> None:
+    if not reasoning_delta:
+        return
+    runtime.emitted_reasoning += reasoning_delta
+    await event_queue.put(
+        (
+            stream_events_svc.EVENT_REASONING_DELTA,
+            stream_events_svc.reasoning_delta_payload(assistant_message_id, reasoning_delta),
+        )
+    )
+
+
+async def _complete_reasoning(
+    *,
+    runtime: AgentStreamRuntime,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+) -> None:
+    if not runtime.reasoning_active:
+        return
+    runtime.reasoning_active = False
+    await event_queue.put(
+        (
+            stream_events_svc.EVENT_REASONING_COMPLETED,
+            stream_events_svc.reasoning_completed_payload(assistant_message_id),
+        )
+    )
+
+
+async def _append_text_delta(
+    *,
+    runtime: AgentStreamRuntime,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+    text_delta: str,
+) -> None:
+    if not text_delta:
+        return
+    runtime.emitted_text += text_delta
+    runtime.content_parts.append(text_delta)
+    await event_queue.put(
+        (
+            stream_events_svc.EVENT_MESSAGE_DELTA,
+            stream_events_svc.message_delta_payload(assistant_message_id, text_delta),
+        )
+    )
+
+
+async def _consume_response_snapshot(
+    *,
+    response: Any,
+    runtime: AgentStreamRuntime,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+) -> None:
+    thinking_text = response.thinking or ""
+    logger.debug(
+        "reasoning_snapshot thinking_len=%d emitted_len=%d",
+        len(thinking_text),
+        len(runtime.emitted_reasoning),
+    )
+    if thinking_text and not runtime.reasoning_started:
+        await _start_reasoning(
+            runtime=runtime,
+            event_queue=event_queue,
+            assistant_message_id=assistant_message_id,
+        )
+
+    if thinking_text.startswith(runtime.emitted_reasoning):
+        reasoning_delta = thinking_text[len(runtime.emitted_reasoning):]
+    else:
+        reasoning_delta = thinking_text
+    await _append_reasoning_delta(
+        runtime=runtime,
+        event_queue=event_queue,
+        assistant_message_id=assistant_message_id,
+        reasoning_delta=reasoning_delta,
+    )
+
+    text_value = response.text or ""
+    if text_value.startswith(runtime.emitted_text):
+        text_delta = text_value[len(runtime.emitted_text):]
+    else:
+        text_delta = text_value
+    await _append_text_delta(
+        runtime=runtime,
+        event_queue=event_queue,
+        assistant_message_id=assistant_message_id,
+        text_delta=text_delta,
+    )
+
+
+async def _consume_raw_stream_event(
+    *,
+    event: Any,
+    runtime: AgentStreamRuntime,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+) -> None:
+    if isinstance(event, PartStartEvent):
+        if isinstance(event.part, ThinkingPart):
+            logger.info("reasoning_part_start content_len=%d", len(event.part.content))
+            await _start_reasoning(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+            )
+            await _append_reasoning_delta(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+                reasoning_delta=event.part.content,
+            )
+            return
+        if isinstance(event.part, TextPart):
+            await _append_text_delta(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+                text_delta=event.part.content,
+            )
+            return
+
+    if isinstance(event, PartDeltaEvent):
+        if isinstance(event.delta, ThinkingPartDelta):
+            _log.info("reasoning_part_delta", delta_len=len(event.delta.content_delta or ""))
+            if event.delta.content_delta and not runtime.reasoning_active:
+                await _start_reasoning(
+                    runtime=runtime,
+                    event_queue=event_queue,
+                    assistant_message_id=assistant_message_id,
+                )
+            await _append_reasoning_delta(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+                reasoning_delta=event.delta.content_delta or "",
+            )
+            return
+        if isinstance(event.delta, TextPartDelta):
+            await _append_text_delta(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+                text_delta=event.delta.content_delta or "",
+            )
+            return
+
+    if isinstance(event, PartEndEvent) and isinstance(event.part, ThinkingPart):
+        await _complete_reasoning(
+            runtime=runtime,
+            event_queue=event_queue,
+            assistant_message_id=assistant_message_id,
+        )
+
+
+def _stream_response_from_result(result: Any) -> Any | None:
+    result_dict = getattr(result, "__dict__", None)
+    if not isinstance(result_dict, dict):
+        return None
+    stream_response = result_dict.get("_stream_response")
+    if stream_response is None or not hasattr(stream_response, "__aiter__"):
+        return None
+    return stream_response
+
+
+async def _mark_stream_result_completed(result: Any) -> None:
+    mark_completed = getattr(result, "_marked_completed", None)
+    if callable(mark_completed):
+        await mark_completed(result.response)
+        return
+    await result.get_output()
+
+
 def start_reader_ask_agent_stream(
     *,
     agent: Any,
@@ -204,43 +403,44 @@ def start_reader_ask_agent_stream(
                 build_reader_ask_prompt(deps),
                 deps=deps,
                 model=model,
-                model_settings=reasoning_enabled_settings(
+                model_settings=prepare_stream_model_settings(
                     route_settings,
                     base_url=base_url,
                 ).to_pydantic_ai(),
             ) as result:
-                async for response, _last in result.stream_responses(debounce_by=None):
-                    thinking_text = response.thinking or ""
-                    if thinking_text and not runtime.reasoning_started:
-                        runtime.reasoning_started = True
-                        await event_queue.put((stream_events_svc.EVENT_REASONING_STARTED, stream_events_svc.reasoning_started_payload(assistant_message_id)))
-                    if thinking_text.startswith(runtime.emitted_reasoning):
-                        reasoning_delta = thinking_text[len(runtime.emitted_reasoning):]
-                    else:
-                        reasoning_delta = thinking_text
-                    if reasoning_delta:
-                        runtime.emitted_reasoning = thinking_text
-                        await event_queue.put(
-                            (stream_events_svc.EVENT_REASONING_DELTA, stream_events_svc.reasoning_delta_payload(assistant_message_id, reasoning_delta))
+                stream_response = _stream_response_from_result(result)
+                logger.info("reasoning_stream_path raw_stream=%s", stream_response is not None)
+                if stream_response is not None:
+                    async for event in stream_response:
+                        await _consume_raw_stream_event(
+                            event=event,
+                            runtime=runtime,
+                            event_queue=event_queue,
+                            assistant_message_id=assistant_message_id,
                         )
+                        if checkpoint_flush is not None:
+                            await checkpoint_flush(runtime, force=False)
+                    await _mark_stream_result_completed(result)
+                else:
+                    async for response, _last in result.stream_responses(debounce_by=None):
+                        await _consume_response_snapshot(
+                            response=response,
+                            runtime=runtime,
+                            event_queue=event_queue,
+                            assistant_message_id=assistant_message_id,
+                        )
+                        if checkpoint_flush is not None:
+                            await checkpoint_flush(runtime, force=False)
 
-                    text_value = response.text or ""
-                    if text_value.startswith(runtime.emitted_text):
-                        text_delta = text_value[len(runtime.emitted_text):]
-                    else:
-                        text_delta = text_value
-                    if text_delta:
-                        runtime.emitted_text = text_value
-                        runtime.content_parts.append(text_delta)
-                        await event_queue.put(
-                            (stream_events_svc.EVENT_MESSAGE_DELTA, stream_events_svc.message_delta_payload(assistant_message_id, text_delta))
-                        )
-                    if checkpoint_flush is not None:
-                        await checkpoint_flush(runtime, force=False)
+                await _complete_reasoning(
+                    runtime=runtime,
+                    event_queue=event_queue,
+                    assistant_message_id=assistant_message_id,
+                )
+                # DIAG: reasoning stream investigation
+                _diag_log.info("reasoning_stream_done", emitted_reasoning_len=len(runtime.emitted_reasoning), reasoning_started=runtime.reasoning_started)
                 if checkpoint_flush is not None:
                     await checkpoint_flush(runtime, force=True)
-                if runtime.reasoning_started:
-                    await event_queue.put((stream_events_svc.EVENT_REASONING_COMPLETED, stream_events_svc.reasoning_completed_payload(assistant_message_id)))
                 runtime.usage_summary = build_usage_metadata(result.usage())
         except Exception as exc:
             if checkpoint_flush is not None:
@@ -291,6 +491,10 @@ def finish_reader_ask_agent_stream(
             )
         raise runtime.producer_error
     return (
-        AgentStreamOutcome(content_md=final_content_md, usage_summary=runtime.usage_summary, interrupted=False),
+        AgentStreamOutcome(
+            content_md=final_content_md,
+            usage_summary=runtime.usage_summary,
+            interrupted=False,
+        ),
         None,
     )

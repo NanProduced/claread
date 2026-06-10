@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai.messages import (
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+)
 
 from app.services.reader_ask import agent_runner as agent_runner_svc
 from app.services.reader_ask import stream_events as stream_events_svc
-
 
 # ---------------------------------------------------------------------------
 # is_degenerate_answer
@@ -39,7 +49,12 @@ class TestIsDegenerateAnswer:
         assert agent_runner_svc.is_degenerate_answer("没有足够的信息来回答。") is True
 
     def test_normal_answer(self) -> None:
-        assert agent_runner_svc.is_degenerate_answer("This sentence uses the present perfect tense.") is False
+        assert (
+            agent_runner_svc.is_degenerate_answer(
+                "This sentence uses the present perfect tense."
+            )
+            is False
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +193,7 @@ class TestStreamReaderAskEvents:
 class TestStartReaderAskAgentStream:
     @pytest.mark.asyncio
     async def test_reasoning_and_message_delta_events_enqueued(self) -> None:
-        """Verify reasoning.started/delta/completed and message.delta are enqueued."""
+        """Verify snapshot fallback still emits reasoning/message events."""
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
 
         # Build a mock agent that yields responses with thinking and text
@@ -207,7 +222,11 @@ class TestStartReaderAskAgentStream:
         mock_deps.event_queue = event_queue
 
         with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
-            with patch.object(agent_runner_svc, "build_usage_metadata", return_value={"total_tokens": 30}):
+            with patch.object(
+                agent_runner_svc,
+                "build_usage_metadata",
+                return_value={"total_tokens": 30},
+            ):
                 task, runtime = agent_runner_svc.start_reader_ask_agent_stream(
                     agent=mock_agent,
                     deps=mock_deps,
@@ -255,14 +274,87 @@ class TestStartReaderAskAgentStream:
         ]
         assert "Hello" in message_deltas[0]
 
+    @pytest.mark.asyncio
+    async def test_raw_stream_events_complete_reasoning_before_answer_delta(self) -> None:
+        """Raw part events should close reasoning before answer text starts."""
+        event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+
+        raw_events = [
+            PartStartEvent(index=0, part=ThinkingPart(content="先看题干")),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="，再判断语境")),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(content="先看题干，再判断语境"),
+                next_part_kind="text",
+            ),
+            PartStartEvent(index=1, part=TextPart(content="这是")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="答案")),
+        ]
+
+        fake_result = SimpleNamespace(
+            _stream_response=self._async_iter(raw_events),
+            response=MagicMock(),
+            usage=MagicMock(return_value=MagicMock(request_tokens=10, response_tokens=20)),
+            _marked_completed=AsyncMock(),
+        )
+
+        mock_stream_ctx = MagicMock()
+        mock_stream_ctx.__aenter__ = AsyncMock(return_value=fake_result)
+        mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_agent = MagicMock()
+        mock_agent.run_stream = MagicMock(return_value=mock_stream_ctx)
+
+        mock_deps = MagicMock()
+        mock_deps.event_queue = event_queue
+
+        with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
+            with patch.object(
+                agent_runner_svc,
+                "build_usage_metadata",
+                return_value={"total_tokens": 30},
+            ):
+                task, runtime = agent_runner_svc.start_reader_ask_agent_stream(
+                    agent=mock_agent,
+                    deps=mock_deps,
+                    model=MagicMock(),
+                    route_settings=MagicMock(
+                        extra_body={"enable_thinking": True},
+                        extra_headers=None,
+                        max_tokens=1000,
+                        temperature=0.7,
+                        top_p=1.0,
+                        timeout=60,
+                        parallel_tool_calls=True,
+                        seed=None,
+                        presence_penalty=None,
+                        frequency_penalty=None,
+                        stop_sequences=None,
+                    ),
+                    assistant_message_id="msg-1",
+                    base_url="",
+                )
+
+                await task
+
+        fake_result._marked_completed.assert_awaited_once_with(fake_result.response)
+
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get_nowait())
+
+        event_names = [event_name for event_name, _payload in events]
+        first_reasoning_completed = event_names.index(stream_events_svc.EVENT_REASONING_COMPLETED)
+        first_message_delta = event_names.index(stream_events_svc.EVENT_MESSAGE_DELTA)
+        assert first_reasoning_completed < first_message_delta
+        assert runtime.emitted_reasoning == "先看题干，再判断语境"
+        assert runtime.emitted_text == "这是答案"
+        assert runtime.reasoning_active is False
+
     @staticmethod
-    def _async_iter(items: list[tuple[Any, bool]]):
+    def _async_iter(items: list[Any]):
         """Create an async iterator from a list."""
         async def _gen():
             for item in items:
                 yield item
         return _gen()
-
-
-# Type alias for test clarity
-from typing import Any

@@ -11,6 +11,7 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
     ReaderAskDeleteSupplementResponse,
     ReaderAskContextRecordSearchResponse,
+    ReaderAskModelOptionListResponse,
     ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
@@ -39,6 +40,15 @@ def _thread_summary() -> ReaderAskThreadSummary:
         record_id=RECORD_ID,
         title="Ask Claread",
         is_default=True,
+        selected_model={
+            "key": "glm-fast",
+            "label": "GLM-5.1",
+            "description": "默认 Ask 模型",
+            "model_name": "glm-5.1",
+            "planner_model_name": "qwen3.6-plus-2026-04-02",
+            "replan_model_name": "glm-5.1",
+            "price_multiplier": 1.0,
+        },
         archived_at=None,
         created_at="2026-05-18T10:00:00+00:00",
         updated_at="2026-05-18T10:00:00+00:00",
@@ -132,6 +142,32 @@ class TestReaderAskRoute:
 
         assert response.status_code == 200
         assert response.json()["items"][0]["record_id"] == "record-3"
+
+    @_mock_auth()
+    @patch("app.api.routes.reader_ask.ask_svc.list_model_options", new_callable=AsyncMock)
+    def test_list_model_options(self, mock_list_model_options, mock_auth) -> None:
+        client = create_client()
+        mock_list_model_options.return_value = ReaderAskModelOptionListResponse(
+            default_key="glm-fast",
+            items=[
+                {
+                    "key": "glm-fast",
+                    "label": "GLM-5.1",
+                    "description": "默认 Ask 模型",
+                    "model_name": "glm-5.1",
+                    "planner_model_name": "qwen3.6-plus-2026-04-02",
+                    "replan_model_name": "glm-5.1",
+                    "price_multiplier": 1.0,
+                    "is_default": True,
+                }
+            ],
+        )
+
+        response = client.get("/reader-ask/model-options", headers=AUTH_HEADERS)
+
+        assert response.status_code == 200
+        assert response.json()["default_key"] == "glm-fast"
+        assert response.json()["items"][0]["model_name"] == "glm-5.1"
 
     @_mock_auth()
     @patch("app.api.routes.reader_ask.ask_svc.create_thread", new_callable=AsyncMock)
@@ -357,8 +393,8 @@ class TestReaderAskRoute:
         """Retry is a full regenerate (new run_attempt), NOT a resume/continue."""
         client = create_client()
 
-        async def fake_stream(user_id: UUID, thread_id: UUID, message_id: UUID):
-            del user_id, thread_id, message_id
+        async def fake_stream(user_id: UUID, thread_id: UUID, message_id: UUID, body: object | None = None):
+            del user_id, thread_id, message_id, body
             yield "event: message.started\ndata: {\"message_id\": \"200\"}\n\n"
             yield "event: message.delta\ndata: {\"delta\": \"retry\"}\n\n"
             yield (
@@ -379,6 +415,7 @@ class TestReaderAskRoute:
             response = client.post(
                 f"/reader-ask/threads/{THREAD_ID}/messages/30000000-0000-0000-0000-000000000001/retry/stream",
                 headers=AUTH_HEADERS,
+                json={},
             )
 
         assert response.status_code == 200

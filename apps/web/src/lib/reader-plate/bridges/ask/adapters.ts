@@ -442,12 +442,13 @@ export function askAttachmentFromStructuredInspect(
   sentence: SentenceModel,
   options: ReaderAskAttachmentFactoryOptions = {},
 ): ReaderAskAttachment {
+  const displayText = intent.lookupText ?? intent.anchorText;
   const anchorPayload = anchorPayloadFromSentence(pageIdentity.recordId, sentence);
   return buildAttachment({
     kind: "analysis_ref",
     subtype: "sentence",
-    label: options.label ?? `结构化解释：${intent.anchorText}`,
-    selectedText: intent.anchorText,
+    label: options.label ?? `结构化解释：${displayText}`,
+    selectedText: displayText,
     targetKey: buildAnalysisTargetKey(pageIdentity.recordId, "structured_inspect", intent.markId),
     targetRef: sentenceToTargetRef(pageIdentity.recordId, sentence),
     anchorPayload,
