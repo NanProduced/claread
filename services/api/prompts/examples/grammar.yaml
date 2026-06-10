@@ -74,30 +74,48 @@ cet:
 - example_type: grammar
   sentence_text: The study, which was conducted by researchers from Harvard, found
     that regular exercise can reduce stress.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which was conducted
-    by researchers from Harvard"}, {"text": "found"}], "label": "非限制性定语从句", "note_zh": "which
-    引导非限制性定语从句，补充说明 the study。快速阅读时可先跳过逗号之间的从句，抓住主干
-    The study found that...（研究发现……）"}'
+  output_fragment: '{"type":"grammar_note","spans":[{"text":"which was conducted
+    by researchers from Harvard"},{"text":"found"}],"label":"非限制性定语从句","note_zh":"which
+    was conducted by researchers from Harvard 是非限制性定语从句，补充说明 the study 的研究来源，不影响主句主干。阅读时先抓主干
+    The study found that...，再回头看 which 从句补充了谁做的研究。"}'
 - example_type: grammar
   sentence_text: Influenced by social media, young people tend to spend more time
     online.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Influenced by social
-    media"}, {"text": "tend to spend"}], "label": "过去分词作状语", "note_zh": "Influenced
-    by social media 是过去分词短语作原因状语，表示“受社交媒体影响”。快速阅读时，看到句首的过去分词，先找主语和谓语（young
-    people tend to...），再回头看分词短语补充的信息"}'
+  output_fragment: '{"type":"grammar_note","spans":[{"text":"Influenced by social
+    media"},{"text":"young people tend to spend"}],"label":"过去分词短语作状语","note_zh":"Influenced
+    by social media 是过去分词短语作原因状语，说明 young people tend to spend more time online 的背景原因。这个结构本身不是主干，阅读时先找主语和谓语，再回头补看句首分词说明了什么影响。"}'
+- example_type: grammar
+  sentence_text: Yet, what I found is that following one's passion does not necessarily
+    lead to fulfillment, but is one of the most powerful cultural forces perpetuating
+    overwork.
+  output_fragment: '{"type":"grammar_note","spans":[{"text":"does not necessarily
+    lead to fulfillment"},{"text":"but is one of the most powerful cultural forces
+    perpetuating overwork"}],"label":"not ... but ... 对比结构","note_zh":"这里是 not ...
+    but ... 对比结构，前半部分否定一种常见看法，but 后半部分给出作者真正强调的判断。语法上两个部分共同说明 following one''s passion 的结果；阅读时要特别留意
+    but 后面的内容，因为那通常才是句子的重心。"}'
 - example_type: sentence_analysis
   sentence_text: A recent study conducted by the University of Oxford has found that
     people who regularly engage in physical activity are less likely to develop heart
     disease.
-  output_fragment: '{"type": "sentence_analysis", "label": "后置定语 + 宾语从句 + 定语从句", "analysis_zh":
-    "主干：A recent study has found that...（一项最新研究发现……）。conducted by the University of
-    Oxford 是过去分词短语作后置定语修饰 study。that 引导宾语从句，其中 who regularly engage in physical activity
-    是定语从句修饰 people。主干信息是“经常锻炼的人更不容易患心脏病”。在段落匹配题中，这类信息可能被改写为“physical activity is linked
-    to lower risk of heart disease”。", "chunks": [{"order": 1, "label": "主干主语", "text":
-    "A recent study"}, {"order": 2, "label": "后置定语", "text": "conducted by the University
-    of Oxford"}, {"order": 3, "label": "主干谓语", "text": "has found"}, {"order": 4,
-    "label": "宾语从句", "text": "that people who regularly engage in physical activity
-    are less likely to develop heart disease"}]}'
+  output_fragment: '{"type":"sentence_analysis","label":"主干 + 后置定语 + 宾语从句","analysis_zh":"主干是
+    A recent study has found that...。conducted by the University of Oxford 是过去分词短语作后置定语，修饰
+    study；that 引导宾语从句，其中 who regularly engage in physical activity 是定语从句修饰 people。第一遍阅读先抓研究发现了什么，再回头补看研究来源和
+    people 的限定范围。","chunks":[{"order":1,"label":"主干主语","text":"A recent study"},{"order":2,"label":"后置定语","text":"conducted
+    by the University of Oxford"},{"order":3,"label":"主干谓语","text":"has found"},{"order":4,"label":"宾语从句","text":"that
+    people who regularly engage in physical activity are less likely to develop heart
+    disease"}]}'
+- example_type: sentence_analysis
+  sentence_text: Colleges, workplaces and career counselors who promote the "follow
+    your passion" path for everyone, without leveling the playing field, help perpetuate
+    socioeconomic inequalities among career aspirants.
+  output_fragment: '{"type":"sentence_analysis","label":"长主语 + 定语从句 + 插入状语","analysis_zh":"主干是
+    Colleges, workplaces and career counselors help perpetuate socioeconomic inequalities。who
+    promote... 是定语从句，修饰前面的三个主体；without leveling the playing field 是插入状语，补充这些主体是在什么条件下这样做的。阅读难点在于主语很长，所以第一遍先抓主语核心和谓语
+    help perpetuate，再回头处理 who 从句和 without 短语。","chunks":[{"order":1,"label":"主语核心","text":"Colleges,
+    workplaces and career counselors"},{"order":2,"label":"定语从句","text":"who promote
+    the \"follow your passion\" path for everyone,"},{"order":3,"label":"插入状语","text":"without
+    leveling the playing field,"},{"order":4,"label":"主句谓语宾语","text":"help perpetuate
+    socioeconomic inequalities among career aspirants."}]}'
 kaoyan:
 - example_type: grammar
   sentence_text: The approach, which was initially designed for urban areas, has failed
