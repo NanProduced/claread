@@ -192,7 +192,11 @@ class PhraseGloss(BaseModel):
     )
     occurrence: int | None = Field(default=None, ge=1, description="同一句中该文本第几次出现")
     phrase_type: Literal["collocation", "phrasal_verb", "idiom", "proper_noun", "compound"] = Field(
-        description="短语类型。proper_noun 仅用于确实需要整体说明的专名。"
+        description=(
+            "短语类型。collocation 为默认的常见搭配；phrasal_verb 用于以动词为核心的整体动作短语；"
+            "idiom 仅用于明显非字面或高度固定的惯用表达；proper_noun 仅用于正式命名的专名；"
+            "compound 用于稳定的多词概念名词、术语或类别名称。"
+        )
     )
     zh: str = Field(min_length=1, description="中文释义")
 

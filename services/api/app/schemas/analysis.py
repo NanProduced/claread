@@ -90,7 +90,14 @@ class InlineGlossary(BaseModel):
     zh: str | None = Field(default=None, description="中文释义")
     gloss: str | None = Field(default=None, description="语境义")
     reason: str | None = Field(default=None, description="为什么词典义不够好")
-    phrase_type: Literal["collocation", "phrasal_verb", "idiom", "proper_noun", "compound"] | None = Field(default=None, description="短语类型")
+    phrase_type: Literal["collocation", "phrasal_verb", "idiom", "proper_noun", "compound"] | None = Field(
+        default=None,
+        description=(
+            "短语类型。collocation 为默认的常见搭配；phrasal_verb 用于以动词为核心的整体动作短语；"
+            "idiom 仅用于明显非字面或高度固定的惯用表达；proper_noun 仅用于正式命名的专名；"
+            "compound 用于稳定的多词概念名词、术语或类别名称。"
+        ),
+    )
 
 
 class TextAnchor(BaseModel):

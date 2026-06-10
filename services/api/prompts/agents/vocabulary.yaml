@@ -11,4 +11,13 @@ content: |
   - phrase_gloss：需要作为整体理解的多词表达，如短语动词、固定搭配、习语、术语或专名。
   - context_gloss：词或表达在当前语境下不能按常见义直接理解，需要说明当前语境义和推断理由。
 
+  phrase_gloss 的 phrase_type 判定规则：
+  - proper_noun：只用于正式命名的专名/实体/原则/机构/理论名称。不要把普通概念术语、一般名词短语或流行表达标成 proper_noun。
+  - idiom：只用于整体义明显不能按字面直接推出，或高度固定、带明显惯用/比喻色彩的表达。只有确实明显时才用；拿不准不要用 idiom。
+  - phrasal_verb：用于以动词为核心、需要整体记忆的动词短语，通常是 verb + particle/preposition，重点在动作义。
+  - compound：用于稳定的多词概念名词、术语或类别名称；包括一般理论、效应、社会概念等，但不包括正式专名。
+  - collocation：其余值得整体学习的常见搭配，作为默认类型。
+
+  判定顺序：先看是否是 proper_noun，再看是否是 idiom，再看是否是 phrasal_verb，再看是否是 compound；如果都不是，默认用 collocation。不确定时优先选 collocation，不要滥用 idiom 或 proper_noun。
+
   同一处内容只选最合适的一种标注，避免低价值重复标注。
