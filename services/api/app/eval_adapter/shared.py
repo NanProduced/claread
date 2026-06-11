@@ -120,20 +120,33 @@ def list_model_profile_summaries(
     *,
     settings: Settings | None = None,
 ) -> list[ModelProfileSummary]:
-    registry = build_model_registry(settings or get_settings())
+    effective_settings = settings or get_settings()
+    registry = build_model_registry(effective_settings)
     annotation_default = registry.route_defaults.get(MODEL_ROUTE_ANNOTATION_GENERATION)
     default_profile = registry.default_profile
-    summaries = [
-        ModelProfileSummary(
-            profile_name=profile_name,
-            provider=profile.provider,
-            model_name=profile.model_name,
-            annotation_route_default=profile_name == annotation_default,
-            default_profile=profile_name == default_profile,
+    summaries: list[ModelProfileSummary] = []
+    for profile_name, profile in registry.profiles.items():
+        if not profile.is_configured():
+            continue
+        try:
+            resolved = resolve_model_config(
+                effective_settings,
+                MODEL_ROUTE_ANNOTATION_GENERATION,
+                ModelSelection(default_profile=profile_name),
+            )
+        except Exception:
+            # Profile references an unconfigured/unactivated provider — skip
+            # rather than failing the entire summary list.
+            continue
+        summaries.append(
+            ModelProfileSummary(
+                profile_name=profile_name,
+                provider=resolved.provider if resolved is not None else "",
+                model_name=resolved.model_name if resolved is not None else "",
+                annotation_route_default=profile_name == annotation_default,
+                default_profile=profile_name == default_profile,
+            )
         )
-        for profile_name, profile in registry.profiles.items()
-        if profile.is_configured()
-    ]
     return sorted(
         summaries,
         key=lambda item: (

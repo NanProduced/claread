@@ -764,7 +764,7 @@ describe("AiWorkspacePanel", () => {
     ).toBe(true);
   });
 
-  it("keeps explainability disclosures out of the default assistant surface", async () => {
+  it("keeps debug disclosures out of the default assistant surface while preserving source disclosures", async () => {
     render(
       <AiWorkspacePanel
         open
@@ -791,10 +791,11 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("解释完成。")).not.toBeNull();
     });
 
-    expect(screen.queryByRole("button", { name: /依据与上下文/i })).toBeNull();
+    expect(screen.queryByText("引用与来源")).toBeNull();
     expect(screen.queryByRole("button", { name: /证据/i })).toBeNull();
+    expect(screen.queryByText("上下文策略")).toBeNull();
     expect(screen.queryByRole("button", { name: /运行轨迹/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /工具步骤/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /当前文章上下文/i })).toBeNull();
   });
 
   it("shows the current page chip and recent related-article search from the add menu", async () => {
@@ -1134,24 +1135,26 @@ describe("AiWorkspacePanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("待确认补充")).not.toBeNull();
+      expect(screen.getByText("写入语法旁注")).not.toBeNull();
     });
+
+    expect(screen.queryByText("补充内容")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() => {
-      expect(screen.getByText("已写入当前页")).not.toBeNull();
+      expect(screen.getAllByText("已写入当前页").length).toBeGreaterThan(0);
       expect(screen.getByText("已把这条 AI 补充写入当前页。")).not.toBeNull();
     });
     expect(onActionExecuted).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除补充" }));
 
     await waitFor(() => {
       expect(screen.getByText("已从当前页移除这条 AI 补充。")).not.toBeNull();
     });
     expect(onSupplementDeleted).toHaveBeenCalledWith("supp-1");
-    expect(screen.queryByText("已写入当前页")).toBeNull();
+    expect(screen.queryByRole("button", { name: "删除补充" })).toBeNull();
   });
 
   it("renders asset disambiguation cards and re-sends the current question after selection", async () => {
@@ -1481,9 +1484,9 @@ describe("AiWorkspacePanel", () => {
     });
 
     expect(screen.queryByText("请解释这里的语法作用。")).toBeNull();
-    expect(screen.getByText("AI 助手生成")).not.toBeNull();
     expect(screen.getByText("Compare A with B")).not.toBeNull();
     expect(screen.getByText(/聚焦片段/)).not.toBeNull();
+    expect(screen.getByText("标注有帮助")).not.toBeNull();
   });
 
   it("includes liveContextAttachment in request attachments when no other attachments", async () => {
@@ -1870,7 +1873,7 @@ describe("AiWorkspacePanel", () => {
     expect(onComposerTextareaBlur).toHaveBeenCalledTimes(1);
   });
 
-  it("renders light footnote style citations without redundant labels", async () => {
+  it("hides citations in the Ask answer surface", async () => {
     vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
@@ -1934,10 +1937,50 @@ describe("AiWorkspacePanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("引用")).not.toBeNull();
-      expect(screen.getByText("当前文章")).not.toBeNull();
-      expect(screen.getByText("This is the source text that was cited.")).not.toBeNull();
+      expect(screen.getByText("Here is the answer.")).not.toBeNull();
     });
+
+    expect(screen.queryByText("引用与来源")).toBeNull();
+    expect(screen.queryByText("当前文章")).toBeNull();
+    expect(screen.queryByText("This is the source text that was cited.")).toBeNull();
+  });
+
+  it("does not render context anchor cards above user messages", async () => {
+    mockThreadMessages([
+      {
+        ...createAssistantMessage({
+          id: "msg-user-1",
+          role: "user",
+          content_md: "帮我分析这句话。",
+          context_anchors: [
+            {
+              anchor_type: "sentence",
+              sentence_id: "s1",
+              paragraph_id: "p1",
+              target_key: "record:record-1:sentence:s1",
+              label: "整句",
+              selected_text: "This anchor card should stay hidden.",
+              segments: [],
+              payload_json: {},
+            },
+          ],
+        }),
+      } as ReaderAskUiMessageDto,
+      createAssistantMessage({
+        id: "msg-assistant-2",
+        content_md: "这是回答。",
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("帮我分析这句话。")).not.toBeNull();
+      expect(screen.getByText("这是回答。")).not.toBeNull();
+    });
+
+    expect(screen.queryByText("整句")).toBeNull();
+    expect(screen.queryByText("This anchor card should stay hidden.")).toBeNull();
   });
 
   it("shows a prompt-kit loader for streaming answers without the ellipsis fallback", async () => {
@@ -2006,20 +2049,61 @@ describe("AiWorkspacePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("思考中")).not.toBeNull();
-      expect(screen.getByText("正在流式生成思路")).not.toBeNull();
+      expect(screen.getByText("正在形成可展示的思路…")).not.toBeNull();
     });
 
     const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
     const content = container.querySelector('[data-slot="reasoning-content"]');
-    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-    expect(content?.getAttribute("data-state")).toBe("closed");
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+    expect(content?.getAttribute("data-state")).toBe("open");
+  });
 
-    fireEvent.click(screen.getByText("思考中"));
+  it("normalizes duplicated tool trace entries into one visible step while streaming", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "streaming",
+        content_md: "已生成第一句。",
+        tool_trace: [
+          {
+            tool_name: "get_record_context",
+            status: "started",
+            started_at: "2026-05-20T00:00:00Z",
+            completed_at: null,
+            input_summary: null,
+            summary: null,
+            next_actions: [],
+            artifacts: [],
+            metadata_json: {},
+          },
+          {
+            tool_name: "get_record_context",
+            status: "completed",
+            started_at: "2026-05-20T00:00:00Z",
+            completed_at: "2026-05-20T00:00:01Z",
+            input_summary: null,
+            summary: "已读取当前文章上下文。",
+            next_actions: [],
+            artifacts: [],
+            metadata_json: {},
+          },
+        ],
+      }),
+    ]);
+
+    renderPanel();
 
     await waitFor(() => {
-      expect(trigger?.getAttribute("aria-expanded")).toBe("true");
-      expect(content?.getAttribute("data-state")).toBe("open");
+      expect(screen.getByRole("button", { name: /当前文章上下文/ })).not.toBeNull();
+      expect(screen.getByText("Completed")).not.toBeNull();
     });
+
+    fireEvent.click(screen.getByRole("button", { name: /当前文章上下文/ }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/已读取当前文章上下文/)).toHaveLength(1);
+    });
+
+    expect(screen.queryByText("Running")).toBeNull();
   });
 
   it("uses the active Ask model for new turns and retry requests", async () => {
@@ -2406,6 +2490,33 @@ describe("AiWorkspacePanel", () => {
 // ---------------------------------------------------------------------------
 
 describe("createSseMessageHandler – replan.started", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      // no-op for tests
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
   it("sets replan_status to 'replanning' on replan.started event", () => {
     type Msg = ReaderAskUiMessageDto;
     const targetId = "msg-1";
@@ -2448,6 +2559,7 @@ describe("createSseMessageHandler – replan.started", () => {
       event: "replan.started",
       data: { message_id: targetId, reason: "degenerate_answer" },
     });
+    flushRaf();
 
     expect(updatedMessages[0].replan_status).toBe("replanning");
   });
@@ -2509,6 +2621,7 @@ describe("createSseMessageHandler – replan.started", () => {
         usage_event_id: "usage-1",
       },
     });
+    flushRaf();
 
     expect(updatedMessages[0].replan_status).toBe("idle");
     expect(updatedMessages[0].content_md).toBe("This is the replanned answer.");
@@ -2553,6 +2666,7 @@ describe("createSseMessageHandler – replan.started", () => {
       event: "message.delta",
       data: { delta: "新的开头" },
     });
+    flushRaf();
 
     expect(updatedMessages[0].content_md).toBe("新的开头");
     expect(updatedMessages[0].regenerate_preview).toBe(false);
@@ -2564,6 +2678,31 @@ describe("createSseMessageHandler – replan.started", () => {
 // ---------------------------------------------------------------------------
 
 describe("createSseMessageHandler – reasoning lifecycle", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
   type Msg = ReaderAskUiMessageDto;
 
   function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
@@ -2610,6 +2749,7 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
     const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
 
     handler({ event: "reasoning.started", data: { message_id: "msg-1" } });
+    flushRaf();
 
     expect(getMessages()[0].reasoning_status).toBe("streaming");
     expect(getMessages()[0].reasoning_md).toBe("");
@@ -2621,9 +2761,11 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
     ]);
 
     handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: "step 1" } });
+    flushRaf();
     expect(getMessages()[0].reasoning_md).toBe("step 1");
 
     handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: " step 2" } });
+    flushRaf();
     expect(getMessages()[0].reasoning_md).toBe("step 1 step 2");
     expect(getMessages()[0].reasoning_status).toBe("streaming");
   });
@@ -2634,6 +2776,7 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
     ]);
 
     handler({ event: "reasoning.completed", data: { message_id: "msg-1" } });
+    flushRaf();
 
     expect(getMessages()[0].reasoning_status).toBe("completed");
     // reasoning_md must not be cleared
@@ -2795,6 +2938,31 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
 // ---------------------------------------------------------------------------
 
 describe("createSseMessageHandler – context compression UX", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
   type Msg = ReaderAskUiMessageDto;
 
   function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
@@ -2841,6 +3009,7 @@ describe("createSseMessageHandler – context compression UX", () => {
     const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
 
     handler({ event: "context.compacting", data: { message_id: "msg-1" } });
+    flushRaf();
 
     expect(getMessages()[0].compacting).toBe(true);
   });
@@ -2851,6 +3020,7 @@ describe("createSseMessageHandler – context compression UX", () => {
     ]);
 
     handler({ event: "message.delta", data: { message_id: "msg-1", delta: "开始回答" } });
+    flushRaf();
 
     expect(getMessages()[0].compacting).toBe(false);
     expect(getMessages()[0].content_md).toBe("开始回答");

@@ -33,17 +33,29 @@ def _settings() -> Settings:
         annotation_model_profile="",
         model_profiles_json=json.dumps(
             {
-                "eval-profile": {
-                    "provider": "openai_compatible",
-                    "model_name": "eval-model",
-                    "base_url": "https://example.invalid/v1",
-                    "api_key": "secret-key",
-                    "model_settings": {
-                        "temperature": 0.2,
-                        "extra_headers": {"Authorization": "Bearer secret"},
-                        "extra_body": {"thinking": {"type": "disabled"}},
-                    },
-                }
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    }
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                        "model_settings": {
+                            "temperature": 0.2,
+                            "extra_headers": {"Authorization": "Bearer secret"},
+                            "extra_body": {"thinking": {"type": "disabled"}},
+                        },
+                    }
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    }
+                },
             }
         ),
     )
@@ -438,3 +450,101 @@ def test_eval_workflow_route_allows_learning_goal(
 
     assert response.status_code == 200
     run_mock.assert_awaited_once()
+
+
+def test_list_model_profile_summaries_skips_broken_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile referencing a provider that doesn't exist in the registry
+    must not crash the entire summary list — it should be silently skipped."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    # Two profiles: one valid, one referencing a model whose provider
+    # is absent from the providers dict — resolve_model_config raises
+    # ModelSelectionError for the broken one.
+    settings = Settings(
+        default_model_profile="eval-profile",
+        annotation_model_profile="eval-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    },
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                    },
+                    "broken-model": {
+                        "provider": "missing-provider",
+                        "model_name": "broken-model",
+                    },
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    },
+                    "broken-profile": {
+                        "model": "broken-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    summaries = list_model_profile_summaries(settings=settings)
+    # Only the working profile should appear; broken-profile must be skipped
+    names = [s.profile_name for s in summaries]
+    assert "eval-profile" in names
+    assert "broken-profile" not in names
+
+
+def test_list_model_profile_summaries_skips_unknown_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile referencing a provider that doesn't even exist in the
+    registry must not crash the summary list."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    settings = Settings(
+        default_model_profile="good-profile",
+        annotation_model_profile="good-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    },
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                    },
+                    "ghost-model": {
+                        "provider": "nonexistent-provider",
+                        "model_name": "ghost-model",
+                    },
+                },
+                "profiles": {
+                    "good-profile": {
+                        "model": "eval-model",
+                    },
+                    "ghost-profile": {
+                        "model": "ghost-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    summaries = list_model_profile_summaries(settings=settings)
+    names = [s.profile_name for s in summaries]
+    assert "good-profile" in names
+    assert "ghost-profile" not in names
