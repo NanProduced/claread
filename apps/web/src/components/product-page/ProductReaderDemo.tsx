@@ -146,19 +146,14 @@ export function ProductReaderDemo() {
 
         <div className="relative">
           <div className="absolute -left-6 -top-6 hidden h-28 w-28 rounded-full border border-lens-blue/20 bg-lens-blue-soft/50 lg:block" />
-          <div className="relative overflow-hidden rounded-[1.75rem] border border-hairline bg-surface/80 shadow-[0_28px_80px_rgba(28,24,18,0.12)] backdrop-blur">
-            <div className="flex items-center justify-between border-b border-hairline bg-reader-paper/80 px-4 py-3 sm:px-5">
-              <div className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#e58467]" />
-                <span className="h-2.5 w-2.5 rounded-full bg-[#e4b000]" />
-                <span className="h-2.5 w-2.5 rounded-full bg-[#3c8c68]" />
-              </div>
-              <div className="hidden items-center gap-2 text-xs font-semibold text-muted sm:flex">
+          <div className="relative overflow-hidden rounded-[1.75rem] border border-hairline bg-reader-paper shadow-[0_14px_44px_rgba(28,24,18,0.12)] paper-grain">
+            <div className="flex items-center justify-between border-b border-hairline/60 px-4 py-3 sm:px-5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-muted">
                 <Check aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />
-                Anchored reader scene
+                Reader Workspace
               </div>
             </div>
-            <div className="max-h-[640px] overflow-y-auto bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(251,250,246,0.92))]">
+            <div className="max-h-[640px] overflow-y-auto">
               <PlateReaderSurface
                 activeAnalysisEntryId={activeEntryId}
                 activeSentenceId={sceneState.selectedSentenceId}

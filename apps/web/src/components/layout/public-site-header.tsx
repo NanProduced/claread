@@ -4,7 +4,6 @@ import { BrandLockup } from "@/components/brand/BrandMarks";
 import {
   blogRoute,
   dailyRoute,
-  examplesRoute,
   helpRoute,
   homeRoute,
 } from "@/lib/routes";
@@ -12,7 +11,6 @@ import { appCtaForSession, getProjectedWebSession } from "@/services/bff/session
 
 const navItems: Array<{ href: Route; label: string }> = [
   { href: dailyRoute, label: "每日精读" },
-  { href: examplesRoute, label: "公开示例" },
   { href: helpRoute, label: "透读方法" },
   { href: blogRoute, label: "Blog" },
 ];

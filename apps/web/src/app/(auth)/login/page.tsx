@@ -1,17 +1,11 @@
-import { ArrowRight, BookOpen, Newspaper, PenLine } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
 import { ApertureWatermark, ClareadStamp } from "@/components/brand/BrandMarks";
 import { PublicSiteHeader } from "@/components/layout";
 import { appCtaForSession, getProjectedWebSession } from "@/services/bff/session";
-import { dailyRoute, examplesRoute } from "@/lib/routes";
+import { dailyRoute } from "@/lib/routes";
 import { PhoneLoginForm } from "./PhoneLoginForm";
-
-const exampleRoutes = [
-  { label: "新闻", title: "A short piece of global news", href: examplesRoute },
-  { label: "学术", title: "An abstract with dense logic", href: "/examples/academic-abstract" as const },
-  { label: "考试", title: "A passage with trap options", href: "/examples/exam-passage" as const },
-] as const;
 
 export default async function LoginPage() {
   const session = await getProjectedWebSession();
@@ -77,31 +71,6 @@ export default async function LoginPage() {
                 </div>
               </div>
             </article>
-
-            <section className="mt-4 grid gap-3 sm:grid-cols-3">
-              {exampleRoutes.map((example) => (
-                <Link
-                  key={example.href}
-                  href={example.href}
-                  className="focus-ring group rounded-[1.25rem] border border-hairline bg-surface-warm/86 p-3.5 shadow-surface-quiet transition-colors hover:border-muted"
-                >
-                  <div className="flex items-center gap-2 text-xs font-semibold text-lens-blue">
-                    {example.label === "新闻" ? (
-                      <Newspaper aria-hidden="true" className="h-4 w-4" />
-                    ) : example.label === "学术" ? (
-                      <BookOpen aria-hidden="true" className="h-4 w-4" />
-                    ) : (
-                      <PenLine aria-hidden="true" className="h-4 w-4" />
-                    )}
-                    {example.label}
-                  </div>
-                  <h3 className="mt-3 font-headline text-base font-semibold leading-snug tracking-normal text-ink">
-                    {example.title}
-                  </h3>
-                  <p className="mt-2 text-xs leading-5 text-muted">查看一份公开标注样张</p>
-                </Link>
-              ))}
-            </section>
           </section>
 
           <aside className="lg:pt-16">

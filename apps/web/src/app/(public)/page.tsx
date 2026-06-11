@@ -3,7 +3,7 @@ import { BookMarked, FileText, GraduationCap, Library, MessageSquareText, Sparkl
 import { PublicSiteHeader } from "@/components/layout";
 import { ProductHero } from "@/components/product-page/ProductHero";
 import { ProductReaderDemo } from "@/components/product-page/ProductReaderDemo";
-import { appReadRoute, dailyRoute, examplesRoute, homeRoute } from "@/lib/routes";
+import { appReadRoute, dailyRoute, homeRoute } from "@/lib/routes";
 import { appCtaForSession, getProjectedWebSession } from "@/services/bff/session";
 
 const readingModes = [
@@ -119,10 +119,10 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-8 px-5 py-16 sm:px-6 lg:grid-cols-2 lg:py-24">
+      <section className="mx-auto max-w-7xl px-5 py-16 sm:px-6 lg:py-24">
         <Link
           href={dailyRoute}
-          className="focus-ring group rounded-2xl border border-hairline bg-surface/70 p-7 transition-colors hover:border-lens-blue/40"
+          className="focus-ring group rounded-2xl border border-hairline bg-surface/70 p-7 transition-colors hover:border-lens-blue/40 block max-w-3xl mx-auto"
         >
           <Library aria-hidden="true" className="h-6 w-6 text-lens-blue" />
           <h2 className="mt-5 font-headline text-3xl font-semibold text-ink">每日精读</h2>
@@ -131,19 +131,6 @@ export default async function HomePage() {
           </p>
           <span className="mt-5 inline-flex text-sm font-semibold text-lens-blue group-hover:underline">
             打开每日精读
-          </span>
-        </Link>
-        <Link
-          href={examplesRoute}
-          className="focus-ring group rounded-2xl border border-hairline bg-surface/70 p-7 transition-colors hover:border-lens-blue/40"
-        >
-          <MessageSquareText aria-hidden="true" className="h-6 w-6 text-lens-blue" />
-          <h2 className="mt-5 font-headline text-3xl font-semibold text-ink">公开示例</h2>
-          <p className="mt-3 text-sm leading-7 text-muted">
-            查看文章、解释、分享态的组合方式，理解 Claread 如何从原文生成可阅读的解释层。
-          </p>
-          <span className="mt-5 inline-flex text-sm font-semibold text-lens-blue group-hover:underline">
-            查看公开示例
           </span>
         </Link>
       </section>
