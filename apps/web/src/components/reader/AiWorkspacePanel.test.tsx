@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
 import type { ReaderAskUiMessageDto } from "@/types/api/reader-ask";
@@ -817,9 +818,13 @@ describe("AiWorkspacePanel", () => {
     });
 
     expect(screen.getByText("Test Reader")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "添加其他文章" }));
+    await userEvent.click(screen.getByRole("button", { name: "添加其他文章" }));
 
-    expect(screen.getByPlaceholderText("搜索其他文章")).not.toBeNull();
+    // Without forceMount, DropdownMenu content renders asynchronously after
+    // the controlled open state updates.
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("搜索其他文章")).not.toBeNull();
+    });
     expect(screen.getByText("最近文章")).not.toBeNull();
     await waitFor(() => {
       expect(screen.getByText("Climate Policy")).not.toBeNull();

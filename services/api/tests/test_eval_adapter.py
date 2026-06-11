@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -548,3 +548,46 @@ def test_list_model_profile_summaries_skips_unknown_provider(
     names = [s.profile_name for s in summaries]
     assert "good-profile" in names
     assert "ghost-profile" not in names
+
+
+def test_list_model_profile_summaries_propagates_unexpected_errors() -> None:
+    """Non-ModelSelectionError exceptions must NOT be silently swallowed."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    settings = Settings(
+        default_model_profile="eval-profile",
+        annotation_model_profile="eval-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    },
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                    },
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="unexpected bug"),
+    ):
+        # Patch resolve_model_config to raise a programming error
+        # that must propagate, not be caught.
+        with patch(
+            "app.eval_adapter.shared.resolve_model_config",
+            side_effect=RuntimeError("unexpected bug"),
+        ):
+            list_model_profile_summaries(settings=settings)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from hashlib import sha256
@@ -15,11 +16,13 @@ from app.eval_adapter.schemas import (
     RequestSnapshot,
 )
 from app.llm.registry import build_model_registry
-from app.llm.router import resolve_model_config
+from app.llm.router import ModelSelectionError, resolve_model_config
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.llm.types import ModelSelection
 from app.observability import disabled_tracing
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
+
+logger = logging.getLogger(__name__)
 
 
 def source_text_hash(text: str) -> str:
@@ -134,9 +137,12 @@ def list_model_profile_summaries(
                 MODEL_ROUTE_ANNOTATION_GENERATION,
                 ModelSelection(default_profile=profile_name),
             )
-        except Exception:
-            # Profile references an unconfigured/unactivated provider — skip
-            # rather than failing the entire summary list.
+        except ModelSelectionError as exc:
+            logger.warning(
+                "Skipping model profile %r in summary: %s",
+                profile_name,
+                exc,
+            )
             continue
         summaries.append(
             ModelProfileSummary(

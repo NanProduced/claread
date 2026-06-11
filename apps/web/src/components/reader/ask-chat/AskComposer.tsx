@@ -97,10 +97,8 @@ function AskComposerSurface({
               <PromptInputActionMenuTrigger
               aria-label="添加其他文章"
               className="rounded-full"
-              onClick={() => onActionMenuOpenChange?.(true)}
             />
             <PromptInputActionMenuContent
-              forceMount
               side="top"
               collisionPadding={8}
               className="w-[18rem] p-0"
