@@ -30,13 +30,25 @@ def _settings() -> Settings:
         annotation_model_profile="",
         model_profiles_json=json.dumps(
             {
-                "eval-profile": {
-                    "provider": "openai_compatible",
-                    "model_name": "eval-model",
-                    "base_url": "https://example.invalid/v1",
-                    "api_key": "secret-key",
-                    "model_settings": {"temperature": 0.2},
-                }
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    }
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                        "model_settings": {"temperature": 0.2},
+                    }
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    }
+                },
             }
         ),
     )
@@ -285,7 +297,7 @@ def test_eval_model_profiles_route_returns_sanitized_summaries(
     payload = response.json()
     assert isinstance(payload, list)
     assert payload[0]["profile_name"] == "eval-profile"
-    assert payload[0]["provider"] == "openai_compatible"
+    assert payload[0]["provider"] == "eval-provider"
     assert payload[0]["model_name"] == "eval-model"
     assert payload[0]["annotation_route_default"] is False
     assert "api_key" not in payload[0]

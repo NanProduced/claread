@@ -27,12 +27,24 @@ def _settings_with_profile() -> Settings:
         default_model_profile="primary",
         model_profiles_json=json.dumps(
             {
-                "primary": {
-                    "provider": "openai_compatible",
-                    "model_name": "primary-model",
-                    "base_url": "https://example.invalid/v1",
-                    "api_key": "primary-key",
-                }
+                "providers": {
+                    "primary-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "primary-key",
+                    }
+                },
+                "models": {
+                    "primary-model": {
+                        "provider": "primary-provider",
+                        "model_name": "primary-model",
+                    }
+                },
+                "profiles": {
+                    "primary": {
+                        "model": "primary-model",
+                    }
+                },
             }
         ),
     )
@@ -144,16 +156,28 @@ async def test_run_structured_completion_propagates_extra_body_and_headers() -> 
         default_model_profile="qwen",
         model_profiles_json=json.dumps(
             {
-                "qwen": {
-                    "provider": "openai_compatible",
-                    "model_name": "qwen3.5-plus",
-                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    "api_key": "qwen-key",
-                    "model_settings": {
-                        "extra_body": {"enable_thinking": False},
-                        "extra_headers": {"X-Trace-Id": "abc-123"},
-                    },
-                }
+                "providers": {
+                    "qwen-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "api_key": "qwen-key",
+                    }
+                },
+                "models": {
+                    "qwen-model": {
+                        "provider": "qwen-provider",
+                        "model_name": "qwen3.5-plus",
+                    }
+                },
+                "profiles": {
+                    "qwen": {
+                        "model": "qwen-model",
+                        "model_settings": {
+                            "extra_body": {"enable_thinking": False},
+                            "extra_headers": {"X-Trace-Id": "abc-123"},
+                        },
+                    }
+                },
             }
         ),
     )

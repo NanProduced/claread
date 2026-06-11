@@ -26,12 +26,24 @@ def _settings_with_profile() -> Settings:
         default_model_profile="primary",
         model_profiles_json=json.dumps(
             {
-                "primary": {
-                    "provider": "openai_compatible",
-                    "model_name": "primary-judge",
-                    "base_url": "https://example.invalid/v1",
-                    "api_key": "primary-key",
-                }
+                "providers": {
+                    "primary-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "primary-key",
+                    }
+                },
+                "models": {
+                    "primary-judge": {
+                        "provider": "primary-provider",
+                        "model_name": "primary-judge",
+                    }
+                },
+                "profiles": {
+                    "primary": {
+                        "model": "primary-judge",
+                    }
+                },
             }
         ),
     )
@@ -598,13 +610,25 @@ async def test_run_workflow_lab_compare_judge_compacts_heavy_prompt_payload() ->
     object.__setattr__(
         packet.baseline,
         "inline_marks",
-        [
+        [{
+            "title": "cross one's path",
+            "anchor": {
+                "kind": "multi_text",
+                "parts": [
+                    {"anchor_text": "crosses"},
+                    {"anchor_text": "path"},
+                ],
+            },
+            "type": "phrase_gloss",
+            "lookup_kind": "idiom",
+            "extra": "偶然遇到",
+        }] + [
             {
                 "anchor": f"anchor-{idx}-" + ("x" * 60),
                 "type": "grammar_note",
                 "extra": "detail-" + ("y" * 60),
             }
-            for idx in range(8)
+            for idx in range(1, 8)
         ],
     )
     object.__setattr__(
@@ -652,6 +676,9 @@ async def test_run_workflow_lab_compare_judge_compacts_heavy_prompt_payload() ->
     sent_prompt = json.loads(fake.calls[0]["user_prompt"])
     baseline = sent_prompt["packet"]["baseline"]
     assert len(baseline["inline_marks"]) == 6
+    assert baseline["inline_marks"][0]["title"] == "cross one's path"
+    assert baseline["inline_marks"][0]["anchor"] == "crosses / path"
+    assert baseline["inline_marks"][0]["lookup_kind"] == "idiom"
     assert len(baseline["sentence_entries"]) == 4
     assert len(baseline["warnings"]) == 4
     assert len(baseline["drop_log"]) == 3

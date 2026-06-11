@@ -48,13 +48,31 @@ def _settings() -> Settings:
         annotation_model_profile="annotation-profile",
         model_profiles_json=json.dumps(
             {
-                "eval-profile": {
-                    "provider": "openai_compatible",
-                    "model_name": "eval-model",
-                    "base_url": "https://example.invalid/v1",
-                    "api_key": "secret-key",
-                    "model_settings": {"temperature": 0.2},
-                }
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    }
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                        "model_settings": {"temperature": 0.2},
+                    }
+                },
+                "profiles": {
+                    "baseline-profile": {
+                        "model": "eval-model",
+                    },
+                    "annotation-profile": {
+                        "model": "eval-model",
+                    },
+                    "eval-profile": {
+                        "model": "eval-model",
+                    }
+                },
             }
         ),
     )
@@ -577,6 +595,99 @@ async def test_node_lab_grammar_quick_validation_keeps_unrecoverable_ellipsis_as
 
 
 @pytest.mark.anyio
+async def test_node_lab_vocabulary_quick_validation_accepts_recoverable_schematic_anchor_patterns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(node_lab, "get_settings", _settings)
+    dynamic_run_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            output=VocabularyDraft(
+                vocab_highlights=[VocabHighlight(sentence_id="s1", text="learning")],
+                phrase_glosses=[
+                    PhraseGloss(
+                        sentence_id="s1",
+                        text="apply ... to",
+                        phrase_type="collocation",
+                        zh="将……应用于……",
+                    )
+                ],
+                context_glosses=[
+                    ContextGloss(
+                        sentence_id="s2",
+                        text="prompt sb to do sth",
+                        gloss="促使某人做某事",
+                        reason="这里表示引发后续行动。",
+                    )
+                ],
+            )
+        )
+    )
+    monkeypatch.setattr(node_lab, "_run_dynamic_agent", dynamic_run_mock)
+
+    result = await node_lab.run_article_analysis_node_lab(
+        node_lab.ArticleAnalysisNodeLabRunRequest(
+            node_name="vocabulary",
+            text=(
+                "Participants should immediately apply their learning to a specific intervention. "
+                "Alternative realities can prompt them to rethink their current beliefs."
+            ),
+            candidate_override={
+                "candidate_id": "cand-vocab-anchor-repair",
+                "node_name": "vocabulary",
+                "model_selection": {"default_profile": "eval-profile"},
+            },
+        )
+    )
+
+    assert result.run.quick_validation is not None
+    assert result.run.quick_validation["status"] == "pass"
+    assert result.run.quick_validation["warning_count"] == 0
+    assert result.run.quick_validation["warnings"] == []
+
+
+@pytest.mark.anyio
+async def test_node_lab_vocabulary_quick_validation_accepts_phrase_gloss_explicit_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(node_lab, "get_settings", _settings)
+    dynamic_run_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            output=VocabularyDraft(
+                vocab_highlights=[],
+                phrase_glosses=[
+                    PhraseGloss(
+                        sentence_id="s1",
+                        text="turn ... into",
+                        spans=[SpanRef(text="turn"), SpanRef(text="into")],
+                        phrase_type="phrasal_verb",
+                        zh="把……变成……",
+                    )
+                ],
+                context_glosses=[],
+            )
+        )
+    )
+    monkeypatch.setattr(node_lab, "_run_dynamic_agent", dynamic_run_mock)
+
+    result = await node_lab.run_article_analysis_node_lab(
+        node_lab.ArticleAnalysisNodeLabRunRequest(
+            node_name="vocabulary",
+            text="People can turn their passion into a stable income.",
+            candidate_override={
+                "candidate_id": "cand-vocab-explicit-spans",
+                "node_name": "vocabulary",
+                "model_selection": {"default_profile": "eval-profile"},
+            },
+        )
+    )
+
+    assert result.run.quick_validation is not None
+    assert result.run.quick_validation["status"] == "pass"
+    assert result.run.quick_validation["warning_count"] == 0
+    assert result.run.quick_validation["warnings"] == []
+
+
+@pytest.mark.anyio
 async def test_node_lab_vocabulary_quick_validation_reports_duplicates_and_subsumption(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -626,6 +737,48 @@ async def test_node_lab_vocabulary_quick_validation_reports_duplicates_and_subsu
     warning_codes = {item["code"] for item in result.run.quick_validation["warnings"]}
     assert "vocabulary_same_text_cross_type" in warning_codes
     assert "vocab_highlight_subsumed_by_phrase_gloss" in warning_codes
+
+
+@pytest.mark.anyio
+async def test_node_lab_vocabulary_quick_validation_reports_phrase_gloss_span_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(node_lab, "get_settings", _settings)
+    dynamic_run_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            output=VocabularyDraft(
+                vocab_highlights=[],
+                phrase_glosses=[
+                    PhraseGloss(
+                        sentence_id="s1",
+                        text="turn ... into",
+                        spans=[SpanRef(text="into"), SpanRef(text="turn")],
+                        phrase_type="phrasal_verb",
+                        zh="把……变成……",
+                    )
+                ],
+                context_glosses=[],
+            )
+        )
+    )
+    monkeypatch.setattr(node_lab, "_run_dynamic_agent", dynamic_run_mock)
+
+    result = await node_lab.run_article_analysis_node_lab(
+        node_lab.ArticleAnalysisNodeLabRunRequest(
+            node_name="vocabulary",
+            text="People can turn their passion into a stable income.",
+            candidate_override={
+                "candidate_id": "cand-vocab-span-order",
+                "node_name": "vocabulary",
+                "model_selection": {"default_profile": "eval-profile"},
+            },
+        )
+    )
+
+    assert result.run.quick_validation is not None
+    assert result.run.quick_validation["status"] == "warning"
+    assert result.run.quick_validation["warning_count"] == 1
+    assert result.run.quick_validation["warnings"][0]["code"] == "phrase_gloss_spans_out_of_order"
 
 
 @pytest.mark.anyio

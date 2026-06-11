@@ -19,6 +19,7 @@ apps/miniprogram/.env.example
 infra/docker/.env.example
 services/api/config/model-profiles.example.json
 services/api/config/model-presets.example.json
+services/api/config/reader-ask-model-options.example.json
 ```
 
 ## pnpm workspace
@@ -136,7 +137,13 @@ dev/staging/prod 由构建环境注入。
 
 ## 模型配置
 
-真实模型配置不提交。通过 `services/api/config/model-profiles.example.json`、`services/api/config/model-presets.example.json` 和环境变量注入模型配置。
+真实模型配置不提交。通过 `services/api/config/model-profiles.example.json`、`services/api/config/model-presets.example.json`、`services/api/config/reader-ask-model-options.example.json` 和环境变量注入模型配置。
+
+当前模型配置采用三层结构：
+
+- `providers`：连接信息、API key env 名称、OpenAI 兼容性差异。
+- `models`：某个 provider 下的远端模型名。
+- `profiles`：场景级配置。Ask / workflow 是否开 thinking，应该写在 profile 或 route override，而不是写死在代码里。
 
 结构化输出链路对模型能力敏感。更换 `DEFAULT_MODEL_PROFILE` 或 `ANNOTATION_MODEL_PROFILE` 后，需要重新验证解析结果是否包含词汇、语法、句式和翻译字段。
 
