@@ -41,7 +41,7 @@ export function ListRow({
               titleClassName,
             )}
           >
-            {title}
+            <>{title}</>
           </Link>
         ) : (
           <div className={cn("font-headline text-[1.35rem] font-semibold leading-snug text-ink", titleClassName)}>
