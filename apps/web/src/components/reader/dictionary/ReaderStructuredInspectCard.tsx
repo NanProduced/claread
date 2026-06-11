@@ -22,6 +22,7 @@ export function ReaderStructuredInspectCard({
   variant = "peek",
 }: ReaderStructuredInspectCardProps) {
   const title = structuredInspectLabel(intent.annotationType, intent.glossary?.phraseType);
+  const displayAnchorText = intent.lookupText ?? intent.anchorText;
   const summary =
     contextualGlossaryText(intent.glossary) ||
     intent.lookupText ||
@@ -39,7 +40,7 @@ export function ReaderStructuredInspectCard({
       {!compact ? (
         <div>
           <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-muted">{title}</p>
-          <h3 className="mt-2 reader-serif text-[1.25rem] leading-tight text-ink">{intent.anchorText}</h3>
+          <h3 className="mt-2 reader-serif text-[1.25rem] leading-tight text-ink">{displayAnchorText}</h3>
         </div>
       ) : null}
       <div className="space-y-2">

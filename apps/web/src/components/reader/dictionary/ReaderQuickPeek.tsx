@@ -167,6 +167,7 @@ export function ReaderQuickPeek({
   const lookupBodyId = useId();
 
   if (inspect) {
+    const inspectDisplayText = inspect.lookupText ?? inspect.anchorText;
     return (
       <TooltipProvider>
         <ReaderQuickPeekShell
@@ -175,7 +176,7 @@ export function ReaderQuickPeek({
           titleId={inspectTitleId}
           eyebrow={structuredInspectLabel(inspect.annotationType, inspect.glossary?.phraseType)}
           eyebrowClassName={getInspectColorClass(inspect.annotationType)}
-          title={inspect.anchorText}
+          title={inspectDisplayText}
           body={
             <ReaderStructuredInspectCard
               intent={inspect}

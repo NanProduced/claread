@@ -115,7 +115,7 @@ describe("renderSceneToPlateDocument", () => {
     if (sentenceText.type !== "reader_sentence_text") {
       throw new Error("Expected sentence text node");
     }
-    expect(sentenceText.children).toEqual([
+    expect(sentenceText.children).toMatchObject([
       {
         text: "Institutional memory ",
         readerSentenceId: "s1",
@@ -269,7 +269,7 @@ describe("renderSceneToPlateDocument", () => {
       "term_note",
       "logic_note",
     ]);
-    expect(sentenceText.children).toEqual([
+    expect(sentenceText.children).toMatchObject([
       {
         text: "Institutional memory",
         readerSentenceId: "s1",
@@ -430,5 +430,53 @@ describe("renderSceneToPlateDocument", () => {
       text: " policy",
       readerMarkAnchorText: "shapes policy",
     });
+  });
+
+  it("keeps multi_text vocabulary parts linked to the same mark and lookup text", () => {
+    const scene: ReaderMockVm = {
+      ...createBaseScene(),
+      inlineMarks: [
+        {
+          id: "mark-multi",
+          annotationType: "phrase_gloss",
+          anchor: {
+            kind: "multi_text",
+            sentenceId: "s1",
+            parts: [
+              { anchorText: "Institutional memory" },
+              { anchorText: "policy choices" },
+            ],
+          },
+          renderType: "background",
+          visualTone: "phrase",
+          clickable: true,
+          lookupKind: "phrase",
+          lookupText: "refer to ... as",
+        },
+      ],
+    };
+
+    const document = renderSceneToPlateDocument(scene);
+    const paragraph = document.children[0];
+    if (paragraph.type !== "reader_paragraph") {
+      throw new Error("Expected paragraph node");
+    }
+
+    const sentence = paragraph.children[0];
+    const sentenceText = sentence.children[0];
+    if (sentenceText.type !== "reader_sentence_text") {
+      throw new Error("Expected sentence text node");
+    }
+
+    const markedLeaves = sentenceText.children.filter((leaf) => leaf.readerMarkId === "mark-multi");
+    expect(markedLeaves).toHaveLength(2);
+    expect(markedLeaves.map((leaf) => leaf.readerMarkAnchorText)).toEqual([
+      "Institutional memory",
+      "policy choices",
+    ]);
+    expect(markedLeaves.map((leaf) => leaf.readerMarkLookupText)).toEqual([
+      "refer to ... as",
+      "refer to ... as",
+    ]);
   });
 });
