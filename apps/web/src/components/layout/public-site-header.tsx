@@ -34,10 +34,10 @@ export async function PublicSiteHeader({
   const cta = appCtaForSession(session);
 
   return (
-    <header className={`mx-auto flex items-center justify-between gap-6 ${wide ? "max-w-[98rem]" : "max-w-7xl"}`}>
-      <BrandLockup href={homeRoute} priority={priority} />
+    <header className={`mx-auto flex h-14 items-center justify-between gap-5 ${wide ? "max-w-[76rem]" : "max-w-7xl"}`}>
+      <BrandLockup href={homeRoute} priority={priority} imageClassName="!w-28 sm:!w-36" />
       <div className="flex items-center gap-3">
-        <nav className="hidden items-center gap-2 text-sm font-semibold text-muted md:flex">
+        <nav className="hidden items-center gap-2 text-[0.78rem] font-semibold text-muted md:flex">
           {navItems.map((item) => {
             const active = currentHref === item.href;
 
@@ -45,7 +45,7 @@ export async function PublicSiteHeader({
               <Link
                 key={item.href}
                 href={item.href}
-                className={`focus-ring rounded-pill px-3 py-2 transition-colors ${
+                className={`focus-ring rounded-pill px-2 py-1 transition-colors ${
                   active ? "text-lens-blue" : "hover:text-ink"
                 }`}
               >
@@ -57,7 +57,7 @@ export async function PublicSiteHeader({
         {showCta ? (
           <Link
             href={cta.href}
-            className="focus-ring inline-flex min-h-10 items-center whitespace-nowrap rounded-pill bg-ink px-4 text-sm font-semibold text-[rgb(255,255,255)] transition-opacity hover:opacity-90"
+            className="focus-ring inline-flex min-h-8 items-center whitespace-nowrap rounded-[8px] bg-ink px-3 text-[0.78rem] font-semibold text-[rgb(255,255,255)] transition-opacity hover:opacity-90"
             style={{ color: "#ffffff" }}
           >
             {ctaLabelOverride ?? cta.label}
