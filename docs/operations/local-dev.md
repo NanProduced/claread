@@ -139,11 +139,49 @@ dev/staging/prod 由构建环境注入。
 
 真实模型配置不提交。通过 `services/api/config/model-profiles.example.json`、`services/api/config/model-presets.example.json`、`services/api/config/reader-ask-model-options.example.json` 和环境变量注入模型配置。
 
+### 三层结构
+
 当前模型配置采用三层结构：
 
-- `providers`：连接信息、API key env 名称、OpenAI 兼容性差异。
-- `models`：某个 provider 下的远端模型名。
-- `profiles`：场景级配置。Ask / workflow 是否开 thinking，应该写在 profile 或 route override，而不是写死在代码里。
+- **providers**：transport/protocol 能力和鉴权信息。adapter 决定协议类型（`openai_compatible` / `dashscope_native`），不是 vendor 名。同一 vendor（如 DashScope）允许按 transport 差异拆成两个 provider。
+- **models**：某个 provider 下的远端模型名。同一远端模型名可以定义两个 model entry，分别引用不同 adapter 的 provider。
+- **profiles**：场景级配置（Ask / workflow / planner / replan）。thinking 是否开启应该在 profile 或 route override 配置，不写死在代码里。
+
+### Adapter 语义
+
+| Adapter | Transport | 要求 | 适用场景 |
+|---------|-----------|------|----------|
+| `openai_compatible` | OpenAI 兼容 HTTP（SSE） | `base_url` 必填 | workflow / planner / eval / structured completion |
+| `dashscope_native` | DashScope 原生 SDK | `api_key` 或 `api_key_env`（不需要 `base_url`） | Ask 主回答 / replan（需要可见 reasoning 流） |
+
+同一 vendor 拆成两个 provider 是允许且推荐的。例如：
+
+- `dashscope`（adapter = `dashscope_native`）— Ask 路由走原生协议
+- `dashscope_compat`（adapter = `openai_compatible`）— workflow / planner 走兼容层
+
+### 推荐实践
+
+- Ask 主回答如需可见 reasoning 流，可走 native provider。
+- workflow / planner / structured completion 在 native 路径未完全验证前可继续 compat。
+- `reader-ask-model-options` 负责运营侧 Ask 模型选项，不等于 profiles 全量暴露。
+
+### 计费与运行预算解耦
+
+- `reserved_points` 不参与 prompt token 上限推导，只负责预扣/风控。
+- compaction / runtime budget 应只看 `runtime_defaults` / `runtime_budget` 字段。
+
+### Route 建议
+
+| Route | 推荐 profile 类型 | 推荐 adapter | 建议 thinking | 备注 |
+|-------|-------------------|-------------|--------------|------|
+| `reader_ask` | ask-main-* | dashscope_native | 开启 | 主回答走原生，支持可见 reasoning |
+| `reader_ask_planner` | ask-planner-* | openai_compatible | 关闭 | planner 先固定 compat |
+| `reader_ask_replan` | ask-replan-* | dashscope_native | 开启 | replan 走原生 |
+| `annotation_generation` | workflow-* | openai_compatible | 关闭 | 结构化输出，compat 已验证 |
+| `dict_ai` | workflow-* | openai_compatible | 关闭 | 词典 AI |
+| `daily_annotation` | workflow-* | openai_compatible | 关闭 | 批量标注 |
+| `daily_analysis` | workflow-* | openai_compatible | 关闭 | 批量分析 |
+| `daily_review` | workflow-* | openai_compatible | 关闭 | 批量复查 |
 
 结构化输出链路对模型能力敏感。更换 `DEFAULT_MODEL_PROFILE` 或 `ANNOTATION_MODEL_PROFILE` 后，需要重新验证解析结果是否包含词汇、语法、句式和翻译字段。
 

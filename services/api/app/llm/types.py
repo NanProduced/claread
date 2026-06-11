@@ -65,10 +65,25 @@ class OpenAIProfileConfig(BaseModel):
         return OpenAIProfileConfig.model_validate(merged)
 
 
+# The same vendor (e.g. DashScope) can have two providers with different adapters —
+# one for compat, one for native. Provider = transport/protocol capability, not just vendor name.
+ModelAdapter = Literal["openai_compatible", "dashscope_native"]
+
+
 class ModelProviderConfig(BaseModel):
+    """Provider-level transport and authentication configuration.
+
+    Adapters:
+        openai_compatible: OpenAI-compatible HTTP transport (SSE streaming via
+            OpenAI protocol). Requires ``base_url``.
+        dashscope_native: DashScope native SDK transport (server-side streaming,
+            reasoning content support). Does NOT require ``base_url``; authenticates
+            via ``api_key`` or ``api_key_env``.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    adapter: str = "openai_compatible"
+    adapter: ModelAdapter = "openai_compatible"
     base_url: str = ""
     api_key: str = ""
     api_key_env: str = ""
@@ -79,7 +94,9 @@ class ModelProviderConfig(BaseModel):
     def is_configured(self) -> bool:
         if self.adapter == "openai_compatible":
             return bool(self.base_url)
-        return True
+        if self.adapter == "dashscope_native":
+            return bool(self.api_key or self.api_key_env)
+        return False
 
 
 class ModelDefinitionConfig(BaseModel):

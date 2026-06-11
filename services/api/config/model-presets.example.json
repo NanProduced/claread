@@ -2,7 +2,8 @@
   "_comment": [
     "这是字段说明版 example，不可直接作为运行时配置加载。",
     "复制到正式配置前，请删除所有以下划线开头的注释键。",
-    "preset 的本质是 route -> profile 的一组映射；也可以继续引用另一个 preset 作为基础。"
+    "preset 的本质是 route -> profile 的一组映射；也可以继续引用另一个 preset 作为基础。",
+    "presets can mix native and compat profiles; planner typically stays compat while Ask main/replan can go native."
   ],
   "workflow_base": {
     "_field_notes": {
@@ -103,6 +104,29 @@
         "profile": "ask-replan-qwen37-max",
         "fallback_profiles": [
           "ask-replan-glm51",
+          "ask-replan-deepseek-v4-pro"
+        ]
+      }
+    }
+  },
+  "ask_qwen_premium_native": {
+    "_field_notes": "Ask main/replan via native provider for visible reasoning stream; planner stays compat.",
+    "preset": "workflow_base",
+    "routes": {
+      "reader_ask": {
+        "profile": "ask-main-qwen37-max-native",
+        "fallback_profiles": [
+          "ask-main-glm51-native",
+          "ask-main-deepseek-v4-pro"
+        ]
+      },
+      "reader_ask_planner": {
+        "profile": "ask-planner-qwen36-plus"
+      },
+      "reader_ask_replan": {
+        "profile": "ask-replan-qwen37-max-native",
+        "fallback_profiles": [
+          "ask-replan-glm51-native",
           "ask-replan-deepseek-v4-pro"
         ]
       }

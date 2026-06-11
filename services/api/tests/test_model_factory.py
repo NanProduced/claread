@@ -428,3 +428,140 @@ def test_resolve_model_config_reads_provider_key_from_local_env_loader(
 
     assert config is not None
     assert config.api_key == "dotenv-dashscope-key"
+
+
+def test_dashscope_native_provider_is_configured_without_base_url() -> None:
+    """dashscope_native adapter does not require base_url; api_key suffices."""
+    from app.llm.types import ModelProviderConfig
+
+    native_with_key = ModelProviderConfig(
+        adapter="dashscope_native",
+        api_key="test-key",
+    )
+    assert native_with_key.is_configured() is True
+
+    native_with_env = ModelProviderConfig(
+        adapter="dashscope_native",
+        api_key_env="DASHSCOPE_API_KEY",
+    )
+    assert native_with_env.is_configured() is True
+
+    native_no_key = ModelProviderConfig(
+        adapter="dashscope_native",
+    )
+    assert native_no_key.is_configured() is False
+
+
+def test_resolve_model_config_with_dashscope_native_provider(
+    monkeypatch,
+) -> None:
+    """Route resolution should work with dashscope_native provider that has no base_url."""
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "native-test-key")
+    settings = Settings(
+        ask_claread_profile="ask-native",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope": {
+                        "adapter": "dashscope_native",
+                        "api_key_env": "DASHSCOPE_API_KEY",
+                    },
+                },
+                "models": {
+                    "qwen37-max-native": {
+                        "provider": "dashscope",
+                        "model_name": "qwen3.7-max",
+                    },
+                },
+                "profiles": {
+                    "ask-native": {
+                        "model": "qwen37-max-native",
+                        "model_settings": {
+                            "extra_body": {"enable_thinking": True},
+                        },
+                    },
+                },
+            }
+        ),
+    )
+
+    config = resolve_model_config(
+        settings,
+        MODEL_ROUTE_ANNOTATION_GENERATION,
+        ModelSelection(default_profile="ask-native"),
+    )
+
+    assert config is not None
+    assert config.adapter == "dashscope_native"
+    assert config.provider == "dashscope"
+    assert config.model_name == "qwen3.7-max"
+    assert config.api_key == "native-test-key"
+    assert config.base_url == ""
+
+
+def test_dashscope_native_and_compat_coexist_in_same_registry(
+    monkeypatch,
+) -> None:
+    """Both dashscope (native) and dashscope_compat can coexist in the same config."""
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "native-test-key")
+    settings = Settings(
+        annotation_model_profile="workflow-compat",
+        ask_claread_profile="ask-native",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope": {
+                        "adapter": "dashscope_native",
+                        "api_key_env": "DASHSCOPE_API_KEY",
+                    },
+                    "dashscope_compat": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "api_key_env": "DASHSCOPE_API_KEY",
+                    },
+                },
+                "models": {
+                    "qwen37-max-native": {
+                        "provider": "dashscope",
+                        "model_name": "qwen3.7-max",
+                    },
+                    "qwen37-max-compat": {
+                        "provider": "dashscope_compat",
+                        "model_name": "qwen3.7-max",
+                    },
+                },
+                "profiles": {
+                    "ask-native": {
+                        "model": "qwen37-max-native",
+                        "model_settings": {
+                            "extra_body": {"enable_thinking": True},
+                        },
+                    },
+                    "workflow-compat": {
+                        "model": "qwen37-max-compat",
+                        "model_settings": {
+                            "extra_body": {"enable_thinking": False},
+                        },
+                    },
+                },
+            }
+        ),
+    )
+
+    ask_config = resolve_model_config(
+        settings,
+        MODEL_ROUTE_ANNOTATION_GENERATION,
+        ModelSelection(default_profile="ask-native"),
+    )
+    workflow_config = resolve_model_config(settings, MODEL_ROUTE_ANNOTATION_GENERATION)
+
+    assert ask_config is not None
+    assert ask_config.adapter == "dashscope_native"
+    assert ask_config.model_settings is not None
+    assert ask_config.model_settings.extra_body == {"enable_thinking": True}
+
+    assert workflow_config is not None
+    assert workflow_config.adapter == "openai_compatible"
+    assert workflow_config.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert workflow_config.model_settings is not None
+    assert workflow_config.model_settings.extra_body == {"enable_thinking": False}
