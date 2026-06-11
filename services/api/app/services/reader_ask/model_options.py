@@ -128,6 +128,8 @@ def _validate_catalog(settings: Settings, catalog: ReaderAskModelCatalogConfig) 
             raise ValueError("Reader Ask model option keys must be non-empty")
         if not option.enabled:
             continue
+        # resolve-only: buildability is verified separately below via
+        # _validate_buildable_route_model, so no need for buildable=True here.
         validate_model_selection(settings, option.selection, _ASK_MODEL_ROUTES)
         for route in _ASK_MODEL_ROUTES:
             model_config = resolve_model_config(settings, route, option.selection)

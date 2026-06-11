@@ -65,10 +65,13 @@ async def _invoke_article_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
     graph = _get_graph_for_plan(plan)
 
     model_selection = parse_model_selection(normalized_payload.model_selection)
+    # Execution entry guard: the model must be buildable, not just resolvable,
+    # because the workflow is about to actually call the LLM.
     validate_model_selection(
         get_settings(),
         model_selection,
         (MODEL_ROUTE_ANNOTATION_GENERATION,),
+        buildable=True,
     )
 
     settings = get_settings()

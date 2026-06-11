@@ -147,10 +147,13 @@ async def run_article_analysis_eval(
     model_identity: ModelIdentity | None = None
 
     try:
+        # Execution entry guard: the model must be buildable, not just
+        # resolvable, because we are about to actually call the LLM.
         validate_model_selection(
             get_settings(),
             model_selection,
             (MODEL_ROUTE_ANNOTATION_GENERATION,),
+            buildable=True,
         )
         model_identity = build_model_identity(model_selection, settings=get_settings())
     except ModelSelectionError as exc:

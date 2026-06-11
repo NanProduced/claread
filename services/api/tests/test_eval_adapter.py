@@ -633,3 +633,58 @@ def test_list_model_profile_summaries_is_resolve_only_not_buildability() -> None
     assert len(summaries) >= 1
     assert summaries[0].profile_name == "native-profile"
     assert summaries[0].provider == "dashscope"
+
+
+def test_eval_entry_guards_use_buildable_true() -> None:
+    """Eval execution entry guards (article_analysis, node_probe, node_lab,
+    node_lab_judge) should call validate_model_selection with buildable=True,
+    not just resolve-only. This test verifies the call signature by patching
+    validate_model_selection and checking the buildable kwarg."""
+    from app.eval_adapter import article_analysis, node_probe
+
+    # Patch validate_model_selection to capture the buildable kwarg
+    calls: list[dict] = []
+
+    def _fake_validate(settings, selection, routes, *, buildable=False):
+        calls.append({"buildable": buildable})
+        # Don't actually validate — just capture the call
+
+    with (
+        patch("app.eval_adapter.article_analysis.validate_model_selection", side_effect=_fake_validate),
+        patch("app.eval_adapter.article_analysis.build_model_identity", return_value=None),
+    ):
+        asyncio.run(
+            article_analysis.run_article_analysis_eval(
+                article_analysis.ArticleAnalysisEvalRequest(
+                    text="hello",
+                    reading_goal="daily_reading",
+                    reading_variant="intermediate_reading",
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is True, (
+        "article_analysis entry guard should use buildable=True"
+    )
+
+    calls.clear()
+
+    with (
+        patch("app.eval_adapter.node_probe.validate_model_selection", side_effect=_fake_validate),
+        patch("app.eval_adapter.node_probe.build_model_identity", return_value=None),
+    ):
+        asyncio.run(
+            node_probe.run_article_analysis_node_probe(
+                node_probe.ArticleAnalysisNodeProbeRequest(
+                    text="hello",
+                    reading_goal="daily_reading",
+                    reading_variant="intermediate_reading",
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is True, (
+        "node_probe entry guard should use buildable=True"
+    )
