@@ -591,3 +591,45 @@ def test_list_model_profile_summaries_propagates_unexpected_errors() -> None:
             side_effect=RuntimeError("unexpected bug"),
         ):
             list_model_profile_summaries(settings=settings)
+
+
+def test_list_model_profile_summaries_is_resolve_only_not_buildability() -> None:
+    """list_model_profile_summaries is a resolve-only catalog. It should NOT
+    crash even if a profile resolves but cannot be built (e.g. missing api_key
+    at build time). It only checks resolution, not buildability."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    # dashscope_native provider with api_key set — resolves successfully,
+    # but if we tried to build it, it might fail for other reasons.
+    # The point is: list_model_profile_summaries should not call
+    # build_model_instance at all.
+    settings = Settings(
+        default_model_profile="native-profile",
+        annotation_model_profile="native-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope": {
+                        "adapter": "dashscope_native",
+                        "api_key": "test-key",
+                    },
+                },
+                "models": {
+                    "native-model": {
+                        "provider": "dashscope",
+                        "model_name": "qwen3.7-max",
+                    },
+                },
+                "profiles": {
+                    "native-profile": {
+                        "model": "native-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    summaries = list_model_profile_summaries(settings=settings)
+    assert len(summaries) >= 1
+    assert summaries[0].profile_name == "native-profile"
+    assert summaries[0].provider == "dashscope"

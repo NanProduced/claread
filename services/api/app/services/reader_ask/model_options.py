@@ -8,13 +8,14 @@ from functools import lru_cache
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config.settings import Settings
+from app.llm.provider_factory import ModelProviderError, build_model_instance
 from app.llm.router import ModelSelectionError, resolve_model_config, validate_model_selection
 from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_PLANNER,
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
-from app.llm.types import ModelSelection
+from app.llm.types import ModelSelection, ResolvedModelConfig
 from app.services.ai_usage.billing import (
     DEFAULT_READER_ASK_BILLING_CONFIG,
     WeightedTokensBillingConfig,
@@ -94,6 +95,33 @@ def _parse_catalog(settings: Settings) -> ReaderAskModelCatalogConfig:
     return ReaderAskModelCatalogConfig.model_validate(payload)
 
 
+def _validate_buildable_route_model(
+    *,
+    option_key: str,
+    route: str,
+    model_config: ResolvedModelConfig,
+    fallback_profile_name: str | None = None,
+) -> None:
+    target = (
+        f"fallback profile {fallback_profile_name!r}"
+        if fallback_profile_name is not None
+        else f"profile {model_config.profile_name!r}"
+    )
+    try:
+        model = build_model_instance(model_config)
+    except ModelProviderError as exc:
+        raise ModelSelectionError(
+            f"Reader Ask model option {option_key!r} uses an unsupported adapter for "
+            f"{route} via {target}: {exc}"
+        ) from exc
+    if model is None:
+        raise ModelSelectionError(
+            f"Reader Ask model option {option_key!r} resolves to an unbuildable model for "
+            f"{route} via {target} (adapter={model_config.adapter!r}, "
+            f"provider={model_config.provider!r}, model={model_config.model_name!r})"
+        )
+
+
 def _validate_catalog(settings: Settings, catalog: ReaderAskModelCatalogConfig) -> None:
     for option_key, option in catalog.options.items():
         if not option_key.strip():
@@ -102,10 +130,39 @@ def _validate_catalog(settings: Settings, catalog: ReaderAskModelCatalogConfig) 
             continue
         validate_model_selection(settings, option.selection, _ASK_MODEL_ROUTES)
         for route in _ASK_MODEL_ROUTES:
-            if resolve_model_config(settings, route, option.selection) is None:
+            model_config = resolve_model_config(settings, route, option.selection)
+            if model_config is None:
                 raise ModelSelectionError(
                     f"Reader Ask model option {option_key!r} is missing route config for {route}"
                 )
+            _validate_buildable_route_model(
+                option_key=option_key,
+                route=route,
+                model_config=model_config,
+            )
+            for fallback_profile_name in model_config.fallback_profiles:
+                fallback_config = resolve_model_config(
+                    settings,
+                    route,
+                    ModelSelection(default_profile=fallback_profile_name),
+                )
+                if fallback_config is None:
+                    raise ModelSelectionError(
+                        f"Reader Ask model option {option_key!r} has an invalid fallback profile "
+                        f"{fallback_profile_name!r} for {route}"
+                    )
+                _validate_buildable_route_model(
+                    option_key=option_key,
+                    route=route,
+                    model_config=fallback_config,
+                    fallback_profile_name=fallback_profile_name,
+                )
+
+    # When no enabled options exist, the fallback (route defaults) is the only
+    # option available to users — it must be buildable.
+    enabled_options = _enabled_options(catalog)
+    if not enabled_options:
+        _validate_fallback_buildable(settings)
 
 
 @lru_cache(maxsize=1)
@@ -226,6 +283,34 @@ def _fallback_default_option(settings: Settings) -> ResolvedReaderAskModelOption
         replan_model_name=replan_model_name,
         is_default=True,
     )
+
+
+def _validate_fallback_buildable(settings: Settings) -> None:
+    """Verify that the route-default fallback option can actually build models.
+
+    This is a startup-time gate: if the Ask route defaults resolve but cannot
+    be built (e.g. dashscope_native adapter with missing api_key), we raise
+    early rather than failing at request time.
+    """
+    for route in _ASK_MODEL_ROUTES:
+        config = resolve_model_config(settings, route, None)
+        if config is None:
+            raise ModelSelectionError(
+                f"Ask route default for {route} does not resolve to a model config"
+            )
+        try:
+            model = build_model_instance(config)
+        except ModelProviderError as exc:
+            raise ModelSelectionError(
+                f"Ask route default for {route} is not buildable "
+                f"(adapter={config.adapter!r}, provider={config.provider!r}): {exc}"
+            ) from exc
+        if model is None:
+            raise ModelSelectionError(
+                f"Ask route default for {route} is not buildable "
+                f"(adapter={config.adapter!r}, provider={config.provider!r}, "
+                f"model={config.model_name!r})"
+            )
 
 
 def _enabled_options(catalog: ReaderAskModelCatalogConfig) -> list[tuple[str, ReaderAskModelOptionConfig]]:

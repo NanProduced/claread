@@ -146,3 +146,124 @@ def test_resolve_reader_ask_model_option_rejects_invalid_explicit_key() -> None:
 
     with pytest.raises(model_options_svc.ReaderAskModelOptionError, match="Unknown Ask Claread model option"):
         model_options_svc.resolve_reader_ask_model_option(settings, "missing-key", strict=True)
+
+
+def test_build_reader_ask_model_catalog_rejects_unbuildable_enabled_option(
+    monkeypatch,
+) -> None:
+    settings = Settings(
+        annotation_model_profile="annotation",
+        ask_claread_profile="ask-default",
+        reader_ask_planner_model_profile="planner-default",
+        reader_ask_replan_model_profile="replan-default",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope-native": {
+                        "adapter": "dashscope_native",
+                        "api_key": "test-key",
+                    },
+                    "compat-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.test/v1",
+                        "api_key": "compat-key",
+                    },
+                },
+                "models": {
+                    "annotation-model": {
+                        "provider": "compat-provider",
+                        "model_name": "annotation-model",
+                    },
+                    "ask-model": {
+                        "provider": "dashscope-native",
+                        "model_name": "qwen3.7-max",
+                    },
+                    "planner-model": {
+                        "provider": "compat-provider",
+                        "model_name": "qwen3.6-plus-2026-04-02",
+                    },
+                    "replan-model": {
+                        "provider": "dashscope-native",
+                        "model_name": "qwen3.7-max",
+                    },
+                },
+                "profiles": {
+                    "annotation": {"model": "annotation-model"},
+                    "ask-default": {"model": "ask-model"},
+                    "planner-default": {"model": "planner-model"},
+                    "replan-default": {"model": "replan-model"},
+                    "ask-native": {"model": "ask-model"},
+                    "planner-compat": {"model": "planner-model"},
+                    "replan-native": {"model": "replan-model"},
+                },
+            }
+        ),
+        reader_ask_model_options_json=json.dumps(
+            {
+                "default_option": "qwen-native",
+                "options": {
+                    "qwen-native": {
+                        "label": "Qwen 3.7 Max (Native)",
+                        "selection": {
+                            "routes": {
+                                "reader_ask": {"profile": "ask-native"},
+                                "reader_ask_planner": {"profile": "planner-compat"},
+                                "reader_ask_replan": {"profile": "replan-native"},
+                            }
+                        },
+                    }
+                },
+            }
+        ),
+    )
+
+    def _fail_native_build(model_config):
+        if model_config.adapter == "dashscope_native":
+            raise model_options_svc.ModelProviderError("Unsupported model adapter: dashscope_native")
+        return object()
+
+    monkeypatch.setattr(model_options_svc, "build_model_instance", _fail_native_build)
+
+    with pytest.raises(model_options_svc.ModelSelectionError, match="unsupported adapter"):
+        model_options_svc.build_reader_ask_model_catalog(settings)
+
+
+def test_fallback_option_must_be_buildable_when_no_enabled_options_exist(
+    monkeypatch,
+) -> None:
+    """When no catalog options are enabled, the route-default fallback must
+    be buildable — otherwise the service would fail at request time."""
+    settings = Settings(
+        annotation_model_profile="annotation",
+        ask_claread_profile="ask-default",
+        reader_ask_planner_model_profile="planner-default",
+        reader_ask_replan_model_profile="replan-default",
+        model_profiles_json=_catalog(
+            {
+                "annotation": "annotation-model",
+                "ask-default": "ask-default-model",
+                "planner-default": "planner-default-model",
+                "replan-default": "replan-default-model",
+            }
+        ),
+        reader_ask_model_options_json=json.dumps(
+            {
+                "options": {
+                    "disabled-opt": {
+                        "label": "Disabled",
+                        "enabled": False,
+                    }
+                },
+            }
+        ),
+    )
+
+    # Make build_model_instance return None to simulate unbuildable config
+    monkeypatch.setattr(
+        model_options_svc,
+        "build_model_instance",
+        lambda config: None,
+    )
+
+    with pytest.raises(model_options_svc.ModelSelectionError, match="not buildable"):
+        model_options_svc.build_reader_ask_model_catalog(settings)

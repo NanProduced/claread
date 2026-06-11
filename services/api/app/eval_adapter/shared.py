@@ -123,6 +123,15 @@ def list_model_profile_summaries(
     *,
     settings: Settings | None = None,
 ) -> list[ModelProfileSummary]:
+    """List model profile summaries for eval/ops tooling.
+
+    This is a **resolve-only** catalog: it checks that each profile can be
+    resolved via ``resolve_model_config``, but does NOT verify that the
+    resolved config can be built into a live model (``build_model_instance``).
+    Profiles that fail resolution (e.g. reference an unknown provider) are
+    silently skipped.  This is intentional — the summary is a static catalog,
+    not a usability promise.
+    """
     effective_settings = settings or get_settings()
     registry = build_model_registry(effective_settings)
     annotation_default = registry.route_defaults.get(MODEL_ROUTE_ANNOTATION_GENERATION)

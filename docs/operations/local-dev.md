@@ -164,6 +164,7 @@ dev/staging/prod 由构建环境注入。
 - Ask 主回答如需可见 reasoning 流，可走 native provider。
 - workflow / planner / structured completion 在 native 路径未完全验证前可继续 compat。
 - `reader-ask-model-options` 负责运营侧 Ask 模型选项，不等于 profiles 全量暴露。
+- `reader-ask-model-options` 中 `enabled=true` 的选项应视为“可实际运行承诺”：三个 Ask route 不仅要能 resolve，还要能在当前后端构建出对应 model adapter。
 
 ### 计费与运行预算解耦
 
@@ -184,6 +185,24 @@ dev/staging/prod 由构建环境注入。
 | `daily_review` | workflow-* | openai_compatible | 关闭 | 批量复查 |
 
 结构化输出链路对模型能力敏感。更换 `DEFAULT_MODEL_PROFILE` 或 `ANNOTATION_MODEL_PROFILE` 后，需要重新验证解析结果是否包含词汇、语法、句式和翻译字段。
+
+### Resolve vs Buildable
+
+配置层有两个层次的可用性判断：
+
+- **Resolve-only**：`resolve_model_config()` 成功返回 `ResolvedModelConfig`。表示 profile → model → provider 链路完整，可以拿到模型身份信息。适用于静态目录展示、trace 元数据、eval 标记等不需要实际构建模型实例的场景。
+- **Buildable**：在 resolve 基础上，`build_model_instance()` 还能成功构建 `Model` 实例。表示该配置可以实际用于 LLM 调用。适用于 Ask 面板可选项、runtime 调用等对用户承诺可用的场景。
+
+当前 buildability 校验点：
+
+| 场景 | 校验层次 | 说明 |
+|------|---------|------|
+| `list_model_profile_summaries` | resolve-only | eval/ops 静态目录，不承诺可 build |
+| `validate_model_selection(buildable=False)` | resolve-only | 默认只校验链路完整性 |
+| `validate_model_selection(buildable=True)` | buildable | 显式要求 buildability |
+| Ask model option catalog (`_validate_catalog`) | buildable | 每个 enabled option 必须可 build |
+| Ask fallback option (无 enabled option 时) | buildable | 路由默认必须可 build |
+| `build_model_for_route` | buildable | runtime 实际构建 |
 
 ## 验证入口
 

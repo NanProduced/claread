@@ -1,5 +1,8 @@
 import json
 
+import pytest
+from pydantic_ai.models.function import FunctionModel
+
 from app.config import settings as settings_module
 from app.config.settings import Settings
 from app.llm.provider_factory import build_model_instance
@@ -287,6 +290,29 @@ def test_qwen_profile_maps_reasoning_content_for_visible_thinking() -> None:
     assert model.profile.openai_supports_tool_choice_required is False
 
 
+def test_dashscope_native_builder_returns_function_model() -> None:
+    model = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_READER_ASK_REPLAN,
+            profile_name="ask-replan-qwen37-max-native",
+            provider="dashscope",
+            adapter="dashscope_native",
+            model_name="qwen3.7-max",
+            api_key="test-key",
+            provider_options={"transport": "dashscope_native"},
+            model_settings=RunModelSettings(
+                max_tokens=4096,
+                extra_body={"enable_thinking": True},
+            ),
+        )
+    )
+
+    assert isinstance(model, FunctionModel)
+    assert model.profile.default_structured_output_mode == "prompted"
+    assert model.profile.supports_json_object_output is False
+    assert model.profile.supports_json_schema_output is False
+
+
 def test_resolve_model_config_carries_explicit_openai_profile_flags() -> None:
     settings = Settings(
         reader_ask_replan_model_profile="glm-replan",
@@ -565,3 +591,99 @@ def test_dashscope_native_and_compat_coexist_in_same_registry(
     assert workflow_config.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert workflow_config.model_settings is not None
     assert workflow_config.model_settings.extra_body == {"enable_thinking": False}
+
+
+def test_validate_model_selection_buildable_catches_unbuildable_config(
+    monkeypatch,
+) -> None:
+    """validate_model_selection with buildable=True should catch configs that
+    resolve but cannot be built."""
+    from app.llm.provider_factory import ModelProviderError
+    from app.llm.router import validate_model_selection
+
+    settings = Settings(
+        annotation_model_profile="test-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "test-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.test/v1",
+                        "api_key": "test-key",
+                    },
+                },
+                "models": {
+                    "test-model": {
+                        "provider": "test-provider",
+                        "model_name": "test-model",
+                    },
+                },
+                "profiles": {
+                    "test-profile": {
+                        "model": "test-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    # Simulate build_model_instance returning None (unbuildable)
+    monkeypatch.setattr(
+        "app.llm.router.build_model_instance",
+        lambda config: None,
+    )
+
+    with pytest.raises(ModelSelectionError, match="unbuildable model"):
+        validate_model_selection(
+            settings,
+            ModelSelection(default_profile="test-profile"),
+            (MODEL_ROUTE_ANNOTATION_GENERATION,),
+            buildable=True,
+        )
+
+
+def test_validate_model_selection_resolve_only_allows_unbuildable_config(
+    monkeypatch,
+) -> None:
+    """validate_model_selection with buildable=False (default) should only
+    check resolution, not buildability."""
+    from app.llm.router import validate_model_selection
+
+    settings = Settings(
+        annotation_model_profile="test-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "test-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.test/v1",
+                        "api_key": "test-key",
+                    },
+                },
+                "models": {
+                    "test-model": {
+                        "provider": "test-provider",
+                        "model_name": "test-model",
+                    },
+                },
+                "profiles": {
+                    "test-profile": {
+                        "model": "test-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    # Even if build_model_instance returns None, resolve-only validation passes
+    monkeypatch.setattr(
+        "app.llm.router.build_model_instance",
+        lambda config: None,
+    )
+
+    # Should NOT raise — resolve-only is the default
+    validate_model_selection(
+        settings,
+        ModelSelection(default_profile="test-profile"),
+        (MODEL_ROUTE_ANNOTATION_GENERATION,),
+    )

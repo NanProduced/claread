@@ -203,11 +203,45 @@ def validate_model_selection(
     settings: Settings,
     selection: ModelSelection | None,
     routes: tuple[ModelRoute, ...],
+    *,
+    buildable: bool = False,
 ) -> None:
+    """Validate that a model selection resolves for every given route.
+
+    Args:
+        buildable: If True, also verify that each resolved config can be
+            built into a live model via ``build_model_instance``.  This is
+            the "buildability" gate — it catches cases where a profile
+            resolves successfully but references an adapter whose builder
+            returns None (e.g. missing api_key at build time).
+
+            When False (default), only resolution is checked.  This is
+            appropriate for static catalog / listing scenarios where the
+            caller only needs to know the model identity, not actually
+            construct a model instance.
+    """
     if selection is None:
         return
     for route in routes:
-        resolve_model_config(settings, route, selection)
+        config = resolve_model_config(settings, route, selection)
+        if config is None:
+            raise ModelSelectionError(
+                f"Model selection resolves to None for route {route}"
+            )
+        if buildable:
+            try:
+                model = build_model_instance(config)
+            except ModelProviderError as exc:
+                raise ModelSelectionError(
+                    f"Model selection for route {route} references an unbuildable adapter "
+                    f"(adapter={config.adapter!r}, provider={config.provider!r}): {exc}"
+                ) from exc
+            if model is None:
+                raise ModelSelectionError(
+                    f"Model selection for route {route} resolves to an unbuildable model "
+                    f"(adapter={config.adapter!r}, provider={config.provider!r}, "
+                    f"model={config.model_name!r})"
+                )
 
 
 def build_model_for_route(
