@@ -209,15 +209,17 @@ async def run_article_analysis_node_probe(
     model_selection = request.model_selection
     model_identity: ModelIdentity | None = None
     topology_mode = "unknown"
+    requires_live_model = not request.dry_run
 
     try:
-        # Execution entry guard: the model must be buildable, not just
-        # resolvable, because we are about to actually call the LLM.
+        # Dry-run only builds prompt/deps/debug output and does not actually call
+        # the LLM, so resolve-only validation is enough there. Real execution
+        # paths require a buildable model.
         validate_model_selection(
             get_settings(),
             model_selection,
             (MODEL_ROUTE_ANNOTATION_GENERATION,),
-            buildable=True,
+            buildable=requires_live_model,
         )
         model_identity = build_model_identity(model_selection, settings=get_settings())
     except ModelSelectionError as exc:

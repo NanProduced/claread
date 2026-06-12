@@ -272,12 +272,12 @@ def test_qwen_profile_maps_reasoning_content_for_visible_thinking() -> None:
         ResolvedModelConfig(
             route=MODEL_ROUTE_ANNOTATION_GENERATION,
             profile_name="qwen35",
-            provider="dashscope",
+            provider="dashscope_compat",
             adapter="openai_compatible",
             model_name="qwen3.5-122b-a10b",
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             api_key="test-key",
-            provider_options={},
+            provider_options={"profile": "reasoning_content"},
             model_settings=RunModelSettings(
                 extra_body={"enable_thinking": True},
             ),
@@ -598,7 +598,6 @@ def test_validate_model_selection_buildable_catches_unbuildable_config(
 ) -> None:
     """validate_model_selection with buildable=True should catch configs that
     resolve but cannot be built."""
-    from app.llm.provider_factory import ModelProviderError
     from app.llm.router import validate_model_selection
 
     settings = Settings(
@@ -637,6 +636,114 @@ def test_validate_model_selection_buildable_catches_unbuildable_config(
         validate_model_selection(
             settings,
             ModelSelection(default_profile="test-profile"),
+            (MODEL_ROUTE_ANNOTATION_GENERATION,),
+            buildable=True,
+        )
+
+
+def test_validate_model_selection_buildable_converts_model_provider_error(
+    monkeypatch,
+) -> None:
+    from app.llm.provider_factory import ModelProviderError
+    from app.llm.router import validate_model_selection
+
+    settings = Settings(
+        annotation_model_profile="test-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "test-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.test/v1",
+                        "api_key": "test-key",
+                    },
+                },
+                "models": {
+                    "test-model": {
+                        "provider": "test-provider",
+                        "model_name": "test-model",
+                    },
+                },
+                "profiles": {
+                    "test-profile": {
+                        "model": "test-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    def _raise_provider_error(config):
+        raise ModelProviderError("Unsupported model adapter: test")
+
+    monkeypatch.setattr(
+        "app.llm.router.build_model_instance",
+        _raise_provider_error,
+    )
+
+    with pytest.raises(ModelSelectionError, match="unbuildable adapter"):
+        validate_model_selection(
+            settings,
+            ModelSelection(default_profile="test-profile"),
+            (MODEL_ROUTE_ANNOTATION_GENERATION,),
+            buildable=True,
+        )
+
+
+def test_validate_model_selection_buildable_catches_unbuildable_fallback_config(
+    monkeypatch,
+) -> None:
+    from app.llm.router import validate_model_selection
+
+    settings = Settings(
+        annotation_model_profile="primary-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "test-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.test/v1",
+                        "api_key": "test-key",
+                    },
+                },
+                "models": {
+                    "primary-model": {
+                        "provider": "test-provider",
+                        "model_name": "primary-model",
+                    },
+                    "fallback-model": {
+                        "provider": "test-provider",
+                        "model_name": "fallback-model",
+                    },
+                },
+                "profiles": {
+                    "primary-profile": {
+                        "model": "primary-model",
+                    },
+                    "fallback-profile": {
+                        "model": "fallback-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    monkeypatch.setattr(
+        "app.llm.router.build_model_instance",
+        lambda config: None if config.model_name == "fallback-model" else object(),
+    )
+
+    with pytest.raises(ModelSelectionError, match="fallback profile 'fallback-profile'"):
+        validate_model_selection(
+            settings,
+            ModelSelection(
+                routes={
+                    MODEL_ROUTE_ANNOTATION_GENERATION: RouteModelSelection(
+                        profile="primary-profile",
+                        fallback_profiles=["fallback-profile"],
+                    )
+                }
+            ),
             (MODEL_ROUTE_ANNOTATION_GENERATION,),
             buildable=True,
         )
@@ -687,3 +794,102 @@ def test_validate_model_selection_resolve_only_allows_unbuildable_config(
         ModelSelection(default_profile="test-profile"),
         (MODEL_ROUTE_ANNOTATION_GENERATION,),
     )
+
+
+def test_explicit_openai_profile_overrides_provider_options_hint() -> None:
+    """When both openai_profile and provider_options.profile are set,
+    the explicit openai_profile takes priority."""
+    from app.llm.types import OpenAIProfileConfig
+
+    model = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            profile_name="custom",
+            provider="dashscope_compat",
+            adapter="openai_compatible",
+            model_name="qwen3.7-max",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key="test-key",
+            provider_options={"profile": "deepseek_v4"},
+            openai_profile=OpenAIProfileConfig(
+                openai_supports_tool_choice_required=True,
+                openai_chat_thinking_field="reasoning_content",
+                openai_chat_send_back_thinking_parts="field",
+            ),
+        )
+    )
+
+    assert model is not None
+    # Explicit openai_profile sets tool_choice_required=True;
+    # deepseek_v4 hint would have set it to False — explicit wins.
+    assert model.profile.openai_supports_tool_choice_required is True
+
+
+def test_no_profile_hint_uses_default_behavior() -> None:
+    """When neither openai_profile nor provider_options.profile is set,
+    OpenAIChatModel uses pydantic-ai defaults (no custom profile)."""
+    model = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            profile_name="generic",
+            provider="generic_provider",
+            adapter="openai_compatible",
+            model_name="some-model",
+            base_url="https://api.example.com/v1",
+            api_key="test-key",
+            provider_options={},
+        )
+    )
+
+    assert model is not None
+    # Default profile should not have reasoning_content fields set
+    assert model.profile.openai_chat_thinking_field is None
+
+
+def test_moonshot_profile_hint_resolves() -> None:
+    """provider_options.profile='moonshot' should resolve to MoonshotAIProvider's profile."""
+    model = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            profile_name="moonshot-v1",
+            provider="moonshot",
+            adapter="openai_compatible",
+            model_name="moonshot-v1-8k",
+            base_url="https://api.moonshot.cn/v1",
+            api_key="test-key",
+            provider_options={"profile": "moonshot"},
+        )
+    )
+
+    assert model is not None
+    # MoonshotAIProvider.model_profile sets specific fields
+    assert model.profile.openai_supports_tool_choice_required is False
+
+
+def test_resolved_model_config_adapter_is_model_adapter_type() -> None:
+    """ResolvedModelConfig.adapter should be ModelAdapter, not arbitrary str."""
+    from app.llm.types import ModelAdapter
+
+    config = ResolvedModelConfig(
+        route=MODEL_ROUTE_ANNOTATION_GENERATION,
+        profile_name="test",
+        provider="test",
+        adapter="openai_compatible",
+        model_name="test-model",
+        base_url="https://api.example.com/v1",
+        api_key="test-key",
+    )
+    assert isinstance(config.adapter, str)
+    assert config.adapter in ("openai_compatible", "dashscope_native")
+
+    # Invalid adapter should fail validation
+    with pytest.raises(Exception):
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_ANNOTATION_GENERATION,
+            profile_name="test",
+            provider="test",
+            adapter="invalid_adapter",
+            model_name="test-model",
+            base_url="https://api.example.com/v1",
+            api_key="test-key",
+        )

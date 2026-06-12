@@ -636,9 +636,9 @@ def test_list_model_profile_summaries_is_resolve_only_not_buildability() -> None
 
 
 def test_eval_entry_guards_use_buildable_true() -> None:
-    """Eval execution entry guards (article_analysis, node_probe, node_lab,
-    node_lab_judge) should call validate_model_selection with buildable=True,
-    not just resolve-only. This test verifies the call signature by patching
+    """Article analysis and real node_probe execution should call
+    validate_model_selection with buildable=True, not just resolve-only.
+    This test verifies the call signature by patching
     validate_model_selection and checking the buildable kwarg."""
     from app.eval_adapter import article_analysis, node_probe
 
@@ -687,4 +687,60 @@ def test_eval_entry_guards_use_buildable_true() -> None:
     assert len(calls) == 1
     assert calls[0]["buildable"] is True, (
         "node_probe entry guard should use buildable=True"
+    )
+
+
+def test_eval_dry_run_entry_guards_remain_resolve_only() -> None:
+    """Dry-run paths only build prompt/debug artifacts and should not require
+    a buildable model instance."""
+    from app.eval_adapter import node_lab, node_probe
+
+    calls: list[dict] = []
+
+    def _fake_validate(settings, selection, routes, *, buildable=False):
+        calls.append({"buildable": buildable})
+
+    with (
+        patch("app.eval_adapter.node_probe.validate_model_selection", side_effect=_fake_validate),
+        patch("app.eval_adapter.node_probe.build_model_identity", return_value=None),
+    ):
+        asyncio.run(
+            node_probe.run_article_analysis_node_probe(
+                node_probe.ArticleAnalysisNodeProbeRequest(
+                    text="hello",
+                    reading_goal="daily_reading",
+                    reading_variant="intermediate_reading",
+                    dry_run=True,
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is False, (
+        "node_probe dry-run should remain resolve-only"
+    )
+
+    calls.clear()
+
+    with (
+        patch("app.eval_adapter.node_lab.validate_model_selection", side_effect=_fake_validate),
+        patch("app.eval_adapter.node_lab.build_model_identity", return_value=None),
+    ):
+        asyncio.run(
+            node_lab.run_article_analysis_node_lab(
+                node_lab.ArticleAnalysisNodeLabRunRequest(
+                    node_name="grammar",
+                    text="hello",
+                    dry_run=True,
+                    candidate_override={
+                        "candidate_id": "cand-a",
+                        "node_name": "grammar",
+                    },
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is False, (
+        "node_lab dry-run should remain resolve-only"
     )

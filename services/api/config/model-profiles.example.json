@@ -60,7 +60,8 @@
       },
       "provider_options": {
         "transport": "sse",
-        "notes": "示例扩展位；当前并非所有 provider_options 都会被业务代码主动消费。"
+        "profile": "reasoning_content",
+        "notes": "示例扩展位；当前并非所有 provider_options 都会被业务代码主动消费。profile 值用于 provider_factory 的配置驱动 profile 查找（当 openai_profile 未显式声明时生效）。"
       },
       "openai_profile": {
         "_field_notes": {
@@ -87,7 +88,8 @@
       "api_key": "",
       "api_key_env": "DEEPSEEK_API_KEY",
       "provider_options": {
-        "transport": "https"
+        "transport": "https",
+        "profile": "deepseek_v4"
       },
       "openai_profile": {
         "supports_json_object_output": true,

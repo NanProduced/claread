@@ -4,7 +4,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 
 from app.config.settings import Settings
-from app.llm.provider_factory import build_model_instance
+from app.llm.provider_factory import ModelProviderError, build_model_instance
 from app.llm.registry import build_model_registry
 from app.llm.routes import ModelRoute
 from app.llm.types import (
@@ -199,6 +199,28 @@ def resolve_model_config(
     )
 
 
+def _validate_buildable_config(
+    route: ModelRoute,
+    config: ResolvedModelConfig,
+    *,
+    target: str | None = None,
+) -> None:
+    target_label = target or f"profile {config.profile_name!r}"
+    try:
+        model = build_model_instance(config)
+    except ModelProviderError as exc:
+        raise ModelSelectionError(
+            f"Model selection for route {route} references an unbuildable adapter via "
+            f"{target_label} (adapter={config.adapter!r}, provider={config.provider!r}): {exc}"
+        ) from exc
+    if model is None:
+        raise ModelSelectionError(
+            f"Model selection for route {route} resolves to an unbuildable model via "
+            f"{target_label} (adapter={config.adapter!r}, provider={config.provider!r}, "
+            f"model={config.model_name!r})"
+        )
+
+
 def validate_model_selection(
     settings: Settings,
     selection: ModelSelection | None,
@@ -210,10 +232,12 @@ def validate_model_selection(
 
     Args:
         buildable: If True, also verify that each resolved config can be
-            built into a live model via ``build_model_instance``.  This is
-            the "buildability" gate — it catches cases where a profile
-            resolves successfully but references an adapter whose builder
-            returns None (e.g. missing api_key at build time).
+            built into a live model via ``build_model_instance``. This
+            includes the primary resolved config and any declared
+            ``fallback_profiles`` for the route. This is the "buildability"
+            gate — it catches cases where a profile resolves successfully but
+            references an adapter whose builder returns None (e.g. missing
+            api_key at build time).
 
             When False (default), only resolution is checked.  This is
             appropriate for static catalog / listing scenarios where the
@@ -222,6 +246,7 @@ def validate_model_selection(
     """
     if selection is None:
         return
+    registry = build_model_registry(settings) if buildable else None
     for route in routes:
         config = resolve_model_config(settings, route, selection)
         if config is None:
@@ -229,18 +254,30 @@ def validate_model_selection(
                 f"Model selection resolves to None for route {route}"
             )
         if buildable:
-            try:
-                model = build_model_instance(config)
-            except ModelProviderError as exc:
-                raise ModelSelectionError(
-                    f"Model selection for route {route} references an unbuildable adapter "
-                    f"(adapter={config.adapter!r}, provider={config.provider!r}): {exc}"
-                ) from exc
-            if model is None:
-                raise ModelSelectionError(
-                    f"Model selection for route {route} resolves to an unbuildable model "
-                    f"(adapter={config.adapter!r}, provider={config.provider!r}, "
-                    f"model={config.model_name!r})"
+            _validate_buildable_config(route, config)
+            assert registry is not None
+            for fallback_profile_name in config.fallback_profiles:
+                fallback_config = _resolve_base_profile_config(
+                    settings,
+                    registry,
+                    route,
+                    fallback_profile_name,
+                )
+                if fallback_config is None:
+                    raise ModelSelectionError(
+                        f"Model selection for route {route} has an unavailable fallback profile "
+                        f"{fallback_profile_name!r}"
+                    )
+                fallback_config = fallback_config.model_copy(
+                    update={
+                        "model_settings": config.model_settings or fallback_config.model_settings,
+                    },
+                    deep=True,
+                )
+                _validate_buildable_config(
+                    route,
+                    fallback_config,
+                    target=f"fallback profile {fallback_profile_name!r}",
                 )
 
 

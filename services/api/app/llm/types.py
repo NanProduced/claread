@@ -162,7 +162,7 @@ class ResolvedModelConfig(BaseModel):
     route: ModelRoute
     profile_name: str
     provider: str
-    adapter: str
+    adapter: ModelAdapter
     model_name: str
     base_url: str = ""
     api_key: str = ""

@@ -854,15 +854,17 @@ async def _run_node_lab_once(
     started_at = perf_counter()
     model_selection = runtime_override.model_selection if runtime_override is not None else None
     model_identity: ModelIdentity | None = None
+    requires_live_model = not getattr(request, "dry_run", False)
 
     try:
-        # Execution entry guard: the model must be buildable, not just
-        # resolvable, because we are about to actually call the LLM.
+        # Dry-run only builds prompt/deps/debug output and does not actually call
+        # the LLM, so resolve-only validation is enough there. Real execution
+        # paths require a buildable model.
         validate_model_selection(
             get_settings(),
             model_selection,
             (MODEL_ROUTE_ANNOTATION_GENERATION,),
-            buildable=True,
+            buildable=requires_live_model,
         )
         model_identity = build_model_identity(model_selection, settings=get_settings())
     except ModelSelectionError as exc:
