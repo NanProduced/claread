@@ -204,3 +204,31 @@ COMMENT ON COLUMN llm_ask_options.price_multiplier IS
     'Multiplier applied to billing_defaults for this option.';
 COMMENT ON COLUMN llm_ask_options.runtime_budget IS
     'Optional per-option runtime budget overrides (max_input_tokens, max_output_tokens, prompt_buffer_tokens).';
+
+-- ------------------------------------------------------------
+-- Ask Config: Ask Claread 顶层配置（单例）
+-- ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS llm_ask_config (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    date_created TIMESTAMPTZ NOT NULL DEFAULT now(),
+    date_updated TIMESTAMPTZ,
+    user_created UUID,
+    user_updated UUID,
+
+    default_option TEXT,
+    billing_defaults JSONB,
+    runtime_defaults JSONB
+);
+
+COMMENT ON TABLE llm_ask_config IS
+    'Singleton for Ask Claread top-level configuration. Only one row should exist.';
+COMMENT ON COLUMN llm_ask_config.default_option IS
+    'Slug of the default ask option. If null, the first enabled option is used.';
+COMMENT ON COLUMN llm_ask_config.billing_defaults IS
+    'Billing defaults for Ask Claread (reserved_points, tokens_per_point, billing_policy_version).';
+COMMENT ON COLUMN llm_ask_config.runtime_defaults IS
+    'Runtime defaults for Ask Claread (max_input_tokens, max_output_tokens, prompt_buffer_tokens).';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_ask_config_singleton
+    ON llm_ask_config ((1));

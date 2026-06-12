@@ -1,100 +1,148 @@
 <script setup>
 import { computed, ref } from "vue";
+import OverviewMode from "./modes/OverviewMode.vue";
+import CatalogMode from "./modes/CatalogMode.vue";
+import AskClareadMode from "./modes/AskClareadMode.vue";
+import ValidationMode from "./modes/ValidationMode.vue";
+import AdvancedMode from "./modes/AdvancedMode.vue";
 
-const tabs = [
-  { id: "providers", label: "Providers", collection: "llm_providers", icon: "dns" },
-  { id: "models", label: "Models", collection: "llm_models", icon: "memory" },
-  { id: "profiles", label: "Profiles", collection: "llm_profiles", icon: "tune" },
-  { id: "presets", label: "Presets", collection: "llm_presets", icon: "playlist_add_check" },
-  { id: "ask-options", label: "Ask Options", collection: "llm_ask_options", icon: "smart_toy" },
+const modes = [
+  {
+    id: "overview",
+    label: "Overview",
+    kicker: "总览",
+    description: "6 个 collection 的统计、Ask 配置概览和快捷入口。",
+  },
+  {
+    id: "catalog",
+    label: "Catalog",
+    kicker: "配置目录",
+    description: "浏览 Providers / Models / Profiles / Presets 的说明与入口。",
+  },
+  {
+    id: "ask",
+    label: "Ask Claread",
+    kicker: "Ask 配置",
+    description: "管理 Ask 选项和顶层配置（default_option / billing / runtime）。",
+  },
+  {
+    id: "validation",
+    label: "Validation & Publish",
+    kicker: "校验发布",
+    description: "校验、导入、导出 LLM 配置 bundle。",
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    kicker: "高级",
+    description: "6 个原始 Directus collection 的直接访问入口。",
+  },
 ];
 
-const activeTab = ref("providers");
-const currentTab = computed(() => tabs.find((t) => t.id === activeTab.value) ?? tabs[0]);
+const activeMode = ref("overview");
+const currentMode = computed(() => modes.find((m) => m.id === activeMode.value) ?? modes[0]);
+
+function switchMode(modeId) {
+  if (modes.some((m) => m.id === modeId)) {
+    activeMode.value = modeId;
+  }
+}
 </script>
 
 <template>
-  <div class="llm-config-module">
-    <header class="llm-config-header">
-      <h1 class="llm-config-title">LLM Config</h1>
-      <p class="llm-config-subtitle">Provider / Model / Profile / Preset / Ask Option authoring</p>
-    </header>
+  <private-view title="LLM Config">
+    <template #headline>
+      Claread Console
+    </template>
 
-    <nav class="llm-config-tabs">
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        :class="['llm-config-tab', { active: activeTab === tab.id }]"
-        @click="activeTab = tab.id"
-      >
-        <v-icon :name="tab.icon" small />
-        {{ tab.label }}
-      </button>
-    </nav>
+    <template #navigation>
+      <nav class="llm-nav" aria-label="LLM Config modes">
+        <div class="llm-nav-label">配置工作台</div>
+        <button
+          v-for="mode in modes"
+          :key="mode.id"
+          class="llm-nav-item"
+          :class="{ 'is-active': activeMode === mode.id }"
+          type="button"
+          @click="activeMode = mode.id"
+        >
+          <span>
+            <strong>{{ mode.label }}</strong>
+            <small>{{ mode.kicker }}</small>
+          </span>
+        </button>
+      </nav>
+    </template>
 
-    <div class="llm-config-content">
-      <v-collection
-        :collection="currentTab.collection"
-        :icon="currentTab.icon"
-      />
-    </div>
-  </div>
+    <main class="llm-config">
+      <h1 class="llm-title">{{ currentMode.label }}</h1>
+
+      <OverviewMode v-if="activeMode === 'overview'" @switch-mode="switchMode" />
+      <CatalogMode v-else-if="activeMode === 'catalog'" />
+      <AskClareadMode v-else-if="activeMode === 'ask'" />
+      <ValidationMode v-else-if="activeMode === 'validation'" />
+      <AdvancedMode v-else-if="activeMode === 'advanced'" />
+    </main>
+  </private-view>
 </template>
 
 <style scoped>
-.llm-config-module {
-  padding: 20px;
+.llm-nav {
+  padding: 16px 12px;
 }
 
-.llm-config-header {
-  margin-bottom: 16px;
+.llm-nav-label {
+  margin: 0 0 8px 8px;
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.llm-config-title {
-  font-size: 24px;
-  font-weight: 600;
-  margin: 0 0 4px 0;
-}
-
-.llm-config-subtitle {
-  color: var(--foreground-subdued);
-  font-size: 14px;
-  margin: 0;
-}
-
-.llm-config-tabs {
+.llm-nav-item {
   display: flex;
-  gap: 4px;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--border-subdued);
-  padding-bottom: 0;
-}
-
-.llm-config-tab {
-  padding: 8px 16px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--foreground-subdued);
-  border-bottom: 2px solid transparent;
-  transition: color 0.2s, border-color 0.2s;
-  display: flex;
+  width: 100%;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 8px;
+  color: var(--theme--foreground);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background-color 160ms ease, color 160ms ease;
 }
 
-.llm-config-tab:hover {
-  color: var(--foreground-normal);
+.llm-nav-item:hover,
+.llm-nav-item.is-active {
+  background: var(--theme--background-subdued);
 }
 
-.llm-config-tab.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
-  font-weight: 500;
+.llm-nav-item strong,
+.llm-nav-item small {
+  display: block;
 }
 
-.llm-config-content {
-  min-height: 400px;
+.llm-nav-item small {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
+}
+
+.llm-config {
+  padding: 32px 24px;
+}
+
+.llm-title {
+  margin: 0 0 24px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+@media (max-width: 720px) {
+  .llm-config {
+    padding: 16px;
+  }
 }
 </style>

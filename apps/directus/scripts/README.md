@@ -69,7 +69,7 @@
 
 ### sync-llm-config-metadata.mjs
 
-同步 LLM Config 控制面的 Directus metadata：5 个 collection 定义、字段元数据、module bar 入口。
+同步 LLM Config 控制面的 Directus metadata：6 个 collection 定义、字段元数据、module bar 入口。
 
 | 项目 | 说明 |
 |------|------|
@@ -85,7 +85,7 @@
 
 - 该脚本会自动读取 `apps/directus/.env`。
 - baseline bootstrap 读取的是 `infra/migrations/llm-config/0001_llm_config_control_plane.sql`。
-- 5 个 collection：`llm_providers`、`llm_models`、`llm_profiles`、`llm_presets`、`llm_ask_options`。
+- 6 个 collection：`llm_providers`、`llm_models`、`llm_profiles`、`llm_presets`、`llm_ask_options`、`llm_ask_config`。
 
 ### export-llm-config-bundle.mjs
 
@@ -108,3 +108,37 @@
 - 导出的 JSON 文件可直接复制到 `services/api/config/` 替换对应配置文件。
 - 校验规则与 `services/api/app/llm/types.py` 的 Pydantic schema 对齐，不引入额外规则。
 - 校验失败时脚本会输出详细错误信息并退出，不会生成不完整的 bundle。
+
+### import-llm-config-bundle.mjs
+
+从 services/api/config/ 读取 3 个源 JSON 文件，幂等 upsert 到 Directus 的 6 个 llm_* collection。
+
+| 项目 | 说明 |
+|------|------|
+| 入口 | `pnpm directus:llm-config:import-bundle` |
+| 会写 SQL | 否 |
+| 会写 Directus 数据 | 是 — 通过 Directus API upsert llm_providers / llm_models / llm_profiles / llm_presets / llm_ask_options / llm_ask_config |
+| 会读文件 | 是 — services/api/config/ 下的 3 个 JSON 文件 |
+| 校验 | 是 — 导入前校验 bundle，与后端 Pydantic schema 规则对齐 |
+| 幂等 | 是 — 按 slug upsert，重复执行不会产生重复记录 |
+| 收敛同步 | 是 — JSON 中省略的可选字段会显式写 null/默认值，确保 Directus 与 JSON 完全一致 |
+| 典型场景 | 首次部署时回填数据、JSON 变更后同步到 Directus |
+
+补充说明：
+
+- 默认读取 `services/api/config/`，可通过 `--input DIR` 指定其他目录。
+- `--dry-run` 参数只校验不写入。
+- 导入顺序按 FK 依赖：providers → models → profiles → presets → ask options → ask config。
+- `llm_ask_config` 是单例表，存储 Ask 顶层配置（default_option / billing_defaults / runtime_defaults）。
+- 收敛同步意味着：如果 JSON 中删除了某个字段（如 provider 的 base_url），Directus 中对应的值会被清空为 null。这保证 "JSON 是真源"。
+
+### validate-llm-config-bundle.mjs
+
+校验 LLM 配置 bundle 的完整性和引用链。被 import/export 脚本内部调用，也可独立运行。
+
+| 项目 | 说明 |
+|------|------|
+| 入口 | `node validate-llm-config-bundle.mjs`（通常由 import/export 自动调用） |
+| 会写 | 否 — 只读校验 |
+| 校验规则 | Adapter 枚举、openai_compatible 必须有 base_url、FK 引用链完整、route 名称合法 |
+| 典型场景 | 配置变更后快速校验，CI 中校验 |

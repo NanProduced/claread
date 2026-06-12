@@ -239,6 +239,90 @@ describe("validateLlmConfigBundle", () => {
     assert.ok(issues.some((i) => i.slug === "bad-option" && i.message.includes("preset")));
   });
 
+  it("rejects ask option with invalid route name", () => {
+    const bundle = makeValidBundle();
+    bundle.askOptionsBundle.options["bad-route-option"] = {
+      label: "Bad Route Option",
+      selection: {
+        routes: {
+          invalid_route_name: { profile: "ask-main-qwen37-max-native" },
+        },
+      },
+      enabled: true,
+    };
+    const { issues, valid } = validateLlmConfigBundle(bundle);
+    assert.equal(valid, false);
+    assert.ok(issues.some((i) => i.slug === "bad-route-option" && i.message.includes("Invalid route")));
+  });
+
+  it("rejects ask option fallback_profiles referencing non-existent profile", () => {
+    const bundle = makeValidBundle();
+    bundle.askOptionsBundle.options["bad-fallback-option"] = {
+      label: "Bad Fallback Option",
+      selection: {
+        routes: {
+          reader_ask: {
+            profile: "ask-main-qwen37-max-native",
+            fallback_profiles: ["missing_profile"],
+          },
+        },
+      },
+      enabled: true,
+    };
+    const { issues, valid } = validateLlmConfigBundle(bundle);
+    assert.equal(valid, false);
+    assert.ok(issues.some((i) => i.slug === "bad-fallback-option" && i.message.includes("fallback")));
+  });
+
+  it("rejects default_option referencing a missing ask option", () => {
+    const bundle = makeValidBundle();
+    bundle.askOptionsBundle.default_option = "missing-option";
+    const { issues, valid } = validateLlmConfigBundle(bundle);
+    assert.equal(valid, false);
+    assert.ok(issues.some((i) => i.slug === "missing-option" && i.message.includes("default_option")));
+  });
+
+  it("warns when ask option route is outside Ask runtime route set", () => {
+    const bundle = makeValidBundle();
+    bundle.askOptionsBundle.options["extra-route-option"] = {
+      label: "Extra Route Option",
+      selection: {
+        routes: {
+          daily_analysis: { profile: "workflow-qwen37-max" },
+        },
+      },
+      enabled: true,
+    };
+    const { issues, valid } = validateLlmConfigBundle(bundle);
+    assert.equal(valid, true);
+    assert.ok(issues.some((i) => i.slug === "extra-route-option" && i.message.includes("outside the Ask option route set")));
+  });
+
+  it("rejects null billing_defaults because backend only accepts omission or object", () => {
+    const bundle = makeValidBundle();
+    bundle.askOptionsBundle.billing_defaults = null;
+    const { issues, valid } = validateLlmConfigBundle(bundle);
+    assert.equal(valid, false);
+    assert.ok(issues.some((i) => i.message.includes("billing_defaults must be an object")));
+  });
+
+  it("rejects null runtime_defaults because backend only accepts omission or object", () => {
+    const bundle = makeValidBundle();
+    bundle.askOptionsBundle.runtime_defaults = null;
+    const { issues, valid } = validateLlmConfigBundle(bundle);
+    assert.equal(valid, false);
+    assert.ok(issues.some((i) => i.message.includes("runtime_defaults must be an object")));
+  });
+
+  it("accepts omitted billing/runtime defaults so backend can apply defaults", () => {
+    const bundle = makeValidBundle();
+    delete bundle.askOptionsBundle.billing_defaults;
+    delete bundle.askOptionsBundle.runtime_defaults;
+    const { issues, valid } = validateLlmConfigBundle(bundle);
+    assert.equal(valid, true);
+    assert.equal(issues.filter((i) => i.level === "error").length, 0);
+  });
+
   it("warns when embedding provider has no profile", () => {
     const bundle = makeValidBundle();
     // Remove embedding profile but keep provider

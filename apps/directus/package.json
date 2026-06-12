@@ -12,7 +12,8 @@
     "parse-run:sync-metadata": "node ./scripts/sync-parse-run-observability-metadata.mjs",
     "eval-center:sync-metadata": "node ./scripts/sync-eval-center-metadata.mjs",
     "llm-config:sync-metadata": "node ./scripts/sync-llm-config-metadata.mjs",
-    "llm-config:export-bundle": "node ./scripts/export-llm-config-bundle.mjs"
+    "llm-config:export-bundle": "node ./scripts/export-llm-config-bundle.mjs",
+    "llm-config:import-bundle": "node ./scripts/import-llm-config-bundle.mjs"
   },
   "pnpm": {
     "executionEnv": {

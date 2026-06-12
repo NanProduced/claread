@@ -285,24 +285,48 @@ LLM 配置可通过 Claread Console（Directus）进行可视化管理。
 
 ### Authoring 流程
 
-1. 在 Directus Admin UI 中打开 **LLM Config** module
-2. 在 5 个 tab 中进行 CRUD 操作：
+1. 在 Directus Admin UI 中打开 **LLM Config** module（landing page）
+2. 点击卡片或侧栏导航进入对应集合进行 CRUD 操作：
    - **Providers**：添加/编辑供应商连接配置
    - **Models**：添加/编辑远端模型定义（选择 provider）
    - **Profiles**：添加/编辑场景配置（选择 model）
    - **Presets**：添加/编辑 route→profile 映射集合
    - **Ask Options**：添加/编辑 Ask Claread 用户可选档位
+   - **Ask Config**：编辑 Ask 顶层配置（default_option / billing_defaults / runtime_defaults）
 3. 新增记录默认 status=draft，确认后改为 active
 4. 执行 export：`pnpm directus:llm-config:export-bundle`
 5. 校验通过后，将导出的 3 个 JSON 文件复制到 `services/api/config/`
 
+### Import / Backfill 流程
+
+首次部署或 JSON 变更后，需要将 services/api/config/ 中的 3 个 JSON 文件同步到 Directus：
+
+1. 确保 Directus 容器运行中（`pnpm directus:up`）
+2. 执行 metadata sync：`pnpm directus:llm-config:sync-metadata`
+3. 执行 import：`pnpm directus:llm-config:import-bundle`
+4. 在 Directus UI 中验证各 collection 的记录数
+
+import 脚本执行收敛同步：
+- 按 slug 幂等 upsert，不会产生重复记录
+- JSON 中省略的可选字段会显式写 null/默认值
+- 例如：JSON 中删除了 provider 的 base_url，Directus 中对应值会被清空
+
+### 完整 Authoring 流程
+
+1. Import：`pnpm directus:llm-config:import-bundle`（JSON → Directus）
+2. 在 Directus UI 中编辑配置
+3. Export：`pnpm directus:llm-config:export-bundle`（Directus → JSON）
+4. 校验通过后，将导出的 3 个 JSON 文件复制到 `services/api/config/`
+
 ### 数据流
 
 ```
-Directus authoring → export-llm-config-bundle.mjs → JSON bundle → services/api/config/
+JSON (真源) ──import──→ Directus (控制面) ──export──→ JSON bundle → services/api/config/
 ```
 
-Directus 是控制面，不是运行时真源。services/api 不直接 live 读 Directus。
+- Import 是收敛同步：JSON 省略的字段会在 Directus 中清空
+- Export 从 Directus 读取 active 记录，包括 llm_ask_config 单例
+- Round-trip 保证：import → export 后的 JSON 与源 JSON 等价（不含 status/sort/enabled 等控制面字段）
 
 ### 校验规则
 

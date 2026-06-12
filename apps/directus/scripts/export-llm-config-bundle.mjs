@@ -96,7 +96,13 @@ function authHeaders(token) {
 async function getItems(token, collection, params = {}) {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    searchParams.set(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+    if (Array.isArray(value)) {
+      searchParams.set(key, value.join(","));
+    } else if (value != null && typeof value === "object") {
+      searchParams.set(key, JSON.stringify(value));
+    } else {
+      searchParams.set(key, String(value));
+    }
   }
   const url = joinUrl(DIRECTUS_URL, `/items/${collection}?${searchParams.toString()}`);
   const result = await fetchJson(url, { headers: authHeaders(token) });
@@ -190,24 +196,31 @@ function buildPresetsBundle(presets) {
 /**
  * Build reader-ask-model-options.json from Directus records.
  */
-function buildAskOptionsBundle(askOptions) {
+function buildAskOptionsBundle(askOptions, askConfig) {
+  // Only fall back to hardcoded defaults when no singleton row exists at all.
+  // If the singleton exists but individual fields are null, omit those keys so
+  // services/api can apply its own Pydantic defaults.
   const result = {
-    default_option: "",
-    billing_defaults: {
-      multiplier_input: 1,
-      multiplier_output: 5,
-      tokens_per_point: 1000,
-      price_multiplier: 1.0,
+    options: {},
+  };
+
+  if (askConfig) {
+    if (askConfig.default_option != null) result.default_option = askConfig.default_option;
+    if (askConfig.billing_defaults != null) result.billing_defaults = askConfig.billing_defaults;
+    if (askConfig.runtime_defaults != null) result.runtime_defaults = askConfig.runtime_defaults;
+  } else {
+    result.default_option = "";
+    result.billing_defaults = {
       reserved_points: 10,
+      tokens_per_point: 1000,
       billing_policy_version: "analysis_weighted_tokens_v1",
-    },
-    runtime_defaults: {
+    };
+    result.runtime_defaults = {
       max_input_tokens: 24000,
       max_output_tokens: 3200,
       prompt_buffer_tokens: 800,
-    },
-    options: {},
-  };
+    };
+  }
 
   for (const opt of askOptions) {
     const entry = {
@@ -222,11 +235,6 @@ function buildAskOptionsBundle(askOptions) {
     entry.enabled = opt.enabled;
 
     result.options[opt.slug] = entry;
-
-    // First enabled option becomes default if none specified
-    if (opt.enabled && !result.default_option) {
-      result.default_option = opt.slug;
-    }
   }
 
   return result;
@@ -245,7 +253,7 @@ async function main() {
   console.log("  Logged in successfully.");
 
   // Fetch active records with related slug fields
-  const [providers, models, profiles, presets, askOptions] = await Promise.all([
+  const [providers, models, profiles, presets, askOptions, askConfigRows] = await Promise.all([
     getItems(token, "llm_providers", {
       "filter[status]": "active",
       "fields": ["*"],
@@ -271,14 +279,17 @@ async function main() {
       "fields": ["*"],
       "sort": "sort",
     }),
+    getItems(token, "llm_ask_config", { limit: 1 }),
   ]);
 
-  console.log(`  Fetched: ${providers.length} providers, ${models.length} models, ${profiles.length} profiles, ${presets.length} presets, ${askOptions.length} ask options`);
+  const askConfig = askConfigRows?.[0] || null;
+
+  console.log(`  Fetched: ${providers.length} providers, ${models.length} models, ${profiles.length} profiles, ${presets.length} presets, ${askOptions.length} ask options, ask config: ${askConfig ? "yes" : "no"}`);
 
   // Build bundles
   const profilesBundle = buildProfilesBundle(providers, models, profiles);
   const presetsBundle = buildPresetsBundle(presets);
-  const askOptionsBundle = buildAskOptionsBundle(askOptions);
+  const askOptionsBundle = buildAskOptionsBundle(askOptions, askConfig);
 
   // Validate
   const { issues, valid } = validateLlmConfigBundle({

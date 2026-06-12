@@ -79,6 +79,16 @@ const COLLECTIONS = [
     sort_field: "sort",
     sort: 45,
   },
+  {
+    collection: "llm_ask_config",
+    icon: "settings",
+    color: "#9333EA",
+    note: "Ask Claread top-level configuration (singleton).",
+    display_template: "Ask Config",
+    sort_field: null,
+    sort: 46,
+    singleton: true,
+  },
 ];
 
 const PROVIDER_FIELD_METADATA = [
@@ -218,12 +228,24 @@ const ASK_OPTION_FIELD_METADATA = [
   ["sort", { interface: "input", width: "half", sort: 17, hidden: true }],
 ];
 
+const ASK_CONFIG_FIELD_METADATA = [
+  ["id", { hidden: true, readonly: true, interface: "input", sort: 1 }],
+  ["date_created", { readonly: true, interface: "datetime", width: "half", sort: 2 }],
+  ["date_updated", { readonly: true, interface: "datetime", width: "half", sort: 3, hidden: true }],
+  ["user_created", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 4, hidden: true }],
+  ["user_updated", { readonly: true, interface: "select-dropdown-m2o", width: "half", sort: 5, hidden: true }],
+  ["default_option", { interface: "input", width: "half", sort: 10, note: "Slug of the default ask option. If empty, first enabled option is used." }],
+  ["billing_defaults", jsonMeta(11, "Billing defaults (reserved_points, tokens_per_point, billing_policy_version)")],
+  ["runtime_defaults", jsonMeta(12, "Runtime defaults (max_input_tokens, max_output_tokens, prompt_buffer_tokens)")],
+];
+
 const FIELD_METADATA_BY_COLLECTION = {
   llm_providers: PROVIDER_FIELD_METADATA,
   llm_models: MODEL_FIELD_METADATA,
   llm_profiles: PROFILE_FIELD_METADATA,
   llm_presets: PRESET_FIELD_METADATA,
   llm_ask_options: ASK_OPTION_FIELD_METADATA,
+  llm_ask_config: ASK_CONFIG_FIELD_METADATA,
 };
 
 function jsonMeta(sort, note) {
@@ -399,7 +421,7 @@ async function syncCollections(token) {
         sort_field: item.sort_field,
         sort: item.sort,
         hidden: false,
-        singleton: false,
+        singleton: item.singleton ?? false,
         accountability: "all",
         collapse: "open",
       },
