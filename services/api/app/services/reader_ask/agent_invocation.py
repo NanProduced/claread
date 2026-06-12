@@ -120,7 +120,7 @@ async def stream_reader_ask_agent_run(
     model: Any,
     route_settings: RunModelSettings,
     assistant_message_id: str,
-    base_url: str,
+    model_config: ResolvedModelConfig | None = None,
     checkpoint_flush: Callable[..., Awaitable[None]] | None = None,
 ) -> AsyncIterator[ReaderAskStreamSseEvent | ReaderAskStreamCompleted]:
     """Run the agent stream lifecycle and yield SSE events + final outcome.
@@ -136,7 +136,7 @@ async def stream_reader_ask_agent_run(
         model=model,
         route_settings=route_settings,
         assistant_message_id=assistant_message_id,
-        base_url=base_url,
+        model_config=model_config,
         checkpoint_flush=checkpoint_flush,
     )
     try:

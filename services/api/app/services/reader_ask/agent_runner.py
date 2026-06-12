@@ -14,6 +14,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agents.reader_ask_agent import (
+    ReaderAskAgentDeps,
+    build_reader_ask_prompt,
+)
+from app.llm.types import ResolvedModelConfig, RunModelSettings
+from app.services.reader_ask import stream_events as stream_events_svc
+from app.workflow.tracing import build_usage_metadata
+
 from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
@@ -23,16 +31,6 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
 )
-
-from app.agents.reader_ask_agent import (
-    ReaderAskAgentDeps,
-    build_reader_ask_prompt,
-)
-from app.llm.types import RunModelSettings
-from app.services.reader_ask import stream_events as stream_events_svc
-
-logger = logging.getLogger(__name__)
-from app.workflow.tracing import build_usage_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -119,12 +117,24 @@ class AgentStreamRuntime:
 def prepare_stream_model_settings(
     route_settings: RunModelSettings,
     *,
-    base_url: str = "",
+    model_config: ResolvedModelConfig | None = None,
 ) -> RunModelSettings:
+    """Augment route settings for streaming.
+
+    The DashScope OpenAI-compat endpoint needs an explicit
+    ``X-DashScope-SSE`` header and ``incremental_output=True`` to
+    stream deltas (the native adapter does not need either, since
+    it streams via ``AioGeneration`` with ``incremental_output=True``
+    baked in).
+    """
     extra_body = dict(route_settings.extra_body or {})
     extra_headers = dict(route_settings.extra_headers or {})
 
-    if "dashscope.aliyuncs.com" in base_url.lower():
+    if (
+        model_config is not None
+        and model_config.adapter == "openai_compatible"
+        and "dashscope.aliyuncs.com" in model_config.base_url.lower()
+    ):
         extra_headers.setdefault("X-DashScope-SSE", "enable")
         extra_body.setdefault("incremental_output", True)
     return RunModelSettings(
@@ -327,7 +337,6 @@ async def _consume_raw_stream_event(
 
     if isinstance(event, PartDeltaEvent):
         if isinstance(event.delta, ThinkingPartDelta):
-            _log.info("reasoning_part_delta", delta_len=len(event.delta.content_delta or ""))
             if event.delta.content_delta and not runtime.reasoning_active:
                 await _start_reasoning(
                     runtime=runtime,
@@ -376,6 +385,49 @@ async def _mark_stream_result_completed(result: Any) -> None:
     await result.get_output()
 
 
+async def _replay_missed_reasoning(
+    result: Any,
+    runtime: AgentStreamRuntime,
+    event_queue: asyncio.Queue[tuple[str, dict[str, Any]]],
+    assistant_message_id: str,
+) -> None:
+    """Fallback: emit synthetic reasoning events from the final response.
+
+    pydantic-ai's agent-level stream (with ``output_type=str``) does not
+    surface ``PartStartEvent`` for the initial ``ThinkingPart`` and
+    ``ThinkingPartDelta`` events emitted by ``FunctionModel``.  The
+    ``ThinkingPart`` IS preserved on ``result.response.parts`` — read it
+    back and emit a single ``reasoning.started``/``reasoning.delta``/
+    ``reasoning.completed`` triple if we did not already stream the
+    reasoning incrementally.
+    """
+    if runtime.reasoning_started:
+        return
+    response = getattr(result, "response", None)
+    if response is None:
+        return
+    parts = getattr(response, "parts", None) or []
+    for part in parts:
+        if isinstance(part, ThinkingPart) and part.content:
+            await _start_reasoning(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+            )
+            await _append_reasoning_delta(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+                reasoning_delta=part.content,
+            )
+            await _complete_reasoning(
+                runtime=runtime,
+                event_queue=event_queue,
+                assistant_message_id=assistant_message_id,
+            )
+            return
+
+
 def start_reader_ask_agent_stream(
     *,
     agent: Any,
@@ -383,12 +435,15 @@ def start_reader_ask_agent_stream(
     model: Any,
     route_settings: RunModelSettings,
     assistant_message_id: str,
-    base_url: str,
+    model_config: ResolvedModelConfig | None = None,
     checkpoint_flush: Callable[..., Awaitable[None]] | None = None,
 ) -> tuple[asyncio.Task[None], AgentStreamRuntime]:
     """Start the agent stream as a background task.
 
     Args:
+        model_config: Resolved model config (used by ``prepare_stream_model_settings``
+            to decide whether the compat DashScope SSE toggle is needed).  When
+            ``None`` (e.g. tests that bypass the router) no extra header is added.
         checkpoint_flush: Optional async callback for flushing stream checkpoints.
             Called as ``await checkpoint_flush(runtime, force=False)`` after each
             response iteration and ``await checkpoint_flush(runtime, force=True)``
@@ -405,7 +460,7 @@ def start_reader_ask_agent_stream(
                 model=model,
                 model_settings=prepare_stream_model_settings(
                     route_settings,
-                    base_url=base_url,
+                    model_config=model_config,
                 ).to_pydantic_ai(),
             ) as result:
                 stream_response = _stream_response_from_result(result)
@@ -421,6 +476,7 @@ def start_reader_ask_agent_stream(
                         if checkpoint_flush is not None:
                             await checkpoint_flush(runtime, force=False)
                     await _mark_stream_result_completed(result)
+                    await _replay_missed_reasoning(result, runtime, event_queue, assistant_message_id)
                 else:
                     async for response, _last in result.stream_responses(debounce_by=None):
                         await _consume_response_snapshot(
@@ -437,8 +493,11 @@ def start_reader_ask_agent_stream(
                     event_queue=event_queue,
                     assistant_message_id=assistant_message_id,
                 )
-                # DIAG: reasoning stream investigation
-                _diag_log.info("reasoning_stream_done", emitted_reasoning_len=len(runtime.emitted_reasoning), reasoning_started=runtime.reasoning_started)
+                logger.debug(
+                    "reasoning_stream_done reasoning_len=%d started=%s",
+                    len(runtime.emitted_reasoning),
+                    runtime.reasoning_started,
+                )
                 if checkpoint_flush is not None:
                     await checkpoint_flush(runtime, force=True)
                 runtime.usage_summary = build_usage_metadata(result.usage())

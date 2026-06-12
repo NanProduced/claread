@@ -41,7 +41,7 @@
         "selection": "模型选择对象。可直接写 routes/default_profile，也可引用 preset。",
         "price_multiplier": "当前 option 对 billing_defaults 的倍率覆盖。",
         "runtime_budget": "可选。只覆盖当前 option 的运行预算；未写字段回退到 runtime_defaults。",
-        "enabled": "false 表示该选项不对用户开放；后端会跳过它。"
+        "enabled": "false 表示该选项不对用户开放；后端会跳过它。enabled=true 的 option 必须在 reader_ask / planner / replan 三个 route 上都能 resolve 且能 build。"
       },
       "label": "GLM-5.1",
       "description": "默认档位：主回答与 replan 使用 GLM-5.1，planner 固定走 Qwen 3.6 Plus。",

@@ -316,7 +316,7 @@ class TestStreamReaderAskAgentRun:
             model=MagicMock(),
             route_settings=RunModelSettings(max_tokens=1000, temperature=0.5, timeout=30),
             assistant_message_id="msg1",
-            base_url="",
+            model_config=None,
         ):
             items.append(item)
 
@@ -361,7 +361,7 @@ class TestStreamReaderAskAgentRun:
             model=MagicMock(),
             route_settings=RunModelSettings(max_tokens=1000, temperature=0.5, timeout=30),
             assistant_message_id="msg1",
-            base_url="",
+            model_config=None,
         ):
             pass
 
@@ -412,7 +412,7 @@ class TestStreamReaderAskAgentRun:
             model=MagicMock(),
             route_settings=RunModelSettings(max_tokens=1000, temperature=0.5, timeout=30),
             assistant_message_id="msg1",
-            base_url="",
+            model_config=None,
         ):
             items.append(item)
 
@@ -468,7 +468,7 @@ class TestStreamReaderAskAgentRun:
             model=MagicMock(),
             route_settings=RunModelSettings(max_tokens=1000, temperature=0.5, timeout=30),
             assistant_message_id="msg1",
-            base_url="",
+            model_config=None,
         ):
             items.append(item)
 

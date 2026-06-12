@@ -3269,7 +3269,7 @@ async def test_replan_not_triggered_when_must_clarify() -> None:
 
 
 def test_prepare_stream_model_settings_preserves_thinking_flags_and_enables_dashscope_sse() -> None:
-    from app.llm.types import RunModelSettings
+    from app.llm.types import ResolvedModelConfig, RunModelSettings
     from app.services.reader_ask.agent_runner import prepare_stream_model_settings
 
     settings = RunModelSettings(
@@ -3282,7 +3282,15 @@ def test_prepare_stream_model_settings_preserves_thinking_flags_and_enables_dash
 
     resolved = prepare_stream_model_settings(
         settings,
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model_config=ResolvedModelConfig(
+            route="reader_ask",
+            profile_name="ask-main-qwen37-max",
+            provider="dashscope",
+            adapter="openai_compatible",
+            model_name="qwen3.7-max",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key="k",
+        ),
     )
 
     assert resolved.extra_headers == {
@@ -3296,13 +3304,21 @@ def test_prepare_stream_model_settings_preserves_thinking_flags_and_enables_dash
 
 
 def test_prepare_stream_model_settings_preserves_non_dashscope_body() -> None:
-    from app.llm.types import RunModelSettings
+    from app.llm.types import ResolvedModelConfig, RunModelSettings
     from app.services.reader_ask.agent_runner import prepare_stream_model_settings
 
     settings = RunModelSettings(extra_body={"thinking": {"type": "disabled"}})
     resolved = prepare_stream_model_settings(
         settings,
-        base_url="https://api.deepseek.com",
+        model_config=ResolvedModelConfig(
+            route="reader_ask",
+            profile_name="ask-main-deepseek",
+            provider="deepseek",
+            adapter="openai_compatible",
+            model_name="deepseek-v4-pro",
+            base_url="https://api.deepseek.com",
+            api_key="k",
+        ),
     )
 
     assert resolved.extra_headers is None

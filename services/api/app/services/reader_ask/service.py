@@ -2893,7 +2893,7 @@ async def stream_thread_message(
             model=model,
             route_settings=route_settings,
             assistant_message_id=assistant_message["id"],
-            base_url=model_config.base_url if model_config else "",
+            model_config=model_config,
             checkpoint_flush=stream_checkpoint_svc.make_checkpoint_flush(checkpoint),
         ):
             if isinstance(stream_item, ReaderAskStreamSseEvent):
@@ -4040,7 +4040,7 @@ async def retry_thread_message(
             model=model,
             route_settings=route_settings,
             assistant_message_id=assistant_message["id"],
-            base_url=model_config.base_url if model_config else "",
+            model_config=model_config,
             checkpoint_flush=stream_checkpoint_svc.make_checkpoint_flush(checkpoint),
         ):
             if isinstance(stream_item, ReaderAskStreamSseEvent):

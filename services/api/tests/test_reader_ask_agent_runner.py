@@ -245,7 +245,7 @@ class TestStartReaderAskAgentStream:
                         stop_sequences=None,
                     ),
                     assistant_message_id="msg-1",
-                    base_url="",
+                    model_config=None,
                 )
 
                 # Wait for the stream to complete
@@ -332,7 +332,7 @@ class TestStartReaderAskAgentStream:
                         stop_sequences=None,
                     ),
                     assistant_message_id="msg-1",
-                    base_url="",
+                    model_config=None,
                 )
 
                 await task
