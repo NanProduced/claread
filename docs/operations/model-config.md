@@ -262,6 +262,10 @@ RAG_RERANK_MODEL_PROFILE=rag-rerank-qwen3
 - `BAILIAN_EMBEDDING_DIMENSION`（默认 `1024`）
 - `BAILIAN_RERANK_MODEL`（默认 `qwen3-rerank`）
 
+注意：
+- 这是 deprecated fallback，仅用于兼容旧环境。
+- 如果 route 已配置，但 profile 最终解析到错误 adapter，运行时会直接 fail fast，不会再静默回退到 `BAILIAN_*`。
+
 ### 审计字段
 
 `rag_embedding` / `rag_rerank` 的 usage audit event 现在与 chat 主链路使用相同的字段：

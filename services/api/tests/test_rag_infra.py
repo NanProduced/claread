@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,6 +262,16 @@ class TestZillizSchemaContract:
 
 
 class TestEmbeddingClient:
+    def test_resolve_embedding_config_raises_on_incompatible_adapter(self):
+        from app.infra.bailian_embedding import EmbeddingError, resolve_embedding_config
+
+        with patch("app.infra.bailian_embedding.get_settings", return_value=SimpleNamespace()), patch(
+            "app.llm.router.resolve_model_config",
+            return_value=SimpleNamespace(adapter="openai_compatible"),
+        ):
+            with pytest.raises(EmbeddingError, match="incompatible adapter"):
+                resolve_embedding_config()
+
     @pytest.mark.anyio
     async def test_embed_texts_raises_when_no_api_key(self):
         from app.infra.bailian_embedding import EmbeddingError, embed_texts
@@ -322,8 +333,31 @@ class TestEmbeddingClient:
             assert len(result) == 3
             assert mock_call.call_count == 1
 
+    @pytest.mark.anyio
+    async def test_embed_texts_with_metadata_empty_input_uses_resolved_config(self):
+        from app.infra.bailian_embedding import embed_texts_with_metadata
+
+        with patch("app.infra.bailian_embedding.resolve_embedding_config") as mock_resolve:
+            mock_resolve.return_value = ("text-embedding-v5", 1536, "test_key")
+
+            result = await embed_texts_with_metadata([])
+
+            assert result.model == "text-embedding-v5"
+            assert result.dimension == 1536
+            assert result.input_count == 0
+
 
 class TestRerankClient:
+    def test_resolve_rerank_config_raises_on_incompatible_adapter(self):
+        from app.infra.bailian_rerank import RerankError, resolve_rerank_config
+
+        with patch("app.infra.bailian_rerank.get_settings", return_value=SimpleNamespace()), patch(
+            "app.llm.router.resolve_model_config",
+            return_value=SimpleNamespace(adapter="openai_compatible"),
+        ):
+            with pytest.raises(RerankError, match="incompatible adapter"):
+                resolve_rerank_config()
+
     @pytest.mark.anyio
     async def test_rerank_raises_when_no_api_key(self):
         from app.infra.bailian_rerank import RerankError, rerank
@@ -360,3 +394,16 @@ class TestRerankClient:
             assert len(result) == 2
             assert result[0].relevance_score == 0.95
             assert result[1].relevance_score == 0.80
+
+    @pytest.mark.anyio
+    async def test_rerank_with_metadata_empty_documents_uses_resolved_config(self):
+        from app.infra.bailian_rerank import rerank_with_metadata
+
+        with patch("app.infra.bailian_rerank.resolve_rerank_config") as mock_resolve:
+            mock_resolve.return_value = ("qwen3-rerank-v2", "test_key")
+
+            result = await rerank_with_metadata("query", [])
+
+            assert result.model == "qwen3-rerank-v2"
+            assert result.top_n == 0
+            assert result.input_count == 0

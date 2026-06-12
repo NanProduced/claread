@@ -9,8 +9,8 @@
 
 模型选择走统一 registry（rag_rerank route），
 通过 ``resolve_rerank_config`` 解析 provider/model/profile。
-当 registry 未配置 rag_rerank route 时，回退到
-``settings.bailian_*`` 旧字段以保持向后兼容。
+只有当 registry 未配置 rag_rerank route 时，才会回退到
+deprecated 的 ``settings.bailian_*`` 旧字段以保持向后兼容。
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from app.config.settings import get_settings
 from app.infra.bailian_usage import provider_metadata_from_response, usage_data_from_response
 
 logger = logging.getLogger(__name__)
+_LEGACY_FALLBACK_WARNING_EMITTED = False
 
 
 class RerankError(Exception):
@@ -56,6 +57,12 @@ class _RerankBatchResult:
     results: list[RerankResult]
     usage_data: dict
     provider_metadata: dict
+
+
+@dataclass
+class _ResolvedRerankRuntimeConfig:
+    model_name: str
+    api_key: str
 
 
 def _call_rerank_sync(
@@ -121,7 +128,19 @@ def resolve_rerank_config() -> tuple[str, str]:
     Resolution order:
       1. If the registry has a ``rag_rerank`` route default that resolves
          to a ``dashscope_rerank`` adapter, use it.
-      2. Fall back to ``settings.bailian_*`` legacy fields.
+      2. Fall back to ``settings.bailian_*`` legacy fields only when the
+         route default is unset.
+    """
+    resolved = _resolve_rerank_runtime_config()
+    return resolved.model_name, resolved.api_key
+
+
+def _resolve_rerank_runtime_config() -> _ResolvedRerankRuntimeConfig:
+    """Resolve the effective rerank runtime config.
+
+    Legacy fallback is only allowed when the ``rag_rerank`` route default is
+    unset. If a route exists but points to an incompatible adapter, we fail
+    fast instead of silently routing through deprecated ``BAILIAN_*`` fields.
     """
     from app.llm.provider_factory import ResolvedRerankConfig, build_model_instance
     from app.llm.router import resolve_model_config
@@ -129,14 +148,42 @@ def resolve_rerank_config() -> tuple[str, str]:
 
     settings = get_settings()
     config = resolve_model_config(settings, MODEL_ROUTE_RAG_RERANK)
-    if config is not None and config.adapter == "dashscope_rerank":
-        built = build_model_instance(config)
-        if isinstance(built, ResolvedRerankConfig):
-            return built.model_name, built.api_key
+    if config is None:
+        _warn_legacy_rerank_fallback_once()
+        return _ResolvedRerankRuntimeConfig(
+            model_name=settings.bailian_rerank_model,
+            api_key=settings.bailian_api_key,
+        )
 
-    # Legacy fallback
-    api_key = settings.bailian_api_key
-    return settings.bailian_rerank_model, api_key
+    if config.adapter != "dashscope_rerank":
+        raise RerankError(
+            "RAG_RERANK_MODEL_PROFILE resolved to incompatible adapter "
+            f"{config.adapter!r}; expected 'dashscope_rerank'."
+        )
+
+    built = build_model_instance(config)
+    if not isinstance(built, ResolvedRerankConfig):
+        raise RerankError(
+            "rag_rerank route resolved, but provider builder did not return "
+            "a ResolvedRerankConfig."
+        )
+
+    return _ResolvedRerankRuntimeConfig(
+        model_name=built.model_name,
+        api_key=built.api_key,
+    )
+
+
+def _warn_legacy_rerank_fallback_once() -> None:
+    global _LEGACY_FALLBACK_WARNING_EMITTED
+    if _LEGACY_FALLBACK_WARNING_EMITTED:
+        return
+    logger.warning(
+        "rag_rerank route is unset; falling back to deprecated BAILIAN_* "
+        "rerank settings. Configure RAG_RERANK_MODEL_PROFILE to use the "
+        "registry path."
+    )
+    _LEGACY_FALLBACK_WARNING_EMITTED = True
 
 
 async def rerank(
@@ -195,8 +242,9 @@ async def rerank_with_metadata(
     model: str | None = None,
 ) -> RerankCallResult:
     """对候选文档精排，并返回安全裁剪后的 provider usage metadata。"""
+    resolved_model, api_key = resolve_rerank_config()
+    effective_model = model or resolved_model
     if not documents:
-        effective_model = model or "qwen3-rerank"
         return RerankCallResult(
             results=[],
             usage_data={
@@ -216,8 +264,6 @@ async def rerank_with_metadata(
             top_n=0,
         )
 
-    resolved_model, api_key = resolve_rerank_config()
-    effective_model = model or resolved_model
     if not api_key:
         raise RerankError("No API key configured for rerank (registry or BAILIAN_API_KEY)")
 

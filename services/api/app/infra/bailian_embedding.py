@@ -8,8 +8,8 @@ dashscope TextEmbedding 单次最多 25 条输入，
 
 模型选择走统一 registry（rag_embedding route），
 通过 ``resolve_embedding_config`` 解析 provider/model/profile。
-当 registry 未配置 rag_embedding route 时，回退到
-``settings.bailian_*`` 旧字段以保持向后兼容。
+只有当 registry 未配置 rag_embedding route 时，才会回退到
+deprecated 的 ``settings.bailian_*`` 旧字段以保持向后兼容。
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from app.infra.bailian_usage import (
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 25
+_LEGACY_FALLBACK_WARNING_EMITTED = False
 
 
 class EmbeddingError(Exception):
@@ -53,6 +54,13 @@ class _EmbeddingBatchResult:
     embeddings: list[list[float]]
     usage_data: dict
     provider_metadata: dict
+
+
+@dataclass
+class _ResolvedEmbeddingRuntimeConfig:
+    model_name: str
+    dimension: int
+    api_key: str
 
 
 def _call_embedding_sync(
@@ -108,7 +116,20 @@ def resolve_embedding_config() -> tuple[str, int, str]:
     Resolution order:
       1. If the registry has a ``rag_embedding`` route default that resolves
          to a ``dashscope_embedding`` adapter, use it.
-      2. Fall back to ``settings.bailian_*`` legacy fields.
+      2. Fall back to ``settings.bailian_*`` legacy fields only when the
+         route default is unset.
+    """
+    resolved = _resolve_embedding_runtime_config()
+    return resolved.model_name, resolved.dimension, resolved.api_key
+
+
+def _resolve_embedding_runtime_config() -> _ResolvedEmbeddingRuntimeConfig:
+    """Resolve the effective embedding runtime config.
+
+    Legacy fallback is only allowed when the ``rag_embedding`` route default is
+    entirely unset. If a route exists but points to an incompatible adapter, we
+    fail fast so misconfiguration cannot be silently masked by old
+    ``BAILIAN_*`` fields.
     """
     from app.llm.provider_factory import ResolvedEmbeddingConfig, build_model_instance
     from app.llm.router import resolve_model_config
@@ -116,14 +137,44 @@ def resolve_embedding_config() -> tuple[str, int, str]:
 
     settings = get_settings()
     config = resolve_model_config(settings, MODEL_ROUTE_RAG_EMBEDDING)
-    if config is not None and config.adapter == "dashscope_embedding":
-        built = build_model_instance(config)
-        if isinstance(built, ResolvedEmbeddingConfig):
-            return built.model_name, built.dimension, built.api_key
+    if config is None:
+        _warn_legacy_embedding_fallback_once()
+        return _ResolvedEmbeddingRuntimeConfig(
+            model_name=settings.bailian_embedding_model,
+            dimension=settings.bailian_embedding_dimension,
+            api_key=settings.bailian_api_key,
+        )
 
-    # Legacy fallback
-    api_key = settings.bailian_api_key
-    return settings.bailian_embedding_model, settings.bailian_embedding_dimension, api_key
+    if config.adapter != "dashscope_embedding":
+        raise EmbeddingError(
+            "RAG_EMBEDDING_MODEL_PROFILE resolved to incompatible adapter "
+            f"{config.adapter!r}; expected 'dashscope_embedding'."
+        )
+
+    built = build_model_instance(config)
+    if not isinstance(built, ResolvedEmbeddingConfig):
+        raise EmbeddingError(
+            "rag_embedding route resolved, but provider builder did not return "
+            "a ResolvedEmbeddingConfig."
+        )
+
+    return _ResolvedEmbeddingRuntimeConfig(
+        model_name=built.model_name,
+        dimension=built.dimension,
+        api_key=built.api_key,
+    )
+
+
+def _warn_legacy_embedding_fallback_once() -> None:
+    global _LEGACY_FALLBACK_WARNING_EMITTED
+    if _LEGACY_FALLBACK_WARNING_EMITTED:
+        return
+    logger.warning(
+        "rag_embedding route is unset; falling back to deprecated BAILIAN_* "
+        "embedding settings. Configure RAG_EMBEDDING_MODEL_PROFILE to use the "
+        "registry path."
+    )
+    _LEGACY_FALLBACK_WARNING_EMITTED = True
 
 
 async def embed_texts(
@@ -185,9 +236,10 @@ async def embed_texts_with_metadata(
     dimension: int | None = None,
 ) -> EmbeddingCallResult:
     """批量文本 embedding，并返回安全裁剪后的 provider usage metadata。"""
+    resolved_model, resolved_dimension, api_key = resolve_embedding_config()
+    effective_model = model or resolved_model
+    effective_dimension = dimension or resolved_dimension
     if not texts:
-        effective_model = model or "text-embedding-v4"
-        effective_dimension = dimension or 1024
         return EmbeddingCallResult(
             embeddings=[],
             usage_data=combine_usage_data([]),
@@ -199,9 +251,6 @@ async def embed_texts_with_metadata(
             batch_count=0,
         )
 
-    resolved_model, resolved_dimension, api_key = resolve_embedding_config()
-    effective_model = model or resolved_model
-    effective_dimension = dimension or resolved_dimension
     if not api_key:
         raise EmbeddingError("No API key configured for embedding (registry or BAILIAN_API_KEY)")
 
