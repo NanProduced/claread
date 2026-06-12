@@ -921,7 +921,12 @@ def test_resolved_model_config_adapter_is_model_adapter_type() -> None:
         api_key="test-key",
     )
     assert isinstance(config.adapter, str)
-    assert config.adapter in ("openai_compatible", "dashscope_native")
+    assert config.adapter in (
+        "openai_compatible",
+        "dashscope_native",
+        "dashscope_embedding",
+        "dashscope_rerank",
+    )
 
     # Invalid adapter should fail validation
     with pytest.raises(Exception):
@@ -934,3 +939,225 @@ def test_resolved_model_config_adapter_is_model_adapter_type() -> None:
             base_url="https://api.example.com/v1",
             api_key="test-key",
         )
+
+
+# ---------------------------------------------------------------------------
+# Embedding / Rerank route resolve + build tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_embedding_route_from_registry(monkeypatch) -> None:
+    """rag_embedding route should resolve through the registry."""
+    from app.llm.routes import MODEL_ROUTE_RAG_EMBEDDING
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-emb-key")
+    settings = Settings(
+        rag_embedding_model_profile="rag-embedding-v4",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope_embedding": {
+                        "adapter": "dashscope_embedding",
+                        "api_key_env": "DASHSCOPE_API_KEY",
+                        "provider_options": {"dimension": 1024},
+                    },
+                },
+                "models": {
+                    "text-embedding-v4": {
+                        "provider": "dashscope_embedding",
+                        "model_name": "text-embedding-v4",
+                        "provider_options": {"dimension": 1024},
+                    },
+                },
+                "profiles": {
+                    "rag-embedding-v4": {
+                        "model": "text-embedding-v4",
+                    },
+                },
+            }
+        ),
+    )
+
+    config = resolve_model_config(settings, MODEL_ROUTE_RAG_EMBEDDING)
+
+    assert config is not None
+    assert config.adapter == "dashscope_embedding"
+    assert config.model_name == "text-embedding-v4"
+    assert config.api_key == "test-emb-key"
+    assert config.provider == "dashscope_embedding"
+
+
+def test_build_embedding_returns_resolved_config() -> None:
+    """dashscope_embedding builder should return ResolvedEmbeddingConfig."""
+    from app.llm.provider_factory import ResolvedEmbeddingConfig, build_model_instance
+    from app.llm.routes import MODEL_ROUTE_RAG_EMBEDDING
+
+    result = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_RAG_EMBEDDING,
+            profile_name="rag-embedding-v4",
+            provider="dashscope_embedding",
+            adapter="dashscope_embedding",
+            model_name="text-embedding-v4",
+            api_key="test-key",
+            provider_options={"dimension": 1024},
+        )
+    )
+
+    assert isinstance(result, ResolvedEmbeddingConfig)
+    assert result.model_name == "text-embedding-v4"
+    assert result.api_key == "test-key"
+    assert result.dimension == 1024
+    assert result.provider == "dashscope_embedding"
+
+
+def test_build_embedding_uses_default_dimension_when_not_specified() -> None:
+    """dashscope_embedding builder defaults dimension to 1024."""
+    from app.llm.provider_factory import ResolvedEmbeddingConfig, build_model_instance
+    from app.llm.routes import MODEL_ROUTE_RAG_EMBEDDING
+
+    result = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_RAG_EMBEDDING,
+            profile_name="rag-embedding-default",
+            provider="dashscope_embedding",
+            adapter="dashscope_embedding",
+            model_name="text-embedding-v4",
+            api_key="test-key",
+            provider_options={},
+        )
+    )
+
+    assert isinstance(result, ResolvedEmbeddingConfig)
+    assert result.dimension == 1024
+
+
+def test_build_embedding_returns_none_without_api_key() -> None:
+    """dashscope_embedding builder returns None when api_key is missing."""
+    from app.llm.provider_factory import build_model_instance
+    from app.llm.routes import MODEL_ROUTE_RAG_EMBEDDING
+
+    result = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_RAG_EMBEDDING,
+            profile_name="rag-embedding-nokey",
+            provider="dashscope_embedding",
+            adapter="dashscope_embedding",
+            model_name="text-embedding-v4",
+            api_key="",
+        )
+    )
+
+    assert result is None
+
+
+def test_resolve_rerank_route_from_registry(monkeypatch) -> None:
+    """rag_rerank route should resolve through the registry."""
+    from app.llm.routes import MODEL_ROUTE_RAG_RERANK
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-rerank-key")
+    settings = Settings(
+        rag_rerank_model_profile="rag-rerank-qwen3",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope_rerank": {
+                        "adapter": "dashscope_rerank",
+                        "api_key_env": "DASHSCOPE_API_KEY",
+                    },
+                },
+                "models": {
+                    "qwen3-rerank": {
+                        "provider": "dashscope_rerank",
+                        "model_name": "qwen3-rerank",
+                    },
+                },
+                "profiles": {
+                    "rag-rerank-qwen3": {
+                        "model": "qwen3-rerank",
+                    },
+                },
+            }
+        ),
+    )
+
+    config = resolve_model_config(settings, MODEL_ROUTE_RAG_RERANK)
+
+    assert config is not None
+    assert config.adapter == "dashscope_rerank"
+    assert config.model_name == "qwen3-rerank"
+    assert config.api_key == "test-rerank-key"
+    assert config.provider == "dashscope_rerank"
+
+
+def test_build_rerank_returns_resolved_config() -> None:
+    """dashscope_rerank builder should return ResolvedRerankConfig."""
+    from app.llm.provider_factory import ResolvedRerankConfig, build_model_instance
+    from app.llm.routes import MODEL_ROUTE_RAG_RERANK
+
+    result = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_RAG_RERANK,
+            profile_name="rag-rerank-qwen3",
+            provider="dashscope_rerank",
+            adapter="dashscope_rerank",
+            model_name="qwen3-rerank",
+            api_key="test-key",
+        )
+    )
+
+    assert isinstance(result, ResolvedRerankConfig)
+    assert result.model_name == "qwen3-rerank"
+    assert result.api_key == "test-key"
+    assert result.provider == "dashscope_rerank"
+
+
+def test_build_rerank_returns_none_without_api_key() -> None:
+    """dashscope_rerank builder returns None when api_key is missing."""
+    from app.llm.provider_factory import build_model_instance
+    from app.llm.routes import MODEL_ROUTE_RAG_RERANK
+
+    result = build_model_instance(
+        ResolvedModelConfig(
+            route=MODEL_ROUTE_RAG_RERANK,
+            profile_name="rag-rerank-nokey",
+            provider="dashscope_rerank",
+            adapter="dashscope_rerank",
+            model_name="qwen3-rerank",
+            api_key="",
+        )
+    )
+
+    assert result is None
+
+
+def test_dashscope_embedding_provider_is_configured_with_api_key() -> None:
+    """dashscope_embedding adapter is configured when api_key is present."""
+    from app.llm.types import ModelProviderConfig
+
+    provider = ModelProviderConfig(
+        adapter="dashscope_embedding",
+        api_key="test-key",
+    )
+    assert provider.is_configured() is True
+
+    provider_no_key = ModelProviderConfig(
+        adapter="dashscope_embedding",
+    )
+    assert provider_no_key.is_configured() is False
+
+
+def test_dashscope_rerank_provider_is_configured_with_api_key() -> None:
+    """dashscope_rerank adapter is configured when api_key is present."""
+    from app.llm.types import ModelProviderConfig
+
+    provider = ModelProviderConfig(
+        adapter="dashscope_rerank",
+        api_key="test-key",
+    )
+    assert provider.is_configured() is True
+
+    provider_no_key = ModelProviderConfig(
+        adapter="dashscope_rerank",
+    )
+    assert provider_no_key.is_configured() is False

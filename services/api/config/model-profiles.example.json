@@ -111,6 +111,19 @@
         "openai_chat_thinking_field": "reasoning_content",
         "openai_chat_send_back_thinking_parts": "field"
       }
+    },
+    "dashscope_embedding": {
+      "_field_notes": "DashScope embedding provider. Uses dashscope_embedding adapter which calls dashscope.TextEmbedding.call. Requires api_key / api_key_env. No base_url needed. provider_options.dimension sets the vector dimension (default 1024).",
+      "adapter": "dashscope_embedding",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "provider_options": {
+        "dimension": 1024
+      }
+    },
+    "dashscope_rerank": {
+      "_field_notes": "DashScope rerank provider. Uses dashscope_rerank adapter which calls dashscope.TextReRank.call. Requires api_key / api_key_env. No base_url needed.",
+      "adapter": "dashscope_rerank",
+      "api_key_env": "DASHSCOPE_API_KEY"
     }
   },
   "models": {
@@ -192,6 +205,19 @@
         "temperature": 0.2,
         "timeout": 120.0
       }
+    },
+    "text-embedding-v4": {
+      "_field_notes": "DashScope embedding model. provider_options.dimension overrides the provider-level default.",
+      "provider": "dashscope_embedding",
+      "model_name": "text-embedding-v4",
+      "provider_options": {
+        "dimension": 1024
+      }
+    },
+    "qwen3-rerank": {
+      "_field_notes": "DashScope rerank model.",
+      "provider": "dashscope_rerank",
+      "model_name": "qwen3-rerank"
     }
   },
   "profiles": {
@@ -337,6 +363,14 @@
           }
         }
       }
+    },
+    "rag-embedding-v4": {
+      "_field_notes": "Grammar RAG embedding profile. Bound to rag_embedding route via RAG_EMBEDDING_MODEL_PROFILE env var.",
+      "model": "text-embedding-v4"
+    },
+    "rag-rerank-qwen3": {
+      "_field_notes": "Grammar RAG rerank profile. Bound to rag_rerank route via RAG_RERANK_MODEL_PROFILE env var.",
+      "model": "qwen3-rerank"
     }
   }
 }

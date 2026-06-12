@@ -11,6 +11,8 @@ from app.llm.routes import (
     MODEL_ROUTE_DAILY_ANNOTATION,
     MODEL_ROUTE_DAILY_REVIEW,
     MODEL_ROUTE_DICT_AI,
+    MODEL_ROUTE_RAG_EMBEDDING,
+    MODEL_ROUTE_RAG_RERANK,
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_PLANNER,
     MODEL_ROUTE_READER_ASK_REPLAN,
@@ -86,6 +88,8 @@ def _build_model_registry_cached(
     daily_annotation_model_profile: str,
     daily_analysis_model_profile: str,
     daily_review_model_profile: str,
+    rag_embedding_model_profile: str,
+    rag_rerank_model_profile: str,
     model_profiles_json: str,
     model_presets_json: str,
 ) -> ModelRegistry:
@@ -99,6 +103,8 @@ def _build_model_registry_cached(
         daily_annotation_model_profile=daily_annotation_model_profile,
         daily_analysis_model_profile=daily_analysis_model_profile,
         daily_review_model_profile=daily_review_model_profile,
+        rag_embedding_model_profile=rag_embedding_model_profile,
+        rag_rerank_model_profile=rag_rerank_model_profile,
         model_profiles_json=model_profiles_json,
         model_presets_json=model_presets_json,
     )
@@ -127,6 +133,8 @@ def _build_model_registry_cached(
             MODEL_ROUTE_DAILY_ANNOTATION: settings.daily_annotation_model_profile,
             MODEL_ROUTE_DAILY_ANALYSIS: settings.daily_analysis_model_profile,
             MODEL_ROUTE_DAILY_REVIEW: settings.daily_review_model_profile,
+            MODEL_ROUTE_RAG_EMBEDDING: settings.rag_embedding_model_profile,
+            MODEL_ROUTE_RAG_RERANK: settings.rag_rerank_model_profile,
         }.items()
         if profile_name
     }
@@ -152,6 +160,8 @@ def build_model_registry(settings: Settings) -> ModelRegistry:
         daily_annotation_model_profile=settings.daily_annotation_model_profile,
         daily_analysis_model_profile=settings.daily_analysis_model_profile,
         daily_review_model_profile=settings.daily_review_model_profile,
+        rag_embedding_model_profile=settings.rag_embedding_model_profile,
+        rag_rerank_model_profile=settings.rag_rerank_model_profile,
         model_profiles_json=settings.model_profiles_json,
         model_presets_json=settings.model_presets_json,
     )

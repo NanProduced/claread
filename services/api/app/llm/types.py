@@ -65,9 +65,15 @@ class OpenAIProfileConfig(BaseModel):
         return OpenAIProfileConfig.model_validate(merged)
 
 
-# The same vendor (e.g. DashScope) can have two providers with different adapters —
-# one for compat, one for native. Provider = transport/protocol capability, not just vendor name.
-ModelAdapter = Literal["openai_compatible", "dashscope_native"]
+# The same vendor (e.g. DashScope) can have multiple providers with different
+# adapters — one for compat, one for native, one for embedding, etc.
+# Provider = transport/protocol capability, not just vendor name.
+ModelAdapter = Literal[
+    "openai_compatible",
+    "dashscope_native",
+    "dashscope_embedding",
+    "dashscope_rerank",
+]
 
 
 class ModelProviderConfig(BaseModel):
@@ -79,6 +85,12 @@ class ModelProviderConfig(BaseModel):
         dashscope_native: DashScope native SDK transport (server-side streaming,
             reasoning content support). Does NOT require ``base_url``; authenticates
             via ``api_key`` or ``api_key_env``.
+        dashscope_embedding: DashScope SDK embedding transport (sync call via
+            ``dashscope.TextEmbedding.call``). Authenticates via ``api_key`` or
+            ``api_key_env``; does NOT require ``base_url``.
+        dashscope_rerank: DashScope SDK rerank transport (sync call via
+            ``dashscope.TextReRank.call``). Authenticates via ``api_key`` or
+            ``api_key_env``; does NOT require ``base_url``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -94,9 +106,9 @@ class ModelProviderConfig(BaseModel):
     def is_configured(self) -> bool:
         if self.adapter == "openai_compatible":
             return bool(self.base_url)
-        if self.adapter == "dashscope_native":
-            return bool(self.api_key or self.api_key_env)
-        return False
+        # dashscope_native, dashscope_embedding, dashscope_rerank all
+        # authenticate via api_key / api_key_env without requiring base_url.
+        return bool(self.api_key or self.api_key_env)
 
 
 class ModelDefinitionConfig(BaseModel):

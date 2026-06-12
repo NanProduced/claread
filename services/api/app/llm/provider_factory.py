@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from pydantic_ai.models import Model, ModelProfile
 from pydantic_ai.models.function import FunctionModel
@@ -9,12 +10,47 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from app.llm.dashscope_stream import stream_dashscope_chat
+from app.llm.dashscope_stream import request_dashscope_chat, stream_dashscope_chat
 from app.llm.types import ModelAdapter, ResolvedModelConfig
 
 
 class ModelProviderError(ValueError):
     """Raised when a configured provider cannot be built."""
+
+
+# ---------------------------------------------------------------------------
+# Embedding / Rerank resolved config — lightweight build result that captures
+# the provider/model/api_key resolved from the registry, without constructing
+# a pydantic-ai Model (which only applies to chat/completion adapters).
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ResolvedEmbeddingConfig:
+    """Resolved config for a dashscope_embedding adapter.
+
+    Carries everything ``bailian_embedding`` needs to call the DashScope SDK,
+    derived from the unified provider/model/profile registry.
+    """
+
+    provider: str
+    model_name: str
+    api_key: str
+    dimension: int
+    provider_options: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ResolvedRerankConfig:
+    """Resolved config for a dashscope_rerank adapter.
+
+    Carries everything ``bailian_rerank`` needs to call the DashScope SDK,
+    derived from the unified provider/model/profile registry.
+    """
+
+    provider: str
+    model_name: str
+    api_key: str
+    provider_options: dict[str, object]
 
 
 def _deepseek_v4_profile() -> OpenAIModelProfile:
@@ -138,17 +174,33 @@ def _build_dashscope_native_model(
         else None
     )
 
+    async def _request(messages, agent_info):
+        return await request_dashscope_chat(
+            model=model_config.model_name,
+            messages=list(messages),
+            api_key=model_config.api_key,
+            model_settings=agent_info.model_settings,
+            provider_options=model_config.provider_options,
+            function_tools=agent_info.function_tools,
+            output_tools=agent_info.output_tools,
+            allow_text_output=agent_info.allow_text_output,
+        )
+
     async def _stream(messages, agent_info):
         async for part in stream_dashscope_chat(
             model=model_config.model_name,
             messages=list(messages),
             api_key=model_config.api_key,
-            model_settings=model_config.model_settings,
+            model_settings=agent_info.model_settings,
             provider_options=model_config.provider_options,
+            function_tools=agent_info.function_tools,
+            output_tools=agent_info.output_tools,
+            allow_text_output=agent_info.allow_text_output,
         ):
             yield part
 
     return FunctionModel(
+        function=_request,
         stream_function=_stream,
         model_name=model_config.model_name,
         profile=_dashscope_native_profile(),
@@ -156,9 +208,47 @@ def _build_dashscope_native_model(
     )
 
 
+def _build_dashscope_embedding_model(
+    model_config: ResolvedModelConfig,
+) -> ResolvedEmbeddingConfig | None:
+    """Build a resolved embedding config from the unified registry.
+
+    The ``dimension`` is read from ``provider_options.dimension`` (int).
+    If not specified, defaults to 1024.
+    """
+    if not model_config.model_name or not model_config.api_key:
+        return None
+
+    dimension = int(model_config.provider_options.get("dimension", 1024))
+    return ResolvedEmbeddingConfig(
+        provider=model_config.provider,
+        model_name=model_config.model_name,
+        api_key=model_config.api_key,
+        dimension=dimension,
+        provider_options=model_config.provider_options,
+    )
+
+
+def _build_dashscope_rerank_model(
+    model_config: ResolvedModelConfig,
+) -> ResolvedRerankConfig | None:
+    """Build a resolved rerank config from the unified registry."""
+    if not model_config.model_name or not model_config.api_key:
+        return None
+
+    return ResolvedRerankConfig(
+        provider=model_config.provider,
+        model_name=model_config.model_name,
+        api_key=model_config.api_key,
+        provider_options=model_config.provider_options,
+    )
+
+
 PROVIDER_BUILDERS: dict[ModelAdapter, Callable[[ResolvedModelConfig], Model | str | None]] = {
     "openai_compatible": _build_openai_compatible_model,
     "dashscope_native": _build_dashscope_native_model,
+    "dashscope_embedding": _build_dashscope_embedding_model,
+    "dashscope_rerank": _build_dashscope_rerank_model,
 }
 
 

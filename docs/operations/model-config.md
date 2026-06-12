@@ -197,4 +197,75 @@ MOONSHOT_API_KEY=...
 - thinking 是否开启必须由 profile / route settings 决定，不允许再在业务代码里强制改写。
 - Ask Claread 的主回答、planner、replan 可以分别走不同 profile。
 - 结构化输出质量和模型能力相关；切换 provider、model 或 profile 后，必须重新验证解析结果中的词汇、语法、句式和翻译字段。
-- 这轮统一的是 LLM 文本生成配置。embedding / rerank 仍需后续继续并到同一概念模型下。
+- 这轮统一的是 LLM 文本生成配置。embedding / rerank 已纳入同一概念模型，见下方。
+
+## Embedding / Rerank 配置
+
+embedding 和 rerank 使用与 chat/completion 相同的 provider / model / profile 三层配置，通过 `rag_embedding` 和 `rag_rerank` 两个 route 绑定。
+
+### Adapter 类型
+
+| Adapter | 用途 | SDK 调用 | 需要 base_url |
+|---------|------|----------|--------------|
+| `dashscope_embedding` | 文本向量 | `dashscope.TextEmbedding.call` | 否 |
+| `dashscope_rerank` | 文档精排 | `dashscope.TextReRank.call` | 否 |
+
+两者均通过 `api_key` / `api_key_env` 鉴权，不需要 `base_url`。
+
+### 配置示例
+
+```json
+{
+  "providers": {
+    "dashscope_embedding": {
+      "adapter": "dashscope_embedding",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "provider_options": {
+        "dimension": 1024
+      }
+    },
+    "dashscope_rerank": {
+      "adapter": "dashscope_rerank",
+      "api_key_env": "DASHSCOPE_API_KEY"
+    }
+  },
+  "models": {
+    "text-embedding-v4": {
+      "provider": "dashscope_embedding",
+      "model_name": "text-embedding-v4",
+      "provider_options": { "dimension": 1024 }
+    },
+    "qwen3-rerank": {
+      "provider": "dashscope_rerank",
+      "model_name": "qwen3-rerank"
+    }
+  },
+  "profiles": {
+    "rag-embedding-v4": { "model": "text-embedding-v4" },
+    "rag-rerank-qwen3": { "model": "qwen3-rerank" }
+  }
+}
+```
+
+### 环境变量
+
+```bash
+RAG_EMBEDDING_MODEL_PROFILE=rag-embedding-v4
+RAG_RERANK_MODEL_PROFILE=rag-rerank-qwen3
+```
+
+### 向后兼容
+
+当 `RAG_EMBEDDING_MODEL_PROFILE` 或 `RAG_RERANK_MODEL_PROFILE` 未配置时，embedding/rerank 模块会回退到旧字段：
+- `BAILIAN_API_KEY`
+- `BAILIAN_EMBEDDING_MODEL`（默认 `text-embedding-v4`）
+- `BAILIAN_EMBEDDING_DIMENSION`（默认 `1024`）
+- `BAILIAN_RERANK_MODEL`（默认 `qwen3-rerank`）
+
+### 审计字段
+
+`rag_embedding` / `rag_rerank` 的 usage audit event 现在与 chat 主链路使用相同的字段：
+- `model_route`：`rag_embedding` 或 `rag_rerank`
+- `model_profile`：从 registry 解析的 profile 名
+- `model_provider`：从 registry 解析的 provider 名（不再硬编码 `"bailian"`）
+- `model_name`：实际调用的远端模型名

@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     daily_annotation_model_profile: str = ""
     daily_analysis_model_profile: str = ""
     daily_review_model_profile: str = ""
+    rag_embedding_model_profile: str = ""
+    rag_rerank_model_profile: str = ""
     model_profiles_json: str = ""
     model_presets_json: str = ""
     reader_ask_model_options_json: str = ""

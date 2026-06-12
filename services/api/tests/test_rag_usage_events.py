@@ -26,8 +26,8 @@ async def test_bailian_embedding_metadata_keeps_legacy_return(monkeypatch):
 
     monkeypatch.setattr(
         bailian_embedding,
-        "get_settings",
-        lambda: SimpleNamespace(bailian_api_key="test-key"),
+        "resolve_embedding_config",
+        lambda: ("text-embedding-v4", 1024, "test-key"),
     )
     monkeypatch.setattr(
         bailian_embedding.dashscope,
@@ -72,8 +72,8 @@ async def test_bailian_rerank_metadata_handles_missing_usage(monkeypatch):
 
     monkeypatch.setattr(
         bailian_rerank,
-        "get_settings",
-        lambda: SimpleNamespace(bailian_api_key="test-key"),
+        "resolve_rerank_config",
+        lambda: ("qwen3-rerank", "test-key"),
     )
     monkeypatch.setattr(
         bailian_rerank.dashscope,
@@ -151,7 +151,7 @@ async def test_record_rag_usage_events_aggregates_two_capabilities(monkeypatch):
     assert by_capability["rag_embedding"].usage_data["aggregate"]["total_tokens"] == 5
     assert by_capability["rag_embedding"].metadata_json["call_count"] == 2
     assert by_capability["rag_rerank"].usage_data["aggregate"]["total_tokens"] == 7
-    assert by_capability["rag_rerank"].model_provider == "bailian"
+    assert by_capability["rag_rerank"].model_route == "rag_rerank"
     assert by_capability["rag_rerank"].billing_mode == "internal_only"
 
 

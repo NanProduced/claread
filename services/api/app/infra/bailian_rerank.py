@@ -1,11 +1,16 @@
-"""阿里云百炼 Rerank 客户端封装。
+"""DashScope Rerank 客户端封装。
 
-使用 dashscope SDK 调用 qwen3-rerank 模型。
+使用 dashscope SDK 调用 rerank 模型。
 同步接口 + asyncio.to_thread() 包装为异步。
 
 按 grammar-rag-design.md §12：
 - rerank 的文档输入为候选样本的简化文本
 - 返回按 relevance_score 降序排列的结果
+
+模型选择走统一 registry（rag_rerank route），
+通过 ``resolve_rerank_config`` 解析 provider/model/profile。
+当 registry 未配置 rag_rerank route 时，回退到
+``settings.bailian_*`` 旧字段以保持向后兼容。
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class RerankError(Exception):
-    """百炼 Rerank 调用失败。"""
+    """Rerank 调用失败。"""
 
 
 @dataclass
@@ -67,7 +72,7 @@ def _call_rerank_sync(
         documents: 候选文档列表
         top_n: 返回前 N 个结果
         model: 模型名称
-        api_key: 百炼 API Key
+        api_key: API Key
 
     Returns:
         按 relevance_score 降序排列的 RerankResult 列表
@@ -86,7 +91,7 @@ def _call_rerank_sync(
 
     if resp.status_code != 200:
         raise RerankError(
-            f"Bailian Rerank call failed: status={resp.status_code}, "
+            f"Rerank call failed: status={resp.status_code}, "
             f"code={resp.code}, message={resp.message}"
         )
 
@@ -107,11 +112,38 @@ def _call_rerank_sync(
     )
 
 
+def resolve_rerank_config() -> tuple[str, str]:
+    """Resolve rerank model/api_key from the unified registry.
+
+    Returns:
+        (model_name, api_key)
+
+    Resolution order:
+      1. If the registry has a ``rag_rerank`` route default that resolves
+         to a ``dashscope_rerank`` adapter, use it.
+      2. Fall back to ``settings.bailian_*`` legacy fields.
+    """
+    from app.llm.provider_factory import ResolvedRerankConfig, build_model_instance
+    from app.llm.router import resolve_model_config
+    from app.llm.routes import MODEL_ROUTE_RAG_RERANK
+
+    settings = get_settings()
+    config = resolve_model_config(settings, MODEL_ROUTE_RAG_RERANK)
+    if config is not None and config.adapter == "dashscope_rerank":
+        built = build_model_instance(config)
+        if isinstance(built, ResolvedRerankConfig):
+            return built.model_name, built.api_key
+
+    # Legacy fallback
+    api_key = settings.bailian_api_key
+    return settings.bailian_rerank_model, api_key
+
+
 async def rerank(
     query: str,
     documents: list[str],
     top_n: int = 5,
-    model: str = "qwen3-rerank",
+    model: str | None = None,
 ) -> list[RerankResult]:
     """对候选文档精排。
 
@@ -119,7 +151,7 @@ async def rerank(
         query: 查询文本
         documents: 候选文档列表
         top_n: 返回前 N 个结果
-        model: 模型名称
+        model: 模型名称（None 时走 registry 解析）
 
     Returns:
         按 relevance_score 降序排列的 RerankResult 列表
@@ -130,10 +162,10 @@ async def rerank(
     if not documents:
         return []
 
-    settings = get_settings()
-    api_key = settings.bailian_api_key
+    resolved_model, api_key = resolve_rerank_config()
+    effective_model = model or resolved_model
     if not api_key:
-        raise RerankError("BAILIAN_API_KEY is not configured")
+        raise RerankError("No API key configured for rerank (registry or BAILIAN_API_KEY)")
 
     actual_top_n = min(top_n, len(documents))
 
@@ -142,7 +174,7 @@ async def rerank(
         query=query,
         documents=documents,
         top_n=actual_top_n,
-        model=model,
+        model=effective_model,
         api_key=api_key,
     )
 
@@ -150,7 +182,7 @@ async def rerank(
         "Reranked %d documents, returned top %d (model=%s)",
         len(documents),
         len(batch_result.results),
-        model,
+        effective_model,
     )
 
     return batch_result.results
@@ -160,10 +192,11 @@ async def rerank_with_metadata(
     query: str,
     documents: list[str],
     top_n: int = 5,
-    model: str = "qwen3-rerank",
+    model: str | None = None,
 ) -> RerankCallResult:
     """对候选文档精排，并返回安全裁剪后的 provider usage metadata。"""
     if not documents:
+        effective_model = model or "qwen3-rerank"
         return RerankCallResult(
             results=[],
             usage_data={
@@ -177,16 +210,16 @@ async def rerank_with_metadata(
                 },
             },
             provider_metadata={"provider_usage_available": False},
-            model=model,
+            model=effective_model,
             input_count=0,
             input_chars=len(query or ""),
             top_n=0,
         )
 
-    settings = get_settings()
-    api_key = settings.bailian_api_key
+    resolved_model, api_key = resolve_rerank_config()
+    effective_model = model or resolved_model
     if not api_key:
-        raise RerankError("BAILIAN_API_KEY is not configured")
+        raise RerankError("No API key configured for rerank (registry or BAILIAN_API_KEY)")
 
     actual_top_n = min(top_n, len(documents))
     batch_result = await asyncio.to_thread(
@@ -194,7 +227,7 @@ async def rerank_with_metadata(
         query=query,
         documents=documents,
         top_n=actual_top_n,
-        model=model,
+        model=effective_model,
         api_key=api_key,
     )
 
@@ -202,14 +235,14 @@ async def rerank_with_metadata(
         "Reranked %d documents, returned top %d (model=%s)",
         len(documents),
         len(batch_result.results),
-        model,
+        effective_model,
     )
 
     return RerankCallResult(
         results=batch_result.results,
         usage_data=batch_result.usage_data,
         provider_metadata=batch_result.provider_metadata,
-        model=model,
+        model=effective_model,
         input_count=len(documents),
         input_chars=len(query or "") + sum(len(document or "") for document in documents),
         top_n=actual_top_n,
