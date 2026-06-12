@@ -273,3 +273,44 @@ RAG_RERANK_MODEL_PROFILE=rag-rerank-qwen3
 - `model_profile`：从 registry 解析的 profile 名
 - `model_provider`：从 registry 解析的 provider 名（不再硬编码 `"bailian"`）
 - `model_name`：实际调用的远端模型名
+
+## Directus Authoring Workflow
+
+LLM 配置可通过 Claread Console（Directus）进行可视化管理。
+
+### 前置条件
+
+1. Directus 容器运行中（`pnpm directus:up`）
+2. 已执行 metadata sync：`pnpm directus:llm-config:sync-metadata`
+
+### Authoring 流程
+
+1. 在 Directus Admin UI 中打开 **LLM Config** module
+2. 在 5 个 tab 中进行 CRUD 操作：
+   - **Providers**：添加/编辑供应商连接配置
+   - **Models**：添加/编辑远端模型定义（选择 provider）
+   - **Profiles**：添加/编辑场景配置（选择 model）
+   - **Presets**：添加/编辑 route→profile 映射集合
+   - **Ask Options**：添加/编辑 Ask Claread 用户可选档位
+3. 新增记录默认 status=draft，确认后改为 active
+4. 执行 export：`pnpm directus:llm-config:export-bundle`
+5. 校验通过后，将导出的 3 个 JSON 文件复制到 `services/api/config/`
+
+### 数据流
+
+```
+Directus authoring → export-llm-config-bundle.mjs → JSON bundle → services/api/config/
+```
+
+Directus 是控制面，不是运行时真源。services/api 不直接 live 读 Directus。
+
+### 校验规则
+
+Export 脚本在导出前自动校验，规则与后端 Pydantic schema 对齐：
+
+- Adapter 必须是合法枚举值
+- `openai_compatible` 必须有 `base_url`
+- `dashscope_native` / `dashscope_embedding` / `dashscope_rerank` 必须有 `api_key_env`
+- FK 引用链完整（profile → model → provider）
+- Route 名称必须是合法 ModelRoute 枚举
+- Embedding / rerank provider 存在时检查是否有对应 profile

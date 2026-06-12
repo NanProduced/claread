@@ -62,7 +62,49 @@
 
 ## 注意事项
 
-- 两个 sync 脚本都会直接操作本地 PostgreSQL 和 Directus metadata，不要在生产环境运行。
+- 三个 sync 脚本都会直接操作本地 PostgreSQL 和 Directus metadata，不要在生产环境运行。
 - sync 脚本依赖 Directus 容器和 PostgreSQL 容器正在运行。
 - `DIRECTUS_SKIP_SQL_BOOTSTRAP=true` 可跳过 SQL 执行（仅同步 Directus metadata）。
 - `DIRECTUS_SKIP_RESTART=true` 可跳过容器重启。
+
+### sync-llm-config-metadata.mjs
+
+同步 LLM Config 控制面的 Directus metadata：5 个 collection 定义、字段元数据、module bar 入口。
+
+| 项目 | 说明 |
+|------|------|
+| 入口 | `pnpm directus:llm-config:sync-metadata` |
+| 会写 SQL | 视环境变量而定；默认会执行 LLM Config baseline bootstrap SQL |
+| 会写 Directus metadata | 是 — 通过 Directus API 创建/更新 collection / field / module bar |
+| 会重启容器 | 视环境变量而定；默认 SQL 执行后重启 Directus |
+| 会清理弃用字段 | 否 — 当前无弃用项 |
+| 关键环境变量 | `DIRECTUS_URL`、`DIRECTUS_CONTAINER`、`POSTGRES_CONTAINER`、`DIRECTUS_SKIP_SQL_BOOTSTRAP`、`DIRECTUS_SKIP_RESTART` |
+| 典型场景 | LLM Config collection 首次部署时、字段变更后 |
+
+补充说明：
+
+- 该脚本会自动读取 `apps/directus/.env`。
+- baseline bootstrap 读取的是 `infra/migrations/llm-config/0001_llm_config_control_plane.sql`。
+- 5 个 collection：`llm_providers`、`llm_models`、`llm_profiles`、`llm_presets`、`llm_ask_options`。
+
+### export-llm-config-bundle.mjs
+
+从 Directus 读取 active 的 LLM 配置记录，导出为 3 个 JSON 文件，与 services/api schema 对齐。
+
+| 项目 | 说明 |
+|------|------|
+| 入口 | `pnpm directus:llm-config:export-bundle` |
+| 会写 SQL | 否 |
+| 会写 Directus metadata | 否 |
+| 会读 Directus 数据 | 是 — 通过 Directus API 读取 5 个 collection 的 active 记录 |
+| 输出文件 | `model-profiles.json`、`model-presets.json`、`reader-ask-model-options.json` |
+| 默认输出目录 | `apps/directus/.runtime/llm-config-export/` |
+| 自定义输出 | `--output DIR` 参数 |
+| 校验 | 是 — 导出前校验 bundle，与后端 Pydantic schema 规则对齐 |
+| 典型场景 | 配置变更后导出 bundle，复制到 services/api/config/ |
+
+补充说明：
+
+- 导出的 JSON 文件可直接复制到 `services/api/config/` 替换对应配置文件。
+- 校验规则与 `services/api/app/llm/types.py` 的 Pydantic schema 对齐，不引入额外规则。
+- 校验失败时脚本会输出详细错误信息并退出，不会生成不完整的 bundle。
