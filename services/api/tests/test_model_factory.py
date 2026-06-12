@@ -866,6 +866,47 @@ def test_moonshot_profile_hint_resolves() -> None:
     assert model.profile.openai_supports_tool_choice_required is False
 
 
+def test_resolve_model_config_uses_moonshot_provider_hint_from_registry() -> None:
+    settings = Settings(
+        annotation_model_profile="workflow-kimi-k26",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "moonshot": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://api.moonshot.cn/v1",
+                        "api_key": "test-key",
+                        "provider_options": {
+                            "profile": "moonshot",
+                        },
+                    }
+                },
+                "models": {
+                    "kimi-k26": {
+                        "provider": "moonshot",
+                        "model_name": "kimi-k2.6",
+                    }
+                },
+                "profiles": {
+                    "workflow-kimi-k26": {
+                        "model": "kimi-k26",
+                    }
+                },
+            }
+        ),
+    )
+
+    config = resolve_model_config(settings, MODEL_ROUTE_ANNOTATION_GENERATION)
+
+    assert config is not None
+    assert config.provider == "moonshot"
+    assert config.provider_options.get("profile") == "moonshot"
+
+    model = build_model_instance(config)
+    assert model is not None
+    assert model.profile.openai_supports_tool_choice_required is False
+
+
 def test_resolved_model_config_adapter_is_model_adapter_type() -> None:
     """ResolvedModelConfig.adapter should be ModelAdapter, not arbitrary str."""
     from app.llm.types import ModelAdapter

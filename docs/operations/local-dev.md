@@ -181,7 +181,7 @@ dev/staging/prod 由构建环境注入。
 
 ### DashScope native adapter
 
-适用于 Ask 主回答 / replan 走 DashScope 原生 SDK（`dashscope.AioGeneration.call(stream=True, result_format="message", incremental_output=True)`），完整支持 `reasoning_content` 流式输出。
+适用于 Ask 主回答 / replan 需要验证 DashScope 原生 reasoning 路径的场景，走 `dashscope.AioGeneration.call(stream=True, result_format="message", incremental_output=True)`。
 
 - provider entry: `adapter: "dashscope_native"`，**不需要 `base_url`**
 - 鉴权: `api_key_env: "DASHSCOPE_API_KEY"`
@@ -191,9 +191,14 @@ dev/staging/prod 由构建环境注入。
 
 同一远端模型可同时存在 `qwen37-max` (compat) 和 `qwen37-max-native` (native) 两个 model entry；profile 按场景引用。
 
-**为什么需要 native**：pydantic-ai 的 OpenAI 兼容适配层在解析 DashScope 流式 chunk 时，会丢失 `reasoning_content` 字段（chunk schema 不含此字段），导致 Ask 主回答在 `qwen3.7-max` / `glm-5.1` 下看不到「思考过程」展开。`dashscope_native` adapter 绕过 OpenAI 兼容层，直接以 `Message` 协议把 `reasoning_content` 转成 `ThinkingPart` 事件流到前端。
+**为什么需要 native**：pydantic-ai 的 OpenAI 兼容适配层在解析 DashScope 流式 chunk 时，会丢失 `reasoning_content` 字段（chunk schema 不含此字段），导致 Ask 主回答在 `qwen3.7-max` / `glm-5.1` 下看不到「思考过程」展开。`dashscope_native` adapter 绕过 OpenAI 兼容层，直接读取 DashScope native `Message` 协议里的 `reasoning_content`。
 
-**fallback**：若 `dashscope_native` 路径出现 tool 调用或流式兼容问题，只需在 `services/api/config/model-profiles.json` 把对应 ask-* profile 的 `model` 字段切回 compat entry（`qwen37-max` / `glm51`），adapter 自动回退到 `openai_compatible`，**不需要改 `reader_ask_agent.py` 的 `@agent.tool`**。
+**当前限制**：
+
+- native reasoning 事件链仍在持续联调，不能把它视为所有 Ask route 都已完全收口。
+- 当前 native path 的 tool bridge / non-stream replan 语义仍有已知限制；在正式收口前，不应把 `dashscope_native` 当成 workflow / planner / structured completion 的通用 adapter。
+
+**fallback**：若 `dashscope_native` 路径出现 tool 调用或流式兼容问题，只需在 `services/api/config/model-profiles.json` 把对应 ask-* profile 的 `model` 字段切回 compat entry（`qwen37-max` / `glm51`），adapter 自动回退到 `openai_compatible`。
 
 ### 计费与运行预算解耦
 

@@ -6,6 +6,17 @@
   ],
   "providers": {
     "_comment": "provider = transport/protocol capability, not just vendor name. Same vendor can have two providers with different adapters. workflow and Ask using the same remote model but different provider/profile is a valid design.",
+    "moonshot": {
+      "_field_notes": "Moonshot 走 openai_compatible，但建议显式声明 provider_options.profile='moonshot'，不要依赖 URL / model name 启发式。",
+      "adapter": "openai_compatible",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key": "",
+      "api_key_env": "MOONSHOT_API_KEY",
+      "provider_options": {
+        "profile": "moonshot",
+        "transport": "https"
+      }
+    },
     "dashscope": {
       "_field_notes": "dashscope_native adapter does not require base_url; authenticates via api_key / api_key_env. Use this for Ask routes that need native streaming reasoning.",
       "adapter": "dashscope_native",
