@@ -256,7 +256,17 @@ const heroVocabularyItems: HeroVocabularyItem[] = [
   },
 ];
 
-export function HeroAppStage() {
+interface HeroAppStageProps {
+  className?: string;
+  interactive?: boolean;
+  variant?: "landing" | "device";
+}
+
+export function HeroAppStage({
+  className,
+  interactive = true,
+  variant = "landing",
+}: HeroAppStageProps = {}) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const stageWindowRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<HeroAppView>("reader");
@@ -554,6 +564,10 @@ export function HeroAppStage() {
   }
 
   function handleStagePointerDownCapture(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!interactive) {
+      return;
+    }
+
     const target = event.target;
     const targetEl =
       target instanceof Element
@@ -595,6 +609,10 @@ export function HeroAppStage() {
   }
 
   function handleStageMouseUpCapture(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!interactive) {
+      return;
+    }
+
     if (view !== "reader") {
       return;
     }
@@ -659,15 +677,24 @@ export function HeroAppStage() {
   return (
     <div
       ref={stageRef}
-      data-hero-app-stage
+      data-hero-app-stage={variant}
       onPointerDownCapture={handleStagePointerDownCapture}
       onMouseUpCapture={handleStageMouseUpCapture}
-      className="relative z-20 mx-auto mt-16 hidden w-[min(94vw,1440px)] lg:block xl:mt-20"
+      className={`${
+        variant === "device"
+          ? "relative h-full w-full overflow-hidden"
+          : "relative z-20 mx-auto mt-16 hidden w-[min(94vw,1440px)] lg:block xl:mt-20"
+      } ${interactive ? "" : "pointer-events-none select-none"} ${className ?? ""}`}
+      inert={interactive ? undefined : true}
     >
       <HeroAppStageStyles />
       <div
         ref={stageWindowRef}
-        className="hero-app-window relative h-[690px] overflow-hidden rounded-[18px] border border-hairline/80 bg-web-canvas text-ink xl:h-[750px] 2xl:h-[800px]"
+        className={`hero-app-window relative overflow-hidden bg-web-canvas text-ink ${
+          variant === "device"
+            ? "h-full rounded-none border-0 shadow-none"
+            : "h-[690px] rounded-[18px] border border-hairline/80 xl:h-[750px] 2xl:h-[800px]"
+        }`}
       >
         <div className="grid h-full grid-cols-[76px_minmax(0,1fr)]">
           <HeroSidebar view={view} onActivateView={activateView} />
@@ -1740,6 +1767,11 @@ function HeroAppStageStyles() {
           0 1px 2px rgba(23, 21, 17, 0.04),
           0 20px 48px rgba(28, 24, 18, 0.105);
         animation: hero-app-window-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      [data-hero-app-stage="device"] .hero-app-window {
+        box-shadow: none;
+        animation: none;
       }
 
       [data-hero-app-stage] .hero-app-sidebar {

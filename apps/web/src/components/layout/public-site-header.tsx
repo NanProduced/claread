@@ -2,7 +2,7 @@ import type { Route } from "next";
 import Link from "next/link";
 import { BrandLockup } from "@/components/brand/BrandMarks";
 import {
-  blogRoute,
+  aboutRoute,
   dailyRoute,
   helpRoute,
   homeRoute,
@@ -11,8 +11,8 @@ import { appCtaForSession, getProjectedWebSession } from "@/services/bff/session
 
 const navItems: Array<{ href: Route; label: string }> = [
   { href: dailyRoute, label: "每日精读" },
-  { href: helpRoute, label: "透读方法" },
-  { href: blogRoute, label: "Blog" },
+  { href: helpRoute, label: "文档" },
+  { href: aboutRoute, label: "关于" },
 ];
 
 export async function PublicSiteHeader({
@@ -43,8 +43,8 @@ export async function PublicSiteHeader({
               <Link
                 key={item.href}
                 href={item.href}
-                className={`focus-ring rounded-pill px-2 py-1 transition-colors ${
-                  active ? "text-lens-blue" : "hover:text-ink"
+                className={`focus-ring rounded-full px-3 py-1.5 transition-all active:scale-95 ${
+                  active ? "bg-ink/5 text-ink font-bold" : "hover:bg-ink/5 hover:text-ink"
                 }`}
               >
                 {item.label}
@@ -52,15 +52,17 @@ export async function PublicSiteHeader({
             );
           })}
         </nav>
-        {showCta ? (
-          <Link
-            href={cta.href}
-            className="focus-ring inline-flex min-h-8 items-center whitespace-nowrap rounded-[8px] bg-ink px-3 text-[0.78rem] font-semibold text-[rgb(255,255,255)] transition-opacity hover:opacity-90"
-            style={{ color: "#ffffff" }}
-          >
-            {ctaLabelOverride ?? cta.label}
-          </Link>
-        ) : null}
+        <div className="flex items-center gap-1">
+          {showCta ? (
+            <Link
+              href={cta.href}
+              className="focus-ring ml-1 inline-flex min-h-8 items-center whitespace-nowrap rounded-full bg-ink px-4 text-[0.78rem] font-semibold text-[rgb(255,255,255)] shadow-sm transition-all hover:scale-105 hover:bg-ink/90 hover:shadow-md active:scale-95"
+              style={{ color: "#ffffff" }}
+            >
+              {ctaLabelOverride ?? cta.label}
+            </Link>
+          ) : null}
+        </div>
       </div>
     </header>
   );
