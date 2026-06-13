@@ -1253,7 +1253,7 @@ def _attachment(kind: str, subtype: str = "x") -> ReaderAskAttachment:
         kind=kind,  # type: ignore[arg-type]
         subtype=subtype,
         label="att",
-        metadata=ReaderAskAttachmentMetadata(),
+        metadata=ReaderAskAttachmentMetadata(source_surface="test"),
     )
 
 

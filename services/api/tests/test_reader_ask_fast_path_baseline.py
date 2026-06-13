@@ -42,6 +42,10 @@ def _anchor(anchor_type: str) -> ReaderAskAnchorRef:
     return ReaderAskAnchorRef(anchor_type=anchor_type, label="a", sentence_id="s1")  # type: ignore[arg-type]
 
 
+def _dict_anchor() -> ReaderAskAnchorRef:
+    return ReaderAskAnchorRef(anchor_type="dictionary_entry", label="dict", dict_entry_id=1)
+
+
 def _attachment(kind: str, subtype: str = "x") -> ReaderAskAttachment:
     return ReaderAskAttachment(
         kind=kind,  # type: ignore[arg-type]
@@ -61,11 +65,22 @@ def _history(n: int) -> list[dict[str, Any]]:
 
 
 class TestShouldUseFastPath:
-    def test_simple_article_question(self) -> None:
+    def test_simple_article_question_with_anchor(self) -> None:
         assert fast_path_runtime.should_use_fast_path(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
+            anchors=[_anchor("sentence")],
+            cross_record_toggle=False,
+            latest_user_message="这句话想表达什么？",
+        ) is True
+
+    def test_simple_article_question_no_anchor(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(2),
+            attachments=[],
+            anchors=[],
             cross_record_toggle=False,
             latest_user_message="这篇文章想表达什么？",
         ) is True
@@ -75,6 +90,7 @@ class TestShouldUseFastPath:
             entry_action="ask_about_this",
             history_messages=_history(5),
             attachments=[],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="继续",
         ) is False
@@ -84,8 +100,29 @@ class TestShouldUseFastPath:
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[_attachment("record_ref", "related_record")],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="对照我之前那篇",
+        ) is False
+
+    def test_false_for_analysis_ref_attachment(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(2),
+            attachments=[_attachment("analysis_ref", "summary")],
+            anchors=[_anchor("sentence")],
+            cross_record_toggle=False,
+            latest_user_message="解释一下",
+        ) is False
+
+    def test_false_for_supplement_ref_attachment(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(2),
+            attachments=[_attachment("supplement_ref", "grammar_note")],
+            anchors=[_anchor("sentence")],
+            cross_record_toggle=False,
+            latest_user_message="解释一下",
         ) is False
 
     def test_false_for_cross_record_keyword_chinese(self) -> None:
@@ -93,6 +130,7 @@ class TestShouldUseFastPath:
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
         ) is False
@@ -102,6 +140,7 @@ class TestShouldUseFastPath:
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="How does this compare to the previous article on this topic?",
         ) is False
@@ -111,6 +150,7 @@ class TestShouldUseFastPath:
             entry_action="some_custom_action",  # type: ignore[arg-type]
             history_messages=_history(0),
             attachments=[],
+            anchors=[],
             cross_record_toggle=False,
             latest_user_message="hello",
         ) is False
@@ -120,6 +160,7 @@ class TestShouldUseFastPath:
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="hello",
         ) is False
@@ -129,18 +170,30 @@ class TestShouldUseFastPath:
             entry_action="explain_this",
             history_messages=_history(0),
             attachments=[],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="解释一下",
         ) is True
 
-    def test_why_here_is_eligible(self) -> None:
+    def test_why_here_with_anchor_is_eligible(self) -> None:
         assert fast_path_runtime.should_use_fast_path(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="这里为什么用 present perfect",
         ) is True
+
+    def test_why_here_without_anchor_not_eligible(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="why_here",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[],
+            cross_record_toggle=False,
+            latest_user_message="这里为什么用 present perfect",
+        ) is False
 
     def test_lookup_in_context_not_eligible(self) -> None:
         # ``lookup_in_context`` is not in the fast-path set; it always
@@ -149,8 +202,109 @@ class TestShouldUseFastPath:
             entry_action="lookup_in_context",
             history_messages=_history(0),
             attachments=[],
+            anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
+        ) is False
+
+    def test_dictionary_anchor_not_eligible(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[_dict_anchor()],
+            cross_record_toggle=False,
+            latest_user_message="这个词什么意思",
+        ) is False
+
+    def test_deictic_without_anchor_not_eligible(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[],
+            cross_record_toggle=False,
+            latest_user_message="解释这句",
+        ) is False
+
+    def test_deictic_with_anchor_is_eligible(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[_anchor("sentence")],
+            cross_record_toggle=False,
+            latest_user_message="解释这句",
+        ) is True
+
+    def test_deictic_english_without_anchor_not_eligible(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[],
+            cross_record_toggle=False,
+            latest_user_message="explain this sentence",
+        ) is False
+
+    def test_non_deictic_without_anchor_is_eligible(self) -> None:
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[],
+            cross_record_toggle=False,
+            latest_user_message="这篇文章的主题是什么",
+        ) is True
+
+
+# ---------------------------------------------------------------------------
+# Internal helper gates
+# ---------------------------------------------------------------------------
+
+
+class TestHasDeicticWithoutAnchor:
+    def test_deictic_chinese_no_anchor(self) -> None:
+        assert fast_path_runtime._has_deictic_without_anchor("解释这句", []) is True
+
+    def test_deictic_chinese_with_anchor(self) -> None:
+        assert fast_path_runtime._has_deictic_without_anchor("解释这句", [_anchor("sentence")]) is False
+
+    def test_deictic_english_no_anchor(self) -> None:
+        assert fast_path_runtime._has_deictic_without_anchor("explain this sentence", []) is True
+
+    def test_non_deictic_no_anchor(self) -> None:
+        assert fast_path_runtime._has_deictic_without_anchor("这篇文章的主题是什么", []) is False
+
+    def test_empty_text(self) -> None:
+        assert fast_path_runtime._has_deictic_without_anchor("", []) is False
+
+
+class TestHasDictionaryAnchorOrAttachment:
+    def test_dictionary_anchor(self) -> None:
+        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+            [_dict_anchor()], []
+        ) is True
+
+    def test_sentence_anchor_not_dictionary(self) -> None:
+        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+            [_anchor("sentence")], []
+        ) is False
+
+    def test_no_anchors_no_attachments(self) -> None:
+        assert fast_path_runtime._has_dictionary_anchor_or_attachment([], []) is False
+
+    def test_dictionary_attachment_subtype(self) -> None:
+        # The helper checks both kind and subtype defensively for
+        # dictionary_entry, even though it is not a valid attachment kind.
+        # Test via subtype since dictionary_entry is not a valid kind.
+        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+            [], [_attachment("text_selection", "dictionary_entry")]
+        ) is True
+
+    def test_non_dictionary_attachment_not_flagged(self) -> None:
+        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+            [], [_attachment("text_selection", "highlight")]
         ) is False
 
 
@@ -351,3 +505,75 @@ class TestAuthoritativeBackfillSmoke:
         # emitted_text retains the raw stream so checkpoint writer and
         # eval can detect the loss and compare against the authoritative.
         assert runtime.emitted_text == "lo world"
+
+
+# ---------------------------------------------------------------------------
+# runtime_state telemetry preservation
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeStateTelemetryPreservation:
+    """Verify that ``planner_skipped`` and ``planner_route_used`` are
+    preserved when ``ReaderAskRuntimeState`` is rebuilt."""
+
+    def test_fast_path_telemetry_preserved_on_rebuild(self) -> None:
+        from app.agents.reader_ask_agent import ReaderAskRuntimeState
+
+        # Simulate the fast path setting telemetry before rebuild
+        original = ReaderAskRuntimeState()
+        original.planner_skipped = True
+        original.planner_route_used = "fast_path"
+
+        # Rebuild as service.py does
+        rebuilt = ReaderAskRuntimeState(
+            citations=[],
+            source_labels={"current_record"},
+            planner_skipped=original.planner_skipped,
+            planner_route_used=original.planner_route_used,
+        )
+
+        assert rebuilt.planner_skipped is True
+        assert rebuilt.planner_route_used == "fast_path"
+
+    def test_legacy_path_telemetry_preserved_on_rebuild(self) -> None:
+        from app.agents.reader_ask_agent import ReaderAskRuntimeState
+
+        original = ReaderAskRuntimeState()
+        # Default values are planner-first
+        assert original.planner_skipped is False
+        assert original.planner_route_used == "planner_first"
+
+        rebuilt = ReaderAskRuntimeState(
+            citations=[],
+            source_labels={"current_record"},
+            planner_skipped=original.planner_skipped,
+            planner_route_used=original.planner_route_used,
+        )
+
+        assert rebuilt.planner_skipped is False
+        assert rebuilt.planner_route_used == "planner_first"
+
+
+# ---------------------------------------------------------------------------
+# build_replan_event with planning_snapshot=None (fast path no replan)
+# ---------------------------------------------------------------------------
+
+
+class TestFastPathNoReplan:
+    """Fast path sets ``planning_snapshot=None``, which must prevent replan."""
+
+    def test_none_snapshot_never_replans(self) -> None:
+        result = agent_runner_svc.build_replan_event(
+            final_content_md="",  # degenerate
+            planning_snapshot=None,
+            assistant_message_id="msg-1",
+        )
+        assert result is None
+
+    def test_none_snapshot_even_with_refusal(self) -> None:
+        result = agent_runner_svc.build_replan_event(
+            final_content_md="I cannot answer this question.",
+            planning_snapshot=None,
+            assistant_message_id="msg-1",
+        )
+        assert result is None

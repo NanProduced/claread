@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app.schemas.reader_ask import (
+    ReaderAskAnchorRef,
     ReaderAskAttachment,
     ReaderAskContextPlan,
     ReaderAskEntryAction,
@@ -39,6 +40,14 @@ _FAST_PATH_ACTIONS: frozenset[ReaderAskEntryAction] = frozenset(
     {"explain_this", "ask_about_this", "why_here"}
 )
 
+# Attachment kinds that require the planner to resolve context before
+# answering. The fast path cannot handle these because they carry
+# external references (records, analyses, supplements) that need
+# planner-level resolution.
+_PLANNER_REQUIRED_ATTACHMENT_KINDS: frozenset[str] = frozenset(
+    {"record_ref", "analysis_ref", "supplement_ref"}
+)
+
 # Substring keywords that, when present in the user's latest message, indicate
 # cross-article intent. The fast path defers these to the legacy planner.
 _CROSS_RECORD_KEYWORDS: tuple[str, ...] = (
@@ -48,6 +57,27 @@ _CROSS_RECORD_KEYWORDS: tuple[str, ...] = (
     "earlier",
     "另一",
     "上篇",
+)
+
+# Deictic expressions that strongly refer to a specific location in the
+# text without an anchor. These require the planner to resolve the
+# reference before answering.
+_DEICTIC_PATTERNS: tuple[str, ...] = (
+    "这里",
+    "这句",
+    "这段",
+    "这一句",
+    "这一段",
+    "这行",
+    "this sentence",
+    "that sentence",
+    "this paragraph",
+    "that paragraph",
+    "this line",
+    "that line",
+    "this part",
+    "that part",
+    "here",
 )
 
 
@@ -64,11 +94,45 @@ def detect_cross_record_in_message(text: str) -> bool:
     return any(keyword.lower() in lowered for keyword in _CROSS_RECORD_KEYWORDS)
 
 
+def _has_deictic_without_anchor(text: str, anchors: list[ReaderAskAnchorRef]) -> bool:
+    """Return True if ``text`` contains a strong deictic expression but
+    the request has no anchors to ground the reference.
+
+    When the user says "explain this sentence" but no anchor is provided,
+    the planner is needed to resolve the reference.
+    """
+    if not text:
+        return False
+    if anchors:
+        return False
+    lowered = text.lower()
+    return any(pattern.lower() in lowered for pattern in _DEICTIC_PATTERNS)
+
+
+def _has_dictionary_anchor_or_attachment(
+    anchors: list[ReaderAskAnchorRef],
+    attachments: list[ReaderAskAttachment],
+) -> bool:
+    """Return True if any anchor is a dictionary_entry or any attachment
+    carries a dictionary-related subtype.
+
+    Dictionary lookups need the planner to decide retrieval strategy.
+    """
+    for anchor in anchors:
+        if anchor.anchor_type == "dictionary_entry":
+            return True
+    for attachment in attachments:
+        if attachment.kind == "dictionary_entry" or attachment.subtype == "dictionary_entry":
+            return True
+    return False
+
+
 def should_use_fast_path(
     *,
     entry_action: ReaderAskEntryAction,
     history_messages: list[dict[str, Any]],
     attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
     cross_record_toggle: bool,
     latest_user_message: str,
 ) -> bool:
@@ -79,8 +143,11 @@ def should_use_fast_path(
     - ``entry_action`` is one of ``_FAST_PATH_ACTIONS``.
     - ``len(history_messages) <= 4`` (short thread).
     - ``cross_record_toggle`` is False (the user has not opted into cross-article mode).
-    - No attachment has ``kind='record_ref' and subtype='related_record'``
-      (no explicit cross-record attachment).
+    - No attachment has a kind in ``_PLANNER_REQUIRED_ATTACHMENT_KINDS``
+      (no record_ref / analysis_ref / supplement_ref attachments).
+    - No dictionary anchor or dictionary attachment is present.
+    - ``why_here`` entry action requires at least one anchor.
+    - No strong deictic expression without an anchor.
     - The latest user message does not contain any cross-article intent keyword.
     """
     if entry_action not in _FAST_PATH_ACTIONS:
@@ -90,8 +157,16 @@ def should_use_fast_path(
     if cross_record_toggle:
         return False
     for attachment in attachments:
-        if attachment.kind == "record_ref" and attachment.subtype == "related_record":
+        if attachment.kind in _PLANNER_REQUIRED_ATTACHMENT_KINDS:
             return False
+    if _has_dictionary_anchor_or_attachment(anchors, attachments):
+        return False
+    # why_here without any anchor requires the planner to resolve context.
+    if entry_action == "why_here" and not anchors:
+        return False
+    # Strong deictic references without an anchor need the planner.
+    if _has_deictic_without_anchor(latest_user_message, anchors):
+        return False
     if detect_cross_record_in_message(latest_user_message):
         return False
     return True

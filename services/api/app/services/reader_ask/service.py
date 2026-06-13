@@ -1278,7 +1278,7 @@ def _build_minimal_contract(
 
 def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot | None) -> dict[str, Any]:
     if planning_snapshot is None:
-        return {}
+        return {"is_fast_path": True}
     # Round 1 — FastPathPlanningSnapshot is a lightweight dataclass that
     # does not carry planner_decision / reference_needs / structured_asset_*
     # fields. The legacy serializer assumes the full ReaderAskPlanningSnapshot
@@ -2377,53 +2377,21 @@ async def stream_thread_message(
             entry_action=body.entry_action,
             history_messages=history_messages,
             attachments=attachments,
+            anchors=resolved_anchors,
             cross_record_toggle=runtime_state.cross_record_context_allowed,
             latest_user_message=body.content,
         ):
-            # Round 1 — agent-loop fast path: skip the LLM planner call and
-            # build a minimal planning snapshot from request data only.
-            # The legacy planner-first path is preserved below.
+            # Round 1 — agent-loop fast path: skip the LLM planner call.
+            # ``planning_snapshot`` is set to None so that
+            # ``materialize_planned_context`` walks the minimal overview
+            # branch and ``build_replan_event`` naturally returns None
+            # (fast path never replans).
             runtime_state.planner_skipped = True
             runtime_state.planner_route_used = "fast_path"
             resolved_intent, resolved_intent_label = (
                 runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
             )
-            minimal_context_plan = fast_path_runtime.build_minimal_context_plan_for_runtime_input(
-                _build_minimal_contract(
-                    body=body,
-                    record=record,
-                    history_messages=history_messages,
-                    attachments=attachments,
-                    anchors=resolved_anchors,
-                    resolved_intent=resolved_intent,
-                    resolved_intent_label=resolved_intent_label,
-                )
-            )
-            minimal_trace_summary = fast_path_runtime.build_minimal_trace_summary_for_runtime_input(
-                _build_minimal_contract(
-                    body=body,
-                    record=record,
-                    history_messages=history_messages,
-                    attachments=attachments,
-                    anchors=resolved_anchors,
-                    resolved_intent=resolved_intent,
-                    resolved_intent_label=resolved_intent_label,
-                ),
-                planner_skipped=True,
-            )
-            planning_snapshot = planner.FastPathPlanningSnapshot(
-                retrieval_needs="none",
-                working_set=planner.ReaderAskWorkingSet(
-                    primary_anchor=resolved_anchors[0] if resolved_anchors else None,
-                    local_context_window_needed=bool(resolved_anchors),
-                    record_insights_needed=False,
-                    article_overview_needed=False,
-                    dictionary_needed=False,
-                    cross_record_context_allowed=False,
-                ),
-                context_plan=minimal_context_plan,
-                trace_summary=minimal_trace_summary,
-            )
+            planning_snapshot = None
             reference_resolution = None
             resolved_context_input = None
             disambiguation = None
@@ -2725,9 +2693,14 @@ async def stream_thread_message(
             _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
             for anchor in resolved_anchors
         ]
+        # Preserve fast-path telemetry across the runtime_state rebuild.
+        _prev_planner_skipped = runtime_state.planner_skipped
+        _prev_planner_route = runtime_state.planner_route_used
         runtime_state = ReaderAskRuntimeState(
             citations=list(base_citations),
             source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+            planner_skipped=_prev_planner_skipped,
+            planner_route_used=_prev_planner_route,
         )
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
@@ -2736,7 +2709,9 @@ async def stream_thread_message(
             # snapshot.
             if not runtime_state.planner_skipped:
                 raise RuntimeError("planning snapshot is required")
-        cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+            cross_record_context_allowed = False
+        else:
+            cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
         resolved = resolve_reader_ask_agent(selected_model_option.selection)
         agent = resolved.agent
@@ -3641,48 +3616,27 @@ async def retry_thread_message(
             entry_action=body.entry_action,
             history_messages=history_messages,
             attachments=attachments,
+            anchors=resolved_anchors,
             cross_record_toggle=runtime_state.cross_record_context_allowed,
             latest_user_message=body.content,
         ):
             # Round 1 — agent-loop fast path: skip the LLM planner call.
+            # ``planning_snapshot`` is set to None so that
+            # ``materialize_planned_context`` walks the minimal overview
+            # branch and ``build_replan_event`` naturally returns None
+            # (fast path never replans).
             runtime_state.planner_skipped = True
             runtime_state.planner_route_used = "fast_path"
             resolved_intent, resolved_intent_label = (
                 runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
             )
-            minimal_contract = _build_minimal_contract(
-                body=body,
-                record=record,
-                history_messages=history_messages,
-                attachments=attachments,
-                anchors=resolved_anchors,
-                resolved_intent=resolved_intent,
-                resolved_intent_label=resolved_intent_label,
-            )
-            minimal_context_plan = fast_path_runtime.build_minimal_context_plan_for_runtime_input(
-                minimal_contract
-            )
-            minimal_trace_summary = fast_path_runtime.build_minimal_trace_summary_for_runtime_input(
-                minimal_contract,
-                planner_skipped=True,
-            )
-            planning_snapshot = planner.FastPathPlanningSnapshot(
-                retrieval_needs="none",
-                working_set=planner.ReaderAskWorkingSet(
-                    primary_anchor=resolved_anchors[0] if resolved_anchors else None,
-                    local_context_window_needed=bool(resolved_anchors),
-                    record_insights_needed=False,
-                    article_overview_needed=False,
-                    dictionary_needed=False,
-                    cross_record_context_allowed=False,
-                ),
-                context_plan=minimal_context_plan,
-                trace_summary=minimal_trace_summary,
-            )
+            planning_snapshot = None
             reference_resolution = None
             resolved_context_input = None
             disambiguation = None
             external_asset_disambiguation = None
+            clarification_only = False
+            clarification_mode = "none"
             submission_mode = planner_runtime_svc.submission_mode(
                 entry_action=body.entry_action, attachments=attachments
             )
@@ -3734,8 +3688,12 @@ async def retry_thread_message(
             attempt=int(run_info.get("run_attempt") or 1),
             supersedes_run_id=str(run_info.get("supersedes_run_id")) if run_info.get("supersedes_run_id") else None,
         )
-        clarification_only = planning_snapshot.clarification_only
-        clarification_mode = planning_snapshot.clarification_mode
+        if planning_snapshot is not None:
+            clarification_only = planning_snapshot.clarification_only
+            clarification_mode = planning_snapshot.clarification_mode
+        else:
+            clarification_only = False
+            clarification_mode = "none"
         if clarification_only and clarification_mode == "must_clarify":
             assistant_md = post_process_svc.build_clarification_message(
                 local_anchor_required=planning_snapshot.context_plan.clarification_reason == "missing_required_context",
@@ -3927,9 +3885,14 @@ async def retry_thread_message(
             _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
             for anchor in resolved_anchors
         ]
+        # Preserve fast-path telemetry across the runtime_state rebuild.
+        _prev_planner_skipped = runtime_state.planner_skipped
+        _prev_planner_route = runtime_state.planner_route_used
         runtime_state = ReaderAskRuntimeState(
             citations=list(base_citations),
             source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
+            planner_skipped=_prev_planner_skipped,
+            planner_route_used=_prev_planner_route,
         )
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
@@ -3938,7 +3901,9 @@ async def retry_thread_message(
             # snapshot.
             if not runtime_state.planner_skipped:
                 raise RuntimeError("planning snapshot is required")
-        cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+            cross_record_context_allowed = False
+        else:
+            cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
         resolved = resolve_reader_ask_agent(selected_model_option.selection)
         agent = resolved.agent

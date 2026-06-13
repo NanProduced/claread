@@ -384,11 +384,25 @@ def _stream_response_from_result(result: Any) -> Any | None:
 
 
 async def _mark_stream_result_completed(result: Any) -> None:
+    """Ensure the result's output is finalized so ``result.output`` is readable.
+
+    This is a best-effort operation — if the result doesn't support
+    completion marking or output retrieval, we silently skip it.  The
+    ``producer_result`` is still set on the runtime regardless.
+    """
     mark_completed = getattr(result, "_marked_completed", None)
     if callable(mark_completed):
-        await mark_completed(result.response)
+        try:
+            await mark_completed(result.response)
+        except Exception:
+            pass
         return
-    await result.get_output()
+    get_output = getattr(result, "get_output", None)
+    if callable(get_output):
+        try:
+            await get_output()
+        except Exception:
+            pass
 
 
 async def _replay_missed_reasoning(
@@ -501,7 +515,9 @@ def start_reader_ask_agent_stream(
                         if checkpoint_flush is not None:
                             await checkpoint_flush(runtime, force=False)
                     await _mark_stream_result_completed(result)
-                    await _replay_missed_reasoning(result, runtime, event_queue, assistant_message_id)
+                    await _replay_missed_reasoning(
+                        result, runtime, event_queue, assistant_message_id,
+                    )
                 else:
                     async for response, _last in result.stream_responses(debounce_by=None):
                         await _consume_response_snapshot(
@@ -512,6 +528,15 @@ def start_reader_ask_agent_stream(
                         )
                         if checkpoint_flush is not None:
                             await checkpoint_flush(runtime, force=False)
+                    # Ensure the result's output is finalized so that
+                    # ``_resolve_authoritative_final_text`` can read
+                    # ``result.output``.  Without this, the snapshot-based
+                    # ``stream_responses`` branch may leave ``output`` unset
+                    # when the producer task finishes.
+                    await _mark_stream_result_completed(result)
+                    await _replay_missed_reasoning(
+                        result, runtime, event_queue, assistant_message_id,
+                    )
 
                 await _complete_reasoning(
                     runtime=runtime,

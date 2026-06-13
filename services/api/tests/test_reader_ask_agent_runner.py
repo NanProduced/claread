@@ -485,3 +485,91 @@ class TestAuthoritativeFinalContent:
         # checkpoint writer still records what was actually streamed to
         # the client (useful for eval/debug of lost-delta cases).
         assert runtime.emitted_text == "lo world"
+
+
+# ---------------------------------------------------------------------------
+# stream_responses branch completion
+# ---------------------------------------------------------------------------
+
+
+class TestStreamResponsesBranchCompletion:
+    """Verify that the ``stream_responses`` (snapshot-based) branch also
+    calls ``_mark_stream_result_completed`` and ``_replay_missed_reasoning``
+    so that ``result.output`` is available for authoritative backfill.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stream_responses_branch_sets_producer_result_output(self) -> None:
+        """When the stream_responses branch completes, ``runtime.producer_result``
+        must have ``output`` accessible for ``_resolve_authoritative_final_text``."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.agents.reader_ask_agent import ReaderAskAgentDeps, ReaderAskRuntimeState
+        from app.llm.types import RunModelSettings
+
+        runtime = ReaderAskRuntimeState()
+        event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+
+        deps = MagicMock(spec=ReaderAskAgentDeps)
+        deps.event_queue = event_queue
+
+        # Create a mock response for the stream_responses path
+        mock_response = MagicMock()
+        mock_response.text = "Hello from snapshot"
+        mock_response.thinking = None
+
+        # Create a mock result that simulates the stream_responses path
+        mock_result = MagicMock()
+        mock_result.output = "Hello from snapshot"
+        # Ensure _stream_response is None to force the stream_responses branch
+        mock_result.__dict__["_stream_response"] = None
+
+        # Make stream_responses return an async iterator
+        async def _stream_responses(**kwargs):
+            yield (mock_response, True)
+
+        mock_result.stream_responses = _stream_responses
+        mock_usage = MagicMock(request_tokens=10, response_tokens=20)
+        mock_result.usage = MagicMock(return_value=mock_usage)
+        # Set up response with no ThinkingParts so _replay_missed_reasoning is safe
+        mock_result.response = MagicMock()
+        mock_result.response.parts = []
+        # Set up _marked_completed as a no-op async
+        mock_result._marked_completed = AsyncMock()
+
+        # Mock the context manager
+        class MockStreamContext:
+            async def __aenter__(self):
+                return mock_result
+            async def __aexit__(self, *args):
+                pass
+
+        mock_agent = MagicMock()
+        mock_agent.run_stream = MagicMock(return_value=MockStreamContext())
+
+        with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
+            with patch.object(
+                agent_runner_svc,
+                "build_usage_metadata",
+                return_value={"total_tokens": 30},
+            ):
+                task, stream_runtime = agent_runner_svc.start_reader_ask_agent_stream(
+                    agent=mock_agent,
+                    deps=deps,
+                    model=MagicMock(),
+                    route_settings=RunModelSettings(max_tokens=100, temperature=0.5),
+                    assistant_message_id="msg-test",
+                )
+
+                await task  # Wait for producer to finish
+
+        assert stream_runtime.producer_result is not None
+        assert stream_runtime.producer_result.output == "Hello from snapshot"
+
+        # Verify authoritative backfill works
+        outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=stream_runtime,
+            assistant_message_id="msg-test",
+        )
+        assert outcome.content_md == "Hello from snapshot"
