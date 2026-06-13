@@ -1215,3 +1215,445 @@ def test_sentence_analysis_in_normalized_annotations() -> None:
 
     assert len(result.normalized_annotations) == 1
     assert isinstance(result.normalized_annotations[0], NormalizedSentenceAnalysis)
+
+
+# ── Phase 2.3B-1: Normalized postprocess parity tests ────────────────
+
+
+def test_normalized_duplicate_dropped_and_logged() -> None:
+    """normalized duplicate 被 drop，canonical_drop_log 有 duplicate。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations: dedup 保留 1 个
+    assert len(result.annotations) == 1
+
+    # normalized_annotations: dedup 保留 1 个
+    assert len(result.normalized_annotations) == 1
+    assert result.normalized_annotations[0].type == "vocab_highlight"
+
+    # canonical_drop_log 有 duplicate
+    dup_drops = [e for e in result.canonical_drop_log if e.drop_reason == "duplicate"]
+    assert len(dup_drops) == 1
+    assert dup_drops[0].annotation_type == "vocab_highlight"
+
+
+def test_normalized_conflict_based_on_span_overlap() -> None:
+    """normalized conflict 基于 CanonicalSpan overlap 生效。
+
+    vocab_highlight "prompted" 和 context_gloss "prompted" 在同一句
+    有完全重叠的 canonical span → context_gloss 赢。
+    """
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+            ],
+            phrase_glosses=[],
+            context_glosses=[
+                DraftContextGloss(
+                    sentence_id="s1",
+                    display="prompt sb to do sth",
+                    anchor_quotes=[AnchorQuote(text="prompted")],
+                    gloss="促使某人做某事",
+                    reason="词典义不足以表达语境含义",
+                )
+            ],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team to rethink their approach.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations: context_gloss 赢，vocab_highlight 被 subsumed
+    assert any(a.type == "context_gloss" for a in result.annotations)
+    assert not any(a.type == "vocab_highlight" for a in result.annotations)
+
+    # normalized_annotations: context_gloss 赢
+    norm_types = [a.type for a in result.normalized_annotations]
+    assert "context_gloss" in norm_types
+    # vocab_highlight 被 conflict_resolution drop
+    conflict_drops = [
+        e for e in result.canonical_drop_log
+        if e.drop_reason == "conflict_resolution" and e.annotation_type == "vocab_highlight"
+    ]
+    assert len(conflict_drops) >= 1
+
+
+def test_normalized_conflict_subsumed_by_phrase_gloss() -> None:
+    """vocab_highlight 被 phrase_gloss 的 span 包含时 drop。
+
+    "need" 的 span 被 "in need" 的 span 包含，两者 overlap，
+    phrase_gloss 优先级更高，vocab_highlight 被 conflict_resolution drop。
+    """
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="need"),
+            ],
+            phrase_glosses=[
+                DraftPhraseGloss(
+                    sentence_id="s1",
+                    label="in need",
+                    anchor_quotes=[AnchorQuote(text="in need")],
+                    phrase_type="collocation",
+                    zh="需要帮助的",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The family was in need of support.")],
+        policy=_policy(),
+    )
+
+    # normalized: phrase_gloss 保留，vocab_highlight "need" 被 drop
+    norm_types = [a.type for a in result.normalized_annotations]
+    assert "phrase_gloss" in norm_types
+    assert "vocab_highlight" not in norm_types
+
+    # vocab_highlight 被 conflict_resolution drop（overlap cluster）
+    conflict_drops = [
+        e for e in result.canonical_drop_log
+        if e.drop_reason == "conflict_resolution" and e.annotation_type == "vocab_highlight"
+    ]
+    assert len(conflict_drops) >= 1
+
+
+def test_normalized_density_control_based_on_canonical_spans() -> None:
+    """normalized density control 基于 canonical spans 生效。"""
+    # annotation_density=2, 但提供 3 个 vocab_highlights
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="results"),
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+                DraftVocabHighlight(sentence_id="s1", text="team"),
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(annotation_density=2),
+    )
+
+    # 旧 annotations: density control 保留 2 个
+    assert len(result.annotations) == 2
+
+    # normalized_annotations: density control 保留 2 个
+    assert len(result.normalized_annotations) == 2
+
+    # canonical_drop_log 有 density_exceeded
+    density_drops = [
+        e for e in result.canonical_drop_log
+        if e.drop_reason.startswith("density_exceeded")
+    ]
+    assert len(density_drops) == 1
+
+
+def test_normalized_multi_span_preserved_after_postprocess() -> None:
+    """phrase/context/grammar multi-span 在 postprocess 后仍保留 spans 顺序和 role。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                DraftPhraseGloss(
+                    sentence_id="s1",
+                    label="turn ... into",
+                    anchor_quotes=[
+                        AnchorQuote(text="Turn", role="verb"),
+                        AnchorQuote(text="into", role="preposition"),
+                    ],
+                    phrase_type="phrasal_verb",
+                    zh="把……变成……",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "Turn their passion into a stable income.")],
+        policy=_policy(),
+    )
+
+    # normalized_annotations 通过 postprocess 后保留
+    assert len(result.normalized_annotations) == 1
+    norm = result.normalized_annotations[0]
+    assert isinstance(norm, NormalizedPhraseGloss)
+    assert len(norm.spans) == 2
+    # spans 顺序和 role 保持
+    assert norm.spans[0].text == "Turn"
+    assert norm.spans[1].text == "into"
+    assert norm.spans[0].role == "verb"
+    assert norm.spans[1].role == "preposition"
+
+
+def test_normalized_grammar_multi_span_preserved_after_postprocess() -> None:
+    """grammar multi-span 在 postprocess 后仍保留 spans 顺序和 role。"""
+    result = normalize_and_ground(
+        vocabulary_draft=_empty_vocab(),
+        grammar_draft=GrammarDraft(
+            grammar_notes=[
+                DraftGrammarNote(
+                    sentence_id="s1",
+                    grammar_point="not only 句首倒装",
+                    anchor_quotes=[
+                        AnchorQuote(text="Not only did", role="inversion_trigger"),
+                        AnchorQuote(text="but he also", role="paired_structure"),
+                    ],
+                    note_zh="Not only 位于句首时使用部分倒装。",
+                )
+            ],
+            sentence_analyses=[],
+        ),
+        translation_draft=_translation_draft("s1"),
+        sentences=[
+            _sentence("s1", "Not only did he win, but he also broke the record.")
+        ],
+        policy=_policy(),
+    )
+
+    assert len(result.normalized_annotations) == 1
+    norm = result.normalized_annotations[0]
+    assert isinstance(norm, NormalizedGrammarNote)
+    assert len(norm.spans) == 2
+    assert norm.spans[0].text == "Not only did"
+    assert norm.spans[1].text == "but he also"
+    assert norm.spans[0].role == "inversion_trigger"
+    assert norm.spans[1].role == "paired_structure"
+
+
+def test_old_annotations_unchanged_by_normalized_postprocess() -> None:
+    """旧 annotations 行为不变，projection 兼容路径不受影响。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations: 1 个（dedup 在旧链路也生效）
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "vocab_highlight"
+
+    # 旧 drop_log 有自己的 duplicate（来自旧链路 dedup）
+    assert any(e.drop_reason == "duplicate" for e in result.drop_log)
+
+    # canonical_drop_log 也有 duplicate（来自 normalized dedup）
+    assert any(e.drop_reason == "duplicate" for e in result.canonical_drop_log)
+
+    # 两个 drop_log 是独立的列表
+    assert result.canonical_drop_log is not result.drop_log
+
+
+def test_canonical_stats_reflects_postprocessed_results() -> None:
+    """canonical_stats 统计 postprocessed normalized count 和 canonical drop count。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    assert result.canonical_stats is not None
+    # postprocessed: 1 个 vocab_highlight
+    assert result.canonical_stats["canonical_normalized_counts"]["vocab_highlight"] == 1
+    # 1 个 duplicate drop
+    assert result.canonical_stats["canonical_drop_counts_by_reason"].get("duplicate", 0) == 1
+    # span_count = 1 (postprocessed)
+    assert result.canonical_stats["canonical_span_count"] == 1
+
+
+def test_normalized_context_gloss_multi_span_preserved_after_postprocess() -> None:
+    """context_gloss multi-span 在 postprocess 后仍保留 spans 顺序和 role。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[],
+            context_glosses=[
+                DraftContextGloss(
+                    sentence_id="s1",
+                    display="prompt sb to do sth",
+                    anchor_quotes=[
+                        AnchorQuote(text="prompted", role="verb"),
+                        AnchorQuote(text="to rethink", role="infinitive"),
+                    ],
+                    gloss="促使某人做某事",
+                    reason="词典义不足以表达语境含义",
+                )
+            ],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team to rethink their approach.")],
+        policy=_policy(),
+    )
+
+    assert len(result.normalized_annotations) == 1
+    norm = result.normalized_annotations[0]
+    assert isinstance(norm, NormalizedContextGloss)
+    assert len(norm.spans) == 2
+    assert norm.spans[0].text == "prompted"
+    assert norm.spans[1].text == "to rethink"
+    assert norm.spans[0].role == "verb"
+    assert norm.spans[1].role == "infinitive"
+
+
+def test_normalized_different_explanation_same_span_not_deduped() -> None:
+    """不同教学解释的 annotation 即使 span 相同也不应误合并。
+
+    例如同一个 "prompted" 既是 vocab_highlight 又是 context_gloss，
+    它们 span 相同但 type 不同，不应被 dedup 合并。
+    """
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompted"),
+            ],
+            phrase_glosses=[],
+            context_glosses=[
+                DraftContextGloss(
+                    sentence_id="s1",
+                    display="prompt sb to do sth",
+                    anchor_quotes=[AnchorQuote(text="prompted")],
+                    gloss="促使某人做某事",
+                    reason="词典义不足以表达语境含义",
+                )
+            ],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team to rethink their approach.")],
+        policy=_policy(),
+    )
+
+    # dedup 不应合并不同 type 的 annotation
+    # 但 conflict_resolution 会 drop 低优先级的 vocab_highlight
+    # 所以最终 normalized_annotations 只有 context_gloss
+    norm_types = [a.type for a in result.normalized_annotations]
+    assert "context_gloss" in norm_types
+
+    # vocab_highlight 被 conflict_resolution drop（不是 dedup）
+    conflict_drops = [
+        e for e in result.canonical_drop_log
+        if e.drop_reason == "conflict_resolution"
+    ]
+    assert len(conflict_drops) >= 1
+
+
+def test_normalized_partial_overlap_conflict() -> None:
+    """partial overlap 的 rich annotation 也会触发 conflict。
+
+    phrase_gloss("prompted the team") 和 context_gloss("prompted")
+    有部分重叠 → context_gloss 优先级更高，phrase_gloss 被 drop。
+    """
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                DraftPhraseGloss(
+                    sentence_id="s1",
+                    label="prompt the team",
+                    anchor_quotes=[
+                        AnchorQuote(text="prompted the team"),
+                    ],
+                    phrase_type="collocation",
+                    zh="促使团队",
+                )
+            ],
+            context_glosses=[
+                DraftContextGloss(
+                    sentence_id="s1",
+                    display="prompt sb to do sth",
+                    anchor_quotes=[AnchorQuote(text="prompted")],
+                    gloss="促使某人做某事",
+                    reason="词典义不足以表达语境含义",
+                )
+            ],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team to rethink their approach.")],
+        policy=_policy(),
+    )
+
+    # context_gloss 赢（优先级 3 > phrase_gloss 优先级 2）
+    norm_types = [a.type for a in result.normalized_annotations]
+    assert "context_gloss" in norm_types
+    assert "phrase_gloss" not in norm_types
+
+    # phrase_gloss 被 conflict_resolution drop
+    conflict_drops = [
+        e for e in result.canonical_drop_log
+        if e.drop_reason == "conflict_resolution" and e.annotation_type == "phrase_gloss"
+    ]
+    assert len(conflict_drops) == 1
+
+
+def test_normalized_no_overlap_no_conflict() -> None:
+    """无 overlap 的 vocabulary annotation 不触发 conflict。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="results"),
+            ],
+            phrase_glosses=[
+                DraftPhraseGloss(
+                    sentence_id="s1",
+                    label="rethink approach",
+                    anchor_quotes=[AnchorQuote(text="rethink")],
+                    phrase_type="collocation",
+                    zh="重新思考方法",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team to rethink their approach.")],
+        policy=_policy(),
+    )
+
+    # 两个 annotation 无 overlap，都保留
+    norm_types = [a.type for a in result.normalized_annotations]
+    assert "vocab_highlight" in norm_types
+    assert "phrase_gloss" in norm_types
+
+    # 没有 conflict_resolution drop
+    conflict_drops = [
+        e for e in result.canonical_drop_log
+        if e.drop_reason == "conflict_resolution"
+    ]
+    assert len(conflict_drops) == 0
