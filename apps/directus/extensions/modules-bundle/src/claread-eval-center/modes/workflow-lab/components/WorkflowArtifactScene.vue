@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import ResultBlock from "../../../components/ResultBlock.vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
+import AnchorDebugPanel from "./AnchorDebugPanel.vue";
 import {
   dash,
   inlineMarkAnchorText,
@@ -170,6 +171,10 @@ function markDetail(mark) {
             <p v-else>暂无 drop log。</p>
           </div>
         </div>
+      </ResultBlock>
+
+      <ResultBlock title="Anchor Debug" :open="false">
+        <AnchorDebugPanel :payload="payload" />
       </ResultBlock>
 
       <ResultBlock v-if="showDebug" title="完整 JSON" :open="false">

@@ -29,6 +29,7 @@ class AnalyzeState(TypedDict, total=False):
     # Normalization result
     normalized_result: NormalizedAnnotationResult | None
     drop_log: list[DropLogEntry]  # Alias for normalized_result.drop_log for direct access
+    canonical_drop_log: list[DropLogEntry]  # Canonical shadow path drops
 
     # Optional repair
     repair_request: dict | None

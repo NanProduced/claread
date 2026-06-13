@@ -633,6 +633,8 @@ class ArticleAnalysisEvalResult(BaseModel):
     node_timings: dict[str, Any] | None = None
     annotation_stats: dict[str, Any] | None = None
     repair_stats: dict[str, Any] | None = None
+    drop_log: list[dict[str, Any]] = Field(default_factory=list)
+    canonical_drop_log: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ArticleAnalysisNodeProbeResult(BaseModel):

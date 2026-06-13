@@ -36,6 +36,8 @@ from app.schemas.analysis import AnalyzeRequest
 from app.services.analysis.debug_snapshots import (
     build_academic_quality,
     build_annotation_stats_summary,
+    build_canonical_drop_log_entries,
+    build_drop_log_entries,
     build_drop_log_summary,
     build_node_timings_summary,
     build_normalize_summary,
@@ -237,4 +239,6 @@ async def run_article_analysis_eval(
         node_timings=build_node_timings_summary(result),
         annotation_stats=build_annotation_stats_summary(result),
         repair_stats=build_repair_stats_summary(result),
+        drop_log=build_drop_log_entries(result),
+        canonical_drop_log=build_canonical_drop_log_entries(result),
     )

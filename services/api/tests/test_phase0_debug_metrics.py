@@ -394,10 +394,19 @@ def test_repair_stats_not_triggered():
 
 
 def test_repair_stats_triggered_and_succeeded(monkeypatch):
+    repaired_canonical_drop = _drop(
+        "quote_not_found",
+        annotation_type="phrase_gloss",
+    )
     repaired = NormalizedAnnotationResult(
         annotations=[VocabHighlight(sentence_id="s1", text="Sentence")],
         sentence_translations=[],
         drop_log=[],
+        canonical_stats={
+            "canonical_anchor_drop_summary": {"total_anchor_drops": 1},
+            "canonical_drop_counts_by_reason": {"quote_not_found": 1},
+        },
+        canonical_drop_log=[repaired_canonical_drop],
     )
     repair_mock = AsyncMock(
         return_value={
@@ -418,8 +427,17 @@ def test_repair_stats_triggered_and_succeeded(monkeypatch):
         annotations=[],
         sentence_translations=[],
         drop_log=[_drop("anchor_not_substring")],
+        canonical_drop_log=[_drop("quote_ambiguous")],
     )
-    state = _make_state(normalized_result=normalized_result)
+    state = _make_state(
+        normalized_result=normalized_result,
+        canonical_drop_log=normalized_result.canonical_drop_log,
+        annotation_stats={
+            "canonical_stats": {
+                "canonical_anchor_drop_summary": {"total_anchor_drops": 99},
+            },
+        },
+    )
     result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))
     stats = result.get("repair_stats")
     assert stats is not None
@@ -431,6 +449,9 @@ def test_repair_stats_triggered_and_succeeded(monkeypatch):
     assert stats["post_repair_annotation_count"] == 1
     assert stats["repair_elapsed_s"] is not None
     assert stats["repair_succeeded"] is True
+    assert result["canonical_drop_log"] == [repaired_canonical_drop]
+    assert result["annotation_stats"]["canonical_stats"] == repaired.canonical_stats
+    assert result["annotation_stats"]["normalized_counts"] == {"vocab_highlight": 1}
 
 
 def test_repair_stats_triggered_but_failed(monkeypatch):

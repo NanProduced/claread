@@ -631,6 +631,7 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
     return {
         "normalized_result": normalized_result,
         "drop_log": normalized_result.drop_log,
+        "canonical_drop_log": normalized_result.canonical_drop_log,
         "warnings": [*state.get("warnings", []), *partial_warnings, *draft_warnings],
         "node_timings": _merge_timings(
             state, {"normalize_and_ground": perf_counter() - t0}
@@ -764,10 +765,39 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "repair_elapsed_s": repair_elapsed,
             "repair_succeeded": True,
         }
+        annotation_stats = dict(state.get("annotation_stats") or {})
+        if repaired_result is not None:
+            drop_by_type = Counter(
+                getattr(e, "annotation_type", "")
+                for e in repaired_result.drop_log
+            )
+            drop_by_reason = Counter(
+                getattr(e, "drop_reason", "")
+                for e in repaired_result.drop_log
+            )
+            drop_by_stage = Counter(
+                getattr(e, "drop_stage", "")
+                for e in repaired_result.drop_log
+            )
+            annotation_stats.update({
+                "normalized_counts": _annotation_count_by_type(
+                    repaired_result.annotations
+                ),
+                "drop_counts_by_type": dict(sorted(drop_by_type.items())),
+                "drop_counts_by_reason": dict(sorted(drop_by_reason.items())),
+                "drop_counts_by_stage": dict(sorted(drop_by_stage.items())),
+                "anchor_drop_summary": _anchor_drop_summary(repaired_result.drop_log),
+                "canonical_stats": repaired_result.canonical_stats,
+            })
         return {
             "repair_request": {"error_context": error_context, "repaired": True},
             "normalized_result": repaired_result,
             "drop_log": repaired_result.drop_log if repaired_result else state.get("drop_log", []),
+            "canonical_drop_log": (
+                repaired_result.canonical_drop_log
+                if repaired_result else state.get("canonical_drop_log", [])
+            ),
+            "annotation_stats": annotation_stats,
             "repair_usage": repair_usage,
             "usage_summary": usage_summary,
             "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),

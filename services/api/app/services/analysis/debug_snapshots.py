@@ -275,6 +275,32 @@ def build_repair_stats_summary(result: dict[str, Any] | None) -> dict[str, Any] 
     return result.get("repair_stats") if result else None
 
 
+def build_drop_log_entries(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """从 result 中提取 drop_log 并序列化为 dict 列表。"""
+    drop_log = _coerce_drop_log(result)
+    if not drop_log:
+        return []
+    return [entry.model_dump(mode="json") for entry in drop_log]
+
+
+def build_canonical_drop_log_entries(
+    result: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """从 result 中提取 canonical_drop_log 并序列化为 dict 列表。"""
+    if not result:
+        return []
+    raw = result.get("canonical_drop_log")
+    if not raw:
+        return []
+    entries: list[dict[str, Any]] = []
+    for entry in raw:
+        if isinstance(entry, DropLogEntry):
+            entries.append(entry.model_dump(mode="json"))
+        elif isinstance(entry, dict):
+            entries.append(DropLogEntry.model_validate(entry).model_dump(mode="json"))
+    return entries
+
+
 def build_trace_refs(
     *,
     request_id: str | None,

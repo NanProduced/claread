@@ -5107,7 +5107,9 @@ function buildWorkflowCaseArtifact(casePayload, config, evalResult, transportErr
     warnings: Array.isArray(evalResult?.warnings)
       ? evalResult.warnings
       : (Array.isArray(renderScene?.warnings) ? renderScene.warnings : []),
-    drop_log: [],
+    drop_log: Array.isArray(evalResult?.drop_log) ? evalResult.drop_log : [],
+    canonical_drop_log: Array.isArray(evalResult?.canonical_drop_log) ? evalResult.canonical_drop_log : [],
+    annotation_stats: evalResult?.annotation_stats || null,
     preprocess_summary: evalResult?.preprocess_summary || null,
     normalize_summary: evalResult?.normalize_summary || null,
     drop_log_summary: evalResult?.drop_log_summary || null,
