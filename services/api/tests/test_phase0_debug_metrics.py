@@ -358,12 +358,22 @@ def test_normalize_and_ground_repair_decision_not_triggered():
     assert stats["repair_succeeded"] is None
 
 
-def test_normalize_and_ground_repair_decision_triggered():
+def test_normalize_and_ground_repair_decision_triggered(monkeypatch):
     """normalize_and_ground_node 在应触发 repair 时写入 trigger_reason。"""
     drop_log = [_drop("anchor_not_substring")]
     # 手动构造一个会触发 repair 的 normalized_result
     normalized_result = NormalizedAnnotationResult(
         annotations=[], sentence_translations=[], drop_log=drop_log,
+    )
+    repair_mock = AsyncMock(
+        return_value={"output": normalized_result, "usage_metadata": None}
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_run_repair_llm_span", repair_mock
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
     )
     # 直接调用 repair_agent_node 来验证 trigger 逻辑
     state = _make_state(normalized_result=normalized_result)
@@ -372,6 +382,7 @@ def test_normalize_and_ground_repair_decision_triggered():
     assert stats is not None
     assert stats["repair_triggered"] is True
     assert stats["trigger_reason"] is not None
+    repair_mock.assert_awaited_once()
 
 
 def test_repair_stats_not_triggered():
