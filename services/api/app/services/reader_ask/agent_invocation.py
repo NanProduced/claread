@@ -21,6 +21,7 @@ from app.agents.reader_ask_agent import (
     get_reader_ask_agent,
 )
 from app.config.settings import get_settings
+from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
@@ -76,9 +77,15 @@ async def run_reader_ask_replan(
     constructing a capped ``RunModelSettings``, and calling ``agent.run()``.
     """
     replan_resolved = resolve_reader_ask_agent(model_selection)
-    replan_model, _replan_model_config = build_reader_ask_replan_model_route(model_selection)
+    replan_model, replan_model_config = build_reader_ask_replan_model_route(
+        model_selection
+    )
     if replan_model is None:
         raise RuntimeError("model route is not configured: reader_ask_replan")
+    assert_real_llm_allowed(
+        "app.services.reader_ask.agent_invocation.run_reader_ask_replan",
+        model_config=replan_model_config,
+    )
     replan_route = route_settings.with_max_tokens(
         min(
             route_settings.max_tokens or cfg.DEFAULT_MAX_OUTPUT_TOKENS,

@@ -14,14 +14,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agents.reader_ask_agent import (
-    ReaderAskAgentDeps,
-    build_reader_ask_prompt,
-)
-from app.llm.types import ResolvedModelConfig, RunModelSettings
-from app.services.reader_ask import stream_events as stream_events_svc
-from app.workflow.tracing import build_usage_metadata
-
 from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
@@ -31,6 +23,15 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
 )
+
+from app.agents.reader_ask_agent import (
+    ReaderAskAgentDeps,
+    build_reader_ask_prompt,
+)
+from app.llm.call_guard import assert_real_llm_allowed
+from app.llm.types import ResolvedModelConfig, RunModelSettings
+from app.services.reader_ask import stream_events as stream_events_svc
+from app.workflow.tracing import build_usage_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -493,6 +494,10 @@ def start_reader_ask_agent_stream(
 
     async def run_agent_stream() -> None:
         try:
+            assert_real_llm_allowed(
+                "app.services.reader_ask.agent_runner.start_reader_ask_agent_stream",
+                model_config=model_config,
+            )
             async with agent.run_stream(
                 build_reader_ask_prompt(deps),
                 deps=deps,

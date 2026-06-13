@@ -2,12 +2,72 @@ from __future__ import annotations
 
 import pytest
 
-from app.llm.call_guard import pop_blocked_real_llm_attempts
+from app.llm.call_guard import (
+    block_real_llm_attempt,
+    pop_blocked_real_llm_attempts,
+)
 
 
 @pytest.fixture(autouse=True)
-def fail_on_real_llm_attempts():
+def fail_on_real_llm_attempts(monkeypatch: pytest.MonkeyPatch):
     pop_blocked_real_llm_attempts()
+
+    from app.infra import bailian_embedding, bailian_rerank
+    from app.llm import dashscope_stream, structured_completion
+
+    class _BlockedStructuredAsyncClient:
+        def __init__(self, *args, **kwargs):
+            block_real_llm_attempt(
+                "app.llm.structured_completion.httpx.AsyncClient",
+            )
+
+    class _BlockedAioGeneration:
+        @staticmethod
+        async def call(*args, **kwargs):
+            block_real_llm_attempt(
+                "app.llm.dashscope_stream.AioGeneration.call",
+                model_name=str(kwargs.get("model") or "unknown"),
+            )
+
+    class _BlockedTextEmbedding:
+        @staticmethod
+        def call(*args, **kwargs):
+            block_real_llm_attempt(
+                "app.infra.bailian_embedding.dashscope.TextEmbedding.call",
+                route="rag_embedding",
+                provider="dashscope_embedding",
+                model_name=str(kwargs.get("model") or "unknown"),
+            )
+
+    class _BlockedTextReRank:
+        @staticmethod
+        def call(*args, **kwargs):
+            block_real_llm_attempt(
+                "app.infra.bailian_rerank.dashscope.TextReRank.call",
+                route="rag_rerank",
+                provider="dashscope_rerank",
+                model_name=str(kwargs.get("model") or "unknown"),
+            )
+
+    monkeypatch.setattr(
+        structured_completion.httpx,
+        "AsyncClient",
+        _BlockedStructuredAsyncClient,
+    )
+    monkeypatch.setattr(dashscope_stream, "AioGeneration", _BlockedAioGeneration)
+    monkeypatch.setattr(
+        bailian_embedding.dashscope,
+        "TextEmbedding",
+        _BlockedTextEmbedding,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        bailian_rerank.dashscope,
+        "TextReRank",
+        _BlockedTextReRank,
+        raising=False,
+    )
+
     yield
     attempts = pop_blocked_real_llm_attempts()
     if not attempts:

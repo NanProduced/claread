@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 ALLOW_REAL_LLM_TESTS_ENV = "CLAREAD_ALLOW_REAL_LLM_TESTS"
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -35,7 +35,8 @@ def real_llm_tests_allowed() -> bool:
 
 
 def _has_api_key(model_config: Any) -> bool:
-    return bool(str(getattr(model_config, "api_key", "") or "").strip())
+    api_key = getattr(model_config, "api_key", "")
+    return isinstance(api_key, str) and bool(api_key.strip())
 
 
 def assert_real_llm_allowed(surface: str, *, model_config: Any) -> None:
@@ -50,12 +51,24 @@ def assert_real_llm_allowed(surface: str, *, model_config: Any) -> None:
     if model_config is None or not _has_api_key(model_config):
         return
 
+    block_real_llm_attempt(surface, model_config=model_config)
+
+
+def block_real_llm_attempt(
+    surface: str,
+    *,
+    model_config: Any = None,
+    route: str = "unknown",
+    profile_name: str = "unknown",
+    provider: str = "unknown",
+    model_name: str = "unknown",
+) -> NoReturn:
     attempt = BlockedRealLLMAttempt(
         surface=surface,
-        route=str(getattr(model_config, "route", "unknown")),
-        profile_name=str(getattr(model_config, "profile_name", "unknown")),
-        provider=str(getattr(model_config, "provider", "unknown")),
-        model_name=str(getattr(model_config, "model_name", "unknown")),
+        route=str(getattr(model_config, "route", route)),
+        profile_name=str(getattr(model_config, "profile_name", profile_name)),
+        provider=str(getattr(model_config, "provider", provider)),
+        model_name=str(getattr(model_config, "model_name", model_name)),
     )
     _blocked_real_llm_attempts.append(attempt)
     raise RealLLMCallBlockedError(

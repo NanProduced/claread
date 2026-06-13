@@ -8,22 +8,23 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from time import perf_counter
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
 from langsmith import traceable
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.routes import MODEL_ROUTE_DAILY_ANALYSIS
 from app.services.ai_usage import (
-    AIUsageEventCreate,
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_DAILY_READER_SCORING,
     STATUS_FALLBACK,
     STATUS_SKIPPED,
     STATUS_SUCCEEDED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
+    AIUsageEventCreate,
     build_model_metadata,
     record_ai_usage_event,
 )
@@ -68,8 +69,8 @@ async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
         "article_word_count": article.word_count,
     }
     try:
-        from app.llm.router import build_model_for_route
         from app.config.settings import get_settings
+        from app.llm.router import build_model_for_route
 
         settings = get_settings()
         model, model_config = build_model_for_route(settings, MODEL_ROUTE_DAILY_ANALYSIS)
@@ -103,6 +104,10 @@ async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
         model_name = model_config.model_name if model_config else "unknown"
         profile_name = model_config.profile_name if model_config else "unknown"
         provider = model_config.provider if model_config else "unknown"
+        assert_real_llm_allowed(
+            "app.services.daily_reader.scoring.score_article",
+            model_config=model_config,
+        )
 
         metadata = {
             "workflow_name": "daily_reader",
@@ -174,6 +179,7 @@ async def _score_article_llm_span(
     provider: str,
 ) -> dict[str, Any]:
     from pydantic_ai import Agent
+
     from app.llm.agent_runner import extract_run_usage
 
     scoring_agent = Agent(

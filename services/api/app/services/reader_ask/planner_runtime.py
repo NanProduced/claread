@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 from app.agents.reader_ask_planner_agent import (
@@ -24,6 +25,9 @@ from app.agents.reader_ask_planner_agent import (
     build_reader_ask_planner_prompt,
     get_reader_ask_planner_agent,
 )
+from app.llm.agent_runner import extract_run_usage
+from app.llm.call_guard import assert_real_llm_allowed
+from app.llm.types import RunModelSettings
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
     ReaderAskAttachment,
@@ -36,12 +40,9 @@ from app.schemas.reader_ask import (
     ReaderAskSubmissionMode,
     ReaderAskTaskMode,
 )
-from app.llm.agent_runner import extract_run_usage
-from app.llm.types import RunModelSettings
 from app.services.reader_ask import config as cfg
 from app.services.reader_ask import context_runtime as context_runtime_svc
-from app.services.reader_ask import planner
-from app.services.reader_ask import utils
+from app.services.reader_ask import planner, utils
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +415,10 @@ async def run_semantic_planner(
     model, model_config = deps.build_model_route_cb()
     if model is None:
         raise RuntimeError("model route is not configured: reader_ask_planner")
+    assert_real_llm_allowed(
+        "app.services.reader_ask.planner_runtime.run_semantic_planner",
+        model_config=model_config,
+    )
 
     route_settings = RunModelSettings(
         max_tokens=cfg.DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
