@@ -434,8 +434,11 @@ class TestAuthoritativeFinalContent:
     def test_authoritative_used_when_first_delta_lost(self) -> None:
         # Simulate the first delta ("hel") being lost — content_parts has
         # "lo " and "world" but the model's true final output is "hello world".
+        # ``emitted_text`` is set to what was actually streamed (the delta
+        # path is the only thing that mutates it in the real stream).
         runtime = agent_runner_svc.AgentStreamRuntime()
         runtime.content_parts = ["lo ", "world"]
+        runtime.emitted_text = "lo world"
         runtime.producer_result = self._result_with_output("hello world")
 
         outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
@@ -451,6 +454,7 @@ class TestAuthoritativeFinalContent:
     def test_interrupted_with_authoritative(self) -> None:
         runtime = agent_runner_svc.AgentStreamRuntime()
         runtime.content_parts = ["abc"]
+        runtime.emitted_text = "abc"
         runtime.producer_error = RuntimeError("network blip")
         runtime.producer_result = self._result_with_output("abcdef")
 
@@ -469,6 +473,7 @@ class TestAuthoritativeFinalContent:
     def test_emitted_text_preserves_streamed_text_when_authoritative_differs(self) -> None:
         runtime = agent_runner_svc.AgentStreamRuntime()
         runtime.content_parts = ["lo ", "world"]
+        runtime.emitted_text = "lo world"
         runtime.producer_result = self._result_with_output("hello world")
 
         agent_runner_svc.finish_reader_ask_agent_stream(

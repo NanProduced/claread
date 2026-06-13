@@ -108,6 +108,12 @@ class AgentStreamRuntime:
     emitted_reasoning: str = ""
     reasoning_started: bool = False
     reasoning_active: bool = False
+    # Set by the producer task at the end of the `agent.run_stream(...)`
+    # context block. ``finish_reader_ask_agent_stream`` reads this to use
+    # the model's authoritative ``result.output`` as the final
+    # ``outcome.content_md``. ``emitted_text`` retains the raw stream so
+    # the checkpoint writer and eval can detect lost-delta cases.
+    producer_result: Any | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +434,25 @@ async def _replay_missed_reasoning(
             return
 
 
+def _resolve_authoritative_final_text(runtime: AgentStreamRuntime) -> str | None:
+    """Return ``result.output`` as the authoritative final text, or None.
+
+    The result is the agent's ``run_stream`` final output. Use this as the
+    completed-payload and persisted content source whenever it is non-empty.
+    The streamed ``runtime.content_parts`` is retained on
+    ``runtime.emitted_text`` for SSE live updates, the checkpoint writer,
+    and eval detection of lost-delta cases.
+    """
+    result = runtime.producer_result
+    if result is None:
+        return None
+    output = getattr(result, "output", None)
+    if output is None:
+        return None
+    text = str(output).strip()
+    return text or None
+
+
 def start_reader_ask_agent_stream(
     *,
     agent: Any,
@@ -501,6 +526,7 @@ def start_reader_ask_agent_stream(
                 if checkpoint_flush is not None:
                     await checkpoint_flush(runtime, force=True)
                 runtime.usage_summary = build_usage_metadata(result.usage())
+                runtime.producer_result = result
         except Exception as exc:
             if checkpoint_flush is not None:
                 await checkpoint_flush(runtime, force=True)
@@ -529,7 +555,13 @@ def finish_reader_ask_agent_stream(
     runtime: AgentStreamRuntime,
     assistant_message_id: str,
 ) -> tuple[AgentStreamOutcome, tuple[str, dict[str, Any]] | None]:
-    final_content_md = "".join(runtime.content_parts).strip()
+    streamed_text = "".join(runtime.content_parts).strip()
+    # ``result.output`` is the authoritative source for the persisted and
+    # completed-payload content. ``runtime.emitted_text`` retains the raw
+    # stream for the checkpoint writer and for eval detection of lost-delta
+    # cases — never overwrite it here.
+    authoritative_text = _resolve_authoritative_final_text(runtime)
+    final_content_md = authoritative_text if authoritative_text else streamed_text
     if runtime.producer_error is not None:
         if final_content_md:
             return (
