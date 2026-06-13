@@ -35,9 +35,12 @@ from app.observability import SURFACE_EVAL_WORKFLOW_LAB, set_trace_surface
 from app.schemas.analysis import AnalyzeRequest
 from app.services.analysis.debug_snapshots import (
     build_academic_quality,
+    build_annotation_stats_summary,
     build_drop_log_summary,
+    build_node_timings_summary,
     build_normalize_summary,
     build_preprocess_summary,
+    build_repair_stats_summary,
     build_runtime_summary,
     build_trace_refs,
     resolve_workflow_identity,
@@ -231,4 +234,7 @@ async def run_article_analysis_eval(
         rag_debug=result.get("rag_debug"),
         trace_refs=build_trace_refs(request_id=request_id),
         warnings=_warnings(result),
+        node_timings=build_node_timings_summary(result),
+        annotation_stats=build_annotation_stats_summary(result),
+        repair_stats=build_repair_stats_summary(result),
     )

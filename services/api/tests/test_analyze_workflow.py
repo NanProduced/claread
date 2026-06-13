@@ -14,11 +14,10 @@ from app.schemas.internal.analysis import (
 )
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
 from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
-from app.services.analysis.preprocess.input_preparation import prepare_input
-from app.services.analysis.postprocess.projection import project_to_render_scene
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
-from app.workflow import learning_workflow
-from app.workflow import analyze_nodes
+from app.services.analysis.postprocess.projection import project_to_render_scene
+from app.services.analysis.preprocess.input_preparation import prepare_input
+from app.workflow import analyze_nodes, learning_workflow
 
 
 async def _fake_run_vocabulary_span(*args, **kwargs):
@@ -42,8 +41,14 @@ async def _fake_run_translation_span(*args, **kwargs):
         "output": TranslationDraft(
             title="店铺防盗与店员安全挑战",
             sentence_translations=[
-                SentenceTranslation(sentence_id="s1", translation_zh="店主不得不采取极端措施阻止商店扒手。"),
-                SentenceTranslation(sentence_id="s2", translation_zh="令人不安的是，每天都有针对店员的暴力事件。"),
+                SentenceTranslation(
+                    sentence_id="s1",
+                    translation_zh="店主不得不采取极端措施阻止商店扒手。",
+                ),
+                SentenceTranslation(
+                    sentence_id="s2",
+                    translation_zh="令人不安的是，每天都有针对店员的暴力事件。",
+                ),
             ]
         ),
         "usage": {"input_tokens": 40, "output_tokens": 20, "total_tokens": 60},
@@ -164,6 +169,7 @@ def test_analyze_route_surfaces_draft_validation_warnings(monkeypatch) -> None:
     monkeypatch.setattr(analyze_nodes, "_run_vocabulary_llm_span", _invalid_vocab_span)
     monkeypatch.setattr(analyze_nodes, "_run_grammar_llm_span", _fake_run_grammar_span)
     monkeypatch.setattr(analyze_nodes, "_run_translation_llm_span", _fake_run_translation_span)
+    monkeypatch.setattr(learning_workflow, "should_trigger_repair", lambda *_args, **_kwargs: False)
 
     client = TestClient(app)
     response = client.post(
@@ -186,15 +192,24 @@ def test_analyze_route_surfaces_draft_validation_warnings(monkeypatch) -> None:
 
 
 def test_projection_keeps_stable_ids_when_prior_mark_is_dropped() -> None:
-    prepared_input = prepare_input("This sentence mentions this first. Another sentence mentions leverage clearly.")
+    prepared_input = prepare_input(
+        "This sentence mentions this first. "
+        "Another sentence mentions leverage clearly."
+    )
     plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
 
     baseline = project_to_render_scene(
         annotation_output=AnnotationOutput(
             annotations=[VocabHighlight(sentence_id="s2", text="leverage")],
             sentence_translations=[
-                SentenceTranslation(sentence_id="s1", translation_zh="第一句先提到了 this。"),
-                SentenceTranslation(sentence_id="s2", translation_zh="第二句清楚地提到了 leverage。"),
+                SentenceTranslation(
+                    sentence_id="s1",
+                    translation_zh="第一句先提到了 this。",
+                ),
+                SentenceTranslation(
+                    sentence_id="s2",
+                    translation_zh="第二句清楚地提到了 leverage。",
+                ),
             ],
         ),
         prepared_input=prepared_input,
@@ -217,8 +232,14 @@ def test_projection_keeps_stable_ids_when_prior_mark_is_dropped() -> None:
                 VocabHighlight(sentence_id="s2", text="leverage"),
             ],
             sentence_translations=[
-                SentenceTranslation(sentence_id="s1", translation_zh="第一句先提到了 this。"),
-                SentenceTranslation(sentence_id="s2", translation_zh="第二句清楚地提到了 leverage。"),
+                SentenceTranslation(
+                    sentence_id="s1",
+                    translation_zh="第一句先提到了 this。",
+                ),
+                SentenceTranslation(
+                    sentence_id="s2",
+                    translation_zh="第二句清楚地提到了 leverage。",
+                ),
             ],
         ),
         prepared_input=prepared_input,
@@ -241,15 +262,16 @@ def test_parallel_agents_aggregate_usage_summary(monkeypatch) -> None:
     prepared_input = prepare_input("Sentence one. Sentence two.")
     state = {
         "prepared_input": prepared_input,
-        "goal_execution_plan": analyze_nodes.build_goal_execution_plan("daily_reading", "intermediate_reading"),
-        "payload": AnalyzeRequest.model_validate(
-            {                "request_id": "req-usage",
-                "text": "Sentence one. Sentence two.",
-                "source_type": "user_input",
-                "reading_goal": "daily_reading",
-                "reading_variant": "intermediate_reading",
-            }
+        "goal_execution_plan": analyze_nodes.build_goal_execution_plan(
+            "daily_reading", "intermediate_reading"
         ),
+        "payload": AnalyzeRequest.model_validate({
+            "request_id": "req-usage",
+            "text": "Sentence one. Sentence two.",
+            "source_type": "user_input",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+        }),
     }
 
     result = asyncio.run(analyze_nodes._run_parallel_agents(state, model_selection=None))
@@ -287,7 +309,11 @@ def test_derive_user_config_node_reuses_precomputed_plan(monkeypatch) -> None:
         )
     )
 
-    assert result == {}
+    # node_timings is always returned; the key assertion is that
+    # build_goal_execution_plan was not called (monkeypatched to _fail).
+    assert "goal_execution_plan" not in result
+    assert "node_timings" in result
+    assert "derive_user_config" in result["node_timings"]
 
 
 class _FakeRunTree:
@@ -383,9 +409,19 @@ def test_should_repair_triggers_for_zero_annotations_with_repair_worthy_drop() -
 
 def test_repair_agent_node_uses_same_zero_annotation_repair_rule(monkeypatch) -> None:
     repaired = NormalizedAnnotationResult(annotations=[], sentence_translations=[], drop_log=[])
-    repair_mock = AsyncMock(return_value={"output": repaired, "usage_metadata": {"total_tokens": 1}})
-    monkeypatch.setattr(analyze_nodes, "_run_repair_llm_span", repair_mock)
-    monkeypatch.setattr(analyze_nodes, "_build_agent_trace_metadata", lambda *_args, **_kwargs: {"extra": {}})
+    repair_mock = AsyncMock(
+        return_value={
+            "output": repaired,
+            "usage_metadata": {"total_tokens": 1},
+        }
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_run_repair_llm_span", repair_mock
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
 
     text = "Languages change."
     state = {
@@ -400,7 +436,9 @@ def test_repair_agent_node_uses_same_zero_annotation_repair_rule(monkeypatch) ->
         ),
         "prepared_input": prepare_input(text),
         "goal_execution_plan": build_goal_execution_plan("daily_reading", "intermediate_reading"),
-        "vocabulary_draft": VocabularyDraft(vocab_highlights=[], phrase_glosses=[], context_glosses=[]),
+        "vocabulary_draft": VocabularyDraft(
+            vocab_highlights=[], phrase_glosses=[], context_glosses=[]
+        ),
         "grammar_draft": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
         "translation_draft": TranslationDraft(title="测试标题", sentence_translations=[]),
         "normalized_result": NormalizedAnnotationResult(

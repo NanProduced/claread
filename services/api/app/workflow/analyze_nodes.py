@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import Counter
+from time import perf_counter
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -68,6 +69,38 @@ ANCHOR_FAILURE_THRESHOLD = 0.35
 def _annotation_count_by_type(annotations: list[Any]) -> dict[str, int]:
     counts = Counter(getattr(a, "type", str(type(a).__name__)) for a in annotations)
     return dict(sorted(counts.items()))
+
+
+ANCHOR_DROP_REASONS = frozenset({
+    "anchor_not_substring", "anchor_invalid", "resolve_failed",
+    "sentence_id_not_found", "schematic_anchor_not_groundable",
+})
+
+
+def _anchor_drop_summary(drop_log: list[Any]) -> dict[str, Any]:
+    """按 (annotation_type, drop_reason) 汇总 anchor 相关 drop。"""
+    anchor_drops = [
+        e for e in drop_log
+        if getattr(e, "drop_reason", "") in ANCHOR_DROP_REASONS
+    ]
+    by_type_and_reason = Counter(
+        (getattr(e, "annotation_type", ""), getattr(e, "drop_reason", ""))
+        for e in anchor_drops
+    )
+    return {
+        "total_anchor_drops": len(anchor_drops),
+        "by_annotation_type_and_reason": [
+            {"annotation_type": at, "drop_reason": dr, "count": cnt}
+            for (at, dr), cnt in by_type_and_reason.most_common()
+        ],
+    }
+
+
+def _merge_timings(state: AnalyzeState, new_timings: dict[str, float]) -> dict[str, float]:
+    """合并节点计时到 state。"""
+    merged = dict(state.get("node_timings", {}) or {})
+    merged.update(new_timings)
+    return merged
 
 
 def _model_selection(config: RunnableConfig | None) -> ModelSelection | None:
@@ -179,7 +212,10 @@ async def _run_vocabulary_llm_span(
 ) -> dict[str, Any]:
     result = await run_vocabulary_agent(deps, model_selection=model_selection)
     usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
 
 
 @traceable(name="grammar_llm_call", run_type="llm")
@@ -191,7 +227,10 @@ async def _run_grammar_llm_span(
 ) -> dict[str, Any]:
     result = await run_grammar_agent(deps, model_selection=model_selection)
     usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
 
 
 @traceable(name="translation_llm_call", run_type="llm")
@@ -203,7 +242,10 @@ async def _run_translation_llm_span(
 ) -> dict[str, Any]:
     result = await run_translation_agent(deps, model_selection=model_selection)
     usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
 
 
 # -------------------------------------------------------------------
@@ -212,6 +254,7 @@ async def _run_translation_llm_span(
 
 
 async def prepare_input_node(state: AnalyzeState) -> AnalyzeState:
+    t0 = perf_counter()
     payload = state["payload"]
     prepared_input = prepare_input(payload.text)
     warnings: list[Any] = []
@@ -225,6 +268,7 @@ async def prepare_input_node(state: AnalyzeState) -> AnalyzeState:
                 payload=payload,
                 profile_id="unresolved",
             ),
+            "node_timings": _merge_timings(state, {"prepare_input": perf_counter() - t0}),
         }
 
     FAIL_WARN = {"code_like", "other"}
@@ -265,17 +309,35 @@ async def prepare_input_node(state: AnalyzeState) -> AnalyzeState:
             )
         )
 
-    return {"prepared_input": prepared_input, "warnings": warnings}
+    return {
+        "prepared_input": prepared_input,
+        "warnings": warnings,
+        "node_timings": _merge_timings(
+            state, {"prepare_input": perf_counter() - t0}
+        ),
+    }
 
 
 async def derive_user_config_node(state: AnalyzeState) -> AnalyzeState:
+    t0 = perf_counter()
     existing_plan = state.get("goal_execution_plan")
     if existing_plan is not None:
-        return {}
+        return {
+            "node_timings": _merge_timings(
+                state, {"derive_user_config": perf_counter() - t0}
+            ),
+        }
 
     payload = state["payload"]
-    plan = build_goal_execution_plan(payload.reading_goal, payload.reading_variant)
-    return {"goal_execution_plan": plan}
+    plan = build_goal_execution_plan(
+        payload.reading_goal, payload.reading_variant
+    )
+    return {
+        "goal_execution_plan": plan,
+        "node_timings": _merge_timings(
+            state, {"derive_user_config": perf_counter() - t0}
+        ),
+    }
 
 
 async def _run_parallel_agents(
@@ -322,32 +384,78 @@ async def _run_parallel_agents(
     grammar_meta = _build_agent_trace_metadata(state, "grammar_agent", model_selection)
     translation_meta = _build_agent_trace_metadata(state, "translation_agent", model_selection)
 
-    vocab_task = _run_vocabulary_llm_span(
-        deps=vocab_deps, metadata=vocab_meta, model_selection=model_selection
+    # 各 agent 独立计时：在各自 coroutine 内 perf_counter
+    # 即使 agent 抛异常也记录耗时，方便定位 timeout/失败瓶颈
+    async def _timed(coro: Any) -> tuple[Any, float]:
+        t0 = perf_counter()
+        try:
+            result = await coro
+        except Exception as exc:
+            elapsed = perf_counter() - t0
+            return exc, elapsed
+        elapsed = perf_counter() - t0
+        return result, elapsed
+
+    vocab_task = _timed(
+        _run_vocabulary_llm_span(
+            deps=vocab_deps, metadata=vocab_meta,
+            model_selection=model_selection,
+        )
     )
-    grammar_task = _run_grammar_llm_span(
-        deps=grammar_deps, metadata=grammar_meta, model_selection=model_selection
+    grammar_task = _timed(
+        _run_grammar_llm_span(
+            deps=grammar_deps, metadata=grammar_meta,
+            model_selection=model_selection,
+        )
     )
-    translation_task = _run_translation_llm_span(
-        deps=translation_deps, metadata=translation_meta, model_selection=model_selection
+    translation_task = _timed(
+        _run_translation_llm_span(
+            deps=translation_deps, metadata=translation_meta,
+            model_selection=model_selection,
+        )
     )
 
-    results = await asyncio.gather(vocab_task, grammar_task, translation_task, return_exceptions=True)
+    gather_t0 = perf_counter()
+    results = await asyncio.gather(
+        vocab_task, grammar_task, translation_task,
+        return_exceptions=True,
+    )
+    _ = perf_counter() - gather_t0  # wall time for parallel_agents recorded separately
 
-    vocab_result = results[0] if not isinstance(results[0], Exception) else None
-    grammar_result = results[1] if not isinstance(results[1], Exception) else None
-    translation_result = results[2] if not isinstance(results[2], Exception) else None
+    # 从 _timed 返回值中提取 agent 结果和独立耗时
+    # _timed 始终返回 (result_or_exc, elapsed)，不再需要 gather 捕获异常
+    agent_timings: dict[str, float] = {}
+    raw_results: list[Any] = []
+    for i, key in enumerate(
+        ("vocabulary_agent", "grammar_agent", "translation_agent")
+    ):
+        agent_result, agent_elapsed = results[i]
+        raw_results.append(agent_result)
+        agent_timings[key] = agent_elapsed
+
+    vocab_result = raw_results[0] if not isinstance(raw_results[0], Exception) else None
+    grammar_result = raw_results[1] if not isinstance(raw_results[1], Exception) else None
+    translation_result = raw_results[2] if not isinstance(raw_results[2], Exception) else None
 
     errors: list[Warning] = []
-    if isinstance(results[0], Exception):
-        logger.exception("vocabulary_agent 调用失败")
-        errors.append(Warning(code="VOCABULARY_AGENT_FAILED", level="error", message=f"vocabulary agent 调用失败: {results[0]}"))
-    if isinstance(results[1], Exception):
-        logger.exception("grammar_agent 调用失败")
-        errors.append(Warning(code="GRAMMAR_AGENT_FAILED", level="error", message=f"grammar agent 调用失败: {results[1]}"))
-    if isinstance(results[2], Exception):
-        logger.exception("translation_agent 调用失败")
-        errors.append(Warning(code="TRANSLATION_AGENT_FAILED", level="error", message=f"translation agent 调用失败: {results[2]}"))
+    if isinstance(raw_results[0], Exception):
+        logger.error("vocabulary_agent 调用失败", exc_info=raw_results[0])
+        errors.append(Warning(
+            code="VOCABULARY_AGENT_FAILED", level="error",
+            message=f"vocabulary agent 调用失败: {raw_results[0]}",
+        ))
+    if isinstance(raw_results[1], Exception):
+        logger.error("grammar_agent 调用失败", exc_info=raw_results[1])
+        errors.append(Warning(
+            code="GRAMMAR_AGENT_FAILED", level="error",
+            message=f"grammar agent 调用失败: {raw_results[1]}",
+        ))
+    if isinstance(raw_results[2], Exception):
+        logger.error("translation_agent 调用失败", exc_info=raw_results[2])
+        errors.append(Warning(
+            code="TRANSLATION_AGENT_FAILED", level="error",
+            message=f"translation agent 调用失败: {raw_results[2]}",
+        ))
 
     vocabulary_output = vocab_result.get("output") if vocab_result else None
     grammar_output = grammar_result.get("output") if grammar_result else None
@@ -364,7 +472,11 @@ async def _run_parallel_agents(
         translation_result.get("usage_metadata") or translation_result.get("usage")
         if translation_result else None
     )
-    usage_summary = _aggregate_usage_summary({"vocabulary": vocabulary_usage, "grammar": grammar_usage, "translation": translation_usage})
+    usage_summary = _aggregate_usage_summary({
+        "vocabulary": vocabulary_usage,
+        "grammar": grammar_usage,
+        "translation": translation_usage,
+    })
 
     return {
         "vocabulary_draft": vocabulary_output,
@@ -376,14 +488,21 @@ async def _run_parallel_agents(
         "usage_summary": usage_summary,
         "rag_debug": _build_learning_rag_debug(grammar_bundle),
         "agent_errors": errors,
+        "agent_timings": agent_timings,
     }
 
 
 async def parallel_agents_node(state: AnalyzeState, config: RunnableConfig) -> AnalyzeState:
     """Parallel agents node."""
+    t0 = perf_counter()
     model_selection = _model_selection(config)
     result = await _run_parallel_agents(state, model_selection)
     errors = result.get("agent_errors", [])
+    parallel_elapsed = perf_counter() - t0
+
+    # 合并 agent 子耗时和 parallel_agents 总耗时
+    agent_timings = result.get("agent_timings", {})
+    timings = _merge_timings(state, {"parallel_agents": parallel_elapsed, **agent_timings})
 
     return {
         "vocabulary_draft": result.get("vocabulary_draft"),
@@ -395,11 +514,13 @@ async def parallel_agents_node(state: AnalyzeState, config: RunnableConfig) -> A
         "usage_summary": result.get("usage_summary"),
         "rag_debug": result.get("rag_debug"),
         "warnings": [*state.get("warnings", []), *errors],
+        "node_timings": timings,
     }
 
 
 async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
     """Normalize and ground node。"""
+    t0 = perf_counter()
     prepared_input = state["prepared_input"]
     vocabulary_draft = state.get("vocabulary_draft")
     grammar_draft = state.get("grammar_draft")
@@ -408,17 +529,46 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
     partial_warnings: list[Warning] = []
     if vocabulary_draft is None:
         vocabulary_draft = VocabularyDraft()
-        partial_warnings.append(Warning(code="VOCABULARY_AGENT_FAILED", level="error", message="vocabulary agent 未返回有效结果，词汇标注已降级为空"))
+        partial_warnings.append(Warning(
+            code="VOCABULARY_AGENT_FAILED", level="error",
+            message="vocabulary agent 未返回有效结果，词汇标注已降级为空",
+        ))
     if grammar_draft is None:
         grammar_draft = GrammarDraft()
-        partial_warnings.append(Warning(code="GRAMMAR_AGENT_FAILED", level="error", message="grammar agent 未返回有效结果，语法标注已降级为空"))
+        partial_warnings.append(Warning(
+            code="GRAMMAR_AGENT_FAILED", level="error",
+            message="grammar agent 未返回有效结果，语法标注已降级为空",
+        ))
     if translation_draft is None:
-        translation_draft = TranslationDraft(title="（翻译不可用）", sentence_translations=[])
-        partial_warnings.append(Warning(code="TRANSLATION_AGENT_FAILED", level="error", message="translation agent 未返回有效结果，翻译已降级为空"))
+        translation_draft = TranslationDraft(
+            title="（翻译不可用）", sentence_translations=[]
+        )
+        partial_warnings.append(Warning(
+            code="TRANSLATION_AGENT_FAILED", level="error",
+            message="translation agent 未返回有效结果，翻译已降级为空",
+        ))
 
-    sentences = [PreparedSentence.model_validate(s) if not isinstance(s, PreparedSentence) else s for s in prepared_input.sentences]
-    validation_warnings = validate_all_drafts(vocabulary_draft, grammar_draft, translation_draft, sentences)
-    draft_warnings = [Warning(code="DRAFT_VALIDATION", level="warning", message=msg) for msg in validation_warnings]
+    # Draft 统计：按 annotation type 分组
+    all_draft_annotations: list[Any] = []
+    all_draft_annotations.extend(vocabulary_draft.vocab_highlights)
+    all_draft_annotations.extend(vocabulary_draft.phrase_glosses)
+    all_draft_annotations.extend(vocabulary_draft.context_glosses)
+    all_draft_annotations.extend(grammar_draft.grammar_notes)
+    all_draft_annotations.extend(grammar_draft.sentence_analyses)
+    draft_counts = _annotation_count_by_type(all_draft_annotations)
+
+    sentences = [
+        PreparedSentence.model_validate(s)
+        if not isinstance(s, PreparedSentence) else s
+        for s in prepared_input.sentences
+    ]
+    validation_warnings = validate_all_drafts(
+        vocabulary_draft, grammar_draft, translation_draft, sentences
+    )
+    draft_warnings = [
+        Warning(code="DRAFT_VALIDATION", level="warning", message=msg)
+        for msg in validation_warnings
+    ]
 
     normalized_result = normalize_and_ground(
         vocabulary_draft=vocabulary_draft,
@@ -428,19 +578,99 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
         policy=state["goal_execution_plan"].policy,
     )
 
+    # Normalized 统计：按 annotation type 分组
+    normalized_counts = _annotation_count_by_type(normalized_result.annotations)
+
+    # Anchor 相关 drop 汇总
+    anchor_drop = _anchor_drop_summary(normalized_result.drop_log)
+
+    # Drop 统计：按 annotation_type / drop_reason / drop_stage 分组
+    drop_by_type = Counter(getattr(e, "annotation_type", "") for e in normalized_result.drop_log)
+    drop_by_reason = Counter(getattr(e, "drop_reason", "") for e in normalized_result.drop_log)
+    drop_by_stage = Counter(getattr(e, "drop_stage", "") for e in normalized_result.drop_log)
+
+    annotation_stats: dict[str, Any] = {
+        "draft_counts": draft_counts,
+        "normalized_counts": normalized_counts,
+        "drop_counts_by_type": dict(sorted(drop_by_type.items())),
+        "drop_counts_by_reason": dict(sorted(drop_by_reason.items())),
+        "drop_counts_by_stage": dict(sorted(drop_by_stage.items())),
+        "anchor_drop_summary": anchor_drop,
+    }
+
+    # Repair decision stats：即使不进入 repair_agent_node 也能观测
+    pre_repair_count = len(normalized_result.annotations)
+    repair_drop_count_val = repair_worthy_drop_count(
+        normalized_result.drop_log
+    )
+    total_annotations = pre_repair_count + repair_drop_count_val
+    failure_ratio = (
+        repair_drop_count_val / total_annotations
+        if total_annotations > 0 else 0.0
+    )
+    will_repair = should_trigger_repair(
+        normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
+    )
+    repair_decision_stats: dict[str, Any] = {
+        "repair_triggered": False,
+        "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+        "trigger_reason": (
+            f"failure_ratio={failure_ratio:.2f}"
+            f" > threshold={ANCHOR_FAILURE_THRESHOLD}"
+            if will_repair else None
+        ),
+        "pre_repair_annotation_count": pre_repair_count,
+        "post_repair_annotation_count": None,
+        "repair_elapsed_s": None,
+        "repair_succeeded": None,
+    }
+
     return {
         "normalized_result": normalized_result,
         "drop_log": normalized_result.drop_log,
         "warnings": [*state.get("warnings", []), *partial_warnings, *draft_warnings],
+        "node_timings": _merge_timings(
+            state, {"normalize_and_ground": perf_counter() - t0}
+        ),
+        "annotation_stats": annotation_stats,
+        "repair_stats": repair_decision_stats,
     }
 
 
 async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> AnalyzeState:
     """Repair agent node（条件触发）。"""
+    t0 = perf_counter()
     normalized_result = state.get("normalized_result")
+    pre_repair_count = (
+        len(normalized_result.annotations) if normalized_result else 0
+    )
+    repair_drop_count_val = (
+        repair_worthy_drop_count(normalized_result.drop_log or [])
+        if normalized_result else 0
+    )
+    total_annotations = pre_repair_count + repair_drop_count_val
+    failure_ratio = repair_drop_count_val / total_annotations if total_annotations > 0 else 0.0
 
     if not should_trigger_repair(normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD):
-        return {"repair_request": None}
+        repair_stats: dict[str, Any] = {
+            "repair_triggered": False,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": None,
+            "pre_repair_annotation_count": pre_repair_count,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": None,
+        }
+        return {
+            "repair_request": None,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
+        }
+
+    trigger_reason = (
+        f"failure_ratio={failure_ratio:.2f}"
+        f" > threshold={ANCHOR_FAILURE_THRESHOLD}"
+    )
 
     prepared_input = state["prepared_input"]
     vocabulary_draft = state.get("vocabulary_draft")
@@ -448,36 +678,68 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
     translation_draft = state.get("translation_draft")
 
     if vocabulary_draft is None or grammar_draft is None or translation_draft is None:
-        return {"repair_request": None}
+        repair_stats = {
+            "repair_triggered": True,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": trigger_reason,
+            "pre_repair_annotation_count": pre_repair_count,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": None,
+        }
+        return {
+            "repair_request": None,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
+        }
 
-    repair_drop_count = repair_worthy_drop_count(normalized_result.drop_log or [])
     deterministic_count = deterministic_drop_count(normalized_result.drop_log or [])
     total_drop_count = len(normalized_result.drop_log) if normalized_result else 0
     error_context = (
         "normalized_result 锚点失败率过高或结构异常。"
-        f"repair_worthy_drops: {repair_drop_count}, "
+        f"repair_worthy_drops: {repair_drop_count_val}, "
         f"deterministic_drops: {deterministic_count}, "
         f"total_drops: {total_drop_count}"
     )
     repair_deps = RepairAgentDeps(
-        sentences=[{"sentence_id": s.sentence_id, "text": s.text} for s in prepared_input.sentences],
+        sentences=[
+            {"sentence_id": s.sentence_id, "text": s.text}
+            for s in prepared_input.sentences
+        ],
         original_drafts={
-            "vocabulary_draft": vocabulary_draft.model_dump(mode="json") if vocabulary_draft else {},
-            "grammar_draft": grammar_draft.model_dump(mode="json") if grammar_draft else {},
-            "translation_draft": translation_draft.model_dump(mode="json") if translation_draft else {},
+            "vocabulary_draft": (
+                vocabulary_draft.model_dump(mode="json")
+                if vocabulary_draft else {}
+            ),
+            "grammar_draft": (
+                grammar_draft.model_dump(mode="json")
+                if grammar_draft else {}
+            ),
+            "translation_draft": (
+                translation_draft.model_dump(mode="json")
+                if translation_draft else {}
+            ),
         },
     )
-    repair_meta = _build_agent_trace_metadata(state, "repair_agent", _model_selection(config))
-    repair_meta["extra"] = {**(repair_meta.get("extra") or {}), "error_context": error_context}
+    repair_meta = _build_agent_trace_metadata(
+        state, "repair_agent", _model_selection(config)
+    )
+    repair_meta["extra"] = {
+        **(repair_meta.get("extra") or {}),
+        "error_context": error_context,
+    }
 
     repair_model_selection = _model_selection(config)
+    repair_elapsed = None
     try:
+        repair_inner_t0 = perf_counter()
         repair_result = await _run_repair_llm_span(
             deps=repair_deps,
             metadata=repair_meta,
             error_context=error_context,
             model_selection=repair_model_selection,
         )
+        repair_elapsed = perf_counter() - repair_inner_t0
         repaired_result = repair_result.get("output")
         repair_usage = repair_result.get("usage_metadata")
         usage_summary = _aggregate_usage_summary({
@@ -486,12 +748,27 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "translation": state.get("translation_usage"),
             "repair": repair_usage,
         })
+        post_repair_count = (
+            len(repaired_result.annotations)
+            if repaired_result else pre_repair_count
+        )
+        repair_stats = {
+            "repair_triggered": True,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": trigger_reason,
+            "pre_repair_annotation_count": pre_repair_count,
+            "post_repair_annotation_count": post_repair_count,
+            "repair_elapsed_s": repair_elapsed,
+            "repair_succeeded": True,
+        }
         return {
             "repair_request": {"error_context": error_context, "repaired": True},
             "normalized_result": repaired_result,
             "drop_log": repaired_result.drop_log if repaired_result else state.get("drop_log", []),
             "repair_usage": repair_usage,
             "usage_summary": usage_summary,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
         }
     except Exception:
         logger.exception("repair_agent 调用失败")
@@ -500,13 +777,27 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "grammar": state.get("grammar_usage"),
             "translation": state.get("translation_usage"),
         })
+        repair_stats = {
+            "repair_triggered": True,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": trigger_reason,
+            "pre_repair_annotation_count": pre_repair_count,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": False,
+        }
         return {
             "repair_request": {"error_context": error_context, "repaired": False},
             "warnings": [
                 *state.get("warnings", []),
-                Warning(code="REPAIR_AGENT_FAILED", level="warning", message="repair agent 调用失败，继续使用归一化结果"),
+                Warning(
+                    code="REPAIR_AGENT_FAILED", level="warning",
+                    message="repair agent 调用失败，继续使用归一化结果",
+                ),
             ],
             "usage_summary": usage_summary,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
         }
 
 
@@ -538,16 +829,31 @@ async def _run_repair_llm_span(
 
 async def project_render_scene_node(state: AnalyzeState) -> AnalyzeState:
     """Project to render scene node。"""
+    t0 = perf_counter()
     payload = state["payload"]
     prepared_input = state["prepared_input"]
     normalized_result = state.get("normalized_result")
     plan = state.get("goal_execution_plan")
 
     if normalized_result is None:
-        return {"render_scene": _empty_result(request_id=payload.request_id or "", payload=payload, profile_id=plan.prompt_profile if plan else "unresolved")}
+        return {
+            "render_scene": _empty_result(
+                request_id=payload.request_id or "",
+                payload=payload,
+                profile_id=(
+                    plan.prompt_profile if plan else "unresolved"
+                ),
+            ),
+            "node_timings": _merge_timings(
+                state, {"project_render_scene": perf_counter() - t0}
+            ),
+        }
 
     from app.schemas.internal.analysis import AnnotationOutput
-    annotation_output = AnnotationOutput(annotations=normalized_result.annotations, sentence_translations=normalized_result.sentence_translations)
+    annotation_output = AnnotationOutput(
+        annotations=normalized_result.annotations,
+        sentence_translations=normalized_result.sentence_translations,
+    )
     projection_outcome = project_to_render_scene(
         annotation_output=annotation_output,
         prepared_input=prepared_input,
@@ -560,18 +866,36 @@ async def project_render_scene_node(state: AnalyzeState) -> AnalyzeState:
 
     return {
         "render_scene": projection_outcome.result,
-        "warnings": [*state.get("warnings", []), *[Warning(**w) for w in projection_outcome.warnings]],
+        "warnings": [
+            *state.get("warnings", []),
+            *[Warning(**w) for w in projection_outcome.warnings],
+        ],
+        "node_timings": _merge_timings(
+            state, {"project_render_scene": perf_counter() - t0}
+        ),
     }
 
 
 async def assemble_result_node(state: AnalyzeState) -> AnalyzeState:
     """Assemble result node。"""
+    t0 = perf_counter()
     render_scene = state.get("render_scene")
 
     if render_scene is None:
         payload = state["payload"]
         plan = state.get("goal_execution_plan")
-        return {"render_scene": _empty_result(request_id=payload.request_id or "", payload=payload, profile_id=plan.prompt_profile if plan else "unresolved")}
+        return {
+            "render_scene": _empty_result(
+                request_id=payload.request_id or "",
+                payload=payload,
+                profile_id=(
+                    plan.prompt_profile if plan else "unresolved"
+                ),
+            ),
+            "node_timings": _merge_timings(
+                state, {"assemble_result": perf_counter() - t0}
+            ),
+        }
 
     existing_warnings = state.get("warnings", [])
     if existing_warnings and hasattr(render_scene, "warnings"):
@@ -581,11 +905,27 @@ async def assemble_result_node(state: AnalyzeState) -> AnalyzeState:
                 render_scene.warnings.append(w)
                 seen_keys.add((w.code, w.sentence_id))
 
-    heavy_failure_codes = {"VOCABULARY_AGENT_FAILED", "GRAMMAR_AGENT_FAILED", "TRANSLATION_AGENT_FAILED", "NORMALIZE_AND_GROUND_FAILED"}
-    has_heavy_failure = any(w.code in heavy_failure_codes for w in render_scene.warnings)
-    has_no_entries = len(render_scene.sentence_entries) == 0 and len(render_scene.inline_marks) == 0
-    informational_codes = {"LOW_ENGLISH_RATIO", "HIGH_NOISE_RATIO", "UNSUPPORTED_TEXT_TYPE", "DRAFT_VALIDATION"}
-    has_informational_only = len(render_scene.warnings) > 0 and all(w.code in informational_codes for w in render_scene.warnings)
+    heavy_failure_codes = {
+        "VOCABULARY_AGENT_FAILED", "GRAMMAR_AGENT_FAILED",
+        "TRANSLATION_AGENT_FAILED", "NORMALIZE_AND_GROUND_FAILED",
+    }
+    has_heavy_failure = any(
+        w.code in heavy_failure_codes for w in render_scene.warnings
+    )
+    has_no_entries = (
+        len(render_scene.sentence_entries) == 0
+        and len(render_scene.inline_marks) == 0
+    )
+    informational_codes = {
+        "LOW_ENGLISH_RATIO", "HIGH_NOISE_RATIO",
+        "UNSUPPORTED_TEXT_TYPE", "DRAFT_VALIDATION",
+    }
+    has_informational_only = (
+        len(render_scene.warnings) > 0
+        and all(
+            w.code in informational_codes for w in render_scene.warnings
+        )
+    )
 
     if has_heavy_failure and has_no_entries:
         render_scene.user_facing_state = "degraded_heavy"
@@ -594,4 +934,9 @@ async def assemble_result_node(state: AnalyzeState) -> AnalyzeState:
     else:
         render_scene.user_facing_state = "normal"
 
-    return {"render_scene": render_scene}
+    return {
+        "render_scene": render_scene,
+        "node_timings": _merge_timings(
+            state, {"assemble_result": perf_counter() - t0}
+        ),
+    }

@@ -33,6 +33,11 @@ class AnalyzeState(TypedDict, total=False):
     # Optional repair
     repair_request: dict | None
 
+    # Phase 0 debug metrics
+    node_timings: dict[str, float]  # node_name → elapsed seconds
+    annotation_stats: dict[str, object] | None
+    repair_stats: dict[str, object] | None
+
     # Final result
     render_scene: RenderSceneModel
 

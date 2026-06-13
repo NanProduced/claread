@@ -170,6 +170,9 @@ CREATE TABLE analysis_debug_snapshots (
   academic_quality_json JSONB,
   rag_debug_json JSONB,
   trace_refs_json JSONB,
+  node_timings_json JSONB,
+  annotation_stats_json JSONB,
+  repair_stats_json JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

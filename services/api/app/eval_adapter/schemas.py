@@ -630,6 +630,9 @@ class ArticleAnalysisEvalResult(BaseModel):
     rag_debug: dict[str, Any] | None = None
     trace_refs: dict[str, Any] | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+    node_timings: dict[str, Any] | None = None
+    annotation_stats: dict[str, Any] | None = None
+    repair_stats: dict[str, Any] | None = None
 
 
 class ArticleAnalysisNodeProbeResult(BaseModel):
