@@ -427,3 +427,119 @@ class TestMaterializePlannedContext:
 
         assert result == {"context": "assembled"}
         assert not runtime_state.used_cross_record_context
+
+
+# ---------------------------------------------------------------------------
+# materialize_planned_context with planning_snapshot=None (fast-path safety)
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeMinimalContext:
+    """When `planning_snapshot` is None (fast-path), ``materialize_planned_context``
+    must NOT call the record/insights callbacks, must still attempt the
+    article_overview, and must return a minimal ``resolved_context_input``
+    with empty external lists.
+    """
+
+    def _make_record(self) -> MagicMock:
+        record = MagicMock()
+        record.record_id = uuid4()
+        record.title = "Fast Path Record"
+        record.render_scene = {"content_summary": {"overview": "Article overview from render_scene."}}
+        record.page_state_json = {}
+        return record
+
+    @pytest.mark.asyncio
+    async def test_snapshot_none_skips_record_context_callback(self) -> None:
+        record = self._make_record()
+        runtime_state = ReaderAskRuntimeState()
+
+        get_context_cb = AsyncMock()
+        get_insights_cb = AsyncMock()
+        load_bundle_cb = AsyncMock()
+
+        with patch.object(
+            context_runtime_svc.planner, "build_resolved_context_input",
+            return_value={"context": "minimal"},
+        ):
+            await context_runtime_svc.materialize_planned_context(
+                user_id=uuid4(),
+                record=record,
+                runtime_state=runtime_state,
+                planning_snapshot=None,
+                page_identity=MagicMock(),
+                entry_action="ask_about_this",
+                attachments=[],
+                anchors=[],
+                get_record_context_cb=get_context_cb,
+                get_record_insights_cb=get_insights_cb,
+                load_record_bundle_cb=load_bundle_cb,
+            )
+
+        get_context_cb.assert_not_awaited()
+        get_insights_cb.assert_not_awaited()
+        load_bundle_cb.assert_not_awaited()
+        assert runtime_state.latest_record_context is None
+
+    @pytest.mark.asyncio
+    async def test_snapshot_none_attempts_article_overview(self) -> None:
+        record = self._make_record()
+        runtime_state = ReaderAskRuntimeState()
+
+        with patch.object(
+            context_runtime_svc.planner, "build_resolved_context_input",
+            return_value={"context": "minimal"},
+        ):
+            await context_runtime_svc.materialize_planned_context(
+                user_id=uuid4(),
+                record=record,
+                runtime_state=runtime_state,
+                planning_snapshot=None,
+                page_identity=MagicMock(),
+                entry_action="ask_about_this",
+                attachments=[],
+                anchors=[],
+                get_record_context_cb=AsyncMock(),
+                get_record_insights_cb=AsyncMock(),
+                load_record_bundle_cb=AsyncMock(),
+            )
+
+        assert runtime_state.latest_article_overview == "Article overview from render_scene."
+
+    @pytest.mark.asyncio
+    async def test_snapshot_none_builds_minimal_resolved_context(self) -> None:
+        record = self._make_record()
+        runtime_state = ReaderAskRuntimeState()
+
+        captured: dict[str, object] = {}
+
+        def capture(**kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {"context": "minimal"}
+
+        with patch.object(
+            context_runtime_svc.planner, "build_resolved_context_input",
+            side_effect=capture,
+        ):
+            await context_runtime_svc.materialize_planned_context(
+                user_id=uuid4(),
+                record=record,
+                runtime_state=runtime_state,
+                planning_snapshot=None,
+                page_identity=MagicMock(),
+                entry_action="ask_about_this",
+                attachments=[],
+                anchors=[],
+                get_record_context_cb=AsyncMock(),
+                get_record_insights_cb=AsyncMock(),
+                load_record_bundle_cb=AsyncMock(),
+            )
+
+        current_record_context = captured["current_record_context"]
+        assert current_record_context.record_id == str(record.record_id)
+        assert current_record_context.record_title == record.title
+        assert current_record_context.local_context is None
+        assert current_record_context.record_insights is None
+        assert current_record_context.article_overview == "Article overview from render_scene."
+        assert captured["external_record_contexts"] == []
+        assert captured["external_asset_contexts"] == []
