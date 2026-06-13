@@ -1233,3 +1233,178 @@ class TestDecisionConfidenceValidation:
     def test_invalid_confidence_rejected(self) -> None:
         with pytest.raises(Exception):
             ReaderAskPlannerDecision(resolved_intent="explain", decision_confidence="invalid")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Round 1 — Planner-minimal helpers for the agent-loop fast path
+# ---------------------------------------------------------------------------
+
+
+def _anchor(anchor_type: str) -> ReaderAskAnchorRef:
+    return ReaderAskAnchorRef(anchor_type=anchor_type, label="a", sentence_id="s1")  # type: ignore[arg-type]
+
+
+def _dict_anchor() -> ReaderAskAnchorRef:
+    return ReaderAskAnchorRef(anchor_type="dictionary_entry", label="dict", dict_entry_id=1)
+
+
+def _attachment(kind: str, subtype: str = "x") -> ReaderAskAttachment:
+    return ReaderAskAttachment(
+        kind=kind,  # type: ignore[arg-type]
+        subtype=subtype,
+        label="att",
+        metadata=ReaderAskAttachmentMetadata(),
+    )
+
+
+class TestBuildMinimalContextPlan:
+    """`build_minimal_context_plan` produces a `ReaderAskContextPlan` for the
+    fast path with conservative defaults — no cross-record, no external refs."""
+
+    def test_ask_about_this_with_anchor(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_context_plan
+
+        plan = build_minimal_context_plan(
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[_anchor("sentence")],
+        )
+        assert plan.entry_action == "ask_about_this"
+        assert plan.explicit_attachment_count == 0
+        assert plan.normalized_anchor_count == 1
+        assert plan.primary_anchor_type == "sentence"
+        assert plan.used_record_context is True
+        assert plan.used_dictionary is False
+        assert plan.used_cross_record_context is False
+        assert plan.reference_resolution_status == "not_needed"
+
+    def test_lookup_in_context_with_dictionary_attachment(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_context_plan
+
+        plan = build_minimal_context_plan(
+            entry_action="lookup_in_context",
+            attachments=[_attachment("text_selection", "dictionary_entry")],
+            anchors=[_dict_anchor()],
+        )
+        assert plan.used_dictionary is True
+        assert plan.primary_anchor_type == "dictionary_entry"
+        assert plan.used_record_context is True
+
+    def test_why_here_grammar_mode(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_context_plan
+
+        plan = build_minimal_context_plan(
+            entry_action="why_here",
+            attachments=[],
+            anchors=[_anchor("sentence")],
+        )
+        assert plan.used_record_context is True
+        assert plan.used_dictionary is False
+        assert plan.used_cross_record_context is False
+
+    def test_no_anchors(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_context_plan
+
+        plan = build_minimal_context_plan(
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[],
+        )
+        assert plan.primary_anchor_type is None
+        assert plan.normalized_anchor_count == 0
+        assert plan.used_record_context is False
+        assert plan.used_dictionary is False
+
+    def test_explicit_attachment_count(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_context_plan
+
+        plan = build_minimal_context_plan(
+            entry_action="ask_about_this",
+            attachments=[_attachment("annotation_ref"), _attachment("supplement_ref")],
+            anchors=[],
+        )
+        assert plan.explicit_attachment_count == 2
+
+
+class TestBuildMinimalTraceSummary:
+    """`build_minimal_trace_summary` produces a `ReaderAskTraceSummary` for the
+    fast path with `planner_mode='direct_answer'` and no cross-record signal."""
+
+    def test_default_planner_mode_direct_answer(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_trace_summary
+
+        trace = build_minimal_trace_summary(
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[_anchor("sentence")],
+            planner_skipped=True,
+        )
+        assert trace.planner_mode == "direct_answer"
+        assert trace.used_known_reference_resolution is False
+        assert trace.cross_record_context_allowed is False
+        assert trace.cross_record_context_used is False
+
+    def test_records_planner_skipped_note(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_trace_summary
+
+        trace = build_minimal_trace_summary(
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[],
+            planner_skipped=True,
+        )
+        assert any("skipped" in note.lower() or "fast_path" in note.lower() for note in trace.notes)
+
+    def test_records_attachment_count_in_notes(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_trace_summary
+
+        trace = build_minimal_trace_summary(
+            entry_action="ask_about_this",
+            attachments=[_attachment("annotation_ref"), _attachment("supplement_ref")],
+            anchors=[],
+            planner_skipped=True,
+        )
+        assert any("2" in note and "attachment" in note.lower() for note in trace.notes)
+
+    def test_no_cross_record_signals(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_trace_summary
+
+        trace = build_minimal_trace_summary(
+            entry_action="ask_about_this",
+            attachments=[],
+            anchors=[],
+            planner_skipped=True,
+        )
+        assert trace.cross_record_context_used is False
+        assert trace.used_known_reference_resolution is False
+        assert trace.used_external_record_context is False
+
+
+class TestBuildMinimalResolvedIntent:
+    """`build_minimal_resolved_intent` maps `entry_action` to a (intent, label)
+    tuple without consulting the LLM planner."""
+
+    def test_ask_about_this_returns_general(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_resolved_intent
+
+        assert build_minimal_resolved_intent("ask_about_this") == ("general", "ask_about_this")
+
+    def test_explain_this_returns_explain(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_resolved_intent
+
+        assert build_minimal_resolved_intent("explain_this") == ("explain", "explain_this")
+
+    def test_why_here_returns_grammar(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_resolved_intent
+
+        assert build_minimal_resolved_intent("why_here") == ("grammar", "why_here")
+
+    def test_lookup_in_context_returns_vocabulary(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_resolved_intent
+
+        assert build_minimal_resolved_intent("lookup_in_context") == ("vocabulary", "lookup_in_context")
+
+    def test_unknown_action_falls_back_to_general(self) -> None:
+        from app.services.reader_ask.planner import build_minimal_resolved_intent
+
+        assert build_minimal_resolved_intent("custom_action") == ("general", "custom_action")
