@@ -1117,3 +1117,143 @@ def build_trace_summary(
         tool_steps=[entry.tool_name for entry in runtime_state.tool_trace if entry.status == "completed"],
         notes=notes,
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 1 — Planner-minimal helpers for the agent-loop fast path
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class FastPathPlanningSnapshot:
+    """Lightweight planning snapshot used by the agent-loop fast path.
+
+    Satisfies the duck-typed access in ``runtime_contract.build_prompt_payload``
+    (lines 280-316 of runtime_contract.py). NOT a substitute for
+    ``ReaderAskPlanningSnapshot`` on the legacy planner-first path. The
+    legacy path constructs a full ``ReaderAskPlanningSnapshot`` from
+    ``_resolve_semantic_planning``; the fast path constructs this lighter
+    shape from the request data only.
+    """
+
+    retrieval_needs: str = "none"
+    working_set: ReaderAskWorkingSet = field(
+        default_factory=lambda: ReaderAskWorkingSet()
+    )
+    context_plan: ReaderAskContextPlan | None = None
+    trace_summary: ReaderAskTraceSummary | None = None
+    clarification_mode: str = "none"
+    clarification_reason: str | None = None
+    # legacy-only fields (referenced defensively by build_prompt_payload)
+    resolved_intent: Any = None
+    planner_decision: Any = None
+    planner_validation_status: str = "n/a"
+    resolved_context_input: Any = None
+    reference_needs: Any = None
+    resolved_references: Any = None
+    structured_asset_needs: Any = None
+    structured_asset_resolution: Any = None
+    disambiguation_state: Any | None = None
+    external_asset_disambiguation_state: Any | None = None
+    clarification_only: bool = False
+
+
+def build_minimal_context_plan(
+    *,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+) -> ReaderAskContextPlan:
+    """Build a minimal ``ReaderAskContextPlan`` for the fast path.
+
+    Conservative defaults: no cross-record, no external refs, no
+    disambiguation. Used when ``planning_snapshot=None`` to keep
+    ``runtime_contract.build_prompt_payload`` shape stable.
+    """
+    primary_anchor_type = None
+    used_record_context = False
+    used_dictionary = False
+    if anchors:
+        primary_anchor_type = anchors[0].anchor_type
+        # Anchors indicate the user is asking about a specific location —
+        # record context is implicitly needed.
+        used_record_context = True
+        if any(anchor.anchor_type == "dictionary_entry" for anchor in anchors):
+            used_dictionary = True
+    if any(
+        attachment.kind == "text_selection" and attachment.subtype == "dictionary_entry"
+        for attachment in attachments
+    ):
+        used_dictionary = True
+    return ReaderAskContextPlan(
+        entry_action=entry_action,
+        explicit_attachment_count=len(attachments),
+        normalized_anchor_count=len(anchors),
+        primary_anchor_type=primary_anchor_type,
+        reference_resolution_status="not_needed",
+        used_record_context=used_record_context,
+        used_dictionary=used_dictionary,
+        source_labels=[],
+    )
+
+
+def build_minimal_trace_summary(
+    *,
+    entry_action: ReaderAskEntryAction,
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    planner_skipped: bool,
+) -> ReaderAskTraceSummary:
+    """Build a minimal ``ReaderAskTraceSummary`` for the fast path.
+
+    ``planner_mode='direct_answer'`` signals the eval pipeline that the
+    answer was produced without going through the legacy planner.
+    """
+    notes: list[str] = []
+    if planner_skipped:
+        notes.append(f"fast_path: skipped semantic planner (entry_action={entry_action})")
+    if attachments:
+        notes.append(f"{len(attachments)} attachment(s) carried in without planner resolution")
+    return ReaderAskTraceSummary(
+        planner_mode="direct_answer",
+        reference_resolution_status="not_needed",
+        working_set_mode="anchor_local",
+        used_known_reference_resolution=False,
+        used_external_record_context=False,
+        used_structured_asset_lookup=False,
+        used_hitp_disambiguation=False,
+        used_external_asset_context=False,
+        used_external_asset_disambiguation=False,
+        supplement_generation_used=False,
+        supplement_persisted_count=0,
+        supplement_deleted_count=0,
+        cross_record_context_allowed=False,
+        cross_record_context_used=False,
+        tool_steps=[],
+        notes=notes,
+    )
+
+
+# entry_action → (resolved_intent, label) mapping used by the fast path.
+# Mirrors the deterministic fallback in
+# ``planner_runtime.fallback_semantic_planner_decision`` (line 272).
+_MINIMAL_INTENT_BY_ENTRY_ACTION: dict[str, tuple[ReaderAskResolvedIntent, str]] = {
+    "ask_about_this": ("general", "ask_about_this"),
+    "explain_this": ("explain", "explain_this"),
+    "why_here": ("grammar", "why_here"),
+    "lookup_in_context": ("vocabulary", "lookup_in_context"),
+}
+
+
+def build_minimal_resolved_intent(
+    entry_action: str,
+) -> tuple[ReaderAskResolvedIntent, str]:
+    """Map an ``entry_action`` to a minimal ``(resolved_intent, label)``.
+
+    Pure deterministic function used by the fast path to construct
+    ``ReaderAskAnswerRuntimeInput.resolved_intent`` / ``resolved_intent_label``
+    without consulting the LLM planner.
+    """
+    if entry_action in _MINIMAL_INTENT_BY_ENTRY_ACTION:
+        return _MINIMAL_INTENT_BY_ENTRY_ACTION[entry_action]
+    return ("general", entry_action)

@@ -348,3 +348,8 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             ),
         }[contract.resolved_intent],
     }
+
+
+# Round 1 re-exports so service.py can build the fast-path runtime input
+# without a direct planner import (keeps the import graph narrow).
+build_minimal_resolved_intent = planner.build_minimal_resolved_intent

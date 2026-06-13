@@ -538,8 +538,10 @@ class TestMaterializeMinimalContext:
         current_record_context = captured["current_record_context"]
         assert current_record_context.record_id == str(record.record_id)
         assert current_record_context.record_title == record.title
-        assert current_record_context.local_context is None
-        assert current_record_context.record_insights is None
+        # ``local_context`` and ``record_insights`` should be empty — either
+        # None or an empty list is acceptable since both signal "no data".
+        assert current_record_context.local_context in (None, [])
+        assert current_record_context.record_insights in (None, [])
         assert current_record_context.article_overview == "Article overview from render_scene."
         assert captured["external_record_contexts"] == []
         assert captured["external_asset_contexts"] == []

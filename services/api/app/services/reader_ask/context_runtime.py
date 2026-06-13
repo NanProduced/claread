@@ -189,7 +189,7 @@ async def materialize_planned_context(
     user_id: UUID,
     record: RecordBundle,
     runtime_state: ReaderAskRuntimeState,
-    planning_snapshot: planner.ReaderAskPlanningSnapshot,
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
     page_identity: Any,
     entry_action: ReaderAskEntryAction,
     attachments: list[ReaderAskAttachment],
@@ -206,50 +206,66 @@ async def materialize_planned_context(
     3. Assembles the final resolved_context_input via planner
 
     All repo-dependent operations are injected via callbacks.
+
+    When ``planning_snapshot`` is None (fast-path), the working_set-driven
+    fetches are skipped — only the article_overview is attempted, and the
+    external lists are empty. The returned ``resolved_context_input`` is a
+    minimal shape that satisfies the rest of the runtime contract.
     """
-    working_set = planning_snapshot.working_set
     resolved_overview = utils.resolve_record_overview(
         render_scene=record.render_scene,
         page_state_json=record.page_state_json,
     )
-    if working_set.local_context_window_needed and runtime_state.latest_record_context is None:
-        runtime_state.latest_record_context = await get_record_context_cb()
-        if runtime_state.latest_record_context is not None:
-            runtime_state.source_labels.update({"current_record", "current_anchor", "current_paragraph"})
-    if working_set.record_insights_needed and not runtime_state.latest_record_insights:
-        runtime_state.latest_record_insights = await get_record_insights_cb()
-        if runtime_state.latest_record_insights:
-            runtime_state.source_labels.add("record_assets")
-    if working_set.article_overview_needed and not runtime_state.latest_article_overview:
-        article_overview = render_scene_article_overview(record)
-        if article_overview:
-            runtime_state.latest_article_overview = article_overview
-            runtime_state.source_labels.add(str(resolved_overview.get("source") or "article_overview"))
+    if planning_snapshot is not None:
+        working_set = planning_snapshot.working_set
+        if working_set.local_context_window_needed and runtime_state.latest_record_context is None:
+            runtime_state.latest_record_context = await get_record_context_cb()
+            if runtime_state.latest_record_context is not None:
+                runtime_state.source_labels.update({"current_record", "current_anchor", "current_paragraph"})
+        if working_set.record_insights_needed and not runtime_state.latest_record_insights:
+            runtime_state.latest_record_insights = await get_record_insights_cb()
+            if runtime_state.latest_record_insights:
+                runtime_state.source_labels.add("record_assets")
+        if working_set.article_overview_needed and not runtime_state.latest_article_overview:
+            article_overview = render_scene_article_overview(record)
+            if article_overview:
+                runtime_state.latest_article_overview = article_overview
+                runtime_state.source_labels.add(str(resolved_overview.get("source") or "article_overview"))
 
-    external_record_contexts = await load_external_record_contexts(
-        user_id,
-        current_record_id=record.record_id,
-        planned_external_refs=working_set.external_record_refs,
-        load_record_bundle_cb=load_record_bundle_cb,
-    )
-    if external_record_contexts:
-        runtime_state.latest_external_record_contexts = [
-            item.model_dump(mode="json") for item in external_record_contexts
-        ]
-        runtime_state.used_cross_record_context = True
-        runtime_state.source_labels.add("external_record_context")
-        for item in external_record_contexts:
-            runtime_state.source_labels.update(item.source_labels)
-    external_asset_contexts = load_external_asset_contexts(
-        current_record_id=record.record_id,
-        planned_external_assets=working_set.external_asset_refs,
-    )
-    if external_asset_contexts:
-        runtime_state.latest_external_asset_contexts = [
-            item.model_dump(mode="json") for item in external_asset_contexts
-        ]
-        runtime_state.used_cross_record_context = True
-        runtime_state.source_labels.update({"external_record_context", "external_assets"})
+        external_record_contexts = await load_external_record_contexts(
+            user_id,
+            current_record_id=record.record_id,
+            planned_external_refs=working_set.external_record_refs,
+            load_record_bundle_cb=load_record_bundle_cb,
+        )
+        if external_record_contexts:
+            runtime_state.latest_external_record_contexts = [
+                item.model_dump(mode="json") for item in external_record_contexts
+            ]
+            runtime_state.used_cross_record_context = True
+            runtime_state.source_labels.add("external_record_context")
+            for item in external_record_contexts:
+                runtime_state.source_labels.update(item.source_labels)
+        external_asset_contexts = load_external_asset_contexts(
+            current_record_id=record.record_id,
+            planned_external_assets=working_set.external_asset_refs,
+        )
+        if external_asset_contexts:
+            runtime_state.latest_external_asset_contexts = [
+                item.model_dump(mode="json") for item in external_asset_contexts
+            ]
+            runtime_state.used_cross_record_context = True
+            runtime_state.source_labels.update({"external_record_context", "external_assets"})
+    else:
+        # Fast-path: skip record/insights/external fetches. Still attempt the
+        # article overview so source_labels can pick it up if present.
+        if not runtime_state.latest_article_overview:
+            article_overview = render_scene_article_overview(record)
+            if article_overview:
+                runtime_state.latest_article_overview = article_overview
+                runtime_state.source_labels.add(str(resolved_overview.get("source") or "article_overview"))
+        external_record_contexts = []
+        external_asset_contexts = []
 
     current_record_context = ReaderAskCurrentRecordContext(
         record_id=str(record.record_id),
