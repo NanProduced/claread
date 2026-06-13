@@ -16,6 +16,13 @@ from app.schemas.internal.drafts import (
     VocabularyDraft,
 )
 from app.schemas.internal.execution_plan import GoalPolicy
+from app.schemas.internal.normalized import (
+    NormalizedContextGloss,
+    NormalizedGrammarNote,
+    NormalizedPhraseGloss,
+    NormalizedSentenceAnalysis,
+    NormalizedVocabHighlight,
+)
 from app.services.analysis.postprocess.normalize_and_ground import normalize_and_ground
 
 
@@ -852,3 +859,359 @@ def test_context_gloss_span_aware_identity_prevents_density_misdrop() -> None:
     ]
     assert len(ctx_drops) == 1
     assert ctx_drops[0].drop_reason.startswith("density_exceeded")
+
+
+# ── Phase 2.3A: Canonical shadow path tests ──────────────────────────
+
+
+def test_normalize_and_ground_returns_both_annotations_and_normalized() -> None:
+    """normalize_and_ground 同时返回旧 annotations 和 normalized_annotations。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompted")
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations 不变
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "vocab_highlight"
+
+    # normalized_annotations 也有结果
+    assert len(result.normalized_annotations) == 1
+    assert isinstance(result.normalized_annotations[0], NormalizedVocabHighlight)
+    assert result.normalized_annotations[0].spans[0].text == "prompted"
+
+
+def test_canonical_stats_populated() -> None:
+    """canonical_stats 包含所有要求的观测指标。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompted")
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    assert result.canonical_stats is not None
+    assert "canonical_normalized_counts" in result.canonical_stats
+    assert "canonical_drop_counts_by_type" in result.canonical_stats
+    assert "canonical_drop_counts_by_reason" in result.canonical_stats
+    assert "canonical_span_count" in result.canonical_stats
+    assert "canonical_anchor_drop_summary" in result.canonical_stats
+
+    assert result.canonical_stats["canonical_normalized_counts"]["vocab_highlight"] == 1
+    assert result.canonical_stats["canonical_span_count"] == 1
+
+
+def test_canonical_drop_log_independent_of_old_drop_log() -> None:
+    """canonical_drop_log 与旧 drop_log 独立。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="in")
+            ],
+            phrase_glosses=[
+                DraftPhraseGloss(
+                    sentence_id="s1",
+                    label="in need",
+                    anchor_quotes=[AnchorQuote(text="in need")],
+                    phrase_type="collocation",
+                    zh="需要帮助的",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The family was in need of support.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations: vocab_highlight "in" 被 low_value_word drop，
+    # phrase_gloss "in need" 保留
+    assert any(a.type == "phrase_gloss" for a in result.annotations)
+    assert any(
+        e.drop_reason == "low_value_word" for e in result.drop_log
+    )
+
+    # canonical_drop_log: "in" 被 quote_too_short drop
+    assert any(
+        e.drop_reason == "quote_too_short" for e in result.canonical_drop_log
+    )
+    # canonical 和旧 drop_log 是独立的列表
+    assert result.canonical_drop_log is not result.drop_log
+
+
+def test_quote_ambiguous_enters_canonical_stats_old_annotations_unchanged() -> None:
+    """quote_ambiguous 会进入 canonical stats，但旧 annotations 行为不变。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="team")
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The team and the other team agreed.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations: "team" 在旧链路中通过 is_substring 检查，保留
+    # （旧链路不做歧义检查，这是 canonical 路径的改进）
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "vocab_highlight"
+
+    # canonical stats: "team" 被 quote_ambiguous drop
+    assert result.canonical_stats is not None
+    assert result.canonical_stats["canonical_drop_counts_by_reason"].get("quote_ambiguous", 0) >= 1
+    assert result.canonical_stats["canonical_anchor_drop_summary"]["total_anchor_drops"] >= 1
+
+
+def test_quote_not_found_enters_canonical_stats_old_annotations_unchanged() -> None:
+    """quote_not_found 会进入 canonical stats，但旧 annotations 行为不变。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                DraftPhraseGloss(
+                    sentence_id="s1",
+                    label="test phrase",
+                    anchor_quotes=[AnchorQuote(text="NONEXISTENT")],
+                    phrase_type="collocation",
+                    zh="测试",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations: phrase_gloss 被 anchor_not_substring drop
+    assert result.annotations == []
+    assert any(
+        e.drop_reason == "anchor_not_substring" for e in result.drop_log
+    )
+
+    # canonical stats: phrase_gloss 被 quote_not_found drop
+    assert result.canonical_stats is not None
+    assert result.canonical_stats["canonical_drop_counts_by_reason"].get("quote_not_found", 0) >= 1
+
+
+def test_multi_quote_phrase_generates_multiple_canonical_spans() -> None:
+    """phrase_gloss 的 multi quote 能生成多个 CanonicalSpan。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[
+                DraftPhraseGloss(
+                    sentence_id="s1",
+                    label="turn ... into",
+                    anchor_quotes=[
+                        AnchorQuote(text="Turn"),
+                        AnchorQuote(text="into"),
+                    ],
+                    phrase_type="phrasal_verb",
+                    zh="把……变成……",
+                )
+            ],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[
+            _sentence("s1", "Turn their passion into a stable income.")
+        ],
+        policy=_policy(),
+    )
+
+    # 旧 annotations 不变
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "phrase_gloss"
+
+    # normalized_annotations 有 2 个 spans
+    assert len(result.normalized_annotations) == 1
+    norm_phrase = result.normalized_annotations[0]
+    assert isinstance(norm_phrase, NormalizedPhraseGloss)
+    assert len(norm_phrase.spans) == 2
+    assert norm_phrase.spans[0].text == "Turn"
+    assert norm_phrase.spans[1].text == "into"
+
+    # canonical_stats 的 span_count = 2
+    assert result.canonical_stats is not None
+    assert result.canonical_stats["canonical_span_count"] == 2
+
+
+def test_multi_quote_context_gloss_generates_multiple_canonical_spans() -> None:
+    """context_gloss 的 multi quote 能生成多个 CanonicalSpan。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[],
+            phrase_glosses=[],
+            context_glosses=[
+                DraftContextGloss(
+                    sentence_id="s1",
+                    display="prompt sb to do sth",
+                    anchor_quotes=[
+                        AnchorQuote(text="prompted"),
+                        AnchorQuote(text="to rethink"),
+                    ],
+                    gloss="促使某人做某事",
+                    reason="词典义不足以表达语境含义",
+                )
+            ],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team to rethink their approach.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations 不变
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "context_gloss"
+
+    # normalized_annotations 有 2 个 spans
+    assert len(result.normalized_annotations) == 1
+    norm_ctx = result.normalized_annotations[0]
+    assert isinstance(norm_ctx, NormalizedContextGloss)
+    assert len(norm_ctx.spans) == 2
+    assert norm_ctx.spans[0].text == "prompted"
+    assert norm_ctx.spans[1].text == "to rethink"
+
+
+def test_multi_quote_grammar_generates_multiple_canonical_spans() -> None:
+    """grammar_note 的 multi quote 能生成多个 CanonicalSpan。"""
+    result = normalize_and_ground(
+        vocabulary_draft=_empty_vocab(),
+        grammar_draft=GrammarDraft(
+            grammar_notes=[
+                DraftGrammarNote(
+                    sentence_id="s1",
+                    grammar_point="not only 句首倒装",
+                    anchor_quotes=[
+                        AnchorQuote(text="Not only did", role="inversion_trigger"),
+                        AnchorQuote(text="but he also", role="paired_structure"),
+                    ],
+                    note_zh="Not only 位于句首时使用部分倒装。",
+                )
+            ],
+            sentence_analyses=[],
+        ),
+        translation_draft=_translation_draft("s1"),
+        sentences=[
+            _sentence(
+                "s1",
+                "Not only did he win, but he also broke the record.",
+            )
+        ],
+        policy=_policy(),
+    )
+
+    # 旧 annotations 不变
+    assert len(result.annotations) == 1
+    assert result.annotations[0].type == "grammar_note"
+
+    # normalized_annotations 有 2 个 spans
+    assert len(result.normalized_annotations) == 1
+    norm_grammar = result.normalized_annotations[0]
+    assert isinstance(norm_grammar, NormalizedGrammarNote)
+    assert len(norm_grammar.spans) == 2
+    assert norm_grammar.spans[0].text == "Not only did"
+    assert norm_grammar.spans[1].text == "but he also"
+    assert norm_grammar.spans[0].role == "inversion_trigger"
+    assert norm_grammar.spans[1].role == "paired_structure"
+
+
+def test_canonical_stats_empty_when_no_drafts() -> None:
+    """无 draft 时 canonical_stats 为空但结构完整。"""
+    result = normalize_and_ground(
+        vocabulary_draft=_empty_vocab(),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "Hello world.")],
+        policy=_policy(),
+    )
+
+    assert result.canonical_stats is not None
+    assert result.canonical_stats["canonical_normalized_counts"] == {}
+    assert result.canonical_stats["canonical_drop_counts_by_type"] == {}
+    assert result.canonical_stats["canonical_drop_counts_by_reason"] == {}
+    assert result.canonical_stats["canonical_span_count"] == 0
+    assert result.canonical_stats["canonical_anchor_drop_summary"]["total_anchor_drops"] == 0
+
+
+def test_canonical_drop_does_not_affect_repair_trigger() -> None:
+    """canonical drop 不影响旧 repair 触发逻辑。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="NONEXISTENT")
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    # 旧 annotations 和 drop_log 不受 canonical 影响
+    assert result.annotations == []
+    # 旧 drop_log 有 anchor_not_substring（旧链路）
+    assert any(
+        e.drop_reason == "anchor_not_substring" for e in result.drop_log
+    )
+    # canonical_drop_log 有 quote_not_found（新链路）
+    assert any(
+        e.drop_reason == "quote_not_found" for e in result.canonical_drop_log
+    )
+    # 两个 drop_log 是独立的
+    assert not any(
+        e.drop_reason == "quote_not_found" for e in result.drop_log
+    )
+
+
+def test_sentence_analysis_in_normalized_annotations() -> None:
+    """sentence_analysis 也出现在 normalized_annotations 中。"""
+    analysis = DraftSentenceAnalysis(
+        sentence_id="s1",
+        label="主句加 result in 压缩结构",
+        analysis_zh="先抓主句，再看后面的结果结构。",
+    )
+    result = normalize_and_ground(
+        vocabulary_draft=_empty_vocab(),
+        grammar_draft=GrammarDraft(
+            grammar_notes=[], sentence_analyses=[analysis]
+        ),
+        translation_draft=_translation_draft("s1"),
+        sentences=[
+            _sentence(
+                "s1",
+                "Higher gas prices result in farmers being forced to pay more.",
+            )
+        ],
+        policy=_policy(),
+    )
+
+    assert len(result.normalized_annotations) == 1
+    assert isinstance(result.normalized_annotations[0], NormalizedSentenceAnalysis)

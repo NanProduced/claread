@@ -283,6 +283,11 @@ def test_normalize_and_ground_node_produces_annotation_stats():
     assert "drop_counts_by_reason" in stats
     assert "drop_counts_by_stage" in stats
     assert "anchor_drop_summary" in stats
+    assert "canonical_stats" in stats
+    canonical_stats = stats["canonical_stats"]
+    assert canonical_stats is not None
+    assert canonical_stats["canonical_normalized_counts"].get("vocab_highlight") == 1
+    assert canonical_stats["canonical_span_count"] == 1
     # P1 fix: normalize_and_ground_node 也产出 repair_stats
     repair = result.get("repair_stats")
     assert repair is not None

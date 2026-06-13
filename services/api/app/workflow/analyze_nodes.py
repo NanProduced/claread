@@ -596,6 +596,7 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
         "drop_counts_by_reason": dict(sorted(drop_by_reason.items())),
         "drop_counts_by_stage": dict(sorted(drop_by_stage.items())),
         "anchor_drop_summary": anchor_drop,
+        "canonical_stats": normalized_result.canonical_stats,
     }
 
     # Repair decision stats：即使不进入 repair_agent_node 也能观测

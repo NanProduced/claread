@@ -22,6 +22,7 @@ from app.schemas.internal.analysis import (
 )
 from app.schemas.internal.drafts import (
     AnchorQuote,
+    DraftAnnotation,
     DraftContextGloss,
     DraftPhraseGloss,
     DraftVocabHighlight,
@@ -31,12 +32,19 @@ from app.schemas.internal.drafts import (
     draft_to_annotation,
 )
 from app.schemas.internal.execution_plan import GoalPolicy
-from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
+from app.schemas.internal.normalized import (
+    DropLogEntry,
+    NormalizedAnnotation,
+    NormalizedAnnotationResult,
+)
 from app.services.analysis.postprocess.anchor_resolution import (
     resolve_explicit_anchor_parts,
     resolve_grammar_anchor_to_source,
     resolve_vocabulary_anchor_binding,
     resolve_vocabulary_anchor_spans,
+)
+from app.services.analysis.postprocess.draft_to_normalized import (
+    draft_to_normalized_annotation,
 )
 from app.services.analysis.postprocess.draft_validators import (
     validate_context_gloss_business_rules,
@@ -790,6 +798,60 @@ def _normalize_translations(
     return result
 
 
+def _build_canonical_stats(
+    normalized_annotations: list[NormalizedAnnotation],
+    canonical_drop_log: list[DropLogEntry],
+) -> dict[str, object]:
+    """Build canonical shadow path observation stats."""
+    from collections import Counter
+
+    canonical_counts = Counter(
+        getattr(a, "type", str(type(a).__name__))
+        for a in normalized_annotations
+    )
+    drop_by_type = Counter(
+        getattr(e, "annotation_type", "") for e in canonical_drop_log
+    )
+    drop_by_reason = Counter(
+        getattr(e, "drop_reason", "") for e in canonical_drop_log
+    )
+
+    total_span_count = 0
+    for a in normalized_annotations:
+        spans = getattr(a, "spans", None)
+        if spans is not None:
+            total_span_count += len(spans)
+
+    # Anchor drop summary for canonical path
+    CANONICAL_ANCHOR_DROP_REASONS: frozenset[str] = frozenset({
+        "quote_not_found", "quote_ambiguous",
+        "quote_out_of_order", "quote_too_short",
+        "sentence_id_invalid",
+    })
+    anchor_drops = [
+        e for e in canonical_drop_log
+        if getattr(e, "drop_reason", "") in CANONICAL_ANCHOR_DROP_REASONS
+    ]
+    by_type_and_reason = Counter(
+        (getattr(e, "annotation_type", ""), getattr(e, "drop_reason", ""))
+        for e in anchor_drops
+    )
+
+    return {
+        "canonical_normalized_counts": dict(sorted(canonical_counts.items())),
+        "canonical_drop_counts_by_type": dict(sorted(drop_by_type.items())),
+        "canonical_drop_counts_by_reason": dict(sorted(drop_by_reason.items())),
+        "canonical_span_count": total_span_count,
+        "canonical_anchor_drop_summary": {
+            "total_anchor_drops": len(anchor_drops),
+            "by_annotation_type_and_reason": [
+                {"annotation_type": at, "drop_reason": dr, "count": cnt}
+                for (at, dr), cnt in by_type_and_reason.most_common()
+            ],
+        },
+    }
+
+
 def normalize_and_ground(
     vocabulary_draft: VocabularyDraft,
     grammar_draft: GrammarDraft,
@@ -830,8 +892,42 @@ def normalize_and_ground(
 
     final_annotations = _density_control(merged_annotations, ctx, drop_log)
 
+    # ── Canonical shadow path ──────────────────────────────────────
+    # 并行生成 normalized_annotations，使用 draft_to_normalized_annotation。
+    # canonical resolve 失败只进入 canonical drop log / stats，
+    # 不影响旧 annotations 输出。
+    canonical_drop_log: list[DropLogEntry] = []
+    normalized_annotations: list[NormalizedAnnotation] = []
+
+    all_drafts: list[tuple[DraftAnnotation, str]] = []
+    for v in vocabulary_draft.vocab_highlights:
+        all_drafts.append((v, "vocabulary"))
+    for p in vocabulary_draft.phrase_glosses:
+        all_drafts.append((p, "vocabulary"))
+    for c in vocabulary_draft.context_glosses:
+        all_drafts.append((c, "vocabulary"))
+    for g in grammar_draft.grammar_notes:
+        all_drafts.append((g, "grammar"))
+    for s in grammar_draft.sentence_analyses:
+        all_drafts.append((s, "grammar"))
+
+    for draft, source_agent in all_drafts:
+        normalized = draft_to_normalized_annotation(
+            draft, ctx.sentence_map, canonical_drop_log,
+            source_agent=source_agent,
+        )
+        if normalized is not None:
+            normalized_annotations.append(normalized)
+
+    canonical_stats = _build_canonical_stats(
+        normalized_annotations, canonical_drop_log,
+    )
+
     return NormalizedAnnotationResult(
         annotations=final_annotations,
+        normalized_annotations=normalized_annotations,
         sentence_translations=translation_result,
         drop_log=drop_log,
+        canonical_stats=canonical_stats,
+        canonical_drop_log=canonical_drop_log,
     )

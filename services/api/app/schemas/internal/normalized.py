@@ -263,3 +263,21 @@ class NormalizedAnnotationResult(BaseModel):
         default_factory=list,
         description="删除/降级日志列表",
     )
+    canonical_stats: dict[str, object] | None = Field(
+        default=None,
+        description=(
+            "Canonical shadow path 观测指标。"
+            "包含 canonical_normalized_counts、canonical_drop_counts_by_type、"
+            "canonical_drop_counts_by_reason、canonical_span_count、"
+            "canonical_anchor_drop_summary。"
+            "Phase 2.3A 新增，不影响旧 annotations 行为。"
+        ),
+    )
+    canonical_drop_log: list[DropLogEntry] = Field(
+        default_factory=list,
+        description=(
+            "Canonical shadow path 的 drop log。"
+            "记录 draft_to_normalized_annotation 转换失败的条目，"
+            "与旧 drop_log 独立，不影响 repair 触发逻辑。"
+        ),
+    )
