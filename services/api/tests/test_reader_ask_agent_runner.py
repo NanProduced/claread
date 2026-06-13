@@ -358,3 +358,125 @@ class TestStartReaderAskAgentStream:
             for item in items:
                 yield item
         return _gen()
+
+
+# ---------------------------------------------------------------------------
+# Authoritative final-content backfill
+# ---------------------------------------------------------------------------
+
+
+class TestAuthoritativeFinalContent:
+    """``finish_reader_ask_agent_stream`` must use ``result.output`` as the
+    authoritative source for ``outcome.content_md`` whenever the agent run
+    produced a final output. The streamed ``runtime.content_parts`` is kept
+    on ``runtime.emitted_text`` for the checkpoint writer and eval, but
+    should NOT be the final payload when a mismatch is possible (e.g. lost
+    first delta).
+    """
+
+    @staticmethod
+    def _result_with_output(text: str) -> Any:
+        result = MagicMock()
+        result.output = text
+        return result
+
+    def test_authoritative_used_when_streamed_is_empty(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.content_parts = []
+        runtime.producer_result = self._result_with_output("hello world")
+
+        outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=runtime,
+            assistant_message_id="msg-1",
+        )
+
+        assert outcome.content_md == "hello world"
+        assert outcome.interrupted is False
+        assert runtime.emitted_text == ""
+
+    def test_streamed_used_when_authoritative_is_none(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.content_parts = ["complete"]
+        runtime.producer_result = None
+
+        outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=runtime,
+            assistant_message_id="msg-1",
+        )
+
+        assert outcome.content_md == "complete"
+        assert outcome.interrupted is False
+
+    def test_streamed_used_when_both_match(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.content_parts = ["hello world"]
+        runtime.producer_result = self._result_with_output("hello world")
+
+        outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=runtime,
+            assistant_message_id="msg-1",
+        )
+
+        assert outcome.content_md == "hello world"
+
+    def test_both_empty_returns_empty(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.content_parts = []
+        runtime.producer_result = None
+
+        outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=runtime,
+            assistant_message_id="msg-1",
+        )
+
+        assert outcome.content_md == ""
+
+    def test_authoritative_used_when_first_delta_lost(self) -> None:
+        # Simulate the first delta ("hel") being lost — content_parts has
+        # "lo " and "world" but the model's true final output is "hello world".
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.content_parts = ["lo ", "world"]
+        runtime.producer_result = self._result_with_output("hello world")
+
+        outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=runtime,
+            assistant_message_id="msg-1",
+        )
+
+        assert outcome.content_md == "hello world"
+        # emitted_text MUST preserve the streamed text so checkpoint writer
+        # and eval can detect the loss and compare against the authoritative.
+        assert runtime.emitted_text == "lo world"
+
+    def test_interrupted_with_authoritative(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.content_parts = ["abc"]
+        runtime.producer_error = RuntimeError("network blip")
+        runtime.producer_result = self._result_with_output("abcdef")
+
+        outcome, interrupted_event = agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=runtime,
+            assistant_message_id="msg-1",
+        )
+
+        assert outcome.interrupted is True
+        assert outcome.content_md == "abcdef"
+        assert interrupted_event is not None
+        event_name, event_payload = interrupted_event
+        assert event_name == stream_events_svc.EVENT_MESSAGE_INTERRUPTED
+        assert event_payload["content_md"] == "abcdef"
+
+    def test_emitted_text_preserves_streamed_text_when_authoritative_differs(self) -> None:
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.content_parts = ["lo ", "world"]
+        runtime.producer_result = self._result_with_output("hello world")
+
+        agent_runner_svc.finish_reader_ask_agent_stream(
+            runtime=runtime,
+            assistant_message_id="msg-1",
+        )
+
+        # The streamed text must be preserved on emitted_text so the
+        # checkpoint writer still records what was actually streamed to
+        # the client (useful for eval/debug of lost-delta cases).
+        assert runtime.emitted_text == "lo world"
