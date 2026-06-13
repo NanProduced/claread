@@ -99,6 +99,29 @@ function normalizeDisplayText(value) {
 export function inlineMarkAnchorParts(mark) {
   const anchor = mark?.anchor;
   if (!anchor || typeof anchor !== "object") return [];
+
+  // multi_range: extract text from each range part
+  if (anchor.kind === "multi_range" && Array.isArray(anchor.ranges)) {
+    return anchor.ranges
+      .map((range) => ({
+        text: String(range?.text ?? "").trim(),
+        occurrence: 1,
+        role: String(range?.role || "").trim(),
+      }))
+      .filter((part) => part.text);
+  }
+
+  // range: single range anchor
+  if (anchor.kind === "range") {
+    const text = String(anchor.text ?? "").trim();
+    if (!text) return [];
+    return [{
+      text,
+      occurrence: 1,
+      role: "",
+    }];
+  }
+
   if (anchor.kind === "multi_text" && Array.isArray(anchor.parts)) {
     return anchor.parts
       .map((part) => ({

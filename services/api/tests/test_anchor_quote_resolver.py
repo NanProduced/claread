@@ -20,6 +20,18 @@ def _sentence(text: str, sentence_id: str = "s1") -> PreparedSentence:
     )
 
 
+def _sentence_with_offset(
+    text: str, offset: int, sentence_id: str = "s2",
+) -> PreparedSentence:
+    """Create a sentence with a non-zero sentence_span.start."""
+    return PreparedSentence(
+        sentence_id=sentence_id,
+        paragraph_id="p1",
+        text=text,
+        sentence_span=TextSpan(start=offset, end=offset + len(text)),
+    )
+
+
 class TestResolveAnchorQuotesExactMatch:
     def test_single_exact_match(self) -> None:
         sentence = _sentence("The results prompted the team to rethink.")
@@ -230,3 +242,124 @@ class TestResolveVocabTextToCanonicalSpan:
         assert span is None
         assert len(errors) == 1
         assert errors[0].reason == "quote_too_short"
+
+
+class TestWordBoundaryEnforcement:
+    """Word boundary checks: lemma/prefix must not match inside a longer word."""
+
+    def test_prefix_inside_word_anchor_quote(self) -> None:
+        """'prompt' must not match inside 'prompted'."""
+        sentence = _sentence("The results prompted the team.")
+        quotes = [AnchorQuote(text="prompt")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 0
+        assert any(e.reason == "quote_boundary_violation" for e in errors)
+
+    def test_prefix_inside_word_vocab_text(self) -> None:
+        """'prompt' must not match inside 'prompted' via vocab text."""
+        sentence = _sentence("The results prompted the team.")
+        span, errors = resolve_vocab_text_to_canonical_span(sentence, "prompt")
+        assert span is None
+        assert any(e.reason == "quote_boundary_violation" for e in errors)
+
+    def test_exact_word_match_succeeds(self) -> None:
+        """'prompted' should match 'prompted' at word boundary."""
+        sentence = _sentence("The results prompted the team.")
+        quotes = [AnchorQuote(text="prompted")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 1
+        assert len(errors) == 0
+        assert spans[0].text == "prompted"
+
+    def test_suffix_inside_word_anchor_quote(self) -> None:
+        """'ted' must not match inside 'prompted'."""
+        sentence = _sentence("The results prompted the team.")
+        quotes = [AnchorQuote(text="ted")]
+        # 'ted' is too short (3 chars > 2), but also not at word boundary
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 0
+        assert any(
+            e.reason in ("quote_boundary_violation", "quote_not_found")
+            for e in errors
+        )
+
+    def test_word_at_sentence_start(self) -> None:
+        """Word at start of sentence should match (left boundary is start)."""
+        sentence = _sentence("Prompted by the results, they acted.")
+        quotes = [AnchorQuote(text="Prompted")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 1
+        assert len(errors) == 0
+
+    def test_word_at_sentence_end(self) -> None:
+        """Word at end of sentence should match (right boundary is end)."""
+        sentence = _sentence("They were prompted.")
+        quotes = [AnchorQuote(text="prompted")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 1
+        assert len(errors) == 0
+
+    def test_nonzero_offset_exact_match(self) -> None:
+        """Exact match in a non-first sentence (sentence_span.start > 0)."""
+        # "First sentence. " is 16 chars, so offset=16
+        sentence = _sentence_with_offset("The results prompted the team.", offset=16)
+        quotes = [AnchorQuote(text="prompted")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 1
+        assert len(errors) == 0
+        assert spans[0].text == "prompted"
+
+    def test_nonzero_offset_prefix_inside_word(self) -> None:
+        """Prefix inside word rejected even with non-zero sentence_span.start."""
+        sentence = _sentence_with_offset("The results prompted the team.", offset=16)
+        quotes = [AnchorQuote(text="prompt")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 0
+        assert any(e.reason == "quote_boundary_violation" for e in errors)
+
+    def test_nonzero_offset_vocab_text(self) -> None:
+        """Vocab text exact match in a non-first sentence."""
+        sentence = _sentence_with_offset("The results prompted the team.", offset=16)
+        span, errors = resolve_vocab_text_to_canonical_span(sentence, "prompted")
+        assert span is not None
+        assert len(errors) == 0
+        assert span.text == "prompted"
+
+    def test_nonzero_offset_vocab_prefix_inside_word(self) -> None:
+        """Vocab text prefix inside word rejected with non-zero offset."""
+        sentence = _sentence_with_offset("The results prompted the team.", offset=16)
+        span, errors = resolve_vocab_text_to_canonical_span(sentence, "prompt")
+        assert span is None
+        assert any(e.reason == "quote_boundary_violation" for e in errors)
+
+    def test_contraction_is_not_split(self) -> None:
+        """'can' must not match inside the contraction \"can't\"."""
+        sentence = _sentence("They can't proceed.")
+        quotes = [AnchorQuote(text="can")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 0
+        assert any(e.reason == "quote_boundary_violation" for e in errors)
+
+    def test_possessive_is_not_split(self) -> None:
+        """'team' must not match inside possessive \"team's\"."""
+        sentence = _sentence("The team's result improved.")
+        span, errors = resolve_vocab_text_to_canonical_span(sentence, "team")
+        assert span is None
+        assert any(e.reason == "quote_boundary_violation" for e in errors)
+
+    def test_hyphenated_compound_is_not_split(self) -> None:
+        """'state' must not match inside 'state-of-the-art'."""
+        sentence = _sentence("It was state-of-the-art.")
+        quotes = [AnchorQuote(text="state")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(spans) == 0
+        assert any(e.reason == "quote_boundary_violation" for e in errors)
+
+    def test_quoted_word_still_matches(self) -> None:
+        """Single quotes as punctuation still count as boundaries."""
+        sentence = _sentence("They said 'prompt' twice.")
+        quotes = [AnchorQuote(text="prompt")]
+        spans, errors = resolve_anchor_quotes(sentence, quotes)
+        assert len(errors) == 0
+        assert len(spans) == 1
+        assert spans[0].text == "prompt"

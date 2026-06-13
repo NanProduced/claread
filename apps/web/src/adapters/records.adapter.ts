@@ -158,12 +158,54 @@ function toWarningLevel(value: unknown): WarningLevel {
   return "info";
 }
 
+function readNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 function mapAnchor(value: unknown): InlineMarkAnchor | null {
   if (!isRecord(value)) {
     return null;
   }
 
   const sentenceId = readString(value.sentence_id ?? value.sentenceId);
+
+  if (value.kind === "multi_range") {
+    return {
+      kind: "multi_range",
+      sentenceId,
+      offsetUnit: "utf16",
+      ranges: readArray(value.ranges)
+        .filter(isRecord)
+        .map((range) => ({
+          start: readNumber(range.start),
+          end: readNumber(range.end),
+          text: readString(range.text),
+          role: readOptionalString(range.role),
+          sourceQuote: readOptionalString(range.source_quote ?? range.sourceQuote),
+          resolutionKind: readOptionalString(range.resolution_kind ?? range.resolutionKind),
+        }))
+        .filter((range) => range.end > range.start && range.text.length > 0),
+    };
+  }
+
+  if (value.kind === "range") {
+    const start = readNumber(value.start);
+    const end = readNumber(value.end);
+    const text = readString(value.text);
+    if (end <= start || text.length === 0) {
+      return null;
+    }
+    return {
+      kind: "range",
+      sentenceId,
+      offsetUnit: "utf16",
+      start,
+      end,
+      text,
+      sourceQuote: readOptionalString(value.source_quote ?? value.sourceQuote),
+      resolutionKind: readOptionalString(value.resolution_kind ?? value.resolutionKind),
+    };
+  }
 
   if (value.kind === "multi_text") {
     return {

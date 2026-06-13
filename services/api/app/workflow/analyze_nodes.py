@@ -37,7 +37,9 @@ from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, Vocabula
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
 from app.services.analysis.postprocess.draft_validators import validate_all_drafts
 from app.services.analysis.postprocess.normalize_and_ground import normalize_and_ground
-from app.services.analysis.postprocess.projection import project_to_render_scene
+from app.services.analysis.postprocess.projection import (
+    project_normalized_to_render_scene,
+)
 from app.services.analysis.postprocess.repair_policy import (
     deterministic_drop_count,
     repair_worthy_drop_count,
@@ -850,13 +852,8 @@ async def project_render_scene_node(state: AnalyzeState) -> AnalyzeState:
             ),
         }
 
-    from app.schemas.internal.analysis import AnnotationOutput
-    annotation_output = AnnotationOutput(
-        annotations=normalized_result.annotations,
-        sentence_translations=normalized_result.sentence_translations,
-    )
-    projection_outcome = project_to_render_scene(
-        annotation_output=annotation_output,
+    projection_outcome = project_normalized_to_render_scene(
+        normalized_result=normalized_result,
         prepared_input=prepared_input,
         source_type=payload.source_type,
         reading_goal=payload.reading_goal,

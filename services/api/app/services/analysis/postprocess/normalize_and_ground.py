@@ -1107,6 +1107,7 @@ def _build_canonical_stats(
     CANONICAL_ANCHOR_DROP_REASONS: frozenset[str] = frozenset({
         "quote_not_found", "quote_ambiguous",
         "quote_out_of_order", "quote_too_short",
+        "quote_boundary_violation",
         "sentence_id_invalid",
     })
     anchor_drops = [

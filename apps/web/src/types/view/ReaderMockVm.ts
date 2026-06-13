@@ -31,7 +31,41 @@ export interface MultiTextAnchor {
   parts: SpanRef[]
 }
 
-export type InlineMarkAnchor = TextAnchor | MultiTextAnchor
+export interface RangePart {
+  /** Start offset in UTF-16 code units within the sentence text. */
+  start: number
+  /** End offset in UTF-16 code units within the sentence text (exclusive). */
+  end: number
+  /** Expected text at this range, used for validation. */
+  text: string
+  role?: string
+  sourceQuote?: string
+  resolutionKind?: string
+}
+
+export interface RangeAnchor {
+  kind: 'range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  start: number
+  end: number
+  text: string
+  sourceQuote?: string
+  resolutionKind?: string
+}
+
+export interface MultiRangeAnchor {
+  kind: 'multi_range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  ranges: RangePart[]
+}
+
+export type InlineMarkAnchor =
+  | TextAnchor
+  | MultiTextAnchor
+  | RangeAnchor
+  | MultiRangeAnchor
 
 export type RenderType = 'background' | 'underline'
 

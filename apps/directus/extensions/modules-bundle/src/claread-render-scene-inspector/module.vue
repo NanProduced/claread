@@ -1380,6 +1380,12 @@ function normalizeDisplayText(value) {
 
 function describeAnchor(anchor) {
   if (!anchor || typeof anchor !== "object") return "未记录";
+  if (anchor.kind === "multi_range" && Array.isArray(anchor.ranges)) {
+    return anchor.ranges.map((r) => r?.text).filter(Boolean).join(" / ") || "未记录";
+  }
+  if (anchor.kind === "range") {
+    return anchor.text || "未记录";
+  }
   if (anchor.kind === "multi_text" && Array.isArray(anchor.parts)) {
     return anchor.parts.map((item) => item?.anchor_text).filter(Boolean).join(" / ") || "未记录";
   }

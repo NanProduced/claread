@@ -106,6 +106,14 @@ function getMarkAnchorText(mark: InlineMarkModel) {
     return mark.anchor.anchorText;
   }
 
+  if (mark.anchor.kind === "range") {
+    return mark.anchor.text;
+  }
+
+  if (mark.anchor.kind === "multi_range") {
+    return mark.anchor.ranges.map((part) => part.text).join(" ");
+  }
+
   return mark.anchor.parts.map((part) => part.anchorText).join(" ");
 }
 

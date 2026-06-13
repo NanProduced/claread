@@ -13,6 +13,9 @@ from app.schemas.internal.analysis import (
     VocabHighlight,
 )
 from app.schemas.internal.drafts import (
+    AnchorQuote,
+    DraftGrammarNote,
+    DraftPhraseGloss,
     DraftVocabHighlight,
     GrammarDraft,
     TranslationDraft,
@@ -192,7 +195,6 @@ def test_analyze_route_surfaces_draft_validation_warnings(monkeypatch) -> None:
     body = response.json()
     warning_codes = {warning["code"] for warning in body["warnings"]}
     assert "DRAFT_VALIDATION" in warning_codes
-    assert body["inline_marks"] == []
 
 
 def test_projection_keeps_stable_ids_when_prior_mark_is_dropped() -> None:
@@ -457,3 +459,226 @@ def test_repair_agent_node_uses_same_zero_annotation_repair_rule(monkeypatch) ->
     assert result["repair_request"]["repaired"] is True
     assert "repair_worthy_drops: 1" in result["repair_request"]["error_context"]
     repair_mock.assert_awaited_once()
+
+
+# ── Phase 2.4B: Workflow mainline switch tests ────────────────────────
+
+
+def _vocab_draft_with_phrase() -> VocabularyDraft:
+    return VocabularyDraft(
+        vocab_highlights=[
+            DraftVocabHighlight(sentence_id="s1", text="prompted"),
+        ],
+        phrase_glosses=[
+            DraftPhraseGloss(
+                sentence_id="s1",
+                label="prompt sb to do sth",
+                anchor_quotes=[AnchorQuote(text="prompted"), AnchorQuote(text="to rethink")],
+                phrase_type="phrasal_verb",
+                zh="促使某人做某事",
+            )
+        ],
+        context_glosses=[],
+    )
+
+
+def _grammar_draft_with_note() -> GrammarDraft:
+    return GrammarDraft(
+        grammar_notes=[
+            DraftGrammarNote(
+                sentence_id="s1",
+                grammar_point="not only 句首倒装",
+                anchor_quotes=[AnchorQuote(text="Not only did"), AnchorQuote(text="but they also")],
+                note_zh="Not only 位于句首时使用部分倒装。",
+            )
+        ],
+        sentence_analyses=[],
+    )
+
+
+def test_workflow_outputs_range_anchor(monkeypatch) -> None:
+    """Workflow 正常输出至少一个 range anchor。"""
+
+    async def _fake_vocab(*a, **kw):
+        return {"output": _vocab_draft_with_phrase()}
+
+    async def _fake_grammar(*a, **kw):
+        return {"output": GrammarDraft(grammar_notes=[], sentence_analyses=[])}
+
+    async def _fake_translation(*a, **kw):
+        return {
+            "output": TranslationDraft(
+                title="测试",
+                sentence_translations=[
+                    SentenceTranslation(sentence_id="s1", translation_zh="结果促使团队。"),
+                ],
+            ),
+        }
+
+    monkeypatch.setattr(analyze_nodes, "_run_vocabulary_llm_span", _fake_vocab)
+    monkeypatch.setattr(analyze_nodes, "_run_grammar_llm_span", _fake_grammar)
+    monkeypatch.setattr(analyze_nodes, "_run_translation_llm_span", _fake_translation)
+
+    client = TestClient(app)
+    response = client.post(
+        "/analyze",
+        json={
+            "text": "The results prompted the team to rethink their approach.",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+            "source_type": "user_input",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    anchor_kinds = {mark["anchor"]["kind"] for mark in body["inline_marks"]}
+    assert "range" in anchor_kinds or "multi_range" in anchor_kinds
+
+
+def test_workflow_multi_span_outputs_multi_range_anchor(monkeypatch) -> None:
+    """Multi-span phrase/grammar 输出 multi_range anchor。"""
+
+    # Quotes matching "Not only did the results prompt the team,
+    # but they also changed the plan."
+    vocab_draft = VocabularyDraft(
+        vocab_highlights=[
+            DraftVocabHighlight(sentence_id="s1", text="prompt"),
+        ],
+        phrase_glosses=[
+            DraftPhraseGloss(
+                sentence_id="s1",
+                label="prompt sb to do sth",
+                anchor_quotes=[AnchorQuote(text="prompt"), AnchorQuote(text="the team")],
+                phrase_type="phrasal_verb",
+                zh="促使某人做某事",
+            )
+        ],
+        context_glosses=[],
+    )
+
+    async def _fake_vocab(*a, **kw):
+        return {"output": vocab_draft}
+
+    async def _fake_grammar(*a, **kw):
+        return {"output": _grammar_draft_with_note()}
+
+    async def _fake_translation(*a, **kw):
+        return {
+            "output": TranslationDraft(
+                title="测试",
+                sentence_translations=[
+                    SentenceTranslation(
+                        sentence_id="s1",
+                        translation_zh="不仅结果促使了团队，他们还改变了计划。",
+                    ),
+                ],
+            ),
+        }
+
+    monkeypatch.setattr(analyze_nodes, "_run_vocabulary_llm_span", _fake_vocab)
+    monkeypatch.setattr(analyze_nodes, "_run_grammar_llm_span", _fake_grammar)
+    monkeypatch.setattr(analyze_nodes, "_run_translation_llm_span", _fake_translation)
+
+    client = TestClient(app)
+    response = client.post(
+        "/analyze",
+        json={
+            "text": "Not only did the results prompt the team, but they also changed the plan.",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+            "source_type": "user_input",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    multi_range_marks = [
+        m for m in body["inline_marks"]
+        if m["anchor"]["kind"] == "multi_range"
+    ]
+    assert len(multi_range_marks) >= 1
+    # Multi-range should have multiple ranges
+    for mark in multi_range_marks:
+        assert len(mark["anchor"]["ranges"]) >= 2
+
+
+def test_projection_warning_enters_render_scene_warnings() -> None:
+    """Range projection warning 会进入 render_scene.warnings / state warnings。"""
+    from app.schemas.internal.normalized import (
+        CanonicalSpan,
+        NormalizedAnnotationResult,
+        NormalizedVocabHighlight,
+    )
+
+    prepared_input = prepare_input("The results prompted the team.")
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+
+    # Create a normalized result with an intentionally wrong span
+    normalized_result = NormalizedAnnotationResult(
+        annotations=[],
+        normalized_annotations=[
+            NormalizedVocabHighlight(
+                sentence_id="s1",
+                spans=[
+                    CanonicalSpan(
+                        sentence_id="s1",
+                        start=12,
+                        end=20,
+                        text="WRONGTEXT",
+                        resolution_kind="exact",
+                    )
+                ],
+            )
+        ],
+        sentence_translations=[
+            SentenceTranslation(sentence_id="s1", translation_zh="翻译"),
+        ],
+    )
+
+    state = {
+        "payload": AnalyzeRequest.model_validate({
+            "request_id": "req-warn",
+            "text": "The results prompted the team.",
+            "source_type": "user_input",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+        }),
+        "prepared_input": prepared_input,
+        "goal_execution_plan": plan,
+        "normalized_result": normalized_result,
+        "warnings": [],
+    }
+
+    result = asyncio.run(analyze_nodes.project_render_scene_node(state))
+    render_scene = result["render_scene"]
+
+    # The warning should appear in render_scene.warnings
+    warning_codes = {w.code for w in render_scene.warnings}
+    assert "canonical_range_validation_failed" in warning_codes
+
+
+def test_old_projection_still_works() -> None:
+    """旧 project_to_render_scene 测试不受影响。"""
+    prepared_input = prepare_input(
+        "This sentence mentions this first. "
+        "Another sentence mentions leverage clearly."
+    )
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+
+    outcome = project_to_render_scene(
+        annotation_output=AnnotationOutput(
+            annotations=[VocabHighlight(sentence_id="s2", text="leverage")],
+            sentence_translations=[
+                SentenceTranslation(sentence_id="s1", translation_zh="第一句。"),
+                SentenceTranslation(sentence_id="s2", translation_zh="第二句。"),
+            ],
+        ),
+        prepared_input=prepared_input,
+        source_type="user_input",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        profile_id=plan.prompt_profile,
+        request_id="req-old",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    assert outcome.result.inline_marks[0].anchor.kind == "text"

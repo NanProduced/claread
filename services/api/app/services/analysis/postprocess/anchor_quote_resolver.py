@@ -28,7 +28,63 @@ QuoteResolveReason = Literal[
     "quote_ambiguous",
     "quote_out_of_order",
     "quote_too_short",
+    "quote_boundary_violation",
 ]
+
+
+# Apostrophes and hyphens can be punctuation, but inside English words they are
+# connectors: can't, team's, state-of-the-art. Treating them as unconditional
+# boundaries would allow partial-word highlights.
+_WORD_CONNECTOR_CHARS = frozenset("'\u2018\u2019`-\u2010\u2011\u2012\u2013\u2014\u2212")
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum()
+
+
+def _is_word_connector_between_word_chars(text: str, index: int) -> bool:
+    return (
+        text[index] in _WORD_CONNECTOR_CHARS
+        and index > 0
+        and index + 1 < len(text)
+        and _is_word_char(text[index - 1])
+        and _is_word_char(text[index + 1])
+    )
+
+
+def _is_left_boundary(text: str, start: int) -> bool:
+    if start == 0:
+        return True
+    previous_index = start - 1
+    previous = text[previous_index]
+    if _is_word_char(previous):
+        return False
+    if _is_word_connector_between_word_chars(text, previous_index):
+        return False
+    return True
+
+
+def _is_right_boundary(text: str, end: int) -> bool:
+    if end == len(text):
+        return True
+    current = text[end]
+    if _is_word_char(current):
+        return False
+    if _is_word_connector_between_word_chars(text, end):
+        return False
+    return True
+
+
+def _is_at_word_boundary(text: str, start: int, end: int) -> bool:
+    """Check whether [start, end) is at word boundaries in text.
+
+    A span is at word boundaries if:
+    - start == 0 or text[start-1] is a boundary character
+    - end == len(text) or text[end] is a boundary character
+    """
+    if start < 0 or end > len(text) or start >= end:
+        return False
+    return _is_left_boundary(text, start) and _is_right_boundary(text, end)
 
 
 @dataclass(frozen=True)
@@ -50,6 +106,9 @@ def _candidate_spans_for_quote(
     direct exact/casefold matches first, then flexible punctuation matches,
     then normalized matching. Exact and casefold are combined so a lowercase
     exact match cannot hide another uppercase occurrence in the same sentence.
+
+    All candidates must be at word boundaries: "prompt" will not match
+    inside "prompted".
     """
     normalized_quote = _normalize_anchor_input(quote_text)
     direct_matches = set(_find_all(sentence.text, normalized_quote))
@@ -62,7 +121,10 @@ def _candidate_spans_for_quote(
         )
     )
     if direct_matches:
-        return sorted(direct_matches)
+        return sorted(
+            (s, e) for s, e in direct_matches
+            if _is_at_word_boundary(sentence.text, s, e)
+        )
 
     flexible_matches = {
         (m.start(), m.end())
@@ -73,7 +135,10 @@ def _candidate_spans_for_quote(
         )
     }
     if flexible_matches:
-        return sorted(flexible_matches)
+        return sorted(
+            (s, e) for s, e in flexible_matches
+            if _is_at_word_boundary(sentence.text, s, e)
+        )
 
     normalized_text, index_map = _normalize_for_matching(sentence.text)
     normalized_anchor, _ = _normalize_for_matching(normalized_quote)
@@ -84,6 +149,9 @@ def _candidate_spans_for_quote(
     return sorted({
         (index_map[start], index_map[end - 1] + 1)
         for start, end in normalized_matches
+        if _is_at_word_boundary(
+            sentence.text, index_map[start], index_map[end - 1] + 1,
+        )
     })
 
 
@@ -175,6 +243,20 @@ def resolve_anchor_quotes(
             )
             return [], errors
 
+        # Word boundary check: resolved span must be at word boundaries
+        # resolved.span is render_text-absolute; convert to sentence-local
+        local_start = resolved.span.start - sentence.sentence_span.start
+        local_end = resolved.span.end - sentence.sentence_span.start
+        if not _is_at_word_boundary(sentence.text, local_start, local_end):
+            errors.append(
+                QuoteResolveError(
+                    quote_text=quote.text,
+                    reason="quote_boundary_violation",
+                    sentence_id=sentence.sentence_id,
+                )
+            )
+            return [], errors
+
         if not candidate_spans:
             errors.append(_error(sentence, quote.text, "quote_not_found"))
             return [], errors
@@ -255,6 +337,19 @@ def resolve_vocab_text_to_canonical_span(
             QuoteResolveError(
                 quote_text=text,
                 reason="quote_not_found",
+                sentence_id=sentence.sentence_id,
+            ),
+        ]
+
+    # Word boundary check: resolved span must be at word boundaries
+    # resolved.span is render_text-absolute; convert to sentence-local
+    local_start = resolved.span.start - sentence.sentence_span.start
+    local_end = resolved.span.end - sentence.sentence_span.start
+    if not _is_at_word_boundary(sentence.text, local_start, local_end):
+        return None, [
+            QuoteResolveError(
+                quote_text=text,
+                reason="quote_boundary_violation",
                 sentence_id=sentence.sentence_id,
             ),
         ]

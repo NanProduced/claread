@@ -1657,3 +1657,36 @@ def test_normalized_no_overlap_no_conflict() -> None:
         if e.drop_reason == "conflict_resolution"
     ]
     assert len(conflict_drops) == 0
+
+
+def test_quote_boundary_violation_enters_canonical_anchor_drop_summary() -> None:
+    """quote_boundary_violation 应进入 canonical_anchor_drop_summary。"""
+    result = normalize_and_ground(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[
+                DraftVocabHighlight(sentence_id="s1", text="prompt"),
+            ],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        grammar_draft=_empty_grammar(),
+        translation_draft=_translation_draft("s1"),
+        sentences=[_sentence("s1", "The results prompted the team.")],
+        policy=_policy(),
+    )
+
+    # "prompt" is a prefix inside "prompted" → quote_boundary_violation
+    assert result.canonical_stats is not None
+    assert result.canonical_stats["canonical_drop_counts_by_reason"].get(
+        "quote_boundary_violation", 0
+    ) >= 1
+    # Should also be counted in anchor drop summary
+    assert result.canonical_stats["canonical_anchor_drop_summary"]["total_anchor_drops"] >= 1
+    # Verify the reason appears in anchor drop summary
+    reasons = {
+        entry["drop_reason"]
+        for entry in result.canonical_stats["canonical_anchor_drop_summary"][
+            "by_annotation_type_and_reason"
+        ]
+    }
+    assert "quote_boundary_violation" in reasons
