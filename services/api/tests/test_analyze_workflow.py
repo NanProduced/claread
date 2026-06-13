@@ -12,7 +12,12 @@ from app.schemas.internal.analysis import (
     SentenceTranslation,
     VocabHighlight,
 )
-from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.drafts import (
+    DraftVocabHighlight,
+    GrammarDraft,
+    TranslationDraft,
+    VocabularyDraft,
+)
 from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
 from app.services.analysis.postprocess.projection import project_to_render_scene
@@ -24,7 +29,7 @@ async def _fake_run_vocabulary_span(*args, **kwargs):
     return {
         "output": VocabularyDraft(
             vocab_highlights=[
-                VocabHighlight(sentence_id="s1", text="constitutional")
+                DraftVocabHighlight(sentence_id="s1", text="constitutional")
             ],
             phrase_glosses=[],
             context_glosses=[],
@@ -60,11 +65,10 @@ async def _raise_span(*args, **kwargs):
 
 
 async def _invalid_vocab_span(*args, **kwargs):
-    invalid = VocabHighlight.model_construct(
+    invalid = DraftVocabHighlight.model_construct(
         type="vocab_highlight",
         sentence_id="s1",
         text="extreme lengths",
-        occurrence=None,
     )
     return {
         "output": VocabularyDraft(

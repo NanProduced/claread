@@ -81,6 +81,7 @@ from app.schemas.reader_ask import (
     ReaderAskUserVisibleOutput,
 )
 from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
+from app.schemas.internal.drafts import draft_to_annotation
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
 from app.services.analysis.postprocess.projection import (
     _format_grammar_note_content,
@@ -526,7 +527,8 @@ async def _generate_sentence_annotation(
 
     if kind == "grammar_note":
         chosen_note = None
-        for note in draft.grammar_notes:
+        for draft_note in draft.grammar_notes:
+            note = draft_to_annotation(draft_note)
             validation = validate_grammar_note(note, sentence_map_payload)
             if not validation.is_valid:
                 continue
@@ -561,7 +563,8 @@ async def _generate_sentence_annotation(
             "usage_summary": usage_summary,
         }
 
-    for analysis in draft.sentence_analyses:
+    for draft_analysis in draft.sentence_analyses:
+        analysis = draft_to_annotation(draft_analysis)
         validation = validate_sentence_analysis(analysis, sentence_map_payload)
         if validation.is_valid:
             return {

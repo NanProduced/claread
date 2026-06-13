@@ -8,8 +8,8 @@ beginner_reading:
     "is my brother"}]}'
 - example_type: grammar
   sentence_text: He gave up smoking last year.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "gave up"}, {"text":
-    "smoking"}], "label": "give up + 动词-ing", "note_zh": "give up 后面跟动词的 -ing 形式，表示“放弃做某事”。日常很常用，比如
+  output_fragment: '{"type": "grammar_note", "anchor_quotes": [{"text": "gave up"}, {"text":
+    "smoking"}], "grammar_point": "give up + 动词-ing", "pattern": "<verb> + -ing", "note_zh": "give up 后面跟动词的 -ing 形式，表示\u201c放弃做某事\u201d。日常很常用，比如
     I gave up eating junk food（我戒掉了垃圾食品）。"}'
 intensive_reading:
 - example_type: sentence_analysis
@@ -32,20 +32,20 @@ gaokao:
 - example_type: grammar
   sentence_text: With several key questions still unanswered, the researchers were
     careful not to draw a final conclusion.
-  output_fragment: '{"type":"grammar_note","spans":[{"text":"With several key questions
-    still unanswered"}],"label":"with 复合结构","note_zh":"这是 with + 宾语 + 宾补 的复合结构，在句中作背景状语。several
+  output_fragment: '{"type":"grammar_note","anchor_quotes":[{"text":"With several key questions
+    still unanswered"}],"grammar_point":"with 复合结构","pattern":"with + <obj> + <participle/adj>","note_zh":"这是 with + 宾语 + 宾补 的复合结构，在句中作背景状语。several
     key questions 是宾语，still unanswered 是过去分词/形容词性成分作宾补，表示“问题仍未得到回答”。这种结构常用来交代主句动作发生的原因或背景，阅读时可先理解为“由于还有几个关键问题未解决”。"}'
 - example_type: grammar
   sentence_text: The report describes a point at which small changes in temperature
     can lead to serious effects on local wildlife.
-  output_fragment: '{"type":"grammar_note","spans":[{"text":"a point"},{"text":"at
-    which"}],"label":"介词 + which 引导定语从句","note_zh":"a point 是先行词，at which 引导定语从句，相当于
+  output_fragment: '{"type":"grammar_note","anchor_quotes":[{"text":"a point"},{"text":"at
+    which"}],"grammar_point":"介词 + which 引导定语从句","pattern":"prep + which","note_zh":"a point 是先行词，at which 引导定语从句，相当于
     at the point where，表示“在这个点上”。后面的从句具体说明：在这个临界点上，温度的小变化会对当地野生动物产生严重影响。高考常考介词和关系代词的搭配，也常考先行词与从句含义的对应。"}'
 - example_type: grammar
   sentence_text: It was not the cost of the program but the lack of public trust that
     made the plan difficult to carry out.
-  output_fragment: '{"type":"grammar_note","spans":[{"text":"It was"},{"text":"that
-    made the plan difficult to carry out"}],"label":"强调句型","note_zh":"这是强调句型 It is/was...that...，被强调部分是
+  output_fragment: '{"type":"grammar_note","anchor_quotes":[{"text":"It was"},{"text":"that
+    made the plan difficult to carry out"}],"grammar_point":"强调句型","pattern":"It is/was ... that ...","note_zh":"这是强调句型 It is/was...that...，被强调部分是
     not the cost of the program but the lack of public trust。这个结构用来突出真正导致计划难以实施的原因不是成本，而是公众信任不足。高考常考强调句型的识别：去掉
     It was 和 that 后，句子仍能还原为 The lack of public trust made the plan difficult to carry
     out。"}'
@@ -74,23 +74,23 @@ cet:
 - example_type: grammar
   sentence_text: The study, which was conducted by researchers from Harvard, found
     that regular exercise can reduce stress.
-  output_fragment: '{"type":"grammar_note","spans":[{"text":"which was conducted
-    by researchers from Harvard"},{"text":"found"}],"label":"非限制性定语从句","note_zh":"which
+  output_fragment: '{"type":"grammar_note","anchor_quotes":[{"text":"which was conducted
+    by researchers from Harvard"},{"text":"found"}],"grammar_point":"非限制性定语从句","note_zh":"which
     was conducted by researchers from Harvard 是非限制性定语从句，补充说明 the study 的研究来源，不影响主句主干。阅读时先抓主干
     The study found that...，再回头看 which 从句补充了谁做的研究。"}'
 - example_type: grammar
   sentence_text: Influenced by social media, young people tend to spend more time
     online.
-  output_fragment: '{"type":"grammar_note","spans":[{"text":"Influenced by social
-    media"},{"text":"young people tend to spend"}],"label":"过去分词短语作状语","note_zh":"Influenced
+  output_fragment: '{"type":"grammar_note","anchor_quotes":[{"text":"Influenced by social
+    media"},{"text":"young people tend to spend"}],"grammar_point":"过去分词短语作状语","pattern":"<past participle> + by <agent>","note_zh":"Influenced
     by social media 是过去分词短语作原因状语，说明 young people tend to spend more time online 的背景原因。这个结构本身不是主干，阅读时先找主语和谓语，再回头补看句首分词说明了什么影响。"}'
 - example_type: grammar
   sentence_text: Yet, what I found is that following one's passion does not necessarily
     lead to fulfillment, but is one of the most powerful cultural forces perpetuating
     overwork.
-  output_fragment: '{"type":"grammar_note","spans":[{"text":"does not necessarily
+  output_fragment: '{"type":"grammar_note","anchor_quotes":[{"text":"does not necessarily
     lead to fulfillment"},{"text":"but is one of the most powerful cultural forces
-    perpetuating overwork"}],"label":"not ... but ... 对比结构","note_zh":"这里是 not ...
+    perpetuating overwork"}],"grammar_point":"not ... but ... 对比结构","pattern":"not ... but ...","note_zh":"这里是 not ...
     but ... 对比结构，前半部分否定一种常见看法，but 后半部分给出作者真正强调的判断。语法上两个部分共同说明 following one''s passion 的结果；阅读时要特别留意
     but 后面的内容，因为那通常才是句子的重心。"}'
 - example_type: sentence_analysis
@@ -120,15 +120,15 @@ kaoyan:
 - example_type: grammar
   sentence_text: The approach, which was initially designed for urban areas, has failed
     to address the needs of rural communities.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "which was initially
-    designed for urban areas"}, {"text": "has failed"}], "label": "非限制性定语从句 + 主谓分离", "note_zh": "which
+  output_fragment: '{"type": "grammar_note", "anchor_quotes": [{"text": "which was initially
+    designed for urban areas"}, {"text": "has failed"}], "grammar_point": "非限制性定语从句 + 主谓分离", "note_zh": "which
     引导非限制性定语从句修饰 the
     approach，可先跳过。主干是 The approach has failed to address...（这种方法未能解决……）。主语和谓语被从句拆开了，阅读时先跳过逗号之间的从句抓主干"}'
 - example_type: grammar
   sentence_text: The findings, the researchers argue, challenge the prevailing assumption
     that economic growth inevitably reduces poverty.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "the researchers argue"},
-    {"text": "that economic growth inevitably reduces poverty"}], "label": "插入语 + 同位语从句", "note_zh": "the
+  output_fragment: '{"type": "grammar_note", "anchor_quotes": [{"text": "the researchers argue"},
+    {"text": "that economic growth inevitably reduces poverty"}], "grammar_point": "插入语 + 同位语从句", "note_zh": "the
     researchers argue 是插入语，可先跳过。主干是
     The findings challenge the assumption（发现挑战了假设）。that 引导同位语从句解释 assumption 的内容。这种“插入语打断主谓”的结构在考研文本中很常见"}'
 - example_type: sentence_analysis
@@ -148,14 +148,14 @@ kaoyan:
 tem:
 - example_type: grammar
   sentence_text: Never had she felt so alone, so utterly abandoned by the world.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "Never"}, {"text":
-    "had she felt"}], "label": "倒装 + 反复", "note_zh": "Never 前置触发倒装，营造紧迫感和戏剧性——读者先被“从未”击中，再感受到主语的孤独。so...so...
+  output_fragment: '{"type": "grammar_note", "anchor_quotes": [{"text": "Never"}, {"text":
+    "had she felt"}], "grammar_point": "倒装 + 反复", "note_zh": "Never 前置触发倒装，营造紧迫感和戏剧性——读者先被“从未”击中，再感受到主语的孤独。so...so...
     反复强化情绪的递进，从 alone 到 utterly abandoned，孤独感层层加深。这种倒装+反复的组合是文学文本中常见的情绪渲染手法，专八常考作者意图题"}'
 - example_type: grammar
   sentence_text: The shadows lengthened, stretched across the empty room like the
     fingers of some unseen hand.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "lengthened"}, {"text":
-    "stretched"}], "label": "动词并列 + 明喻", "note_zh": "lengthened 和 stretched 两个动词并列，赋予阴影主动性和侵入感——阴影不是被动存在，而是在“蔓延”。like
+  output_fragment: '{"type": "grammar_note", "anchor_quotes": [{"text": "lengthened"}, {"text":
+    "stretched"}], "grammar_point": "动词并列 + 明喻", "note_zh": "lengthened 和 stretched 两个动词并列，赋予阴影主动性和侵入感——阴影不是被动存在，而是在“蔓延”。like
     the fingers of some unseen hand 是明喻，将阴影比作“看不见的手指”，营造不安和神秘氛围。这种动词选择+明喻的组合是文学描写中常见的氛围营造手法"}'
 - example_type: sentence_analysis
   sentence_text: Had she known then what she knows now, she would never have opened
@@ -173,14 +173,14 @@ ielts_toefl:
 - example_type: grammar
   sentence_text: The factor that contributed most significantly to the decline was
     habitat loss.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "that contributed
-    most significantly to the decline"}], "label": "限制性定语从句", "note_zh": "that 引导限制性定语从句，限定了是“哪个”
+  output_fragment: '{"type": "grammar_note", "anchor_quotes": [{"text": "that contributed
+    most significantly to the decline"}], "grammar_point": "限制性定语从句", "note_zh": "that 引导限制性定语从句，限定了是“哪个”
     factor——是导致衰退最显著的那个因素。这类限定信息在雅思
     T/F/NG 题中常被改写为判断对象，如果题目说“Habitat loss was the primary factor”，答案取决于原文的限定是否精确"}'
 - example_type: grammar
   sentence_text: The mechanism by which the drug operates has not been fully elucidated.
-  output_fragment: '{"type": "grammar_note", "spans": [{"text": "by which"}, {"text":
-    "has not been"}], "label": "介词+关系代词 + 被动语态", "note_zh": "by which 引导定语从句修饰 mechanism，说明药物“通过什么机制”起作用。has
+  output_fragment: '{"type": "grammar_note", "anchor_quotes": [{"text": "by which"}, {"text":
+    "has not been"}], "grammar_point": "介词+关系代词 + 被动语态", "pattern": "prep + which", "note_zh": "by which 引导定语从句修饰 mechanism，说明药物“通过什么机制”起作用。has
     not been fully elucidated 是被动语态，动作执行者被省略（学术界惯例）。被动语态在学术文本中极常见（约 30-40% 的句子），需注意动作执行者是被省略了还是在
     by 后面"}'
 - example_type: sentence_analysis

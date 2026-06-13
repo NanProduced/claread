@@ -2333,7 +2333,7 @@ async def test_generate_sentence_annotation_breakdown_cache_hit_skips_run_tool()
 async def test_generate_sentence_annotation_uses_example_strategy_examples(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.schemas.internal.analysis import GrammarNote, SpanRef
+    from app.schemas.internal.drafts import AnchorQuote, DraftGrammarNote
     from app.services.analysis.prompting.example_strategy import ExampleEntry
 
     example_entry = ExampleEntry(
@@ -2357,10 +2357,10 @@ async def test_generate_sentence_annotation_uses_example_strategy_examples(
         return SimpleNamespace(
             output=SimpleNamespace(
                 grammar_notes=[
-                    GrammarNote(
+                    DraftGrammarNote(
                         sentence_id="s1",
-                        spans=[SpanRef(text="For almost a decade")],
-                        label="时间状语",
+                        grammar_point="时间状语",
+                        anchor_quotes=[AnchorQuote(text="For almost a decade")],
                         note_zh="这里作时间状语。",
                     )
                 ],

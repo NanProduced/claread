@@ -20,8 +20,13 @@ from app.eval_adapter.schemas import (
     SchemaIdentity,
     WorkflowIdentity,
 )
-from app.schemas.internal.analysis import GrammarNote, SpanRef
-from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.drafts import (
+    AnchorQuote,
+    DraftGrammarNote,
+    GrammarDraft,
+    TranslationDraft,
+    VocabularyDraft,
+)
 
 
 def _settings() -> Settings:
@@ -174,10 +179,10 @@ async def test_grammar_node_probe_returns_raw_grammar_draft(
     monkeypatch.setattr(node_probe, "get_settings", _settings)
     draft = GrammarDraft(
         grammar_notes=[
-            GrammarNote(
+            DraftGrammarNote(
                 sentence_id="s1",
-                spans=[SpanRef(text="Although", role="subordinator")],
-                label="Adverbial clause",
+                grammar_point="Adverbial clause",
+                anchor_quotes=[AnchorQuote(text="Although", role="subordinator")],
                 note_zh="Although 引导让步状语从句。",
             )
         ],
@@ -196,7 +201,7 @@ async def test_grammar_node_probe_returns_raw_grammar_draft(
 
     assert result.status == "succeeded"
     assert result.node_output is not None
-    assert result.node_output["grammar_notes"][0]["label"] == "Adverbial clause"
+    assert result.node_output["grammar_notes"][0]["grammar_point"] == "Adverbial clause"
     assert result.runtime_summary is not None
     assert result.runtime_summary["latency_ms"] >= 0
     run_mock.assert_awaited_once()

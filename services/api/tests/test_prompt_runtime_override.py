@@ -82,7 +82,8 @@ def test_instruction_override_falls_back_outside_scope() -> None:
 def test_grammar_instructions_define_source_evidence_span_contract() -> None:
     instructions = load_agent_instructions("grammar")
 
-    assert "span.text 必须逐字复制原句中的连续可见片段" in instructions
+    assert "anchor_quotes" in instructions
+    assert "必须逐字复制原句中的连续可见片段" in instructions
     assert "不得用 ... 或省略号代替原文中间内容" in instructions
     assert "自然短片段" not in instructions
 
@@ -90,8 +91,8 @@ def test_grammar_instructions_define_source_evidence_span_contract() -> None:
 def test_vocabulary_instructions_define_phrase_title_and_explicit_spans_contract() -> None:
     instructions = load_agent_instructions("vocabulary")
 
-    assert "phrase_gloss.text 是短语卡片标题 / lookup_text / 教学短语名" in instructions
-    assert "默认每条 phrase_gloss 都提供 spans" in instructions
+    assert "phrase_gloss.label 是短语卡片标题 / lookup_text / 教学短语名" in instructions
+    assert "默认每条 phrase_gloss 都提供 anchor_quotes" in instructions
     assert "兼作旧式锚点" not in instructions
 
 
@@ -162,10 +163,10 @@ def test_grammar_examples_use_exact_visible_text_anchors() -> None:
                 continue
             payload = json.loads(example["output_fragment"])
             sentence_text = example["sentence_text"]
-            for span in payload.get("spans", []):
-                span_text = span["text"]
-                assert "..." not in span_text
-                assert span_text in sentence_text
+            for quote in payload.get("anchor_quotes", []):
+                quote_text = quote["text"]
+                assert "..." not in quote_text
+                assert quote_text in sentence_text
 
 
 def test_vocabulary_phrase_examples_use_explicit_source_spans() -> None:
@@ -188,13 +189,13 @@ def test_vocabulary_phrase_examples_use_explicit_source_spans() -> None:
             if payload.get("type") != "phrase_gloss":
                 continue
             sentence_text = example["sentence_text"]
-            spans = payload.get("spans")
-            assert spans, f"{variant} phrase_gloss example missing spans"
-            assert 1 <= len(spans) <= 4
-            for span in spans:
-                span_text = span["text"]
-                assert "..." not in span_text
-                assert span_text in sentence_text
+            anchor_quotes = payload.get("anchor_quotes")
+            assert anchor_quotes, f"{variant} phrase_gloss example missing anchor_quotes"
+            assert 1 <= len(anchor_quotes) <= 4
+            for quote in anchor_quotes:
+                quote_text = quote["text"]
+                assert "..." not in quote_text
+                assert quote_text in sentence_text
 
 
 def test_vocabulary_examples_output_fragments_are_valid_json() -> None:
@@ -211,6 +212,23 @@ def test_vocabulary_examples_output_fragments_are_valid_json() -> None:
 
     for variant in variants:
         for example in load_examples("vocabulary", variant):
+            payload = json.loads(example["output_fragment"])
+            assert isinstance(payload, dict), f"{variant} output_fragment must decode to an object"
+
+
+def test_grammar_examples_output_fragments_are_valid_json() -> None:
+    variants = [
+        "beginner_reading",
+        "intensive_reading",
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+    ]
+
+    for variant in variants:
+        for example in load_examples("grammar", variant):
             payload = json.loads(example["output_fragment"])
             assert isinstance(payload, dict), f"{variant} output_fragment must decode to an object"
 

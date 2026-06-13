@@ -14,32 +14,39 @@ from app.config.settings import Settings
 from app.eval_adapter import node_lab
 from app.eval_adapter import node_lab_judge as node_lab_judge_adapter
 from app.eval_adapter.schemas import (
-    ArticleAnalysisNodeLabCompareResult,
     ArticleAnalysisNodeLabCompareRequest,
+    ArticleAnalysisNodeLabCompareResult,
     ArticleAnalysisNodeLabRunRequest,
     ArticleAnalysisNodeLabRunResult,
     ModelIdentity,
+    NodeLabBaselineConfigRequest,
     NodeLabJudgeAggregate,
     NodeLabJudgeCriterionScore,
     NodeLabJudgeExecuteRequest,
     NodeLabJudgeExecuteResult,
-    NodeLabJudgeRunResult,
     NodeLabJudgeItemResult,
     NodeLabJudgeItemSummary,
+    NodeLabJudgeRunResult,
     NodeLabJudgeSideResult,
     NodeLabPairwiseResult,
     NodeLabPairwiseReview,
-    NodeLabRubricScoringResult,
-    NodeLabBaselineConfigRequest,
     NodeLabResultEntry,
+    NodeLabRubricScoringResult,
     PromptIdentity,
     RequestSnapshot,
     SchemaIdentity,
     WorkflowIdentity,
 )
-from app.schemas.internal.analysis import ContextGloss, GrammarNote, PhraseGloss, SpanRef, VocabHighlight
-from app.schemas.internal.drafts import GrammarDraft, VocabularyDraft
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
+from app.schemas.internal.drafts import (
+    AnchorQuote,
+    DraftContextGloss,
+    DraftGrammarNote,
+    DraftPhraseGloss,
+    DraftVocabHighlight,
+    GrammarDraft,
+    VocabularyDraft,
+)
 
 
 def _settings() -> Settings:
@@ -246,7 +253,9 @@ def _judge_run_result() -> NodeLabJudgeRunResult:
 
 
 @pytest.mark.anyio
-async def test_execute_node_lab_judge_computes_ternary_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_execute_node_lab_judge_computes_ternary_summaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(node_lab_judge_adapter, "get_settings", _settings)
     monkeypatch.setattr(
         node_lab_judge_adapter,
@@ -263,8 +272,16 @@ async def test_execute_node_lab_judge_computes_ternary_summaries(monkeypatch: py
                                 "label": "focus",
                                 "source_excerpt": "Source sentence.",
                                 "criteria": [
-                                    {"criterion_id": "GN1", "score": 2, "reason": "结构判断准确。"},
-                                    {"criterion_id": "GN2", "score": 1, "reason": "解释还可更贴句。"},
+                                    {
+                                        "criterion_id": "GN1",
+                                        "score": 2,
+                                        "reason": "结构判断准确。",
+                                    },
+                                    {
+                                        "criterion_id": "GN2",
+                                        "score": 1,
+                                        "reason": "解释还可更贴句。",
+                                    },
                                 ],
                             }
                         ],
@@ -279,8 +296,16 @@ async def test_execute_node_lab_judge_computes_ternary_summaries(monkeypatch: py
                                 "label": "focus",
                                 "source_excerpt": "Source sentence.",
                                 "criteria": [
-                                    {"criterion_id": "GN1", "score": 0, "reason": "结构判断错误。"},
-                                    {"criterion_id": "GN2", "score": 1, "reason": "解释仍偏模板化。"},
+                                    {
+                                        "criterion_id": "GN1",
+                                        "score": 0,
+                                        "reason": "结构判断错误。",
+                                    },
+                                    {
+                                        "criterion_id": "GN2",
+                                        "score": 1,
+                                        "reason": "解释仍偏模板化。",
+                                    },
                                 ],
                             }
                         ],
@@ -329,7 +354,11 @@ async def test_execute_node_lab_judge_computes_ternary_summaries(monkeypatch: py
     [
         (
             NodeLabBaselineConfigRequest,
-            {"node_name": "grammar", "reading_goal": "academic", "reading_variant": "academic_general"},
+            {
+                "node_name": "grammar",
+                "reading_goal": "academic",
+                "reading_variant": "academic_general",
+            },
         ),
         (
             ArticleAnalysisNodeLabRunRequest,
@@ -397,7 +426,10 @@ async def test_node_lab_dry_run_uses_instruction_policy_and_example_override(
 
     assert result.run.status == "succeeded"
     assert result.run.agent_instructions == "You are a stricter grammar coach."
-    assert "Only annotate the most instructionally useful structure." in (result.run.prompt_preview or "")
+    assert (
+        "Only annotate the most instructionally useful structure."
+        in (result.run.prompt_preview or "")
+    )
     assert "Candidate example sentence." in (result.run.prompt_preview or "")
     assert result.run.example_summary is not None
     assert result.run.example_summary["selection_mode"] == "candidate"
@@ -413,10 +445,10 @@ async def test_node_lab_real_run_uses_dynamic_agent_when_instruction_overridden(
         return_value=SimpleNamespace(
             output=GrammarDraft(
                 grammar_notes=[
-                    GrammarNote(
+                    DraftGrammarNote(
                         sentence_id="s1",
-                        spans=[SpanRef(text="Although", role="subordinator")],
-                        label="Clause focus",
+                        grammar_point="Clause focus",
+                        anchor_quotes=[AnchorQuote(text="Although", role="subordinator")],
                         note_zh="测试",
                     )
                 ],
@@ -444,7 +476,7 @@ async def test_node_lab_real_run_uses_dynamic_agent_when_instruction_overridden(
 
     assert result.run.status == "succeeded"
     assert result.run.node_output is not None
-    assert result.run.node_output["grammar_notes"][0]["label"] == "Clause focus"
+    assert result.run.node_output["grammar_notes"][0]["grammar_point"] == "Clause focus"
     assert result.run.quick_validation is not None
     assert result.run.quick_validation["status"] == "pass"
     dynamic_run_mock.assert_awaited_once()
@@ -459,10 +491,10 @@ async def test_node_lab_grammar_quick_validation_reports_anchor_warning(
         return_value=SimpleNamespace(
             output=GrammarDraft(
                 grammar_notes=[
-                    GrammarNote(
+                    DraftGrammarNote(
                         sentence_id="s1",
-                        spans=[SpanRef(text="Imaginary anchor", role="subordinator")],
-                        label="Clause focus",
+                        grammar_point="Clause focus",
+                        anchor_quotes=[AnchorQuote(text="Imaginary anchor", role="subordinator")],
                         note_zh="测试",
                     )
                 ],
@@ -502,16 +534,16 @@ async def test_node_lab_grammar_quick_validation_reports_anchor_quality_warnings
         return_value=SimpleNamespace(
             output=GrammarDraft(
                 grammar_notes=[
-                    GrammarNote(
+                    DraftGrammarNote(
                         sentence_id="s1",
-                        spans=[SpanRef(text=", which does not depend on GDP growth")],
-                        label="非限制性定语从句",
+                        grammar_point="非限制性定语从句",
+                        anchor_quotes=[AnchorQuote(text=", which does not depend on GDP growth")],
                         note_zh="测试",
                     ),
-                    GrammarNote(
+                    DraftGrammarNote(
                         sentence_id="s2",
-                        spans=[SpanRef(text="It wasn't until ... that ...")],
-                        label="强调句型",
+                        grammar_point="强调句型",
+                        anchor_quotes=[AnchorQuote(text="It wasn't until ... that ...")],
                         note_zh="测试",
                     ),
                 ],
@@ -538,10 +570,11 @@ async def test_node_lab_grammar_quick_validation_reports_anchor_quality_warnings
 
     assert result.run.quick_validation is not None
     assert result.run.quick_validation["status"] == "warning"
-    assert result.run.quick_validation["warning_count"] == 0
-    assert result.run.quick_validation["hard_warning_count"] == 0
+    # draft_validators emits ellipsis warning as hard; anchor quality are soft
+    assert result.run.quick_validation["hard_warning_count"] == 1
     assert result.run.quick_validation["soft_warning_count"] >= 2
-    assert result.run.quick_validation["warnings"] == []
+    hard_warning_codes = {item["code"] for item in result.run.quick_validation["warnings"]}
+    assert "grammar_anchor_ellipsis" in hard_warning_codes
     soft_warning_codes = {item["code"] for item in result.run.quick_validation["soft_warnings"]}
     assert "boundary_punctuation_grammar_anchor" in soft_warning_codes
     assert "recovered_schematic_ellipsis_grammar_anchor" in soft_warning_codes
@@ -556,10 +589,10 @@ async def test_node_lab_grammar_quick_validation_keeps_unrecoverable_ellipsis_as
         return_value=SimpleNamespace(
             output=GrammarDraft(
                 grammar_notes=[
-                    GrammarNote(
+                    DraftGrammarNote(
                         sentence_id="s1",
-                        spans=[SpanRef(text="at which ... wildlife")],
-                        label="介词 + which 引导定语从句",
+                        grammar_point="介词 + which 引导定语从句",
+                        anchor_quotes=[AnchorQuote(text="at which ... wildlife")],
                         note_zh="测试",
                     )
                 ],
@@ -586,10 +619,12 @@ async def test_node_lab_grammar_quick_validation_keeps_unrecoverable_ellipsis_as
 
     assert result.run.quick_validation is not None
     assert result.run.quick_validation["status"] == "warning"
-    assert result.run.quick_validation["warning_count"] == 1
-    assert result.run.quick_validation["hard_warning_count"] == 1
+    # draft_validators ellipsis warning + anchor not found = 2 hard
+    assert result.run.quick_validation["hard_warning_count"] == 2
     assert result.run.quick_validation["soft_warning_count"] >= 1
-    assert result.run.quick_validation["warnings"][0]["code"] == "grammar_span_not_found"
+    hard_warning_codes = {item["code"] for item in result.run.quick_validation["warnings"]}
+    assert "grammar_anchor_ellipsis" in hard_warning_codes
+    assert "grammar_span_not_found" in hard_warning_codes
     soft_warning_codes = {item["code"] for item in result.run.quick_validation["soft_warnings"]}
     assert "schematic_ellipsis_grammar_anchor" in soft_warning_codes
 
@@ -602,19 +637,21 @@ async def test_node_lab_vocabulary_quick_validation_accepts_recoverable_schemati
     dynamic_run_mock = AsyncMock(
         return_value=SimpleNamespace(
             output=VocabularyDraft(
-                vocab_highlights=[VocabHighlight(sentence_id="s1", text="learning")],
+                vocab_highlights=[DraftVocabHighlight(sentence_id="s1", text="learning")],
                 phrase_glosses=[
-                    PhraseGloss(
+                    DraftPhraseGloss(
                         sentence_id="s1",
-                        text="apply ... to",
+                        label="apply ... to",
+                        anchor_quotes=[AnchorQuote(text="apply"), AnchorQuote(text="to")],
                         phrase_type="collocation",
                         zh="将……应用于……",
                     )
                 ],
                 context_glosses=[
-                    ContextGloss(
+                    DraftContextGloss(
                         sentence_id="s2",
-                        text="prompt sb to do sth",
+                        display="prompt sb to do sth",
+                        anchor_quotes=[AnchorQuote(text="prompt"), AnchorQuote(text="to rethink")],
                         gloss="促使某人做某事",
                         reason="这里表示引发后续行动。",
                     )
@@ -655,10 +692,10 @@ async def test_node_lab_vocabulary_quick_validation_accepts_phrase_gloss_explici
             output=VocabularyDraft(
                 vocab_highlights=[],
                 phrase_glosses=[
-                    PhraseGloss(
+                    DraftPhraseGloss(
                         sentence_id="s1",
-                        text="turn ... into",
-                        spans=[SpanRef(text="turn"), SpanRef(text="into")],
+                        label="turn ... into",
+                        anchor_quotes=[AnchorQuote(text="turn"), AnchorQuote(text="into")],
                         phrase_type="phrasal_verb",
                         zh="把……变成……",
                     )
@@ -696,21 +733,23 @@ async def test_node_lab_vocabulary_quick_validation_reports_duplicates_and_subsu
         return_value=SimpleNamespace(
             output=VocabularyDraft(
                 vocab_highlights=[
-                    VocabHighlight(sentence_id="s1", text="settling"),
-                    VocabHighlight(sentence_id="s1", text="range"),
+                    DraftVocabHighlight(sentence_id="s1", text="settling"),
+                    DraftVocabHighlight(sentence_id="s1", text="range"),
                 ],
                 phrase_glosses=[
-                    PhraseGloss(
+                    DraftPhraseGloss(
                         sentence_id="s1",
-                        text="settling down",
+                        label="settling down",
+                        anchor_quotes=[AnchorQuote(text="settling down")],
                         phrase_type="phrasal_verb",
                         zh="安定下来",
                     )
                 ],
                 context_glosses=[
-                    ContextGloss(
+                    DraftContextGloss(
                         sentence_id="s1",
-                        text="range",
+                        display="range",
+                        anchor_quotes=[AnchorQuote(text="range")],
                         gloss="一系列",
                         reason="后面语境强调多个选择。",
                     )
@@ -749,10 +788,10 @@ async def test_node_lab_vocabulary_quick_validation_reports_phrase_gloss_span_or
             output=VocabularyDraft(
                 vocab_highlights=[],
                 phrase_glosses=[
-                    PhraseGloss(
+                    DraftPhraseGloss(
                         sentence_id="s1",
-                        text="turn ... into",
-                        spans=[SpanRef(text="into"), SpanRef(text="turn")],
+                        label="turn ... into",
+                        anchor_quotes=[AnchorQuote(text="into"), AnchorQuote(text="turn")],
                         phrase_type="phrasal_verb",
                         zh="把……变成……",
                     )
@@ -800,7 +839,9 @@ async def test_node_lab_compare_returns_baseline_and_candidate(
                 candidate_id="cand-a",
                 snapshot_hash="snap-1",
                 status="succeeded",
-                prompt_identity=PromptIdentity(prompt_version="test", prompt_snapshot_hash="snap-1"),
+                prompt_identity=PromptIdentity(
+                    prompt_version="test", prompt_snapshot_hash="snap-1"
+                ),
                 prompt_preview="candidate prompt",
                 runtime_summary={"latency_ms": 25, "aggregate": {"total_tokens": 42}},
             ),
@@ -838,10 +879,10 @@ async def test_node_lab_compare_real_path_does_not_require_dry_run_field(
         return_value=SimpleNamespace(
             output=GrammarDraft(
                 grammar_notes=[
-                    GrammarNote(
+                    DraftGrammarNote(
                         sentence_id="s1",
-                        spans=[SpanRef(text="Although", role="subordinator")],
-                        label="Clause focus",
+                        grammar_point="Clause focus",
+                        anchor_quotes=[AnchorQuote(text="Although", role="subordinator")],
                         note_zh="测试",
                     )
                 ],
@@ -875,11 +916,6 @@ def test_node_lab_baseline_config_uses_raw_policy_loader(
         node_lab,
         "load_policy_lines_raw",
         lambda *_args, **_kwargs: ["baseline policy line"],
-    )
-    monkeypatch.setattr(
-        node_lab,
-        "load_policy_lines",
-        lambda *_args, **_kwargs: ["contaminated override line"],
     )
 
     result = node_lab.get_node_lab_baseline_config(
@@ -1089,6 +1125,9 @@ def test_node_lab_judge_execute_route_rejects_academic_goal(
         ),
     ],
 )
-def test_node_lab_judge_execute_request_validates_strategy_matrix(payload, expected_message) -> None:
+def test_node_lab_judge_execute_request_validates_strategy_matrix(
+    payload,
+    expected_message,
+) -> None:
     with pytest.raises(ValidationError, match=expected_message):
         NodeLabJudgeExecuteRequest.model_validate(payload)

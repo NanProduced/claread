@@ -37,9 +37,20 @@ from app.eval_adapter.shared import trace_scope
 from app.llm.agent_runner import extract_run_usage, run_agent_with_route
 from app.llm.router import ModelSelectionError, validate_model_selection
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
-from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
 from app.schemas.internal.analysis import PreparedSentence
+from app.schemas.internal.drafts import (
+    GrammarDraft,
+    TranslationDraft,
+    VocabularyDraft,
+)
 from app.schemas.internal.execution_plan import GoalExecutionPlan
+from app.services.analysis.debug_snapshots import (
+    build_preprocess_summary,
+    build_runtime_summary,
+    build_trace_refs,
+)
+from app.services.analysis.planning.goal_planner import build_goal_execution_plan
+from app.services.analysis.planning.goal_views import get_annotation_style
 from app.services.analysis.postprocess.anchor_resolution import (
     resolve_explicit_anchor_parts,
     resolve_grammar_anchor_to_source,
@@ -49,13 +60,6 @@ from app.services.analysis.postprocess.draft_validators import (
     validate_grammar_draft,
     validate_vocabulary_draft,
 )
-from app.services.analysis.debug_snapshots import (
-    build_preprocess_summary,
-    build_runtime_summary,
-    build_trace_refs,
-)
-from app.services.analysis.planning.goal_planner import build_goal_execution_plan
-from app.services.analysis.planning.goal_views import get_annotation_style
 from app.services.analysis.preprocess.input_preparation import prepare_input
 from app.services.analysis.prompting.example_strategy import ExampleEntry
 from app.services.analysis.prompting.node_lab_runtime import (
@@ -66,7 +70,6 @@ from app.services.analysis.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
     load_examples,
-    load_policy_lines,
     load_policy_lines_raw,
 )
 from app.services.analysis.prompting.prompt_strategy import PromptStrategy
@@ -181,7 +184,8 @@ def _parse_grammar_validation_warning(message: str) -> dict[str, Any]:
             "grammar_sentence_missing",
         ),
         (
-            r"^grammar_note: span text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
+            r"^grammar_note: anchor quote text "
+            r"'(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
             "grammar_span_not_found",
         ),
         (
@@ -189,12 +193,19 @@ def _parse_grammar_validation_warning(message: str) -> dict[str, Any]:
             "sentence_analysis_sentence_missing",
         ),
         (
-            r"^sentence_analysis: chunks missing for sentence (?P<sentence_id>\S+); (?P<detail>.+)$",
+            r"^sentence_analysis: chunks missing for sentence "
+            r"(?P<sentence_id>\S+); (?P<detail>.+)$",
             "sentence_analysis_chunks_missing",
         ),
         (
-            r"^sentence_analysis: chunk text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
+            r"^sentence_analysis: chunk text '(?P<anchor_text>.+)' "
+            r"not found in sentence (?P<sentence_id>\S+)$",
             "sentence_analysis_chunk_not_found",
+        ),
+        (
+            r"^grammar_note: anchor quote text "
+            r"'(?P<anchor_text>.+)' contains ellipsis in sentence (?P<sentence_id>\S+)$",
+            "grammar_anchor_ellipsis",
         ),
     ]
 
@@ -202,7 +213,9 @@ def _parse_grammar_validation_warning(message: str) -> dict[str, Any]:
         match = re.match(pattern, text)
         if match:
             payload = {"code": code, "message": text}
-            payload.update({key: value for key, value in match.groupdict().items() if value is not None})
+            payload.update(
+                {k: v for k, v in match.groupdict().items() if v is not None}
+            )
             return payload
 
     return {
@@ -271,6 +284,15 @@ _WEAK_SINGLE_GRAMMAR_ANCHORS = {
 }
 
 
+def _item_anchor_display(item: Any) -> str:
+    """Get a display text for a Draft annotation item for logging/warnings."""
+    for attr in ("text", "label", "display", "grammar_point"):
+        val = getattr(item, attr, None)
+        if val:
+            return str(val)
+    return ""
+
+
 def _grammar_anchor_quality_warnings(
     draft: GrammarDraft,
     sentences: list[PreparedSentence],
@@ -287,16 +309,18 @@ def _grammar_anchor_quality_warnings(
         sentence_len = max(1, len(sentence_text.strip()))
         total_anchor_len = 0
 
-        for span in item.spans:
-            anchor_text = str(span.text or "")
+        for q in item.anchor_quotes:
+            anchor_text = str(q.text or "")
             stripped_anchor = anchor_text.strip(_GRAMMAR_ANCHOR_BOUNDARY_PUNCTUATION)
             resolved_anchor = resolve_grammar_anchor_to_source(
                 sentence,
                 anchor_text,
-                span.occurrence,
+                None,
             )
             comparable_anchor_text = (
-                resolved_anchor.text if resolved_anchor is not None else stripped_anchor or anchor_text
+                resolved_anchor.text
+                if resolved_anchor is not None
+                else stripped_anchor or anchor_text
             )
             total_anchor_len += len(comparable_anchor_text.strip())
 
@@ -313,8 +337,8 @@ def _grammar_anchor_quality_warnings(
                     warnings.append({
                         "code": "recovered_schematic_ellipsis_grammar_anchor",
                         "message": (
-                            "grammar_note span 使用了讲义式省略号模板，但可被恢复为原句真实子串: "
-                            f"{anchor_text}"
+                            "grammar_note anchor_quote 使用了讲义式省略号模板，"
+                            f"但可被恢复为原句真实子串: {anchor_text}"
                         ),
                         "resolved_anchor_text": resolved_anchor.text,
                         **ellipsis_warning,
@@ -322,14 +346,16 @@ def _grammar_anchor_quality_warnings(
                 else:
                     warnings.append({
                         "code": "schematic_ellipsis_grammar_anchor",
-                        "message": f"grammar_note span 使用了讲义式省略号模板: {anchor_text}",
+                        "message": (
+                            f"grammar_note anchor_quote 使用了讲义式省略号模板: {anchor_text}"
+                        ),
                         **ellipsis_warning,
                     })
 
             if stripped_anchor and stripped_anchor != anchor_text:
                 warnings.append({
                     "code": "boundary_punctuation_grammar_anchor",
-                    "message": f"grammar_note span 包含首尾无关标点或空格: {anchor_text}",
+                    "message": f"grammar_note anchor_quote 包含首尾无关标点或空格: {anchor_text}",
                     "sentence_id": item.sentence_id,
                     "anchor_text": anchor_text,
                     "resolved_anchor_text": comparable_anchor_text,
@@ -338,20 +364,29 @@ def _grammar_anchor_quality_warnings(
 
             comparable_anchor = comparable_anchor_text.strip().rstrip(".!?")
             comparable_sentence = sentence_text.strip().rstrip(".!?")
-            if comparable_anchor and comparable_sentence and comparable_anchor == comparable_sentence:
+            if (
+                comparable_anchor
+                and comparable_sentence
+                and comparable_anchor == comparable_sentence
+            ):
                 warnings.append({
                     "code": "full_sentence_grammar_anchor",
-                    "message": f"grammar_note span 覆盖整句: {comparable_anchor_text}",
+                    "message": f"grammar_note anchor_quote 覆盖整句: {comparable_anchor_text}",
                     "sentence_id": item.sentence_id,
                     "anchor_text": comparable_anchor_text,
                     "severity": "soft",
                 })
 
             anchor_words = re.findall(r"[A-Za-z]+", comparable_anchor_text)
-            if len(anchor_words) == 1 and anchor_words[0].casefold() in _WEAK_SINGLE_GRAMMAR_ANCHORS:
+            if (
+                len(anchor_words) == 1
+                and anchor_words[0].casefold() in _WEAK_SINGLE_GRAMMAR_ANCHORS
+            ):
                 warnings.append({
                     "code": "weak_short_grammar_anchor",
-                    "message": f"grammar_note span 只有低信息量关系词: {comparable_anchor_text}",
+                    "message": (
+                        f"grammar_note anchor_quote 只有低信息量关系词: {comparable_anchor_text}"
+                    ),
                     "sentence_id": item.sentence_id,
                     "anchor_text": comparable_anchor_text,
                     "severity": "soft",
@@ -360,7 +395,10 @@ def _grammar_anchor_quality_warnings(
             if len(comparable_anchor_text.strip()) > _GRAMMAR_ANCHOR_MAX_CHARS:
                 warnings.append({
                     "code": "long_grammar_anchor",
-                    "message": f"grammar_note span 过长，不适合作为原文行内锚点: {comparable_anchor_text}",
+                    "message": (
+                        f"grammar_note anchor_quote 过长，不适合作为原文行内锚点: "
+                        f"{comparable_anchor_text}"
+                    ),
                     "sentence_id": item.sentence_id,
                     "anchor_text": comparable_anchor_text,
                     "severity": "soft",
@@ -369,9 +407,9 @@ def _grammar_anchor_quality_warnings(
         if total_anchor_len / sentence_len > _GRAMMAR_ANCHOR_MAX_SENTENCE_RATIO:
             warnings.append({
                 "code": "broad_grammar_anchor",
-                "message": f"grammar_note spans 覆盖原句比例过高: {item.sentence_id}",
+                "message": f"grammar_note anchor_quotes 覆盖原句比例过高: {item.sentence_id}",
                 "sentence_id": item.sentence_id,
-                "anchor_text": " || ".join(span.text for span in item.spans),
+                "anchor_text": " || ".join(q.text for q in item.anchor_quotes),
                 "severity": "soft",
             })
 
@@ -388,20 +426,39 @@ def _parse_vocabulary_validation_warning(message: str) -> dict[str, Any]:
 
     patterns = [
         (
-            r"^(?P<annotation_type>vocab_highlight|phrase_gloss|context_gloss): sentence_id (?P<sentence_id>\S+) not found$",
+            r"^(?P<annotation_type>vocab_highlight|phrase_gloss|context_gloss): "
+            r"sentence_id (?P<sentence_id>\S+) not found$",
             "vocabulary_sentence_missing",
         ),
         (
-            r"^(?P<annotation_type>vocab_highlight|phrase_gloss|context_gloss): text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
+            r"^(?P<annotation_type>vocab_highlight|phrase_gloss|context_gloss): "
+            r"text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
             "vocabulary_anchor_not_found",
         ),
         (
-            r"^(?P<annotation_type>phrase_gloss): span text '(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
+            r"^(?P<annotation_type>phrase_gloss): anchor quote text "
+            r"'(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
             "vocabulary_anchor_not_found",
         ),
         (
-            r"^(?P<annotation_type>phrase_gloss): spans out of source order in sentence (?P<sentence_id>\S+)$",
+            r"^(?P<annotation_type>context_gloss): anchor quote text "
+            r"'(?P<anchor_text>.+)' not found in sentence (?P<sentence_id>\S+)$",
+            "vocabulary_anchor_not_found",
+        ),
+        (
+            r"^(?P<annotation_type>phrase_gloss): anchor quotes out of source order "
+            r"in sentence (?P<sentence_id>\S+)$",
             "phrase_gloss_spans_out_of_order",
+        ),
+        (
+            r"^(?P<annotation_type>phrase_gloss): anchor quote text "
+            r"'(?P<anchor_text>.+)' contains ellipsis in sentence (?P<sentence_id>\S+)$",
+            "vocabulary_anchor_ellipsis",
+        ),
+        (
+            r"^(?P<annotation_type>context_gloss): anchor quote text "
+            r"'(?P<anchor_text>.+)' contains ellipsis in sentence (?P<sentence_id>\S+)$",
+            "vocabulary_anchor_ellipsis",
         ),
     ]
 
@@ -409,7 +466,9 @@ def _parse_vocabulary_validation_warning(message: str) -> dict[str, Any]:
         match = re.match(pattern, text)
         if match:
             payload = {"code": code, "message": text}
-            payload.update({key: value for key, value in match.groupdict().items() if value is not None})
+            payload.update(
+                {k: v for k, v in match.groupdict().items() if v is not None}
+            )
             return payload
 
     return {
@@ -425,6 +484,20 @@ def _span_payloads(
     sentence = sentence_map.get(str(getattr(item, "sentence_id", "")))
     if sentence is None:
         return None
+
+    # Handle anchor_quotes (Draft types: DraftPhraseGloss, DraftContextGloss)
+    anchor_quotes = getattr(item, "anchor_quotes", None)
+    if anchor_quotes:
+        parts = [
+            {"anchor_text": q.text, "occurrence": None, "role": q.role}
+            for q in anchor_quotes
+        ]
+        resolved_parts = resolve_explicit_anchor_parts(sentence, parts)
+        if resolved_parts is None:
+            return None
+        return [(part.span.start, part.span.end) for part in resolved_parts]
+
+    # Handle spans (Annotation types: PhraseGloss)
     spans = getattr(item, "spans", None)
     if spans:
         parts = [
@@ -435,6 +508,8 @@ def _span_payloads(
         if resolved_parts is None:
             return None
         return [(part.span.start, part.span.end) for part in resolved_parts]
+
+    # Handle text-based resolution (DraftVocabHighlight, VocabHighlight, ContextGloss)
     resolved = resolve_vocabulary_anchor_spans(
         sentence,
         str(getattr(item, "text", "")),
@@ -482,21 +557,23 @@ def _vocabulary_duplicate_and_overlap_warnings(
     text_groups: dict[tuple[str, str], list[tuple[str, Any]]] = {}
     for annotation_type, item in typed_items:
         sentence_id = str(getattr(item, "sentence_id", ""))
-        text = str(getattr(item, "text", ""))
+        display_text = _item_anchor_display(item)
         spans = _span_payloads(item, sentence_map)
         anchor_signature = (
             json.dumps(spans, ensure_ascii=False, separators=(",", ":"))
             if spans is not None
-            else text.casefold()
+            else display_text.casefold()
         )
         if sentence_id and anchor_signature:
-            text_groups.setdefault((sentence_id, anchor_signature), []).append((annotation_type, item))
+            text_groups.setdefault(
+                (sentence_id, anchor_signature), []
+            ).append((annotation_type, item))
 
     for (sentence_id, _text_key), items in text_groups.items():
         annotation_types = sorted({annotation_type for annotation_type, _item in items})
         if len(annotation_types) <= 1:
             continue
-        anchor_text = str(getattr(items[0][1], "text", ""))
+        anchor_text = _item_anchor_display(items[0][1])
         warnings.append({
             "code": "vocabulary_same_text_cross_type",
             "message": f"同一句同一文本被多个 vocabulary type 标注: {anchor_text}",
@@ -527,7 +604,7 @@ def _vocabulary_duplicate_and_overlap_warnings(
                     "message": f"vocab_highlight 被 {annotation_type} 覆盖: {vocab.text}",
                     "sentence_id": vocab.sentence_id,
                     "anchor_text": vocab.text,
-                    "container_text": getattr(rich_item, "text", ""),
+                    "container_text": _item_anchor_display(rich_item),
                 })
                 break
 
@@ -548,10 +625,13 @@ def _vocabulary_duplicate_and_overlap_warnings(
             if _span_groups_overlap(phrase_span, context_span):
                 warnings.append({
                     "code": "phrase_context_overlap",
-                    "message": f"phrase_gloss 与 context_gloss 锚点重叠: {phrase.text} / {context.text}",
+                    "message": (
+                        f"phrase_gloss 与 context_gloss 锚点重叠: "
+                        f"{_item_anchor_display(phrase)} / {_item_anchor_display(context)}"
+                    ),
                     "sentence_id": phrase.sentence_id,
-                    "anchor_text": phrase.text,
-                    "other_anchor_text": context.text,
+                    "anchor_text": _item_anchor_display(phrase),
+                    "other_anchor_text": _item_anchor_display(context),
                 })
 
     return warnings
@@ -745,8 +825,12 @@ def _resolved_policy_lines(
     runtime_override: NodeLabRuntimeOverride | None,
 ) -> list[str]:
     if runtime_override and runtime_override.policy_override.mode == "override_lines":
-        return [line for line in runtime_override.policy_override.lines if line.strip()]
-    return load_policy_lines_raw(node_name, _policy_focus_for_node(plan, node_name), plan.variant_id)
+        return [
+            line for line in runtime_override.policy_override.lines if line.strip()
+        ]
+    return load_policy_lines_raw(
+        node_name, _policy_focus_for_node(plan, node_name), plan.variant_id
+    )
 
 
 def _prompt_identity(runtime_override: NodeLabRuntimeOverride | None) -> PromptIdentity:
@@ -885,7 +969,10 @@ async def _run_node_lab_once(
         plan = build_goal_execution_plan(request.reading_goal, request.reading_variant)
         topology_mode = getattr(plan, "topology_mode", "unknown")
         if topology_mode != "learning":
-            raise ValueError("node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
+            raise ValueError(
+                "node_lab v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
+            )
 
         prepared_input = prepare_input(request.text)
         sentences_data = [
@@ -1001,9 +1088,15 @@ def get_node_lab_baseline_config(
         prompt_profile=plan.prompt_profile,
         policy_focus=policy_focus,
         agent_instructions=load_agent_instructions(request.node_name),
-        policy_lines=load_policy_lines_raw(request.node_name, policy_focus, request.reading_variant),
+        policy_lines=load_policy_lines_raw(
+            request.node_name, policy_focus, request.reading_variant
+        ),
         baseline_examples=baseline_examples,
-        baseline_model_profile=settings.annotation_model_profile or settings.default_model_profile or None,
+        baseline_model_profile=(
+            settings.annotation_model_profile
+            or settings.default_model_profile
+            or None
+        ),
     )
 
 
@@ -1011,7 +1104,11 @@ async def run_article_analysis_node_lab(
     request: ArticleAnalysisNodeLabRunRequest,
 ) -> ArticleAnalysisNodeLabRunResult:
     request_id = _request_id(request)
-    rag_mode = request.candidate_override.few_shot_override.few_shot_mode if request.candidate_override else "baseline"
+    rag_mode = (
+        request.candidate_override.few_shot_override.few_shot_mode
+        if request.candidate_override
+        else "baseline"
+    )
     result_entry = await _run_node_lab_once(
         request=SimpleNamespace(**request.model_dump(mode="python")),
         participant_label="candidate" if request.candidate_override else "baseline",
@@ -1056,8 +1153,12 @@ async def compare_article_analysis_node_lab(
             request_id=f"{request_id}:candidate",
         ),
     )
-    baseline_tokens = ((baseline.runtime_summary or {}).get("aggregate") or {}).get("total_tokens")
-    candidate_tokens = ((candidate.runtime_summary or {}).get("aggregate") or {}).get("total_tokens")
+    baseline_tokens = (
+        (baseline.runtime_summary or {}).get("aggregate") or {}
+    ).get("total_tokens")
+    candidate_tokens = (
+        (candidate.runtime_summary or {}).get("aggregate") or {}
+    ).get("total_tokens")
     baseline_latency = (baseline.runtime_summary or {}).get("latency_ms") or 0
     candidate_latency = (candidate.runtime_summary or {}).get("latency_ms") or 0
     compare_status = (
@@ -1091,7 +1192,11 @@ async def compare_article_analysis_node_lab(
         source_type=request.source_type,
         extended=request.extended,
         trace_scope_value=request.trace_scope,
-        rag_mode="rag" if request.candidate_override.few_shot_override.few_shot_mode == "rag" else "off",
+        rag_mode=(
+            "rag"
+            if request.candidate_override.few_shot_override.few_shot_mode == "rag"
+            else "off"
+        ),
     )
     return ArticleAnalysisNodeLabCompareResult(
         node_name=request.node_name,

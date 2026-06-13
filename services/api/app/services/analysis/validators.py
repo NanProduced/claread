@@ -199,14 +199,35 @@ def validate_context_gloss(
         return result
 
     prepared_sentence = _as_prepared_sentence(annotation.sentence_id, sentence_text)
-    if resolve_vocabulary_anchor_binding(
+    if annotation.spans:
+        parts = [
+            {
+                "anchor_text": span.text,
+                "occurrence": span.occurrence,
+                "role": span.role,
+            }
+            for span in annotation.spans
+        ]
+        if resolve_explicit_anchor_parts(prepared_sentence, parts) is None:
+            result.add_error(
+                "anchor_not_substring",
+                (
+                    "ContextGloss.spans 不是可稳定映射的原文锚点: "
+                    f"{[s.text for s in annotation.spans]}"
+                ),
+                sentence_id=annotation.sentence_id,
+            )
+    elif resolve_vocabulary_anchor_binding(
         prepared_sentence,
         annotation.text,
         annotation.occurrence,
     ) is None:
         result.add_error(
             "anchor_not_substring",
-            f"ContextGloss.text 不是可稳定映射的原文锚点: '{annotation.text}'",
+            (
+                "ContextGloss.text 不是可稳定映射的原文锚点: "
+                f"'{annotation.text}'"
+            ),
             sentence_id=annotation.sentence_id,
         )
 

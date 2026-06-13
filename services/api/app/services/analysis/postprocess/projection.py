@@ -19,13 +19,13 @@ from app.schemas.analysis import (
     TranslationItem,
 )
 from app.schemas.internal.analysis import (
+    AnnotationOutput,
     Chunk,
     ContextGloss,
     GrammarNote,
     PhraseGloss,
     SentenceAnalysis,
     SpanRef,
-    AnnotationOutput,
     VocabHighlight,
 )
 from app.services.analysis.postprocess.anchor_resolution import (
@@ -228,7 +228,9 @@ def _project_phrase_gloss(
                         occurrence=resolved_part.occurrence,
                         role=original_span.role,
                     )
-                    for original_span, resolved_part in zip(annotation.spans, resolved_parts, strict=False)
+                    for original_span, resolved_part in zip(
+                        annotation.spans, resolved_parts, strict=False
+                    )
                 ],
             )
     else:
@@ -262,9 +264,55 @@ def _project_context_gloss(
     sentence_obj: PreparedSentence,
 ) -> tuple[InlineMark | None, list[dict[str, object]]]:
     warnings: list[dict[str, object]] = []
-    resolved_anchor = _resolve_vocabulary_anchor_ref(
-        sentence_obj, annotation.sentence_id, annotation.text, annotation.occurrence
-    )
+    lookup_text = annotation.display or annotation.text
+
+    if annotation.spans:
+        # 有显式 spans 时，按 phrase_gloss 的显式 span 逻辑投影
+        parts = [
+            {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
+            for span in annotation.spans
+        ]
+        resolved_parts = resolve_explicit_anchor_parts(sentence_obj, parts)
+        if resolved_parts is None:
+            warnings.append({
+                "code": "anchor_resolve_failed",
+                "level": "warning",
+                "message": (
+                    f"ContextGloss 锚点解析失败: "
+                    f"{[s.text for s in annotation.spans]}"
+                ),
+                "sentence_id": annotation.sentence_id,
+            })
+            return None, warnings
+        if len(resolved_parts) == 1:
+            resolved_part = resolved_parts[0]
+            resolved_anchor: TextAnchor | MultiTextAnchor | None = TextAnchor(
+                kind="text",
+                sentence_id=annotation.sentence_id,
+                anchor_text=resolved_part.text,
+                occurrence=resolved_part.occurrence,
+            )
+        else:
+            resolved_anchor = MultiTextAnchor(
+                kind="multi_text",
+                sentence_id=annotation.sentence_id,
+                parts=[
+                    SpanRefPart(
+                        anchor_text=resolved_part.text,
+                        occurrence=resolved_part.occurrence,
+                        role=original_span.role,
+                    )
+                    for original_span, resolved_part in zip(
+                        annotation.spans, resolved_parts, strict=False
+                    )
+                ],
+            )
+    else:
+        resolved_anchor = _resolve_vocabulary_anchor_ref(
+            sentence_obj, annotation.sentence_id,
+            annotation.text, annotation.occurrence,
+        )
+
     if resolved_anchor is None:
         warnings.append({
             "code": "anchor_resolve_failed",
@@ -280,8 +328,8 @@ def _project_context_gloss(
         render_type="underline",
         visual_tone="context",
         clickable=True,
-        lookup_text=annotation.text,
-        lookup_kind=_lookup_kind_for_context_gloss(annotation.text, resolved_anchor),
+        lookup_text=lookup_text,
+        lookup_kind=_lookup_kind_for_context_gloss(lookup_text, resolved_anchor),
         glossary=InlineGlossary(gloss=annotation.gloss, reason=annotation.reason),
     )
     return inline_mark, warnings
@@ -304,7 +352,8 @@ def _project_grammar_note(
 
     content = _format_grammar_note_content(annotation)
 
-    # NOTE: To allow frontend correlation, we use the EXACT same dictionary structure to generate the stable ID suffix.
+    # NOTE: To allow frontend correlation, we use the EXACT same dictionary
+    # structure to generate the stable ID suffix.
     stable_payload_dict = annotation.model_dump()
 
     sentence_entry = SentenceEntry(

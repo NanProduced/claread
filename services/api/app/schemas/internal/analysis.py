@@ -163,7 +163,8 @@ class VocabHighlight(BaseModel):
         min_length=1,
         description=(
             "用于前端原文高亮的单个英文词锚点。最终必须能落成对应句子中的单个原文词形；"
-            "不能含空格，不得改成词典原形或其他非原句 surface form。多词表达请使用 PhraseGloss 或 ContextGloss。"
+            "不能含空格，不得改成词典原形或其他非原句 surface form。"
+            "多词表达请使用 PhraseGloss 或 ContextGloss。"
         ),
     )
     occurrence: int | None = Field(default=None, ge=1, description="同一句中该文本第几次出现")
@@ -197,7 +198,8 @@ class PhraseGloss(BaseModel):
         min_length=1,
         max_length=4,
         description=(
-            "用于前端原文高亮的证据 spans。默认应提供：连续短语可提供 1 个 span；不连续短语可提供 2-4 个 span。"
+            "用于前端原文高亮的证据 spans。"
+            "默认应提供：连续短语可提供 1 个 span；不连续短语可提供 2-4 个 span。"
             "每个 span.text 都必须是原句中的连续真实子串，不得使用 ... 或概括性改写。"
             "提供 spans 时，前端锚点只以 spans 为准。"
         ),
@@ -226,7 +228,10 @@ class PhraseGloss(BaseModel):
             if not 1 <= len(self.spans) <= 4:
                 raise ValueError("PhraseGloss.spans must contain 1 to 4 spans when provided")
             if any("..." in span.text for span in self.spans):
-                raise ValueError("PhraseGloss.spans must use exact continuous substrings, not ellipsis")
+                raise ValueError(
+                    "PhraseGloss.spans must use exact "
+                    "continuous substrings, not ellipsis"
+                )
         return self
 
 
@@ -244,6 +249,21 @@ class ContextGloss(BaseModel):
             "可恢复为同一句内多段原文的示意性框架（如 refer to ... as、prompt sb to do sth）。"
             "不要改写成脱离原句的词典原形或概括性 paraphrase。用于词典义不足以解释当前语境的情况；"
             "若只是固定搭配整体义，优先使用 PhraseGloss。"
+        ),
+    )
+    display: str | None = Field(
+        default=None,
+        description=(
+            "展示文本（来自 Draft 层 display 字段）。"
+            "当 display 与 text 不同时，前端展示用 display，"
+            "原文绑定用 text。"
+        ),
+    )
+    spans: list[SpanRef] | None = Field(
+        default=None,
+        description=(
+            "原文锚点 spans（来自 Draft 层 anchor_quotes 转换）。"
+            "提供 spans 时，前端锚点以 spans 为准（同 PhraseGloss）。"
         ),
     )
     occurrence: int | None = Field(default=None, ge=1, description="同一句中该文本第几次出现")

@@ -1,4 +1,5 @@
 from app.schemas.internal.analysis import (
+    AnnotationOutput,
     Chunk,
     ContextGloss,
     GrammarNote,
@@ -6,12 +7,11 @@ from app.schemas.internal.analysis import (
     SentenceAnalysis,
     SentenceTranslation,
     SpanRef,
-    AnnotationOutput,
     VocabHighlight,
 )
-from app.services.analysis.preprocess.input_preparation import prepare_input
-from app.services.analysis.postprocess.projection import project_to_render_scene
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
+from app.services.analysis.postprocess.projection import project_to_render_scene
+from app.services.analysis.preprocess.input_preparation import prepare_input
 
 
 def test_vocab_highlight_projects_to_inline_mark() -> None:
@@ -19,7 +19,12 @@ def test_vocab_highlight_projects_to_inline_mark() -> None:
     plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
     output = AnnotationOutput(
         annotations=[VocabHighlight(sentence_id="s1", text="implementation")],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="可持续实践的实施是具有挑战性的。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="可持续实践的实施是具有挑战性的。",
+            )
+        ],
     )
     outcome = project_to_render_scene(
         annotation_output=output,
@@ -45,12 +50,21 @@ def test_grammar_note_projects_to_inline_mark_and_entry() -> None:
         annotations=[
             GrammarNote(
                 sentence_id="s1",
-                spans=[SpanRef(text="So", role="trigger"), SpanRef(text="fundamental", role="focus"), SpanRef(text="that", role="conjunction")],
+                spans=[
+                    SpanRef(text="So", role="trigger"),
+                    SpanRef(text="fundamental", role="focus"),
+                    SpanRef(text="that", role="conjunction"),
+                ],
                 label="结果状语从句（半倒装）",
                 note_zh="so...that 结构，主语较长时使用部分倒装。",
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="这些挑战如此根本，以至于传统方法失败了。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="这些挑战如此根本，以至于传统方法失败了。",
+            )
+        ],
     )
     outcome = project_to_render_scene(
         annotation_output=output,
@@ -68,7 +82,10 @@ def test_grammar_note_projects_to_inline_mark_and_entry() -> None:
 
 
 def test_grammar_note_with_broad_anchor_still_projects_inline_mark() -> None:
-    sentence = "It wasn't until I began to research this widely accepted career advice that I understood how problematic it really was."
+    sentence = (
+        "It wasn't until I began to research this widely accepted career advice "
+        "that I understood how problematic it really was."
+    )
     prepared = prepare_input(sentence)
     plan = build_goal_execution_plan("exam", "gaokao")
     output = AnnotationOutput(
@@ -80,7 +97,12 @@ def test_grammar_note_with_broad_anchor_still_projects_inline_mark() -> None:
                 note_zh="这是 not until 强调句型。",
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="直到开始研究这条建议，我才意识到它的问题。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="直到开始研究这条建议，我才意识到它的问题。",
+            )
+        ],
     )
     outcome = project_to_render_scene(
         annotation_output=output,
@@ -100,7 +122,10 @@ def test_grammar_note_with_broad_anchor_still_projects_inline_mark() -> None:
 
 
 def test_sentence_analysis_projects_to_entry_only() -> None:
-    prepared = prepare_input("They recognize that sustainable success requires a fundamental rethinking of core business models.")
+    prepared = prepare_input(
+        "They recognize that sustainable success requires "
+        "a fundamental rethinking of core business models."
+    )
     plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
     output = AnnotationOutput(
         annotations=[
@@ -111,12 +136,21 @@ def test_sentence_analysis_projects_to_entry_only() -> None:
                 chunks=[
                     Chunk(order=1, label="主语", text="They"),
                     Chunk(order=2, label="谓语", text="recognize"),
-                    Chunk(order=3, label="that 宾语从句", text="that sustainable success requires a fundamental rethinking"),
+                    Chunk(
+                        order=3,
+                        label="that 宾语从句",
+                        text="that sustainable success requires a fundamental rethinking",
+                    ),
                     Chunk(order=4, label="of 介词短语", text="of core business models"),
                 ],
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="他们认识到，可持续的成功需要对核心商业模式的根本性反思。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="他们认识到，可持续的成功需要对核心商业模式的根本性反思。",
+            )
+        ],
     )
     outcome = project_to_render_scene(
         annotation_output=output,
@@ -130,7 +164,10 @@ def test_sentence_analysis_projects_to_entry_only() -> None:
     assert len(outcome.result.inline_marks) == 0
     assert len(outcome.result.sentence_entries) == 1
     assert outcome.result.sentence_entries[0].entry_type == "sentence_analysis"
-    assert outcome.result.sentence_entries[0].analysis_text == "本句主句为 They recognize，后接 that 引导的宾语从句。"
+    assert (
+        outcome.result.sentence_entries[0].analysis_text
+        == "本句主句为 They recognize，后接 that 引导的宾语从句。"
+    )
     assert outcome.result.sentence_entries[0].chunks == [
         {"order": 1, "label": "主语", "text": "They", "occurrence": None},
         {"order": 2, "label": "谓语", "text": "recognize", "occurrence": None},
@@ -142,7 +179,10 @@ def test_sentence_analysis_projects_to_entry_only() -> None:
         },
         {"order": 4, "label": "of 介词短语", "text": "of core business models", "occurrence": None},
     ]
-    assert "本句主句为 They recognize，后接 that 引导的宾语从句。" in outcome.result.sentence_entries[0].content
+    assert (
+        "本句主句为 They recognize，后接 that 引导的宾语从句。"
+        in outcome.result.sentence_entries[0].content
+    )
     assert "**1. 主语**" in outcome.result.sentence_entries[0].content
 
 
@@ -156,11 +196,22 @@ def test_mixed_annotations_project_correctly() -> None:
         annotations=[
             VocabHighlight(sentence_id="s1", text="implementation"),
             PhraseGloss(sentence_id="s2", text="buzzword", phrase_type="compound", zh="流行术语"),
-            ContextGloss(sentence_id="s1", text="requires", gloss="这里表示“需要进行”", reason="句中强调的是实现该动作的要求"),
+            ContextGloss(
+                sentence_id="s1",
+                text="requires",
+                gloss="这里表示\u201c需要进行\u201d",
+                reason="句中强调的是实现该动作的要求",
+            ),
         ],
         sentence_translations=[
-            SentenceTranslation(sentence_id="s1", translation_zh="可持续发展实践的实施需要根本性的反思。"),
-            SentenceTranslation(sentence_id="s2", translation_zh="这个概念已经变成了一个流行术语。"),
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="可持续发展实践的实施需要根本性的反思。",
+            ),
+            SentenceTranslation(
+                sentence_id="s2",
+                translation_zh="这个概念已经变成了一个流行术语。",
+            ),
         ],
     )
     outcome = project_to_render_scene(
@@ -187,7 +238,12 @@ def test_phrase_gloss_schematic_anchor_projects_to_multi_text() -> None:
                 zh="把……称作……",
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="人们常把这种模式称作捷径。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="人们常把这种模式称作捷径。",
+            )
+        ],
     )
 
     outcome = project_to_render_scene(
@@ -221,7 +277,12 @@ def test_phrase_gloss_single_explicit_span_projects_to_text_anchor() -> None:
                 zh="安顿下来",
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="他们在村里安顿下来。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="他们在村里安顿下来。",
+            )
+        ],
     )
 
     outcome = project_to_render_scene(
@@ -255,7 +316,12 @@ def test_phrase_gloss_explicit_spans_project_to_multi_text() -> None:
                 zh="把……变成……",
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="人们可以把热情转化为进步。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="人们可以把热情转化为进步。",
+            )
+        ],
     )
 
     outcome = project_to_render_scene(
@@ -288,7 +354,12 @@ def test_context_gloss_schematic_anchor_projects_to_multi_text_with_phrase_looku
                 reason="这里强调把规则迁移到新情境中的用法。",
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="他们把这条规则应用到不熟悉的案例中。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="他们把这条规则应用到不熟悉的案例中。",
+            )
+        ],
     )
 
     outcome = project_to_render_scene(
@@ -322,7 +393,12 @@ def test_context_gloss_single_token_keeps_word_lookup() -> None:
                 reason="强调后面动作是必要条件。",
             )
         ],
-        sentence_translations=[SentenceTranslation(sentence_id="s1", translation_zh="这项提案需要仔细审查。")],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="这项提案需要仔细审查。",
+            )
+        ],
     )
 
     outcome = project_to_render_scene(
@@ -359,4 +435,64 @@ def test_missing_translation_adds_warning() -> None:
         profile_id=plan.prompt_profile,
         request_id="test-008",
     )
-    assert any(warning.get("code") == "translation_coverage_incomplete" for warning in outcome.warnings)
+    assert any(
+        warning.get("code") == "translation_coverage_incomplete"
+        for warning in outcome.warnings
+    )
+
+
+def test_context_gloss_with_display_and_spans_projects_correctly() -> None:
+    """DraftContextGloss(display="prompt sb to do sth", anchor_quotes=["prompt", "to rethink"])
+    经过 draft_to_annotation → normalize → projection 后，
+    lookup_text 为 display，anchor 为 multi_text，parts 为两个真实原文片段。"""
+    from app.schemas.internal.drafts import (
+        AnchorQuote,
+        DraftContextGloss,
+        draft_to_annotation,
+    )
+
+    prepared = prepare_input("The results prompted the team to rethink their approach.")
+    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+
+    draft = DraftContextGloss(
+        sentence_id="s1",
+        display="prompt sb to do sth",
+        anchor_quotes=[
+            AnchorQuote(text="prompted"),
+            AnchorQuote(text="to rethink"),
+        ],
+        gloss="促使某人做某事",
+        reason='词典义"提示"不足以表达"促使/推动"的语境含义。',
+    )
+    annotation = draft_to_annotation(draft)
+
+    output = AnnotationOutput(
+        annotations=[annotation],
+        sentence_translations=[
+            SentenceTranslation(
+                sentence_id="s1",
+                translation_zh="结果促使团队重新思考他们的方法。",
+            )
+        ],
+    )
+
+    outcome = project_to_render_scene(
+        annotation_output=output,
+        prepared_input=prepared,
+        source_type="user_input",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        profile_id=plan.prompt_profile,
+        request_id="test-ctx-display-spans",
+    )
+
+    assert len(outcome.result.inline_marks) == 1
+    inline_mark = outcome.result.inline_marks[0]
+    assert inline_mark.annotation_type == "context_gloss"
+    assert inline_mark.lookup_text == "prompt sb to do sth"
+    assert inline_mark.lookup_kind == "phrase"
+    assert inline_mark.anchor.kind == "multi_text"
+    assert [part.anchor_text for part in inline_mark.anchor.parts] == [
+        "prompted",
+        "to rethink",
+    ]

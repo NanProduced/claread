@@ -20,7 +20,16 @@ from app.schemas.internal.analysis import (
     SpanRef,
     VocabHighlight,
 )
-from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.drafts import (
+    AnchorQuote,
+    DraftContextGloss,
+    DraftPhraseGloss,
+    DraftVocabHighlight,
+    GrammarDraft,
+    TranslationDraft,
+    VocabularyDraft,
+    draft_to_annotation,
+)
 from app.schemas.internal.execution_plan import GoalPolicy
 from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
 from app.services.analysis.postprocess.anchor_resolution import (
@@ -28,7 +37,6 @@ from app.services.analysis.postprocess.anchor_resolution import (
     resolve_grammar_anchor_to_source,
     resolve_vocabulary_anchor_binding,
     resolve_vocabulary_anchor_spans,
-    source_substring_from_span,
 )
 from app.services.analysis.postprocess.draft_validators import (
     validate_context_gloss_business_rules,
@@ -89,7 +97,10 @@ def _log_drop(
     sentence_id: str,
     anchor_text: str,
     drop_reason: str,
-    drop_stage: Literal["grounding", "deduplication", "conflict_resolution", "density_control", "pruning"],
+    drop_stage: Literal[
+        "grounding", "deduplication",
+        "conflict_resolution", "density_control", "pruning",
+    ],
     drop_log: list[DropLogEntry],
 ) -> None:
     drop_log.append(
@@ -220,6 +231,29 @@ def _canonicalize_vocabulary_anchor(
         ]
         return annotation.model_copy(update={"spans": normalized_spans})
 
+    if isinstance(annotation, ContextGloss) and annotation.spans:
+        parts = [
+            {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
+            for span in annotation.spans
+        ]
+        resolved_parts = resolve_explicit_anchor_parts(sentence_obj, parts)
+        if resolved_parts is None:
+            _log_drop(
+                "vocabulary",
+                annotation.type,
+                annotation.sentence_id,
+                annotation.text,
+                "anchor_not_substring",
+                "grounding",
+                drop_log,
+            )
+            return None
+        normalized_spans = [
+            span.model_copy(update={"text": resolved.text, "occurrence": resolved.occurrence})
+            for span, resolved in zip(annotation.spans, resolved_parts, strict=False)
+        ]
+        return annotation.model_copy(update={"spans": normalized_spans})
+
     if annotation.text in sentence_obj.text:
         return annotation
 
@@ -256,12 +290,41 @@ def _passes_business_rules(
     annotation: VocabHighlight | PhraseGloss | ContextGloss,
     drop_log: list[DropLogEntry],
 ) -> bool:
+    """在旧 Annotation 类型上做 business rules 校验。
+
+    Phase 1 后 validate_*_business_rules 期望 Draft 类型，
+    此处将旧类型字段映射回 Draft 语义进行校验。
+    """
     if annotation.type == "vocab_highlight":
-        reasons = validate_vocab_highlight_business_rules(annotation)
+        draft = DraftVocabHighlight.model_construct(
+            type="vocab_highlight",
+            sentence_id=annotation.sentence_id,
+            text=annotation.text,
+        )
+        reasons = validate_vocab_highlight_business_rules(draft)
     elif annotation.type == "phrase_gloss":
-        reasons = validate_phrase_gloss_business_rules(annotation)
+        draft = DraftPhraseGloss.model_construct(
+            type="phrase_gloss",
+            sentence_id=annotation.sentence_id,
+            label=annotation.text,
+            anchor_quotes=[
+                AnchorQuote(text=span.text, role=span.role)
+                for span in (annotation.spans or [])
+            ],
+            phrase_type=annotation.phrase_type,
+            zh=annotation.zh,
+        )
+        reasons = validate_phrase_gloss_business_rules(draft)
     else:
-        reasons = validate_context_gloss_business_rules(annotation)
+        draft = DraftContextGloss.model_construct(
+            type="context_gloss",
+            sentence_id=annotation.sentence_id,
+            display=annotation.text,
+            anchor_quotes=[AnchorQuote(text=annotation.text)],
+            gloss=annotation.gloss,
+            reason=annotation.reason,
+        )
+        reasons = validate_context_gloss_business_rules(draft)
 
     if not reasons:
         return True
@@ -280,14 +343,14 @@ def _passes_business_rules(
 
 
 def _normalize_vocab_highlights(
-    draft: VocabularyDraft,
+    items: list[VocabHighlight],
     ctx: NormalizationContext,
     drop_log: list[DropLogEntry],
 ) -> list[VocabHighlight]:
     result: list[VocabHighlight] = []
     seen_keys: set[str] = set()
 
-    for item in draft.vocab_highlights:
+    for item in items:
         normalized_item = _canonicalize_vocabulary_anchor(item, ctx.sentence_map, drop_log)
         if normalized_item is None:
             continue
@@ -295,11 +358,22 @@ def _normalize_vocab_highlights(
         if not _passes_business_rules(item, drop_log):
             continue
         if _check_low_value_word(item.text):
-            _log_drop("vocabulary", item.type, item.sentence_id, item.text, "low_value_word", "pruning", drop_log)
+            _log_drop(
+                "vocabulary", item.type,
+                item.sentence_id, item.text,
+                "low_value_word", "pruning", drop_log,
+            )
             continue
-        key = _make_anchor_key(item.type, item.sentence_id, _annotation_anchor_payload(item, ctx.sentence_map))
+        key = _make_anchor_key(
+            item.type, item.sentence_id,
+            _annotation_anchor_payload(item, ctx.sentence_map),
+        )
         if key in seen_keys:
-            _log_drop("vocabulary", item.type, item.sentence_id, item.text, "duplicate", "deduplication", drop_log)
+            _log_drop(
+                "vocabulary", item.type,
+                item.sentence_id, item.text,
+                "duplicate", "deduplication", drop_log,
+            )
             continue
         seen_keys.add(key)
         result.append(item)
@@ -308,23 +382,30 @@ def _normalize_vocab_highlights(
 
 
 def _normalize_phrase_glosses(
-    draft: VocabularyDraft,
+    items: list[PhraseGloss],
     ctx: NormalizationContext,
     drop_log: list[DropLogEntry],
 ) -> list[PhraseGloss]:
     result: list[PhraseGloss] = []
     seen_keys: set[str] = set()
 
-    for item in draft.phrase_glosses:
+    for item in items:
         normalized_item = _canonicalize_vocabulary_anchor(item, ctx.sentence_map, drop_log)
         if normalized_item is None:
             continue
         item = normalized_item
         if not _passes_business_rules(item, drop_log):
             continue
-        key = _make_anchor_key(item.type, item.sentence_id, _annotation_anchor_payload(item, ctx.sentence_map))
+        key = _make_anchor_key(
+            item.type, item.sentence_id,
+            _annotation_anchor_payload(item, ctx.sentence_map),
+        )
         if key in seen_keys:
-            _log_drop("vocabulary", item.type, item.sentence_id, item.text, "duplicate", "deduplication", drop_log)
+            _log_drop(
+                "vocabulary", item.type,
+                item.sentence_id, item.text,
+                "duplicate", "deduplication", drop_log,
+            )
             continue
         seen_keys.add(key)
         result.append(item)
@@ -333,23 +414,30 @@ def _normalize_phrase_glosses(
 
 
 def _normalize_context_glosses(
-    draft: VocabularyDraft,
+    items: list[ContextGloss],
     ctx: NormalizationContext,
     drop_log: list[DropLogEntry],
 ) -> list[ContextGloss]:
     result: list[ContextGloss] = []
     seen_keys: set[str] = set()
 
-    for item in draft.context_glosses:
+    for item in items:
         normalized_item = _canonicalize_vocabulary_anchor(item, ctx.sentence_map, drop_log)
         if normalized_item is None:
             continue
         item = normalized_item
         if not _passes_business_rules(item, drop_log):
             continue
-        key = _make_anchor_key(item.type, item.sentence_id, _annotation_anchor_payload(item, ctx.sentence_map))
+        key = _make_anchor_key(
+            item.type, item.sentence_id,
+            _annotation_anchor_payload(item, ctx.sentence_map),
+        )
         if key in seen_keys:
-            _log_drop("vocabulary", item.type, item.sentence_id, item.text, "duplicate", "deduplication", drop_log)
+            _log_drop(
+                "vocabulary", item.type,
+                item.sentence_id, item.text,
+                "duplicate", "deduplication", drop_log,
+            )
             continue
         seen_keys.add(key)
         result.append(item)
@@ -358,14 +446,14 @@ def _normalize_context_glosses(
 
 
 def _normalize_grammar_notes(
-    draft: GrammarDraft,
+    items: list[GrammarNote],
     ctx: NormalizationContext,
     drop_log: list[DropLogEntry],
 ) -> list[GrammarNote]:
     result: list[GrammarNote] = []
     seen_keys: set[str] = set()
 
-    for item in draft.grammar_notes:
+    for item in items:
         normalized_spans: list[SpanRef] = []
         failed = False
         for span in item.spans:
@@ -380,7 +468,11 @@ def _normalize_grammar_notes(
         primary_text = item.spans[0].text if item.spans else ""
         key = _make_anchor_key(item.type, item.sentence_id, primary_text)
         if key in seen_keys:
-            _log_drop("grammar", item.type, item.sentence_id, primary_text, "duplicate", "deduplication", drop_log)
+            _log_drop(
+                "grammar", item.type,
+                item.sentence_id, primary_text,
+                "duplicate", "deduplication", drop_log,
+            )
             continue
         seen_keys.add(key)
         result.append(item)
@@ -389,22 +481,30 @@ def _normalize_grammar_notes(
 
 
 def _normalize_sentence_analyses(
-    draft: GrammarDraft,
+    items: list[SentenceAnalysis],
     ctx: NormalizationContext,
     drop_log: list[DropLogEntry],
 ) -> list[SentenceAnalysis]:
     result: list[SentenceAnalysis] = []
     seen_keys: set[str] = set()
 
-    for item in draft.sentence_analyses:
+    for item in items:
         if item.chunks and any(
-            not _grounding_check(item.type, chunk.text, item.sentence_id, ctx.sentence_map, "grammar", drop_log)
+            not _grounding_check(
+                item.type, chunk.text,
+                item.sentence_id, ctx.sentence_map,
+                "grammar", drop_log,
+            )
             for chunk in item.chunks
         ):
             continue
         key = _make_anchor_key(item.type, item.sentence_id, item.label)
         if key in seen_keys:
-            _log_drop("grammar", item.type, item.sentence_id, item.label, "duplicate", "deduplication", drop_log)
+            _log_drop(
+                "grammar", item.type,
+                item.sentence_id, item.label,
+                "duplicate", "deduplication", drop_log,
+            )
             continue
         seen_keys.add(key)
         result.append(item)
@@ -460,6 +560,15 @@ def _annotation_spans(
     if sentence_obj is None:
         return None
     if annotation.type == "phrase_gloss" and annotation.spans:
+        parts = [
+            {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
+            for span in annotation.spans
+        ]
+        resolved_parts = resolve_explicit_anchor_parts(sentence_obj, parts)
+        if resolved_parts is None:
+            return None
+        return tuple(part.span for part in resolved_parts)
+    if annotation.type == "context_gloss" and annotation.spans:
         parts = [
             {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
             for span in annotation.spans
@@ -576,7 +685,7 @@ def _drop_subsumed_vocab_highlights(
 
 
 def _annotation_identity(annotation: Annotation) -> str:
-    if annotation.type == "phrase_gloss" and annotation.spans:
+    if annotation.type in {"phrase_gloss", "context_gloss"} and annotation.spans:
         span_payload = json.dumps(
             [
                 {"text": span.text, "occurrence": span.occurrence}
@@ -586,12 +695,19 @@ def _annotation_identity(annotation: Annotation) -> str:
             sort_keys=True,
             separators=(",", ":"),
         )
-        return f"{annotation.sentence_id}:{annotation.type}:{annotation.text}:{span_payload}"
+        return (
+            f"{annotation.sentence_id}:{annotation.type}"
+            f":{annotation.text}:{span_payload}"
+        )
     anchor_text = getattr(annotation, "text", None)
     if anchor_text is not None:
         return f"{annotation.sentence_id}:{annotation.type}:{anchor_text}"
     if annotation.type == "grammar_note":
-        return f"{annotation.sentence_id}:{annotation.type}:{annotation.spans[0].text if annotation.spans else annotation.label}"
+        primary = (
+            annotation.spans[0].text
+            if annotation.spans else annotation.label
+        )
+        return f"{annotation.sentence_id}:{annotation.type}:{primary}"
     return f"{annotation.sentence_id}:{annotation.type}:{annotation.label}"
 
 
@@ -616,7 +732,14 @@ def _density_control(
             survivors.add(_annotation_identity(item))
         for item in ranked[max_per_sentence:]:
             _log_drop(
-                "vocabulary" if item.type in {"vocab_highlight", "phrase_gloss", "context_gloss"} else "grammar",
+                (
+                    "vocabulary"
+                    if item.type in {
+                        "vocab_highlight", "phrase_gloss",
+                        "context_gloss",
+                    }
+                    else "grammar"
+                ),
                 item.type,
                 sentence_id,
                 getattr(item, "text", getattr(item, "label", "")),
@@ -625,7 +748,10 @@ def _density_control(
                 drop_log,
             )
 
-    return [annotation for annotation in annotations if _annotation_identity(annotation) in survivors]
+    return [
+        annotation for annotation in annotations
+        if _annotation_identity(annotation) in survivors
+    ]
 
 
 def _normalize_translations(
@@ -638,13 +764,25 @@ def _normalize_translations(
 
     for item in draft.sentence_translations:
         if item.sentence_id not in ctx.sentence_map:
-            _log_drop("translation", "sentence_translation", item.sentence_id, "", "sentence_id_not_found", "grounding", drop_log)
+            _log_drop(
+                "translation", "sentence_translation",
+                item.sentence_id, "",
+                "sentence_id_not_found", "grounding", drop_log,
+            )
             continue
         if not item.translation_zh.strip():
-            _log_drop("translation", "sentence_translation", item.sentence_id, "", "empty_translation", "pruning", drop_log)
+            _log_drop(
+                "translation", "sentence_translation",
+                item.sentence_id, "",
+                "empty_translation", "pruning", drop_log,
+            )
             continue
         if item.sentence_id in seen_ids:
-            _log_drop("translation", "sentence_translation", item.sentence_id, "", "duplicate", "deduplication", drop_log)
+            _log_drop(
+                "translation", "sentence_translation",
+                item.sentence_id, "",
+                "duplicate", "deduplication", drop_log,
+            )
             continue
         seen_ids.add(item.sentence_id)
         result.append(item)
@@ -666,11 +804,18 @@ def normalize_and_ground(
     )
     drop_log: list[DropLogEntry] = []
 
-    vocab_result = _normalize_vocab_highlights(vocabulary_draft, ctx, drop_log)
-    phrase_result = _normalize_phrase_glosses(vocabulary_draft, ctx, drop_log)
-    context_result = _normalize_context_glosses(vocabulary_draft, ctx, drop_log)
-    grammar_result = _normalize_grammar_notes(grammar_draft, ctx, drop_log)
-    sentence_analysis_result = _normalize_sentence_analyses(grammar_draft, ctx, drop_log)
+    # Phase 1: Draft → Annotation 兼容转换
+    vocab_highlights = [draft_to_annotation(v) for v in vocabulary_draft.vocab_highlights]
+    phrase_glosses = [draft_to_annotation(p) for p in vocabulary_draft.phrase_glosses]
+    context_glosses = [draft_to_annotation(c) for c in vocabulary_draft.context_glosses]
+    grammar_notes = [draft_to_annotation(g) for g in grammar_draft.grammar_notes]
+    sentence_analyses = [draft_to_annotation(s) for s in grammar_draft.sentence_analyses]
+
+    vocab_result = _normalize_vocab_highlights(vocab_highlights, ctx, drop_log)
+    phrase_result = _normalize_phrase_glosses(phrase_glosses, ctx, drop_log)
+    context_result = _normalize_context_glosses(context_glosses, ctx, drop_log)
+    grammar_result = _normalize_grammar_notes(grammar_notes, ctx, drop_log)
+    sentence_analysis_result = _normalize_sentence_analyses(sentence_analyses, ctx, drop_log)
     translation_result = _normalize_translations(translation_draft, ctx, drop_log)
 
     merged_annotations = _merge_and_resolve_conflicts(

@@ -17,7 +17,12 @@ from unittest.mock import AsyncMock
 from app.eval_adapter.schemas import ArticleAnalysisEvalResult
 from app.schemas.analysis import AnalyzeRequest
 from app.schemas.internal.analysis import SentenceTranslation, VocabHighlight
-from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.drafts import (
+    DraftVocabHighlight,
+    GrammarDraft,
+    TranslationDraft,
+    VocabularyDraft,
+)
 from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
 from app.services.analysis.debug_snapshots import (
     build_annotation_stats_summary,
@@ -82,7 +87,7 @@ def _make_state(**overrides) -> dict:
 async def _fake_vocab_span(*args, **kwargs):
     return {
         "output": VocabularyDraft(
-            vocab_highlights=[VocabHighlight(sentence_id="s1", text="Sentence")],
+            vocab_highlights=[DraftVocabHighlight(sentence_id="s1", text="Sentence")],
             phrase_glosses=[],
             context_glosses=[],
         ),
@@ -264,7 +269,7 @@ def test_full_workflow_node_timings_keys(monkeypatch):
 def test_normalize_and_ground_node_produces_annotation_stats():
     state = _make_state(
         vocabulary_draft=VocabularyDraft(
-            vocab_highlights=[VocabHighlight(sentence_id="s1", text="Sentence")],
+            vocab_highlights=[DraftVocabHighlight(sentence_id="s1", text="Sentence")],
             phrase_glosses=[],
             context_glosses=[],
         ),
@@ -289,7 +294,7 @@ def test_normalize_and_ground_node_produces_annotation_stats():
 def test_annotation_stats_draft_counts():
     state = _make_state(
         vocabulary_draft=VocabularyDraft(
-            vocab_highlights=[VocabHighlight(sentence_id="s1", text="Sentence")],
+            vocab_highlights=[DraftVocabHighlight(sentence_id="s1", text="Sentence")],
             phrase_glosses=[],
             context_glosses=[],
         ),
