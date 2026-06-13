@@ -744,3 +744,168 @@ def test_eval_dry_run_entry_guards_remain_resolve_only() -> None:
     assert calls[0]["buildable"] is False, (
         "node_lab dry-run should remain resolve-only"
     )
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_node_timings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+                "node_timings": {
+                    "prepare_input": 0.1,
+                    "parallel_agents": 5.0,
+                    "normalize_and_ground": 0.2,
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.")
+    )
+
+    assert result.node_timings is not None
+    assert "prepare_input" in result.node_timings
+    assert "parallel_agents" in result.node_timings
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_repair_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+                "node_timings": {
+                    "prepare_input": 0.1,
+                    "parallel_agents": 5.0,
+                    "normalize_and_ground": 0.2,
+                },
+                "repair_stats": {
+                    "repair_triggered": False,
+                    "trigger_threshold": 0.35,
+                    "trigger_reason": None,
+                    "pre_repair_annotation_count": 3,
+                    "post_repair_annotation_count": None,
+                    "repair_elapsed_s": None,
+                    "repair_succeeded": None,
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.")
+    )
+
+    assert result.repair_stats is not None
+    assert result.repair_stats["repair_triggered"] is False
+    assert "trigger_threshold" in result.repair_stats
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_canonical_drop_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+                "node_timings": {
+                    "prepare_input": 0.1,
+                    "parallel_agents": 5.0,
+                    "normalize_and_ground": 0.2,
+                },
+                "repair_stats": {
+                    "repair_triggered": False,
+                    "trigger_threshold": 0.35,
+                    "trigger_reason": None,
+                    "pre_repair_annotation_count": 3,
+                    "post_repair_annotation_count": None,
+                    "repair_elapsed_s": None,
+                    "repair_succeeded": None,
+                },
+                "canonical_drop_log": [
+                    {
+                        "source_agent": "vocabulary",
+                        "annotation_type": "phrase_gloss",
+                        "sentence_id": "s1",
+                        "anchor_text": "missing",
+                        "drop_reason": "quote_not_found",
+                        "drop_stage": "grounding",
+                        "dropped_at": "2025-01-01T00:00:00Z",
+                    }
+                ],
+                "drop_log": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.")
+    )
+
+    assert isinstance(result.canonical_drop_log, list)
+    assert len(result.canonical_drop_log) == 1
+    assert result.canonical_drop_log[0]["drop_reason"] == "quote_not_found"

@@ -682,3 +682,52 @@ def test_old_projection_still_works() -> None:
 
     assert len(outcome.result.inline_marks) == 1
     assert outcome.result.inline_marks[0].anchor.kind == "text"
+
+
+def test_draft_validation_warnings_enter_render_scene_warnings() -> None:
+    """DRAFT_VALIDATION warnings from normalize_and_ground propagate to render_scene.warnings."""
+    invalid_highlight = DraftVocabHighlight.model_construct(
+        type="vocab_highlight",
+        sentence_id="s1",
+        text="extreme lengths",
+    )
+
+    text = "Shopkeepers are having to go to extreme lengths to stop shoplifters. Disturbingly, there are daily incidents of violence against workers."
+    state = {
+        "payload": AnalyzeRequest.model_validate({
+            "request_id": "req-draft-warn",
+            "text": text,
+            "source_type": "user_input",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+        }),
+        "prepared_input": prepare_input(text),
+        "goal_execution_plan": build_goal_execution_plan("daily_reading", "intermediate_reading"),
+        "vocabulary_draft": VocabularyDraft(
+            vocab_highlights=[invalid_highlight],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+        "grammar_draft": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        "translation_draft": TranslationDraft(title="测试标题", sentence_translations=[]),
+        "warnings": [],
+    }
+
+    # normalize_and_ground_node should add DRAFT_VALIDATION warning
+    result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
+    warning_codes = {w.code for w in result.get("warnings", [])}
+    assert "DRAFT_VALIDATION" in warning_codes
+
+    # Carry forward keys that normalize_and_ground_node does not emit
+    result["payload"] = state["payload"]
+    result["prepared_input"] = state["prepared_input"]
+    result["goal_execution_plan"] = state["goal_execution_plan"]
+
+    # project_render_scene_node produces render_scene but keeps warnings in state
+    render_result = asyncio.run(analyze_nodes.project_render_scene_node(result))
+
+    # assemble_result_node merges state warnings into render_scene.warnings
+    assembled = asyncio.run(analyze_nodes.assemble_result_node(render_result))
+    render_scene = assembled["render_scene"]
+    render_warning_codes = {w.code for w in render_scene.warnings}
+    assert "DRAFT_VALIDATION" in render_warning_codes

@@ -173,6 +173,7 @@ CREATE TABLE analysis_debug_snapshots (
   node_timings_json JSONB,
   annotation_stats_json JSONB,
   repair_stats_json JSONB,
+  canonical_drop_log_json JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

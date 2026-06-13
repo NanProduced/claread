@@ -7,10 +7,23 @@ from app.llm.call_guard import (
     pop_blocked_real_llm_attempts,
 )
 
+_LANGSMITH_ENV_DEFAULTS = {
+    "LANGSMITH_ENABLED": "false",
+    "LANGSMITH_TRACING": "false",
+    "LANGSMITH_TRACING_V2": "false",
+    "LANGSMITH_OTEL_ENABLED": "false",
+    "LANGCHAIN_TRACING": "false",
+    "LANGCHAIN_TRACING_V2": "false",
+}
+
 
 @pytest.fixture(autouse=True)
 def fail_on_real_llm_attempts(monkeypatch: pytest.MonkeyPatch):
     pop_blocked_real_llm_attempts()
+    for key, value in _LANGSMITH_ENV_DEFAULTS.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
 
     from app.infra import bailian_embedding, bailian_rerank
     from app.llm import dashscope_stream, structured_completion
@@ -69,6 +82,11 @@ def fail_on_real_llm_attempts(monkeypatch: pytest.MonkeyPatch):
     )
 
     yield
+    for key, value in _LANGSMITH_ENV_DEFAULTS.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+
     attempts = pop_blocked_real_llm_attempts()
     if not attempts:
         return

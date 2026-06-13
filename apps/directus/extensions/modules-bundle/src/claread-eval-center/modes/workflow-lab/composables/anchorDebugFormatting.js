@@ -8,6 +8,20 @@
  *  - 不做任何 text-search fallback 或 anchor 修复
  */
 
+// ── Node timings & repair stats extraction ──────────────────────
+
+export function extractNodeTimings(artifact) {
+  const timings = artifact?.node_timings;
+  if (!timings || typeof timings !== "object") return null;
+  return timings;
+}
+
+export function extractRepairStats(artifact) {
+  const stats = artifact?.repair_stats;
+  if (!stats || typeof stats !== "object") return null;
+  return stats;
+}
+
 // ── Anchor kind 分类 ──────────────────────────────────────────
 
 export function anchorKindCategory(anchor) {

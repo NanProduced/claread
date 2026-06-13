@@ -358,6 +358,7 @@ def build_debug_snapshot_payload(
         "node_timings_json": build_node_timings_summary(result),
         "annotation_stats_json": build_annotation_stats_summary(result),
         "repair_stats_json": build_repair_stats_summary(result),
+        "canonical_drop_log_json": build_canonical_drop_log_entries(result),
     }
 
 
@@ -392,6 +393,7 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
                 node_timings_json,
                 annotation_stats_json,
                 repair_stats_json,
+                canonical_drop_log_json,
                 created_at,
                 updated_at
             )
@@ -399,7 +401,7 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb,
                 $15::jsonb, $16::jsonb, $17::jsonb, $18::jsonb,
-                $19::jsonb, $20::jsonb, $21, $21
+                $19::jsonb, $20::jsonb, $21::jsonb, $22, $22
             )
             ON CONFLICT (task_id) DO UPDATE SET
                 record_id = EXCLUDED.record_id,
@@ -421,6 +423,7 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
                 node_timings_json = EXCLUDED.node_timings_json,
                 annotation_stats_json = EXCLUDED.annotation_stats_json,
                 repair_stats_json = EXCLUDED.repair_stats_json,
+                canonical_drop_log_json = EXCLUDED.canonical_drop_log_json,
                 updated_at = EXCLUDED.updated_at
             """,
             snapshot["record_id"],
@@ -443,5 +446,6 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
             jsonb_param(snapshot.get("node_timings_json")),
             jsonb_param(snapshot.get("annotation_stats_json")),
             jsonb_param(snapshot.get("repair_stats_json")),
+            jsonb_param(snapshot.get("canonical_drop_log_json")),
             now,
         )

@@ -26,6 +26,7 @@ from app.schemas.internal.drafts import (
 from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
 from app.services.analysis.debug_snapshots import (
     build_annotation_stats_summary,
+    build_canonical_drop_log_entries,
     build_drop_log_summary,
     build_node_timings_summary,
     build_repair_stats_summary,
@@ -637,3 +638,119 @@ def test_eval_result_schema_new_fields_default_none():
     assert result.node_timings is None
     assert result.annotation_stats is None
     assert result.repair_stats is None
+
+
+# ── canonical_stats and canonical_drop_log tests ─────────────────────
+
+
+def test_normalize_and_ground_node_produces_canonical_stats_with_all_subfields():
+    state = _make_state(
+        vocabulary_draft=VocabularyDraft(
+            vocab_highlights=[DraftVocabHighlight(sentence_id="s1", text="Sentence")],
+            phrase_glosses=[],
+            context_glosses=[],
+        ),
+    )
+    result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
+    canonical_stats = result["annotation_stats"]["canonical_stats"]
+    assert canonical_stats is not None
+    expected_keys = {
+        "canonical_normalized_counts",
+        "canonical_span_count",
+        "canonical_anchor_drop_summary",
+        "canonical_drop_counts_by_reason",
+        "canonical_drop_counts_by_type",
+    }
+    assert expected_keys.issubset(set(canonical_stats.keys()))
+
+
+def test_canonical_drop_log_empty_when_no_drops():
+    state = _make_state()
+    result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
+    assert isinstance(result["canonical_drop_log"], list)
+    assert len(result["canonical_drop_log"]) == 0
+
+
+def test_canonical_drop_log_multiple_entries():
+    drop1 = _drop("anchor_not_substring")
+    drop2 = _drop("anchor_not_substring", annotation_type="grammar_note")
+    result_dict = {
+        "canonical_drop_log": [drop1, drop2],
+    }
+    entries = build_canonical_drop_log_entries(result_dict)
+    assert isinstance(entries, list)
+    assert len(entries) == 2
+    for entry in entries:
+        assert "drop_reason" in entry
+        assert "annotation_type" in entry
+        assert "sentence_id" in entry
+
+
+def test_usage_summary_structure_from_parallel_agents(monkeypatch):
+    async def _fake_vocab_with_usage(*args, **kwargs):
+        return {
+            "output": VocabularyDraft(
+                vocab_highlights=[DraftVocabHighlight(sentence_id="s1", text="Sentence")],
+                phrase_glosses=[],
+                context_glosses=[],
+            ),
+            "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30},
+        }
+
+    async def _fake_grammar_with_usage(*args, **kwargs):
+        return {
+            "output": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+            "usage": {"input_tokens": 15, "output_tokens": 8, "total_tokens": 23},
+        }
+
+    monkeypatch.setattr(analyze_nodes, "_run_vocabulary_llm_span", _fake_vocab_with_usage)
+    monkeypatch.setattr(analyze_nodes, "_run_grammar_llm_span", _fake_grammar_with_usage)
+    monkeypatch.setattr(analyze_nodes, "_run_translation_llm_span", _fake_translation_span)
+
+    state = _make_state()
+    result = asyncio.run(analyze_nodes.parallel_agents_node(state, config={}))
+    usage = result["usage_summary"]
+    assert usage is not None
+    assert usage["available"] is True
+    assert "aggregate" in usage
+    assert "total_tokens" in usage["aggregate"]
+    assert "input_tokens" in usage["aggregate"]
+    assert "output_tokens" in usage["aggregate"]
+    assert "per_agent" in usage
+    assert "vocabulary" in usage["per_agent"]
+    assert "grammar" in usage["per_agent"]
+    assert "translation" in usage["per_agent"]
+
+
+def test_debug_snapshot_payload_includes_canonical_drop_log():
+    from uuid import uuid4
+
+    from app.services.analysis.debug_snapshots import build_debug_snapshot_payload
+
+    drop1 = _drop("anchor_not_substring")
+    drop2 = _drop("quote_not_found", annotation_type="phrase_gloss")
+    result_dict = {
+        "canonical_drop_log": [drop1, drop2],
+        "goal_execution_plan": None,
+    }
+
+    payload = build_debug_snapshot_payload(
+        record_id=uuid4(),
+        task_id=uuid4(),
+        source_text="Test text.",
+        task_status="completed",
+        usage_summary=None,
+        latency_ms=100,
+        billed_points=0,
+        failure_code=None,
+        failure_message=None,
+        request_id="req-test",
+        user_facing_state="completed",
+        result=result_dict,
+        schema_version="3.0.0",
+        prompt_version="test",
+    )
+
+    assert "canonical_drop_log_json" in payload
+    assert isinstance(payload["canonical_drop_log_json"], list)
+    assert len(payload["canonical_drop_log_json"]) == 2

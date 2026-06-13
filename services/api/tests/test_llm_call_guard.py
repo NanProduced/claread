@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -73,3 +74,10 @@ async def test_run_agent_with_route_allows_explicit_integration_opt_in(monkeypat
 
     assert result.output == "ok"
     assert result._resolved_model_config == config
+
+
+def test_pytest_disables_langsmith_by_default():
+    assert os.getenv("LANGSMITH_ENABLED") == "false"
+    assert os.getenv("LANGSMITH_TRACING") == "false"
+    assert os.getenv("LANGSMITH_TRACING_V2") == "false"
+    assert os.getenv("LANGSMITH_API_KEY") is None
