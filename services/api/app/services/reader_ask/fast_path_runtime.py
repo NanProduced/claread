@@ -23,7 +23,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app.schemas.reader_ask import (
-    ReaderAskAnchorRef,
     ReaderAskAttachment,
     ReaderAskContextPlan,
     ReaderAskEntryAction,

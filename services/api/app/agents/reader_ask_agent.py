@@ -59,6 +59,13 @@ class ReaderAskRuntimeState:
     latest_dictionary_entry: dict[str, Any] | None = None
     latest_dictionary_ai: dict[str, Any] | None = None
     latest_generated_annotations: list[dict[str, Any]] = field(default_factory=list)
+    # Round 1 — fast-path routing telemetry. ``planner_skipped`` is True
+    # when the request was eligible for the agent-loop fast path and
+    # bypassed the legacy ``resolve_semantic_planning`` call.
+    # ``planner_route_used`` records which path actually ran for billing
+    # and eval: "planner_first" (legacy) or "fast_path".
+    planner_skipped: bool = False
+    planner_route_used: str = "planner_first"
 
 
 @dataclass(slots=True)

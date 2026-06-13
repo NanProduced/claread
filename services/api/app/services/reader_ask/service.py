@@ -120,13 +120,14 @@ from app.services.dictionary.schemas import DictionaryLookupRequest
 from app.services.dictionary_ai.schemas import DictionaryAIContextExplainRequest
 from app.services.dictionary_ai.service import get_service as get_dictionary_ai_service
 from app.services.reader_ask import capabilities as capabilities_svc
+from app.services.reader_ask import context_runtime as context_runtime_svc
+from app.services.reader_ask import fast_path_runtime
 from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner
 from app.services.reader_ask import post_process as post_process_svc
 from app.services.reader_ask import prompt_preparation as prompt_preparation_svc
-from app.services.reader_ask import repository as repo
-from app.services.reader_ask import context_runtime as context_runtime_svc
 from app.services.reader_ask import recovery as recovery_svc
+from app.services.reader_ask import repository as repo
 from app.services.reader_ask import runtime_contract as runtime_contract_svc
 from app.services.reader_ask import stream_events as stream_events_svc
 from app.services.reader_ask import supplements as supplements_svc
@@ -1236,9 +1237,83 @@ def _visible_output_from_message(message: ReaderAskMessage, message_dict: dict[s
     return output_contract_svc.visible_output_from_message(message, message_dict)
 
 
+def _build_minimal_contract(
+    *,
+    body: ReaderAskMessageStreamRequest,
+    record: _RecordBundle,
+    history_messages: list[dict[str, Any]],
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    resolved_intent: ReaderAskResolvedIntent,
+    resolved_intent_label: str,
+) -> runtime_contract_svc.ReaderAskAnswerRuntimeInput:
+    """Build a minimal ``ReaderAskAnswerRuntimeInput`` for the fast path.
+
+    The contract is read-only from the helpers' perspective — they consume
+    ``entry_action`` / ``attachments`` / ``anchors`` to produce minimal
+    context_plan and trace_summary shapes. The ``planning_snapshot`` field
+    stays None because the helpers do not need it.
+    """
+    return runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+        thread={"id": str(getattr(body.page_identity, "thread_id", "")) or "", "title": None},
+        record=record,
+        user_message=body.content,
+        history_messages=history_messages,
+        page_identity=body.page_identity,
+        attachments=attachments,
+        anchors=anchors,
+        resolved_intent=resolved_intent,
+        resolved_intent_label=resolved_intent_label,
+        entry_action=body.entry_action,
+        submission_mode="chat",
+        cross_record_context_allowed=False,
+        resolved_context_input=None,
+        quick_action_annotation=None,
+        reference_resolution=None,
+        planning_snapshot=None,
+        max_history_messages=4,
+        max_message_text=2000,
+    )
+
+
 def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot | None) -> dict[str, Any]:
     if planning_snapshot is None:
         return {}
+    # Round 1 — FastPathPlanningSnapshot is a lightweight dataclass that
+    # does not carry planner_decision / reference_needs / structured_asset_*
+    # fields. The legacy serializer assumes the full ReaderAskPlanningSnapshot
+    # shape; emit a minimal JSON for the fast path that preserves the
+    # ``context_plan`` / ``trace_summary`` / ``working_set`` / ``retrieval_needs``
+    # fields used by eval, and skip the legacy-only fields.
+    if isinstance(planning_snapshot, planner.FastPathPlanningSnapshot):
+        return {
+            "resolved_intent": planning_snapshot.resolved_intent,
+            "planner_decision": None,
+            "planner_validation_status": planning_snapshot.planner_validation_status,
+            "retrieval_needs": planning_snapshot.retrieval_needs,
+            "working_set": {
+                "primary_anchor": planning_snapshot.working_set.primary_anchor.model_dump(mode="json")
+                if planning_snapshot.working_set.primary_anchor
+                else None,
+                "local_context_window_needed": planning_snapshot.working_set.local_context_window_needed,
+                "record_insights_needed": planning_snapshot.working_set.record_insights_needed,
+                "article_overview_needed": planning_snapshot.working_set.article_overview_needed,
+                "dictionary_needed": planning_snapshot.working_set.dictionary_needed,
+                "cross_record_context_allowed": planning_snapshot.working_set.cross_record_context_allowed,
+                "external_record_refs": planning_snapshot.working_set.external_record_refs,
+                "external_asset_refs": planning_snapshot.working_set.external_asset_refs,
+                "external_asset_lookup_needed": planning_snapshot.working_set.external_asset_lookup_needed,
+            },
+            "context_plan": planning_snapshot.context_plan.model_dump(mode="json")
+            if planning_snapshot.context_plan
+            else None,
+            "trace_summary": planning_snapshot.trace_summary.model_dump(mode="json")
+            if planning_snapshot.trace_summary
+            else None,
+            "disambiguation_state": None,
+            "external_asset_disambiguation_state": None,
+            "is_fast_path": True,
+        }
     return {
         "resolved_intent": planning_snapshot.resolved_intent,
         "planner_decision": planning_snapshot.planner_decision.model_dump(mode="json"),
@@ -2297,33 +2372,96 @@ async def stream_thread_message(
             )
             return
 
-        planning_result = await planner_runtime_svc.resolve_semantic_planning(
-            user_id=user_id,
-            record=record,
-            history_messages=history_messages,
-            user_message=body.content,
-            page_identity=body.page_identity,
+        planning_result = None
+        if fast_path_runtime.should_use_fast_path(
             entry_action=body.entry_action,
+            history_messages=history_messages,
             attachments=attachments,
-            anchors=resolved_anchors,
-            deps=build_reader_ask_resolve_planning_deps(
-                current_record_affordances_cb=_current_record_affordances,
-                load_record_bundle_cb=_load_record_bundle,
-                reference_reranker=_build_reference_reranker(),
-                model_selection=selected_model_option.selection,
-            ),
-            truncate_history_message_cb=_truncate_history_message,
-        )
-        planner_usage_summary = planning_result.planner_usage_summary
-        reference_resolution = planning_result.reference_resolution
-        planning_snapshot = planning_result.planning_snapshot
-        resolved_intent = planning_snapshot.resolved_intent
-        resolved_context_input = planning_snapshot.resolved_context_input
-        disambiguation = planning_snapshot.disambiguation_state
-        external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
-        clarification_only = planning_snapshot.clarification_only
-        clarification_mode = planning_snapshot.clarification_mode
-        submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
+            cross_record_toggle=runtime_state.cross_record_context_allowed,
+            latest_user_message=body.content,
+        ):
+            # Round 1 — agent-loop fast path: skip the LLM planner call and
+            # build a minimal planning snapshot from request data only.
+            # The legacy planner-first path is preserved below.
+            runtime_state.planner_skipped = True
+            runtime_state.planner_route_used = "fast_path"
+            resolved_intent, resolved_intent_label = (
+                runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
+            )
+            minimal_context_plan = fast_path_runtime.build_minimal_context_plan_for_runtime_input(
+                _build_minimal_contract(
+                    body=body,
+                    record=record,
+                    history_messages=history_messages,
+                    attachments=attachments,
+                    anchors=resolved_anchors,
+                    resolved_intent=resolved_intent,
+                    resolved_intent_label=resolved_intent_label,
+                )
+            )
+            minimal_trace_summary = fast_path_runtime.build_minimal_trace_summary_for_runtime_input(
+                _build_minimal_contract(
+                    body=body,
+                    record=record,
+                    history_messages=history_messages,
+                    attachments=attachments,
+                    anchors=resolved_anchors,
+                    resolved_intent=resolved_intent,
+                    resolved_intent_label=resolved_intent_label,
+                ),
+                planner_skipped=True,
+            )
+            planning_snapshot = planner.FastPathPlanningSnapshot(
+                retrieval_needs="none",
+                working_set=planner.ReaderAskWorkingSet(
+                    primary_anchor=resolved_anchors[0] if resolved_anchors else None,
+                    local_context_window_needed=bool(resolved_anchors),
+                    record_insights_needed=False,
+                    article_overview_needed=False,
+                    dictionary_needed=False,
+                    cross_record_context_allowed=False,
+                ),
+                context_plan=minimal_context_plan,
+                trace_summary=minimal_trace_summary,
+            )
+            reference_resolution = None
+            resolved_context_input = None
+            disambiguation = None
+            external_asset_disambiguation = None
+            clarification_only = False
+            clarification_mode = "none"
+            submission_mode = planner_runtime_svc.submission_mode(
+                entry_action=body.entry_action, attachments=attachments
+            )
+            planner_usage_summary = None
+        else:
+            planning_result = await planner_runtime_svc.resolve_semantic_planning(
+                user_id=user_id,
+                record=record,
+                history_messages=history_messages,
+                user_message=body.content,
+                page_identity=body.page_identity,
+                entry_action=body.entry_action,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                deps=build_reader_ask_resolve_planning_deps(
+                    current_record_affordances_cb=_current_record_affordances,
+                    load_record_bundle_cb=_load_record_bundle,
+                    reference_reranker=_build_reference_reranker(),
+                    model_selection=selected_model_option.selection,
+                ),
+                truncate_history_message_cb=_truncate_history_message,
+            )
+            planner_usage_summary = planning_result.planner_usage_summary
+            reference_resolution = planning_result.reference_resolution
+            planning_snapshot = planning_result.planning_snapshot
+            resolved_intent = planning_snapshot.resolved_intent
+            resolved_context_input = planning_snapshot.resolved_context_input
+            disambiguation = planning_snapshot.disambiguation_state
+            external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+            clarification_only = planning_snapshot.clarification_only
+            clarification_mode = planning_snapshot.clarification_mode
+            submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
         if clarification_only and clarification_mode == "must_clarify":
             user_message = await repo.create_message(
                 thread_id=thread_id,
@@ -2593,7 +2731,11 @@ async def stream_thread_message(
         )
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
-            raise RuntimeError("planning snapshot is required")
+            # Fast-path safety: a None snapshot is legal iff planner_skipped
+            # is True. Legacy planner-first paths must always produce a
+            # snapshot.
+            if not runtime_state.planner_skipped:
+                raise RuntimeError("planning snapshot is required")
         cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
         resolved = resolve_reader_ask_agent(selected_model_option.selection)
@@ -3494,31 +3636,83 @@ async def retry_thread_message(
             )
             return
 
-        planning_result = await planner_runtime_svc.resolve_semantic_planning(
-            user_id=user_id,
-            record=record,
-            history_messages=history_messages,
-            user_message=body.content,
-            page_identity=body.page_identity,
+        planning_result = None
+        if fast_path_runtime.should_use_fast_path(
             entry_action=body.entry_action,
+            history_messages=history_messages,
             attachments=attachments,
-            anchors=resolved_anchors,
-            deps=build_reader_ask_resolve_planning_deps(
-                current_record_affordances_cb=_current_record_affordances,
-                load_record_bundle_cb=_load_record_bundle,
-                reference_reranker=_build_reference_reranker(),
-                model_selection=selected_model_option.selection,
-            ),
-            truncate_history_message_cb=_truncate_history_message,
-        )
-        planner_usage_summary = planning_result.planner_usage_summary
-        reference_resolution = planning_result.reference_resolution
-        planning_snapshot = planning_result.planning_snapshot
-        resolved_intent = planning_snapshot.resolved_intent
-        resolved_context_input = planning_snapshot.resolved_context_input
-        disambiguation = planning_snapshot.disambiguation_state
-        external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
-        submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
+            cross_record_toggle=runtime_state.cross_record_context_allowed,
+            latest_user_message=body.content,
+        ):
+            # Round 1 — agent-loop fast path: skip the LLM planner call.
+            runtime_state.planner_skipped = True
+            runtime_state.planner_route_used = "fast_path"
+            resolved_intent, resolved_intent_label = (
+                runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
+            )
+            minimal_contract = _build_minimal_contract(
+                body=body,
+                record=record,
+                history_messages=history_messages,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                resolved_intent=resolved_intent,
+                resolved_intent_label=resolved_intent_label,
+            )
+            minimal_context_plan = fast_path_runtime.build_minimal_context_plan_for_runtime_input(
+                minimal_contract
+            )
+            minimal_trace_summary = fast_path_runtime.build_minimal_trace_summary_for_runtime_input(
+                minimal_contract,
+                planner_skipped=True,
+            )
+            planning_snapshot = planner.FastPathPlanningSnapshot(
+                retrieval_needs="none",
+                working_set=planner.ReaderAskWorkingSet(
+                    primary_anchor=resolved_anchors[0] if resolved_anchors else None,
+                    local_context_window_needed=bool(resolved_anchors),
+                    record_insights_needed=False,
+                    article_overview_needed=False,
+                    dictionary_needed=False,
+                    cross_record_context_allowed=False,
+                ),
+                context_plan=minimal_context_plan,
+                trace_summary=minimal_trace_summary,
+            )
+            reference_resolution = None
+            resolved_context_input = None
+            disambiguation = None
+            external_asset_disambiguation = None
+            submission_mode = planner_runtime_svc.submission_mode(
+                entry_action=body.entry_action, attachments=attachments
+            )
+            planner_usage_summary = None
+        else:
+            planning_result = await planner_runtime_svc.resolve_semantic_planning(
+                user_id=user_id,
+                record=record,
+                history_messages=history_messages,
+                user_message=body.content,
+                page_identity=body.page_identity,
+                entry_action=body.entry_action,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                deps=build_reader_ask_resolve_planning_deps(
+                    current_record_affordances_cb=_current_record_affordances,
+                    load_record_bundle_cb=_load_record_bundle,
+                    reference_reranker=_build_reference_reranker(),
+                    model_selection=selected_model_option.selection,
+                ),
+                truncate_history_message_cb=_truncate_history_message,
+            )
+            planner_usage_summary = planning_result.planner_usage_summary
+            reference_resolution = planning_result.reference_resolution
+            planning_snapshot = planning_result.planning_snapshot
+            resolved_intent = planning_snapshot.resolved_intent
+            resolved_context_input = planning_snapshot.resolved_context_input
+            disambiguation = planning_snapshot.disambiguation_state
+            external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
+            submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
         run_info, run_history = _next_run_info(assistant_message)
         turn_run = await repo.create_turn_run(
             message_id=message_id,
@@ -3739,7 +3933,11 @@ async def retry_thread_message(
         )
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
-            raise RuntimeError("planning snapshot is required")
+            # Fast-path safety: a None snapshot is legal iff planner_skipped
+            # is True. Legacy planner-first paths must always produce a
+            # snapshot.
+            if not runtime_state.planner_skipped:
+                raise RuntimeError("planning snapshot is required")
         cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
         resolved = resolve_reader_ask_agent(selected_model_option.selection)
