@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 from app.agents.repair_agent import (
-    RepairAgentDeps,
     RepairPatchDeps,
     build_repair_patch_prompt,
-    build_repair_prompt,
 )
 from app.schemas.internal.repair import RepairPatchRequest, RepairTarget
 
@@ -69,14 +67,3 @@ def test_patch_prompt_includes_draft_payload_when_present() -> None:
     prompt = build_repair_patch_prompt(RepairPatchDeps(patch_request=req))
 
     assert "example" in prompt
-
-
-def test_old_build_repair_prompt_still_works() -> None:
-    deps = RepairAgentDeps(
-        sentences=[{"sentence_id": "s1", "text": "Hello"}],
-        original_drafts={"vocabulary_draft": {}, "grammar_draft": {}, "translation_draft": {}},
-    )
-    result = build_repair_prompt(deps, "test error")
-
-    assert isinstance(result, str)
-    assert len(result) > 0

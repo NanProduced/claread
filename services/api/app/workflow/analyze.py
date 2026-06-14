@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, cast
 from uuid import uuid4
 
 from app.config.settings import get_settings
@@ -54,7 +54,7 @@ def _get_graph_for_plan(plan: Any) -> Any:
 async def _invoke_article_analysis(
     payload: AnalyzeRequest,
     *,
-    repair_mode: Literal["full_result", "patch"] | None = None,
+    repair_enabled: bool | None = None,
 ) -> dict[str, Any]:
     request_id = payload.request_id or str(uuid4())
     normalized_payload = (
@@ -99,7 +99,7 @@ async def _invoke_article_analysis(
             "tags": build_workflow_root_tags(WORKFLOW_NAME, model_names, surface=surface),
             "configurable": {
                 "model_selection": dump_model_selection(model_selection),
-                **({"repair_mode": repair_mode} if repair_mode is not None else {}),
+                **({"repair_enabled": repair_enabled} if repair_enabled is not None else {}),
             },
             "metadata": build_workflow_root_metadata(
                 workflow_name=WORKFLOW_NAME,
@@ -129,9 +129,9 @@ async def run_article_analysis(payload: AnalyzeRequest) -> AnyRenderSceneModel:
 async def run_article_analysis_with_state(
     payload: AnalyzeRequest,
     *,
-    repair_mode: Literal["full_result", "patch"] | None = None,
+    repair_enabled: bool | None = None,
 ) -> dict[str, Any]:
-    return await _invoke_article_analysis(payload, repair_mode=repair_mode)
+    return await _invoke_article_analysis(payload, repair_enabled=repair_enabled)
 
 
 __all__ = [

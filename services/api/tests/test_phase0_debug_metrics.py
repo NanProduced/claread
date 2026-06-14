@@ -361,16 +361,18 @@ def test_normalize_and_ground_repair_decision_not_triggered():
 
 def test_normalize_and_ground_repair_decision_triggered(monkeypatch):
     """normalize_and_ground_node 在应触发 repair 时写入 trigger_reason。"""
+    from app.schemas.internal.repair import RepairPatchResult
+
     drop_log = [_drop("anchor_not_substring")]
     # 手动构造一个会触发 repair 的 normalized_result
     normalized_result = NormalizedAnnotationResult(
-        annotations=[], sentence_translations=[], drop_log=drop_log,
+        annotations=[], normalized_annotations=[], sentence_translations=[], drop_log=drop_log,
     )
     repair_mock = AsyncMock(
-        return_value={"output": normalized_result, "usage_metadata": None}
+        return_value={"output": RepairPatchResult(patches=[]), "usage_metadata": None}
     )
     monkeypatch.setattr(
-        analyze_nodes, "_run_repair_llm_span", repair_mock
+        analyze_nodes, "_run_repair_patch_llm_span", repair_mock
     )
     monkeypatch.setattr(
         analyze_nodes, "_build_agent_trace_metadata",
@@ -389,6 +391,7 @@ def test_normalize_and_ground_repair_decision_triggered(monkeypatch):
 def test_repair_stats_not_triggered():
     normalized_result = NormalizedAnnotationResult(
         annotations=[VocabHighlight(sentence_id="s1", text="Sentence")],
+        normalized_annotations=[],
         sentence_translations=[],
         drop_log=[_drop("duplicate", stage="deduplication")],
     )
@@ -399,56 +402,39 @@ def test_repair_stats_not_triggered():
     assert stats["repair_triggered"] is False
     assert stats["trigger_threshold"] == 0.35
     assert stats["trigger_reason"] is None
-    assert stats["pre_repair_annotation_count"] == 1
     assert stats["post_repair_annotation_count"] is None
     assert stats["repair_elapsed_s"] is None
     assert stats["repair_succeeded"] is None
 
 
 def test_repair_stats_triggered_and_succeeded(monkeypatch):
-    repaired_canonical_drop = _drop(
-        "quote_not_found",
-        annotation_type="phrase_gloss",
-    )
-    repaired = NormalizedAnnotationResult(
-        annotations=[VocabHighlight(sentence_id="s1", text="Sentence")],
-        sentence_translations=[],
-        drop_log=[],
-        canonical_stats={
-            "canonical_anchor_drop_summary": {"total_anchor_drops": 1},
-            "canonical_drop_counts_by_reason": {"quote_not_found": 1},
-        },
-        canonical_drop_log=[repaired_canonical_drop],
-    )
+    from app.schemas.internal.repair import RepairPatchResult
+
     repair_mock = AsyncMock(
         return_value={
-            "output": repaired,
+            "output": RepairPatchResult(patches=[]),
             "usage_metadata": {"total_tokens": 1},
         }
     )
     monkeypatch.setattr(
-        analyze_nodes, "_run_repair_llm_span", repair_mock
+        analyze_nodes, "_run_repair_patch_llm_span", repair_mock
     )
     monkeypatch.setattr(
         analyze_nodes, "_build_agent_trace_metadata",
         lambda *_args, **_kwargs: {"extra": {}},
     )
 
-    # 0 annotations + 1 repair-worthy drop → should trigger repair
+    # 0 annotations + repair-worthy drop → should trigger repair
     normalized_result = NormalizedAnnotationResult(
         annotations=[],
+        normalized_annotations=[],
         sentence_translations=[],
         drop_log=[_drop("anchor_not_substring")],
-        canonical_drop_log=[_drop("quote_ambiguous")],
+        canonical_drop_log=[_drop("quote_not_found", annotation_type="phrase_gloss")],
     )
     state = _make_state(
         normalized_result=normalized_result,
         canonical_drop_log=normalized_result.canonical_drop_log,
-        annotation_stats={
-            "canonical_stats": {
-                "canonical_anchor_drop_summary": {"total_anchor_drops": 99},
-            },
-        },
     )
     result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))
     stats = result.get("repair_stats")
@@ -457,13 +443,7 @@ def test_repair_stats_triggered_and_succeeded(monkeypatch):
     assert stats["trigger_threshold"] == 0.35
     assert stats["trigger_reason"] is not None
     assert "failure_ratio" in stats["trigger_reason"]
-    assert stats["pre_repair_annotation_count"] == 0
-    assert stats["post_repair_annotation_count"] == 1
-    assert stats["repair_elapsed_s"] is not None
     assert stats["repair_succeeded"] is True
-    assert result["canonical_drop_log"] == [repaired_canonical_drop]
-    assert result["annotation_stats"]["canonical_stats"] == repaired.canonical_stats
-    assert result["annotation_stats"]["normalized_counts"] == {"vocab_highlight": 1}
 
 
 def test_repair_stats_triggered_but_failed(monkeypatch):
@@ -471,7 +451,7 @@ def test_repair_stats_triggered_but_failed(monkeypatch):
         raise RuntimeError("repair failed")
 
     monkeypatch.setattr(
-        analyze_nodes, "_run_repair_llm_span", _fail_repair
+        analyze_nodes, "_run_repair_patch_llm_span", _fail_repair
     )
     monkeypatch.setattr(
         analyze_nodes, "_build_agent_trace_metadata",
@@ -480,8 +460,10 @@ def test_repair_stats_triggered_but_failed(monkeypatch):
 
     normalized_result = NormalizedAnnotationResult(
         annotations=[],
+        normalized_annotations=[],
         sentence_translations=[],
         drop_log=[_drop("anchor_not_substring")],
+        canonical_drop_log=[_drop("quote_not_found", annotation_type="phrase_gloss")],
     )
     state = _make_state(normalized_result=normalized_result)
     result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))

@@ -65,7 +65,7 @@ def print_plan(
     node: str,
     reading_goal: str,
     reading_variant: str,
-    repair_mode: str,
+    repair_enabled: bool,
 ) -> None:
     """Print the exact run plan before any possible model call."""
     mode = "REAL LLM" if run_real else "DRY RUN"
@@ -73,7 +73,7 @@ def print_plan(
     print(f"Target: {target}" + (f" ({node})" if target == "node-probe" else ""))
     print(f"Model profile: {model_profile}")
     print(f"Reading goal/variant: {reading_goal}/{reading_variant}")
-    print(f"Repair mode: {repair_mode}")
+    print(f"Repair enabled: {repair_enabled}")
     print(f"Samples: {len(samples)}")
     for sample in samples:
         print(f"  - {sample['id']}: {sample['chars']} chars")
@@ -86,13 +86,14 @@ def build_run_output_dir(
     run_real: bool,
     target: str,
     node: str,
-    repair_mode: str,
+    repair_enabled: bool,
 ) -> Path:
     """Create a unique output directory for this script invocation."""
     run_mode = "real" if run_real else "dryrun"
     sample_scope = "all" if len(samples) != 1 else str(samples[0]["id"])
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    run_id = f"{timestamp}_{run_mode}_{target}_{node}_{sample_scope}_{repair_mode}"
+    repair_tag = "repair" if repair_enabled else "no-repair"
+    run_id = f"{timestamp}_{run_mode}_{target}_{node}_{sample_scope}_{repair_tag}"
     output_dir = SAMPLES_DIR / "runs" / run_id
     output_dir.mkdir(parents=True, exist_ok=False)
     return output_dir
@@ -147,7 +148,7 @@ async def run_single_sample(
     reading_variant: str,
     rag_mode: str,
     timeout_seconds: float | None,
-    repair_mode: str,
+    repair_enabled: bool,
 ) -> dict:
     """Run eval for a single sample and collect metrics."""
     from app.eval_adapter.article_analysis import run_article_analysis_eval
@@ -164,7 +165,7 @@ async def run_single_sample(
         rag_mode=rag_mode,
         trace_scope="off",
         timeout_seconds=timeout_seconds,
-        repair_mode=repair_mode,
+        repair_enabled=repair_enabled,
     )
 
     t0 = time.perf_counter()
@@ -177,7 +178,7 @@ async def run_single_sample(
         "chars": sample["chars"],
         "wall_clock_s": round(elapsed, 2),
         "status": result.status,
-        "repair_mode": repair_mode,
+        "repair_enabled": repair_enabled,
     }
     if result.model_identity:
         metrics["model_identity"] = result.model_identity.model_dump(mode="json")
@@ -277,7 +278,7 @@ async def run_single_node_probe(
     rag_mode: str,
     timeout_seconds: float | None,
     run_real: bool,
-    repair_mode: str,
+    repair_enabled: bool,
 ) -> dict:
     """Run or dry-run one isolated analysis node for a single sample."""
     from app.eval_adapter.node_probe import run_article_analysis_node_probe
@@ -310,7 +311,7 @@ async def run_single_node_probe(
         "wall_clock_s": round(elapsed, 2),
         "status": result.status,
         "dry_run": not run_real,
-        "repair_mode": repair_mode,
+        "repair_enabled": repair_enabled,
         "sentence_count": len(result.prepared_sentences),
         "prompt_chars": len(result.prompt_preview or ""),
         "instruction_chars": len(result.agent_instructions or ""),
@@ -416,10 +417,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually call the LLM. Also requires CLAREAD_ALLOW_REAL_LLM_TESTS=1.",
     )
     parser.add_argument(
-        "--repair-mode",
-        default="patch",
-        choices=("full_result", "patch"),
-        help="Repair mode for workflow target. Default: patch.",
+        "--no-repair",
+        action="store_true",
+        help="Disable repair agent (repair_enabled=false). Default: repair enabled.",
     )
     return parser
 
@@ -436,7 +436,7 @@ async def main():
         node=args.node,
         reading_goal=args.reading_goal,
         reading_variant=args.reading_variant,
-        repair_mode=args.repair_mode,
+        repair_enabled=not args.no_repair,
     )
     ensure_real_run_allowed(run_real=args.run_real, all_samples=args.all)
 
@@ -449,7 +449,7 @@ async def main():
         run_real=args.run_real,
         target=args.target,
         node=args.node,
-        repair_mode=args.repair_mode,
+        repair_enabled=not args.no_repair,
     )
 
     all_metrics = []
@@ -469,7 +469,7 @@ async def main():
                     rag_mode=args.rag_mode,
                     timeout_seconds=args.timeout_seconds,
                     run_real=args.run_real,
-                    repair_mode=args.repair_mode,
+                    repair_enabled=not args.no_repair,
                 )
             else:
                 metrics = await run_single_sample(
@@ -479,7 +479,7 @@ async def main():
                     reading_variant=args.reading_variant,
                     rag_mode=args.rag_mode,
                     timeout_seconds=args.timeout_seconds,
-                    repair_mode=args.repair_mode,
+                    repair_enabled=not args.no_repair,
                 )
             all_metrics.append(metrics)
             if metrics.get("status") != "succeeded":
@@ -542,7 +542,7 @@ async def main():
                 "reading_variant": args.reading_variant,
                 "rag_mode": args.rag_mode,
                 "timeout_seconds": args.timeout_seconds,
-                "repair_mode": args.repair_mode,
+                "repair_enabled": not args.no_repair,
                 "samples": [
                     {"id": sample["id"], "chars": sample["chars"]}
                     for sample in samples

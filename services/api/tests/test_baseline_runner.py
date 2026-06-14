@@ -15,35 +15,18 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.run_p41b_baseline import build_parser, run_single_node_probe  # noqa: E402
 
 
-def test_baseline_parser_accepts_repair_mode() -> None:
-    """--repair-mode patch is parsed correctly."""
+def test_baseline_parser_accepts_no_repair() -> None:
+    """--no-repair flag is parsed correctly."""
     parser = build_parser()
-    args = parser.parse_args(["--sample", "sample-1", "--repair-mode", "patch"])
-    assert args.repair_mode == "patch"
+    args = parser.parse_args(["--sample", "sample-1", "--no-repair"])
+    assert args.no_repair is True
 
 
-def test_baseline_parser_accepts_full_result_repair_mode() -> None:
-    """--repair-mode full_result is parsed correctly."""
-    parser = build_parser()
-    args = parser.parse_args(["--sample", "sample-1", "--repair-mode", "full_result"])
-    assert args.repair_mode == "full_result"
-
-
-def test_baseline_parser_defaults_repair_mode() -> None:
-    """Default repair_mode is patch."""
+def test_baseline_parser_defaults_no_repair() -> None:
+    """Default no_repair is False (repair enabled by default)."""
     parser = build_parser()
     args = parser.parse_args(["--sample", "sample-1"])
-    assert args.repair_mode == "patch"
-
-
-def test_baseline_parser_rejects_invalid_repair_mode() -> None:
-    """Invalid repair_mode is rejected."""
-    parser = build_parser()
-    try:
-        parser.parse_args(["--sample", "sample-1", "--repair-mode", "invalid"])
-        raise AssertionError("Should have raised SystemExit")
-    except SystemExit:
-        pass
+    assert args.no_repair is False
 
 
 def test_baseline_dry_run_no_real_llm() -> None:
@@ -67,8 +50,8 @@ def test_baseline_dry_run_no_real_llm() -> None:
             os.environ["CLAREAD_ALLOW_REAL_LLM_TESTS"] = original
 
 
-def test_node_probe_metrics_include_repair_mode() -> None:
-    """run_single_node_probe metrics dict must contain repair_mode."""
+def test_node_probe_metrics_include_repair_enabled() -> None:
+    """run_single_node_probe metrics dict must contain repair_enabled."""
     from app.eval_adapter.schemas import (
         ArticleAnalysisNodeProbeResult,
         PromptIdentity,
@@ -129,9 +112,9 @@ def test_node_probe_metrics_include_repair_mode() -> None:
                 rag_mode="off",
                 timeout_seconds=None,
                 run_real=False,
-                repair_mode="patch",
+                repair_enabled=True,
             )
         )
 
-    assert metrics["repair_mode"] == "patch"
+    assert metrics["repair_enabled"] is True
     assert metrics["target"] == "node-probe"

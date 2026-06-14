@@ -93,6 +93,7 @@ class RequestSnapshot(BaseModel):
     rag_mode: RagMode
     trace_scope: TraceScope
     repair_mode: str = "patch"
+    repair_enabled: bool = True
 
 
 class EvalError(BaseModel):
@@ -572,7 +573,8 @@ class ArticleAnalysisEvalRequest(BaseModel):
     trace_project: str | None = "claread-eval"
     timeout_seconds: float | None = Field(default=None, gt=0.0)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
-    repair_mode: Literal["full_result", "patch"] = "patch"
+    repair_mode: Literal["patch"] = "patch"
+    repair_enabled: bool = True
 
     @model_validator(mode="after")
     def _validate_learning_only(self) -> ArticleAnalysisEvalRequest:

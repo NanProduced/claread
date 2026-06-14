@@ -17,13 +17,13 @@ import logging
 import os
 from collections import Counter
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langsmith import traceable
 
 from app.agents.grammar_agent import GrammarAgentDeps
-from app.agents.repair_agent import RepairAgentDeps, RepairPatchDeps
+from app.agents.repair_agent import RepairPatchDeps
 from app.agents.translation_agent import TranslationAgentDeps
 from app.agents.vocabulary_agent import VocabularyAgentDeps
 from app.config.settings import get_settings
@@ -47,10 +47,8 @@ from app.services.analysis.postprocess.repair_items import (
     build_repair_patch_request_with_stats,
 )
 from app.services.analysis.postprocess.repair_policy import (
-    deterministic_drop_count,
     repair_worthy_drop_count,
     should_trigger_patch_repair,
-    should_trigger_repair,
 )
 from app.services.analysis.preprocess.input_preparation import prepare_input
 from app.services.analysis.prompting.strategy_builder import (
@@ -76,43 +74,31 @@ ANCHOR_FAILURE_THRESHOLD = 0.35
 REPAIR_PATCH_MAX_TARGETS = 8
 
 
-def _repair_mode(config: RunnableConfig | None) -> Literal["full_result", "patch"]:
-    """决定 repair 模式：patch（默认）或 full_result。
+def _repair_enabled(config: RunnableConfig | None) -> bool:
+    """决定是否启用 repair。
 
-    优先级：config["configurable"]["repair_mode"] > env CLAREAD_WORKFLOW_REPAIR_MODE。
-    非法值 fail-safe 到 "full_result" 并写 warning。
+    优先级：config["configurable"]["repair_enabled"] > env CLAREAD_WORKFLOW_REPAIR_ENABLED。
+    默认启用。显式设置为 "false" / "0" / "no" 时关闭。
     """
     # 1. 显式 config 优先
     if config is not None:
         configurable = config.get("configurable") if isinstance(config, dict) else None
         if configurable and isinstance(configurable, dict):
-            val = configurable.get("repair_mode")
+            val = configurable.get("repair_enabled")
             if val is not None:
-                if val == "patch":
-                    return "patch"
-                if val == "full_result":
-                    return "full_result"
-                logger.warning(
-                    "Invalid repair_mode=%r in config, falling back to full_result",
-                    val,
-                )
-                return "full_result"
+                if isinstance(val, bool):
+                    return val
+                if str(val).lower() in ("false", "0", "no"):
+                    return False
+                return True
 
     # 2. 环境变量
-    env_val = os.environ.get("CLAREAD_WORKFLOW_REPAIR_MODE")
+    env_val = os.environ.get("CLAREAD_WORKFLOW_REPAIR_ENABLED")
     if env_val is not None:
-        if env_val == "patch":
-            return "patch"
-        if env_val == "full_result":
-            return "full_result"
-        logger.warning(
-            "Invalid CLAREAD_WORKFLOW_REPAIR_MODE=%r, falling back to full_result",
-            env_val,
-        )
-        return "full_result"
+        return env_val.lower() not in ("false", "0", "no")
 
-    # 3. 默认
-    return "patch"
+    # 3. 默认启用
+    return True
 
 
 def _annotation_count_by_type(annotations: list[Any]) -> dict[str, int]:
@@ -371,13 +357,13 @@ async def derive_user_config_node(
     state: AnalyzeState, config: RunnableConfig
 ) -> AnalyzeState:
     t0 = perf_counter()
-    # Always resolve repair_mode from config/env, even if plan already exists,
+    # Always resolve repair_enabled from config/env, even if plan already exists,
     # so the conditional edge can read it from state.
-    repair_mode = _repair_mode(config)
+    repair_enabled = _repair_enabled(config)
     existing_plan = state.get("goal_execution_plan")
     if existing_plan is not None:
         return {
-            "repair_mode": repair_mode,
+            "repair_enabled": repair_enabled,
             "node_timings": _merge_timings(
                 state, {"derive_user_config": perf_counter() - t0}
             ),
@@ -389,7 +375,7 @@ async def derive_user_config_node(
     )
     return {
         "goal_execution_plan": plan,
-        "repair_mode": repair_mode,
+        "repair_enabled": repair_enabled,
         "node_timings": _merge_timings(
             state, {"derive_user_config": perf_counter() - t0}
         ),
@@ -665,7 +651,7 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
         repair_drop_count_val / total_annotations
         if total_annotations > 0 else 0.0
     )
-    will_repair = should_trigger_repair(
+    will_repair = should_trigger_patch_repair(
         normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
     )
 
@@ -693,7 +679,8 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
         "post_repair_annotation_count": None,
         "repair_elapsed_s": None,
         "repair_succeeded": None,
-        "repair_mode": state.get("repair_mode"),
+        "repair_mode": "patch",
+        "repair_disabled": not state.get("repair_enabled", True),
         "full_result_failure_ratio": round(failure_ratio, 4),
         "patch_failure_ratio": round(patch_failure_ratio, 4),
         "canonical_repair_worthy_drop_count": canonical_repair_worthy_count,
@@ -715,65 +702,71 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
 async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> AnalyzeState:
     """Repair agent node（条件触发）。
 
-    支持两种 repair mode：
-    - patch（默认）：item-level repair，LLM 输出 RepairPatchResult，merge 回原结果。
-    - full_result：旧逻辑，LLM 输出完整 NormalizedAnnotationResult。
+    只使用 item-level patch repair。
+    可通过 config["configurable"]["repair_enabled"]=false 或
+    env CLAREAD_WORKFLOW_REPAIR_ENABLED=false 显式关闭。
     """
     t0 = perf_counter()
     normalized_result = state.get("normalized_result")
-    pre_repair_count = (
-        len(normalized_result.annotations) if normalized_result else 0
-    )
-    repair_drop_count_val = (
-        repair_worthy_drop_count(normalized_result.drop_log or [])
-        if normalized_result else 0
-    )
-    total_annotations = pre_repair_count + repair_drop_count_val
-    failure_ratio = repair_drop_count_val / total_annotations if total_annotations > 0 else 0.0
 
-    active_mode = state.get("repair_mode") or _repair_mode(config)
+    repair_enabled = state.get("repair_enabled")
+    if repair_enabled is None:
+        repair_enabled = _repair_enabled(config)
 
-    # ── Mode-aware trigger guard ────────────────────────────────────
-    # Patch mode uses should_trigger_patch_repair() which sees
-    # canonical_drop_log + normalized_annotations; full_result mode
-    # uses the old should_trigger_repair() which sees drop_log + annotations.
-    if active_mode == "patch":
-        will_repair = should_trigger_patch_repair(
-            normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
-        )
-        # Patch mode: compute canonical failure ratio for trigger_reason
-        if normalized_result is not None:
-            combined_drops = list(normalized_result.drop_log or [])
-            combined_drops.extend(normalized_result.canonical_drop_log or [])
-            patch_drop_count = repair_worthy_drop_count(combined_drops)
-            patch_annotation_count = len(normalized_result.normalized_annotations)
-            patch_total = patch_annotation_count + patch_drop_count
-            failure_ratio = (
-                patch_drop_count / patch_total if patch_total > 0 else 0.0
-            )
-        else:
-            failure_ratio = 0.0
-    else:
-        will_repair = should_trigger_repair(
-            normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
-        )
-
-    if not will_repair:
+    # ── Disabled guard ──────────────────────────────────────────────
+    if not repair_enabled:
         repair_stats: dict[str, Any] = {
             "repair_triggered": False,
             "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
             "trigger_reason": None,
-            "pre_repair_annotation_count": pre_repair_count,
+            "pre_repair_annotation_count": None,
             "post_repair_annotation_count": None,
             "repair_elapsed_s": None,
             "repair_succeeded": None,
-            "repair_mode": active_mode,
+            "repair_mode": "patch",
+            "repair_disabled": True,
         }
         return {
             "repair_request": None,
             "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
             "repair_stats": repair_stats,
         }
+
+    # ── Trigger guard (patch policy) ────────────────────────────────
+    will_repair = should_trigger_patch_repair(
+        normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
+    )
+
+    if not will_repair:
+        repair_stats = {
+            "repair_triggered": False,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": None,
+            "pre_repair_annotation_count": None,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": None,
+            "repair_mode": "patch",
+            "repair_disabled": False,
+        }
+        return {
+            "repair_request": None,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
+        }
+
+    # Compute canonical failure ratio for trigger_reason
+    if normalized_result is not None:
+        combined_drops = list(normalized_result.drop_log or [])
+        combined_drops.extend(normalized_result.canonical_drop_log or [])
+        patch_drop_count = repair_worthy_drop_count(combined_drops)
+        patch_annotation_count = len(normalized_result.normalized_annotations)
+        patch_total = patch_annotation_count + patch_drop_count
+        failure_ratio = (
+            patch_drop_count / patch_total if patch_total > 0 else 0.0
+        )
+    else:
+        failure_ratio = 0.0
 
     trigger_reason = (
         f"failure_ratio={failure_ratio:.2f}"
@@ -790,11 +783,12 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "repair_triggered": True,
             "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
             "trigger_reason": trigger_reason,
-            "pre_repair_annotation_count": pre_repair_count,
+            "pre_repair_annotation_count": None,
             "post_repair_annotation_count": None,
             "repair_elapsed_s": None,
             "repair_succeeded": None,
-            "repair_mode": active_mode,
+            "repair_mode": "patch",
+            "repair_disabled": False,
         }
         return {
             "repair_request": None,
@@ -802,184 +796,11 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "repair_stats": repair_stats,
         }
 
-    # ── Determine repair mode ──────────────────────────────────────
-    # Prefer state (set by derive_user_config_node from config),
-    # fallback to _repair_mode(config) for backward compat
-    state_mode = state.get("repair_mode")
-    if state_mode in ("full_result", "patch"):
-        mode = state_mode
-    else:
-        mode = _repair_mode(config)
-
-    if mode == "patch":
-        return await _repair_patch_mode(
-            state, config, t0, normalized_result, pre_repair_count,
-            trigger_reason, prepared_input,
-            vocabulary_draft, grammar_draft, translation_draft,
-        )
-
-    # ── full_result mode (default) ─────────────────────────────────
-    return await _repair_full_result_mode(
-        state, config, t0, normalized_result, pre_repair_count,
+    return await _repair_patch_mode(
+        state, config, t0, normalized_result,
         trigger_reason, prepared_input,
         vocabulary_draft, grammar_draft, translation_draft,
     )
-
-
-async def _repair_full_result_mode(
-    state: AnalyzeState,
-    config: RunnableConfig,
-    t0: float,
-    normalized_result: NormalizedAnnotationResult,
-    pre_repair_count: int,
-    trigger_reason: str,
-    prepared_input: Any,
-    vocabulary_draft: VocabularyDraft,
-    grammar_draft: GrammarDraft,
-    translation_draft: TranslationDraft,
-) -> AnalyzeState:
-    """旧 full-result repair 逻辑。"""
-    repair_drop_count_val = (
-        repair_worthy_drop_count(normalized_result.drop_log or [])
-        if normalized_result else 0
-    )
-    deterministic_count = deterministic_drop_count(normalized_result.drop_log or [])
-    total_drop_count = len(normalized_result.drop_log) if normalized_result else 0
-    error_context = (
-        "normalized_result 锚点失败率过高或结构异常。"
-        f"repair_worthy_drops: {repair_drop_count_val}, "
-        f"deterministic_drops: {deterministic_count}, "
-        f"total_drops: {total_drop_count}"
-    )
-    repair_deps = RepairAgentDeps(
-        sentences=[
-            {"sentence_id": s.sentence_id, "text": s.text}
-            for s in prepared_input.sentences
-        ],
-        original_drafts={
-            "vocabulary_draft": (
-                vocabulary_draft.model_dump(mode="json")
-                if vocabulary_draft else {}
-            ),
-            "grammar_draft": (
-                grammar_draft.model_dump(mode="json")
-                if grammar_draft else {}
-            ),
-            "translation_draft": (
-                translation_draft.model_dump(mode="json")
-                if translation_draft else {}
-            ),
-        },
-    )
-    repair_meta = _build_agent_trace_metadata(
-        state, "repair_agent", _model_selection(config)
-    )
-    repair_meta["extra"] = {
-        **(repair_meta.get("extra") or {}),
-        "error_context": error_context,
-    }
-
-    repair_model_selection = _model_selection(config)
-    repair_elapsed = None
-    try:
-        repair_inner_t0 = perf_counter()
-        repair_result = await _run_repair_llm_span(
-            deps=repair_deps,
-            metadata=repair_meta,
-            error_context=error_context,
-            model_selection=repair_model_selection,
-        )
-        repair_elapsed = perf_counter() - repair_inner_t0
-        repaired_result = repair_result.get("output")
-        repair_usage = repair_result.get("usage_metadata")
-        usage_summary = _aggregate_usage_summary({
-            "vocabulary": state.get("vocabulary_usage"),
-            "grammar": state.get("grammar_usage"),
-            "translation": state.get("translation_usage"),
-            "repair": repair_usage,
-        })
-        post_repair_count = (
-            len(repaired_result.annotations)
-            if repaired_result else pre_repair_count
-        )
-        repair_stats = {
-            "repair_triggered": True,
-            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
-            "trigger_reason": trigger_reason,
-            "pre_repair_annotation_count": pre_repair_count,
-            "post_repair_annotation_count": post_repair_count,
-            "repair_elapsed_s": repair_elapsed,
-            "repair_succeeded": True,
-            "repair_mode": "full_result",
-        }
-        annotation_stats = dict(state.get("annotation_stats") or {})
-        if repaired_result is not None:
-            drop_by_type = Counter(
-                getattr(e, "annotation_type", "")
-                for e in repaired_result.drop_log
-            )
-            drop_by_reason = Counter(
-                getattr(e, "drop_reason", "")
-                for e in repaired_result.drop_log
-            )
-            drop_by_stage = Counter(
-                getattr(e, "drop_stage", "")
-                for e in repaired_result.drop_log
-            )
-            annotation_stats.update({
-                "normalized_counts": _annotation_count_by_type(
-                    repaired_result.annotations
-                ),
-                "drop_counts_by_type": dict(sorted(drop_by_type.items())),
-                "drop_counts_by_reason": dict(sorted(drop_by_reason.items())),
-                "drop_counts_by_stage": dict(sorted(drop_by_stage.items())),
-                "anchor_drop_summary": _anchor_drop_summary(repaired_result.drop_log),
-                "canonical_stats": repaired_result.canonical_stats,
-            })
-        return {
-            "repair_request": {"error_context": error_context, "repaired": True},
-            "normalized_result": repaired_result,
-            "drop_log": repaired_result.drop_log if repaired_result else state.get("drop_log", []),
-            "canonical_drop_log": (
-                repaired_result.canonical_drop_log
-                if repaired_result else state.get("canonical_drop_log", [])
-            ),
-            "annotation_stats": annotation_stats,
-            "repair_usage": repair_usage,
-            "usage_summary": usage_summary,
-            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
-            "repair_stats": repair_stats,
-        }
-    except Exception:
-        logger.exception("repair_agent 调用失败")
-        usage_summary = _aggregate_usage_summary({
-            "vocabulary": state.get("vocabulary_usage"),
-            "grammar": state.get("grammar_usage"),
-            "translation": state.get("translation_usage"),
-        })
-        repair_stats = {
-            "repair_triggered": True,
-            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
-            "trigger_reason": trigger_reason,
-            "pre_repair_annotation_count": pre_repair_count,
-            "post_repair_annotation_count": None,
-            "repair_elapsed_s": None,
-            "repair_succeeded": False,
-            "repair_mode": "full_result",
-        }
-        return {
-            "repair_request": {"error_context": error_context, "repaired": False},
-            "warnings": [
-                *state.get("warnings", []),
-                Warning(
-                    code="REPAIR_AGENT_FAILED", level="warning",
-                    message="repair agent 调用失败，继续使用归一化结果",
-                ),
-            ],
-            "usage_summary": usage_summary,
-            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
-            "repair_stats": repair_stats,
-        }
 
 
 async def _repair_patch_mode(
@@ -987,7 +808,6 @@ async def _repair_patch_mode(
     config: RunnableConfig,
     t0: float,
     normalized_result: NormalizedAnnotationResult,
-    pre_repair_count: int,
     trigger_reason: str,
     prepared_input: Any,
     vocabulary_draft: VocabularyDraft,
@@ -1188,32 +1008,6 @@ async def _repair_patch_mode(
             "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
             "repair_stats": repair_stats,
         }
-
-
-@traceable(name="repair_llm_call", run_type="llm")
-async def _run_repair_llm_span(
-    *,
-    deps: RepairAgentDeps,
-    metadata: dict[str, object],
-    error_context: str,
-    model_selection: ModelSelection | None = None,
-) -> dict[str, Any]:
-    from app.agents.repair_agent import build_repair_prompt, get_repair_agent
-    from app.llm.agent_runner import run_agent_with_route
-    from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
-
-    result = await run_agent_with_route(
-        agent=get_repair_agent(),
-        prompt=build_repair_prompt(deps, error_context),
-        deps=deps,
-        route=MODEL_ROUTE_ANNOTATION_GENERATION,
-        model_selection=model_selection,
-    )
-    usage = extract_run_usage(result)
-    return {
-        "output": result.output if hasattr(result, "output") else result,
-        "usage_metadata": usage,
-    }
 
 
 @traceable(name="repair_patch_llm_call", run_type="llm")

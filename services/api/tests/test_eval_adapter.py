@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,10 +20,8 @@ from app.eval_adapter.schemas import (
     SchemaIdentity,
     WorkflowIdentity,
 )
-from app.llm.types import ModelSelection
 from app.schemas.analysis import AnalyzeRequestMeta, ArticleStructure, RenderSceneModel
 from app.services.analysis.prompting.runtime_context import is_grammar_rag_enabled
-from app.workflow import analyze_nodes
 
 
 def _settings() -> Settings:
@@ -137,11 +134,11 @@ async def test_eval_adapter_returns_sanitized_success_result(
         eval_article_analysis, "validate_model_selection", lambda *a, **kw: None
     )
 
-    async def _fake_workflow(payload, *, repair_mode=None):
+    async def _fake_workflow(payload, *, repair_enabled=None):
         assert payload.request_id == "eval:run-1:case-1"
         assert payload.model_selection.default_profile == "eval-profile"
         assert is_grammar_rag_enabled(settings) is False
-        assert repair_mode == "patch"
+        assert repair_enabled is True
         return {
             "render_scene": _render_scene(payload.request_id),
             "usage_summary": {
@@ -262,7 +259,7 @@ async def test_eval_adapter_returns_structured_timeout(
     settings = _settings()
     monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
 
-    async def _slow_workflow(_payload, *, repair_mode=None):
+    async def _slow_workflow(_payload, *, repair_enabled=None):
         await asyncio.sleep(0.05)
         return {"render_scene": _render_scene("eval:req")}
 
@@ -326,32 +323,6 @@ async def test_eval_adapter_does_not_call_business_side_effects(
     assert result.status == "succeeded"
     for mock in side_effect_mocks:
         mock.assert_not_called()
-
-
-def test_repair_llm_span_forwards_model_selection(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    async def _fake_run_agent_with_route(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(output="ok", usage=lambda: None)
-
-    monkeypatch.setattr(
-        "app.llm.agent_runner.run_agent_with_route",
-        _fake_run_agent_with_route,
-    )
-    selection = ModelSelection(default_profile="eval-profile")
-
-    result = asyncio.run(
-        analyze_nodes._run_repair_llm_span(
-            deps=analyze_nodes.RepairAgentDeps(sentences=[], original_drafts={}),
-            metadata={},
-            error_context="repair",
-            model_selection=selection,
-        )
-    )
-
-    assert result["output"] == "ok"
-    assert captured["model_selection"] == selection
 
 
 def test_eval_workflow_route_is_admin_key_protected(
@@ -1022,9 +993,10 @@ async def test_eval_result_includes_llm_config_snapshot(
 
 
 def test_eval_schema_accepts_default_repair_mode() -> None:
-    """ArticleAnalysisEvalRequest defaults repair_mode to 'patch'."""
+    """ArticleAnalysisEvalRequest defaults repair_mode='patch' and repair_enabled=True."""
     req = ArticleAnalysisEvalRequest(text="Hello world.")
     assert req.repair_mode == "patch"
+    assert req.repair_enabled is True
 
 
 def test_eval_schema_accepts_explicit_patch_mode() -> None:
@@ -1034,10 +1006,10 @@ def test_eval_schema_accepts_explicit_patch_mode() -> None:
 
 
 @pytest.mark.anyio
-async def test_eval_adapter_passes_repair_mode_to_workflow(
+async def test_eval_adapter_passes_repair_enabled_to_workflow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """run_article_analysis_eval passes repair_mode to
+    """run_article_analysis_eval passes repair_enabled=True to
     run_article_analysis_with_state."""
     settings = _settings()
     monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
@@ -1048,8 +1020,8 @@ async def test_eval_adapter_passes_repair_mode_to_workflow(
 
     captured_kwargs: dict = {}
 
-    async def _fake_workflow(payload, *, repair_mode=None):
-        captured_kwargs["repair_mode"] = repair_mode
+    async def _fake_workflow(payload, *, repair_enabled=None):
+        captured_kwargs["repair_enabled"] = repair_enabled
         return {
             "render_scene": _render_scene("eval:req"),
             "usage_summary": {
@@ -1067,28 +1039,25 @@ async def test_eval_adapter_passes_repair_mode_to_workflow(
     )
     monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
 
-    # Default: patch
+    # Default: repair_enabled=True
     await eval_article_analysis.run_article_analysis_eval(
         ArticleAnalysisEvalRequest(text="Sentence one.")
     )
-    assert captured_kwargs["repair_mode"] == "patch"
-
-    # Explicit: full_result
-    await eval_article_analysis.run_article_analysis_eval(
-        ArticleAnalysisEvalRequest(text="Sentence one.", repair_mode="full_result")
-    )
-    assert captured_kwargs["repair_mode"] == "full_result"
+    assert captured_kwargs["repair_enabled"] is True
 
 
 def test_request_snapshot_includes_repair_mode() -> None:
-    """RequestSnapshot records repair_mode."""
+    """RequestSnapshot records repair_mode and repair_enabled."""
     from app.eval_adapter.shared import request_snapshot
 
-    req = ArticleAnalysisEvalRequest(text="Hello world.", repair_mode="full_result")
+    # Default: patch, enabled
+    req = ArticleAnalysisEvalRequest(text="Hello world.")
     snap = request_snapshot(req, request_id_value="test-id")
-    assert snap.repair_mode == "full_result"
+    assert snap.repair_mode == "patch"
+    assert snap.repair_enabled is True
 
-    # Default is now patch
-    req2 = ArticleAnalysisEvalRequest(text="Hello world.")
+    # Explicit disabled
+    req2 = ArticleAnalysisEvalRequest(text="Hello world.", repair_enabled=False)
     snap2 = request_snapshot(req2, request_id_value="test-id")
     assert snap2.repair_mode == "patch"
+    assert snap2.repair_enabled is False

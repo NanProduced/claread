@@ -7,7 +7,6 @@ from langgraph.graph import END, START, StateGraph
 
 from app.services.analysis.postprocess.repair_policy import (
     should_trigger_patch_repair,
-    should_trigger_repair,
 )
 from app.workflow.analyze_nodes import (
     assemble_result_node,
@@ -21,47 +20,33 @@ from app.workflow.analyze_nodes import (
 from app.workflow.analyze_state import AnalyzeState
 
 
-def _resolve_repair_mode(state: AnalyzeState) -> str:
-    """解析 repair mode：state 优先（来自 config），fallback 到 env，默认 patch。
+def _repair_enabled(state: AnalyzeState) -> bool:
+    """判断 repair 是否启用。
 
-    优先级：state["repair_mode"] > env CLAREAD_WORKFLOW_REPAIR_MODE > "patch"。
-    state["repair_mode"] 由 derive_user_config_node 从 config 写入，
-    确保显式 config 在条件路由阶段也能生效。
-    非法 env 值 fail-safe 到 "full_result"。
+    优先级：state["repair_enabled"] > env CLAREAD_WORKFLOW_REPAIR_ENABLED > True。
+    state["repair_enabled"] 由 derive_user_config_node 从 config 写入。
     """
-    mode = state.get("repair_mode")
-    if mode in ("full_result", "patch"):
-        return mode
-    # Fallback to env
-    env_val = os.environ.get("CLAREAD_WORKFLOW_REPAIR_MODE")
-    if env_val == "patch":
-        return "patch"
-    if env_val == "full_result":
-        return "full_result"
+    enabled = state.get("repair_enabled")
+    if enabled is not None:
+        return bool(enabled)
+    env_val = os.environ.get("CLAREAD_WORKFLOW_REPAIR_ENABLED")
     if env_val is not None:
-        # Invalid env value → fail-safe to full_result
-        return "full_result"
-    # Default
-    return "patch"
+        return env_val.lower() not in ("false", "0", "no")
+    return True
 
 
 def _should_repair(state: AnalyzeState) -> bool:
     """判断是否需要触发 repair_agent。
 
-    full_result mode：只看 drop_log + 旧 annotations（旧逻辑不变）。
-    patch mode：合并 drop_log + canonical_drop_log，用 normalized_annotations 计数。
-    repair_mode 从 state 读取（由 derive_user_config_node 从 config 写入），
-    fallback 到 env CLAREAD_WORKFLOW_REPAIR_MODE。
+    只使用 patch repair policy（合并 drop_log + canonical_drop_log，
+    用 normalized_annotations 计数）。
+    repair_enabled=false 时直接跳过。
     """
+    if not _repair_enabled(state):
+        return False
+
     normalized_result = state.get("normalized_result")
-    mode = _resolve_repair_mode(state)
-
-    if mode == "patch":
-        return should_trigger_patch_repair(
-            normalized_result, threshold=0.35
-        )
-
-    return should_trigger_repair(normalized_result, threshold=0.35)
+    return should_trigger_patch_repair(normalized_result, threshold=0.35)
 
 
 def build_learning_graph() -> Any:
