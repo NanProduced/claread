@@ -15,6 +15,7 @@ import {
   sceneSentenceEntries,
   sceneTranslations,
   sceneWarnings,
+  extractLLMConfigSnapshot,
 } from "../composables/workflowLabFormatting.js";
 
 const props = defineProps({
@@ -26,6 +27,7 @@ const props = defineProps({
 });
 
 const scene = computed(() => normalizeWorkflowScene(props.payload));
+const llmConfig = computed(() => extractLLMConfigSnapshot(props.payload));
 const translations = computed(() => sceneTranslations(scene.value));
 const inlineMarks = computed(() => sceneInlineMarks(scene.value));
 const sentenceEntries = computed(() => sceneSentenceEntries(scene.value));
@@ -171,6 +173,21 @@ function markDetail(mark) {
             <p v-else>暂无 drop log。</p>
           </div>
         </div>
+      </ResultBlock>
+
+      <ResultBlock v-if="llmConfig" title="LLM 配置" :open="false">
+        <dl class="llm-config-grid">
+          <div><dt>Profile</dt><dd>{{ dash(llmConfig.profile) }}</dd></div>
+          <div><dt>Provider</dt><dd>{{ dash(llmConfig.provider) }}</dd></div>
+          <div><dt>Adapter</dt><dd>{{ dash(llmConfig.adapter) }}</dd></div>
+          <div><dt>Model</dt><dd>{{ dash(llmConfig.model) }}</dd></div>
+          <div><dt>tool_choice_required</dt><dd>{{ llmConfig.openai_supports_tool_choice_required === true ? '是' : llmConfig.openai_supports_tool_choice_required === false ? '否' : dash(llmConfig.openai_supports_tool_choice_required) }}</dd></div>
+          <div><dt>expected_tool_choice</dt><dd>{{ dash(llmConfig.expected_tool_choice) }}</dd></div>
+          <div><dt>json_schema</dt><dd>{{ llmConfig.supports_json_schema_output === true ? '是' : llmConfig.supports_json_schema_output === false ? '否' : dash(llmConfig.supports_json_schema_output) }}</dd></div>
+          <div><dt>json_object</dt><dd>{{ llmConfig.supports_json_object_output === true ? '是' : llmConfig.supports_json_object_output === false ? '否' : dash(llmConfig.supports_json_object_output) }}</dd></div>
+          <div><dt>structured_output_mode</dt><dd>{{ dash(llmConfig.default_structured_output_mode) }}</dd></div>
+          <div><dt>thinking</dt><dd>{{ llmConfig.thinking_enabled ? '开启' : '关闭' }}</dd></div>
+        </dl>
       </ResultBlock>
 
       <ResultBlock title="Anchor Debug" :open="false">
@@ -327,6 +344,26 @@ function markDetail(mark) {
   border-radius: 8px;
   padding: 18px;
   background: var(--theme--background-subdued);
+}
+
+.llm-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.llm-config-grid div {
+  background: var(--theme--background-subdued);
+  padding: 10px;
+}
+
+.llm-config-grid dd {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 @media (max-width: 980px) {

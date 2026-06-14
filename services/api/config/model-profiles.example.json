@@ -218,6 +218,14 @@
       "_field_notes": "DashScope rerank model.",
       "provider": "dashscope_rerank",
       "model_name": "qwen3-rerank"
+    },
+    "qwen36-flash-tool-required": {
+      "_field_notes": "Qwen3.6 Flash 实验配置：显式声明 openai_supports_tool_choice_required=true，用于 tool_choice=required A/B 实验。",
+      "provider": "dashscope_compat",
+      "model_name": "qwen3.6-flash-2026-04-16",
+      "openai_profile": {
+        "openai_supports_tool_choice_required": true
+      }
     }
   },
   "profiles": {
@@ -371,6 +379,15 @@
     "rag-rerank-qwen3": {
       "_field_notes": "Grammar RAG rerank profile. Bound to rag_rerank route via RAG_RERANK_MODEL_PROFILE env var.",
       "model": "qwen3-rerank"
+    },
+    "workflow-qwen36-flash-tool-required": {
+      "_field_notes": "Qwen3.6 Flash tool_choice=required 实验配置。不替换 workflow-qwen36-flash 生产 profile。",
+      "model": "qwen36-flash-tool-required",
+      "model_settings": {
+        "extra_body": {
+          "enable_thinking": false
+        }
+      }
     }
   }
 }

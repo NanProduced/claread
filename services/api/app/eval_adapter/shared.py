@@ -10,11 +10,14 @@ from uuid import uuid4
 
 from app.config.settings import Settings, get_settings
 from app.eval_adapter.schemas import (
+    LLMConfigSnapshot,
     ModelIdentity,
     ModelProfileSummary,
     PromptIdentity,
     RequestSnapshot,
+    StructuredOutputSnapshot,
 )
+from app.llm.provider_factory import _resolve_openai_profile
 from app.llm.registry import build_model_registry
 from app.llm.router import ModelSelectionError, resolve_model_config
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
@@ -117,6 +120,95 @@ def model_identity(
         fallback_profiles=list(config.fallback_profiles),
         model_settings=model_settings_payload(config.model_settings),
     )
+
+
+def build_llm_config_snapshot(
+    selection: ModelSelection | None,
+    *,
+    settings: Settings | None = None,
+) -> LLMConfigSnapshot | None:
+    config = resolve_model_config(
+        settings or get_settings(),
+        MODEL_ROUTE_ANNOTATION_GENERATION,
+        selection,
+    )
+    if config is None:
+        return None
+
+    # Use the resolved OpenAIModelProfile (which merges config + hint +
+    # PydanticAI defaults) rather than the raw OpenAIProfileConfig dict,
+    # so that inferred fields reflect actual runtime behavior.
+    resolved_profile = _resolve_openai_profile(config)
+    openai_profile = config.openai_profile
+    openai_profile_dict = (
+        openai_profile.model_dump(exclude_none=True) if openai_profile else {}
+    )
+
+    # Read from resolved profile (falls back to PydanticAI defaults)
+    supports_tool_choice_required = (
+        resolved_profile.openai_supports_tool_choice_required
+        if resolved_profile
+        else True
+    )
+    default_mode = (
+        resolved_profile.default_structured_output_mode
+        if resolved_profile
+        else "tool"
+    )
+    supports_json_schema = (
+        resolved_profile.supports_json_schema_output
+        if resolved_profile
+        else False
+    )
+    supports_json_object = (
+        resolved_profile.supports_json_object_output
+        if resolved_profile
+        else False
+    )
+    expected_tool_choice = (
+        "required" if default_mode == "tool" and supports_tool_choice_required else "auto"
+    )
+    # Infer expected_response_format from PydanticAI's actual request behavior:
+    #   tool mode → no response_format, uses tools + tool_choice → None
+    #   native mode → response_format json_schema → "json_schema"
+    #   prompted + json_object → response_format json_object → "json_object"
+    #   prompted without json_object → no response_format → None
+    if default_mode == "native":
+        expected_response_format = "json_schema"
+    elif default_mode == "prompted" and supports_json_object:
+        expected_response_format = "json_object"
+    else:
+        expected_response_format = None
+
+    return LLMConfigSnapshot(
+        profile_name=config.profile_name,
+        provider=config.provider,
+        adapter=config.adapter,
+        model_name=config.model_name,
+        fallback_profiles=list(config.fallback_profiles),
+        model_settings=model_settings_payload(config.model_settings),
+        openai_profile=openai_profile_dict,
+        structured_output=StructuredOutputSnapshot(
+            default_structured_output_mode=default_mode,
+            supports_json_schema_output=supports_json_schema,
+            supports_json_object_output=supports_json_object,
+            openai_supports_tool_choice_required=supports_tool_choice_required,
+            expected_tool_choice=expected_tool_choice,
+            expected_response_format=expected_response_format,
+        ),
+    )
+
+
+def build_llm_config_snapshot_safe(
+    selection: ModelSelection | None,
+    *,
+    settings: Settings | None = None,
+) -> LLMConfigSnapshot | None:
+    """Safe wrapper that returns None instead of raising on invalid selection."""
+    try:
+        return build_llm_config_snapshot(selection, settings=settings)
+    except ModelSelectionError:
+        return None
 
 
 def list_model_profile_summaries(

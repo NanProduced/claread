@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from pydantic_ai.models.function import FunctionModel
@@ -14,6 +15,8 @@ from app.llm.routes import (
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
 from app.llm.types import ModelSelection, ResolvedModelConfig, RouteModelSelection, RunModelSettings
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _catalog(profile_specs: dict[str, dict[str, object]]) -> str:
@@ -1145,6 +1148,54 @@ def test_dashscope_embedding_provider_is_configured_with_api_key() -> None:
         adapter="dashscope_embedding",
     )
     assert provider_no_key.is_configured() is False
+
+
+def test_resolve_workflow_qwen36_flash_tool_required_has_tool_choice_required(
+    monkeypatch,
+) -> None:
+    """workflow-qwen36-flash-tool-required profile must resolve with
+    openai_supports_tool_choice_required=True."""
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+    settings = Settings(
+        annotation_model_profile="workflow-qwen36-flash-tool-required",
+        model_profiles_json=json.dumps({
+            "providers": {
+                "dashscope": {
+                    "adapter": "openai_compatible",
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "api_key_env": "DASHSCOPE_API_KEY",
+                },
+            },
+            "models": {
+                "qwen36-flash-tool-required": {
+                    "provider": "dashscope",
+                    "model_name": "qwen3.6-flash-2026-04-16",
+                    "openai_profile": {
+                        "openai_supports_tool_choice_required": True,
+                    },
+                },
+            },
+            "profiles": {
+                "workflow-qwen36-flash-tool-required": {
+                    "model": "qwen36-flash-tool-required",
+                    "model_settings": {
+                        "extra_body": {"enable_thinking": False},
+                    },
+                },
+            },
+        }),
+    )
+
+    config = resolve_model_config(
+        settings,
+        MODEL_ROUTE_ANNOTATION_GENERATION,
+        ModelSelection(default_profile="workflow-qwen36-flash-tool-required"),
+    )
+
+    assert config is not None
+    assert config.profile_name == "workflow-qwen36-flash-tool-required"
+    assert config.openai_profile is not None
+    assert config.openai_profile.openai_supports_tool_choice_required is True
 
 
 def test_dashscope_rerank_provider_is_configured_with_api_key() -> None:

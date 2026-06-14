@@ -22,6 +22,34 @@ export function extractRepairStats(artifact) {
   return stats;
 }
 
+// ── LLM Config Snapshot ──────────────────────────────────────
+
+export function extractLLMConfigSnapshot(artifact) {
+  const snapshot = artifact?.llm_config_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+
+  const so = snapshot.structured_output || {};
+  const ms = snapshot.model_settings || {};
+  const eb = ms.extra_body || {};
+
+  let thinkingEnabled = false;
+  if (eb.enable_thinking === true) thinkingEnabled = true;
+  if (typeof eb.thinking === "object" && eb.thinking?.type === "enabled") thinkingEnabled = true;
+
+  return {
+    profile: snapshot.profile_name || null,
+    provider: snapshot.provider || null,
+    adapter: snapshot.adapter || null,
+    model: snapshot.model_name || null,
+    openai_supports_tool_choice_required: so.openai_supports_tool_choice_required ?? null,
+    expected_tool_choice: so.expected_tool_choice || null,
+    supports_json_schema_output: so.supports_json_schema_output ?? null,
+    supports_json_object_output: so.supports_json_object_output ?? null,
+    default_structured_output_mode: so.default_structured_output_mode || null,
+    thinking_enabled: thinkingEnabled,
+  };
+}
+
 // ── Anchor kind 分类 ──────────────────────────────────────────
 
 export function anchorKindCategory(anchor) {

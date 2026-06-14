@@ -759,6 +759,41 @@ export function compareHealthInsights(baselineHealth, candidateHealth) {
 }
 
 /**
+ * 从 artifact 中提取 llm_config_snapshot 关键字段。
+ * 返回 null 或一个对象，包含：
+ *   profile, provider, adapter, model,
+ *   openai_supports_tool_choice_required, expected_tool_choice,
+ *   supports_json_schema_output, supports_json_object_output,
+ *   default_structured_output_mode, thinking_enabled
+ */
+export function extractLLMConfigSnapshot(artifact) {
+  const snapshot = artifact?.llm_config_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+
+  const so = snapshot.structured_output || {};
+  const ms = snapshot.model_settings || {};
+  const eb = ms.extra_body || {};
+
+  // Determine thinking enabled
+  let thinkingEnabled = false;
+  if (eb.enable_thinking === true) thinkingEnabled = true;
+  if (typeof eb.thinking === "object" && eb.thinking?.type === "enabled") thinkingEnabled = true;
+
+  return {
+    profile: snapshot.profile_name || null,
+    provider: snapshot.provider || null,
+    adapter: snapshot.adapter || null,
+    model: snapshot.model_name || null,
+    openai_supports_tool_choice_required: so.openai_supports_tool_choice_required ?? null,
+    expected_tool_choice: so.expected_tool_choice || null,
+    supports_json_schema_output: so.supports_json_schema_output ?? null,
+    supports_json_object_output: so.supports_json_object_output ?? null,
+    default_structured_output_mode: so.default_structured_output_mode || null,
+    thinking_enabled: thinkingEnabled,
+  };
+}
+
+/**
  * 把 user_facing_state tone 映射到一个可比较的 rank（越大越差）。
  * 用来在 compareHealthInsights 中作为 +1 / -1 的硬信号。
  */

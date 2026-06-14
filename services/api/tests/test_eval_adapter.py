@@ -909,3 +909,70 @@ async def test_eval_result_includes_canonical_drop_log(
     assert isinstance(result.canonical_drop_log, list)
     assert len(result.canonical_drop_log) == 1
     assert result.canonical_drop_log[0]["drop_reason"] == "quote_not_found"
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_llm_config_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+    # validate_model_selection(buildable=True) triggers build_model_instance
+    # which creates httpx.AsyncClient blocked by conftest; mock it to skip build.
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "validate_model_selection",
+        lambda *a, **kw: None,
+    )
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(
+            text="Sentence one.",
+            model_selection={"default_profile": "eval-profile"},
+        )
+    )
+
+    assert result.status == "succeeded"
+    assert result.llm_config_snapshot is not None
+    snapshot = result.llm_config_snapshot
+    assert snapshot["profile_name"] == "eval-profile"
+    assert snapshot["provider"] == "eval-provider"
+    assert snapshot["adapter"] == "openai_compatible"
+    assert snapshot["model_name"] == "eval-model"
+    assert "structured_output" in snapshot
+    # No explicit openai_profile → resolved profile is None → PydanticAI
+    # defaults apply: tool_choice_required=True, mode=tool → "required"
+    assert snapshot["structured_output"]["expected_tool_choice"] == "required"
+    assert snapshot["structured_output"]["openai_supports_tool_choice_required"] is True
+    # Verify inferred defaults are filled (not null)
+    assert snapshot["structured_output"]["default_structured_output_mode"] == "tool"
+    assert snapshot["structured_output"]["supports_json_schema_output"] is False
+    assert snapshot["structured_output"]["supports_json_object_output"] is False
+    assert snapshot["structured_output"]["expected_response_format"] is None
+    # Verify JSON serialization round-trips
+    dumped = json.dumps(snapshot)
+    assert isinstance(json.loads(dumped), dict)

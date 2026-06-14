@@ -14,14 +14,16 @@ from app.eval_adapter.schemas import (
     WorkflowIdentity,
 )
 from app.eval_adapter.shared import (
+    build_llm_config_snapshot,
+    build_llm_config_snapshot_safe,
+    rag_override,
+    trace_scope,
+)
+from app.eval_adapter.shared import (
     model_identity as build_model_identity,
 )
 from app.eval_adapter.shared import (
     prompt_identity as build_prompt_identity,
-)
-from app.eval_adapter.shared import (
-    rag_override,
-    trace_scope,
 )
 from app.eval_adapter.shared import (
     request_id as build_request_id,
@@ -121,6 +123,7 @@ def _failure_result(
     error: BaseException,
     latency_ms: int,
     model_identity: ModelIdentity | None = None,
+    llm_config_snapshot: dict[str, Any] | None = None,
 ) -> ArticleAnalysisEvalResult:
     topology_mode = _topology_mode(request)
     return ArticleAnalysisEvalResult(
@@ -138,6 +141,7 @@ def _failure_result(
         ),
         prompt_identity=build_prompt_identity(request, prompt_version=get_prompt_version()),
         model_identity=model_identity,
+        llm_config_snapshot=llm_config_snapshot,
         runtime_summary={"latency_ms": latency_ms},
         trace_refs=build_trace_refs(request_id=request_id),
     )
@@ -163,13 +167,21 @@ async def run_article_analysis_eval(
         model_identity = build_model_identity(model_selection, settings=get_settings())
     except ModelSelectionError as exc:
         latency_ms = int((perf_counter() - started_at) * 1000)
+        _snap = build_llm_config_snapshot_safe(
+            model_selection, settings=get_settings(),
+        )
         return _failure_result(
             request,
             request_id=request_id,
             status="failed",
             error=exc,
             latency_ms=latency_ms,
+            llm_config_snapshot=_snap.model_dump(mode="json") if _snap else None,
         )
+
+    _llm_snapshot = build_llm_config_snapshot(
+        model_selection, settings=get_settings(),
+    )
 
     payload = AnalyzeRequest(
         text=request.text,
@@ -204,6 +216,9 @@ async def run_article_analysis_eval(
             error=exc,
             latency_ms=latency_ms,
             model_identity=model_identity,
+            llm_config_snapshot=(
+                _llm_snapshot.model_dump(mode="json") if _llm_snapshot else None
+            ),
         )
     except Exception as exc:
         latency_ms = int((perf_counter() - started_at) * 1000)
@@ -214,6 +229,9 @@ async def run_article_analysis_eval(
             error=exc,
             latency_ms=latency_ms,
             model_identity=model_identity,
+            llm_config_snapshot=(
+                _llm_snapshot.model_dump(mode="json") if _llm_snapshot else None
+            ),
         )
 
     latency_ms = int((perf_counter() - started_at) * 1000)
@@ -241,4 +259,5 @@ async def run_article_analysis_eval(
         repair_stats=build_repair_stats_summary(result),
         drop_log=build_drop_log_entries(result),
         canonical_drop_log=build_canonical_drop_log_entries(result),
+        llm_config_snapshot=_llm_snapshot.model_dump(mode="json") if _llm_snapshot else None,
     )

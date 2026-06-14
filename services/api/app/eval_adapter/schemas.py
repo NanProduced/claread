@@ -54,6 +54,30 @@ JudgeOutputSchemaKind = Literal[
 ]
 
 
+class StructuredOutputSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    default_structured_output_mode: str | None = None
+    supports_json_schema_output: bool | None = None
+    supports_json_object_output: bool | None = None
+    openai_supports_tool_choice_required: bool | None = None
+    expected_tool_choice: str  # "required" or "auto"
+    expected_response_format: str | None = None
+
+
+class LLMConfigSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_name: str
+    provider: str
+    adapter: str
+    model_name: str
+    fallback_profiles: list[str] = Field(default_factory=list)
+    model_settings: dict[str, Any] = Field(default_factory=dict)
+    openai_profile: dict[str, Any] = Field(default_factory=dict)
+    structured_output: StructuredOutputSnapshot
+
+
 class RequestSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -635,6 +659,7 @@ class ArticleAnalysisEvalResult(BaseModel):
     repair_stats: dict[str, Any] | None = None
     drop_log: list[dict[str, Any]] = Field(default_factory=list)
     canonical_drop_log: list[dict[str, Any]] = Field(default_factory=list)
+    llm_config_snapshot: dict[str, Any] | None = None
 
 
 class ArticleAnalysisNodeProbeResult(BaseModel):
@@ -661,6 +686,7 @@ class ArticleAnalysisNodeProbeResult(BaseModel):
     rag_debug: dict[str, Any] | None = None
     trace_refs: dict[str, Any] | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+    llm_config_snapshot: dict[str, Any] | None = None
 
 
 class ExampleLabGenerateRagFieldsRequest(BaseModel):

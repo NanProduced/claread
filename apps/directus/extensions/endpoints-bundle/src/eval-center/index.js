@@ -3833,6 +3833,7 @@ function buildSingleRunCaseArtifact({ body, result, runId }) {
     schema_identity: schemaIdentity,
     prompt_identity: result?.prompt_identity || null,
     model_identity: result?.model_identity || null,
+    llm_config_snapshot: result?.llm_config_snapshot || null,
     runtime_summary: runtimeSummary,
     render_scene: renderScene,
     input_snapshot: {
@@ -4181,6 +4182,7 @@ function buildWorkflowSingleRunHistoryArtifact({ body, result, runId }) {
     schema_identity: schemaIdentity,
     prompt_identity: result?.prompt_identity || null,
     model_identity: result?.model_identity || null,
+    llm_config_snapshot: result?.llm_config_snapshot || null,
     runtime_summary: runtimeSummary,
     render_scene: renderScene,
     input_snapshot: {
@@ -5127,6 +5129,7 @@ function buildWorkflowCaseArtifact(casePayload, config, evalResult, transportErr
         : {},
     },
     model_identity: evalResult?.model_identity || {},
+    llm_config_snapshot: evalResult?.llm_config_snapshot || null,
     grader_results: [],
     error,
     timeout: adapterStatus === "timeout",
