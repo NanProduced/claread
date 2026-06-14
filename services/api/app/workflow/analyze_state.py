@@ -33,6 +33,7 @@ class AnalyzeState(TypedDict, total=False):
 
     # Optional repair
     repair_request: dict | None
+    repair_mode: str  # "full_result" | "patch", resolved in derive_user_config_node
 
     # Phase 0 debug metrics
     node_timings: dict[str, float]  # node_name → elapsed seconds

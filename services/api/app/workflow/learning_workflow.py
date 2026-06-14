@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from app.services.analysis.postprocess.repair_policy import (
+    should_trigger_patch_repair,
+    should_trigger_repair,
+)
 from app.workflow.analyze_nodes import (
     assemble_result_node,
     derive_user_config_node,
@@ -13,17 +18,40 @@ from app.workflow.analyze_nodes import (
     project_render_scene_node,
     repair_agent_node,
 )
-from app.services.analysis.postprocess.repair_policy import should_trigger_repair
 from app.workflow.analyze_state import AnalyzeState
+
+
+def _resolve_repair_mode(state: AnalyzeState) -> str:
+    """解析 repair mode：state 优先（来自 config），fallback 到 env，默认 full_result。
+
+    优先级：state["repair_mode"] > env CLAREAD_WORKFLOW_REPAIR_MODE > "full_result"。
+    state["repair_mode"] 由 derive_user_config_node 从 config 写入，
+    确保显式 config 在条件路由阶段也能生效。
+    """
+    mode = state.get("repair_mode")
+    if mode in ("full_result", "patch"):
+        return mode
+    # Fallback to env
+    return os.environ.get("CLAREAD_WORKFLOW_REPAIR_MODE", "full_result")
 
 
 def _should_repair(state: AnalyzeState) -> bool:
     """判断是否需要触发 repair_agent。
 
-    只统计 quality drops（排除 density_control 正常裁剪），
-    与 repair_agent_node 内部的判断标准保持一致。
+    full_result mode：只看 drop_log + 旧 annotations（旧逻辑不变）。
+    patch mode：合并 drop_log + canonical_drop_log，用 normalized_annotations 计数。
+    repair_mode 从 state 读取（由 derive_user_config_node 从 config 写入），
+    fallback 到 env CLAREAD_WORKFLOW_REPAIR_MODE。
     """
-    return should_trigger_repair(state.get("normalized_result"), threshold=0.35)
+    normalized_result = state.get("normalized_result")
+    mode = _resolve_repair_mode(state)
+
+    if mode == "patch":
+        return should_trigger_patch_repair(
+            normalized_result, threshold=0.35
+        )
+
+    return should_trigger_repair(normalized_result, threshold=0.35)
 
 
 def build_learning_graph() -> Any:

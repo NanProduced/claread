@@ -127,14 +127,14 @@ def test_derive_user_config_node_records_timing():
     state = _make_state()
     # Remove plan so it gets computed
     del state["goal_execution_plan"]
-    result = asyncio.run(analyze_nodes.derive_user_config_node(state))
+    result = asyncio.run(analyze_nodes.derive_user_config_node(state, config={}))
     assert "node_timings" in result
     assert "derive_user_config" in result["node_timings"]
 
 
 def test_derive_user_config_node_records_timing_when_plan_exists():
     state = _make_state()
-    result = asyncio.run(analyze_nodes.derive_user_config_node(state))
+    result = asyncio.run(analyze_nodes.derive_user_config_node(state, config={}))
     assert "node_timings" in result
     assert "derive_user_config" in result["node_timings"]
 

@@ -235,7 +235,7 @@ class TestBuildRepairPatchRequest:
         ]
         sentences = [_make_sentence("s1", "This is valid")]
         result = build_repair_patch_request_with_stats(drops, sentences)
-        assert result is not None
+        assert result.request is not None
         assert result.stats.repair_worthy_count == 2
         assert result.stats.missing_sentence_count == 1
         assert result.stats.selected_target_count == 1
@@ -254,3 +254,28 @@ class TestBuildRepairPatchRequest:
         sentences = [_make_sentence("s1", "Hello")]
         result = build_repair_patch_request(drops, sentences)
         assert result is None
+
+    def test_missing_sentence_no_target_stats_observable(self) -> None:
+        """When all repair-worthy drops are missing sentences, _with_stats
+        returns request=None but stats show the real missing count."""
+        drops = [
+            _make_drop(
+                sentence_id="s_missing_1",
+                anchor_text="orphan_1",
+                drop_reason="quote_not_found",
+                drop_stage="grounding",
+            ),
+            _make_drop(
+                sentence_id="s_missing_2",
+                anchor_text="orphan_2",
+                drop_reason="anchor_invalid",
+                drop_stage="grounding",
+            ),
+        ]
+        # Sentences do NOT include any missing sentence IDs
+        sentences = [_make_sentence("s1", "Hello")]
+        result = build_repair_patch_request_with_stats(drops, sentences)
+        assert result.request is None
+        assert result.stats.repair_worthy_count == 2
+        assert result.stats.missing_sentence_count == 2
+        assert result.stats.selected_target_count == 0

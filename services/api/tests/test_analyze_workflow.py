@@ -311,7 +311,8 @@ def test_derive_user_config_node_reuses_precomputed_plan(monkeypatch) -> None:
                         "reading_variant": "intermediate_reading",
                     }
                 ),
-            }
+            },
+            config={},
         )
     )
 
@@ -459,6 +460,201 @@ def test_repair_agent_node_uses_same_zero_annotation_repair_rule(monkeypatch) ->
     assert result["repair_request"]["repaired"] is True
     assert "repair_worthy_drops: 1" in result["repair_request"]["error_context"]
     repair_mock.assert_awaited_once()
+
+
+# ── Patch repair trigger tests ────────────────────────────────────────
+
+
+def test_should_trigger_patch_repair_with_canonical_drops() -> None:
+    """Patch repair triggers when canonical_drop_log has repair-worthy drops,
+    even if old drop_log + annotations would not trigger full-result repair."""
+    from app.services.analysis.postprocess.repair_policy import (
+        should_trigger_patch_repair,
+        should_trigger_repair,
+    )
+
+    # Old path: 0 annotations, only deterministic drops → no full-result repair
+    normalized_result = NormalizedAnnotationResult(
+        annotations=[],
+        normalized_annotations=[],
+        sentence_translations=[],
+        drop_log=[
+            _drop("duplicate", "deduplication"),  # deterministic, not repair-worthy
+        ],
+        canonical_drop_log=[
+            _drop("quote_not_found", "grounding"),  # repair-worthy
+        ],
+    )
+
+    # full-result: only sees drop_log → 0 repair-worthy → no trigger
+    assert should_trigger_repair(normalized_result, threshold=0.35) is False
+    # patch: sees canonical_drop_log too → 1 repair-worthy + 0 annotations → trigger
+    assert should_trigger_patch_repair(normalized_result, threshold=0.35) is True
+
+
+def test_should_repair_uses_patch_trigger_in_patch_mode(monkeypatch) -> None:
+    """_should_repair() in learning_workflow uses patch trigger when env is set."""
+    monkeypatch.setenv("CLAREAD_WORKFLOW_REPAIR_MODE", "patch")
+
+    # Old path: no repair-worthy drops in drop_log
+    # Patch path: repair-worthy drops in canonical_drop_log
+    normalized_result = NormalizedAnnotationResult(
+        annotations=[],
+        normalized_annotations=[],
+        sentence_translations=[],
+        drop_log=[_drop("duplicate", "deduplication")],
+        canonical_drop_log=[_drop("quote_not_found", "grounding")],
+    )
+
+    # In patch mode, should trigger
+    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is True
+
+    # Clean up
+    monkeypatch.delenv("CLAREAD_WORKFLOW_REPAIR_MODE", raising=False)
+
+
+def test_should_repair_default_uses_full_result_trigger(monkeypatch) -> None:
+    """_should_repair() default (no env) uses full-result trigger."""
+    # Ensure no env override
+    monkeypatch.delenv("CLAREAD_WORKFLOW_REPAIR_MODE", raising=False)
+
+    normalized_result = NormalizedAnnotationResult(
+        annotations=[],
+        normalized_annotations=[],
+        sentence_translations=[],
+        drop_log=[_drop("duplicate", "deduplication")],
+        canonical_drop_log=[_drop("quote_not_found", "grounding")],
+    )
+
+    # Default mode: only sees drop_log → no trigger
+    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is False
+
+
+def test_should_repair_reads_repair_mode_from_state(monkeypatch) -> None:
+    """_should_repair() reads repair_mode from state (no env needed)."""
+    # Ensure no env override
+    monkeypatch.delenv("CLAREAD_WORKFLOW_REPAIR_MODE", raising=False)
+
+    normalized_result = NormalizedAnnotationResult(
+        annotations=[],
+        normalized_annotations=[],
+        sentence_translations=[],
+        drop_log=[_drop("duplicate", "deduplication")],
+        canonical_drop_log=[_drop("quote_not_found", "grounding")],
+    )
+
+    # Without repair_mode in state → no trigger (full_result mode)
+    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is False
+
+    # With repair_mode="patch" in state → trigger (patch mode)
+    assert learning_workflow._should_repair({
+        "normalized_result": normalized_result,
+        "repair_mode": "patch",
+    }) is True
+
+
+def test_derive_user_config_node_resolves_repair_mode_from_config() -> None:
+    """derive_user_config_node resolves repair_mode from config and writes to state."""
+    text = "This is a test."
+    state = {
+        "payload": AnalyzeRequest.model_validate(
+            {
+                "request_id": "req-config-mode-test",
+                "text": text,
+                "source_type": "user_input",
+                "reading_goal": "daily_reading",
+                "reading_variant": "intermediate_reading",
+            }
+        ),
+        "prepared_input": prepare_input(text),
+    }
+    config = {"configurable": {"repair_mode": "patch"}}
+    result = asyncio.run(analyze_nodes.derive_user_config_node(state, config=config))
+
+    assert result["repair_mode"] == "patch"
+
+
+def test_derive_user_config_node_resolves_repair_mode_with_existing_plan() -> None:
+    """derive_user_config_node still writes repair_mode even when plan already exists."""
+    precomputed_plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
+    state = {
+        "goal_execution_plan": precomputed_plan,
+        "payload": AnalyzeRequest.model_validate(
+            {
+                "request_id": "req-existing-plan-mode",
+                "text": "Sentence one.",
+                "source_type": "user_input",
+                "reading_goal": "daily_reading",
+                "reading_variant": "intermediate_reading",
+            }
+        ),
+    }
+    config = {"configurable": {"repair_mode": "patch"}}
+    result = asyncio.run(analyze_nodes.derive_user_config_node(state, config=config))
+
+    assert result["repair_mode"] == "patch"
+
+
+def test_repair_agent_node_reads_mode_from_state(monkeypatch) -> None:
+    """repair_agent_node reads repair_mode from state when present."""
+    from app.schemas.internal.repair import RepairPatchResult
+
+    async def _fake_patch_span(*args, **kwargs):
+        patch_result = RepairPatchResult(patches=[])
+        return {
+            "output": patch_result,
+            "usage_metadata": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        }
+
+    monkeypatch.setattr(
+        analyze_nodes, "_run_repair_patch_llm_span", _fake_patch_span
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
+
+    state = _make_repair_trigger_state()
+    # Set repair_mode in state (simulating derive_user_config_node output)
+    state["repair_mode"] = "patch"
+    # Pass empty config — mode should come from state, not config
+    result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))
+
+    stats = result["repair_stats"]
+    assert stats["repair_mode"] == "patch"
+
+
+def test_normalize_and_ground_exposes_patch_failure_ratio() -> None:
+    """normalize_and_ground_node exposes patch_failure_ratio and
+    canonical_repair_worthy_drop_count in repair_stats."""
+    text = "This is a simple test sentence."
+    state = {
+        "payload": AnalyzeRequest.model_validate(
+            {
+                "request_id": "req-patch-ratio-test",
+                "text": text,
+                "source_type": "user_input",
+                "reading_goal": "daily_reading",
+                "reading_variant": "intermediate_reading",
+            }
+        ),
+        "prepared_input": prepare_input(text),
+        "goal_execution_plan": build_goal_execution_plan(
+            "daily_reading", "intermediate_reading"
+        ),
+        "vocabulary_draft": VocabularyDraft(
+            vocab_highlights=[], phrase_glosses=[], context_glosses=[]
+        ),
+        "grammar_draft": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        "translation_draft": TranslationDraft(title="测试标题", sentence_translations=[]),
+        "warnings": [],
+    }
+    result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
+
+    stats = result.get("repair_stats", {})
+    assert "full_result_failure_ratio" in stats
+    assert "patch_failure_ratio" in stats
+    assert "canonical_repair_worthy_drop_count" in stats
 
 
 # ── Phase 2.4B: Workflow mainline switch tests ────────────────────────
@@ -692,7 +888,10 @@ def test_draft_validation_warnings_enter_render_scene_warnings() -> None:
         text="extreme lengths",
     )
 
-    text = "Shopkeepers are having to go to extreme lengths to stop shoplifters. Disturbingly, there are daily incidents of violence against workers."
+    text = (
+        "Shopkeepers are having to go to extreme lengths to stop shoplifters. "
+        "Disturbingly, there are daily incidents of violence against workers."
+    )
     state = {
         "payload": AnalyzeRequest.model_validate({
             "request_id": "req-draft-warn",
@@ -731,3 +930,312 @@ def test_draft_validation_warnings_enter_render_scene_warnings() -> None:
     render_scene = assembled["render_scene"]
     render_warning_codes = {w.code for w in render_scene.warnings}
     assert "DRAFT_VALIDATION" in render_warning_codes
+
+
+# ── P4.3B-2: Patch repair mode tests ─────────────────────────────────
+
+
+def _make_repair_trigger_state() -> dict:
+    """构造会触发 repair 的 state（0 annotations + 1 repair-worthy drop）。"""
+    text = "Languages change over time."
+    return {
+        "payload": AnalyzeRequest.model_validate(
+            {
+                "request_id": "req-patch-test",
+                "text": text,
+                "source_type": "user_input",
+                "reading_goal": "daily_reading",
+                "reading_variant": "intermediate_reading",
+            }
+        ),
+        "prepared_input": prepare_input(text),
+        "goal_execution_plan": build_goal_execution_plan(
+            "daily_reading", "intermediate_reading"
+        ),
+        "vocabulary_draft": VocabularyDraft(
+            vocab_highlights=[], phrase_glosses=[], context_glosses=[]
+        ),
+        "grammar_draft": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        "translation_draft": TranslationDraft(title="测试标题", sentence_translations=[]),
+        "normalized_result": NormalizedAnnotationResult(
+            annotations=[],
+            normalized_annotations=[],
+            sentence_translations=[],
+            drop_log=[_drop("anchor_not_substring", "grounding")],
+            canonical_drop_log=[],
+        ),
+        "warnings": [],
+    }
+
+
+def test_repair_agent_node_patch_mode_succeeds(monkeypatch) -> None:
+    """Patch mode: LLM returns RepairPatchResult, normalized_result is updated."""
+    from app.schemas.internal.repair import (
+        RepairPatch,
+        RepairPatchResult,
+    )
+
+    # Mock the patch LLM span to return a successful patch result
+    async def _fake_patch_span(*args, **kwargs):
+        patch_result = RepairPatchResult(
+            patches=[
+                RepairPatch(
+                    target_index=0,
+                    action="replace",
+                    annotation=DraftVocabHighlight(
+                        sentence_id="s1", text="Languages",
+                    ),
+                    repair_reason="retry anchor",
+                ),
+            ],
+        )
+        return {
+            "output": patch_result,
+            "usage_metadata": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        }
+
+    monkeypatch.setattr(
+        analyze_nodes, "_run_repair_patch_llm_span", _fake_patch_span
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
+
+    state = _make_repair_trigger_state()
+    config = {"configurable": {"repair_mode": "patch"}}
+    result = asyncio.run(analyze_nodes.repair_agent_node(state, config=config))
+
+    # normalized_result should be updated
+    assert result["normalized_result"] is not None
+    assert len(result["normalized_result"].normalized_annotations) >= 1
+
+    # repair_stats should reflect patch mode
+    stats = result["repair_stats"]
+    assert stats["repair_mode"] == "patch"
+    assert stats["repair_triggered"] is True
+    assert stats["repair_succeeded"] is True
+    assert stats["patch_repair_worthy_count"] is not None
+    assert stats["patch_selected_target_count"] is not None
+    assert stats["patch_patched_count"] is not None
+
+    # usage_summary should include repair usage
+    usage = result["usage_summary"]
+    assert usage["available"] is True
+    assert "repair" in usage["per_agent"]
+
+
+def test_repair_agent_node_patch_mode_no_targets_skips_llm(monkeypatch) -> None:
+    """Patch mode: all repair-worthy drops are missing sentence → no LLM call."""
+    # Create a state where the drop references a sentence not in prepared_input
+    text = "Languages change over time."
+    state = {
+        "payload": AnalyzeRequest.model_validate(
+            {
+                "request_id": "req-patch-notargets",
+                "text": text,
+                "source_type": "user_input",
+                "reading_goal": "daily_reading",
+                "reading_variant": "intermediate_reading",
+            }
+        ),
+        "prepared_input": prepare_input(text),
+        "goal_execution_plan": build_goal_execution_plan(
+            "daily_reading", "intermediate_reading"
+        ),
+        "vocabulary_draft": VocabularyDraft(
+            vocab_highlights=[], phrase_glosses=[], context_glosses=[]
+        ),
+        "grammar_draft": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        "translation_draft": TranslationDraft(title="测试标题", sentence_translations=[]),
+        "normalized_result": NormalizedAnnotationResult(
+            annotations=[],
+            normalized_annotations=[],
+            sentence_translations=[],
+            drop_log=[
+                DropLogEntry(
+                    source_agent="vocabulary",
+                    annotation_type="vocab_highlight",
+                    sentence_id="s_missing",
+                    anchor_text="orphan",
+                    drop_reason="quote_not_found",
+                    drop_stage="grounding",
+                ),
+            ],
+            canonical_drop_log=[],
+        ),
+        "warnings": [],
+    }
+
+    # This should NOT be called
+    async def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("Patch LLM should not be called when no targets")
+
+    monkeypatch.setattr(
+        analyze_nodes, "_run_repair_patch_llm_span", _should_not_be_called
+    )
+
+    config = {"configurable": {"repair_mode": "patch"}}
+    result = asyncio.run(analyze_nodes.repair_agent_node(state, config=config))
+
+    # Warning should indicate no targets
+    warning_codes = {w.code for w in result.get("warnings", [])}
+    assert "REPAIR_PATCH_NO_TARGETS" in warning_codes
+
+    # repair_stats should show patch_no_targets with real missing count
+    stats = result["repair_stats"]
+    assert stats["repair_mode"] == "patch"
+    assert stats["patch_no_targets"] is True
+    assert stats["patch_missing_sentence_count"] == 1
+    assert stats["patch_repair_worthy_count"] == 1
+
+
+def test_repair_agent_node_patch_mode_failure_keeps_original_result(monkeypatch) -> None:
+    """Patch mode: LLM throws exception → original normalized_result preserved."""
+    async def _failing_patch_span(*args, **kwargs):
+        raise RuntimeError("patch LLM failed")
+
+    monkeypatch.setattr(
+        analyze_nodes, "_run_repair_patch_llm_span", _failing_patch_span
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
+
+    state = _make_repair_trigger_state()
+    original_result = state["normalized_result"]
+    config = {"configurable": {"repair_mode": "patch"}}
+    result = asyncio.run(analyze_nodes.repair_agent_node(state, config=config))
+
+    # Original normalized_result should be preserved
+    assert (
+        result.get("normalized_result") is None
+        or result.get("normalized_result") == original_result
+    )
+
+    # Warning should indicate failure
+    warning_codes = {w.code for w in result.get("warnings", [])}
+    assert "REPAIR_PATCH_AGENT_FAILED" in warning_codes
+
+    # repair_stats should show failure
+    stats = result["repair_stats"]
+    assert stats["repair_mode"] == "patch"
+    assert stats["repair_succeeded"] is False
+
+    # usage_summary should still have vocabulary/grammar/translation usage
+    usage = result["usage_summary"]
+    assert usage is not None
+
+
+def test_repair_agent_node_default_still_uses_full_result_repair(monkeypatch) -> None:
+    """Default (no repair_mode config) still uses full-result repair path."""
+    repaired = NormalizedAnnotationResult(
+        annotations=[], sentence_translations=[], drop_log=[],
+    )
+    repair_mock = AsyncMock(
+        return_value={
+            "output": repaired,
+            "usage_metadata": {"total_tokens": 1},
+        }
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_run_repair_llm_span", repair_mock
+    )
+    monkeypatch.setattr(
+        analyze_nodes, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
+
+    state = _make_repair_trigger_state()
+    # No repair_mode in config → should use full_result
+    result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))
+
+    # Should have called the full-result repair LLM
+    repair_mock.assert_awaited_once()
+
+    # repair_stats should show full_result mode
+    stats = result["repair_stats"]
+    assert stats["repair_mode"] == "full_result"
+    assert stats["repair_triggered"] is True
+
+
+def test_normalize_and_ground_repair_decision_includes_repair_mode() -> None:
+    """normalize_and_ground_node repair_decision_stats includes repair_mode=None."""
+    text = "This is a simple test sentence."
+    state = {
+        "payload": AnalyzeRequest.model_validate(
+            {
+                "request_id": "req-repair-mode-test",
+                "text": text,
+                "source_type": "user_input",
+                "reading_goal": "daily_reading",
+                "reading_variant": "intermediate_reading",
+            }
+        ),
+        "prepared_input": prepare_input(text),
+        "goal_execution_plan": build_goal_execution_plan(
+            "daily_reading", "intermediate_reading"
+        ),
+        "vocabulary_draft": VocabularyDraft(
+            vocab_highlights=[], phrase_glosses=[], context_glosses=[]
+        ),
+        "grammar_draft": GrammarDraft(grammar_notes=[], sentence_analyses=[]),
+        "translation_draft": TranslationDraft(title="测试标题", sentence_translations=[]),
+        "warnings": [],
+    }
+    result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
+
+    # repair_stats should include repair_mode=None when repair not triggered
+    stats = result.get("repair_stats", {})
+    assert "repair_mode" in stats
+    assert stats["repair_mode"] is None
+
+
+def test_patch_mode_uses_canonical_annotation_count(monkeypatch) -> None:
+    """Patch mode pre/post counts use normalized_annotations (canonical) path."""
+    from app.schemas.internal.normalized import (
+        CanonicalSpan,
+        NormalizedVocabHighlight,
+    )
+    from app.schemas.internal.repair import RepairPatchResult
+
+    # Build a state where annotations (old) and normalized_annotations (canonical) differ
+    state = _make_repair_trigger_state()
+    # annotations=[] (old path: 0), normalized_annotations has 1 item (canonical: 1)
+    state["normalized_result"] = NormalizedAnnotationResult(
+        annotations=[],
+        normalized_annotations=[
+            NormalizedVocabHighlight(
+                sentence_id="s1",
+                spans=[CanonicalSpan(
+                    sentence_id="s1", start=0, end=9,
+                    text="Languages", resolution_kind="exact",
+                )],
+            ),
+        ],
+        sentence_translations=[],
+        drop_log=[_drop("quote_not_found", "grounding")],
+        canonical_drop_log=[],
+    )
+
+    async def _fake_patch_span(*args, **kwargs):
+        patch_result = RepairPatchResult(patches=[])
+        return {
+            "output": patch_result,
+            "usage_metadata": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        }
+
+    import app.workflow.analyze_nodes as an
+    monkeypatch.setattr(an, "_run_repair_patch_llm_span", _fake_patch_span)
+    monkeypatch.setattr(
+        an, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
+
+    config = {"configurable": {"repair_mode": "patch"}}
+    result = asyncio.run(an.repair_agent_node(state, config=config))
+
+    stats = result["repair_stats"]
+    # pre_repair_annotation_count should use canonical path (1), not old path (0)
+    assert stats["pre_repair_annotation_count"] == 1

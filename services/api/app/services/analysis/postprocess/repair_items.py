@@ -67,9 +67,13 @@ class RepairPatchBuildStats:
 
 @dataclass
 class RepairPatchBuildResult:
-    """Repair patch request 构建返回值：请求 + 统计。"""
+    """Repair patch request 构建返回值：请求 + 统计。
 
-    request: RepairPatchRequest
+    request 为 None 表示无可用 target（全部 missing sentence 或无 repair-worthy drop），
+    但 stats 始终可观测，便于区分"无 repair-worthy"和"有 repair-worthy 但全缺句子"。
+    """
+
+    request: RepairPatchRequest | None
     stats: RepairPatchBuildStats
 
 
@@ -163,7 +167,7 @@ def build_repair_patch_request(
         canonical_drop_log=canonical_drop_log,
         max_targets=max_targets,
     )
-    if result is None:
+    if result.request is None:
         return None
     return result.request
 
@@ -177,12 +181,11 @@ def build_repair_patch_request_with_stats(
     translation_draft: TranslationDraft | None = None,
     canonical_drop_log: list[DropLogEntry] | None = None,
     max_targets: int = 8,
-) -> RepairPatchBuildResult | None:
+) -> RepairPatchBuildResult:
     """从 drop_log 构建 RepairPatchRequest，附带构建统计。
 
-    与 build_repair_patch_request 相同逻辑，但返回 RepairPatchBuildResult
-    包含可观测的统计字段（repair_worthy_count, missing_sentence_count,
-    selected_target_count）。
+    与 build_repair_patch_request 相同逻辑，但始终返回 RepairPatchBuildResult，
+    request 可为 None（无可用 target），stats 始终可观测。
     """
     sentence_map = {s.sentence_id: s for s in sentences}
 
@@ -214,9 +217,16 @@ def build_repair_patch_request_with_stats(
 
     selected = with_sentence[:max_targets]
 
-    # 4. 无目标则返回 None
+    # 4. 无目标则返回 request=None，但 stats 始终可观测
     if not selected:
-        return None
+        return RepairPatchBuildResult(
+            request=None,
+            stats=RepairPatchBuildStats(
+                repair_worthy_count=repair_worthy_count,
+                missing_sentence_count=missing_sentence_count,
+                selected_target_count=0,
+            ),
+        )
 
     # 5. 为每个 target 匹配 draft_payload
     targets: list[RepairTarget] = []
