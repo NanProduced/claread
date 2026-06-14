@@ -141,7 +141,7 @@ async def test_eval_adapter_returns_sanitized_success_result(
         assert payload.request_id == "eval:run-1:case-1"
         assert payload.model_selection.default_profile == "eval-profile"
         assert is_grammar_rag_enabled(settings) is False
-        assert repair_mode == "full_result"
+        assert repair_mode == "patch"
         return {
             "render_scene": _render_scene(payload.request_id),
             "usage_summary": {
@@ -1022,9 +1022,9 @@ async def test_eval_result_includes_llm_config_snapshot(
 
 
 def test_eval_schema_accepts_default_repair_mode() -> None:
-    """ArticleAnalysisEvalRequest defaults repair_mode to 'full_result'."""
+    """ArticleAnalysisEvalRequest defaults repair_mode to 'patch'."""
     req = ArticleAnalysisEvalRequest(text="Hello world.")
-    assert req.repair_mode == "full_result"
+    assert req.repair_mode == "patch"
 
 
 def test_eval_schema_accepts_explicit_patch_mode() -> None:
@@ -1067,28 +1067,28 @@ async def test_eval_adapter_passes_repair_mode_to_workflow(
     )
     monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
 
-    # Default: full_result
+    # Default: patch
     await eval_article_analysis.run_article_analysis_eval(
         ArticleAnalysisEvalRequest(text="Sentence one.")
     )
-    assert captured_kwargs["repair_mode"] == "full_result"
-
-    # Explicit: patch
-    await eval_article_analysis.run_article_analysis_eval(
-        ArticleAnalysisEvalRequest(text="Sentence one.", repair_mode="patch")
-    )
     assert captured_kwargs["repair_mode"] == "patch"
+
+    # Explicit: full_result
+    await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.", repair_mode="full_result")
+    )
+    assert captured_kwargs["repair_mode"] == "full_result"
 
 
 def test_request_snapshot_includes_repair_mode() -> None:
     """RequestSnapshot records repair_mode."""
     from app.eval_adapter.shared import request_snapshot
 
-    req = ArticleAnalysisEvalRequest(text="Hello world.", repair_mode="patch")
+    req = ArticleAnalysisEvalRequest(text="Hello world.", repair_mode="full_result")
     snap = request_snapshot(req, request_id_value="test-id")
-    assert snap.repair_mode == "patch"
+    assert snap.repair_mode == "full_result"
 
-    # Default
+    # Default is now patch
     req2 = ArticleAnalysisEvalRequest(text="Hello world.")
     snap2 = request_snapshot(req2, request_id_value="test-id")
-    assert snap2.repair_mode == "full_result"
+    assert snap2.repair_mode == "patch"

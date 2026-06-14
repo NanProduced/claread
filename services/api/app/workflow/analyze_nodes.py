@@ -49,6 +49,7 @@ from app.services.analysis.postprocess.repair_items import (
 from app.services.analysis.postprocess.repair_policy import (
     deterministic_drop_count,
     repair_worthy_drop_count,
+    should_trigger_patch_repair,
     should_trigger_repair,
 )
 from app.services.analysis.preprocess.input_preparation import prepare_input
@@ -76,7 +77,7 @@ REPAIR_PATCH_MAX_TARGETS = 8
 
 
 def _repair_mode(config: RunnableConfig | None) -> Literal["full_result", "patch"]:
-    """决定 repair 模式：full_result（默认）或 patch。
+    """决定 repair 模式：patch（默认）或 full_result。
 
     优先级：config["configurable"]["repair_mode"] > env CLAREAD_WORKFLOW_REPAIR_MODE。
     非法值 fail-safe 到 "full_result" 并写 warning。
@@ -108,9 +109,10 @@ def _repair_mode(config: RunnableConfig | None) -> Literal["full_result", "patch
             "Invalid CLAREAD_WORKFLOW_REPAIR_MODE=%r, falling back to full_result",
             env_val,
         )
+        return "full_result"
 
     # 3. 默认
-    return "full_result"
+    return "patch"
 
 
 def _annotation_count_by_type(annotations: list[Any]) -> dict[str, int]:
@@ -691,7 +693,7 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
         "post_repair_annotation_count": None,
         "repair_elapsed_s": None,
         "repair_succeeded": None,
-        "repair_mode": None,
+        "repair_mode": state.get("repair_mode"),
         "full_result_failure_ratio": round(failure_ratio, 4),
         "patch_failure_ratio": round(patch_failure_ratio, 4),
         "canonical_repair_worthy_drop_count": canonical_repair_worthy_count,
@@ -714,8 +716,8 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
     """Repair agent node（条件触发）。
 
     支持两种 repair mode：
-    - full_result（默认）：旧逻辑，LLM 输出完整 NormalizedAnnotationResult。
-    - patch：item-level repair，LLM 输出 RepairPatchResult，merge 回原结果。
+    - patch（默认）：item-level repair，LLM 输出 RepairPatchResult，merge 回原结果。
+    - full_result：旧逻辑，LLM 输出完整 NormalizedAnnotationResult。
     """
     t0 = perf_counter()
     normalized_result = state.get("normalized_result")
@@ -729,7 +731,34 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
     total_annotations = pre_repair_count + repair_drop_count_val
     failure_ratio = repair_drop_count_val / total_annotations if total_annotations > 0 else 0.0
 
-    if not should_trigger_repair(normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD):
+    active_mode = state.get("repair_mode") or _repair_mode(config)
+
+    # ── Mode-aware trigger guard ────────────────────────────────────
+    # Patch mode uses should_trigger_patch_repair() which sees
+    # canonical_drop_log + normalized_annotations; full_result mode
+    # uses the old should_trigger_repair() which sees drop_log + annotations.
+    if active_mode == "patch":
+        will_repair = should_trigger_patch_repair(
+            normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
+        )
+        # Patch mode: compute canonical failure ratio for trigger_reason
+        if normalized_result is not None:
+            combined_drops = list(normalized_result.drop_log or [])
+            combined_drops.extend(normalized_result.canonical_drop_log or [])
+            patch_drop_count = repair_worthy_drop_count(combined_drops)
+            patch_annotation_count = len(normalized_result.normalized_annotations)
+            patch_total = patch_annotation_count + patch_drop_count
+            failure_ratio = (
+                patch_drop_count / patch_total if patch_total > 0 else 0.0
+            )
+        else:
+            failure_ratio = 0.0
+    else:
+        will_repair = should_trigger_repair(
+            normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
+        )
+
+    if not will_repair:
         repair_stats: dict[str, Any] = {
             "repair_triggered": False,
             "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
@@ -738,7 +767,7 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "post_repair_annotation_count": None,
             "repair_elapsed_s": None,
             "repair_succeeded": None,
-            "repair_mode": None,
+            "repair_mode": active_mode,
         }
         return {
             "repair_request": None,
@@ -765,7 +794,7 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "post_repair_annotation_count": None,
             "repair_elapsed_s": None,
             "repair_succeeded": None,
-            "repair_mode": None,
+            "repair_mode": active_mode,
         }
         return {
             "repair_request": None,

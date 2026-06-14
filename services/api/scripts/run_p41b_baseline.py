@@ -417,9 +417,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--repair-mode",
-        default="full_result",
+        default="patch",
         choices=("full_result", "patch"),
-        help="Repair mode for workflow target. Default: full_result.",
+        help="Repair mode for workflow target. Default: patch.",
     )
     return parser
 

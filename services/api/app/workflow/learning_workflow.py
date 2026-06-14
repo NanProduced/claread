@@ -22,17 +22,27 @@ from app.workflow.analyze_state import AnalyzeState
 
 
 def _resolve_repair_mode(state: AnalyzeState) -> str:
-    """解析 repair mode：state 优先（来自 config），fallback 到 env，默认 full_result。
+    """解析 repair mode：state 优先（来自 config），fallback 到 env，默认 patch。
 
-    优先级：state["repair_mode"] > env CLAREAD_WORKFLOW_REPAIR_MODE > "full_result"。
+    优先级：state["repair_mode"] > env CLAREAD_WORKFLOW_REPAIR_MODE > "patch"。
     state["repair_mode"] 由 derive_user_config_node 从 config 写入，
     确保显式 config 在条件路由阶段也能生效。
+    非法 env 值 fail-safe 到 "full_result"。
     """
     mode = state.get("repair_mode")
     if mode in ("full_result", "patch"):
         return mode
     # Fallback to env
-    return os.environ.get("CLAREAD_WORKFLOW_REPAIR_MODE", "full_result")
+    env_val = os.environ.get("CLAREAD_WORKFLOW_REPAIR_MODE")
+    if env_val == "patch":
+        return "patch"
+    if env_val == "full_result":
+        return "full_result"
+    if env_val is not None:
+        # Invalid env value → fail-safe to full_result
+        return "full_result"
+    # Default
+    return "patch"
 
 
 def _should_repair(state: AnalyzeState) -> bool:

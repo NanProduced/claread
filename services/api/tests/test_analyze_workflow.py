@@ -173,10 +173,22 @@ def test_analyze_route_returns_academic_render_scene() -> None:
 
 
 def test_analyze_route_surfaces_draft_validation_warnings(monkeypatch) -> None:
+    from app.schemas.internal.repair import RepairPatchResult
+
     monkeypatch.setattr(analyze_nodes, "_run_vocabulary_llm_span", _invalid_vocab_span)
     monkeypatch.setattr(analyze_nodes, "_run_grammar_llm_span", _fake_run_grammar_span)
     monkeypatch.setattr(analyze_nodes, "_run_translation_llm_span", _fake_run_translation_span)
-    monkeypatch.setattr(learning_workflow, "should_trigger_repair", lambda *_args, **_kwargs: False)
+    # Default repair mode is now patch; mock the patch LLM span to avoid real calls
+    async def _fake_patch_span(*_args, **_kwargs):
+        return {
+            "output": RepairPatchResult(patches=[]),
+            "usage_metadata": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+    monkeypatch.setattr(analyze_nodes, "_run_repair_patch_llm_span", _fake_patch_span)
+    monkeypatch.setattr(
+        analyze_nodes, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
 
     client = TestClient(app)
     response = client.post(
@@ -455,7 +467,11 @@ def test_repair_agent_node_uses_same_zero_annotation_repair_rule(monkeypatch) ->
         ),
     }
 
-    result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))  # type: ignore[arg-type]
+    result = asyncio.run(
+        analyze_nodes.repair_agent_node(
+            state, config={"configurable": {"repair_mode": "full_result"}}
+        )
+    )  # type: ignore[arg-type]
 
     assert result["repair_request"]["repaired"] is True
     assert "repair_worthy_drops: 1" in result["repair_request"]["error_context"]
@@ -513,8 +529,8 @@ def test_should_repair_uses_patch_trigger_in_patch_mode(monkeypatch) -> None:
     monkeypatch.delenv("CLAREAD_WORKFLOW_REPAIR_MODE", raising=False)
 
 
-def test_should_repair_default_uses_full_result_trigger(monkeypatch) -> None:
-    """_should_repair() default (no env) uses full-result trigger."""
+def test_should_repair_default_uses_patch_trigger(monkeypatch) -> None:
+    """_should_repair() default (no env) now uses patch trigger."""
     # Ensure no env override
     monkeypatch.delenv("CLAREAD_WORKFLOW_REPAIR_MODE", raising=False)
 
@@ -526,8 +542,14 @@ def test_should_repair_default_uses_full_result_trigger(monkeypatch) -> None:
         canonical_drop_log=[_drop("quote_not_found", "grounding")],
     )
 
-    # Default mode: only sees drop_log → no trigger
-    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is False
+    # Default mode is now patch: sees canonical_drop_log → trigger
+    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is True
+
+    # Explicit full_result: only sees drop_log → no trigger
+    assert learning_workflow._should_repair({
+        "normalized_result": normalized_result,
+        "repair_mode": "full_result",
+    }) is False
 
 
 def test_should_repair_reads_repair_mode_from_state(monkeypatch) -> None:
@@ -543,10 +565,14 @@ def test_should_repair_reads_repair_mode_from_state(monkeypatch) -> None:
         canonical_drop_log=[_drop("quote_not_found", "grounding")],
     )
 
-    # Without repair_mode in state → no trigger (full_result mode)
-    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is False
+    # Without repair_mode in state → default is now "patch" → trigger
+    assert learning_workflow._should_repair({"normalized_result": normalized_result}) is True
 
-    # With repair_mode="patch" in state → trigger (patch mode)
+    # With repair_mode="full_result" in state → old trigger logic, no trigger
+    assert learning_workflow._should_repair({
+        "normalized_result": normalized_result,
+        "repair_mode": "full_result",
+    }) is False
     assert learning_workflow._should_repair({
         "normalized_result": normalized_result,
         "repair_mode": "patch",
@@ -572,6 +598,60 @@ def test_derive_user_config_node_resolves_repair_mode_from_config() -> None:
     result = asyncio.run(analyze_nodes.derive_user_config_node(state, config=config))
 
     assert result["repair_mode"] == "patch"
+
+
+def test_repair_mode_defaults_to_patch_without_config_or_env(
+    monkeypatch,
+) -> None:
+    """_repair_mode() returns 'patch' when no config or env is set."""
+    monkeypatch.delenv("CLAREAD_WORKFLOW_REPAIR_MODE", raising=False)
+    assert analyze_nodes._repair_mode(None) == "patch"
+    assert analyze_nodes._repair_mode({}) == "patch"
+
+
+def test_repair_mode_config_full_result_overrides_default_patch() -> None:
+    """Explicit config repair_mode=full_result overrides the default patch."""
+    config = {"configurable": {"repair_mode": "full_result"}}
+    assert analyze_nodes._repair_mode(config) == "full_result"
+
+
+def test_repair_mode_env_full_result_overrides_default_patch(
+    monkeypatch,
+) -> None:
+    """CLAREAD_WORKFLOW_REPAIR_MODE=full_result overrides the default patch."""
+    monkeypatch.setenv("CLAREAD_WORKFLOW_REPAIR_MODE", "full_result")
+    assert analyze_nodes._repair_mode(None) == "full_result"
+    assert analyze_nodes._repair_mode({}) == "full_result"
+
+
+def test_repair_mode_invalid_env_falls_back_to_full_result(
+    monkeypatch,
+) -> None:
+    """Invalid env value fail-safes to full_result, not patch."""
+    monkeypatch.setenv("CLAREAD_WORKFLOW_REPAIR_MODE", "invalid")
+    assert analyze_nodes._repair_mode(None) == "full_result"
+
+
+def test_resolve_repair_mode_defaults_to_patch(monkeypatch) -> None:
+    """_resolve_repair_mode() returns 'patch' when state/env are empty."""
+    monkeypatch.delenv("CLAREAD_WORKFLOW_REPAIR_MODE", raising=False)
+    assert learning_workflow._resolve_repair_mode({}) == "patch"
+
+
+def test_resolve_repair_mode_env_full_result_overrides_default(
+    monkeypatch,
+) -> None:
+    """_resolve_repair_mode: env full_result overrides default patch."""
+    monkeypatch.setenv("CLAREAD_WORKFLOW_REPAIR_MODE", "full_result")
+    assert learning_workflow._resolve_repair_mode({}) == "full_result"
+
+
+def test_resolve_repair_mode_invalid_env_falls_back_to_full_result(
+    monkeypatch,
+) -> None:
+    """_resolve_repair_mode: invalid env fail-safes to full_result."""
+    monkeypatch.setenv("CLAREAD_WORKFLOW_REPAIR_MODE", "bad")
+    assert learning_workflow._resolve_repair_mode({}) == "full_result"
 
 
 def test_derive_user_config_node_resolves_repair_mode_with_existing_plan() -> None:
@@ -1179,8 +1259,8 @@ def test_repair_agent_node_patch_mode_failure_keeps_original_result(monkeypatch)
     assert usage is not None
 
 
-def test_repair_agent_node_default_still_uses_full_result_repair(monkeypatch) -> None:
-    """Default (no repair_mode config) still uses full-result repair path."""
+def test_repair_agent_node_explicit_full_result_repair(monkeypatch) -> None:
+    """Explicit config repair_mode=full_result still uses full-result repair path."""
     repaired = NormalizedAnnotationResult(
         annotations=[], sentence_translations=[], drop_log=[],
     )
@@ -1199,8 +1279,12 @@ def test_repair_agent_node_default_still_uses_full_result_repair(monkeypatch) ->
     )
 
     state = _make_repair_trigger_state()
-    # No repair_mode in config → should use full_result
-    result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))
+    # Explicit full_result config
+    result = asyncio.run(
+        analyze_nodes.repair_agent_node(
+            state, config={"configurable": {"repair_mode": "full_result"}}
+        )
+    )
 
     # Should have called the full-result repair LLM
     repair_mock.assert_awaited_once()
@@ -1212,7 +1296,7 @@ def test_repair_agent_node_default_still_uses_full_result_repair(monkeypatch) ->
 
 
 def test_normalize_and_ground_repair_decision_includes_repair_mode() -> None:
-    """normalize_and_ground_node repair_decision_stats includes repair_mode=None."""
+    """normalize_and_ground_node repair_decision_stats includes repair_mode from state."""
     text = "This is a simple test sentence."
     state = {
         "payload": AnalyzeRequest.model_validate(
@@ -1237,10 +1321,18 @@ def test_normalize_and_ground_repair_decision_includes_repair_mode() -> None:
     }
     result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
 
-    # repair_stats should include repair_mode=None when repair not triggered
+    # repair_stats should include repair_mode key
     stats = result.get("repair_stats", {})
     assert "repair_mode" in stats
+    # Without repair_mode in state, it's None (normalize_and_ground_node
+    # cannot access config; repair_agent_node resolves the active mode)
     assert stats["repair_mode"] is None
+
+    # With repair_mode in state, it should be reflected
+    state_with_mode = {**state, "repair_mode": "patch"}
+    result2 = asyncio.run(analyze_nodes.normalize_and_ground_node(state_with_mode))
+    stats2 = result2.get("repair_stats", {})
+    assert stats2["repair_mode"] == "patch"
 
 
 def test_patch_mode_uses_canonical_annotation_count(monkeypatch) -> None:
@@ -1290,3 +1382,56 @@ def test_patch_mode_uses_canonical_annotation_count(monkeypatch) -> None:
     stats = result["repair_stats"]
     # pre_repair_annotation_count should use canonical path (1), not old path (0)
     assert stats["pre_repair_annotation_count"] == 1
+
+
+def test_patch_mode_canonical_only_failure_not_short_circuited(
+    monkeypatch,
+) -> None:
+    """Patch mode: canonical-only failures (empty drop_log) still trigger repair.
+
+    The repair_agent_node internal guard must use should_trigger_patch_repair()
+    when active_mode=="patch", not should_trigger_repair() which only sees
+    the old drop_log and would short-circuit.
+    """
+    from app.schemas.internal.repair import RepairPatchResult
+
+    # drop_log=[] (old path: no failures), canonical_drop_log has failures
+    state = _make_repair_trigger_state()
+    state["normalized_result"] = NormalizedAnnotationResult(
+        annotations=[],
+        normalized_annotations=[],
+        sentence_translations=[],
+        drop_log=[],
+        canonical_drop_log=[_drop("quote_not_found", "grounding")],
+    )
+    state["repair_mode"] = "patch"
+
+    patch_llm_called = False
+
+    async def _fake_patch_span(*args, **kwargs):
+        nonlocal patch_llm_called
+        patch_llm_called = True
+        patch_result = RepairPatchResult(patches=[])
+        return {
+            "output": patch_result,
+            "usage_metadata": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        }
+
+    import app.workflow.analyze_nodes as an
+
+    monkeypatch.setattr(an, "_run_repair_patch_llm_span", _fake_patch_span)
+    monkeypatch.setattr(
+        an, "_build_agent_trace_metadata",
+        lambda *_args, **_kwargs: {"extra": {}},
+    )
+
+    result = asyncio.run(an.repair_agent_node(state, config={}))
+
+    stats = result["repair_stats"]
+    assert stats["repair_triggered"] is True, (
+        "patch mode should trigger repair for canonical-only failures"
+    )
+    assert stats["repair_mode"] == "patch"
+    assert patch_llm_called is True, (
+        "patch repair LLM span should have been called"
+    )

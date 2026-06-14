@@ -22,11 +22,18 @@ def test_baseline_parser_accepts_repair_mode() -> None:
     assert args.repair_mode == "patch"
 
 
+def test_baseline_parser_accepts_full_result_repair_mode() -> None:
+    """--repair-mode full_result is parsed correctly."""
+    parser = build_parser()
+    args = parser.parse_args(["--sample", "sample-1", "--repair-mode", "full_result"])
+    assert args.repair_mode == "full_result"
+
+
 def test_baseline_parser_defaults_repair_mode() -> None:
-    """Default repair_mode is full_result."""
+    """Default repair_mode is patch."""
     parser = build_parser()
     args = parser.parse_args(["--sample", "sample-1"])
-    assert args.repair_mode == "full_result"
+    assert args.repair_mode == "patch"
 
 
 def test_baseline_parser_rejects_invalid_repair_mode() -> None:
