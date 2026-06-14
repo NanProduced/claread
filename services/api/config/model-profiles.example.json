@@ -206,6 +206,22 @@
         "timeout": 120.0
       }
     },
+    "deepseek-v4-pro-tool-required": {
+      "_field_notes": "DeepSeek V4 Pro 实验配置：显式声明 openai_supports_tool_choice_required=true + default_structured_output_mode=tool，用于 tool_choice=required A/B 实验。不替换 deepseek-v4-pro 生产 model。",
+      "provider": "deepseek",
+      "model_name": "deepseek-v4-pro",
+      "model_settings": {
+        "temperature": 0.2,
+        "timeout": 120.0,
+        "parallel_tool_calls": false
+      },
+      "openai_profile": {
+        "default_structured_output_mode": "tool",
+        "openai_supports_tool_choice_required": true,
+        "supports_json_object_output": true,
+        "supports_json_schema_output": false
+      }
+    },
     "text-embedding-v4": {
       "_field_notes": "DashScope embedding model. provider_options.dimension overrides the provider-level default.",
       "provider": "dashscope_embedding",
@@ -255,6 +271,17 @@
     },
     "workflow-deepseek-v4-pro": {
       "model": "deepseek-v4-pro",
+      "model_settings": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      }
+    },
+    "workflow-deepseek-v4-pro-tool-required": {
+      "_field_notes": "DeepSeek V4 Pro tool_choice=required 实验配置。不替换 workflow-deepseek-v4-pro 生产 profile。",
+      "model": "deepseek-v4-pro-tool-required",
       "model_settings": {
         "extra_body": {
           "thinking": {

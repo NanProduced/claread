@@ -60,6 +60,17 @@
       }
     }
   },
+  "workflow_deepseek_v4_pro_tool_required": {
+    "_field_notes": "DeepSeek V4 Pro tool_choice=required 实验预设。不替换 workflow_deepseek_v4_pro 生产预设。",
+    "routes": {
+      "annotation_generation": {
+        "profile": "workflow-deepseek-v4-pro-tool-required"
+      },
+      "dict_ai": {
+        "profile": "workflow-deepseek-v4-pro-tool-required"
+      }
+    }
+  },
   "ask_deepseek_balanced": {
     "preset": "workflow_base",
     "routes": {

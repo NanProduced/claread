@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai.models.function import FunctionModel
 
 from app.config import settings as settings_module
@@ -247,7 +248,9 @@ def test_resolve_model_config_rejects_unknown_preset() -> None:
 
 
 def test_deepseek_v4_profile_uses_prompted_json_output() -> None:
-    model = build_model_instance(
+    from app.llm.provider_factory import _resolve_openai_profile
+
+    profile = _resolve_openai_profile(
         ResolvedModelConfig(
             route=MODEL_ROUTE_ANNOTATION_GENERATION,
             profile_name="deepseek-v4-pro",
@@ -263,11 +266,11 @@ def test_deepseek_v4_profile_uses_prompted_json_output() -> None:
         )
     )
 
-    assert model is not None
-    assert model.profile.default_structured_output_mode == "prompted"
-    assert model.profile.supports_json_object_output is True
-    assert model.profile.supports_json_schema_output is False
-    assert model.profile.openai_supports_tool_choice_required is False
+    assert profile is not None
+    assert profile.default_structured_output_mode == "prompted"
+    assert profile.supports_json_object_output is True
+    assert profile.supports_json_schema_output is False
+    assert profile.openai_supports_tool_choice_required is False
 
 
 def test_qwen_profile_maps_reasoning_content_for_visible_thinking() -> None:
@@ -912,8 +915,6 @@ def test_resolve_model_config_uses_moonshot_provider_hint_from_registry() -> Non
 
 def test_resolved_model_config_adapter_is_model_adapter_type() -> None:
     """ResolvedModelConfig.adapter should be ModelAdapter, not arbitrary str."""
-    from app.llm.types import ModelAdapter
-
     config = ResolvedModelConfig(
         route=MODEL_ROUTE_ANNOTATION_GENERATION,
         profile_name="test",
@@ -932,7 +933,7 @@ def test_resolved_model_config_adapter_is_model_adapter_type() -> None:
     )
 
     # Invalid adapter should fail validation
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ResolvedModelConfig(
             route=MODEL_ROUTE_ANNOTATION_GENERATION,
             profile_name="test",
@@ -1498,3 +1499,137 @@ def test_enrich_structured_output_runtime_handles_none_summary() -> None:
 
     result = enrich_structured_output_runtime(snapshot, None)
     assert result.structured_output_runtime[0].observed_usage is None
+
+
+def test_deepseek_v4_pro_tool_required_profile_resolves_correctly() -> None:
+    """DeepSeek V4 Pro tool-required experiment profile resolves with correct
+    structured output configuration."""
+    settings = Settings(
+        annotation_model_profile="workflow-deepseek-v4-pro-tool-required",
+        model_profiles_json=_catalog(
+            {
+                "workflow-deepseek-v4-pro-tool-required": {
+                    "provider_name": "deepseek",
+                    "model_key": "deepseek-v4-pro-tool-required",
+                    "model_name": "deepseek-v4-pro",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "api_key": "test-key",
+                    "model_openai_profile": {
+                        "default_structured_output_mode": "tool",
+                        "openai_supports_tool_choice_required": True,
+                        "supports_json_object_output": True,
+                        "supports_json_schema_output": False,
+                    },
+                    "model_settings": {
+                        "parallel_tool_calls": False,
+                    },
+                },
+            }
+        ),
+    )
+
+    config = resolve_model_config(
+        settings,
+        route=MODEL_ROUTE_ANNOTATION_GENERATION,
+        selection=ModelSelection(default_profile="workflow-deepseek-v4-pro-tool-required"),
+    )
+
+    assert config.provider == "deepseek"
+    assert config.model_name == "deepseek-v4-pro"
+    assert config.openai_profile is not None
+    assert config.openai_profile.default_structured_output_mode == "tool"
+    assert config.openai_profile.openai_supports_tool_choice_required is True
+    assert config.openai_profile.supports_json_object_output is True
+    assert config.openai_profile.supports_json_schema_output is False
+
+
+def test_deepseek_v4_pro_tool_required_llm_config_snapshot() -> None:
+    """DeepSeek V4 Pro tool-required profile produces correct llm_config_snapshot."""
+    from app.eval_adapter.shared import build_llm_config_snapshot
+
+    settings = Settings(
+        annotation_model_profile="workflow-deepseek-v4-pro-tool-required",
+        model_profiles_json=_catalog(
+            {
+                "workflow-deepseek-v4-pro-tool-required": {
+                    "provider_name": "deepseek",
+                    "model_key": "deepseek-v4-pro-tool-required",
+                    "model_name": "deepseek-v4-pro",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "api_key": "test-key",
+                    "model_openai_profile": {
+                        "default_structured_output_mode": "tool",
+                        "openai_supports_tool_choice_required": True,
+                        "supports_json_object_output": True,
+                        "supports_json_schema_output": False,
+                    },
+                    "model_settings": {
+                        "parallel_tool_calls": False,
+                    },
+                },
+            }
+        ),
+    )
+
+    snapshot = build_llm_config_snapshot(
+        ModelSelection(default_profile="workflow-deepseek-v4-pro-tool-required"),
+        settings=settings,
+    )
+    assert snapshot is not None
+    assert snapshot.provider == "deepseek"
+    assert snapshot.model_name == "deepseek-v4-pro"
+
+    so = snapshot.structured_output
+    assert so.default_structured_output_mode == "tool"
+    assert so.openai_supports_tool_choice_required is True
+    assert so.supports_json_object_output is True
+    assert so.supports_json_schema_output is False
+    assert so.expected_tool_choice == "required"
+    assert so.expected_response_format is None
+
+    assert snapshot.parallel_tool_calls is False
+    assert snapshot.thinking_enabled is False
+
+    for entry in snapshot.structured_output_runtime:
+        assert entry.agent_name in ("vocabulary", "grammar", "translation")
+        assert entry.resolved_default_structured_output_mode == "tool"
+        assert entry.resolved_openai_supports_tool_choice_required is True
+        assert entry.inferred_expected_tool_choice == "required"
+        assert entry.inferred_expected_response_format is None
+        assert entry.resolved_parallel_tool_calls is False
+        assert entry.resolved_thinking_enabled is False
+
+
+def test_deepseek_v4_pro_baseline_profile_unchanged() -> None:
+    """DeepSeek V4 Pro baseline profile still resolves as prompted mode
+    (openai_supports_tool_choice_required=false)."""
+    settings = Settings(
+        annotation_model_profile="workflow-deepseek-v4-pro",
+        model_profiles_json=_catalog(
+            {
+                "workflow-deepseek-v4-pro": {
+                    "provider_name": "deepseek",
+                    "model_key": "deepseek-v4-pro",
+                    "model_name": "deepseek-v4-pro",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "api_key": "test-key",
+                    "model_openai_profile": {
+                        "default_structured_output_mode": "prompted",
+                        "openai_supports_tool_choice_required": False,
+                        "supports_json_object_output": True,
+                        "supports_json_schema_output": False,
+                    },
+                },
+            }
+        ),
+    )
+
+    config = resolve_model_config(
+        settings,
+        route=MODEL_ROUTE_ANNOTATION_GENERATION,
+        selection=ModelSelection(default_profile="workflow-deepseek-v4-pro"),
+    )
+
+    assert config.openai_profile is not None
+    assert config.openai_profile.default_structured_output_mode == "prompted"
+    assert config.openai_profile.openai_supports_tool_choice_required is False
