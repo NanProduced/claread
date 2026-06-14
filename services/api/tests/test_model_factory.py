@@ -1212,3 +1212,289 @@ def test_dashscope_rerank_provider_is_configured_with_api_key() -> None:
         adapter="dashscope_rerank",
     )
     assert provider_no_key.is_configured() is False
+
+
+# ── Structured output snapshot / runtime inference tests ──────────
+
+
+def test_build_llm_config_snapshot_includes_runtime_fields() -> None:
+    """build_llm_config_snapshot populates parallel_tool_calls, thinking_enabled,
+    and structured_output_runtime per-agent entries."""
+    from app.eval_adapter.shared import build_llm_config_snapshot
+
+    settings = Settings(
+        annotation_model_profile="test-profile",
+        model_profiles_json=_catalog(
+            {
+                "test-profile": {
+                    "provider_name": "dashscope",
+                    "base_url": "https://dashscope.example.com/v1",
+                    "api_key": "test-key",
+                    "model_name": "qwen3.6-flash",
+                    "provider_openai_profile": {
+                        "openai_supports_tool_choice_required": True,
+                    },
+                    "profile_model_settings": {
+                        "parallel_tool_calls": False,
+                        "extra_body": {"enable_thinking": False},
+                    },
+                },
+            }
+        ),
+    )
+
+    snapshot = build_llm_config_snapshot(
+        ModelSelection(default_profile="test-profile"),
+        settings=settings,
+    )
+    assert snapshot is not None
+    assert snapshot.parallel_tool_calls is False
+    assert snapshot.thinking_enabled is False
+    assert snapshot.structured_output_runtime is not None
+    assert len(snapshot.structured_output_runtime) == 3  # vocab, grammar, translation
+    agent_names_seen = [entry.agent_name for entry in snapshot.structured_output_runtime]
+    assert agent_names_seen == ["vocabulary", "grammar", "translation"]
+    for entry in snapshot.structured_output_runtime:
+        assert entry.profile_name == "test-profile"
+        assert entry.resolved_default_structured_output_mode == "tool"
+        assert entry.resolved_openai_supports_tool_choice_required is True
+        assert entry.inferred_expected_tool_choice == "required"
+        assert entry.inferred_expected_response_format is None
+        assert entry.resolved_parallel_tool_calls is False
+        assert entry.resolved_thinking_enabled is False
+        # Observed fields are None before actual run
+        assert entry.observed_usage is None
+        assert entry.observed_retry_count is None
+        assert entry.observed_request_count is None
+
+
+def test_build_llm_config_snapshot_auto_tool_choice() -> None:
+    """When openai_supports_tool_choice_required is False, inferred
+    expected_tool_choice is 'auto'."""
+    from app.eval_adapter.shared import build_llm_config_snapshot
+
+    settings = Settings(
+        annotation_model_profile="dashscope-default",
+        model_profiles_json=_catalog(
+            {
+                "dashscope-default": {
+                    "provider_name": "dashscope",
+                    "base_url": "https://dashscope.example.com/v1",
+                    "api_key": "test-key",
+                    "model_name": "qwen3.6-plus",
+                    "provider_openai_profile": {
+                        "openai_supports_tool_choice_required": False,
+                    },
+                },
+            }
+        ),
+    )
+
+    snapshot = build_llm_config_snapshot(
+        ModelSelection(default_profile="dashscope-default"),
+        settings=settings,
+    )
+    assert snapshot is not None
+    assert snapshot.structured_output.expected_tool_choice == "auto"
+    for entry in snapshot.structured_output_runtime:
+        assert entry.inferred_expected_tool_choice == "auto"
+
+
+def test_build_llm_config_snapshot_prompted_mode_response_format() -> None:
+    """Prompted mode + json_object support → expected_response_format='json_object',
+    and expected_tool_choice is None (no tools sent in prompted mode)."""
+    from app.eval_adapter.shared import build_llm_config_snapshot
+
+    settings = Settings(
+        annotation_model_profile="deepseek-v4",
+        model_profiles_json=_catalog(
+            {
+                "deepseek-v4": {
+                    "provider_name": "deepseek",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "api_key": "test-key",
+                    "model_name": "deepseek-v4-flash",
+                    "provider_openai_profile": {
+                        "default_structured_output_mode": "prompted",
+                        "supports_json_object_output": True,
+                        "openai_supports_tool_choice_required": False,
+                    },
+                },
+            }
+        ),
+    )
+
+    snapshot = build_llm_config_snapshot(
+        ModelSelection(default_profile="deepseek-v4"),
+        settings=settings,
+    )
+    assert snapshot is not None
+    assert snapshot.structured_output.default_structured_output_mode == "prompted"
+    assert snapshot.structured_output.expected_response_format == "json_object"
+    # Prompted mode does not send tools → tool_choice is None, not "auto"
+    assert snapshot.structured_output.expected_tool_choice is None
+    for entry in snapshot.structured_output_runtime:
+        assert entry.inferred_expected_response_format == "json_object"
+        assert entry.inferred_expected_tool_choice is None
+
+
+def test_build_llm_config_snapshot_thinking_enabled_via_extra_body() -> None:
+    """thinking_enabled is True when model_settings.extra_body has
+    enable_thinking=true."""
+    from app.eval_adapter.shared import build_llm_config_snapshot
+
+    settings = Settings(
+        annotation_model_profile="thinking-profile",
+        model_profiles_json=_catalog(
+            {
+                "thinking-profile": {
+                    "provider_name": "dashscope",
+                    "base_url": "https://dashscope.example.com/v1",
+                    "api_key": "test-key",
+                    "model_name": "qwen3.7-max",
+                    "profile_model_settings": {
+                        "extra_body": {"enable_thinking": True},
+                    },
+                },
+            }
+        ),
+    )
+
+    snapshot = build_llm_config_snapshot(
+        ModelSelection(default_profile="thinking-profile"),
+        settings=settings,
+    )
+    assert snapshot is not None
+    assert snapshot.thinking_enabled is True
+    for entry in snapshot.structured_output_runtime:
+        assert entry.resolved_thinking_enabled is True
+
+
+def test_structured_output_runtime_schema_round_trip() -> None:
+    """StructuredOutputRuntime serializes and deserializes correctly."""
+    from app.eval_adapter.schemas import StructuredOutputRuntime
+
+    entry = StructuredOutputRuntime(
+        agent_name="vocabulary",
+        profile_name="test-profile",
+        provider="dashscope",
+        model_name="qwen3.6-flash",
+        resolved_default_structured_output_mode="tool",
+        resolved_openai_supports_tool_choice_required=True,
+        inferred_expected_tool_choice="required",
+        inferred_expected_response_format=None,
+        resolved_parallel_tool_calls=False,
+        resolved_thinking_enabled=False,
+        observed_usage={"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+        observed_retry_count=0,
+        observed_request_count=1,
+    )
+    data = entry.model_dump(mode="json")
+    restored = StructuredOutputRuntime.model_validate(data)
+    assert restored.profile_name == "test-profile"
+    assert restored.observed_usage is not None
+    assert restored.observed_usage["total_tokens"] == 150
+    assert restored.agent_name == "vocabulary"
+
+
+def test_enrich_structured_output_runtime_fills_observed_usage() -> None:
+    """enrich_structured_output_runtime fills observed_usage from
+    runtime_summary.per_agent by agent_name key."""
+    from app.eval_adapter.schemas import (
+        LLMConfigSnapshot,
+        StructuredOutputRuntime,
+        StructuredOutputSnapshot,
+    )
+    from app.eval_adapter.shared import enrich_structured_output_runtime
+
+    snapshot = LLMConfigSnapshot(
+        profile_name="test-profile",
+        provider="dashscope",
+        adapter="openai_compatible",
+        model_name="qwen3.6-flash",
+        structured_output=StructuredOutputSnapshot(
+            expected_tool_choice="required",
+        ),
+        structured_output_runtime=[
+            StructuredOutputRuntime(
+                agent_name="vocabulary",
+                profile_name="test-profile",
+                provider="dashscope",
+                model_name="qwen3.6-flash",
+                resolved_default_structured_output_mode="tool",
+                resolved_openai_supports_tool_choice_required=True,
+                inferred_expected_tool_choice="required",
+            ),
+            StructuredOutputRuntime(
+                agent_name="grammar",
+                profile_name="test-profile",
+                provider="dashscope",
+                model_name="qwen3.6-flash",
+                resolved_default_structured_output_mode="tool",
+                resolved_openai_supports_tool_choice_required=True,
+                inferred_expected_tool_choice="required",
+            ),
+            StructuredOutputRuntime(
+                agent_name="translation",
+                profile_name="test-profile",
+                provider="dashscope",
+                model_name="qwen3.6-flash",
+                resolved_default_structured_output_mode="tool",
+                resolved_openai_supports_tool_choice_required=True,
+                inferred_expected_tool_choice="required",
+            ),
+        ],
+    )
+
+    runtime_summary = {
+        "per_agent": {
+            "vocabulary": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+            "grammar": {"input_tokens": 200, "output_tokens": 80, "total_tokens": 280},
+            # translation missing — should remain None
+        },
+    }
+
+    result = enrich_structured_output_runtime(snapshot, runtime_summary)
+    assert result is snapshot  # same object, mutated in-place
+
+    vocab = result.structured_output_runtime[0]
+    assert vocab.observed_usage is not None
+    assert vocab.observed_usage["total_tokens"] == 150
+
+    grammar = result.structured_output_runtime[1]
+    assert grammar.observed_usage is not None
+    assert grammar.observed_usage["total_tokens"] == 280
+
+    translation = result.structured_output_runtime[2]
+    assert translation.observed_usage is None  # no data in per_agent
+
+
+def test_enrich_structured_output_runtime_handles_none_summary() -> None:
+    """enrich_structured_output_runtime with None runtime_summary is a no-op."""
+    from app.eval_adapter.schemas import (
+        LLMConfigSnapshot,
+        StructuredOutputRuntime,
+        StructuredOutputSnapshot,
+    )
+    from app.eval_adapter.shared import enrich_structured_output_runtime
+
+    snapshot = LLMConfigSnapshot(
+        profile_name="test",
+        provider="dashscope",
+        adapter="openai_compatible",
+        model_name="qwen3.6-flash",
+        structured_output=StructuredOutputSnapshot(
+            expected_tool_choice="required",
+        ),
+        structured_output_runtime=[
+            StructuredOutputRuntime(
+                agent_name="vocabulary",
+                profile_name="test",
+                provider="dashscope",
+                model_name="qwen3.6-flash",
+            ),
+        ],
+    )
+
+    result = enrich_structured_output_runtime(snapshot, None)
+    assert result.structured_output_runtime[0].observed_usage is None

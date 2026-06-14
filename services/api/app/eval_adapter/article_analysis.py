@@ -242,6 +242,12 @@ async def run_article_analysis_eval(
     render_scene = result.get("render_scene")
     topology_mode = _topology_mode(request)
 
+    # Enrich snapshot with observed usage from runtime_summary
+    _runtime = _runtime_summary(result, latency_ms=latency_ms)
+    if _llm_snapshot:
+        from app.eval_adapter.shared import enrich_structured_output_runtime
+        enrich_structured_output_runtime(_llm_snapshot, _runtime)
+
     return ArticleAnalysisEvalResult(
         status="succeeded",
         request_snapshot=build_request_snapshot(request, request_id_value=request_id),
@@ -253,7 +259,7 @@ async def run_article_analysis_eval(
         preprocess_summary=build_preprocess_summary(request.text, result),
         normalize_summary=build_normalize_summary(result),
         drop_log_summary=build_drop_log_summary(result),
-        runtime_summary=_runtime_summary(result, latency_ms=latency_ms),
+        runtime_summary=_runtime,
         academic_quality=build_academic_quality(result),
         rag_debug=result.get("rag_debug"),
         trace_refs=build_trace_refs(request_id=request_id),

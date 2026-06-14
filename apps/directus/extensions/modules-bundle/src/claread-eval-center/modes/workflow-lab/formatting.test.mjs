@@ -41,6 +41,25 @@ test("extractLLMConfigSnapshot extracts all fields from full snapshot", () => {
         expected_tool_choice: "required",
         expected_response_format: null,
       },
+      parallel_tool_calls: false,
+      thinking_enabled: false,
+      structured_output_runtime: [
+        {
+          agent_name: "vocabulary",
+          profile_name: "workflow-qwen36-flash-tool-required",
+          provider: "dashscope",
+          model_name: "qwen3.6-flash-2026-04-16",
+          resolved_default_structured_output_mode: "tool",
+          resolved_openai_supports_tool_choice_required: true,
+          inferred_expected_tool_choice: "required",
+          inferred_expected_response_format: null,
+          resolved_parallel_tool_calls: false,
+          resolved_thinking_enabled: false,
+          observed_usage: null,
+          observed_retry_count: null,
+          observed_request_count: null,
+        },
+      ],
     },
   };
 
@@ -55,7 +74,26 @@ test("extractLLMConfigSnapshot extracts all fields from full snapshot", () => {
     supports_json_schema_output: false,
     supports_json_object_output: false,
     default_structured_output_mode: "tool",
+    expected_response_format: null,
     thinking_enabled: false,
+    parallel_tool_calls: false,
+    structured_output_runtime: [
+      {
+        agent_name: "vocabulary",
+        profile_name: "workflow-qwen36-flash-tool-required",
+        provider: "dashscope",
+        model_name: "qwen3.6-flash-2026-04-16",
+        resolved_default_structured_output_mode: "tool",
+        resolved_openai_supports_tool_choice_required: true,
+        inferred_expected_tool_choice: "required",
+        inferred_expected_response_format: null,
+        resolved_parallel_tool_calls: false,
+        resolved_thinking_enabled: false,
+        observed_usage: null,
+        observed_retry_count: null,
+        observed_request_count: null,
+      },
+    ],
   });
 });
 
@@ -121,6 +159,24 @@ test("extractLLMConfigSnapshot handles missing structured_output gracefully", ()
   assert.equal(result.profile, "test");
   assert.equal(result.expected_tool_choice, null);
   assert.equal(result.thinking_enabled, false);
+  assert.equal(result.parallel_tool_calls, null);
+  assert.equal(result.expected_response_format, null);
+  assert.deepEqual(result.structured_output_runtime, []);
+});
+
+test("extractLLMConfigSnapshot defaults structured_output_runtime to empty array", () => {
+  const artifact = {
+    llm_config_snapshot: {
+      profile_name: "test",
+      provider: "p",
+      adapter: "a",
+      model_name: "m",
+      structured_output: {},
+    },
+  };
+  const result = extractLLMConfigSnapshot(artifact);
+  assert.ok(Array.isArray(result.structured_output_runtime));
+  assert.equal(result.structured_output_runtime.length, 0);
 });
 
 // ── anchorDebugFormatting.extractLLMConfigSnapshot ─────────────
@@ -142,10 +198,16 @@ test("anchorDebug extractLLMConfigSnapshot extracts same fields", () => {
         openai_supports_tool_choice_required: false,
         expected_tool_choice: "auto",
       },
+      parallel_tool_calls: null,
+      thinking_enabled: false,
+      structured_output_runtime: [],
     },
   };
   const result = extractLLMConfigSnapshotAnchor(artifact);
   assert.equal(result.profile, "workflow-qwen36-flash");
   assert.equal(result.expected_tool_choice, "auto");
   assert.equal(result.thinking_enabled, false);
+  assert.equal(result.parallel_tool_calls, null);
+  assert.equal(result.expected_response_format, null);
+  assert.deepEqual(result.structured_output_runtime, []);
 });

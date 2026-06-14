@@ -764,7 +764,9 @@ export function compareHealthInsights(baselineHealth, candidateHealth) {
  *   profile, provider, adapter, model,
  *   openai_supports_tool_choice_required, expected_tool_choice,
  *   supports_json_schema_output, supports_json_object_output,
- *   default_structured_output_mode, thinking_enabled
+ *   default_structured_output_mode, thinking_enabled,
+ *   parallel_tool_calls, expected_response_format,
+ *   structured_output_runtime (per-agent resolved + observed)
  */
 export function extractLLMConfigSnapshot(artifact) {
   const snapshot = artifact?.llm_config_snapshot;
@@ -778,6 +780,13 @@ export function extractLLMConfigSnapshot(artifact) {
   let thinkingEnabled = false;
   if (eb.enable_thinking === true) thinkingEnabled = true;
   if (typeof eb.thinking === "object" && eb.thinking?.type === "enabled") thinkingEnabled = true;
+  // Also check top-level thinking_enabled from backend
+  if (snapshot.thinking_enabled === true) thinkingEnabled = true;
+
+  // Extract per-agent runtime entries
+  const runtimeEntries = Array.isArray(snapshot.structured_output_runtime)
+    ? snapshot.structured_output_runtime
+    : [];
 
   return {
     profile: snapshot.profile_name || null,
@@ -789,7 +798,10 @@ export function extractLLMConfigSnapshot(artifact) {
     supports_json_schema_output: so.supports_json_schema_output ?? null,
     supports_json_object_output: so.supports_json_object_output ?? null,
     default_structured_output_mode: so.default_structured_output_mode || null,
+    expected_response_format: so.expected_response_format ?? null,
     thinking_enabled: thinkingEnabled,
+    parallel_tool_calls: snapshot.parallel_tool_calls ?? null,
+    structured_output_runtime: runtimeEntries,
   };
 }
 

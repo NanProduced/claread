@@ -15,6 +15,7 @@ from app.eval_adapter.schemas import (
     ModelProfileSummary,
     PromptIdentity,
     RequestSnapshot,
+    StructuredOutputRuntime,
     StructuredOutputSnapshot,
 )
 from app.llm.provider_factory import _resolve_openai_profile
@@ -124,6 +125,114 @@ def model_identity(
     )
 
 
+def _resolve_parallel_tool_calls(config: Any) -> bool | None:
+    """Resolve parallel_tool_calls from model_settings."""
+    ms = config.model_settings
+    if ms is None:
+        return None
+    return getattr(ms, "parallel_tool_calls", None)
+
+
+def _resolve_thinking_enabled(config: Any) -> bool:
+    """Resolve thinking_enabled from model_settings.extra_body."""
+    ms = config.model_settings
+    if ms is None:
+        return False
+    return ms.thinking_enabled()
+
+
+def _build_structured_output_runtime(
+    config: Any,
+    resolved_profile: Any,
+) -> list[StructuredOutputRuntime]:
+    """Build per-agent structured output runtime entries.
+
+    Currently the workflow uses a single model profile for all three agents
+    (vocabulary, grammar, translation), so we produce one entry per agent
+    with the same resolved config.  Observed fields are None because the
+    snapshot is built before the actual run; they are filled in later by
+    the eval adapter after the run completes.
+    """
+    resolved_mode = (
+        resolved_profile.default_structured_output_mode
+        if resolved_profile
+        else "tool"
+    )
+    supports_tcr = (
+        resolved_profile.openai_supports_tool_choice_required
+        if resolved_profile
+        else True
+    )
+    supports_json_object = (
+        resolved_profile.supports_json_object_output
+        if resolved_profile
+        else False
+    )
+
+    # tool mode: required or auto depending on provider support
+    # prompted / native mode: no tool_choice is sent → None
+    if resolved_mode == "tool":
+        inferred_tool_choice = "required" if supports_tcr else "auto"
+    else:
+        inferred_tool_choice = None
+
+    if resolved_mode == "native":
+        inferred_response_format = "json_schema"
+    elif resolved_mode == "prompted" and supports_json_object:
+        inferred_response_format = "json_object"
+    else:
+        inferred_response_format = None
+
+    parallel_tc = _resolve_parallel_tool_calls(config)
+    thinking = _resolve_thinking_enabled(config)
+
+    agent_names = ["vocabulary", "grammar", "translation"]
+    entries: list[StructuredOutputRuntime] = []
+    for agent_name in agent_names:
+        entries.append(
+            StructuredOutputRuntime(
+                agent_name=agent_name,
+                profile_name=config.profile_name,
+                provider=config.provider,
+                model_name=config.model_name,
+                resolved_default_structured_output_mode=resolved_mode,
+                resolved_openai_supports_tool_choice_required=supports_tcr,
+                inferred_expected_tool_choice=inferred_tool_choice,
+                inferred_expected_response_format=inferred_response_format,
+                resolved_parallel_tool_calls=parallel_tc,
+                resolved_thinking_enabled=thinking,
+                observed_usage=None,
+                observed_retry_count=None,
+                observed_request_count=None,
+            )
+        )
+    return entries
+
+
+def enrich_structured_output_runtime(
+    snapshot: LLMConfigSnapshot,
+    runtime_summary: dict[str, Any] | None,
+) -> LLMConfigSnapshot:
+    """Fill observed fields in structured_output_runtime from runtime_summary.
+
+    ``runtime_summary`` is the dict produced by ``build_runtime_summary()``,
+    whose ``per_agent`` key maps agent names (e.g. "vocabulary") to usage
+    dicts with ``input_tokens`` / ``output_tokens`` / ``total_tokens``.
+
+    Returns the same snapshot object with observed fields mutated in-place.
+    """
+    per_agent = (runtime_summary or {}).get("per_agent") or {}
+    for entry in snapshot.structured_output_runtime:
+        agent_data = per_agent.get(entry.agent_name)
+        if agent_data and isinstance(agent_data, dict):
+            entry.observed_usage = {
+                "input_tokens": agent_data.get("input_tokens"),
+                "output_tokens": agent_data.get("output_tokens"),
+                "total_tokens": agent_data.get("total_tokens"),
+            }
+    return snapshot
+
+
 def build_llm_config_snapshot(
     selection: ModelSelection | None,
     *,
@@ -167,9 +276,12 @@ def build_llm_config_snapshot(
         if resolved_profile
         else False
     )
-    expected_tool_choice = (
-        "required" if default_mode == "tool" and supports_tool_choice_required else "auto"
-    )
+    # tool mode: required or auto depending on provider support
+    # prompted / native mode: no tool_choice is sent → None
+    if default_mode == "tool":
+        expected_tool_choice = "required" if supports_tool_choice_required else "auto"
+    else:
+        expected_tool_choice = None
     # Infer expected_response_format from PydanticAI's actual request behavior:
     #   tool mode → no response_format, uses tools + tool_choice → None
     #   native mode → response_format json_schema → "json_schema"
@@ -197,6 +309,11 @@ def build_llm_config_snapshot(
             openai_supports_tool_choice_required=supports_tool_choice_required,
             expected_tool_choice=expected_tool_choice,
             expected_response_format=expected_response_format,
+        ),
+        parallel_tool_calls=_resolve_parallel_tool_calls(config),
+        thinking_enabled=_resolve_thinking_enabled(config),
+        structured_output_runtime=_build_structured_output_runtime(
+            config, resolved_profile
         ),
     )
 

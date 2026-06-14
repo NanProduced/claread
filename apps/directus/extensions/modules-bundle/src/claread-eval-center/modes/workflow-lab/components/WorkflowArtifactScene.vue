@@ -186,8 +186,28 @@ function markDetail(mark) {
           <div><dt>json_schema</dt><dd>{{ llmConfig.supports_json_schema_output === true ? '是' : llmConfig.supports_json_schema_output === false ? '否' : dash(llmConfig.supports_json_schema_output) }}</dd></div>
           <div><dt>json_object</dt><dd>{{ llmConfig.supports_json_object_output === true ? '是' : llmConfig.supports_json_object_output === false ? '否' : dash(llmConfig.supports_json_object_output) }}</dd></div>
           <div><dt>structured_output_mode</dt><dd>{{ dash(llmConfig.default_structured_output_mode) }}</dd></div>
+          <div><dt>response_format</dt><dd>{{ dash(llmConfig.expected_response_format) }}</dd></div>
+          <div><dt>parallel_tool_calls</dt><dd>{{ llmConfig.parallel_tool_calls === true ? '是' : llmConfig.parallel_tool_calls === false ? '否' : dash(llmConfig.parallel_tool_calls) }}</dd></div>
           <div><dt>thinking</dt><dd>{{ llmConfig.thinking_enabled ? '开启' : '关闭' }}</dd></div>
         </dl>
+        <details v-if="llmConfig.structured_output_runtime?.length" class="runtime-details" open>
+          <summary>Per-Agent 结构化输出配置</summary>
+          <div v-for="(entry, idx) in llmConfig.structured_output_runtime" :key="idx" class="runtime-entry">
+            <dl class="llm-config-grid">
+              <div><dt>Agent</dt><dd>{{ dash(entry.agent_name) }}</dd></div>
+              <div><dt>Profile</dt><dd>{{ dash(entry.profile_name) }}</dd></div>
+              <div><dt>Model</dt><dd>{{ dash(entry.model_name) }}</dd></div>
+              <div><dt>output_mode</dt><dd>{{ dash(entry.resolved_default_structured_output_mode) }}</dd></div>
+              <div><dt>tool_choice</dt><dd>{{ dash(entry.inferred_expected_tool_choice) }}</dd></div>
+              <div><dt>response_format</dt><dd>{{ dash(entry.inferred_expected_response_format) }}</dd></div>
+              <div><dt>parallel_tool_calls</dt><dd>{{ entry.resolved_parallel_tool_calls === true ? '是' : entry.resolved_parallel_tool_calls === false ? '否' : dash(entry.resolved_parallel_tool_calls) }}</dd></div>
+              <div><dt>thinking</dt><dd>{{ entry.resolved_thinking_enabled ? '开启' : '关闭' }}</dd></div>
+              <div v-if="entry.observed_usage"><dt>observed_usage</dt><dd>{{ entry.observed_usage }}</dd></div>
+              <div v-if="entry.observed_retry_count != null"><dt>retry_count</dt><dd>{{ entry.observed_retry_count }}</dd></div>
+              <div v-if="entry.observed_request_count != null"><dt>request_count</dt><dd>{{ entry.observed_request_count }}</dd></div>
+            </dl>
+          </div>
+        </details>
       </ResultBlock>
 
       <ResultBlock title="Anchor Debug" :open="false">

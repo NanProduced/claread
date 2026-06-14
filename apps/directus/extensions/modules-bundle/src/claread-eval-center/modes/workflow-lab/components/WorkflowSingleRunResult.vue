@@ -105,6 +105,8 @@ function summarizeRun(side) {
     llm_config_expected_tool_choice: llmConfig?.expected_tool_choice || null,
     llm_config_thinking: llmConfig?.thinking_enabled ? "开启" : llmConfig ? "关闭" : null,
     llm_config_structured_output_mode: llmConfig?.default_structured_output_mode || null,
+    llm_config_parallel_tool_calls: llmConfig?.parallel_tool_calls ?? null,
+    llm_config_expected_response_format: llmConfig?.expected_response_format ?? null,
   };
 }
 
@@ -299,6 +301,8 @@ function readingVariantLabel(value) {
             <div class="meta-row"><span class="meta-label">模型</span><span class="meta-value">{{ dash(baselineSummary?.profile_name || baselineSummary?.model_name) }}</span></div>
             <div class="meta-row"><span class="meta-label">tool_choice</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_expected_tool_choice) }}</span></div>
             <div class="meta-row"><span class="meta-label">结构化输出</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_structured_output_mode) }}</span></div>
+            <div class="meta-row"><span class="meta-label">response_format</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_expected_response_format) }}</span></div>
+            <div class="meta-row"><span class="meta-label">parallel_tool_calls</span><span class="meta-value">{{ baselineSummary?.llm_config_parallel_tool_calls === true ? '是' : baselineSummary?.llm_config_parallel_tool_calls === false ? '否' : dash(baselineSummary?.llm_config_parallel_tool_calls) }}</span></div>
             <div class="meta-row"><span class="meta-label">Thinking</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_thinking) }}</span></div>
             <div class="meta-row">
               <span class="meta-label">耗时</span>
@@ -376,6 +380,8 @@ function readingVariantLabel(value) {
             <div class="meta-row"><span class="meta-label">模型</span><span class="meta-value">{{ dash(candidateSummary?.profile_name || candidateSummary?.model_name) }}</span></div>
             <div class="meta-row"><span class="meta-label">tool_choice</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_expected_tool_choice) }}</span></div>
             <div class="meta-row"><span class="meta-label">结构化输出</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_structured_output_mode) }}</span></div>
+            <div class="meta-row"><span class="meta-label">response_format</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_expected_response_format) }}</span></div>
+            <div class="meta-row"><span class="meta-label">parallel_tool_calls</span><span class="meta-value">{{ candidateSummary?.llm_config_parallel_tool_calls === true ? '是' : candidateSummary?.llm_config_parallel_tool_calls === false ? '否' : dash(candidateSummary?.llm_config_parallel_tool_calls) }}</span></div>
             <div class="meta-row"><span class="meta-label">Thinking</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_thinking) }}</span></div>
             <div class="meta-row">
               <span class="meta-label">耗时</span>

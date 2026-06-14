@@ -61,8 +61,38 @@ class StructuredOutputSnapshot(BaseModel):
     supports_json_schema_output: bool | None = None
     supports_json_object_output: bool | None = None
     openai_supports_tool_choice_required: bool | None = None
-    expected_tool_choice: str  # "required" or "auto"
+    expected_tool_choice: str | None  # "required", "auto", or None (non-tool modes)
     expected_response_format: str | None = None
+
+
+class StructuredOutputRuntime(BaseModel):
+    """Per-agent resolved structured output configuration and observed behavior.
+
+    ``resolved_*`` fields come from static model profile / settings resolution.
+    ``observed_*`` fields come from actual agent run results; when runtime data
+    is unavailable, they are ``None``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # ── Identity ──
+    agent_name: str  # e.g. "vocabulary", "grammar", "translation", "repair"
+
+    # ── Resolved (static, from profile / settings) ──
+    profile_name: str
+    provider: str
+    model_name: str
+    resolved_default_structured_output_mode: str | None = None
+    resolved_openai_supports_tool_choice_required: bool | None = None
+    inferred_expected_tool_choice: str | None = None
+    inferred_expected_response_format: str | None = None
+    resolved_parallel_tool_calls: bool | None = None
+    resolved_thinking_enabled: bool = False
+
+    # ── Observed (from actual agent run) ──
+    observed_usage: dict[str, Any] | None = None
+    observed_retry_count: int | None = None
+    observed_request_count: int | None = None
 
 
 class LLMConfigSnapshot(BaseModel):
@@ -76,6 +106,9 @@ class LLMConfigSnapshot(BaseModel):
     model_settings: dict[str, Any] = Field(default_factory=dict)
     openai_profile: dict[str, Any] = Field(default_factory=dict)
     structured_output: StructuredOutputSnapshot
+    parallel_tool_calls: bool | None = None
+    thinking_enabled: bool = False
+    structured_output_runtime: list[StructuredOutputRuntime] = Field(default_factory=list)
 
 
 class RequestSnapshot(BaseModel):

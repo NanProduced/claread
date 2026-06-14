@@ -990,6 +990,22 @@ async def test_eval_result_includes_llm_config_snapshot(
     # Verify JSON serialization round-trips
     dumped = json.dumps(snapshot)
     assert isinstance(json.loads(dumped), dict)
+    # Verify new fields are present
+    assert "parallel_tool_calls" in snapshot
+    assert "thinking_enabled" in snapshot
+    assert "structured_output_runtime" in snapshot
+    assert isinstance(snapshot["structured_output_runtime"], list)
+    assert len(snapshot["structured_output_runtime"]) == 3
+    for entry in snapshot["structured_output_runtime"]:
+        assert "agent_name" in entry
+        assert entry["profile_name"] == "eval-profile"
+        assert "resolved_default_structured_output_mode" in entry
+        assert "inferred_expected_tool_choice" in entry
+        assert "resolved_parallel_tool_calls" in entry
+        assert "resolved_thinking_enabled" in entry
+        assert "observed_usage" in entry
+        assert "observed_retry_count" in entry
+        assert "observed_request_count" in entry
 
 
 def test_eval_schema_accepts_default_repair_mode() -> None:

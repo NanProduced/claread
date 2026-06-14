@@ -35,6 +35,11 @@ export function extractLLMConfigSnapshot(artifact) {
   let thinkingEnabled = false;
   if (eb.enable_thinking === true) thinkingEnabled = true;
   if (typeof eb.thinking === "object" && eb.thinking?.type === "enabled") thinkingEnabled = true;
+  if (snapshot.thinking_enabled === true) thinkingEnabled = true;
+
+  const runtimeEntries = Array.isArray(snapshot.structured_output_runtime)
+    ? snapshot.structured_output_runtime
+    : [];
 
   return {
     profile: snapshot.profile_name || null,
@@ -46,7 +51,10 @@ export function extractLLMConfigSnapshot(artifact) {
     supports_json_schema_output: so.supports_json_schema_output ?? null,
     supports_json_object_output: so.supports_json_object_output ?? null,
     default_structured_output_mode: so.default_structured_output_mode || null,
+    expected_response_format: so.expected_response_format ?? null,
     thinking_enabled: thinkingEnabled,
+    parallel_tool_calls: snapshot.parallel_tool_calls ?? null,
+    structured_output_runtime: runtimeEntries,
   };
 }
 
