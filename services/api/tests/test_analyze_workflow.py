@@ -4,8 +4,15 @@ from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
+from app.api.routes import analyze as analyze_route
 from app.main import app
-from app.schemas.analysis import AnalyzeRequest, RenderSceneModel
+from app.schemas.analysis import (
+    AcademicRenderSceneModel,
+    AnalyzeRequest,
+    AnalyzeRequestMeta,
+    ArticleStructure,
+    RenderSceneModel,
+)
 from app.schemas.internal.analysis import (
     AnnotationOutput,
     PhraseGloss,
@@ -156,7 +163,34 @@ def test_analyze_route_returns_empty_result_when_all_agents_fail(monkeypatch) ->
     assert body["inline_marks"] == []
     assert body["sentence_entries"] == []
 
-def test_analyze_route_returns_academic_render_scene() -> None:
+def test_analyze_route_returns_academic_render_scene(monkeypatch) -> None:
+    async def _fake_academic_workflow(payload, *, repair_enabled=None):
+        return {
+            "render_scene": AcademicRenderSceneModel(
+                request=AnalyzeRequestMeta(
+                    request_id=payload.request_id or "test-request",
+                    source_type=payload.source_type,
+                    reading_goal=payload.reading_goal,
+                    reading_variant=payload.reading_variant,
+                    profile_id="academic_general",
+                ),
+                article=ArticleStructure(
+                    source_type=payload.source_type,
+                    source_text=payload.text,
+                    render_text=payload.text,
+                    paragraphs=[],
+                    sentences=[],
+                ),
+            ),
+            "usage_summary": {"available": False},
+        }
+
+    monkeypatch.setattr(
+        analyze_route,
+        "run_article_analysis_with_state",
+        _fake_academic_workflow,
+    )
+
     client = TestClient(app)
     response = client.post(
         "/analyze",
