@@ -222,6 +222,7 @@ class DropLogEntry(BaseModel):
         "conflict_resolution",
         "density_control",
         "pruning",
+        "repair",
     ] = Field(description="删除发生的阶段")
     dropped_at: datetime = Field(
         default_factory=datetime.now,

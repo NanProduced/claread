@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
 
 from app.schemas.common import TextSpan
@@ -33,14 +32,9 @@ from app.schemas.internal.drafts import (
 )
 from app.schemas.internal.execution_plan import GoalPolicy
 from app.schemas.internal.normalized import (
-    CanonicalSpan,
     DropLogEntry,
     NormalizedAnnotation,
     NormalizedAnnotationResult,
-    NormalizedContextGloss,
-    NormalizedGrammarNote,
-    NormalizedPhraseGloss,
-    NormalizedSentenceAnalysis,
 )
 from app.services.analysis.postprocess.anchor_resolution import (
     resolve_explicit_anchor_parts,
@@ -57,14 +51,12 @@ from app.services.analysis.postprocess.draft_validators import (
     validate_vocab_highlight_business_rules,
 )
 from app.services.analysis.postprocess.normalize import is_substring
-
-PRIORITY_RANK: dict[str, int] = {
-    "context_gloss": 3,
-    "phrase_gloss": 2,
-    "vocab_highlight": 1,
-    "grammar_note": 10,
-    "sentence_analysis": 10,
-}
+from app.services.analysis.postprocess.normalized_postprocess import (
+    PRIORITY_RANK,
+    build_canonical_stats,
+    log_drop,
+    postprocess_normalized_annotations,
+)
 
 LOW_VALUE_WORDS: set[str] = {
     "this", "that", "these", "those", "the", "a", "an",
@@ -104,31 +96,6 @@ def _make_anchor_key(annotation_type: str, sentence_id: str, anchor_payload: obj
     return f"{annotation_type}_{sentence_id}_{digest}"
 
 
-def _log_drop(
-    source_agent: Literal["vocabulary", "grammar", "translation"],
-    annotation_type: str,
-    sentence_id: str,
-    anchor_text: str,
-    drop_reason: str,
-    drop_stage: Literal[
-        "grounding", "deduplication",
-        "conflict_resolution", "density_control", "pruning",
-    ],
-    drop_log: list[DropLogEntry],
-) -> None:
-    drop_log.append(
-        DropLogEntry(
-            source_agent=source_agent,
-            annotation_type=annotation_type,
-            sentence_id=sentence_id,
-            anchor_text=anchor_text,
-            drop_reason=drop_reason,
-            drop_stage=drop_stage,
-            dropped_at=datetime.now(),
-        )
-    )
-
-
 def _grounding_check(
     annotation_type: str,
     text: str,
@@ -139,13 +106,13 @@ def _grounding_check(
 ) -> bool:
     sentence_obj = sentence_map.get(sentence_id)
     if sentence_obj is None:
-        _log_drop(
+        log_drop(
             source_agent, annotation_type, sentence_id, text,
             "sentence_id_not_found", "grounding", drop_log
         )
         return False
     if not is_substring(text, sentence_obj.text):
-        _log_drop(
+        log_drop(
             source_agent, annotation_type, sentence_id, text,
             "anchor_not_substring", "grounding", drop_log
         )
@@ -161,7 +128,7 @@ def _canonicalize_grammar_span(
 ) -> SpanRef | None:
     sentence_obj = sentence_map.get(item.sentence_id)
     if sentence_obj is None:
-        _log_drop(
+        log_drop(
             "grammar",
             item.type,
             item.sentence_id,
@@ -185,7 +152,7 @@ def _canonicalize_grammar_span(
         if "..." in span.text and span.text not in sentence_obj.text
         else "anchor_not_substring"
     )
-    _log_drop(
+    log_drop(
         "grammar",
         item.type,
         item.sentence_id,
@@ -210,7 +177,7 @@ def _canonicalize_vocabulary_anchor(
     """
     sentence_obj = sentence_map.get(annotation.sentence_id)
     if sentence_obj is None:
-        _log_drop(
+        log_drop(
             "vocabulary",
             annotation.type,
             annotation.sentence_id,
@@ -228,7 +195,7 @@ def _canonicalize_vocabulary_anchor(
         ]
         resolved_parts = resolve_explicit_anchor_parts(sentence_obj, parts)
         if resolved_parts is None:
-            _log_drop(
+            log_drop(
                 "vocabulary",
                 annotation.type,
                 annotation.sentence_id,
@@ -251,7 +218,7 @@ def _canonicalize_vocabulary_anchor(
         ]
         resolved_parts = resolve_explicit_anchor_parts(sentence_obj, parts)
         if resolved_parts is None:
-            _log_drop(
+            log_drop(
                 "vocabulary",
                 annotation.type,
                 annotation.sentence_id,
@@ -283,7 +250,7 @@ def _canonicalize_vocabulary_anchor(
     if comparison_match:
         return annotation
 
-    _log_drop(
+    log_drop(
         "vocabulary",
         annotation.type,
         annotation.sentence_id,
@@ -343,7 +310,7 @@ def _passes_business_rules(
         return True
 
     for reason in reasons:
-        _log_drop(
+        log_drop(
             "vocabulary",
             annotation.type,
             annotation.sentence_id,
@@ -371,7 +338,7 @@ def _normalize_vocab_highlights(
         if not _passes_business_rules(item, drop_log):
             continue
         if _check_low_value_word(item.text):
-            _log_drop(
+            log_drop(
                 "vocabulary", item.type,
                 item.sentence_id, item.text,
                 "low_value_word", "pruning", drop_log,
@@ -382,7 +349,7 @@ def _normalize_vocab_highlights(
             _annotation_anchor_payload(item, ctx.sentence_map),
         )
         if key in seen_keys:
-            _log_drop(
+            log_drop(
                 "vocabulary", item.type,
                 item.sentence_id, item.text,
                 "duplicate", "deduplication", drop_log,
@@ -414,7 +381,7 @@ def _normalize_phrase_glosses(
             _annotation_anchor_payload(item, ctx.sentence_map),
         )
         if key in seen_keys:
-            _log_drop(
+            log_drop(
                 "vocabulary", item.type,
                 item.sentence_id, item.text,
                 "duplicate", "deduplication", drop_log,
@@ -446,7 +413,7 @@ def _normalize_context_glosses(
             _annotation_anchor_payload(item, ctx.sentence_map),
         )
         if key in seen_keys:
-            _log_drop(
+            log_drop(
                 "vocabulary", item.type,
                 item.sentence_id, item.text,
                 "duplicate", "deduplication", drop_log,
@@ -481,7 +448,7 @@ def _normalize_grammar_notes(
         primary_text = item.spans[0].text if item.spans else ""
         key = _make_anchor_key(item.type, item.sentence_id, primary_text)
         if key in seen_keys:
-            _log_drop(
+            log_drop(
                 "grammar", item.type,
                 item.sentence_id, primary_text,
                 "duplicate", "deduplication", drop_log,
@@ -513,7 +480,7 @@ def _normalize_sentence_analyses(
             continue
         key = _make_anchor_key(item.type, item.sentence_id, item.label)
         if key in seen_keys:
-            _log_drop(
+            log_drop(
                 "grammar", item.type,
                 item.sentence_id, item.label,
                 "duplicate", "deduplication", drop_log,
@@ -549,7 +516,7 @@ def _merge_and_resolve_conflicts(
         winner = candidates[0]
         vocabulary_winners.append(winner)
         for loser in candidates[1:]:
-            _log_drop(
+            log_drop(
                 "vocabulary",
                 loser.type,
                 sentence_id,
@@ -684,7 +651,7 @@ def _drop_subsumed_vocab_highlights(
             survivors.append(item)
             continue
 
-        _log_drop(
+        log_drop(
             "vocabulary",
             item.type,
             item.sentence_id,
@@ -744,7 +711,7 @@ def _density_control(
         for item in ranked[:max_per_sentence]:
             survivors.add(_annotation_identity(item))
         for item in ranked[max_per_sentence:]:
-            _log_drop(
+            log_drop(
                 (
                     "vocabulary"
                     if item.type in {
@@ -777,21 +744,21 @@ def _normalize_translations(
 
     for item in draft.sentence_translations:
         if item.sentence_id not in ctx.sentence_map:
-            _log_drop(
+            log_drop(
                 "translation", "sentence_translation",
                 item.sentence_id, "",
                 "sentence_id_not_found", "grounding", drop_log,
             )
             continue
         if not item.translation_zh.strip():
-            _log_drop(
+            log_drop(
                 "translation", "sentence_translation",
                 item.sentence_id, "",
                 "empty_translation", "pruning", drop_log,
             )
             continue
         if item.sentence_id in seen_ids:
-            _log_drop(
+            log_drop(
                 "translation", "sentence_translation",
                 item.sentence_id, "",
                 "duplicate", "deduplication", drop_log,
@@ -801,337 +768,6 @@ def _normalize_translations(
         result.append(item)
 
     return result
-
-
-def _normalized_span_identity(annotation: NormalizedAnnotation) -> str:
-    """Identity key for NormalizedAnnotation dedup, based on CanonicalSpan payload.
-
-    Includes annotation type, sentence_id, span tuple, and key display field
-    to avoid merging annotations with same spans but different explanations.
-    """
-    spans = getattr(annotation, "spans", None)
-    if spans is not None:
-        span_payload = json.dumps(
-            [
-                {"start": s.start, "end": s.end, "text": s.text}
-                for s in spans
-            ],
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-    else:
-        span_payload = ""
-
-    # Key display field differentiates same-span different-explanation
-    display_key = ""
-    if isinstance(annotation, NormalizedPhraseGloss):
-        display_key = annotation.label
-    elif isinstance(annotation, NormalizedContextGloss):
-        display_key = annotation.display
-    elif isinstance(annotation, NormalizedGrammarNote):
-        display_key = annotation.grammar_point
-    elif isinstance(annotation, NormalizedSentenceAnalysis):
-        display_key = annotation.label
-
-    return f"{annotation.sentence_id}:{annotation.type}:{span_payload}:{display_key}"
-
-
-def _normalized_anchor_text(annotation: NormalizedAnnotation) -> str:
-    """Get a representative anchor text for drop log from NormalizedAnnotation."""
-    spans = getattr(annotation, "spans", None)
-    if spans:
-        return spans[0].text
-    if isinstance(annotation, NormalizedSentenceAnalysis):
-        return annotation.label
-    return ""
-
-
-def _normalized_source_agent(annotation: NormalizedAnnotation) -> str:
-    """Determine source agent from annotation type."""
-    if annotation.type in {"vocab_highlight", "phrase_gloss", "context_gloss"}:
-        return "vocabulary"
-    return "grammar"
-
-
-def _canonical_spans_overlap(left: list[CanonicalSpan], right: list[CanonicalSpan]) -> bool:
-    """Check if two CanonicalSpan lists overlap (same sentence, overlapping ranges)."""
-    if not left or not right:
-        return False
-    if left[0].sentence_id != right[0].sentence_id:
-        return False
-    return any(
-        l_span.start < r_span.end and r_span.start < l_span.end
-        for l_span in left
-        for r_span in right
-    )
-
-
-def _canonical_span_group_contains(
-    container: list[CanonicalSpan], inner: CanonicalSpan,
-) -> bool:
-    """Check if any span in container fully contains inner span."""
-    return any(
-        s.start <= inner.start and inner.end <= s.end
-        for s in container
-    )
-
-
-def _normalized_dedup(
-    annotations: list[NormalizedAnnotation],
-    drop_log: list[DropLogEntry],
-) -> list[NormalizedAnnotation]:
-    """Dedup NormalizedAnnotations based on CanonicalSpan identity."""
-    result: list[NormalizedAnnotation] = []
-    seen: set[str] = set()
-
-    for annotation in annotations:
-        identity = _normalized_span_identity(annotation)
-        if identity in seen:
-            _log_drop(
-                _normalized_source_agent(annotation),
-                annotation.type,
-                annotation.sentence_id,
-                _normalized_anchor_text(annotation),
-                "duplicate",
-                "deduplication",
-                drop_log,
-            )
-            continue
-        seen.add(identity)
-        result.append(annotation)
-
-    return result
-
-
-def _build_overlap_clusters(
-    items: list[NormalizedAnnotation],
-) -> list[list[int]]:
-    """Build overlap clusters from NormalizedAnnotations using Union-Find.
-
-    Returns a list of clusters, where each cluster is a list of indices into `items`.
-    """
-    n = len(items)
-    if n <= 1:
-        return [[i] for i in range(n)]
-
-    parent = list(range(n))
-
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(i: int, j: int) -> None:
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[ri] = rj
-
-    for i in range(n):
-        i_spans = getattr(items[i], "spans", None) or []
-        for j in range(i + 1, n):
-            j_spans = getattr(items[j], "spans", None) or []
-            if _canonical_spans_overlap(i_spans, j_spans):
-                union(i, j)
-
-    clusters: dict[int, list[int]] = {}
-    for i in range(n):
-        clusters.setdefault(find(i), []).append(i)
-    return list(clusters.values())
-
-
-def _normalized_conflict_resolution(
-    annotations: list[NormalizedAnnotation],
-    drop_log: list[DropLogEntry],
-) -> list[NormalizedAnnotation]:
-    """Resolve conflicts between vocabulary NormalizedAnnotations based on span overlap.
-
-    When vocab types (vocab_highlight, phrase_gloss, context_gloss) have
-    overlapping canonical spans in the same sentence, keep the highest priority.
-    Same-priority ties broken by stable identity key.
-    Also drop vocab_highlights subsumed by phrase_gloss / context_gloss.
-    """
-    # Separate grammar/sentence_analysis from vocabulary types
-    grammar_annotations: list[NormalizedAnnotation] = []
-    vocab_annotations: list[NormalizedAnnotation] = []
-    for a in annotations:
-        if a.type in {"grammar_note", "sentence_analysis"}:
-            grammar_annotations.append(a)
-        else:
-            vocab_annotations.append(a)
-
-    # Build overlap clusters: group vocab annotations by sentence,
-    # then find connected components via span overlap.
-    by_sentence: dict[str, list[NormalizedAnnotation]] = {}
-    for a in vocab_annotations:
-        by_sentence.setdefault(a.sentence_id, []).append(a)
-
-    vocab_winners: list[NormalizedAnnotation] = []
-    for sentence_id, items in by_sentence.items():
-        clusters = _build_overlap_clusters(items)
-
-        for member_indices in clusters:
-            if len(member_indices) == 1:
-                vocab_winners.append(items[member_indices[0]])
-                continue
-            # Sort by priority (desc), then identity for stable tie-break
-            member_indices.sort(
-                key=lambda idx: (
-                    PRIORITY_RANK.get(items[idx].type, 0),
-                    _normalized_span_identity(items[idx]),
-                ),
-                reverse=True,
-            )
-            vocab_winners.append(items[member_indices[0]])
-            for idx in member_indices[1:]:
-                loser = items[idx]
-                _log_drop(
-                    _normalized_source_agent(loser),
-                    loser.type,
-                    sentence_id,
-                    _normalized_anchor_text(loser),
-                    "conflict_resolution",
-                    "conflict_resolution",
-                    drop_log,
-                )
-
-    # Drop vocab_highlights subsumed by phrase_gloss / context_gloss
-    rich_annotations = [
-        a for a in vocab_winners
-        if a.type in {"context_gloss", "phrase_gloss"}
-    ]
-    rich_spans = [
-        (a, getattr(a, "spans", []))
-        for a in rich_annotations
-        if getattr(a, "spans", None)
-    ]
-
-    survivors: list[NormalizedAnnotation] = []
-    for a in vocab_winners:
-        if a.type != "vocab_highlight":
-            survivors.append(a)
-            continue
-        a_spans = getattr(a, "spans", [])
-        if not a_spans:
-            survivors.append(a)
-            continue
-        subsumer = None
-        inner_span = a_spans[0]
-        for rich_a, rich_span_group in rich_spans:
-            if rich_a.sentence_id == a.sentence_id and _canonical_span_group_contains(
-                rich_span_group, inner_span,
-            ):
-                subsumer = rich_a
-                break
-        if subsumer is None:
-            survivors.append(a)
-            continue
-        _log_drop(
-            "vocabulary",
-            a.type,
-            a.sentence_id,
-            _normalized_anchor_text(a),
-            f"subsumed_by_{subsumer.type}",
-            "conflict_resolution",
-            drop_log,
-        )
-
-    return [*grammar_annotations, *survivors]
-
-
-def _normalized_density_control(
-    annotations: list[NormalizedAnnotation],
-    max_per_sentence: int,
-    drop_log: list[DropLogEntry],
-) -> list[NormalizedAnnotation]:
-    """Density control for NormalizedAnnotations based on canonical span count."""
-    grouped: dict[str, list[NormalizedAnnotation]] = {}
-    for a in annotations:
-        grouped.setdefault(a.sentence_id, []).append(a)
-
-    survivors: set[str] = set()
-    for sentence_id, items in grouped.items():
-        ranked = sorted(
-            items,
-            key=lambda item: (
-                PRIORITY_RANK.get(item.type, 0),
-                _normalized_span_identity(item),
-            ),
-            reverse=True,
-        )
-        for item in ranked[:max_per_sentence]:
-            survivors.add(_normalized_span_identity(item))
-        for item in ranked[max_per_sentence:]:
-            _log_drop(
-                _normalized_source_agent(item),
-                item.type,
-                sentence_id,
-                _normalized_anchor_text(item),
-                f"density_exceeded_max_{max_per_sentence}",
-                "density_control",
-                drop_log,
-            )
-
-    return [
-        a for a in annotations
-        if _normalized_span_identity(a) in survivors
-    ]
-
-
-def _build_canonical_stats(
-    normalized_annotations: list[NormalizedAnnotation],
-    canonical_drop_log: list[DropLogEntry],
-) -> dict[str, object]:
-    """Build canonical shadow path observation stats."""
-    from collections import Counter
-
-    canonical_counts = Counter(
-        getattr(a, "type", str(type(a).__name__))
-        for a in normalized_annotations
-    )
-    drop_by_type = Counter(
-        getattr(e, "annotation_type", "") for e in canonical_drop_log
-    )
-    drop_by_reason = Counter(
-        getattr(e, "drop_reason", "") for e in canonical_drop_log
-    )
-
-    total_span_count = 0
-    for a in normalized_annotations:
-        spans = getattr(a, "spans", None)
-        if spans is not None:
-            total_span_count += len(spans)
-
-    # Anchor drop summary for canonical path
-    CANONICAL_ANCHOR_DROP_REASONS: frozenset[str] = frozenset({
-        "quote_not_found", "quote_ambiguous",
-        "quote_out_of_order", "quote_too_short",
-        "quote_boundary_violation",
-        "sentence_id_invalid",
-    })
-    anchor_drops = [
-        e for e in canonical_drop_log
-        if getattr(e, "drop_reason", "") in CANONICAL_ANCHOR_DROP_REASONS
-    ]
-    by_type_and_reason = Counter(
-        (getattr(e, "annotation_type", ""), getattr(e, "drop_reason", ""))
-        for e in anchor_drops
-    )
-
-    return {
-        "canonical_normalized_counts": dict(sorted(canonical_counts.items())),
-        "canonical_drop_counts_by_type": dict(sorted(drop_by_type.items())),
-        "canonical_drop_counts_by_reason": dict(sorted(drop_by_reason.items())),
-        "canonical_span_count": total_span_count,
-        "canonical_anchor_drop_summary": {
-            "total_anchor_drops": len(anchor_drops),
-            "by_annotation_type_and_reason": [
-                {"annotation_type": at, "drop_reason": dr, "count": cnt}
-                for (at, dr), cnt in by_type_and_reason.most_common()
-            ],
-        },
-    }
 
 
 def normalize_and_ground(
@@ -1202,18 +838,11 @@ def normalize_and_ground(
             normalized_annotations.append(normalized)
 
     # ── Normalized postprocess ─────────────────────────────────────
-    # 1. Dedup based on CanonicalSpan identity
-    normalized_annotations = _normalized_dedup(normalized_annotations, canonical_drop_log)
-    # 2. Conflict resolution based on span overlap
-    normalized_annotations = _normalized_conflict_resolution(
-        normalized_annotations, canonical_drop_log,
-    )
-    # 3. Density control based on canonical span count
-    normalized_annotations = _normalized_density_control(
-        normalized_annotations, ctx.policy.annotation_density, canonical_drop_log,
+    normalized_annotations = postprocess_normalized_annotations(
+        normalized_annotations, canonical_drop_log, ctx.policy.annotation_density,
     )
 
-    canonical_stats = _build_canonical_stats(
+    canonical_stats = build_canonical_stats(
         normalized_annotations, canonical_drop_log,
     )
 
