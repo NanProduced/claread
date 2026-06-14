@@ -133,11 +133,15 @@ async def test_eval_adapter_returns_sanitized_success_result(
         "app.services.analysis.debug_snapshots.get_settings",
         lambda: settings,
     )
+    monkeypatch.setattr(
+        eval_article_analysis, "validate_model_selection", lambda *a, **kw: None
+    )
 
-    async def _fake_workflow(payload):
+    async def _fake_workflow(payload, *, repair_mode=None):
         assert payload.request_id == "eval:run-1:case-1"
         assert payload.model_selection.default_profile == "eval-profile"
         assert is_grammar_rag_enabled(settings) is False
+        assert repair_mode == "full_result"
         return {
             "render_scene": _render_scene(payload.request_id),
             "usage_summary": {
@@ -204,6 +208,9 @@ async def test_eval_adapter_uses_provided_prompt_snapshot_hash(
         "run_article_analysis_with_state",
         AsyncMock(return_value={"render_scene": _render_scene("eval:req")}),
     )
+    monkeypatch.setattr(
+        eval_article_analysis, "validate_model_selection", lambda *a, **kw: None
+    )
 
     result = await eval_article_analysis.run_article_analysis_eval(
         ArticleAnalysisEvalRequest(
@@ -255,7 +262,7 @@ async def test_eval_adapter_returns_structured_timeout(
     settings = _settings()
     monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
 
-    async def _slow_workflow(_payload):
+    async def _slow_workflow(_payload, *, repair_mode=None):
         await asyncio.sleep(0.05)
         return {"render_scene": _render_scene("eval:req")}
 
@@ -395,7 +402,11 @@ def test_eval_workflow_route_rejects_academic_goal(
     response = client.post(
         "/eval/article-analysis/workflow",
         headers={"x-admin-api-key": "eval-key"},
-        json={"text": "Academic text.", "reading_goal": "academic", "reading_variant": "academic_general"},
+        json={
+            "text": "Academic text.",
+            "reading_goal": "academic",
+            "reading_variant": "academic_general",
+        },
     )
 
     assert response.status_code == 422
@@ -403,7 +414,9 @@ def test_eval_workflow_route_rejects_academic_goal(
     # Pydantic validation error wraps the ValueError message
     error_detail = body.get("detail", [])
     messages = [e.get("msg", "") for e in error_detail if isinstance(e, dict)]
-    assert any("learning topology" in m for m in messages), f"Expected 'learning topology' in error messages, got: {messages}"
+    assert any(
+        "learning topology" in m for m in messages
+    ), f"Expected 'learning topology' in error messages, got: {messages}"
 
 
 def test_eval_node_probe_route_rejects_academic_goal(
@@ -420,14 +433,20 @@ def test_eval_node_probe_route_rejects_academic_goal(
     response = client.post(
         "/eval/article-analysis/node-probe",
         headers={"x-admin-api-key": "eval-key"},
-        json={"text": "Academic text.", "reading_goal": "academic", "reading_variant": "academic_general"},
+        json={
+            "text": "Academic text.",
+            "reading_goal": "academic",
+            "reading_variant": "academic_general",
+        },
     )
 
     assert response.status_code == 422
     body = response.json()
     error_detail = body.get("detail", [])
     messages = [e.get("msg", "") for e in error_detail if isinstance(e, dict)]
-    assert any("learning topology" in m for m in messages), f"Expected 'learning topology' in error messages, got: {messages}"
+    assert any(
+        "learning topology" in m for m in messages
+    ), f"Expected 'learning topology' in error messages, got: {messages}"
 
 
 def test_eval_workflow_route_allows_learning_goal(
@@ -445,7 +464,11 @@ def test_eval_workflow_route_allows_learning_goal(
     response = client.post(
         "/eval/article-analysis/workflow",
         headers={"x-admin-api-key": "eval-key"},
-        json={"text": "Learning text.", "reading_goal": "daily_reading", "reading_variant": "intermediate_reading"},
+        json={
+            "text": "Learning text.",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+        },
     )
 
     assert response.status_code == 200
@@ -649,9 +672,22 @@ def test_eval_entry_guards_use_buildable_true() -> None:
         calls.append({"buildable": buildable})
         # Don't actually validate — just capture the call
 
+    async def _fake_workflow(_payload, **_kw):
+        return {"render_scene": None}
+
     with (
-        patch("app.eval_adapter.article_analysis.validate_model_selection", side_effect=_fake_validate),
-        patch("app.eval_adapter.article_analysis.build_model_identity", return_value=None),
+        patch(
+            "app.eval_adapter.article_analysis.validate_model_selection",
+            side_effect=_fake_validate,
+        ),
+        patch(
+            "app.eval_adapter.article_analysis.build_model_identity",
+            return_value=None,
+        ),
+        patch(
+            "app.eval_adapter.article_analysis.run_article_analysis_with_state",
+            _fake_workflow,
+        ),
     ):
         asyncio.run(
             article_analysis.run_article_analysis_eval(
@@ -670,9 +706,16 @@ def test_eval_entry_guards_use_buildable_true() -> None:
 
     calls.clear()
 
+    async def _fake_agent(**_kw):
+        return None
+
     with (
         patch("app.eval_adapter.node_probe.validate_model_selection", side_effect=_fake_validate),
         patch("app.eval_adapter.node_probe.build_model_identity", return_value=None),
+        patch("app.eval_adapter.node_probe.prepare_input"),
+        patch("app.eval_adapter.node_probe.run_vocabulary_agent", _fake_agent),
+        patch("app.eval_adapter.node_probe.run_grammar_agent", _fake_agent),
+        patch("app.eval_adapter.node_probe.run_translation_agent", _fake_agent),
     ):
         asyncio.run(
             node_probe.run_article_analysis_node_probe(
@@ -976,3 +1019,76 @@ async def test_eval_result_includes_llm_config_snapshot(
     # Verify JSON serialization round-trips
     dumped = json.dumps(snapshot)
     assert isinstance(json.loads(dumped), dict)
+
+
+def test_eval_schema_accepts_default_repair_mode() -> None:
+    """ArticleAnalysisEvalRequest defaults repair_mode to 'full_result'."""
+    req = ArticleAnalysisEvalRequest(text="Hello world.")
+    assert req.repair_mode == "full_result"
+
+
+def test_eval_schema_accepts_explicit_patch_mode() -> None:
+    """ArticleAnalysisEvalRequest accepts repair_mode='patch'."""
+    req = ArticleAnalysisEvalRequest(text="Hello world.", repair_mode="patch")
+    assert req.repair_mode == "patch"
+
+
+@pytest.mark.anyio
+async def test_eval_adapter_passes_repair_mode_to_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_article_analysis_eval passes repair_mode to
+    run_article_analysis_with_state."""
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+
+    captured_kwargs: dict = {}
+
+    async def _fake_workflow(payload, *, repair_mode=None):
+        captured_kwargs["repair_mode"] = repair_mode
+        return {
+            "render_scene": _render_scene("eval:req"),
+            "usage_summary": {
+                "available": True,
+                "per_agent": {},
+                "aggregate": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            },
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        _fake_workflow,
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    # Default: full_result
+    await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.")
+    )
+    assert captured_kwargs["repair_mode"] == "full_result"
+
+    # Explicit: patch
+    await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.", repair_mode="patch")
+    )
+    assert captured_kwargs["repair_mode"] == "patch"
+
+
+def test_request_snapshot_includes_repair_mode() -> None:
+    """RequestSnapshot records repair_mode."""
+    from app.eval_adapter.shared import request_snapshot
+
+    req = ArticleAnalysisEvalRequest(text="Hello world.", repair_mode="patch")
+    snap = request_snapshot(req, request_id_value="test-id")
+    assert snap.repair_mode == "patch"
+
+    # Default
+    req2 = ArticleAnalysisEvalRequest(text="Hello world.")
+    snap2 = request_snapshot(req2, request_id_value="test-id")
+    assert snap2.repair_mode == "full_result"

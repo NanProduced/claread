@@ -657,6 +657,57 @@ def test_normalize_and_ground_exposes_patch_failure_ratio() -> None:
     assert "canonical_repair_worthy_drop_count" in stats
 
 
+# ── P4.3C: Repair mode eval/runner wiring tests ─────────────────────
+
+
+def test_run_article_analysis_with_state_passes_repair_mode_to_config(
+    monkeypatch,
+) -> None:
+    """run_article_analysis_with_state(repair_mode='patch') writes
+    repair_mode into graph.ainvoke config['configurable']."""
+    from app.workflow import analyze as analyze_module
+
+    captured_config: dict = {}
+
+    class FakeGraph:
+        async def ainvoke(self, state, config=None):
+            captured_config.update(config or {})
+            return {"render_scene": None}
+
+    monkeypatch.setattr(analyze_module, "build_learning_graph", FakeGraph)
+    monkeypatch.setattr(analyze_module, "validate_model_selection", lambda *a, **kw: None)
+    monkeypatch.setattr(analyze_module, "resolve_model_config", lambda *a, **kw: None)
+    monkeypatch.setattr(analyze_module, "get_settings", lambda: None)
+    monkeypatch.setattr(analyze_module, "get_trace_surface", lambda *a: "test")
+    monkeypatch.setattr(analyze_module, "build_workflow_root_tags", lambda *a, **kw: [])
+    monkeypatch.setattr(analyze_module, "build_workflow_root_metadata", lambda *a, **kw: {})
+
+    payload = AnalyzeRequest.model_validate(
+        {
+            "request_id": "req-repair-mode-test",
+            "text": "Hello world.",
+            "source_type": "user_input",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+        }
+    )
+
+    # With repair_mode="patch"
+    asyncio.run(
+        analyze_module.run_article_analysis_with_state(
+            payload, repair_mode="patch"
+        )
+    )
+    assert captured_config.get("configurable", {}).get("repair_mode") == "patch"
+
+    # Without repair_mode → not in configurable
+    captured_config.clear()
+    asyncio.run(
+        analyze_module.run_article_analysis_with_state(payload)
+    )
+    assert "repair_mode" not in captured_config.get("configurable", {})
+
+
 # ── Phase 2.4B: Workflow mainline switch tests ────────────────────────
 
 

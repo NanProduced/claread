@@ -201,10 +201,14 @@ async def run_article_analysis_eval(
             trace_scope(request),
         ):
             if request.timeout_seconds is None:
-                result = await run_article_analysis_with_state(payload)
+                result = await run_article_analysis_with_state(
+                    payload, repair_mode=request.repair_mode,
+                )
             else:
                 result = await asyncio.wait_for(
-                    run_article_analysis_with_state(payload),
+                    run_article_analysis_with_state(
+                        payload, repair_mode=request.repair_mode,
+                    ),
                     timeout=request.timeout_seconds,
                 )
     except TimeoutError as exc:

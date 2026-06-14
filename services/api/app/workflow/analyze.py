@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from app.config.settings import get_settings
@@ -14,7 +14,10 @@ from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.llm.runtime import dump_model_selection
 from app.llm.types import ModelSelection, parse_model_selection
 from app.observability import SURFACE_ANALYZE_DIRECT, get_trace_surface
-from app.schemas.analysis import AcademicRenderSceneModel, AnalyzeRequest, AnyRenderSceneModel, RenderSceneModel
+from app.schemas.analysis import (
+    AnalyzeRequest,
+    AnyRenderSceneModel,
+)
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
 from app.workflow.academic_workflow import build_academic_graph
 from app.workflow.analyze_nodes import (
@@ -48,7 +51,11 @@ def _get_graph_for_plan(plan: Any) -> Any:
         raise ValueError(f"Unknown topology mode: {plan.topology_mode}")
 
 
-async def _invoke_article_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
+async def _invoke_article_analysis(
+    payload: AnalyzeRequest,
+    *,
+    repair_mode: Literal["full_result", "patch"] | None = None,
+) -> dict[str, Any]:
     request_id = payload.request_id or str(uuid4())
     normalized_payload = (
         payload
@@ -92,6 +99,7 @@ async def _invoke_article_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
             "tags": build_workflow_root_tags(WORKFLOW_NAME, model_names, surface=surface),
             "configurable": {
                 "model_selection": dump_model_selection(model_selection),
+                **({"repair_mode": repair_mode} if repair_mode is not None else {}),
             },
             "metadata": build_workflow_root_metadata(
                 workflow_name=WORKFLOW_NAME,
@@ -118,8 +126,12 @@ async def run_article_analysis(payload: AnalyzeRequest) -> AnyRenderSceneModel:
     return cast(AnyRenderSceneModel, result["render_scene"])
 
 
-async def run_article_analysis_with_state(payload: AnalyzeRequest) -> dict[str, Any]:
-    return await _invoke_article_analysis(payload)
+async def run_article_analysis_with_state(
+    payload: AnalyzeRequest,
+    *,
+    repair_mode: Literal["full_result", "patch"] | None = None,
+) -> dict[str, Any]:
+    return await _invoke_article_analysis(payload, repair_mode=repair_mode)
 
 
 __all__ = [

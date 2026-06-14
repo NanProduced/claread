@@ -53,6 +53,7 @@ def request_snapshot(request: Any, *, request_id_value: str) -> RequestSnapshot:
         extended=request.extended,
         rag_mode=request.rag_mode,
         trace_scope=request.trace_scope,
+        repair_mode=getattr(request, "repair_mode", "full_result"),
     )
 
 
