@@ -292,6 +292,15 @@ function getContextHighlightFragments(
     const text = String(mark.anchor.anchorText || '').trim()
     return text ? [{ text, occurrence: mark.anchor.occurrence }] : []
   }
+  if (mark?.anchor.kind === 'range') {
+    const text = String(mark.anchor.range.text || '').trim()
+    return text ? [{ text }] : []
+  }
+  if (mark?.anchor.kind === 'multi_range') {
+    return mark.anchor.ranges
+      .map(r => ({ text: String(r.text || '').trim() }))
+      .filter(part => part.text.length > 0)
+  }
   const text = lookupText.trim()
   return text ? [{ text }] : []
 }

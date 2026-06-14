@@ -28,7 +28,30 @@ export interface MultiTextAnchor {
   parts: SpanRef[]
 }
 
-export type InlineMarkAnchor = TextAnchor | MultiTextAnchor
+export interface RangePart {
+  start: number
+  end: number
+  text: string
+  role?: string
+  sourceQuote?: string
+  resolutionKind?: string
+}
+
+export interface RangeAnchor {
+  kind: 'range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  range: RangePart
+}
+
+export interface MultiRangeAnchor {
+  kind: 'multi_range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  ranges: RangePart[]
+}
+
+export type InlineMarkAnchor = TextAnchor | MultiTextAnchor | RangeAnchor | MultiRangeAnchor
 
 export type RenderType = 'background' | 'underline'
 

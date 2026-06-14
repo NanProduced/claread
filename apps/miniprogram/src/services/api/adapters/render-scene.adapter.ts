@@ -17,6 +17,9 @@ import type {
   AcademicInlineMark as DtoAcademicInlineMark,
   TextAnchor as DtoTextAnchor,
   MultiTextAnchor as DtoMultiTextAnchor,
+  RangeAnchor as DtoRangeAnchor,
+  MultiRangeAnchor as DtoMultiRangeAnchor,
+  RangePart as DtoRangePart,
   SpanRefPart,
   ArticleSentence,
   ArticleParagraph,
@@ -41,6 +44,9 @@ import type {
   AcademicInlineGlossary as VmAcademicInlineGlossary,
   TextAnchor as VmTextAnchor,
   MultiTextAnchor as VmMultiTextAnchor,
+  RangeAnchor as VmRangeAnchor,
+  MultiRangeAnchor as VmMultiRangeAnchor,
+  RangePart as VmRangePart,
   SpanRef,
   SentenceModel,
   ParagraphModel,
@@ -55,7 +61,20 @@ import type {
 
 // ============ 共享转换函数 ============
 
-function transformAnchor(dtoAnchor: DtoTextAnchor | DtoMultiTextAnchor): VmTextAnchor | VmMultiTextAnchor {
+function transformRangePart(p: DtoRangePart): VmRangePart {
+  return {
+    start: p.start,
+    end: p.end,
+    text: p.text,
+    role: p.role,
+    sourceQuote: p.source_quote,
+    resolutionKind: p.resolution_kind,
+  }
+}
+
+function transformAnchor(
+  dtoAnchor: DtoTextAnchor | DtoMultiTextAnchor | DtoRangeAnchor | DtoMultiRangeAnchor,
+): VmTextAnchor | VmMultiTextAnchor | VmRangeAnchor | VmMultiRangeAnchor {
   if (dtoAnchor.kind === 'text') {
     const a = dtoAnchor as DtoTextAnchor
     return {
@@ -64,7 +83,7 @@ function transformAnchor(dtoAnchor: DtoTextAnchor | DtoMultiTextAnchor): VmTextA
       anchorText: a.anchor_text,
       occurrence: a.occurrence,
     }
-  } else {
+  } else if (dtoAnchor.kind === 'multi_text') {
     const a = dtoAnchor as DtoMultiTextAnchor
     return {
       kind: 'multi_text',
@@ -74,6 +93,22 @@ function transformAnchor(dtoAnchor: DtoTextAnchor | DtoMultiTextAnchor): VmTextA
         occurrence: p.occurrence,
         role: p.role,
       })),
+    }
+  } else if (dtoAnchor.kind === 'range') {
+    const a = dtoAnchor as DtoRangeAnchor
+    return {
+      kind: 'range',
+      sentenceId: a.sentence_id,
+      offsetUnit: a.offset_unit,
+      range: transformRangePart(a.range),
+    }
+  } else {
+    const a = dtoAnchor as DtoMultiRangeAnchor
+    return {
+      kind: 'multi_range',
+      sentenceId: a.sentence_id,
+      offsetUnit: a.offset_unit,
+      ranges: a.ranges.map(transformRangePart),
     }
   }
 }
@@ -247,7 +282,20 @@ export function analyzeResponseDtoToVm(dto: AnyAnalyzeResponseDto): AnyRenderSce
 
 // ============ 反向转换：共享函数 ============
 
-function reverseAnchor(vmAnchor: VmTextAnchor | VmMultiTextAnchor): DtoTextAnchor | DtoMultiTextAnchor {
+function reverseRangePart(p: VmRangePart): DtoRangePart {
+  return {
+    start: p.start,
+    end: p.end,
+    text: p.text,
+    role: p.role,
+    source_quote: p.sourceQuote,
+    resolution_kind: p.resolutionKind,
+  }
+}
+
+function reverseAnchor(
+  vmAnchor: VmTextAnchor | VmMultiTextAnchor | VmRangeAnchor | VmMultiRangeAnchor,
+): DtoTextAnchor | DtoMultiTextAnchor | DtoRangeAnchor | DtoMultiRangeAnchor {
   if (vmAnchor.kind === 'text') {
     const a = vmAnchor as VmTextAnchor
     return {
@@ -256,7 +304,7 @@ function reverseAnchor(vmAnchor: VmTextAnchor | VmMultiTextAnchor): DtoTextAncho
       anchor_text: a.anchorText,
       occurrence: a.occurrence,
     }
-  } else {
+  } else if (vmAnchor.kind === 'multi_text') {
     const a = vmAnchor as VmMultiTextAnchor
     return {
       kind: 'multi_text',
@@ -266,6 +314,22 @@ function reverseAnchor(vmAnchor: VmTextAnchor | VmMultiTextAnchor): DtoTextAncho
         occurrence: p.occurrence,
         role: p.role,
       })),
+    }
+  } else if (vmAnchor.kind === 'range') {
+    const a = vmAnchor as VmRangeAnchor
+    return {
+      kind: 'range',
+      sentence_id: a.sentenceId,
+      offset_unit: a.offsetUnit,
+      range: reverseRangePart(a.range),
+    }
+  } else {
+    const a = vmAnchor as VmMultiRangeAnchor
+    return {
+      kind: 'multi_range',
+      sentence_id: a.sentenceId,
+      offset_unit: a.offsetUnit,
+      ranges: a.ranges.map(reverseRangePart),
     }
   }
 }
