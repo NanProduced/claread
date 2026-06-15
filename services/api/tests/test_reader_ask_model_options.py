@@ -8,6 +8,15 @@ from app.config.settings import Settings
 from app.services.reader_ask import model_options as model_options_svc
 
 
+@pytest.fixture(autouse=True)
+def _clear_catalog_cache():
+    """Clear the lru_cache on _build_catalog_cached between tests to prevent
+    cross-test cache pollution when Settings differ."""
+    model_options_svc._build_catalog_cached.cache_clear()
+    yield
+    model_options_svc._build_catalog_cached.cache_clear()
+
+
 def _catalog(profile_map: dict[str, str]) -> str:
     return json.dumps(
         {
@@ -33,7 +42,11 @@ def _catalog(profile_map: dict[str, str]) -> str:
     )
 
 
-def test_list_reader_ask_model_options_resolves_stage_model_names() -> None:
+def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -> None:
+    # Avoid constructing real OpenAIProvider / httpx.AsyncClient during
+    # catalog validation — we only need the resolved model names.
+    monkeypatch.setattr(model_options_svc, "build_model_instance", lambda config: object())
+
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",
@@ -98,7 +111,9 @@ def test_list_reader_ask_model_options_resolves_stage_model_names() -> None:
     assert items[0].runtime_budget.prompt_buffer_tokens == 900
 
 
-def test_resolve_reader_ask_model_option_falls_back_for_stale_thread_key() -> None:
+def test_resolve_reader_ask_model_option_falls_back_for_stale_thread_key(monkeypatch) -> None:
+    monkeypatch.setattr(model_options_svc, "build_model_instance", lambda config: object())
+
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",
@@ -127,7 +142,9 @@ def test_resolve_reader_ask_model_option_falls_back_for_stale_thread_key() -> No
     assert option.main_model_name == "ask-default-model"
 
 
-def test_resolve_reader_ask_model_option_rejects_invalid_explicit_key() -> None:
+def test_resolve_reader_ask_model_option_rejects_invalid_explicit_key(monkeypatch) -> None:
+    monkeypatch.setattr(model_options_svc, "build_model_instance", lambda config: object())
+
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",

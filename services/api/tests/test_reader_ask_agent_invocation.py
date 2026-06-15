@@ -66,13 +66,11 @@ def _make_deps(**kwargs) -> ReaderAskAgentDeps:
         primary_anchor=None,
         get_record_context_fn=AsyncMock(),
         get_record_insights_fn=AsyncMock(),
-        search_user_vocabulary_fn=AsyncMock(),
-        lookup_dictionary_entry_fn=AsyncMock(),
-        run_dictionary_ai_context_explain_fn=AsyncMock(),
+        get_user_vocabulary_book_fn=AsyncMock(),
+        resolve_known_reference_fn=AsyncMock(),
         generate_sentence_annotation_fn=AsyncMock(),
+        suggest_prompts_fn=AsyncMock(),
         vocabulary_item_to_citation_fn=_vocab_cite,
-        dictionary_item_to_citation_fn=_dict_cite,
-        dictionary_ai_to_citation_fn=_dict_ai_cite,
         **kwargs,
     )
 

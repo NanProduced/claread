@@ -284,6 +284,10 @@ def test_hydration_reads_all_contract_fields_from_user_visible_output() -> None:
         "persisted_supplements": [],
         "reasoning_md": "thinking content",
         "reasoning_status": "completed",
+        "follow_up_suggestions": [
+            {"label": "Next", "prompt": "Tell me more"},
+            {"label": "Save", "prompt": "Save as note"},
+        ],
     }
 
     # Verify the test data covers all contract fields

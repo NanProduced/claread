@@ -14,11 +14,11 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_GENERATE_SENTENCE_ANNOTATION,
     TOOL_GET_RECORD_CONTEXT,
     TOOL_GET_RECORD_INSIGHTS,
-    TOOL_LOOKUP_DICTIONARY_ENTRY,
+    TOOL_GET_USER_VOCABULARY_BOOK,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
-    TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
-    TOOL_SEARCH_USER_VOCABULARY,
+    TOOL_RESOLVE_KNOWN_REFERENCE,
+    TOOL_SUGGEST_PROMPTS,
 )
 from app.agents.reader_ask_tool_runtime import (
     run_tool,
@@ -30,6 +30,20 @@ from app.agents.reader_ask_write_gate import (
 )
 from app.schemas.reader_ask import ReaderAskAnchorRef, ReaderAskCitation, ReaderAskToolTraceEntry
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+
+
+# ---------------------------------------------------------------------------
+# Round 2: tool IO contracts (stable, model-facing)
+#
+# Each contract is the explicit shape the main agent sees. Keeping them as
+# ``dataclass``/TypedDict definitions makes tool behavior auditable from
+# tests without having to round-trip through the LLM.
+# ---------------------------------------------------------------------------
+
+RecordContextScope = Literal["window", "paragraph", "full"]
+InsightKind = Literal["grammar_note", "sentence_analysis", "vocabulary"]
+VocabularySortBy = Literal["recent", "lemma_asc"]
+ReferenceResolutionStatus = Literal["resolved", "ambiguous", "not_found"]
 
 
 @dataclass(slots=True)
@@ -48,6 +62,7 @@ class ReaderAskRuntimeState:
     action_requests: list[ReaderAskRuntimeActionRequest] = field(default_factory=list)
     source_labels: set[str] = field(default_factory=set)
     used_cross_record_context: bool = False
+    cross_record_context_allowed: bool = False
     tool_call_count: int = 0
     max_tool_calls: int = 5
     latest_record_context: dict[str, Any] | None = None
@@ -56,9 +71,13 @@ class ReaderAskRuntimeState:
     latest_external_record_contexts: list[dict[str, Any]] = field(default_factory=list)
     latest_external_asset_contexts: list[dict[str, Any]] = field(default_factory=list)
     latest_user_vocabulary: list[dict[str, Any]] = field(default_factory=list)
+    # Round 2: dictionary tools are deprecated — fields kept for legacy
+    # context_runtime / service plumbing until Round 3 cleanup.
     latest_dictionary_entry: dict[str, Any] | None = None
     latest_dictionary_ai: dict[str, Any] | None = None
+    latest_resolved_references: dict[str, Any] | None = None
     latest_generated_annotations: list[dict[str, Any]] = field(default_factory=list)
+    latest_suggestions: list[dict[str, Any]] = field(default_factory=list)
     # Round 1 — fast-path routing telemetry. ``planner_skipped`` is True
     # when the request was eligible for the agent-loop fast path and
     # bypassed the legacy ``resolve_semantic_planning`` call.
@@ -78,24 +97,32 @@ class ReaderAskAgentDeps:
     record_id: str
     record_title: str | None
     primary_anchor: ReaderAskAnchorRef | None
-    get_record_context_fn: Callable[[], Awaitable[dict[str, Any]]]
-    get_record_insights_fn: Callable[[], Awaitable[list[dict[str, Any]]]]
-    search_user_vocabulary_fn: Callable[[str], Awaitable[list[dict[str, Any]]]]
-    lookup_dictionary_entry_fn: Callable[
-        [str | None, int | None, str | None, str | None, int | None],
-        Awaitable[dict[str, Any] | None],
+    # Round 2 tool contracts.
+    get_record_context_fn: Callable[
+        ["ReaderAskAgentDeps" | None, RecordContextScope | None, str | None],
+        Awaitable[dict[str, Any]],
     ]
-    run_dictionary_ai_context_explain_fn: Callable[
-        [str, int, str, Literal["word", "phrase"], int | None],
-        Awaitable[dict[str, Any] | None],
+    get_record_insights_fn: Callable[
+        ["ReaderAskAgentDeps" | None, str | None, InsightKind | None, int | None],
+        Awaitable[list[dict[str, Any]]],
+    ]
+    get_user_vocabulary_book_fn: Callable[
+        ["ReaderAskAgentDeps" | None, str | None, int | None, VocabularySortBy | None],
+        Awaitable[list[dict[str, Any]]],
+    ]
+    resolve_known_reference_fn: Callable[
+        ["ReaderAskAgentDeps" | None, str, int | None],
+        Awaitable[dict[str, Any]],
     ]
     generate_sentence_annotation_fn: Callable[
         [Literal["grammar_note", "sentence_analysis"]],
         Awaitable[dict[str, Any] | None],
     ]
+    suggest_prompts_fn: Callable[
+        [list[dict[str, Any]]],
+        Awaitable[dict[str, Any]],
+    ]
     vocabulary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation]
-    dictionary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation]
-    dictionary_ai_to_citation_fn: Callable[[dict[str, Any], str, int], ReaderAskCitation]
     tool_availability: ToolAvailabilityResult | None = None
 
 
@@ -114,6 +141,195 @@ def _append_citation(state: ReaderAskRuntimeState, citation: ReaderAskCitation) 
         ):
             return
     state.citations.append(citation)
+
+
+# ---------------------------------------------------------------------------
+# Read tools (Round 2)
+# ---------------------------------------------------------------------------
+
+
+async def _get_record_context_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    scope: RecordContextScope = "window",
+    target_sentence_id: str | None = None,
+) -> dict[str, Any]:
+    """Agent tool: get the current record's local context window.
+
+    Scope contract:
+    - ``window`` (default): 5 sentences around the active anchor
+      (2 before + active + 2 after). Cheap.
+    - ``paragraph``: the full paragraph containing the target sentence.
+    - ``full``: the full article text. The implementation MUST apply a
+      length cap (default 10000 chars) and mark ``truncated: true`` if hit.
+    """
+    async def runner() -> dict[str, Any]:
+        ctx.deps.state.source_labels.update({"current_record", "current_anchor"})
+        if scope == "paragraph":
+            ctx.deps.state.source_labels.add("current_paragraph")
+        elif scope == "full":
+            ctx.deps.state.source_labels.add("full_article")
+        result = await ctx.deps.get_record_context_fn(
+            ctx.deps, scope, target_sentence_id,
+        )
+        ctx.deps.state.latest_record_context = result
+        return result
+
+    summary_bits: list[str] = [f"scope={scope}"]
+    if target_sentence_id:
+        summary_bits.append(f"target={target_sentence_id}")
+    return await run_tool(
+        ctx.deps,
+        TOOL_GET_RECORD_CONTEXT,
+        runner,
+        input_summary=" ".join(summary_bits),
+    )
+
+
+async def _get_record_insights_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    target_sentence_id: str | None = None,
+    kind: InsightKind | None = None,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Agent tool: get insights for the current record.
+
+    The agent MUST pass at least one of ``target_sentence_id`` or ``kind``;
+    unfiltered full loads are wasteful and the prompt forbids them. The
+    result items carry ``translation_zh`` (workflow-generated) so the model
+    can ground its translation/explanation in what the user already sees.
+    """
+    if target_sentence_id is None and kind is None:
+        return [
+            {
+                "status": "error",
+                "summary": "get_record_insights requires at least one of target_sentence_id or kind.",
+                "next_actions": [
+                    "Pass target_sentence_id for a specific sentence.",
+                    "Pass kind='grammar_note' | 'sentence_analysis' | 'vocabulary' to filter by type.",
+                ],
+                "artifacts": [],
+                "ok": False,
+                "reason": "missing_filter",
+            }
+        ]
+
+    async def runner() -> list[dict[str, Any]]:
+        items = await ctx.deps.get_record_insights_fn(
+            ctx.deps, target_sentence_id, kind, limit,
+        )
+        if items:
+            ctx.deps.state.source_labels.add("record_assets")
+        ctx.deps.state.latest_record_insights = items
+        return items
+
+    summary_bits: list[str] = []
+    if kind:
+        summary_bits.append(f"kind={kind}")
+    if target_sentence_id:
+        summary_bits.append(f"target={target_sentence_id}")
+    summary_bits.append(f"limit={limit}")
+    return await run_tool(
+        ctx.deps,
+        TOOL_GET_RECORD_INSIGHTS,
+        runner,
+        input_summary=" ".join(summary_bits) or "filtered",
+    )
+
+
+async def _get_user_vocabulary_book_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    lemma: str | None = None,
+    limit: int = 10,
+    sort_by: VocabularySortBy = "recent",
+) -> list[dict[str, Any]] | dict[str, Any]:
+    """Agent tool: list the user's vocabulary book entries.
+
+    The vocabulary backend does not support search; we load all entries
+    and filter by ``lemma`` in memory. The agent MUST pass at least one
+    of ``lemma`` or ``sort_by`` (default ``sort_by='recent'``). When
+    ``lemma`` is provided and no entry matches, return a warning
+    observation dict (not a list) so the normalizer surfaces it as a
+    warning instead of "0 item(s)" success.
+    """
+    async def runner() -> list[dict[str, Any]] | dict[str, Any]:
+        items = await ctx.deps.get_user_vocabulary_book_fn(
+            ctx.deps, lemma, limit, sort_by,
+        )
+        if items:
+            ctx.deps.state.source_labels.add("vocabulary")
+            ctx.deps.state.latest_user_vocabulary = items
+            for item in items:
+                _append_citation(
+                    ctx.deps.state,
+                    ctx.deps.vocabulary_item_to_citation_fn(item),
+                )
+            return items
+        # No match — surface a warning observation (dict) so the agent
+        # doesn't loop on empty results and the trace/chip is honest
+        # about "not found".
+        return {
+            "status": "warning",
+            "summary": "Word not in vocabulary book",
+            "next_actions": [
+                "Ask the user if they want to save the word.",
+            ],
+            "artifacts": [],
+            "ok": False,
+            "reason": "lemma_not_found",
+        }
+
+    summary_bits: list[str] = [f"sort_by={sort_by}", f"limit={limit}"]
+    if lemma:
+        summary_bits.insert(0, f"lemma={truncate_tool_arg(lemma)}")
+    return await run_tool(
+        ctx.deps,
+        TOOL_GET_USER_VOCABULARY_BOOK,
+        runner,
+        input_summary=" ".join(summary_bits),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resolver tool (Round 2)
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_known_reference_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    query: str,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Agent tool: resolve a cross-record reference.
+
+    Returns one of three states: ``resolved`` (single match), ``ambiguous``
+    (multiple candidates — the agent should ask the user via HITL) or
+    ``not_found`` (zero matches). The implementation reuses the existing
+    known-reference resolver backend and never causes a cross-HTTP
+    resume — ambiguous results are returned to the model so the main
+    loop can decide how to present them.
+    """
+    async def runner() -> dict[str, Any]:
+        result = await ctx.deps.resolve_known_reference_fn(ctx.deps, query, top_k)
+        # Always record the resolution, even when status='not_found'.
+        ctx.deps.state.latest_resolved_references = result
+        status = result.get("status") if isinstance(result, dict) else None
+        if status == "resolved":
+            ctx.deps.state.source_labels.add("cross_record_resolved")
+        elif status == "ambiguous":
+            ctx.deps.state.source_labels.add("cross_record_ambiguous")
+        return result
+
+    return await run_tool(
+        ctx.deps,
+        TOOL_RESOLVE_KNOWN_REFERENCE,
+        runner,
+        input_summary=truncate_tool_arg(query),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Annotation tool (cache-aware)
+# ---------------------------------------------------------------------------
 
 
 async def _generate_sentence_annotation_tool(
@@ -151,6 +367,11 @@ async def _generate_sentence_annotation_tool(
         runner,
         input_summary=f"kind={kind}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Write-proposal tools (with write-gate precondition)
+# ---------------------------------------------------------------------------
 
 
 async def _propose_save_note_tool(
@@ -252,6 +473,81 @@ async def _propose_save_highlight_tool(
     return await run_tool(ctx.deps, TOOL_PROPOSE_SAVE_HIGHLIGHT, runner)
 
 
+# ---------------------------------------------------------------------------
+# Suggestion tool (Round 2)
+# ---------------------------------------------------------------------------
+
+
+async def _suggest_prompts_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    suggestions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Agent tool: surface 2-3 follow-up prompt suggestions.
+
+    The agent decides when to call this (e.g. when the user is drifting
+    off-topic, after a complete in-scope answer, etc.). The backend
+    validates the shape: 2-3 suggestions, each with a short ``label``
+    and the actual ``prompt`` text. The frontend renders them as
+    clickable chips at the tail of the assistant message; this round
+    only wires up the contract, not the front-end.
+    """
+    if not suggestions:
+        return {
+            "status": "warning",
+            "summary": "No suggestions provided.",
+            "next_actions": ["Provide 2-3 suggestions if you want chips to render."],
+            "artifacts": [],
+            "ok": False,
+            "suggestions": [],
+        }
+
+    # Validate shape and clamp to 2-3.
+    cleaned: list[dict[str, Any]] = []
+    for item in suggestions[:3]:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label")
+        prompt = item.get("prompt")
+        if not isinstance(label, str) or not label.strip():
+            continue
+        if not isinstance(prompt, str) or not prompt.strip():
+            continue
+        cleaned.append(
+            {
+                "label": label.strip()[:40],
+                "prompt": prompt.strip()[:200],
+            }
+        )
+    if len(cleaned) < 2:
+        return {
+            "status": "warning",
+            "summary": "Need at least 2 valid suggestions to render chips.",
+            "next_actions": [
+                "Provide 2-3 suggestions with both 'label' and 'prompt'.",
+            ],
+            "artifacts": [],
+            "ok": False,
+            "suggestions": [],
+        }
+
+    async def runner() -> dict[str, Any]:
+        result = await ctx.deps.suggest_prompts_fn(cleaned)
+        ctx.deps.state.latest_suggestions = cleaned
+        return result
+
+    return await run_tool(
+        ctx.deps,
+        TOOL_SUGGEST_PROMPTS,
+        runner,
+        input_summary=f"{len(cleaned)} suggestion(s)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent construction
+# ---------------------------------------------------------------------------
+
+
 @lru_cache(maxsize=1)
 def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     agent = Agent[ReaderAskAgentDeps, str](
@@ -266,110 +562,38 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     )
 
     @agent.tool(name=TOOL_GET_RECORD_CONTEXT)
-    async def get_record_context(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
-        async def runner() -> dict[str, Any]:
-            ctx.deps.state.source_labels.update({"current_record", "current_anchor"})
-            ctx.deps.state.source_labels.add("current_paragraph")
-            result = await ctx.deps.get_record_context_fn()
-            ctx.deps.state.latest_record_context = result
-            return result
-
-        return await run_tool(ctx.deps, TOOL_GET_RECORD_CONTEXT, runner)
+    async def get_record_context(
+        ctx: RunContext[ReaderAskAgentDeps],
+        scope: RecordContextScope = "window",
+        target_sentence_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await _get_record_context_tool(ctx, scope, target_sentence_id)
 
     @agent.tool(name=TOOL_GET_RECORD_INSIGHTS)
-    async def get_record_insights(ctx: RunContext[ReaderAskAgentDeps]) -> list[dict[str, Any]]:
-        async def runner() -> list[dict[str, Any]]:
-            items = await ctx.deps.get_record_insights_fn()
-            if items:
-                ctx.deps.state.source_labels.add("record_assets")
-            ctx.deps.state.latest_record_insights = items
-            return items
-
-        return await run_tool(ctx.deps, TOOL_GET_RECORD_INSIGHTS, runner)
-
-    @agent.tool(name=TOOL_SEARCH_USER_VOCABULARY)
-    async def search_user_vocabulary(
+    async def get_record_insights(
         ctx: RunContext[ReaderAskAgentDeps],
-        query: str,
+        target_sentence_id: str | None = None,
+        kind: InsightKind | None = None,
+        limit: int = 5,
     ) -> list[dict[str, Any]]:
-        async def runner() -> list[dict[str, Any]]:
-            items = await ctx.deps.search_user_vocabulary_fn(query)
-            if items:
-                ctx.deps.state.source_labels.add("vocabulary")
-                ctx.deps.state.latest_user_vocabulary = items
-            for item in items:
-                _append_citation(ctx.deps.state, ctx.deps.vocabulary_item_to_citation_fn(item))
-            return items
+        return await _get_record_insights_tool(ctx, target_sentence_id, kind, limit)
 
-        return await run_tool(
-            ctx.deps, TOOL_SEARCH_USER_VOCABULARY, runner,
-            input_summary=truncate_tool_arg(query),
-        )
-
-    @agent.tool(name=TOOL_LOOKUP_DICTIONARY_ENTRY)
-    async def lookup_dictionary_entry(
+    @agent.tool(name=TOOL_GET_USER_VOCABULARY_BOOK)
+    async def get_user_vocabulary_book(
         ctx: RunContext[ReaderAskAgentDeps],
-        query: str | None = None,
-        entry_id: int | None = None,
-        query_type: Literal["word", "phrase"] | None = None,
-        context_sentence: str | None = None,
-        occurrence: int | None = None,
-    ) -> dict[str, Any] | None:
-        async def runner() -> dict[str, Any] | None:
-            item = await ctx.deps.lookup_dictionary_entry_fn(
-                query, entry_id, query_type, context_sentence, occurrence,
-            )
-            if item is not None:
-                ctx.deps.state.source_labels.add("dictionary")
-                ctx.deps.state.latest_dictionary_entry = item
-                _append_citation(ctx.deps.state, ctx.deps.dictionary_item_to_citation_fn(item))
-            return item
+        lemma: str | None = None,
+        limit: int = 10,
+        sort_by: VocabularySortBy = "recent",
+    ) -> list[dict[str, Any]]:
+        return await _get_user_vocabulary_book_tool(ctx, lemma, limit, sort_by)
 
-        summary_bits = [
-            query,
-            str(entry_id) if entry_id is not None else None,
-            query_type,
-            context_sentence,
-        ]
-        return await run_tool(
-            ctx.deps,
-            TOOL_LOOKUP_DICTIONARY_ENTRY,
-            runner,
-            input_summary=truncate_tool_arg(" | ".join(bit for bit in summary_bits if bit)),
-        )
-
-    @agent.tool(name=TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN)
-    async def run_dictionary_ai_context_explain(
+    @agent.tool(name=TOOL_RESOLVE_KNOWN_REFERENCE)
+    async def resolve_known_reference(
         ctx: RunContext[ReaderAskAgentDeps],
         query: str,
-        entry_id: int,
-        context_sentence: str,
-        query_type: Literal["word", "phrase"] = "word",
-        occurrence: int | None = None,
-    ) -> dict[str, Any] | None:
-        async def runner() -> dict[str, Any] | None:
-            item = await ctx.deps.run_dictionary_ai_context_explain_fn(
-                query,
-                entry_id,
-                context_sentence,
-                query_type,
-                occurrence,
-            )
-            if item is not None:
-                ctx.deps.state.source_labels.add("dictionary")
-                ctx.deps.state.latest_dictionary_ai = item
-                _append_citation(
-                    ctx.deps.state,
-                    ctx.deps.dictionary_ai_to_citation_fn(item, query, entry_id),
-                )
-            return item
-
-        return await run_tool(
-            ctx.deps,
-            TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
-            runner,
-            input_summary=truncate_tool_arg(query),
-        )
+        top_k: int = 5,
+    ) -> dict[str, Any]:
+        return await _resolve_known_reference_tool(ctx, query, top_k)
 
     @agent.tool(name=TOOL_GENERATE_SENTENCE_ANNOTATION)
     async def generate_sentence_annotation(
@@ -388,5 +612,12 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     @agent.tool(name=TOOL_PROPOSE_SAVE_HIGHLIGHT)
     async def propose_save_highlight(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
         return await _propose_save_highlight_tool(ctx)
+
+    @agent.tool(name=TOOL_SUGGEST_PROMPTS)
+    async def suggest_prompts(
+        ctx: RunContext[ReaderAskAgentDeps],
+        suggestions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return await _suggest_prompts_tool(ctx, suggestions)
 
     return agent

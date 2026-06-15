@@ -1,4 +1,4 @@
-"""Tests for the Ask Claread tool availability policy (P5-3)."""
+"""Tests for the Ask Claread tool availability policy (P5-3, Round 2)."""
 
 import pytest
 
@@ -25,13 +25,28 @@ def _default_input(**overrides: object) -> ToolAvailabilityInput:
 
 
 # ---------------------------------------------------------------------------
-# Default: all 8 tools allowed
+# Default: 8 agent-callable tools (Round 2 surface)
 # ---------------------------------------------------------------------------
 
-def test_default_input_allows_all_8_tools() -> None:
+def test_default_input_allows_8_agent_callable_tools() -> None:
     result = build_tool_availability(_default_input())
-    assert result.allowed_tool_names == READER_ASK_TOOL_NAMES
     assert len(result.allowed_tool_names) == 8
+
+
+def test_default_input_excludes_deprecated_and_reserved() -> None:
+    """Deprecated tools + reserved RAG tool must NOT be in allowed_tool_names."""
+    from app.agents.reader_ask_tool_registry import (
+        TOOL_LOOKUP_DICTIONARY_ENTRY,
+        TOOL_LOOKUP_RECORD_BY_EMBEDDING,
+        TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
+        TOOL_SEARCH_USER_VOCABULARY,
+    )
+
+    result = build_tool_availability(_default_input())
+    assert TOOL_SEARCH_USER_VOCABULARY not in result.allowed_tool_names
+    assert TOOL_LOOKUP_DICTIONARY_ENTRY not in result.allowed_tool_names
+    assert TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN not in result.allowed_tool_names
+    assert TOOL_LOOKUP_RECORD_BY_EMBEDDING not in result.allowed_tool_names
 
 
 def test_default_input_no_unavailable_reasons() -> None:
@@ -45,18 +60,15 @@ def test_default_input_no_unavailable_reasons() -> None:
 
 def test_no_primary_anchor_write_proposals_still_allowed() -> None:
     result = build_tool_availability(_default_input(has_primary_anchor=False))
-    # Write proposal tools must still be in allowed_tool_names
     assert TOOL_PROPOSE_SAVE_NOTE in result.allowed_tool_names
     assert TOOL_PROPOSE_SAVE_HIGHLIGHT in result.allowed_tool_names
-    # All 8 tools still allowed
-    assert result.allowed_tool_names == READER_ASK_TOOL_NAMES
+    assert len(result.allowed_tool_names) == 8
 
 
 def test_no_primary_anchor_write_proposals_flagged_in_reasons() -> None:
     result = build_tool_availability(_default_input(has_primary_anchor=False))
     assert result.unavailable_reasons[TOOL_PROPOSE_SAVE_NOTE] == "requires_primary_anchor"
     assert result.unavailable_reasons[TOOL_PROPOSE_SAVE_HIGHLIGHT] == "requires_primary_anchor"
-    # Only write proposal tools should have reasons
     assert len(result.unavailable_reasons) == 2
 
 
@@ -84,13 +96,15 @@ def test_allowed_tools_subset_of_registry() -> None:
 ])
 def test_task_mode_does_not_remove_tools(task_mode: str) -> None:
     result = build_tool_availability(_default_input(task_mode=task_mode))
-    assert result.allowed_tool_names == READER_ASK_TOOL_NAMES
+    # Always exactly the agent-callable set
+    assert len(result.allowed_tool_names) == 8
 
 
-def test_vocabulary_mode_does_not_remove_dictionary_tools() -> None:
+def test_vocabulary_mode_includes_get_user_vocabulary_book() -> None:
     result = build_tool_availability(_default_input(task_mode="vocabulary"))
-    assert "lookup_dictionary_entry" in result.allowed_tool_names
-    assert "run_dictionary_ai_context_explain" in result.allowed_tool_names
+    assert "get_user_vocabulary_book" in result.allowed_tool_names
+    # Old search_user_vocabulary still not exposed
+    assert "search_user_vocabulary" not in result.allowed_tool_names
 
 
 def test_grammar_mode_does_not_remove_annotation_tools() -> None:
@@ -100,7 +114,7 @@ def test_grammar_mode_does_not_remove_annotation_tools() -> None:
 
 def test_general_mode_does_not_remove_any_tools() -> None:
     result = build_tool_availability(_default_input(task_mode="general"))
-    assert result.allowed_tool_names == READER_ASK_TOOL_NAMES
+    assert len(result.allowed_tool_names) == 8
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +175,8 @@ def test_input_is_frozen() -> None:
 # P5-6 Wiring: ReaderAskAgentDeps carries tool_availability
 # ---------------------------------------------------------------------------
 
-def test_deps_carries_tool_availability() -> None:
+def _make_deps_for_policy_test(**overrides: object):
+    """Build a minimal ReaderAskAgentDeps carrying a tool_availability."""
     from unittest.mock import AsyncMock, MagicMock
 
     from app.agents.reader_ask_agent import ReaderAskAgentDeps, ReaderAskRuntimeState
@@ -177,10 +192,10 @@ def test_deps_carries_tool_availability() -> None:
         ToolAvailabilityInput(
             task_mode="explain",
             entry_action="ask_about_this",
-            has_primary_anchor=True,
+            has_primary_anchor=overrides.pop("has_primary_anchor", True),
         )
     )
-    deps = ReaderAskAgentDeps(
+    return ReaderAskAgentDeps(
         payload={},
         event_queue=AsyncMock(),
         state=ReaderAskRuntimeState(),
@@ -188,20 +203,22 @@ def test_deps_carries_tool_availability() -> None:
         task_mode="explain",
         record_id="r1",
         record_title="Test",
-        primary_anchor=anchor,
+        primary_anchor=anchor if overrides.pop("has_primary_anchor", True) else None,
         get_record_context_fn=AsyncMock(return_value={}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
+        suggest_prompts_fn=AsyncMock(return_value={}),
         vocabulary_item_to_citation_fn=MagicMock(),
-        dictionary_item_to_citation_fn=MagicMock(),
-        dictionary_ai_to_citation_fn=MagicMock(),
         tool_availability=availability,
     )
+
+
+def test_deps_carries_tool_availability() -> None:
+    deps = _make_deps_for_policy_test()
     assert deps.tool_availability is not None
-    assert deps.tool_availability.allowed_tool_names == READER_ASK_TOOL_NAMES
+    assert len(deps.tool_availability.allowed_tool_names) == 8
 
 
 def test_deps_tool_availability_defaults_to_none() -> None:
@@ -227,49 +244,17 @@ def test_deps_tool_availability_defaults_to_none() -> None:
         primary_anchor=anchor,
         get_record_context_fn=AsyncMock(return_value={}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
+        suggest_prompts_fn=AsyncMock(return_value={}),
         vocabulary_item_to_citation_fn=MagicMock(),
-        dictionary_item_to_citation_fn=MagicMock(),
-        dictionary_ai_to_citation_fn=MagicMock(),
     )
     assert deps.tool_availability is None
 
 
 def test_deps_no_anchor_unavailable_reasons_contains_write_proposals() -> None:
-    from unittest.mock import AsyncMock, MagicMock
-
-    from app.agents.reader_ask_agent import ReaderAskAgentDeps, ReaderAskRuntimeState
-
-    availability = build_tool_availability(
-        ToolAvailabilityInput(
-            task_mode="explain",
-            entry_action="ask_about_this",
-            has_primary_anchor=False,
-        )
-    )
-    deps = ReaderAskAgentDeps(
-        payload={},
-        event_queue=AsyncMock(),
-        state=ReaderAskRuntimeState(),
-        query_seed="test",
-        task_mode="explain",
-        record_id="r1",
-        record_title="Test",
-        primary_anchor=None,
-        get_record_context_fn=AsyncMock(return_value={}),
-        get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
-        generate_sentence_annotation_fn=AsyncMock(return_value=None),
-        vocabulary_item_to_citation_fn=MagicMock(),
-        dictionary_item_to_citation_fn=MagicMock(),
-        dictionary_ai_to_citation_fn=MagicMock(),
-        tool_availability=availability,
-    )
+    deps = _make_deps_for_policy_test(has_primary_anchor=False)
     assert deps.tool_availability is not None
     assert TOOL_PROPOSE_SAVE_NOTE in deps.tool_availability.unavailable_reasons
     assert TOOL_PROPOSE_SAVE_HIGHLIGHT in deps.tool_availability.unavailable_reasons

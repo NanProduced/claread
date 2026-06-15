@@ -485,16 +485,16 @@ class TestFastPathPlanningSnapshotShape:
 
 class TestAuthoritativeBackfillSmoke:
     """Smoke test that a simulated lost first delta gets correctly backfilled
-    from ``result.output`` via ``finish_reader_ask_agent_stream``. This is the
-    end-to-end counterpart to the unit tests in
+    from ``runtime.authoritative_output`` via ``finish_reader_ask_agent_stream``.
+    This is the end-to-end counterpart to the unit tests in
     ``test_reader_ask_agent_runner.py::TestAuthoritativeFinalContent``."""
 
     def test_first_delta_lost_backfilled(self) -> None:
         runtime = agent_runner_svc.AgentStreamRuntime()
         runtime.content_parts = ["lo ", "world"]
         runtime.emitted_text = "lo world"
+        runtime.authoritative_output = "hello world"
         runtime.producer_result = MagicMock()
-        runtime.producer_result.output = "hello world"
 
         outcome, _ = agent_runner_svc.finish_reader_ask_agent_stream(
             runtime=runtime,

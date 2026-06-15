@@ -74,13 +74,11 @@ def _make_deps(**overrides: object) -> ReaderAskAgentDeps:
         primary_anchor=_make_anchor(),
         get_record_context_fn=AsyncMock(return_value={"summary": "Context loaded"}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
+        suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=AsyncMock(),
-        dictionary_item_to_citation_fn=AsyncMock(),
-        dictionary_ai_to_citation_fn=AsyncMock(),
     )
     kwargs.update(overrides)
     return ReaderAskAgentDeps(**kwargs)
@@ -125,12 +123,19 @@ class TestRegistryContractConsistency:
                 )
 
     def test_read_tools_only_success_observation(self) -> None:
-        """Read-effect tool implementations only produce success observations."""
+        """Read-effect tool implementations produce success observations,
+        and may also produce warning observations (Round 2 — narrow-query
+        tools return warnings when filters yield no matches)."""
         for name, spec in READER_ASK_TOOL_REGISTRY.items():
             if spec.effect == "read":
-                assert spec.observation_statuses == ("success",), (
-                    f"{name}: read tool should only have success observation, "
-                    f"got {spec.observation_statuses}"
+                assert all(
+                    status in ("success", "warning") for status in spec.observation_statuses
+                ), (
+                    f"{name}: read tool observation_statuses must only "
+                    f"contain success/warning, got {spec.observation_statuses}"
+                )
+                assert "success" in spec.observation_statuses, (
+                    f"{name}: read tool must allow success observation"
                 )
 
     def test_propose_write_tools_have_success_and_error(self) -> None:
@@ -153,7 +158,8 @@ class TestRegistryContractConsistency:
         assert insights.output_kind == "list_or_empty"
 
     def test_vocabulary_tool_output_kind(self) -> None:
-        vocab = READER_ASK_TOOL_REGISTRY[TOOL_SEARCH_USER_VOCABULARY]
+        from app.agents.reader_ask_tool_registry import TOOL_GET_USER_VOCABULARY_BOOK
+        vocab = READER_ASK_TOOL_REGISTRY[TOOL_GET_USER_VOCABULARY_BOOK]
         assert vocab.output_kind == "list_or_empty"
 
     def test_dictionary_tools_output_kind(self) -> None:
@@ -399,13 +405,15 @@ class TestRuntimeWrapperContract:
     def test_dict_or_none_tool_none_result(self) -> None:
         """dict_or_none tool returning None produces completed trace with
         normalized 'Loaded' summary."""
+        from app.agents.reader_ask_tool_registry import TOOL_LOOKUP_RECORD_BY_EMBEDDING
+
         deps = _make_deps()
 
         async def runner() -> None:
             return None
 
         result = asyncio.run(
-            run_tool(deps, TOOL_LOOKUP_DICTIONARY_ENTRY, runner),
+            run_tool(deps, TOOL_LOOKUP_RECORD_BY_EMBEDDING, runner),
         )
         assert result is None
         # Trace: started + completed
@@ -417,13 +425,15 @@ class TestRuntimeWrapperContract:
     def test_list_or_empty_tool_list_result(self) -> None:
         """list_or_empty tool returning list produces completed trace with
         item count summary."""
+        from app.agents.reader_ask_tool_registry import TOOL_GET_USER_VOCABULARY_BOOK
+
         deps = _make_deps()
 
         async def runner() -> list[dict[str, str]]:
             return [{"word": "test"}]
 
         result = asyncio.run(
-            run_tool(deps, TOOL_SEARCH_USER_VOCABULARY, runner),
+            run_tool(deps, TOOL_GET_USER_VOCABULARY_BOOK, runner),
         )
         assert isinstance(result, list)
         assert len(result) == 1

@@ -69,6 +69,11 @@ def normalize_tool_observation(result: Any) -> ToolObservation:
     - **dict** with ``status="error"``   → status=error, summary from
       ``summary`` / ``reason`` / ``"Loaded"``.
     - **dict** with ``status="warning"`` → status=warning.
+    - **dict** with ``ok=False`` (Round 2 — narrow-query / resolver
+      tools return ``ok: False`` for ``not_found`` / ``ambiguous`` /
+      ``lemma_not_found`` even when ``status`` is omitted) → status=warning.
+    - **dict** with ``status="not_found"`` / ``"ambiguous"`` (Round 2
+      resolver states) → status=warning.
     - **dict** otherwise                  → status=success, summary from
       ``summary`` / ``reason`` / ``"Loaded"``.
     - **list**                            → status=success,
@@ -80,9 +85,21 @@ def normalize_tool_observation(result: Any) -> ToolObservation:
     """
     if isinstance(result, dict):
         raw_status = result.get("status")
+        explicit_ok = result.get("ok")
         if raw_status == "error":
             status: ToolObservationStatus = "error"
         elif raw_status == "warning":
+            status = "warning"
+        elif raw_status in ("not_found", "ambiguous"):
+            # Round 2: resolver tool's three-state contract surfaces as
+            # warning observation so the trace / tool chip row is honest
+            # about "no usable answer".
+            status = "warning"
+        elif explicit_ok is False:
+            # Round 2: narrow-query tools (``get_user_vocabulary_book``,
+            # ``resolve_known_reference``) return ``ok: False`` for empty
+            # / no-match results. Normalize to warning so the trace does
+            # not falsely report success.
             status = "warning"
         else:
             status = "success"

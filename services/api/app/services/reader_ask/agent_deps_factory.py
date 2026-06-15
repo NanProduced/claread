@@ -3,6 +3,11 @@
 Every code path that creates a ``ReaderAskAgentDeps`` instance must go through
 ``build_reader_ask_agent_deps`` so that ``tool_availability`` is always wired
 consistently and the construction surface stays auditable.
+
+Round 2: tool callbacks now carry the model-facing parameters (scope,
+target_sentence_id, lemma, sort_by, query, top_k, suggestions, etc.).
+The agent module is the single source of truth for the Round 2 contracts;
+the callbacks close over per-run state (record bundle, anchors, user_id).
 """
 
 from __future__ import annotations
@@ -11,7 +16,13 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
-from app.agents.reader_ask_agent import ReaderAskAgentDeps, ReaderAskRuntimeState
+from app.agents.reader_ask_agent import (
+    InsightKind,
+    ReaderAskAgentDeps,
+    ReaderAskRuntimeState,
+    RecordContextScope,
+    VocabularySortBy,
+)
 from app.agents.reader_ask_tool_policy import (
     ToolAvailabilityInput,
     build_tool_availability,
@@ -35,24 +46,32 @@ def build_reader_ask_agent_deps(
     record_id: str,
     record_title: str | None,
     primary_anchor: ReaderAskAnchorRef | None,
-    get_record_context_fn: Callable[[], Awaitable[dict[str, Any]]],
-    get_record_insights_fn: Callable[[], Awaitable[list[dict[str, Any]]]],
-    search_user_vocabulary_fn: Callable[[str], Awaitable[list[dict[str, Any]]]],
-    lookup_dictionary_entry_fn: Callable[
-        [str | None, int | None, str | None, str | None, int | None],
-        Awaitable[dict[str, Any] | None],
+    # Round 2 tool callbacks (model-facing parameters).
+    get_record_context_fn: Callable[
+        [ReaderAskAgentDeps | None, RecordContextScope | None, str | None],
+        Awaitable[dict[str, Any]],
     ],
-    run_dictionary_ai_context_explain_fn: Callable[
-        [str, int, str, Literal["word", "phrase"], int | None],
-        Awaitable[dict[str, Any] | None],
+    get_record_insights_fn: Callable[
+        [ReaderAskAgentDeps | None, str | None, InsightKind | None, int | None],
+        Awaitable[list[dict[str, Any]]],
+    ],
+    get_user_vocabulary_book_fn: Callable[
+        [ReaderAskAgentDeps | None, str | None, int | None, VocabularySortBy | None],
+        Awaitable[list[dict[str, Any]]],
+    ],
+    resolve_known_reference_fn: Callable[
+        [ReaderAskAgentDeps | None, str, int | None],
+        Awaitable[dict[str, Any]],
     ],
     generate_sentence_annotation_fn: Callable[
         [Literal["grammar_note", "sentence_analysis"]],
         Awaitable[dict[str, Any] | None],
     ],
+    suggest_prompts_fn: Callable[
+        [list[dict[str, Any]]],
+        Awaitable[dict[str, Any]],
+    ],
     vocabulary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation],
-    dictionary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation],
-    dictionary_ai_to_citation_fn: Callable[[dict[str, Any], str, int], ReaderAskCitation],
     has_dictionary_anchor: bool = False,
     has_generated_annotation_cache: bool = False,
 ) -> ReaderAskAgentDeps:
@@ -84,12 +103,10 @@ def build_reader_ask_agent_deps(
         primary_anchor=primary_anchor,
         get_record_context_fn=get_record_context_fn,
         get_record_insights_fn=get_record_insights_fn,
-        search_user_vocabulary_fn=search_user_vocabulary_fn,
-        lookup_dictionary_entry_fn=lookup_dictionary_entry_fn,
-        run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_fn,
+        get_user_vocabulary_book_fn=get_user_vocabulary_book_fn,
+        resolve_known_reference_fn=resolve_known_reference_fn,
         generate_sentence_annotation_fn=generate_sentence_annotation_fn,
+        suggest_prompts_fn=suggest_prompts_fn,
         vocabulary_item_to_citation_fn=vocabulary_item_to_citation_fn,
-        dictionary_item_to_citation_fn=dictionary_item_to_citation_fn,
-        dictionary_ai_to_citation_fn=dictionary_ai_to_citation_fn,
         tool_availability=tool_availability,
     )

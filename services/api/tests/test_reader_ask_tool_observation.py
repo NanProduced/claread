@@ -57,6 +57,63 @@ def test_dict_with_warning_status() -> None:
     assert obs.summary == "Partial results"
 
 
+# ---------------------------------------------------------------------------
+# Round 2: ok=False / not_found / ambiguous surface as warning
+# ---------------------------------------------------------------------------
+
+def test_dict_with_ok_false_is_warning() -> None:
+    """Round 2 narrow-query tools (vocab, resolver) return ``ok: False``
+    for no-match cases. Normalize to warning so the trace is honest."""
+    result = {
+        "status": "warning",
+        "summary": "Word not in vocabulary book",
+        "ok": False,
+        "reason": "lemma_not_found",
+    }
+    obs = normalize_tool_observation(result)
+    assert obs.status == "warning"
+    assert obs.summary == "Word not in vocabulary book"
+
+
+def test_dict_with_status_not_found_is_warning() -> None:
+    """Round 2 resolver tool: ``status='not_found'`` is a stable state,
+    not an error. Normalize to warning."""
+    result = {
+        "status": "not_found",
+        "summary": "No matching records in workspace",
+        "ok": False,
+        "disambiguation_needed": False,
+    }
+    obs = normalize_tool_observation(result)
+    assert obs.status == "warning"
+    assert obs.summary == "No matching records in workspace"
+
+
+def test_dict_with_status_ambiguous_is_warning() -> None:
+    """Round 2 resolver tool: ``status='ambiguous'`` is a stable state
+    that triggers HITL. Normalize to warning so the trace is honest."""
+    result = {
+        "status": "ambiguous",
+        "summary": "Multiple matches (2) — disambiguation needed.",
+        "ok": True,
+        "disambiguation_needed": True,
+    }
+    obs = normalize_tool_observation(result)
+    assert obs.status == "warning"
+    assert obs.summary == "Multiple matches (2) — disambiguation needed."
+
+
+def test_dict_with_explicit_ok_false_no_status_is_warning() -> None:
+    """Round 2: tools that return ``ok: False`` without an explicit
+    ``status`` field are also warnings."""
+    result = {
+        "summary": "Not applicable",
+        "ok": False,
+    }
+    obs = normalize_tool_observation(result)
+    assert obs.status == "warning"
+
+
 def test_empty_dict() -> None:
     obs = normalize_tool_observation({})
     assert obs.status == "success"
@@ -197,13 +254,11 @@ def test_run_tool_uses_normalize_for_trace() -> None:
         primary_anchor=anchor,
         get_record_context_fn=AsyncMock(return_value={"summary": "Context loaded"}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
+        suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),
-        dictionary_item_to_citation_fn=MagicMock(),
-        dictionary_ai_to_citation_fn=MagicMock(),
     )
 
     async def runner() -> dict[str, str]:

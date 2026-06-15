@@ -110,11 +110,17 @@ class AgentStreamRuntime:
     reasoning_started: bool = False
     reasoning_active: bool = False
     # Set by the producer task at the end of the `agent.run_stream(...)`
-    # context block. ``finish_reader_ask_agent_stream`` reads this to use
-    # the model's authoritative ``result.output`` as the final
-    # ``outcome.content_md``. ``emitted_text`` retains the raw stream so
+    # context block.  ``finish_reader_ask_agent_stream`` reads this to use
+    # the model's authoritative output as the final
+    # ``outcome.content_md``.  ``emitted_text`` retains the raw stream so
     # the checkpoint writer and eval can detect lost-delta cases.
     producer_result: Any | None = None
+    # The authoritative final output captured from ``await result.get_output()``
+    # after stream completion.  This is the primary source for
+    # ``outcome.content_md``; ``producer_result.output`` is NOT used because
+    # pydantic-ai 1.73+ ``StreamedRunResult`` exposes ``get_output()`` rather
+    # than an ``output`` property.
+    authoritative_output: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -384,26 +390,36 @@ def _stream_response_from_result(result: Any) -> Any | None:
     return stream_response
 
 
-async def _mark_stream_result_completed(result: Any) -> None:
-    """Ensure the result's output is finalized so ``result.output`` is readable.
+async def _mark_stream_result_completed(result: Any, runtime: AgentStreamRuntime) -> None:
+    """Finalize the stream result and capture the authoritative output.
 
-    This is a best-effort operation — if the result doesn't support
-    completion marking or output retrieval, we silently skip it.  The
-    ``producer_result`` is still set on the runtime regardless.
+    First, the result is marked as completed (via ``_marked_completed`` or
+    ``get_output()``).  Then the final output is captured from
+    ``await result.get_output()`` and stored on
+    ``runtime.authoritative_output``.  This is the primary source for
+    ``outcome.content_md`` in ``finish_reader_ask_agent_stream``.
+
+    Completion failures (e.g. ``ModelHTTPError``, auth errors) are **not**
+    swallowed — they propagate to the caller so the outer producer error
+    path can record the failure via ``runtime.producer_error``.  Only
+    ``AttributeError`` (method signature mismatch) is silently skipped.
     """
     mark_completed = getattr(result, "_marked_completed", None)
     if callable(mark_completed):
         try:
             await mark_completed(result.response)
-        except Exception:
+        except AttributeError:
+            # Method exists but signature mismatch — not a real failure.
             pass
-        return
+
+    # Capture the authoritative output from get_output().  When
+    # ``_marked_completed`` was not available, this call also finalizes
+    # the result.
     get_output = getattr(result, "get_output", None)
     if callable(get_output):
-        try:
-            await get_output()
-        except Exception:
-            pass
+        output = await get_output()
+        text = str(output).strip() if output is not None else None
+        runtime.authoritative_output = text or None
 
 
 async def _replay_missed_reasoning(
@@ -450,22 +466,16 @@ async def _replay_missed_reasoning(
 
 
 def _resolve_authoritative_final_text(runtime: AgentStreamRuntime) -> str | None:
-    """Return ``result.output`` as the authoritative final text, or None.
+    """Return the authoritative final text, or None.
 
-    The result is the agent's ``run_stream`` final output. Use this as the
-    completed-payload and persisted content source whenever it is non-empty.
-    The streamed ``runtime.content_parts`` is retained on
-    ``runtime.emitted_text`` for SSE live updates, the checkpoint writer,
-    and eval detection of lost-delta cases.
+    The primary source is ``runtime.authoritative_output``, which is
+    captured from ``await result.get_output()`` during stream completion.
+    This avoids relying on ``result.output`` which does not exist on
+    pydantic-ai 1.73+ ``StreamedRunResult``.
     """
-    result = runtime.producer_result
-    if result is None:
-        return None
-    output = getattr(result, "output", None)
-    if output is None:
-        return None
-    text = str(output).strip()
-    return text or None
+    if runtime.authoritative_output is not None:
+        return runtime.authoritative_output
+    return None
 
 
 def start_reader_ask_agent_stream(
@@ -519,7 +529,7 @@ def start_reader_ask_agent_stream(
                         )
                         if checkpoint_flush is not None:
                             await checkpoint_flush(runtime, force=False)
-                    await _mark_stream_result_completed(result)
+                    await _mark_stream_result_completed(result, runtime)
                     await _replay_missed_reasoning(
                         result, runtime, event_queue, assistant_message_id,
                     )
@@ -533,12 +543,9 @@ def start_reader_ask_agent_stream(
                         )
                         if checkpoint_flush is not None:
                             await checkpoint_flush(runtime, force=False)
-                    # Ensure the result's output is finalized so that
-                    # ``_resolve_authoritative_final_text`` can read
-                    # ``result.output``.  Without this, the snapshot-based
-                    # ``stream_responses`` branch may leave ``output`` unset
-                    # when the producer task finishes.
-                    await _mark_stream_result_completed(result)
+                    # Finalize the stream and capture the authoritative
+                    # output from ``await result.get_output()``.
+                    await _mark_stream_result_completed(result, runtime)
                     await _replay_missed_reasoning(
                         result, runtime, event_queue, assistant_message_id,
                     )
@@ -586,10 +593,11 @@ def finish_reader_ask_agent_stream(
     assistant_message_id: str,
 ) -> tuple[AgentStreamOutcome, tuple[str, dict[str, Any]] | None]:
     streamed_text = "".join(runtime.content_parts).strip()
-    # ``result.output`` is the authoritative source for the persisted and
-    # completed-payload content. ``runtime.emitted_text`` retains the raw
-    # stream for the checkpoint writer and for eval detection of lost-delta
-    # cases — never overwrite it here.
+    # ``runtime.authoritative_output`` (captured from ``await
+    # result.get_output()``) is the authoritative source for the persisted
+    # and completed-payload content. ``runtime.emitted_text`` retains the
+    # raw stream for the checkpoint writer and for eval detection of
+    # lost-delta cases — never overwrite it here.
     authoritative_text = _resolve_authoritative_final_text(runtime)
     final_content_md = authoritative_text if authoritative_text else streamed_text
     if runtime.producer_error is not None:

@@ -843,6 +843,223 @@ def _collect_sentence_windows(record: _RecordBundle, anchors: list[ReaderAskAnch
     return ordered
 
 
+def _collect_paragraph_sentences(
+    record: _RecordBundle,
+    *,
+    target_sentence_id: str | None,
+) -> list[dict[str, Any]]:
+    """Return the sentences in the paragraph containing the target sentence.
+
+    Paragraph identity is derived from ``render_scene.article.sentences``
+    using each entry's ``paragraph_id``. If no paragraph_id metadata exists
+    we fall back to a 3-sentence window around the target sentence.
+    """
+    sentences = record.render_scene.get("article", {}).get("sentences")
+    if not isinstance(sentences, list):
+        return []
+
+    if not target_sentence_id:
+        return []
+
+    target_paragraph_id: str | None = None
+    target_index: int | None = None
+    for index, item in enumerate(sentences):
+        if not isinstance(item, dict):
+            continue
+        if item.get("sentence_id") == target_sentence_id:
+            target_paragraph_id = item.get("paragraph_id")
+            target_index = index
+            break
+
+    if target_paragraph_id is not None:
+        paragraph_sentences = [
+            sentence for sentence in sentences
+            if isinstance(sentence, dict)
+            and sentence.get("paragraph_id") == target_paragraph_id
+        ]
+        return [_format_sentence_span(s) for s in paragraph_sentences if isinstance(s, dict)]
+
+    if target_index is None:
+        return []
+
+    # Fallback: 3-sentence window.
+    fallback = sentences[max(target_index - 1, 0):min(target_index + 2, len(sentences))]
+    return [_format_sentence_span(s) for s in fallback if isinstance(s, dict)]
+
+
+def _format_sentence_span(sentence: dict[str, Any]) -> dict[str, Any]:
+    sentence_id = sentence.get("sentence_id")
+    text = _truncate_text(sentence.get("text"), 320)
+    return {
+        "sentence_id": sentence_id,
+        "paragraph_id": sentence.get("paragraph_id"),
+        "text": text,
+        "is_active_anchor": False,
+    }
+
+
+def _build_record_context_payload(
+    record: _RecordBundle,
+    *,
+    scope: str,
+    target_sentence_id: str | None,
+) -> dict[str, Any]:
+    """Build a context payload for ``get_record_context`` based on scope.
+
+    ``scope`` is one of ``window`` (default), ``paragraph``, ``full``.
+    Length cap on ``scope='full'`` is 10000 chars; oversized articles are
+    truncated and marked ``truncated: true``.
+    """
+    can_load_more = scope
+    truncated = False
+    article_text = record.source_text or ""
+
+    if scope == "full":
+        if len(article_text) > 10000:
+            article_text = article_text[:10000]
+            truncated = True
+        sentence_window: list[dict[str, Any]] = [
+            {
+                "sentence_id": None,
+                "paragraph_id": None,
+                "text": article_text,
+                "is_active_anchor": False,
+            }
+        ]
+    elif scope == "paragraph":
+        sentence_window = _collect_paragraph_sentences(
+            record, target_sentence_id=target_sentence_id,
+        )
+        if not sentence_window:
+            # Fallback to 3 sentences around target so the tool still
+            # returns something useful.
+            sentences = record.render_scene.get("article", {}).get("sentences") or []
+            target_index = next(
+                (
+                    index
+                    for index, item in enumerate(sentences)
+                    if isinstance(item, dict) and item.get("sentence_id") == target_sentence_id
+                ),
+                None,
+            )
+            if target_index is not None:
+                sentence_window = [
+                    _format_sentence_span(s)
+                    for s in sentences[max(target_index - 1, 0):min(target_index + 2, len(sentences))]
+                    if isinstance(s, dict)
+                ]
+    else:  # 'window' default
+        anchors = _extract_active_anchors(record)
+        sentence_window = _collect_sentence_windows(record, anchors)
+        # Flatten the (anchor->window) shape to sentence spans.
+        flattened: list[dict[str, Any]] = []
+        for entry in sentence_window:
+            for item in entry.get("window", []):
+                flattened.append(
+                    {
+                        "sentence_id": item.get("sentence_id"),
+                        "paragraph_id": item.get("paragraph_id"),
+                        "text": item.get("text"),
+                        "translation_zh": item.get("translation_zh"),
+                        "is_active_anchor": False,
+                    }
+                )
+        sentence_window = flattened
+
+    active_anchor = None
+    sentences_lookup = sentence_map(record.render_scene)
+    if target_sentence_id:
+        target = sentences_lookup.get(target_sentence_id)
+        if target is not None:
+            active_anchor = {
+                "sentence_id": target_sentence_id,
+                "text": _truncate_text(target.get("text"), 240),
+                "paragraph_id": target.get("paragraph_id"),
+            }
+
+    return {
+        "record_id": str(record.record_id),
+        "record_title": record.title,
+        "active_anchor": active_anchor,
+        "sentence_window": sentence_window,
+        "can_load_more": can_load_more,
+        "scope": scope,
+        "target_sentence_id": target_sentence_id,
+        "truncated": truncated,
+    }
+
+
+def _extract_active_anchors(record: _RecordBundle) -> list[ReaderAskAnchorRef]:
+    """Return the anchors whose sentence IDs are known to this record.
+
+    When called outside the request scope (e.g. tests), ``record`` carries
+    no per-run anchors; we fall back to the first two sentences as a
+    cheap window so the tool still returns something useful.
+    """
+    sentences = record.render_scene.get("article", {}).get("sentences") or []
+    fallback_targets: list[str] = []
+    for sentence in sentences:
+        if isinstance(sentence, dict):
+            sid = sentence.get("sentence_id")
+            if isinstance(sid, str):
+                fallback_targets.append(sid)
+            if len(fallback_targets) >= 2:
+                break
+    if not fallback_targets:
+        return []
+    return [
+        ReaderAskAnchorRef(
+            anchor_type="sentence",
+            target_key=f"record:{record.record_id}:sentence:{sid}",
+            sentence_id=sid,
+        )
+        for sid in fallback_targets
+    ]
+
+
+def _collect_insight_entries(
+    record: _RecordBundle,
+    *,
+    target_sentence_id: str | None,
+    kind: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Round 2: collect insights with optional filters + translation_zh."""
+    translations = _translations_map(record)
+    entries_raw = record.render_scene.get("sentence_entries") or []
+    if not isinstance(entries_raw, list):
+        entries_raw = []
+
+    results: list[dict[str, Any]] = []
+    for entry in entries_raw:
+        if not isinstance(entry, dict):
+            continue
+        sentence_id = entry.get("sentence_id") or entry.get("sentenceId")
+        if not isinstance(sentence_id, str):
+            continue
+        if target_sentence_id and sentence_id != target_sentence_id:
+            continue
+        entry_kind = str(entry.get("entry_type") or entry.get("entryType") or "")
+        if kind and entry_kind != kind:
+            continue
+        results.append(
+            {
+                "insight_id": str(entry.get("id")),
+                "sentence_id": sentence_id,
+                "kind": entry_kind,
+                "title": _truncate_text(entry.get("title") or entry.get("label"), 80),
+                "content_md": _truncate_text(entry.get("content"), 360),
+                "translation_zh": _truncate_text(translations.get(sentence_id), 240) or None,
+                "source": "workflow",
+                "confidence": entry.get("confidence"),
+                "created_at": entry.get("created_at"),
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnchorRef]) -> list[dict[str, Any]]:
     entries_raw = record.render_scene.get("sentence_entries") or record.render_scene.get("sentenceEntries")
     if not isinstance(entries_raw, list):
@@ -868,8 +1085,11 @@ def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnch
 
 
 async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[str, Any]]:
-    # NOTE(optimization): vocabulary API 不支持搜索参数，当前仍需全量加载后内存过滤。
-    # 后续若 vocabulary service 支持搜索参数，应改为数据库侧过滤。
+    """Deprecated: replaced by ``_tool_get_user_vocabulary_book``.
+
+    Kept for legacy callers (e.g. ``_search_user_vocabulary_cb``). New
+    agent-loop entry points must use ``_tool_get_user_vocabulary_book``.
+    """
     items, _ = await vocabulary_svc.list_vocabulary(
         user_id=user_id,
         page=1,
@@ -895,6 +1115,191 @@ async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[s
             }
         )
     return matches[:cfg.MAX_PROMPT_ASSET_ITEMS]
+
+
+async def _tool_get_user_vocabulary_book(
+    user_id: UUID,
+    *,
+    lemma: str | None,
+    limit: int,
+    sort_by: str,
+) -> list[dict[str, Any]]:
+    """Round 2 tool: list vocabulary book entries for the user.
+
+    The vocabulary backend does not support search; we load the user's
+    entries and filter / sort in memory. Returns at most ``limit`` rows.
+    """
+    items, _ = await vocabulary_svc.list_vocabulary(
+        user_id=user_id,
+        page=1,
+        limit=200,
+        lite=False,
+    )
+
+    # Filter by lemma substring (case-insensitive).
+    query_lower = _normalize_text(lemma).lower() if lemma else ""
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        item_lemma = str(item.get("lemma") or "")
+        item_display = str(item.get("display_word") or "")
+        item_source = str(item.get("source_sentence") or "")
+        if query_lower:
+            haystack = " ".join([item_lemma, item_display, item_source]).lower()
+            if query_lower not in haystack:
+                continue
+        filtered.append(item)
+
+    # Sort.
+    if sort_by == "lemma_asc":
+        filtered.sort(key=lambda it: str(it.get("lemma") or "").lower())
+    else:
+        # Default: 'recent' — vocabulary service returns ORDER BY created_at DESC.
+        # list_vocabulary already sorts this way; we trust the service order
+        # but enforce here defensively.
+        filtered.sort(
+            key=lambda it: str(it.get("created_at") or ""),
+            reverse=True,
+        )
+
+    # Project to the agent-facing shape.
+    matches: list[dict[str, Any]] = []
+    for item in filtered[:limit]:
+        matches.append(
+            {
+                "id": str(item.get("id")),
+                "lemma": str(item.get("lemma") or ""),
+                "display_word": str(item.get("display_word") or ""),
+                "short_meaning": _truncate_text(item.get("short_meaning"), 80),
+                "source_sentence": _truncate_text(item.get("source_sentence"), 120),
+                "mastery_status": item.get("mastery_status"),
+            }
+        )
+    return matches
+
+
+async def _tool_resolve_known_reference_for_agent(
+    *,
+    user_id: UUID,
+    current_record_id: UUID,
+    query: str,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Round 2 resolver tool: wrap existing known-reference resolver.
+
+    Returns a stable dict shape with one of three statuses:
+    - ``resolved``  — single candidate match.
+    - ``ambiguous`` — multiple candidates; ``disambiguation_needed=True``,
+      model must trigger HITL picker.
+    - ``not_found`` — zero candidates.
+
+    No cross-HTTP HITL resume this round: results are returned to the
+    model so the main loop can decide how to present them.
+    """
+    # Lazy import to avoid circular import: resolver.py depends on this module
+    # only via the resolver facade.
+    from app.services.reader_ask.resolver import resolve_known_references
+
+    reference_needs = planner.ReaderAskReferenceNeeds(
+        requested=True,
+        query=query.strip() if isinstance(query, str) else None,
+        reason="agent_tool",
+    )
+
+    resolution = await resolve_known_references(
+        user_id=user_id,
+        current_record_id=current_record_id,
+        reference_needs=reference_needs,
+    )
+
+    status = resolution.status or "not_needed"
+    if status == "not_needed":
+        # Should not happen since reference_needs.requested=True, but fall back.
+        status = "not_found"
+
+    candidates: list[dict[str, Any]] = []
+    if status == "resolved":
+        candidates = [dict(record) for record in resolution.resolved_records]
+    elif status == "ambiguous":
+        candidates = [dict(record) for record in resolution.ambiguous_records]
+
+    # Apply top_k limit.
+    candidates = candidates[: max(1, top_k)]
+
+    if status == "resolved" and len(candidates) == 1:
+        return {
+            "status": "resolved",
+            "query": query,
+            "summary": f"Resolved to {candidates[0].get('title', 'one record')}",
+            "next_actions": [
+                "Use the resolved record's overview to ground the answer.",
+            ],
+            "artifacts": [f"record:{candidates[0].get('record_id')}"],
+            "ok": True,
+            "record": candidates[0] if candidates else None,
+            "disambiguation_needed": False,
+        }
+
+    if status == "ambiguous":
+        return {
+            "status": "ambiguous",
+            "query": query,
+            "summary": f"Multiple matches ({len(candidates)}) — disambiguation needed.",
+            "next_actions": [
+                "Ask the user to pick one of the candidates.",
+            ],
+            "artifacts": [
+                f"record:{c.get('record_id')}" for c in candidates if c.get("record_id")
+            ],
+            "ok": True,
+            "candidates": candidates,
+            "disambiguation_needed": True,
+        }
+
+    # not_found
+    return {
+        "status": "not_found",
+        "query": query,
+        "summary": "No matching records in workspace",
+        "next_actions": [
+            "Ask the user to be more specific or attach a record.",
+        ],
+        "artifacts": [],
+        "ok": False,
+        "disambiguation_needed": False,
+    }
+
+
+async def _tool_suggest_prompts(
+    suggestions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Round 2 suggestion tool: emit 2-3 follow-up chips.
+
+    The agent has already validated the suggestions before calling this
+    function (the agent tool layer enforces 2-3 + label/prompt). This
+    function is a thin observability seam that lets Round 2 record the
+    suggestions in tool trace / state. Front-end rendering wires up
+    in Round 4.
+    """
+    cleaned = [
+        {
+            "label": str(item.get("label", "")).strip()[:40],
+            "prompt": str(item.get("prompt", "")).strip()[:200],
+        }
+        for item in suggestions
+        if isinstance(item, dict)
+        and isinstance(item.get("label"), str)
+        and isinstance(item.get("prompt"), str)
+    ]
+    return {
+        "status": "success",
+        "summary": f"Suggested {len(cleaned)} follow-up prompt(s).",
+        "next_actions": [
+            "Render chips at the tail of the assistant message.",
+        ],
+        "artifacts": [f"suggestion:{item['label']}" for item in cleaned],
+        "ok": True,
+        "suggestions": cleaned,
+    }
 
 
 async def _tool_lookup_dictionary_entry(
@@ -1104,6 +1509,7 @@ def _build_user_visible_output(
     persisted_supplements: list[ReaderAskPersistedSupplement] | list[dict[str, Any]],
     reasoning_md: str | None = None,
     reasoning_status: str | None = None,
+    follow_up_suggestions: list[Any] | None = None,
 ) -> ReaderAskUserVisibleOutput:
     return output_contract_svc.build_user_visible_output(
         content_md=content_md,
@@ -1127,6 +1533,7 @@ def _build_user_visible_output(
         persisted_supplements=persisted_supplements,
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
+        follow_up_suggestions=follow_up_suggestions,
     )
 
 
@@ -1229,6 +1636,7 @@ def _build_stream_checkpoint_output_json(
         persisted_supplements=persisted_supplements,
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
+        follow_up_suggestions=runtime_state.latest_suggestions or None,
     )
     return output.model_dump(mode="json")
 
@@ -1276,9 +1684,16 @@ def _build_minimal_contract(
     )
 
 
-def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot | None) -> dict[str, Any]:
+def _planning_snapshot_json(
+    planning_snapshot: planner.ReaderAskPlanningSnapshot | None,
+    *,
+    planner_route_used: str = "planner_first",
+) -> dict[str, Any]:
     if planning_snapshot is None:
-        return {"is_fast_path": True}
+        return {
+            "is_fast_path": planner_route_used == "fast_path",
+            "planner_route_used": planner_route_used,
+        }
     # Round 1 — FastPathPlanningSnapshot is a lightweight dataclass that
     # does not carry planner_decision / reference_needs / structured_asset_*
     # fields. The legacy serializer assumes the full ReaderAskPlanningSnapshot
@@ -1313,6 +1728,7 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
             "disambiguation_state": None,
             "external_asset_disambiguation_state": None,
             "is_fast_path": True,
+            "planner_route_used": planner_route_used,
         }
     return {
         "resolved_intent": planning_snapshot.resolved_intent,
@@ -1369,6 +1785,8 @@ def _planning_snapshot_json(planning_snapshot: planner.ReaderAskPlanningSnapshot
         "external_asset_disambiguation_state": planning_snapshot.external_asset_disambiguation_state.model_dump(mode="json")
         if planning_snapshot.external_asset_disambiguation_state
         else None,
+        "is_fast_path": planner_route_used == "fast_path",
+        "planner_route_used": planner_route_used,
     }
 
 
@@ -1461,7 +1879,7 @@ async def _upsert_eval_trace_record(
     return await repo.upsert_eval_trace(
         turn_run_id=turn_run_id,
         trace_schema_version=_EVAL_TRACE_SCHEMA_VERSION,
-        planning_snapshot_json=_planning_snapshot_json(planning_snapshot) or (existing or {}).get("planning_snapshot_json") or {},
+        planning_snapshot_json=_planning_snapshot_json(planning_snapshot, planner_route_used=runtime_state.planner_route_used) or (existing or {}).get("planning_snapshot_json") or {},
         capability_trace_json=_capability_trace_json(runtime_state=runtime_state, context_plan=context_plan)
         if context_plan is not None or runtime_state.source_labels
         else (existing or {}).get("capability_trace_json") or {},
@@ -2306,6 +2724,7 @@ async def stream_thread_message(
     selected_model_option: model_options_svc.ResolvedReaderAskModelOption | None = None
     final_content_md = ""
     stream_runtime: AgentStreamRuntime | None = None
+    submission_mode: ReaderAskSubmissionMode = "chat"
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -2736,18 +3155,59 @@ async def stream_thread_message(
         primary_anchor = resolved_anchors[0] if resolved_anchors else None
         dictionary_anchor = next((anchor for anchor in resolved_anchors if anchor.anchor_type == "dictionary_entry"), None)
 
-        async def get_record_context_cb() -> dict[str, Any]:
-            return {
-                "title": record.title,
-                "source_excerpt": _truncate_text(record.source_text, cfg.MAX_CONTEXT_TEXT),
-                "sentence_windows": _collect_sentence_windows(record, resolved_anchors),
-            }
+        async def get_record_context_cb(
+            _deps: Any = None,
+            scope: str = "window",
+            target_sentence_id: str | None = None,
+        ) -> dict[str, Any]:
+            return _build_record_context_payload(
+                record,
+                scope=scope,
+                target_sentence_id=target_sentence_id,
+            )
 
-        async def get_record_insights_cb() -> list[dict[str, Any]]:
-            return _collect_sentence_entries(record, resolved_anchors)
+        async def get_record_insights_cb(
+            _deps: Any = None,
+            target_sentence_id: str | None = None,
+            kind: str | None = None,
+            limit: int = 5,
+        ) -> list[dict[str, Any]]:
+            return _collect_insight_entries(
+                record,
+                target_sentence_id=target_sentence_id,
+                kind=kind,
+                limit=limit,
+            )
 
-        async def search_user_vocabulary_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_search_user_vocabulary(user_id, query)
+        async def get_user_vocabulary_book_cb(
+            _deps: Any = None,
+            lemma: str | None = None,
+            limit: int = 10,
+            sort_by: str = "recent",
+        ) -> list[dict[str, Any]]:
+            return await _tool_get_user_vocabulary_book(
+                user_id,
+                lemma=lemma,
+                limit=limit,
+                sort_by=sort_by,
+            )
+
+        async def resolve_known_reference_cb(
+            _deps: Any = None,
+            query: str = "",
+            top_k: int = 5,
+        ) -> dict[str, Any]:
+            return await _tool_resolve_known_reference_for_agent(
+                user_id=user_id,
+                current_record_id=record.record_id,
+                query=query,
+                top_k=top_k,
+            )
+
+        async def suggest_prompts_cb(
+            suggestions: list[dict[str, Any]],
+        ) -> dict[str, Any]:
+            return await _tool_suggest_prompts(suggestions)
 
         async def lookup_dictionary_entry_cb(
             query: str | None,
@@ -2976,13 +3436,11 @@ async def stream_thread_message(
             primary_anchor=primary_anchor,
             get_record_context_fn=get_record_context_cb,
             get_record_insights_fn=get_record_insights_cb,
-            search_user_vocabulary_fn=search_user_vocabulary_cb,
-            lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
-            run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+            get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
+            resolve_known_reference_fn=resolve_known_reference_cb,
             generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+            suggest_prompts_fn=suggest_prompts_cb,
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
-            dictionary_item_to_citation_fn=_dictionary_item_to_citation,
-            dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
         checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
@@ -3134,13 +3592,11 @@ async def stream_thread_message(
                         primary_anchor=primary_anchor,
                         get_record_context_fn=get_record_context_cb,
                         get_record_insights_fn=get_record_insights_cb,
-                        search_user_vocabulary_fn=search_user_vocabulary_cb,
-                        lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
-                        run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+                        get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
+                        resolve_known_reference_fn=resolve_known_reference_cb,
                         generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+                        suggest_prompts_fn=suggest_prompts_cb,
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
-                        dictionary_item_to_citation_fn=_dictionary_item_to_citation,
-                        dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
                     )
                     replan_content = await run_reader_ask_replan(
                         replan_deps=replan_deps,
@@ -3314,6 +3770,7 @@ async def stream_thread_message(
             persisted_supplements=[],
             reasoning_md=stream_runtime.emitted_reasoning or None,
             reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
+            follow_up_suggestions=runtime_state.latest_suggestions or None,
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         updated = await repo.update_message(
@@ -3506,6 +3963,7 @@ async def retry_thread_message(
     final_content_md = ""
     persisted_supplements_json: list[dict[str, Any]] = []
     stream_runtime: AgentStreamRuntime | None = None
+    submission_mode: ReaderAskSubmissionMode = "chat"
 
     try:
         thread = await repo.get_thread(user_id, thread_id)
@@ -3928,18 +4386,59 @@ async def retry_thread_message(
         primary_anchor = resolved_anchors[0] if resolved_anchors else None
         dictionary_anchor = next((anchor for anchor in resolved_anchors if anchor.anchor_type == "dictionary_entry"), None)
 
-        async def get_record_context_cb() -> dict[str, Any]:
-            return {
-                "title": record.title,
-                "source_excerpt": _truncate_text(record.source_text, cfg.MAX_CONTEXT_TEXT),
-                "sentence_windows": _collect_sentence_windows(record, resolved_anchors),
-            }
+        async def get_record_context_cb(
+            _deps: Any = None,
+            scope: str = "window",
+            target_sentence_id: str | None = None,
+        ) -> dict[str, Any]:
+            return _build_record_context_payload(
+                record,
+                scope=scope,
+                target_sentence_id=target_sentence_id,
+            )
 
-        async def get_record_insights_cb() -> list[dict[str, Any]]:
-            return _collect_sentence_entries(record, resolved_anchors)
+        async def get_record_insights_cb(
+            _deps: Any = None,
+            target_sentence_id: str | None = None,
+            kind: str | None = None,
+            limit: int = 5,
+        ) -> list[dict[str, Any]]:
+            return _collect_insight_entries(
+                record,
+                target_sentence_id=target_sentence_id,
+                kind=kind,
+                limit=limit,
+            )
 
-        async def search_user_vocabulary_cb(query: str) -> list[dict[str, Any]]:
-            return await _tool_search_user_vocabulary(user_id, query)
+        async def get_user_vocabulary_book_cb(
+            _deps: Any = None,
+            lemma: str | None = None,
+            limit: int = 10,
+            sort_by: str = "recent",
+        ) -> list[dict[str, Any]]:
+            return await _tool_get_user_vocabulary_book(
+                user_id,
+                lemma=lemma,
+                limit=limit,
+                sort_by=sort_by,
+            )
+
+        async def resolve_known_reference_cb(
+            _deps: Any = None,
+            query: str = "",
+            top_k: int = 5,
+        ) -> dict[str, Any]:
+            return await _tool_resolve_known_reference_for_agent(
+                user_id=user_id,
+                current_record_id=record.record_id,
+                query=query,
+                top_k=top_k,
+            )
+
+        async def suggest_prompts_cb(
+            suggestions: list[dict[str, Any]],
+        ) -> dict[str, Any]:
+            return await _tool_suggest_prompts(suggestions)
 
         async def lookup_dictionary_entry_cb(
             query: str | None,
@@ -4169,13 +4668,11 @@ async def retry_thread_message(
             primary_anchor=primary_anchor,
             get_record_context_fn=get_record_context_cb,
             get_record_insights_fn=get_record_insights_cb,
-            search_user_vocabulary_fn=search_user_vocabulary_cb,
-            lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
-            run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+            get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
+            resolve_known_reference_fn=resolve_known_reference_cb,
             generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+            suggest_prompts_fn=suggest_prompts_cb,
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
-            dictionary_item_to_citation_fn=_dictionary_item_to_citation,
-            dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
         )
         checkpoint = stream_checkpoint_svc.TurnRunStreamCheckpoint(
             turn_run_id=active_turn_run_id,
@@ -4327,13 +4824,11 @@ async def retry_thread_message(
                         primary_anchor=primary_anchor,
                         get_record_context_fn=get_record_context_cb,
                         get_record_insights_fn=get_record_insights_cb,
-                        search_user_vocabulary_fn=search_user_vocabulary_cb,
-                        lookup_dictionary_entry_fn=lookup_dictionary_entry_cb,
-                        run_dictionary_ai_context_explain_fn=run_dictionary_ai_context_explain_cb,
+                        get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
+                        resolve_known_reference_fn=resolve_known_reference_cb,
                         generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+                        suggest_prompts_fn=suggest_prompts_cb,
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
-                        dictionary_item_to_citation_fn=_dictionary_item_to_citation,
-                        dictionary_ai_to_citation_fn=_dictionary_ai_to_citation,
                     )
                     replan_content = await run_reader_ask_replan(
                         replan_deps=replan_deps,
@@ -4508,6 +5003,7 @@ async def retry_thread_message(
             persisted_supplements=persisted_supplements_json,
             reasoning_md=stream_runtime.emitted_reasoning or None,
             reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
+            follow_up_suggestions=runtime_state.latest_suggestions or None,
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         await repo.update_message(

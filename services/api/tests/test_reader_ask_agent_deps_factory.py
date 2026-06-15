@@ -1,11 +1,11 @@
-"""Tests for ReaderAskAgentDeps factory — build_reader_ask_agent_deps."""
+"""Tests for ReaderAskAgentDeps factory — build_reader_ask_agent_deps (Round 2)."""
 
 from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock
 
-from app.agents.reader_ask_tool_registry import READER_ASK_TOOL_NAMES
+from app.agents.reader_ask_tool_registry import agent_callable_tool_names
 from app.schemas.reader_ask import ReaderAskAnchorRef, ReaderAskCitation
 from app.services.reader_ask.agent_deps_factory import build_reader_ask_agent_deps
 
@@ -27,14 +27,6 @@ def _citation() -> ReaderAskCitation:
 
 
 def _vocab_cite(item: dict) -> ReaderAskCitation:  # noqa: ARG001
-    return _citation()
-
-
-def _dict_cite(item: dict) -> ReaderAskCitation:  # noqa: ARG001
-    return _citation()
-
-
-def _dict_ai_cite(item: dict, q: str, eid: int) -> ReaderAskCitation:  # noqa: ARG001
     return _citation()
 
 
@@ -60,25 +52,26 @@ def _make_deps(
         primary_anchor=primary_anchor,
         get_record_context_fn=AsyncMock(),
         get_record_insights_fn=AsyncMock(),
-        search_user_vocabulary_fn=AsyncMock(),
-        lookup_dictionary_entry_fn=AsyncMock(),
-        run_dictionary_ai_context_explain_fn=AsyncMock(),
+        get_user_vocabulary_book_fn=AsyncMock(),
+        resolve_known_reference_fn=AsyncMock(),
         generate_sentence_annotation_fn=AsyncMock(),
+        suggest_prompts_fn=AsyncMock(),
         vocabulary_item_to_citation_fn=_vocab_cite,
-        dictionary_item_to_citation_fn=_dict_cite,
-        dictionary_ai_to_citation_fn=_dict_ai_cite,
         has_dictionary_anchor=has_dictionary_anchor,
         has_generated_annotation_cache=has_generated_annotation_cache,
     )
 
 
 class TestBuildReaderAskAgentDepsToolAvailability:
-    """Tool availability is correctly wired by the factory."""
+    """Tool availability is correctly wired by the factory (Round 2: only
+    the 8 agent-callable tools are exposed)."""
 
-    def test_with_primary_anchor_all_tools_allowed(self) -> None:
+    def test_with_primary_anchor_all_agent_callable_tools_allowed(self) -> None:
         deps = _make_deps(primary_anchor=_anchor())
         assert deps.tool_availability is not None
-        assert deps.tool_availability.allowed_tool_names == READER_ASK_TOOL_NAMES
+        assert deps.tool_availability.allowed_tool_names == agent_callable_tool_names()
+        # 8 agent-callable tools total
+        assert len(deps.tool_availability.allowed_tool_names) == 8
 
     def test_without_primary_anchor_write_tools_unavailable(self) -> None:
         deps = _make_deps(primary_anchor=None)
@@ -90,7 +83,7 @@ class TestBuildReaderAskAgentDepsToolAvailability:
     def test_without_primary_anchor_all_tools_still_allowed(self) -> None:
         """Conservative baseline: no tool is removed from allowed_tool_names."""
         deps = _make_deps(primary_anchor=None)
-        assert deps.tool_availability.allowed_tool_names == READER_ASK_TOOL_NAMES
+        assert deps.tool_availability.allowed_tool_names == agent_callable_tool_names()
 
 
 class TestBuildReaderAskAgentDepsPreservesCallbacks:
@@ -99,10 +92,10 @@ class TestBuildReaderAskAgentDepsPreservesCallbacks:
     def test_callback_fns_preserved(self) -> None:
         get_ctx = AsyncMock()
         get_insights = AsyncMock()
-        search_vocab = AsyncMock()
-        lookup_dict = AsyncMock()
-        dict_ai = AsyncMock()
+        get_vocab = AsyncMock()
+        resolve_known = AsyncMock()
         gen_annot = AsyncMock()
+        suggest = AsyncMock()
 
         from app.agents.reader_ask_agent import ReaderAskRuntimeState
 
@@ -118,24 +111,20 @@ class TestBuildReaderAskAgentDepsPreservesCallbacks:
             primary_anchor=None,
             get_record_context_fn=get_ctx,
             get_record_insights_fn=get_insights,
-            search_user_vocabulary_fn=search_vocab,
-            lookup_dictionary_entry_fn=lookup_dict,
-            run_dictionary_ai_context_explain_fn=dict_ai,
+            get_user_vocabulary_book_fn=get_vocab,
+            resolve_known_reference_fn=resolve_known,
             generate_sentence_annotation_fn=gen_annot,
+            suggest_prompts_fn=suggest,
             vocabulary_item_to_citation_fn=_vocab_cite,
-            dictionary_item_to_citation_fn=_dict_cite,
-            dictionary_ai_to_citation_fn=_dict_ai_cite,
         )
 
         assert deps.get_record_context_fn is get_ctx
         assert deps.get_record_insights_fn is get_insights
-        assert deps.search_user_vocabulary_fn is search_vocab
-        assert deps.lookup_dictionary_entry_fn is lookup_dict
-        assert deps.run_dictionary_ai_context_explain_fn is dict_ai
+        assert deps.get_user_vocabulary_book_fn is get_vocab
+        assert deps.resolve_known_reference_fn is resolve_known
         assert deps.generate_sentence_annotation_fn is gen_annot
+        assert deps.suggest_prompts_fn is suggest
         assert deps.vocabulary_item_to_citation_fn is _vocab_cite
-        assert deps.dictionary_item_to_citation_fn is _dict_cite
-        assert deps.dictionary_ai_to_citation_fn is _dict_ai_cite
 
     def test_runtime_state_preserved(self) -> None:
         from app.agents.reader_ask_agent import ReaderAskRuntimeState
@@ -157,13 +146,11 @@ class TestBuildReaderAskAgentDepsPreservesCallbacks:
             primary_anchor=None,
             get_record_context_fn=AsyncMock(),
             get_record_insights_fn=AsyncMock(),
-            search_user_vocabulary_fn=AsyncMock(),
-            lookup_dictionary_entry_fn=AsyncMock(),
-            run_dictionary_ai_context_explain_fn=AsyncMock(),
+            get_user_vocabulary_book_fn=AsyncMock(),
+            resolve_known_reference_fn=AsyncMock(),
             generate_sentence_annotation_fn=AsyncMock(),
+            suggest_prompts_fn=AsyncMock(),
             vocabulary_item_to_citation_fn=_vocab_cite,
-            dictionary_item_to_citation_fn=_dict_cite,
-            dictionary_ai_to_citation_fn=_dict_ai_cite,
         )
         assert deps_custom.state is state
         assert deps_custom.state.max_tool_calls == 10
@@ -197,12 +184,10 @@ class TestBuildReaderAskAgentDepsBaselineDefaults:
             primary_anchor=None,
             get_record_context_fn=AsyncMock(),
             get_record_insights_fn=AsyncMock(),
-            search_user_vocabulary_fn=AsyncMock(),
-            lookup_dictionary_entry_fn=AsyncMock(),
-            run_dictionary_ai_context_explain_fn=AsyncMock(),
+            get_user_vocabulary_book_fn=AsyncMock(),
+            resolve_known_reference_fn=AsyncMock(),
             generate_sentence_annotation_fn=AsyncMock(),
+            suggest_prompts_fn=AsyncMock(),
             vocabulary_item_to_citation_fn=_vocab_cite,
-            dictionary_item_to_citation_fn=_dict_cite,
-            dictionary_ai_to_citation_fn=_dict_ai_cite,
         )
         assert deps.event_queue is q

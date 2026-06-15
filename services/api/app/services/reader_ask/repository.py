@@ -63,6 +63,10 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "reasoning_status",
         metadata.get("reasoning_status") if use_legacy_fallback else None,
     )
+    follow_up_suggestions = visible.get(
+        "follow_up_suggestions",
+        metadata.get("follow_up_suggestions") if use_legacy_fallback else None,
+    )
     usage_event_id = (
         str(row["current_turn_run_usage_event_id"])
         if row.get("current_turn_run_usage_event_id")
@@ -96,6 +100,7 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "persisted_supplements": persisted_supplements,
         "reasoning_md": reasoning_md,
         "reasoning_status": reasoning_status,
+        "follow_up_suggestions": follow_up_suggestions,
         "usage_event_id": usage_event_id,
         "current_turn_run_id": str(row["current_turn_run_id"]) if row.get("current_turn_run_id") else None,
         "current_turn_run": _turn_run_row_to_dict(row) if row.get("current_turn_run_id") else None,

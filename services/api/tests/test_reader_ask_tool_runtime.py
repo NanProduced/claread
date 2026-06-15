@@ -34,13 +34,11 @@ def _make_deps() -> ReaderAskAgentDeps:
         primary_anchor=_make_anchor(),
         get_record_context_fn=AsyncMock(return_value={"summary": "Context loaded"}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
+        suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=AsyncMock(),
-        dictionary_item_to_citation_fn=AsyncMock(),
-        dictionary_ai_to_citation_fn=AsyncMock(),
     )
 
 

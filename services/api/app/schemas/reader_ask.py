@@ -664,6 +664,10 @@ class ReaderAskMessage(BaseModel):
     reasoning_md: str | None = None
     reasoning_status: Literal["idle", "streaming", "completed"] | None = None
     usage_event_id: str | None = None
+    # Round 2: follow-up prompt suggestions emitted by
+    # ``suggest_prompts`` tool. The frontend renders them as clickable
+    # chips at the tail of the assistant message.
+    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
     created_at: str
     updated_at: str
 
@@ -761,6 +765,17 @@ class ReaderAskMessageRetryRequest(BaseModel):
     model: str | None = None
 
 
+class ReaderAskFollowUpSuggestion(BaseModel):
+    """A single follow-up prompt chip (Round 2 suggest_prompts tool).
+
+    ``label`` is the chip text (≤40 chars); ``prompt`` is the actual
+    user message to send when the chip is clicked (≤200 chars).
+    """
+
+    label: str
+    prompt: str
+
+
 class ReaderAskUserVisibleOutput(BaseModel):
     content_md: str
     submission_mode: ReaderAskSubmissionMode = "chat"
@@ -783,6 +798,11 @@ class ReaderAskUserVisibleOutput(BaseModel):
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
     reasoning_md: str | None = None
     reasoning_status: Literal["idle", "streaming", "completed"] | None = None
+    # Round 2: follow-up prompt suggestions emitted by the
+    # ``suggest_prompts`` tool. The frontend renders them as clickable
+    # chips at the tail of the assistant message. None when the tool
+    # was not called.
+    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
 
 
 class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):

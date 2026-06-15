@@ -1,4 +1,4 @@
-"""Tests for the Ask Claread tool registry (P5-1)."""
+"""Tests for the Ask Claread tool registry (P5-1, Round 2 tool surface)."""
 
 from app.agents.reader_ask_tool_registry import (
     READER_ASK_TOOL_NAMES,
@@ -6,13 +6,19 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_GENERATE_SENTENCE_ANNOTATION,
     TOOL_GET_RECORD_CONTEXT,
     TOOL_GET_RECORD_INSIGHTS,
+    TOOL_GET_USER_VOCABULARY_BOOK,
     TOOL_LOOKUP_DICTIONARY_ENTRY,
+    TOOL_LOOKUP_RECORD_BY_EMBEDDING,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
+    TOOL_RESOLVE_KNOWN_REFERENCE,
     TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
     TOOL_SEARCH_USER_VOCABULARY,
+    TOOL_SUGGEST_PROMPTS,
     ToolSpec,
+    agent_callable_tool_names,
     get_tool_spec,
+    is_agent_callable,
     is_write_proposal_tool,
     requires_anchor,
 )
@@ -21,25 +27,48 @@ from app.agents.reader_ask_tool_registry import (
 # Registry completeness
 # ---------------------------------------------------------------------------
 
-_EXPECTED_TOOL_NAMES = frozenset({
-    "get_record_context",
-    "get_record_insights",
-    "search_user_vocabulary",
-    "lookup_dictionary_entry",
-    "run_dictionary_ai_context_explain",
-    "generate_sentence_annotation",
-    "propose_save_note",
-    "propose_save_highlight",
+_ALL_TOOL_NAMES = frozenset({
+    # Read / context
+    TOOL_GET_RECORD_CONTEXT,
+    TOOL_GET_RECORD_INSIGHTS,
+    TOOL_GET_USER_VOCABULARY_BOOK,
+    # Resolver
+    TOOL_RESOLVE_KNOWN_REFERENCE,
+    # Annotation
+    TOOL_GENERATE_SENTENCE_ANNOTATION,
+    # Write-proposal
+    TOOL_PROPOSE_SAVE_NOTE,
+    TOOL_PROPOSE_SAVE_HIGHLIGHT,
+    # Suggestion
+    TOOL_SUGGEST_PROMPTS,
+    # Reserved RAG
+    TOOL_LOOKUP_RECORD_BY_EMBEDDING,
+    # Deprecated (Round 2: kept as schema entries, agent_callable=False)
+    TOOL_SEARCH_USER_VOCABULARY,
+    TOOL_LOOKUP_DICTIONARY_ENTRY,
+    TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
 })
 
+_AGENT_CALLABLE_NAMES = frozenset({
+    TOOL_GET_RECORD_CONTEXT,
+    TOOL_GET_RECORD_INSIGHTS,
+    TOOL_GET_USER_VOCABULARY_BOOK,
+    TOOL_RESOLVE_KNOWN_REFERENCE,
+    TOOL_GENERATE_SENTENCE_ANNOTATION,
+    TOOL_PROPOSE_SAVE_NOTE,
+    TOOL_PROPOSE_SAVE_HIGHLIGHT,
+    TOOL_SUGGEST_PROMPTS,
+})
 
-def test_registry_contains_exactly_8_tools() -> None:
-    assert set(READER_ASK_TOOL_REGISTRY.keys()) == _EXPECTED_TOOL_NAMES
-    assert len(READER_ASK_TOOL_REGISTRY) == 8
+_NON_AGENT_CALLABLE_NAMES = _ALL_TOOL_NAMES - _AGENT_CALLABLE_NAMES
+
+
+def test_registry_contains_round2_tools() -> None:
+    assert set(READER_ASK_TOOL_REGISTRY.keys()) == _ALL_TOOL_NAMES
 
 
 def test_tool_names_constant_matches_registry() -> None:
-    assert READER_ASK_TOOL_NAMES == _EXPECTED_TOOL_NAMES
+    assert READER_ASK_TOOL_NAMES == _ALL_TOOL_NAMES
 
 
 def test_every_tool_name_is_unique() -> None:
@@ -48,56 +77,88 @@ def test_every_tool_name_is_unique() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Agent-callable filter — the main agent only sees a subset
+# ---------------------------------------------------------------------------
+
+
+def test_agent_callable_tool_names_set() -> None:
+    assert agent_callable_tool_names() == _AGENT_CALLABLE_NAMES
+
+
+def test_reserved_rag_tool_not_agent_callable() -> None:
+    spec = READER_ASK_TOOL_REGISTRY[TOOL_LOOKUP_RECORD_BY_EMBEDDING]
+    assert spec.agent_callable is False
+    assert is_agent_callable(TOOL_LOOKUP_RECORD_BY_EMBEDDING) is False
+
+
+def test_deprecated_vocabulary_tool_not_agent_callable() -> None:
+    spec = READER_ASK_TOOL_REGISTRY[TOOL_SEARCH_USER_VOCABULARY]
+    assert spec.agent_callable is False
+    assert is_agent_callable(TOOL_SEARCH_USER_VOCABULARY) is False
+
+
+def test_deprecated_dictionary_tools_not_agent_callable() -> None:
+    for name in (TOOL_LOOKUP_DICTIONARY_ENTRY, TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN):
+        spec = READER_ASK_TOOL_REGISTRY[name]
+        assert spec.agent_callable is False, f"{name}: deprecated tool must not be agent-callable"
+        assert is_agent_callable(name) is False
+
+
+def test_is_agent_callable_unknown_returns_false() -> None:
+    assert is_agent_callable("nonexistent_tool") is False
+
+
+# ---------------------------------------------------------------------------
 # Per-tool metadata
 # ---------------------------------------------------------------------------
 
 _EXPECTED_SPECS: dict[str, dict] = {
-    "get_record_context": {
+    TOOL_GET_RECORD_CONTEXT: {
         "category": "context",
         "effect": "read",
         "requires_anchor": False,
         "consumes_budget_when_precondition_fails": True,
         "agent_callable": True,
         "output_kind": "dict_or_none",
-        "observation_statuses": ("success",),
+        "observation_statuses": ("success", "warning"),
     },
-    "get_record_insights": {
+    TOOL_GET_RECORD_INSIGHTS: {
         "category": "context",
         "effect": "read",
         "requires_anchor": False,
         "consumes_budget_when_precondition_fails": True,
         "agent_callable": True,
         "output_kind": "list_or_empty",
-        "observation_statuses": ("success",),
+        "observation_statuses": ("success", "warning"),
     },
-    "search_user_vocabulary": {
+    TOOL_GET_USER_VOCABULARY_BOOK: {
         "category": "vocabulary",
         "effect": "read",
         "requires_anchor": False,
         "consumes_budget_when_precondition_fails": True,
         "agent_callable": True,
         "output_kind": "list_or_empty",
-        "observation_statuses": ("success",),
+        "observation_statuses": ("success", "warning"),
     },
-    "lookup_dictionary_entry": {
-        "category": "dictionary",
+    TOOL_RESOLVE_KNOWN_REFERENCE: {
+        "category": "resolver",
         "effect": "read",
         "requires_anchor": False,
         "consumes_budget_when_precondition_fails": True,
         "agent_callable": True,
         "output_kind": "dict_or_none",
-        "observation_statuses": ("success",),
+        "observation_statuses": ("success", "warning"),
     },
-    "run_dictionary_ai_context_explain": {
-        "category": "dictionary",
+    TOOL_SUGGEST_PROMPTS: {
+        "category": "suggestion",
         "effect": "read",
         "requires_anchor": False,
         "consumes_budget_when_precondition_fails": True,
         "agent_callable": True,
         "output_kind": "dict_or_none",
-        "observation_statuses": ("success",),
+        "observation_statuses": ("success", "warning"),
     },
-    "generate_sentence_annotation": {
+    TOOL_GENERATE_SENTENCE_ANNOTATION: {
         "category": "annotation",
         "effect": "read",
         "requires_anchor": False,
@@ -106,7 +167,7 @@ _EXPECTED_SPECS: dict[str, dict] = {
         "output_kind": "dict_or_none",
         "observation_statuses": ("success",),
     },
-    "propose_save_note": {
+    TOOL_PROPOSE_SAVE_NOTE: {
         "category": "write_proposal",
         "effect": "propose_write",
         "requires_anchor": True,
@@ -115,7 +176,7 @@ _EXPECTED_SPECS: dict[str, dict] = {
         "output_kind": "dict_always",
         "observation_statuses": ("success", "error"),
     },
-    "propose_save_highlight": {
+    TOOL_PROPOSE_SAVE_HIGHLIGHT: {
         "category": "write_proposal",
         "effect": "propose_write",
         "requires_anchor": True,
@@ -123,6 +184,42 @@ _EXPECTED_SPECS: dict[str, dict] = {
         "agent_callable": True,
         "output_kind": "dict_always",
         "observation_statuses": ("success", "error"),
+    },
+    TOOL_LOOKUP_RECORD_BY_EMBEDDING: {
+        "category": "context",
+        "effect": "read",
+        "requires_anchor": False,
+        "consumes_budget_when_precondition_fails": True,
+        "agent_callable": False,
+        "output_kind": "list_or_empty",
+        "observation_statuses": ("success", "warning"),
+    },
+    TOOL_SEARCH_USER_VOCABULARY: {
+        "category": "vocabulary",
+        "effect": "read",
+        "requires_anchor": False,
+        "consumes_budget_when_precondition_fails": True,
+        "agent_callable": False,
+        "output_kind": "list_or_empty",
+        "observation_statuses": ("success",),
+    },
+    TOOL_LOOKUP_DICTIONARY_ENTRY: {
+        "category": "dictionary",
+        "effect": "read",
+        "requires_anchor": False,
+        "consumes_budget_when_precondition_fails": True,
+        "agent_callable": False,
+        "output_kind": "dict_or_none",
+        "observation_statuses": ("success",),
+    },
+    TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN: {
+        "category": "dictionary",
+        "effect": "read",
+        "requires_anchor": False,
+        "consumes_budget_when_precondition_fails": True,
+        "agent_callable": False,
+        "output_kind": "dict_or_none",
+        "observation_statuses": ("success",),
     },
 }
 
@@ -148,11 +245,12 @@ def test_per_tool_metadata() -> None:
 # Helper: is_write_proposal_tool
 # ---------------------------------------------------------------------------
 
+
 def test_is_write_proposal_tool_only_for_propose_tools() -> None:
     assert is_write_proposal_tool("propose_save_note") is True
     assert is_write_proposal_tool("propose_save_highlight") is True
     # All other tools must NOT be write-proposal tools
-    for name in _EXPECTED_TOOL_NAMES - {"propose_save_note", "propose_save_highlight"}:
+    for name in _ALL_TOOL_NAMES - {"propose_save_note", "propose_save_highlight"}:
         assert is_write_proposal_tool(name) is False, f"{name} should not be write_proposal"
 
 
@@ -164,13 +262,14 @@ def test_is_write_proposal_tool_unknown_returns_false() -> None:
 # Helper: requires_anchor
 # ---------------------------------------------------------------------------
 
+
 def test_requires_anchor_for_write_proposal_tools() -> None:
     assert requires_anchor("propose_save_note") is True
     assert requires_anchor("propose_save_highlight") is True
 
 
 def test_requires_anchor_false_for_non_write_tools() -> None:
-    for name in _EXPECTED_TOOL_NAMES - {"propose_save_note", "propose_save_highlight"}:
+    for name in _ALL_TOOL_NAMES - {"propose_save_note", "propose_save_highlight"}:
         assert requires_anchor(name) is False, f"{name} should not require anchor"
 
 
@@ -181,6 +280,7 @@ def test_requires_anchor_unknown_returns_false() -> None:
 # ---------------------------------------------------------------------------
 # Helper: get_tool_spec
 # ---------------------------------------------------------------------------
+
 
 def test_get_tool_spec_returns_spec_for_known_tool() -> None:
     spec = get_tool_spec("get_record_context")
@@ -197,27 +297,49 @@ def test_get_tool_spec_returns_none_for_unknown_tool() -> None:
 # Tool-name constants match string values
 # ---------------------------------------------------------------------------
 
+
 def test_tool_name_constants_match_strings() -> None:
     assert TOOL_GET_RECORD_CONTEXT == "get_record_context"
     assert TOOL_GET_RECORD_INSIGHTS == "get_record_insights"
-    assert TOOL_SEARCH_USER_VOCABULARY == "search_user_vocabulary"
-    assert TOOL_LOOKUP_DICTIONARY_ENTRY == "lookup_dictionary_entry"
-    assert TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN == "run_dictionary_ai_context_explain"
+    assert TOOL_GET_USER_VOCABULARY_BOOK == "get_user_vocabulary_book"
+    assert TOOL_RESOLVE_KNOWN_REFERENCE == "resolve_known_reference"
     assert TOOL_GENERATE_SENTENCE_ANNOTATION == "generate_sentence_annotation"
     assert TOOL_PROPOSE_SAVE_NOTE == "propose_save_note"
     assert TOOL_PROPOSE_SAVE_HIGHLIGHT == "propose_save_highlight"
+    assert TOOL_SUGGEST_PROMPTS == "suggest_prompts"
+    assert TOOL_LOOKUP_RECORD_BY_EMBEDDING == "lookup_record_by_embedding"
+    assert TOOL_SEARCH_USER_VOCABULARY == "search_user_vocabulary"
+    assert TOOL_LOOKUP_DICTIONARY_ENTRY == "lookup_dictionary_entry"
+    assert TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN == "run_dictionary_ai_context_explain"
 
 
 # ---------------------------------------------------------------------------
-# P5-7: Agent tool registration uses registry constants
+# Round 2: agent tool registration uses registry constants
 # ---------------------------------------------------------------------------
+
+# Tools that the agent module's @agent.tool(name=...) / run_tool(...) must use
+# in Round 2. Deprecated search_user_vocabulary / dictionary tools and the
+# reserved lookup_record_by_embedding are intentionally excluded — the main
+# agent must never invoke them.
+_AGENT_MODULE_TOOL_CONSTANTS = frozenset({
+    "TOOL_GET_RECORD_CONTEXT",
+    "TOOL_GET_RECORD_INSIGHTS",
+    "TOOL_GET_USER_VOCABULARY_BOOK",
+    "TOOL_RESOLVE_KNOWN_REFERENCE",
+    "TOOL_GENERATE_SENTENCE_ANNOTATION",
+    "TOOL_PROPOSE_SAVE_NOTE",
+    "TOOL_PROPOSE_SAVE_HIGHLIGHT",
+    "TOOL_SUGGEST_PROMPTS",
+})
+
 
 def test_agent_tool_names_use_registry_constants() -> None:
     """Verify reader_ask_agent uses registry constants for tool names.
 
     This test parses the source file and checks that every
     ``@agent.tool(name=...)`` decorator and every ``run_tool(...)`` call passes
-    a ``TOOL_*`` identifier, not a hardcoded string literal.
+    a ``TOOL_*`` identifier from the Round 2 agent-callable set, not a
+    hardcoded string literal and not a deprecated constant.
     """
     import ast
     from pathlib import Path
@@ -228,16 +350,6 @@ def test_agent_tool_names_use_registry_constants() -> None:
 
     decorator_tool_names: list[str] = []
     run_tool_names: list[str] = []
-    expected_constants = {
-        "TOOL_GET_RECORD_CONTEXT",
-        "TOOL_GET_RECORD_INSIGHTS",
-        "TOOL_SEARCH_USER_VOCABULARY",
-        "TOOL_LOOKUP_DICTIONARY_ENTRY",
-        "TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN",
-        "TOOL_GENERATE_SENTENCE_ANNOTATION",
-        "TOOL_PROPOSE_SAVE_NOTE",
-        "TOOL_PROPOSE_SAVE_HIGHLIGHT",
-    }
 
     for node in ast.walk(tree):
         # Look for @agent.tool(name=...) decorators
@@ -285,63 +397,40 @@ def test_agent_tool_names_use_registry_constants() -> None:
                 run_tool_names.append(tool_name_arg.id)
             else:
                 raise AssertionError(
-                    f"run_tool(...) at line {node.lineno} uses unexpected tool "
+                    f"run_tool(...) at line {tool_name_arg.lineno} uses unexpected tool "
                     f"name expression: {ast.dump(tool_name_arg)}"
                 )
 
     actual_decorator_constants = set(decorator_tool_names)
-    assert actual_decorator_constants == expected_constants, (
+    assert actual_decorator_constants == _AGENT_MODULE_TOOL_CONSTANTS, (
         f"Tool name constants mismatch: "
-        f"missing={expected_constants - actual_decorator_constants}, "
-        f"extra={actual_decorator_constants - expected_constants}"
+        f"missing={_AGENT_MODULE_TOOL_CONSTANTS - actual_decorator_constants}, "
+        f"extra={actual_decorator_constants - _AGENT_MODULE_TOOL_CONSTANTS}"
     )
     actual_run_tool_constants = set(run_tool_names)
-    assert actual_run_tool_constants == expected_constants, (
+    assert actual_run_tool_constants == _AGENT_MODULE_TOOL_CONSTANTS, (
         f"run_tool constants mismatch: "
-        f"missing={expected_constants - actual_run_tool_constants}, "
-        f"extra={actual_run_tool_constants - expected_constants}"
+        f"missing={_AGENT_MODULE_TOOL_CONSTANTS - actual_run_tool_constants}, "
+        f"extra={actual_run_tool_constants - _AGENT_MODULE_TOOL_CONSTANTS}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Registry constant names match agent registration
+# Round 2: deprecated / reserved tools do NOT leak into the agent module
 # ---------------------------------------------------------------------------
 
-def test_registry_names_match_agent_tool_names() -> None:
-    """Verify that the registry tool name constants are the same ones
-    imported and used in reader_ask_agent.py's @agent.tool(name=...) decorators."""
-    from app.agents.reader_ask_agent import (
-        TOOL_GENERATE_SENTENCE_ANNOTATION as AGENT_GENERATE_SENTENCE_ANNOTATION,
-    )
-    from app.agents.reader_ask_agent import (
-        TOOL_GET_RECORD_CONTEXT as AGENT_GET_RECORD_CONTEXT,
-    )
-    from app.agents.reader_ask_agent import (
-        TOOL_GET_RECORD_INSIGHTS as AGENT_GET_RECORD_INSIGHTS,
-    )
-    from app.agents.reader_ask_agent import (
-        TOOL_LOOKUP_DICTIONARY_ENTRY as AGENT_LOOKUP_DICTIONARY_ENTRY,
-    )
-    from app.agents.reader_ask_agent import (
-        TOOL_PROPOSE_SAVE_HIGHLIGHT as AGENT_PROPOSE_SAVE_HIGHLIGHT,
-    )
-    from app.agents.reader_ask_agent import (
-        TOOL_PROPOSE_SAVE_NOTE as AGENT_PROPOSE_SAVE_NOTE,
-    )
-    from app.agents.reader_ask_agent import (
-        TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN as AGENT_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
-    )
-    from app.agents.reader_ask_agent import (
-        TOOL_SEARCH_USER_VOCABULARY as AGENT_SEARCH_USER_VOCABULARY,
-    )
 
-    # The agent module re-exports the same constants from the registry module,
-    # so these must be identical objects (same identity and value).
-    assert AGENT_GET_RECORD_CONTEXT is TOOL_GET_RECORD_CONTEXT
-    assert AGENT_GET_RECORD_INSIGHTS is TOOL_GET_RECORD_INSIGHTS
-    assert AGENT_SEARCH_USER_VOCABULARY is TOOL_SEARCH_USER_VOCABULARY
-    assert AGENT_LOOKUP_DICTIONARY_ENTRY is TOOL_LOOKUP_DICTIONARY_ENTRY
-    assert AGENT_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN is TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN
-    assert AGENT_GENERATE_SENTENCE_ANNOTATION is TOOL_GENERATE_SENTENCE_ANNOTATION
-    assert AGENT_PROPOSE_SAVE_NOTE is TOOL_PROPOSE_SAVE_NOTE
-    assert AGENT_PROPOSE_SAVE_HIGHLIGHT is TOOL_PROPOSE_SAVE_HIGHLIGHT
+def test_agent_module_does_not_register_deprecated_tools() -> None:
+    """The agent module must not re-export constants for deprecated tools."""
+    import importlib
+
+    agent_module = importlib.import_module("app.agents.reader_ask_agent")
+    for name in (
+        "TOOL_SEARCH_USER_VOCABULARY",
+        "TOOL_LOOKUP_DICTIONARY_ENTRY",
+        "TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN",
+        "TOOL_LOOKUP_RECORD_BY_EMBEDDING",
+    ):
+        assert not hasattr(agent_module, name), (
+            f"reader_ask_agent should not re-export {name} in Round 2"
+        )

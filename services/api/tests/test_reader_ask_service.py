@@ -1171,6 +1171,9 @@ def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
     assert data["working_set"]["external_record_refs"][0]["record_id"] == "r-2"
     # Phase 4 Round 2: planning_snapshot_json preserves resolution_meta
     assert "resolution_meta" in data["resolved_references"]
+    # planner_route_used defaults to "planner_first" for legacy snapshots
+    assert data["planner_route_used"] == "planner_first"
+    assert data["is_fast_path"] is False
 
 
 def test_planning_snapshot_json_preserves_resolution_meta_all_paths() -> None:
@@ -1258,6 +1261,33 @@ def test_planning_snapshot_json_preserves_resolution_meta_all_paths() -> None:
     data = _planning_snapshot_json(snapshot_resolved)
     assert data["resolved_references"]["resolution_meta"][RESOLUTION_META_STRATEGY] == RESOLUTION_STRATEGY_TITLE_SEARCH
     assert data["resolved_references"]["resolution_meta"][RESOLUTION_META_TOP_SCORE] == 100
+
+
+def test_planning_snapshot_json_none_uses_planner_route_used() -> None:
+    """When ``planning_snapshot is None``, ``is_fast_path`` is derived from
+    ``planner_route_used`` instead of being hardcoded to ``True``."""
+    # fast_path route
+    data_fast = _planning_snapshot_json(None, planner_route_used="fast_path")
+    assert data_fast["is_fast_path"] is True
+    assert data_fast["planner_route_used"] == "fast_path"
+
+    # planner_first route (e.g. snapshot is None due to an error, not fast path)
+    data_legacy = _planning_snapshot_json(None, planner_route_used="planner_first")
+    assert data_legacy["is_fast_path"] is False
+    assert data_legacy["planner_route_used"] == "planner_first"
+
+    # default is planner_first
+    data_default = _planning_snapshot_json(None)
+    assert data_default["is_fast_path"] is False
+    assert data_default["planner_route_used"] == "planner_first"
+
+
+def test_planning_snapshot_json_fast_path_snapshot_includes_route() -> None:
+    """``FastPathPlanningSnapshot`` trace includes ``planner_route_used``."""
+    snap = planner_svc.FastPathPlanningSnapshot()
+    data = _planning_snapshot_json(snap, planner_route_used="fast_path")
+    assert data["is_fast_path"] is True
+    assert data["planner_route_used"] == "fast_path"
 
 
 def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
@@ -2247,13 +2277,11 @@ async def test_generate_sentence_annotation_grammar_cache_hit_skips_run_tool() -
         primary_anchor=None,
         get_record_context_fn=AsyncMock(return_value={}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
         generate_sentence_annotation_fn=annotation_fn,
+        suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),
-        dictionary_item_to_citation_fn=MagicMock(),
-        dictionary_ai_to_citation_fn=MagicMock(),
     )
 
     ctx = MagicMock(spec=RunContext)
@@ -2309,13 +2337,11 @@ async def test_generate_sentence_annotation_breakdown_cache_hit_skips_run_tool()
         primary_anchor=None,
         get_record_context_fn=AsyncMock(return_value={}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
         generate_sentence_annotation_fn=annotation_fn,
+        suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),
-        dictionary_item_to_citation_fn=MagicMock(),
-        dictionary_ai_to_citation_fn=MagicMock(),
     )
 
     ctx = MagicMock(spec=RunContext)
@@ -2471,13 +2497,11 @@ def _make_agent_deps(
         primary_anchor=anchor,
         get_record_context_fn=AsyncMock(return_value={}),
         get_record_insights_fn=AsyncMock(return_value=[]),
-        search_user_vocabulary_fn=AsyncMock(return_value=[]),
-        lookup_dictionary_entry_fn=AsyncMock(return_value=None),
-        run_dictionary_ai_context_explain_fn=AsyncMock(return_value=None),
+        get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
+        resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
+        suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),
-        dictionary_item_to_citation_fn=MagicMock(),
-        dictionary_ai_to_citation_fn=MagicMock(),
     )
     return deps, event_queue
 

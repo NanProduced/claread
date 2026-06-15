@@ -16,6 +16,7 @@ from app.agents.reader_ask_tool_registry import (
     READER_ASK_TOOL_REGISTRY,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
+    agent_callable_tool_names,
 )
 from app.schemas.reader_ask import ReaderAskEntryAction, ReaderAskTaskMode
 
@@ -75,9 +76,7 @@ def build_tool_availability(inp: ToolAvailabilityInput) -> ToolAvailabilityResul
     3. No tool is removed based on ``task_mode``, ``entry_action``,
        ``has_dictionary_anchor``, or ``has_generated_annotation_cache``.
     """
-    allowed: frozenset[str] = frozenset(
-        spec.name for spec in READER_ASK_TOOL_REGISTRY.values() if spec.agent_callable
-    )
+    allowed: frozenset[str] = agent_callable_tool_names()
 
     unavailable_reasons: dict[str, str] = {}
 

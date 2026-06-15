@@ -7,6 +7,7 @@ from app.schemas.reader_ask import (
     ReaderAskContextPlan,
     ReaderAskDisambiguation,
     ReaderAskEvidenceItem,
+    ReaderAskFollowUpSuggestion,
     ReaderAskMessage,
     ReaderAskPersistedSupplement,
     ReaderAskResolvedContextInput,
@@ -69,6 +70,8 @@ USER_VISIBLE_OUTPUT_FIELDS: frozenset[str] = frozenset({
     # supplements
     "supplement_candidates",
     "persisted_supplements",
+    # Round 2: follow-up prompt suggestions (suggest_prompts tool)
+    "follow_up_suggestions",
 })
 
 # Fields that repository hydration projects from user_visible_output_json onto
@@ -138,6 +141,7 @@ def build_user_visible_output(
     persisted_supplements: list[ReaderAskPersistedSupplement] | list[dict[str, Any]],
     reasoning_md: str | None = None,
     reasoning_status: str | None = None,
+    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | list[dict[str, Any]] | None = None,
 ) -> ReaderAskUserVisibleOutput:
     normalized_run_info = (
         run_info
@@ -152,6 +156,14 @@ def build_user_visible_output(
         item if isinstance(item, ReaderAskPersistedSupplement) else ReaderAskPersistedSupplement.model_validate(item)
         for item in persisted_supplements
     ]
+    if follow_up_suggestions is None:
+        normalized_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
+    else:
+        normalized_suggestions = [
+            item if isinstance(item, ReaderAskFollowUpSuggestion)
+            else ReaderAskFollowUpSuggestion.model_validate(item)
+            for item in follow_up_suggestions
+        ]
     return ReaderAskUserVisibleOutput(
         content_md=content_md,
         submission_mode=submission_mode,
@@ -174,6 +186,7 @@ def build_user_visible_output(
         persisted_supplements=normalized_persisted,
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
+        follow_up_suggestions=normalized_suggestions,
     )
 
 
@@ -227,5 +240,6 @@ def visible_output_from_message(message: ReaderAskMessage, message_dict: dict[st
         persisted_supplements=message.persisted_supplements,
         reasoning_md=message.reasoning_md,
         reasoning_status=message.reasoning_status,
+        follow_up_suggestions=message.follow_up_suggestions,
     )
     return output.model_dump(mode="json")
