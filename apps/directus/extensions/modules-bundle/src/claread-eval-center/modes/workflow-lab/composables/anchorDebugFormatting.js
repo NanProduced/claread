@@ -84,17 +84,30 @@ export function extractAnchorDetail(mark) {
   const offsetUnit = String(anchor.offset_unit ?? anchor.offsetUnit ?? "");
 
   if (kind === "range") {
+    const range = anchor.range && typeof anchor.range === "object" ? anchor.range : anchor;
     return {
       kind,
       sentenceId,
       offsetUnit: offsetUnit || "utf16",
       ranges: [{
-        start: anchor.start ?? null,
-        end: anchor.end ?? null,
-        text: String(anchor.text ?? ""),
-        sourceQuote: String(anchor.source_quote ?? anchor.sourceQuote ?? ""),
-        resolutionKind: String(anchor.resolution_kind ?? anchor.resolutionKind ?? ""),
-        role: "",
+        start: range.start ?? null,
+        end: range.end ?? null,
+        text: String(range.text ?? ""),
+        sourceQuote: String(
+          range.source_quote ??
+          range.sourceQuote ??
+          anchor.source_quote ??
+          anchor.sourceQuote ??
+          "",
+        ),
+        resolutionKind: String(
+          range.resolution_kind ??
+          range.resolutionKind ??
+          anchor.resolution_kind ??
+          anchor.resolutionKind ??
+          "",
+        ),
+        role: String(range.role ?? ""),
       }],
     };
   }

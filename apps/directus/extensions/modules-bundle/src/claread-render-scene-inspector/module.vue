@@ -1384,7 +1384,8 @@ function describeAnchor(anchor) {
     return anchor.ranges.map((r) => r?.text).filter(Boolean).join(" / ") || "未记录";
   }
   if (anchor.kind === "range") {
-    return anchor.text || "未记录";
+    const range = anchor.range && typeof anchor.range === "object" ? anchor.range : anchor;
+    return range.text || "未记录";
   }
   if (anchor.kind === "multi_text" && Array.isArray(anchor.parts)) {
     return anchor.parts.map((item) => item?.anchor_text).filter(Boolean).join(" / ") || "未记录";

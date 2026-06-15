@@ -189,9 +189,10 @@ function mapAnchor(value: unknown): InlineMarkAnchor | null {
   }
 
   if (value.kind === "range") {
-    const start = readNumber(value.start);
-    const end = readNumber(value.end);
-    const text = readString(value.text);
+    const range = isRecord(value.range) ? value.range : value;
+    const start = readNumber(range.start);
+    const end = readNumber(range.end);
+    const text = readString(range.text);
     if (end <= start || text.length === 0) {
       return null;
     }
@@ -202,8 +203,15 @@ function mapAnchor(value: unknown): InlineMarkAnchor | null {
       start,
       end,
       text,
-      sourceQuote: readOptionalString(value.source_quote ?? value.sourceQuote),
-      resolutionKind: readOptionalString(value.resolution_kind ?? value.resolutionKind),
+      sourceQuote: readOptionalString(
+        range.source_quote ?? range.sourceQuote ?? value.source_quote ?? value.sourceQuote,
+      ),
+      resolutionKind: readOptionalString(
+        range.resolution_kind ??
+          range.resolutionKind ??
+          value.resolution_kind ??
+          value.resolutionKind,
+      ),
     };
   }
 

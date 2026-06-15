@@ -113,12 +113,13 @@ export function inlineMarkAnchorParts(mark) {
 
   // range: single range anchor
   if (anchor.kind === "range") {
-    const text = String(anchor.text ?? "").trim();
+    const range = anchor.range && typeof anchor.range === "object" ? anchor.range : anchor;
+    const text = String(range.text ?? "").trim();
     if (!text) return [];
     return [{
       text,
       occurrence: 1,
-      role: "",
+      role: String(range.role || "").trim(),
     }];
   }
 

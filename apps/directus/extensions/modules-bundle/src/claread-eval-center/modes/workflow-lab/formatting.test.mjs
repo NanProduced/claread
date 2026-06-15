@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractLLMConfigSnapshot } from "./composables/workflowLabFormatting.js";
-import { extractLLMConfigSnapshot as extractLLMConfigSnapshotAnchor } from "./composables/anchorDebugFormatting.js";
+import {
+  extractLLMConfigSnapshot,
+  inlineMarkAnchorParts,
+} from "./composables/workflowLabFormatting.js";
+import {
+  extractAnchorDetail,
+  extractLLMConfigSnapshot as extractLLMConfigSnapshotAnchor,
+} from "./composables/anchorDebugFormatting.js";
 
 // ── workflowLabFormatting.extractLLMConfigSnapshot ─────────────
 
@@ -179,10 +185,64 @@ test("extractLLMConfigSnapshot defaults structured_output_runtime to empty array
   assert.equal(result.structured_output_runtime.length, 0);
 });
 
+test("inlineMarkAnchorParts reads nested range anchor text", () => {
+  const parts = inlineMarkAnchorParts({
+    anchor: {
+      kind: "range",
+      sentence_id: "s1",
+      offset_unit: "utf16",
+      range: {
+        start: 44,
+        end: 56,
+        text: "trillionaire",
+        role: "term",
+      },
+    },
+  });
+
+  assert.deepEqual(parts, [{
+    text: "trillionaire",
+    occurrence: 1,
+    role: "term",
+  }]);
+});
+
 // ── anchorDebugFormatting.extractLLMConfigSnapshot ─────────────
 
 test("anchorDebug extractLLMConfigSnapshot returns null for null artifact", () => {
   assert.equal(extractLLMConfigSnapshotAnchor(null), null);
+});
+
+test("anchorDebug extractAnchorDetail reads nested range anchor", () => {
+  const detail = extractAnchorDetail({
+    anchor: {
+      kind: "range",
+      sentence_id: "s1",
+      offset_unit: "utf16",
+      range: {
+        start: 44,
+        end: 56,
+        text: "trillionaire",
+        role: "term",
+        source_quote: "trillionaire",
+        resolution_kind: "exact",
+      },
+    },
+  });
+
+  assert.deepEqual(detail, {
+    kind: "range",
+    sentenceId: "s1",
+    offsetUnit: "utf16",
+    ranges: [{
+      start: 44,
+      end: 56,
+      text: "trillionaire",
+      sourceQuote: "trillionaire",
+      resolutionKind: "exact",
+      role: "term",
+    }],
+  });
 });
 
 test("anchorDebug extractLLMConfigSnapshot extracts same fields", () => {
