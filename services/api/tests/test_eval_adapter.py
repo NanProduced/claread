@@ -1008,19 +1008,6 @@ async def test_eval_result_includes_llm_config_snapshot(
         assert "observed_request_count" in entry
 
 
-def test_eval_schema_accepts_default_repair_mode() -> None:
-    """ArticleAnalysisEvalRequest defaults repair_mode='patch' and repair_enabled=True."""
-    req = ArticleAnalysisEvalRequest(text="Hello world.")
-    assert req.repair_mode == "patch"
-    assert req.repair_enabled is True
-
-
-def test_eval_schema_accepts_explicit_patch_mode() -> None:
-    """ArticleAnalysisEvalRequest accepts repair_mode='patch'."""
-    req = ArticleAnalysisEvalRequest(text="Hello world.", repair_mode="patch")
-    assert req.repair_mode == "patch"
-
-
 @pytest.mark.anyio
 async def test_eval_adapter_passes_repair_enabled_to_workflow(
     monkeypatch: pytest.MonkeyPatch,
@@ -1056,24 +1043,7 @@ async def test_eval_adapter_passes_repair_enabled_to_workflow(
     monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
 
     # Default: repair_enabled=True
-    await eval_article_analysis.run_article_analysis_eval(
-        ArticleAnalysisEvalRequest(text="Sentence one.")
-    )
+    req = ArticleAnalysisEvalRequest(text="Sentence one.")
+    assert req.repair_enabled is True
+    await eval_article_analysis.run_article_analysis_eval(req)
     assert captured_kwargs["repair_enabled"] is True
-
-
-def test_request_snapshot_includes_repair_mode() -> None:
-    """RequestSnapshot records repair_mode and repair_enabled."""
-    from app.eval_adapter.shared import request_snapshot
-
-    # Default: patch, enabled
-    req = ArticleAnalysisEvalRequest(text="Hello world.")
-    snap = request_snapshot(req, request_id_value="test-id")
-    assert snap.repair_mode == "patch"
-    assert snap.repair_enabled is True
-
-    # Explicit disabled
-    req2 = ArticleAnalysisEvalRequest(text="Hello world.", repair_enabled=False)
-    snap2 = request_snapshot(req2, request_id_value="test-id")
-    assert snap2.repair_mode == "patch"
-    assert snap2.repair_enabled is False

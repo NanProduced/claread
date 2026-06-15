@@ -35,7 +35,7 @@ class AnalyzeState(TypedDict, total=False):
     repair_request: dict | None
     repair_enabled: bool  # Whether repair is enabled, resolved in derive_user_config_node
 
-    # Phase 0 debug metrics
+    # Debug metrics
     node_timings: dict[str, float]  # node_name → elapsed seconds
     annotation_stats: dict[str, object] | None
     repair_stats: dict[str, object] | None

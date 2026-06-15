@@ -249,7 +249,7 @@ def draft_to_annotation(draft: DraftAnnotation) -> (
     """将 DraftAnnotation 转换为当前 Annotation 类型。
 
     供 normalize/projection 链路使用。
-    Phase 1 兼容层：Draft 类型 → 旧 Annotation 类型。
+    Draft → Annotation 兼容转换。
 
     使用 model_construct 避免重复校验；
     Draft 可能通过 model_construct 绕过校验（如测试），

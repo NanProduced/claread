@@ -57,7 +57,52 @@ canonical analysis result
 
 ## 当前已知限制
 
-- 小程序 render scene 不是 Web 端体验上限。
-- Web 端更丰富的 render profile 尚未定义。
+- 三端均支持 range/multi_range，渲染丰富度差异由客户端 UI 能力决定，不影响后端输出契约。
+- 各端渲染适配细节（如小程序组件限制、Web 交互动效）由客户端各自处理。
 - 后续 eval 与 Inspector 仍需要更深层的 debug truth，例如 raw drop 明细、draft validation 结构化摘要和更完整的 trace refs。
 - 后续质量回看需要基于 workflow version、prompt version 与 `analysis_debug_snapshots` 追踪输出质量。
+
+## Learning Workflow 主链路
+
+```text
+Draft schema → NormalizedAnnotation → CanonicalSpan → RenderScene range/multi_range
+```
+
+具体数据流：
+
+1. LLM 输出 DraftAnnotation（含 anchor_quotes）
+2. normalize_and_ground 阶段将 anchor_quotes resolve 为 CanonicalSpan
+3. postprocess（dedup、conflict resolution、density control）基于 canonical span
+4. project_normalized_to_render_scene 将 CanonicalSpan 转为 UTF-16 sentence-local range
+5. RenderScene 输出 RangeAnchor / MultiRangeAnchor 给前端消费
+
+## RenderScene Range Anchor Contract
+
+- offset_unit = "utf16"
+- start / end 是前端 JavaScript 可直接 slice 的 UTF-16 code unit offset
+- 半开区间 [start, end)
+- range 坐标相对于 RenderScene 中对应 sentence_id 的 sentence render text
+- 每个 range 必须带 text，用于校验 slice(start, end) === text
+- fail-closed：range 校验失败时丢弃 mark/range 并记录 warning，不 fallback 到 text search
+- multi_range 任一 part 校验失败，整条 mark 不渲染
+- 旧 TextAnchor / MultiTextAnchor 仍在 InlineMarkAnchor 联合类型中保留
+
+## Repair 策略
+
+- 当前唯一 repair 路径：item-level patch repair
+- 开关：repair_enabled（config/env/state 三级优先级，默认 True）
+- 触发策略：should_trigger_patch_repair()，基于 combined repair-worthy drops（drop_log + canonical_drop_log）
+- 触发阈值：ANCHOR_FAILURE_THRESHOLD = 0.35
+- repair_stats 口径：pre_repair_annotation_count 使用 normalized_annotations 长度，patch_failure_ratio 基于 combined drops 计算
+
+## LLM Config Observability
+
+- llm_config_snapshot：记录 profile、provider、adapter、model、structured_output 配置、thinking 开关、parallel_tool_calls
+- per-agent structured_output_runtime：区分 resolved config（静态解析）和 observed behavior（运行时填充）
+- tool_choice=required 实验 profile 是可选配置，不是默认生产策略
+
+## 三端 Range/Multi_range 支持状态
+
+- Web Reader：完整支持 range/multi_range 渲染，fail-closed
+- Eval Center：完整支持 range/multi_range 展示与诊断
+- 小程序：完整支持 range/multi_range 数据解析和渲染适配，fail-closed

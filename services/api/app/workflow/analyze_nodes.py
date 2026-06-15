@@ -642,29 +642,20 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
     }
 
     # Repair decision stats：即使不进入 repair_agent_node 也能观测
-    pre_repair_count = len(normalized_result.annotations)
-    repair_drop_count_val = repair_worthy_drop_count(
-        normalized_result.drop_log
+    # canonical/patch 口径：使用 normalized_annotations + combined drops
+    pre_repair_count = len(normalized_result.normalized_annotations)
+    combined_drops = (
+        list(normalized_result.drop_log or [])
+        + list(normalized_result.canonical_drop_log or [])
     )
-    total_annotations = pre_repair_count + repair_drop_count_val
+    repair_worthy_drops = repair_worthy_drop_count(combined_drops)
+    total_annotations = pre_repair_count + repair_worthy_drops
     failure_ratio = (
-        repair_drop_count_val / total_annotations
+        repair_worthy_drops / total_annotations
         if total_annotations > 0 else 0.0
     )
     will_repair = should_trigger_patch_repair(
         normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
-    )
-
-    # Patch repair decision stats（canonical 口径）
-    canonical_repair_worthy_count = repair_worthy_drop_count(
-        list(normalized_result.drop_log or [])
-        + list(normalized_result.canonical_drop_log or [])
-    )
-    canonical_annotation_count = len(normalized_result.normalized_annotations)
-    canonical_total = canonical_annotation_count + canonical_repair_worthy_count
-    patch_failure_ratio = (
-        canonical_repair_worthy_count / canonical_total
-        if canonical_total > 0 else 0.0
     )
 
     repair_decision_stats: dict[str, Any] = {
@@ -679,11 +670,9 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
         "post_repair_annotation_count": None,
         "repair_elapsed_s": None,
         "repair_succeeded": None,
-        "repair_mode": "patch",
         "repair_disabled": not state.get("repair_enabled", True),
-        "full_result_failure_ratio": round(failure_ratio, 4),
-        "patch_failure_ratio": round(patch_failure_ratio, 4),
-        "canonical_repair_worthy_drop_count": canonical_repair_worthy_count,
+        "patch_failure_ratio": round(failure_ratio, 4),
+        "canonical_repair_worthy_drop_count": repair_worthy_drops,
     }
 
     return {
@@ -723,7 +712,6 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "post_repair_annotation_count": None,
             "repair_elapsed_s": None,
             "repair_succeeded": None,
-            "repair_mode": "patch",
             "repair_disabled": True,
         }
         return {
@@ -746,7 +734,6 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "post_repair_annotation_count": None,
             "repair_elapsed_s": None,
             "repair_succeeded": None,
-            "repair_mode": "patch",
             "repair_disabled": False,
         }
         return {
@@ -787,7 +774,6 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
             "post_repair_annotation_count": None,
             "repair_elapsed_s": None,
             "repair_succeeded": None,
-            "repair_mode": "patch",
             "repair_disabled": False,
         }
         return {
@@ -836,7 +822,6 @@ async def _repair_patch_mode(
     )
 
     patch_base_stats: dict[str, Any] = {
-        "repair_mode": "patch",
         "patch_target_count": None,
         "patch_repair_worthy_count": None,
         "patch_missing_sentence_count": None,
@@ -896,7 +881,6 @@ async def _repair_patch_mode(
     )
     patch_meta["extra"] = {
         **(patch_meta.get("extra") or {}),
-        "repair_mode": "patch",
         "target_count": len(patch_request.targets),
     }
 
@@ -962,7 +946,6 @@ async def _repair_patch_mode(
 
         return {
             "repair_request": {
-                "repair_mode": "patch",
                 "target_count": len(patch_request.targets),
                 "repaired": True,
             },
@@ -994,7 +977,6 @@ async def _repair_patch_mode(
         }
         return {
             "repair_request": {
-                "repair_mode": "patch",
                 "repaired": False,
             },
             "warnings": [

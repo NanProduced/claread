@@ -14,10 +14,7 @@ from app.schemas.analysis import (
     RenderSceneModel,
 )
 from app.schemas.internal.analysis import (
-    AnnotationOutput,
-    PhraseGloss,
     SentenceTranslation,
-    VocabHighlight,
 )
 from app.schemas.internal.drafts import (
     AnchorQuote,
@@ -30,7 +27,6 @@ from app.schemas.internal.drafts import (
 )
 from app.schemas.internal.normalized import DropLogEntry, NormalizedAnnotationResult
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
-from app.services.analysis.postprocess.projection import project_to_render_scene
 from app.services.analysis.preprocess.input_preparation import prepare_input
 from app.workflow import analyze_nodes, learning_workflow
 
@@ -241,69 +237,6 @@ def test_analyze_route_surfaces_draft_validation_warnings(monkeypatch) -> None:
     body = response.json()
     warning_codes = {warning["code"] for warning in body["warnings"]}
     assert "DRAFT_VALIDATION" in warning_codes
-
-
-def test_projection_keeps_stable_ids_when_prior_mark_is_dropped() -> None:
-    prepared_input = prepare_input(
-        "This sentence mentions this first. "
-        "Another sentence mentions leverage clearly."
-    )
-    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
-
-    baseline = project_to_render_scene(
-        annotation_output=AnnotationOutput(
-            annotations=[VocabHighlight(sentence_id="s2", text="leverage")],
-            sentence_translations=[
-                SentenceTranslation(
-                    sentence_id="s1",
-                    translation_zh="第一句先提到了 this。",
-                ),
-                SentenceTranslation(
-                    sentence_id="s2",
-                    translation_zh="第二句清楚地提到了 leverage。",
-                ),
-            ],
-        ),
-        prepared_input=prepared_input,
-        source_type="user_input",
-        reading_goal="daily_reading",
-        reading_variant="intermediate_reading",
-        profile_id=plan.prompt_profile,
-        request_id="req-1",
-    )
-
-    with_dropped_prefix = project_to_render_scene(
-        annotation_output=AnnotationOutput(
-            annotations=[
-                PhraseGloss(
-                    sentence_id="s1",
-                    text="missing anchor",
-                    phrase_type="collocation",
-                    zh="缺失锚点",
-                ),
-                VocabHighlight(sentence_id="s2", text="leverage"),
-            ],
-            sentence_translations=[
-                SentenceTranslation(
-                    sentence_id="s1",
-                    translation_zh="第一句先提到了 this。",
-                ),
-                SentenceTranslation(
-                    sentence_id="s2",
-                    translation_zh="第二句清楚地提到了 leverage。",
-                ),
-            ],
-        ),
-        prepared_input=prepared_input,
-        source_type="user_input",
-        reading_goal="daily_reading",
-        reading_variant="intermediate_reading",
-        profile_id=plan.prompt_profile,
-        request_id="req-2",
-    )
-
-    assert baseline.result.inline_marks[0].id == with_dropped_prefix.result.inline_marks[0].id
-    assert with_dropped_prefix.dropped_count == 1
 
 
 def test_parallel_agents_aggregate_usage_summary(monkeypatch) -> None:
@@ -711,7 +644,6 @@ def test_repair_agent_node_reads_repair_enabled_from_state(monkeypatch) -> None:
     result = asyncio.run(analyze_nodes.repair_agent_node(state, config={}))
 
     stats = result["repair_stats"]
-    assert stats["repair_mode"] == "patch"
     assert stats["repair_triggered"] is True
 
 
@@ -743,7 +675,6 @@ def test_normalize_and_ground_exposes_patch_failure_ratio() -> None:
     result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
 
     stats = result.get("repair_stats", {})
-    assert "full_result_failure_ratio" in stats
     assert "patch_failure_ratio" in stats
     assert "canonical_repair_worthy_drop_count" in stats
 
@@ -994,34 +925,6 @@ def test_projection_warning_enters_render_scene_warnings() -> None:
     assert "canonical_range_validation_failed" in warning_codes
 
 
-def test_old_projection_still_works() -> None:
-    """旧 project_to_render_scene 测试不受影响。"""
-    prepared_input = prepare_input(
-        "This sentence mentions this first. "
-        "Another sentence mentions leverage clearly."
-    )
-    plan = build_goal_execution_plan("daily_reading", "intermediate_reading")
-
-    outcome = project_to_render_scene(
-        annotation_output=AnnotationOutput(
-            annotations=[VocabHighlight(sentence_id="s2", text="leverage")],
-            sentence_translations=[
-                SentenceTranslation(sentence_id="s1", translation_zh="第一句。"),
-                SentenceTranslation(sentence_id="s2", translation_zh="第二句。"),
-            ],
-        ),
-        prepared_input=prepared_input,
-        source_type="user_input",
-        reading_goal="daily_reading",
-        reading_variant="intermediate_reading",
-        profile_id=plan.prompt_profile,
-        request_id="req-old",
-    )
-
-    assert len(outcome.result.inline_marks) == 1
-    assert outcome.result.inline_marks[0].anchor.kind == "text"
-
-
 def test_draft_validation_warnings_enter_render_scene_warnings() -> None:
     """DRAFT_VALIDATION warnings from normalize_and_ground propagate to render_scene.warnings."""
     invalid_highlight = DraftVocabHighlight.model_construct(
@@ -1153,7 +1056,6 @@ def test_repair_agent_node_patch_mode_succeeds(monkeypatch) -> None:
 
     # repair_stats should reflect patch mode
     stats = result["repair_stats"]
-    assert stats["repair_mode"] == "patch"
     assert stats["repair_triggered"] is True
     assert stats["repair_succeeded"] is True
     assert stats["patch_repair_worthy_count"] is not None
@@ -1224,7 +1126,6 @@ def test_repair_agent_node_patch_mode_no_targets_skips_llm(monkeypatch) -> None:
 
     # repair_stats should show patch_no_targets with real missing count
     stats = result["repair_stats"]
-    assert stats["repair_mode"] == "patch"
     assert stats["patch_no_targets"] is True
     assert stats["patch_missing_sentence_count"] == 1
     assert stats["patch_repair_worthy_count"] == 1
@@ -1259,7 +1160,6 @@ def test_repair_agent_node_patch_mode_failure_keeps_original_result(monkeypatch)
 
     # repair_stats should show failure
     stats = result["repair_stats"]
-    assert stats["repair_mode"] == "patch"
     assert stats["repair_succeeded"] is False
 
     # usage_summary should still have vocabulary/grammar/translation usage
@@ -1267,9 +1167,9 @@ def test_repair_agent_node_patch_mode_failure_keeps_original_result(monkeypatch)
     assert usage is not None
 
 
-def test_normalize_and_ground_repair_decision_includes_repair_mode() -> None:
+def test_normalize_and_ground_repair_decision_includes_repair_enabled() -> None:
     """normalize_and_ground_node repair_decision_stats always has
-    repair_mode='patch' and repair_disabled."""
+    repair_disabled."""
     text = "This is a simple test sentence."
     state = {
         "payload": AnalyzeRequest.model_validate(
@@ -1294,9 +1194,8 @@ def test_normalize_and_ground_repair_decision_includes_repair_mode() -> None:
     }
     result = asyncio.run(analyze_nodes.normalize_and_ground_node(state))
 
-    # repair_stats should always have repair_mode="patch" and repair_disabled
+    # repair_stats should always have repair_disabled
     stats = result.get("repair_stats", {})
-    assert stats["repair_mode"] == "patch"
     assert "repair_disabled" in stats
     # Without repair_enabled in state, default is True → repair_disabled=False
     assert stats["repair_disabled"] is False
@@ -1305,7 +1204,6 @@ def test_normalize_and_ground_repair_decision_includes_repair_mode() -> None:
     state_with_disabled = {**state, "repair_enabled": False}
     result2 = asyncio.run(analyze_nodes.normalize_and_ground_node(state_with_disabled))
     stats2 = result2.get("repair_stats", {})
-    assert stats2["repair_mode"] == "patch"
     assert stats2["repair_disabled"] is True
 
 
@@ -1403,7 +1301,6 @@ def test_patch_mode_canonical_only_failure_not_short_circuited(
     assert stats["repair_triggered"] is True, (
         "patch mode should trigger repair for canonical-only failures"
     )
-    assert stats["repair_mode"] == "patch"
     assert patch_llm_called is True, (
         "patch repair LLM span should have been called"
     )
@@ -1431,7 +1328,6 @@ def test_repair_agent_node_disabled_skips_repair(monkeypatch) -> None:
     stats = result["repair_stats"]
     assert stats["repair_triggered"] is False
     assert stats["repair_disabled"] is True
-    assert stats["repair_mode"] == "patch"
 
 
 def test_should_repair_returns_false_when_disabled(monkeypatch) -> None:

@@ -1,8 +1,8 @@
 """Normalized annotation schemas for backend trusted result layer.
 
-Phase 2 引入 CanonicalSpan 与 NormalizedAnnotation union，
+CanonicalSpan 与 NormalizedAnnotation 是归一化层的核心类型，
 将后端 resolved 的可信结果与 LLM Draft 层彻底分离。
-旧 Annotation union 保留给兼容链路，子任务 3 统一切换。
+旧 Annotation union 保留给兼容链路。
 """
 
 from __future__ import annotations
@@ -254,7 +254,7 @@ class NormalizedAnnotationResult(BaseModel):
     )
     normalized_annotations: list[NormalizedAnnotation] = Field(
         default_factory=list,
-        description="归一化后的标注列表（新字段，Phase 2 子任务 3 统一后替换 annotations）",
+        description="归一化后的标注列表（新字段，统一后替换 annotations）",
     )
     sentence_translations: list[SentenceTranslation] = Field(
         default_factory=list,
@@ -271,7 +271,7 @@ class NormalizedAnnotationResult(BaseModel):
             "包含 canonical_normalized_counts、canonical_drop_counts_by_type、"
             "canonical_drop_counts_by_reason、canonical_span_count、"
             "canonical_anchor_drop_summary。"
-            "Phase 2.3A 新增，不影响旧 annotations 行为。"
+            "新增字段，不影响旧 annotations 行为。"
         ),
     )
     canonical_drop_log: list[DropLogEntry] = Field(

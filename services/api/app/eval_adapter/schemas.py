@@ -9,11 +9,8 @@ from app.llm.types import ModelSelection
 from app.schemas.analysis import AnyRenderSceneModel, SourceType
 from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
 from app.services.analysis.prompting.node_lab_runtime import (
-    FewShotOverride,
-    InstructionOverride,
     NodeLabExampleEntry,
     NodeLabRuntimeOverride,
-    PolicyOverride,
 )
 from app.services.analysis.prompting.runtime_context import PromptRuntimeOverride
 
@@ -42,7 +39,9 @@ TraceScope = Literal["off", "inherit"]
 NodeProbeName = Literal["grammar", "vocabulary", "translation"]
 WorkflowLabPromptAgentName = Literal["vocabulary", "grammar", "translation", "repair"]
 NodeLabWorkspace = Literal["single_run", "baseline_compare"]
-JudgeStrategy = Literal["grammar_item_review", "vocabulary_item_review", "translation_output_review"]
+JudgeStrategy = Literal[
+    "grammar_item_review", "vocabulary_item_review", "translation_output_review"
+]
 JudgeMethod = Literal["rubric_only", "rubric_plus_pairwise", "anti_template_probe"]
 JudgeOutputMode = Literal["rubric_scoring", "pairwise", "probe_appendix"]
 JudgeOutputSchemaKind = Literal[
@@ -125,7 +124,6 @@ class RequestSnapshot(BaseModel):
     extended: bool
     rag_mode: RagMode
     trace_scope: TraceScope
-    repair_mode: str = "patch"
     repair_enabled: bool = True
 
 
@@ -193,7 +191,8 @@ class NodeLabBaselineConfigRequest(BaseModel):
     def _validate_node_lab_goal(self) -> NodeLabBaselineConfigRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+                "node_lab v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
             )
         return self
 
@@ -224,7 +223,10 @@ class WorkflowLabBaselineBundleRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_learning_only(self) -> WorkflowLabBaselineBundleRequest:
         if self.reading_goal == "academic":
-            raise ValueError("workflow_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
+            raise ValueError(
+                "workflow_lab v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
+            )
         return self
 
 
@@ -309,9 +311,13 @@ class ArticleAnalysisNodeLabRunRequest(BaseModel):
     def _validate_candidate_node(self) -> ArticleAnalysisNodeLabRunRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+                "node_lab v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
             )
-        if self.candidate_override is not None and self.candidate_override.node_name != self.node_name:
+        if (
+            self.candidate_override is not None
+            and self.candidate_override.node_name != self.node_name
+        ):
             raise ValueError("candidate_override.node_name must match node_name")
         if (
             self.candidate_override is not None
@@ -357,7 +363,8 @@ class ArticleAnalysisNodeLabCompareRequest(BaseModel):
     def _validate_candidate_node(self) -> ArticleAnalysisNodeLabCompareRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+                "node_lab v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
             )
         if self.candidate_override.node_name != self.node_name:
             raise ValueError("candidate_override.node_name must match node_name")
@@ -481,7 +488,9 @@ class NodeLabProbeAppendixResult(BaseModel):
 class NodeLabJudgeExecuteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    eval_adapter_schema_version: Literal[
+        "article-analysis-node-lab-judge-v1"
+    ] = NODE_LAB_JUDGE_SCHEMA_VERSION
     request_id: str | None = None
     node_name: NodeProbeName
     judge_strategy: JudgeStrategy
@@ -498,10 +507,11 @@ class NodeLabJudgeExecuteRequest(BaseModel):
     timeout_seconds: float | None = Field(default=None, gt=0.0)
 
     @model_validator(mode="after")
-    def _validate_request(self) -> "NodeLabJudgeExecuteRequest":
+    def _validate_request(self) -> NodeLabJudgeExecuteRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_lab judge v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+                "node_lab judge v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
             )
         allowed_by_node: dict[str, set[str]] = {
             "grammar": {"grammar_item_review"},
@@ -511,9 +521,15 @@ class NodeLabJudgeExecuteRequest(BaseModel):
         if self.judge_strategy not in allowed_by_node[self.node_name]:
             raise ValueError("judge_strategy is not compatible with node_name")
         if self.output_mode == "probe_appendix" and self.judge_method != "anti_template_probe":
-            raise ValueError("probe_appendix output_mode requires judge_method='anti_template_probe'")
+            raise ValueError(
+                "probe_appendix output_mode requires "
+                "judge_method='anti_template_probe'"
+            )
         if self.judge_method == "anti_template_probe" and self.node_name != "grammar":
-            raise ValueError("anti_template_probe is only supported for grammar in node_lab judge v1")
+            raise ValueError(
+                "anti_template_probe is only supported for grammar "
+                "in node_lab judge v1"
+            )
         expected_schema: dict[tuple[str, str], str] = {
             ("grammar_item_review", "rubric_scoring"): "grammar_item_scoring",
             ("vocabulary_item_review", "rubric_scoring"): "vocabulary_item_scoring",
@@ -532,7 +548,9 @@ class NodeLabJudgeExecuteRequest(BaseModel):
 class NodeLabJudgeExecuteResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    eval_adapter_schema_version: Literal[
+        "article-analysis-node-lab-judge-v1"
+    ] = NODE_LAB_JUDGE_SCHEMA_VERSION
     request_id: str
     node_name: NodeProbeName
     judge_strategy: JudgeStrategy
@@ -553,7 +571,9 @@ class NodeLabJudgeExecuteResult(BaseModel):
 class NodeLabJudgeRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    eval_adapter_schema_version: Literal[
+        "article-analysis-node-lab-judge-v1"
+    ] = NODE_LAB_JUDGE_SCHEMA_VERSION
     request_id: str | None = None
     judge_request_id: str | None = None
     node_name: NodeProbeName
@@ -568,7 +588,9 @@ class NodeLabJudgeRunRequest(BaseModel):
 class NodeLabJudgeRunResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    eval_adapter_schema_version: Literal["article-analysis-node-lab-judge-v1"] = NODE_LAB_JUDGE_SCHEMA_VERSION
+    eval_adapter_schema_version: Literal[
+        "article-analysis-node-lab-judge-v1"
+    ] = NODE_LAB_JUDGE_SCHEMA_VERSION
     judge_request_id: str
     trial_id: str
     session_id: str | None = None
@@ -606,14 +628,14 @@ class ArticleAnalysisEvalRequest(BaseModel):
     trace_project: str | None = "claread-eval"
     timeout_seconds: float | None = Field(default=None, gt=0.0)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
-    repair_mode: Literal["patch"] = "patch"
     repair_enabled: bool = True
 
     @model_validator(mode="after")
     def _validate_learning_only(self) -> ArticleAnalysisEvalRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "eval workflow v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+                "eval workflow v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
             )
         if (
             self.prompt_variant_id
@@ -656,7 +678,8 @@ class ArticleAnalysisNodeProbeRequest(BaseModel):
     def _validate_learning_only(self) -> ArticleAnalysisNodeProbeRequest:
         if self.reading_goal == "academic":
             raise ValueError(
-                "node_probe v1 only supports learning topology; academic should use a dedicated academic lab/workflow"
+                "node_probe v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
             )
         if (
             self.prompt_variant_id
@@ -744,8 +767,10 @@ class ExampleLabGenerateRagFieldsRequest(BaseModel):
         """Validate output_fragment conforms to the few-shot JSON contract.
 
         Contract per design doc:
-        - grammar_note: type="grammar_note", label (required), note_zh (required), spans (optional)
-        - sentence_analysis: type="sentence_analysis", label (required), analysis_zh (required), chunks (optional)
+        - grammar_note: type="grammar_note",
+          label (required), note_zh (required), spans (optional)
+        - sentence_analysis: type="sentence_analysis",
+          label (required), analysis_zh (required), chunks (optional)
         """
         frag = self.output_fragment
         if not frag:
@@ -759,35 +784,68 @@ class ExampleLabGenerateRagFieldsRequest(BaseModel):
             if not frag.get("label"):
                 raise ValueError("grammar_note output_fragment must have a non-empty 'label' field")
             if not frag.get("note_zh"):
-                raise ValueError("grammar_note output_fragment must have a non-empty 'note_zh' field")
+                raise ValueError(
+                    "grammar_note output_fragment must have "
+                    "a non-empty 'note_zh' field"
+                )
             spans = frag.get("spans")
             if spans is not None:
                 if not isinstance(spans, list):
-                    raise ValueError("grammar_note output_fragment 'spans' must be an array if present")
+                    raise ValueError(
+                        "grammar_note output_fragment 'spans' "
+                        "must be an array if present"
+                    )
                 for i, span in enumerate(spans):
                     if not isinstance(span, dict):
-                        raise ValueError(f"grammar_note output_fragment spans[{i}] must be an object")
+                        raise ValueError(
+                            f"grammar_note output_fragment "
+                            f"spans[{i}] must be an object"
+                        )
                     if "text" not in span or not isinstance(span["text"], str):
-                        raise ValueError(f"grammar_note output_fragment spans[{i}] must have a string 'text' field")
+                        raise ValueError(
+                            f"grammar_note output_fragment "
+                            f"spans[{i}] must have a string 'text' field"
+                        )
 
         elif frag_type == "sentence_analysis":
             if not frag.get("label"):
-                raise ValueError("sentence_analysis output_fragment must have a non-empty 'label' field")
+                raise ValueError(
+                    "sentence_analysis output_fragment must have "
+                    "a non-empty 'label' field"
+                )
             if not frag.get("analysis_zh"):
-                raise ValueError("sentence_analysis output_fragment must have a non-empty 'analysis_zh' field")
+                raise ValueError(
+                    "sentence_analysis output_fragment must have "
+                    "a non-empty 'analysis_zh' field"
+                )
             chunks = frag.get("chunks")
             if chunks is not None:
                 if not isinstance(chunks, list):
-                    raise ValueError("sentence_analysis output_fragment 'chunks' must be an array if present")
+                    raise ValueError(
+                        "sentence_analysis output_fragment 'chunks' "
+                        "must be an array if present"
+                    )
                 for i, chunk in enumerate(chunks):
                     if not isinstance(chunk, dict):
-                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must be an object")
+                        raise ValueError(
+                            f"sentence_analysis output_fragment "
+                            f"chunks[{i}] must be an object"
+                        )
                     if "text" not in chunk or not isinstance(chunk["text"], str):
-                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must have a string 'text' field")
+                        raise ValueError(
+                            f"sentence_analysis output_fragment "
+                            f"chunks[{i}] must have a string 'text' field"
+                        )
                     if "order" not in chunk or not isinstance(chunk["order"], int):
-                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must have an integer 'order' field")
+                        raise ValueError(
+                            f"sentence_analysis output_fragment "
+                            f"chunks[{i}] must have an integer 'order' field"
+                        )
                     if "label" not in chunk or not isinstance(chunk["label"], str):
-                        raise ValueError(f"sentence_analysis output_fragment chunks[{i}] must have a string 'label' field")
+                        raise ValueError(
+                            f"sentence_analysis output_fragment "
+                            f"chunks[{i}] must have a string 'label' field"
+                        )
 
         else:
             raise ValueError(

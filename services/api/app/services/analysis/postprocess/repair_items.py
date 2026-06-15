@@ -297,7 +297,7 @@ def apply_repair_patches_to_normalized_result(
     """
     sentence_map = {s.sentence_id: s for s in sentences}
 
-    # ── Phase 1: Convert patches to annotations ────────────────────
+    # ── Convert patches to annotations ────────────────────────────────
     new_annotations: list[NormalizedAnnotation] = []
     repair_drop_log: list[DropLogEntry] = []
     patched_count = 0
@@ -365,7 +365,7 @@ def apply_repair_patches_to_normalized_result(
         new_annotations.append(normalized)
         patched_count += 1
 
-    # ── Phase 2: Full postprocess ──────────────────────────────────
+    # ── Full postprocess ──────────────────────────────────────────────
     # Merge existing + new, then run dedup → conflict → density
     pre_count = len(result.normalized_annotations) + len(new_annotations)
     candidates = list(result.normalized_annotations) + new_annotations
@@ -376,7 +376,7 @@ def apply_repair_patches_to_normalized_result(
     )
     postprocess_drop_count = pre_count - len(final_annotations)
 
-    # ── Phase 3: Build result ──────────────────────────────────────
+    # ── Build result ──────────────────────────────────────────────────
     all_drop_log = (
         (result.canonical_drop_log or [])
         + repair_drop_log

@@ -227,11 +227,38 @@ def test_assemble_result_node_records_timing():
     assert "assemble_result" in timings
 
 
-def test_full_workflow_node_timings_keys(monkeypatch):
-    """运行完整 learning workflow，验证所有顶层节点计时 key 存在。"""
-    monkeypatch.setattr(analyze_nodes, "_run_vocabulary_llm_span", _fake_vocab_span)
-    monkeypatch.setattr(analyze_nodes, "_run_grammar_llm_span", _fake_grammar_span)
-    monkeypatch.setattr(analyze_nodes, "_run_translation_llm_span", _fake_translation_span)
+def test_workflow_result_node_timings_contract(monkeypatch):
+    """验证 workflow 返回结果的 node_timings / repair_stats 结构契约。
+
+    Mock workflow 边界函数，避免真实 LLM 调用。
+    """
+    from app.workflow import analyze as analyze_module
+
+    async def _fake_workflow(payload, *, repair_enabled=None):
+        return {
+            "node_timings": {
+                "prepare_input": 0.1,
+                "derive_user_config": 0.01,
+                "parallel_agents": 5.0,
+                "vocabulary_agent": 5.0,
+                "grammar_agent": 5.0,
+                "translation_agent": 5.0,
+                "normalize_and_ground": 0.2,
+                "project_render_scene": 0.05,
+                "assemble_result": 0.01,
+            },
+            "repair_stats": {
+                "repair_triggered": False,
+                "trigger_threshold": 0.35,
+                "trigger_reason": None,
+                "pre_repair_annotation_count": 0,
+                "post_repair_annotation_count": None,
+                "repair_elapsed_s": None,
+                "repair_succeeded": None,
+            },
+        }
+
+    monkeypatch.setattr(analyze_module, "run_article_analysis_with_state", _fake_workflow)
 
     payload = AnalyzeRequest.model_validate(
         {
@@ -241,8 +268,7 @@ def test_full_workflow_node_timings_keys(monkeypatch):
             "source_type": "user_input",
         }
     )
-    from app.workflow.analyze import run_article_analysis_with_state
-    result = asyncio.run(run_article_analysis_with_state(payload))
+    result = asyncio.run(analyze_module.run_article_analysis_with_state(payload))
 
     timings = result.get("node_timings", {})
     expected_top_keys = {

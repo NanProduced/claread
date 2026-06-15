@@ -50,3 +50,23 @@ v3 的核心改进是分层：
 - 新功能优先沿 v3 的分层思路扩展。
 - Web 端可以有更强 render profile，但不应要求后端专门复制一套业务服务。
 - 如果要引入 Directus、LLM-as-a-Judge 或 few-shot RAG，应作为 v3 之后的扩展层，而不是把旧 regression 脚本复活。
+
+## v3 锚点重构（2026-06）
+
+重构原因：
+
+- 旧 projection 依赖 text-search 型 anchor resolution（6 级 fallback），LLM 无法精确复制原文导致 40-50% anchor grounding 失败
+- display text 和 source anchor 混用，短语如 "turn ... into" 被当作单一锚点
+
+核心决策：
+
+- 拆分 DraftAnnotation 与 NormalizedAnnotation，LLM 输出 exact source quote，后端 resolve 成 canonical span
+- RenderScene 使用 UTF-16 sentence-local range，前端直接 slice 定位，不依赖 indexOf
+- fail-closed 原则：错误高亮比高亮缺失更严重
+- repair 从 full-result 改为 item-level patch
+- tool_choice=required 对 grammar 节点有显著延迟和 token 收益，但作为可选实验配置
+
+保留经验：
+
+- 结构化输出可以约束 JSON 形状，不能保证模型复制的 quote 一定来自原文
+- 必须同时建设 Pydantic schema、normalize 阶段 source quote resolve、清晰 drop log、Eval Center 可观察性

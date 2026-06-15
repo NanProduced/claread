@@ -2,9 +2,7 @@
 
 在 normalize_and_ground 失败时触发。
 职责：修复结构性问题，不新增语义标注。
-
 只使用 item-level patch repair。
-旧 full-result repair（RepairAgentDeps / build_repair_prompt / get_repair_agent）已移除。
 """
 
 from __future__ import annotations
