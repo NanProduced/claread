@@ -82,9 +82,13 @@ class ReaderAskRuntimeState:
     # when the request was eligible for the agent-loop fast path and
     # bypassed the legacy ``resolve_semantic_planning`` call.
     # ``planner_route_used`` records which path actually ran for billing
-    # and eval: "planner_first" (legacy) or "fast_path".
+    # and eval: "planner_first" (legacy), "fast_path", or
+    # "agent_loop_first" (Round 3 agent-loop-first entry).
     planner_skipped: bool = False
     planner_route_used: str = "planner_first"
+    # Round 3 — degenerate-loop detection telemetry.
+    degenerate_detected: bool = False
+    degenerate_reason: str | None = None
 
 
 @dataclass(slots=True)

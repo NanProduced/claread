@@ -91,7 +91,7 @@ class TestFastPathRoutingDecision:
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor()],
-            cross_record_toggle=False,
+            cross_record_toggle=True,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
         ) is False
 
@@ -108,7 +108,7 @@ class TestFastPathRoutingDecision:
     def test_long_history_uses_planner(self) -> None:
         assert fast_path_runtime.should_use_fast_path(
             entry_action="ask_about_this",
-            history_messages=_history(5),
+            history_messages=_history(11),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=False,
@@ -122,7 +122,7 @@ class TestFastPathRoutingDecision:
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=True,
-            latest_user_message="解释一下",
+            latest_user_message="和另一篇有什么不同",
         ) is False
 
     def test_dictionary_anchor_uses_planner(self) -> None:
@@ -261,14 +261,14 @@ class TestFastPathRuntimeStateTelemetry:
     def test_fast_path_sets_planner_skipped(self) -> None:
         state = ReaderAskRuntimeState()
         state.planner_skipped = True
-        state.planner_route_used = "fast_path"
+        state.planner_route_used = "agent_loop_first"
         assert state.planner_skipped is True
-        assert state.planner_route_used == "fast_path"
+        assert state.planner_route_used == "agent_loop_first"
 
     def test_fast_path_telemetry_preserved_on_rebuild(self) -> None:
         original = ReaderAskRuntimeState()
         original.planner_skipped = True
-        original.planner_route_used = "fast_path"
+        original.planner_route_used = "agent_loop_first"
 
         rebuilt = ReaderAskRuntimeState(
             citations=[],
@@ -278,7 +278,7 @@ class TestFastPathRuntimeStateTelemetry:
         )
 
         assert rebuilt.planner_skipped is True
-        assert rebuilt.planner_route_used == "fast_path"
+        assert rebuilt.planner_route_used == "agent_loop_first"
 
     def test_legacy_telemetry_preserved_on_rebuild(self) -> None:
         original = ReaderAskRuntimeState()
@@ -307,10 +307,10 @@ class TestFastPathTraceSemantics:
 
     def test_none_snapshot_fast_path_trace(self) -> None:
         data = service_svc._planning_snapshot_json(
-            None, planner_route_used="fast_path"
+            None, planner_route_used="agent_loop_first"
         )
         assert data["is_fast_path"] is True
-        assert data["planner_route_used"] == "fast_path"
+        assert data["planner_route_used"] == "agent_loop_first"
 
     def test_none_snapshot_planner_first_trace(self) -> None:
         """When planning_snapshot is None but route is planner_first (e.g.
@@ -324,10 +324,10 @@ class TestFastPathTraceSemantics:
     def test_fast_path_snapshot_trace(self) -> None:
         snap = planner_svc.FastPathPlanningSnapshot()
         data = service_svc._planning_snapshot_json(
-            snap, planner_route_used="fast_path"
+            snap, planner_route_used="agent_loop_first"
         )
         assert data["is_fast_path"] is True
-        assert data["planner_route_used"] == "fast_path"
+        assert data["planner_route_used"] == "agent_loop_first"
 
     def test_legacy_snapshot_trace(self) -> None:
         """Legacy planner-first snapshot should have planner_route_used."""
@@ -486,9 +486,10 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
     Callers should enter all patches, then configure repo mocks.
     If ``include_planning_deps`` is True, also patch
     ``build_reader_ask_resolve_planning_deps``.
-    If ``fast_path`` is True, ``should_use_fast_path`` returns True;
-    otherwise False.
+    If ``fast_path`` is True, ``resolve_planner_route`` returns
+    ``"agent_loop_first"``; otherwise ``"planner_first"``.
     """
+    route = "agent_loop_first" if fast_path else "planner_first"
     patches = {
         "load_record": patch.object(service_svc, "_load_record_bundle", new_callable=AsyncMock),
         "resolve_model": patch.object(service_svc, "_resolve_thread_model_option", new_callable=AsyncMock),
@@ -510,9 +511,9 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
         "post_process": patch.object(service_svc, "post_process_svc"),
         "checkpoint": patch.object(service_svc, "stream_checkpoint_svc"),
         "repo": patch.object(service_svc, "repo"),
-        "should_use_fast_path": patch(
-            "app.services.reader_ask.service.fast_path_runtime.should_use_fast_path",
-            return_value=fast_path,
+        "resolve_planner_route": patch(
+            "app.services.reader_ask.service.fast_path_runtime.resolve_planner_route",
+            return_value=route,
         ),
         "refund_points": patch.object(service_svc, "refund_reserved_points", new_callable=AsyncMock),
     }
@@ -633,8 +634,8 @@ class TestStreamThreadMessageFastPath:
             )
 
             # The planner must NOT have been called
-            mocks["should_use_fast_path"].assert_called_once()
-            gate_kwargs = mocks["should_use_fast_path"].call_args.kwargs
+            mocks["resolve_planner_route"].assert_called_once()
+            gate_kwargs = mocks["resolve_planner_route"].call_args.kwargs
             assert gate_kwargs["entry_action"] == "ask_about_this"
             assert gate_kwargs["history_messages"] == []
             assert gate_kwargs["attachments"] == []
@@ -700,8 +701,8 @@ class TestStreamThreadMessageFastPath:
             )
 
             # The planner MUST have been called
-            mocks["should_use_fast_path"].assert_called_once()
-            gate_kwargs = mocks["should_use_fast_path"].call_args.kwargs
+            mocks["resolve_planner_route"].assert_called_once()
+            gate_kwargs = mocks["resolve_planner_route"].call_args.kwargs
             assert gate_kwargs["entry_action"] == "ask_about_this"
             assert gate_kwargs["history_messages"] == []
             assert gate_kwargs["attachments"] == []
@@ -788,8 +789,8 @@ class TestRetryThreadMessageFastPath:
             )
 
             # The planner must NOT have been called
-            mocks["should_use_fast_path"].assert_called_once()
-            gate_kwargs = mocks["should_use_fast_path"].call_args.kwargs
+            mocks["resolve_planner_route"].assert_called_once()
+            gate_kwargs = mocks["resolve_planner_route"].call_args.kwargs
             assert gate_kwargs["entry_action"] == "ask_about_this"
             assert gate_kwargs["history_messages"] == [user_msg]
             assert gate_kwargs["attachments"] == []

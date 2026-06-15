@@ -1691,7 +1691,7 @@ def _planning_snapshot_json(
 ) -> dict[str, Any]:
     if planning_snapshot is None:
         return {
-            "is_fast_path": planner_route_used == "fast_path",
+            "is_fast_path": planner_route_used in ("fast_path", "agent_loop_first"),
             "planner_route_used": planner_route_used,
         }
     # Round 1 — FastPathPlanningSnapshot is a lightweight dataclass that
@@ -1785,7 +1785,7 @@ def _planning_snapshot_json(
         "external_asset_disambiguation_state": planning_snapshot.external_asset_disambiguation_state.model_dump(mode="json")
         if planning_snapshot.external_asset_disambiguation_state
         else None,
-        "is_fast_path": planner_route_used == "fast_path",
+        "is_fast_path": planner_route_used in ("fast_path", "agent_loop_first"),
         "planner_route_used": planner_route_used,
     }
 
@@ -1845,6 +1845,9 @@ def _metrics_json(
     trace_summary: ReaderAskTraceSummary | None,
     billed_points: int,
     usage_event_id: UUID | None,
+    planner_route: str | None = None,
+    degenerate_detected: bool = False,
+    degenerate_reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "planner_mode": trace_summary.planner_mode if trace_summary else None,
@@ -1860,6 +1863,9 @@ def _metrics_json(
         "billed_points": billed_points,
         "usage_event_id": str(usage_event_id) if usage_event_id else None,
         "prompt_version": get_prompt_version(),
+        "planner_route": planner_route,
+        "degenerate_detected": degenerate_detected,
+        "degenerate_reason": degenerate_reason,
     }
 
 
@@ -1891,6 +1897,9 @@ async def _upsert_eval_trace_record(
             trace_summary=trace_summary,
             billed_points=billed_points,
             usage_event_id=usage_event_id,
+            planner_route=runtime_state.planner_route_used,
+            degenerate_detected=runtime_state.degenerate_detected,
+            degenerate_reason=runtime_state.degenerate_reason,
         )
         if trace_summary is not None or usage_event_id is not None or billed_points
         else (existing or {}).get("metrics_json") or {},
@@ -2792,21 +2801,20 @@ async def stream_thread_message(
             return
 
         planning_result = None
-        if fast_path_runtime.should_use_fast_path(
+        planner_route = fast_path_runtime.resolve_planner_route(
             entry_action=body.entry_action,
             history_messages=history_messages,
             attachments=attachments,
             anchors=resolved_anchors,
             cross_record_toggle=runtime_state.cross_record_context_allowed,
             latest_user_message=body.content,
-        ):
-            # Round 1 — agent-loop fast path: skip the LLM planner call.
-            # ``planning_snapshot`` is set to None so that
-            # ``materialize_planned_context`` walks the minimal overview
-            # branch and ``build_replan_event`` naturally returns None
-            # (fast path never replans).
+        )
+        if planner_route == "agent_loop_first":
+            # Round 3 — agent-loop-first: default path. Skip the LLM planner
+            # call and materialize_planned_context. The model calls read tools
+            # on demand instead of receiving a pre-fetched working set.
             runtime_state.planner_skipped = True
-            runtime_state.planner_route_used = "fast_path"
+            runtime_state.planner_route_used = "agent_loop_first"
             resolved_intent, resolved_intent_label = (
                 runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
             )
@@ -3255,19 +3263,33 @@ async def stream_thread_message(
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
-        resolved_context_input = await context_runtime_svc.materialize_planned_context(
-            user_id=user_id,
-            record=record,
-            runtime_state=runtime_state,
-            planning_snapshot=planning_snapshot,
-            page_identity=body.page_identity,
-            entry_action=body.entry_action,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            get_record_context_cb=get_record_context_cb,
-            get_record_insights_cb=get_record_insights_cb,
-            load_record_bundle_cb=_load_record_bundle,
-        )
+        if planner_route == "agent_loop_first":
+            # Round 3 — agent-loop-first: skip materialize_planned_context.
+            # Build a minimal context with overview only; the model will call
+            # read tools on demand when it needs more detail.
+            resolved_context_input = context_runtime_svc.build_agent_loop_context(
+                record=record,
+                runtime_state=runtime_state,
+                anchors=resolved_anchors,
+                attachments=attachments,
+                user_id=user_id,
+                page_identity=body.page_identity,
+                entry_action=body.entry_action,
+            )
+        else:
+            resolved_context_input = await context_runtime_svc.materialize_planned_context(
+                user_id=user_id,
+                record=record,
+                runtime_state=runtime_state,
+                planning_snapshot=planning_snapshot,
+                page_identity=body.page_identity,
+                entry_action=body.entry_action,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                get_record_context_cb=get_record_context_cb,
+                get_record_insights_cb=get_record_insights_cb,
+                load_record_bundle_cb=_load_record_bundle,
+            )
         quick_action_annotation = await _run_explicit_quick_action_annotation(
             submission_mode=submission_mode,
             task_mode=resolved_intent,
@@ -3488,6 +3510,8 @@ async def stream_thread_message(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
             assistant_message_id=assistant_message["id"],
+            planner_route=planner_route,
+            runtime_state=runtime_state,
         )
         if replan_event is not None:
             yield stream_events_svc.encode_sse(replan_event[0], replan_event[1])
@@ -4070,21 +4094,20 @@ async def retry_thread_message(
             return
 
         planning_result = None
-        if fast_path_runtime.should_use_fast_path(
+        planner_route = fast_path_runtime.resolve_planner_route(
             entry_action=body.entry_action,
             history_messages=history_messages,
             attachments=attachments,
             anchors=resolved_anchors,
             cross_record_toggle=runtime_state.cross_record_context_allowed,
             latest_user_message=body.content,
-        ):
-            # Round 1 — agent-loop fast path: skip the LLM planner call.
-            # ``planning_snapshot`` is set to None so that
-            # ``materialize_planned_context`` walks the minimal overview
-            # branch and ``build_replan_event`` naturally returns None
-            # (fast path never replans).
+        )
+        if planner_route == "agent_loop_first":
+            # Round 3 — agent-loop-first: default path. Skip the LLM planner
+            # call and materialize_planned_context. The model calls read tools
+            # on demand instead of receiving a pre-fetched working set.
             runtime_state.planner_skipped = True
-            runtime_state.planner_route_used = "fast_path"
+            runtime_state.planner_route_used = "agent_loop_first"
             resolved_intent, resolved_intent_label = (
                 runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
             )
@@ -4486,19 +4509,33 @@ async def retry_thread_message(
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
-        resolved_context_input = await context_runtime_svc.materialize_planned_context(
-            user_id=user_id,
-            record=record,
-            runtime_state=runtime_state,
-            planning_snapshot=planning_snapshot,
-            page_identity=body.page_identity,
-            entry_action=body.entry_action,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            get_record_context_cb=get_record_context_cb,
-            get_record_insights_cb=get_record_insights_cb,
-            load_record_bundle_cb=_load_record_bundle,
-        )
+        if planner_route == "agent_loop_first":
+            # Round 3 — agent-loop-first: skip materialize_planned_context.
+            # Build a minimal context with overview only; the model will call
+            # read tools on demand when it needs more detail.
+            resolved_context_input = context_runtime_svc.build_agent_loop_context(
+                record=record,
+                runtime_state=runtime_state,
+                anchors=resolved_anchors,
+                attachments=attachments,
+                user_id=user_id,
+                page_identity=body.page_identity,
+                entry_action=body.entry_action,
+            )
+        else:
+            resolved_context_input = await context_runtime_svc.materialize_planned_context(
+                user_id=user_id,
+                record=record,
+                runtime_state=runtime_state,
+                planning_snapshot=planning_snapshot,
+                page_identity=body.page_identity,
+                entry_action=body.entry_action,
+                attachments=attachments,
+                anchors=resolved_anchors,
+                get_record_context_cb=get_record_context_cb,
+                get_record_insights_cb=get_record_insights_cb,
+                load_record_bundle_cb=_load_record_bundle,
+            )
         quick_action_annotation = await _run_explicit_quick_action_annotation(
             submission_mode=submission_mode,
             task_mode=resolved_intent,
@@ -4720,6 +4757,8 @@ async def retry_thread_message(
             final_content_md=final_content_md,
             planning_snapshot=planning_snapshot,
             assistant_message_id=assistant_message["id"],
+            planner_route=planner_route,
+            runtime_state=runtime_state,
         )
         if replan_event is not None:
             yield stream_events_svc.encode_sse(replan_event[0], replan_event[1])

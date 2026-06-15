@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
 
 from app.agents.reader_ask_agent import (
     ReaderAskAgentDeps,
+    ReaderAskRuntimeState,
     build_reader_ask_prompt,
 )
 from app.llm.call_guard import assert_real_llm_allowed
@@ -121,6 +122,11 @@ class AgentStreamRuntime:
     # pydantic-ai 1.73+ ``StreamedRunResult`` exposes ``get_output()`` rather
     # than an ``output`` property.
     authoritative_output: str | None = None
+    # Degenerate-answer metadata: set by ``build_replan_event`` when
+    # ``planner_route == "agent_loop_first"`` so that the caller can
+    # observe the detection without triggering a replan.
+    degenerate_detected: bool = False
+    degenerate_reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -174,22 +180,48 @@ def build_replan_event(
     final_content_md: str,
     planning_snapshot: Any,
     assistant_message_id: str,
+    planner_route: str = "planner_first",
+    runtime_state: ReaderAskRuntimeState | AgentStreamRuntime | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Check if replan should be triggered and return the replan.started event.
 
     Returns the (event_name, event_payload) tuple if replan is triggered,
     None otherwise.
 
+    When ``planner_route == "agent_loop_first"``, degenerate answers are
+    detected and recorded as metadata on ``runtime_state`` but no replan
+    event is returned — the agent loop continues without interruption.
+    For all other routes (including the default ``"planner_first"``), the
+    existing replan logic applies.
+
     The caller is responsible for yielding the event via SSE — this function
     does NOT put anything on the event_queue because it is called after the
     stream consumer has already exited.
     """
-    if (
+    is_degenerate = (
         is_degenerate_answer(final_content_md)
         and planning_snapshot is not None
         and planning_snapshot.clarification_mode == "none"
         and planning_snapshot.clarification_only is False
-    ):
+    )
+
+    if planner_route == "agent_loop_first":
+        # For agent_loop_first, planning_snapshot is None so the
+        # compound degenerate check above will always be False.
+        # Use a simpler check that only looks at the answer content.
+        if is_degenerate_answer(final_content_md):
+            logger.warning(
+                "reader_ask_degenerate_detected_no_replan: Degenerate answer detected "
+                "(%d chars) in agent_loop_first route — recording metadata, skipping replan",
+                len(final_content_md.strip()),
+            )
+            if runtime_state is not None:
+                runtime_state.degenerate_detected = True
+                runtime_state.degenerate_reason = "degenerate_answer"
+        return None
+
+    # planner_first (default) — existing replan logic
+    if is_degenerate:
         logger.warning(
             "reader_ask_replan_triggered: Degenerate answer detected (%d chars), attempting replan",
             len(final_content_md.strip()),

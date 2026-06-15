@@ -180,6 +180,59 @@ def load_external_asset_contexts(
     return contexts
 
 
+def build_agent_loop_context(
+    *,
+    record: RecordBundle,
+    runtime_state: ReaderAskRuntimeState,
+    anchors: list[ReaderAskAnchorRef],
+    attachments: list[ReaderAskAttachment],
+    user_id: UUID,
+    page_identity: Any,
+    entry_action: ReaderAskEntryAction,
+) -> Any:
+    """Build a minimal resolved_context_input for the agent loop.
+
+    Unlike ``materialize_planned_context``, this function does NOT call any
+    pre-fetch callbacks (get_record_context_cb, get_record_insights_cb) and
+    does NOT invoke the planner.  It assembles a lightweight context with only
+    the record identity, overview, and source_labels — suitable for the agent
+    loop where full context materialization is unnecessary.
+    """
+    resolved_overview = utils.resolve_record_overview(
+        render_scene=record.render_scene,
+        page_state_json=getattr(record, "page_state_json", None),
+    )
+    overview = resolved_overview.get("overview")
+    overview_str = str(overview).strip() or None if isinstance(overview, str) else None
+
+    source_labels: list[str] = []
+    if overview_str:
+        runtime_state.latest_article_overview = overview_str
+        runtime_state.source_labels.add(str(resolved_overview.get("source") or "article_overview"))
+        source_labels.append("article_overview")
+
+    current_record_context = ReaderAskCurrentRecordContext(
+        record_id=str(record.record_id),
+        record_title=record.title,
+        local_context=None,
+        record_insights=[],
+        article_overview=overview_str,
+        article_overview_status=str(resolved_overview.get("status") or "") or None,
+        article_overview_source=str(resolved_overview.get("source") or "") or None,
+        article_overview_confidence=str(resolved_overview.get("confidence") or "") or None,
+        source_labels=source_labels,
+    )
+    return planner.build_resolved_context_input(
+        page_identity=page_identity,
+        entry_action=entry_action,
+        attachments=attachments,
+        anchors=anchors,
+        current_record_context=current_record_context,
+        external_record_contexts=[],
+        external_asset_contexts=[],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main entry: materialize planned context
 # ---------------------------------------------------------------------------

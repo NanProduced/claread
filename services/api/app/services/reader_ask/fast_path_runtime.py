@@ -1,26 +1,29 @@
-"""Fast-path runtime helpers for the Ask Claread agent-loop.
+"""Route policy and fast-path runtime helpers for the Ask Claread agent-loop.
 
-Round 1 introduces a controlled bypass of the legacy ``resolve_semantic_planning``
-LLM call for article-bound / low-risk / short-history queries. The fast
-path:
+Round 3 flips the default from planner-first to agent-loop-first. The route
+policy determines whether a request should use the agent-loop path (model
+decides context on demand via tools) or fall back to the legacy planner-first
+path (planner pre-fetches working set before the answer agent runs).
 
-- skips the planner LLM call;
-- skips the working_set-driven pre-fetch in ``materialize_planned_context``
-  (but still calls it with ``planning_snapshot=None`` so article_overview
-  can be picked up and source_labels remain accurate);
-- builds a minimal ``context_plan`` / ``trace_summary`` from request data only;
-- runs the same main answer agent stream as the legacy path.
+Route values:
 
-The legacy planner-first path remains the default and is fully preserved.
+- ``"agent_loop_first"`` — default for article-bound queries. The main agent
+  receives a minimal payload (overview, anchors, attachments, history) and
+  calls read tools on demand.
+- ``"planner_first"`` — legacy fallback for complex scenarios that need the
+  planner to resolve context before answering (external references, deictic
+  without anchor, dictionary anchors, long threads).
 
-Decision logic lives in :func:`should_use_fast_path`. See
-``docs/tmp/ask-claread/TMP-ask-claread-agent-loop-refactor-task-tracker-2026-06-13.md``
-§Round 1 for the full design rationale.
+Decision logic lives in :func:`resolve_planner_route`. The older
+:func:`should_use_fast_path` is retained as a thin compatibility wrapper.
+
+See ``docs/tmp/ask-claread/TMP-ask-claread-agent-loop-refactor-task-tracker-2026-06-13.md``
+§Round 3 for the design rationale.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
@@ -34,22 +37,31 @@ if TYPE_CHECKING:
     from app.services.reader_ask.runtime_contract import ReaderAskAnswerRuntimeInput
 
 
-# Entry actions eligible for the fast path. Anything outside this set always
-# uses the legacy planner-first path.
-_FAST_PATH_ACTIONS: frozenset[ReaderAskEntryAction] = frozenset(
-    {"explain_this", "ask_about_this", "why_here"}
-)
+# ---------------------------------------------------------------------------
+# Route type
+# ---------------------------------------------------------------------------
+
+PlannerRoute = Literal["agent_loop_first", "planner_first"]
+"""Possible planner route values.
+
+- ``"agent_loop_first"``: default — model calls tools on demand.
+- ``"planner_first"``: legacy fallback — planner pre-fetches context.
+"""
+
+# ---------------------------------------------------------------------------
+# Planner-first trigger conditions
+# ---------------------------------------------------------------------------
 
 # Attachment kinds that require the planner to resolve context before
-# answering. The fast path cannot handle these because they carry
-# external references (records, analyses, supplements) that need
-# planner-level resolution.
+# answering. These carry external references (records, analyses, supplements)
+# that need planner-level resolution.
 _PLANNER_REQUIRED_ATTACHMENT_KINDS: frozenset[str] = frozenset(
     {"record_ref", "analysis_ref", "supplement_ref"}
 )
 
 # Substring keywords that, when present in the user's latest message, indicate
-# cross-article intent. The fast path defers these to the legacy planner.
+# cross-article intent. When combined with cross_record_toggle, these trigger
+# the planner-first fallback.
 _CROSS_RECORD_KEYWORDS: tuple[str, ...] = (
     "另一篇",
     "之前那篇",
@@ -80,13 +92,20 @@ _DEICTIC_PATTERNS: tuple[str, ...] = (
     "here",
 )
 
+# History length threshold beyond which the planner-first fallback is used.
+# Long threads have complex context that benefits from planner pre-resolution.
+_LONG_HISTORY_THRESHOLD: int = 10
+
+
+# ---------------------------------------------------------------------------
+# Helper predicates
+# ---------------------------------------------------------------------------
+
 
 def detect_cross_record_in_message(text: str) -> bool:
     """Return True if ``text`` contains any known cross-article intent keyword.
 
-    Exported for unit testing and future extension. The keyword list is
-    intentionally small for Round 1; expansion is deferred to Round 2
-    alongside the tool registry rewrite.
+    Exported for unit testing and future extension.
     """
     if not text:
         return False
@@ -127,6 +146,67 @@ def _has_dictionary_anchor_or_attachment(
     return False
 
 
+def _has_planner_required_attachments(attachments: list[ReaderAskAttachment]) -> bool:
+    """Return True if any attachment requires planner-level resolution."""
+    return any(attachment.kind in _PLANNER_REQUIRED_ATTACHMENT_KINDS for attachment in attachments)
+
+
+# ---------------------------------------------------------------------------
+# Route resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_planner_route(
+    *,
+    entry_action: ReaderAskEntryAction,
+    history_messages: list[dict[str, Any]],
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    cross_record_toggle: bool,
+    latest_user_message: str,
+) -> PlannerRoute:
+    """Determine the planner route for a given request.
+
+    Returns ``"agent_loop_first"`` by default. Returns ``"planner_first"``
+    when any of the following conditions hold:
+
+    - Has attachments requiring planner resolution (record_ref / analysis_ref /
+      supplement_ref).
+    - Has a dictionary anchor or dictionary attachment.
+    - Contains a deictic expression without an anchor.
+    - ``cross_record_toggle`` is True **and** the message contains cross-article
+      keywords.
+    - History exceeds ``_LONG_HISTORY_THRESHOLD`` messages.
+
+    The ``entry_action`` is no longer used as a whitelist gate — all entry
+    actions default to agent-loop-first unless one of the explicit fallback
+    conditions triggers.
+    """
+    if _has_planner_required_attachments(attachments):
+        return "planner_first"
+    if _has_dictionary_anchor_or_attachment(anchors, attachments):
+        return "planner_first"
+    if _has_deictic_without_anchor(latest_user_message, anchors):
+        return "planner_first"
+    if cross_record_toggle and detect_cross_record_in_message(latest_user_message):
+        return "planner_first"
+    if len(history_messages) > _LONG_HISTORY_THRESHOLD:
+        return "planner_first"
+    return "agent_loop_first"
+
+
+# ---------------------------------------------------------------------------
+# Compatibility wrapper (Round 1 API)
+# ---------------------------------------------------------------------------
+
+# Entry actions that were eligible for the fast path in Round 1.
+# Retained for backward compatibility with existing tests; no longer used
+# by ``resolve_planner_route``.
+_FAST_PATH_ACTIONS: frozenset[ReaderAskEntryAction] = frozenset(
+    {"explain_this", "ask_about_this", "why_here"}
+)
+
+
 def should_use_fast_path(
     *,
     entry_action: ReaderAskEntryAction,
@@ -136,40 +216,21 @@ def should_use_fast_path(
     cross_record_toggle: bool,
     latest_user_message: str,
 ) -> bool:
-    """Return True when the request is eligible for the agent-loop fast path.
+    """Compatibility wrapper — delegates to :func:`resolve_planner_route`.
 
-    A request is eligible when ALL of the following hold:
-
-    - ``entry_action`` is one of ``_FAST_PATH_ACTIONS``.
-    - ``len(history_messages) <= 4`` (short thread).
-    - ``cross_record_toggle`` is False (the user has not opted into cross-article mode).
-    - No attachment has a kind in ``_PLANNER_REQUIRED_ATTACHMENT_KINDS``
-      (no record_ref / analysis_ref / supplement_ref attachments).
-    - No dictionary anchor or dictionary attachment is present.
-    - ``why_here`` entry action requires at least one anchor.
-    - No strong deictic expression without an anchor.
-    - The latest user message does not contain any cross-article intent keyword.
+    Returns True when the route is ``"agent_loop_first"``.
     """
-    if entry_action not in _FAST_PATH_ACTIONS:
-        return False
-    if len(history_messages) > 4:
-        return False
-    if cross_record_toggle:
-        return False
-    for attachment in attachments:
-        if attachment.kind in _PLANNER_REQUIRED_ATTACHMENT_KINDS:
-            return False
-    if _has_dictionary_anchor_or_attachment(anchors, attachments):
-        return False
-    # why_here without any anchor requires the planner to resolve context.
-    if entry_action == "why_here" and not anchors:
-        return False
-    # Strong deictic references without an anchor need the planner.
-    if _has_deictic_without_anchor(latest_user_message, anchors):
-        return False
-    if detect_cross_record_in_message(latest_user_message):
-        return False
-    return True
+    return (
+        resolve_planner_route(
+            entry_action=entry_action,
+            history_messages=history_messages,
+            attachments=attachments,
+            anchors=anchors,
+            cross_record_toggle=cross_record_toggle,
+            latest_user_message=latest_user_message,
+        )
+        == "agent_loop_first"
+    )
 
 
 def build_minimal_context_plan_for_runtime_input(

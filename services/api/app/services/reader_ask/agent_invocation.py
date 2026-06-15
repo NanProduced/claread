@@ -178,6 +178,8 @@ def build_reader_ask_replan_event(
     final_content_md: str,
     planning_snapshot: Any,
     assistant_message_id: str,
+    planner_route: str = "planner_first",
+    runtime_state: Any | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Check if replan should be triggered and return the replan.started event.
 
@@ -188,6 +190,8 @@ def build_reader_ask_replan_event(
         final_content_md=final_content_md,
         planning_snapshot=planning_snapshot,
         assistant_message_id=assistant_message_id,
+        planner_route=planner_route,
+        runtime_state=runtime_state,
     )
 
 

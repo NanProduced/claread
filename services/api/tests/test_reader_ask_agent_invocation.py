@@ -503,6 +503,8 @@ class TestBuildReaderAskReplanEvent:
             final_content_md="I don't know",
             planning_snapshot=mock_runner.build_replan_event.call_args.kwargs["planning_snapshot"],
             assistant_message_id="msg1",
+            planner_route="planner_first",
+            runtime_state=None,
         )
 
     @patch("app.services.reader_ask.agent_invocation.agent_runner_svc")

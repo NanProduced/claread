@@ -33,6 +33,7 @@ from app.services.analysis.credit_service import CreditReservation
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
 from app.services.reader_ask import agent_runner as agent_runner_svc
 from app.services.reader_ask import capabilities as capabilities_svc
+from app.services.reader_ask import context_runtime as context_runtime_svc
 from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner as planner_svc
 from app.services.reader_ask import post_process as post_process_svc
@@ -49,6 +50,7 @@ from app.services.reader_ask.service import (
     _capability_trace_json,
     _build_action_proposals,
     _planning_snapshot_json,
+    _metrics_json,
     _build_response_cards,
     _build_supplement_candidates_from_runtime,
     _dictionary_ai_to_citation,
@@ -1271,6 +1273,11 @@ def test_planning_snapshot_json_none_uses_planner_route_used() -> None:
     assert data_fast["is_fast_path"] is True
     assert data_fast["planner_route_used"] == "fast_path"
 
+    # agent_loop_first route (Round 3) — also counts as fast path
+    data_agent = _planning_snapshot_json(None, planner_route_used="agent_loop_first")
+    assert data_agent["is_fast_path"] is True
+    assert data_agent["planner_route_used"] == "agent_loop_first"
+
     # planner_first route (e.g. snapshot is None due to an error, not fast path)
     data_legacy = _planning_snapshot_json(None, planner_route_used="planner_first")
     assert data_legacy["is_fast_path"] is False
@@ -1288,6 +1295,88 @@ def test_planning_snapshot_json_fast_path_snapshot_includes_route() -> None:
     data = _planning_snapshot_json(snap, planner_route_used="fast_path")
     assert data["is_fast_path"] is True
     assert data["planner_route_used"] == "fast_path"
+
+
+def test_planning_snapshot_json_fast_path_snapshot_agent_loop_first_route() -> None:
+    """Round 3: ``FastPathPlanningSnapshot`` with ``agent_loop_first`` route."""
+    snap = planner_svc.FastPathPlanningSnapshot()
+    data = _planning_snapshot_json(snap, planner_route_used="agent_loop_first")
+    assert data["is_fast_path"] is True
+    assert data["planner_route_used"] == "agent_loop_first"
+
+
+def test_metrics_json_includes_planner_route() -> None:
+    """Round 3: ``_metrics_json`` includes the ``planner_route`` field."""
+    from app.schemas.reader_ask import ReaderAskTraceSummary
+
+    trace = ReaderAskTraceSummary(
+        planner_mode="direct_answer",
+        working_set_mode="anchor_local",
+        cross_record_context_allowed=False,
+        cross_record_context_used=False,
+    )
+    data = _metrics_json(
+        trace_summary=trace,
+        billed_points=10,
+        usage_event_id=None,
+        planner_route="agent_loop_first",
+    )
+    assert data["planner_route"] == "agent_loop_first"
+    assert data["degenerate_detected"] is False
+    assert data["degenerate_reason"] is None
+    assert data["planner_mode"] == "direct_answer"
+    assert data["billed_points"] == 10
+
+    data_degenerate = _metrics_json(
+        trace_summary=trace,
+        billed_points=10,
+        usage_event_id=None,
+        planner_route="agent_loop_first",
+        degenerate_detected=True,
+        degenerate_reason="degenerate_answer",
+    )
+    assert data_degenerate["degenerate_detected"] is True
+    assert data_degenerate["degenerate_reason"] == "degenerate_answer"
+
+    # Default planner_route is None
+    data_default = _metrics_json(
+        trace_summary=None,
+        billed_points=0,
+        usage_event_id=None,
+    )
+    assert data_default["planner_route"] is None
+    assert data_default["degenerate_detected"] is False
+    assert data_default["degenerate_reason"] is None
+
+
+def test_build_agent_loop_context_syncs_overview_to_runtime_state() -> None:
+    record_id = uuid4()
+    record = SimpleNamespace(
+        record_id=record_id,
+        title="Test Article",
+        source_text="",
+        render_scene={"content_summary": {"overview": "academic overview"}},
+        page_state_json={},
+        workflow_version=None,
+        schema_version=None,
+    )
+    runtime_state = ReaderAskRuntimeState(source_labels={"current_record"})
+
+    context_input = context_runtime_svc.build_agent_loop_context(
+        record=record,
+        runtime_state=runtime_state,
+        anchors=[],
+        attachments=[],
+        user_id=uuid4(),
+        page_identity=ReaderAskPageIdentity(record_id=str(record_id)),
+        entry_action="ask_about_this",
+    )
+
+    assert context_input.current_record_context is not None
+    assert context_input.current_record_context.article_overview == "academic overview"
+    assert context_input.current_record_context.source_labels == ["article_overview"]
+    assert runtime_state.latest_article_overview == "academic overview"
+    assert "academic_render_scene" in runtime_state.source_labels
 
 
 def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
@@ -3290,6 +3379,48 @@ async def test_replan_not_triggered_when_must_clarify() -> None:
     )
 
     assert result is None
+
+
+async def test_replan_not_triggered_for_agent_loop_first_route() -> None:
+    """Round 3: agent_loop_first route never triggers replan, even with
+    a degenerate answer. Degenerate metadata is recorded on runtime_state
+    instead."""
+    from unittest.mock import MagicMock
+
+    from app.services.reader_ask.agent_runner import build_replan_event
+
+    planning_snapshot = planner_svc.plan_request(
+        content="Explain the main idea of the article",
+        page_identity=ReaderAskPageIdentity(
+            record_id="00000000-0000-0000-0000-000000000001",
+            title="Test",
+            available_context_capabilities=["record_context"],
+            has_article_overview=True,
+            has_sentence_entries=True,
+            has_annotations=True,
+            has_reader_notes=True,
+        ),
+        entry_action="ask_about_this",
+        attachments=[],
+        anchors=[],
+        planner_decision=_planner_decision(resolved_intent="explain"),
+    )
+
+    runtime = agent_runner_svc.AgentStreamRuntime()
+    runtime.producer_result = MagicMock()
+
+    result = build_replan_event(
+        final_content_md="",  # degenerate
+        planning_snapshot=planning_snapshot,
+        assistant_message_id="msg-123",
+        planner_route="agent_loop_first",
+        runtime_state=runtime,
+    )
+
+    assert result is None
+    # Degenerate metadata is set on the runtime state instead
+    assert runtime.degenerate_detected is True
+    assert runtime.degenerate_reason == "degenerate_answer"
 
 
 def test_prepare_stream_model_settings_preserves_thinking_flags_and_enables_dashscope_sse() -> None:

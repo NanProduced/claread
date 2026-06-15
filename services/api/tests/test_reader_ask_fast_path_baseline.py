@@ -88,7 +88,7 @@ class TestShouldUseFastPath:
     def test_false_for_long_history(self) -> None:
         assert fast_path_runtime.should_use_fast_path(
             entry_action="ask_about_this",
-            history_messages=_history(5),
+            history_messages=_history(11),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
@@ -126,6 +126,29 @@ class TestShouldUseFastPath:
         ) is False
 
     def test_false_for_cross_record_keyword_chinese(self) -> None:
+        # Round 3: cross-record keywords only block when cross_record_toggle is True
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[_anchor("sentence")],
+            cross_record_toggle=True,
+            latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
+        ) is False
+
+    def test_false_for_cross_record_keyword_english(self) -> None:
+        # Round 3: cross-record keywords only block when cross_record_toggle is True
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(0),
+            attachments=[],
+            anchors=[_anchor("sentence")],
+            cross_record_toggle=True,
+            latest_user_message="How does this compare to the previous article on this topic?",
+        ) is False
+
+    def test_cross_record_keyword_without_toggle_still_eligible(self) -> None:
+        # Round 3: cross-record keywords without toggle → still agent_loop_first
         assert fast_path_runtime.should_use_fast_path(
             entry_action="ask_about_this",
             history_messages=_history(0),
@@ -133,19 +156,11 @@ class TestShouldUseFastPath:
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
-        ) is False
+        ) is True
 
-    def test_false_for_cross_record_keyword_english(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
-            entry_action="ask_about_this",
-            history_messages=_history(0),
-            attachments=[],
-            anchors=[_anchor("sentence")],
-            cross_record_toggle=False,
-            latest_user_message="How does this compare to the previous article on this topic?",
-        ) is False
-
-    def test_false_for_unknown_entry_action(self) -> None:
+    def test_true_for_unknown_entry_action(self) -> None:
+        # Round 3: entry_action is no longer a whitelist gate; all actions
+        # default to agent_loop_first unless a fallback condition triggers.
         assert fast_path_runtime.should_use_fast_path(
             entry_action="some_custom_action",  # type: ignore[arg-type]
             history_messages=_history(0),
@@ -153,9 +168,22 @@ class TestShouldUseFastPath:
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="hello",
+        ) is True
+
+    def test_false_when_toggle_on_with_cross_record_keywords(self) -> None:
+        # Round 3: cross_record_toggle alone is not sufficient; the message
+        # must also contain cross-record keywords.
+        assert fast_path_runtime.should_use_fast_path(
+            entry_action="ask_about_this",
+            history_messages=_history(2),
+            attachments=[],
+            anchors=[_anchor("sentence")],
+            cross_record_toggle=True,
+            latest_user_message="和我之前那篇有什么不同",
         ) is False
 
-    def test_false_when_toggle_on(self) -> None:
+    def test_true_when_toggle_on_without_cross_record_keywords(self) -> None:
+        # Round 3: toggle on but no cross-record keywords → still agent_loop_first.
         assert fast_path_runtime.should_use_fast_path(
             entry_action="ask_about_this",
             history_messages=_history(2),
@@ -163,7 +191,7 @@ class TestShouldUseFastPath:
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="hello",
-        ) is False
+        ) is True
 
     def test_explain_this_is_eligible(self) -> None:
         assert fast_path_runtime.should_use_fast_path(
@@ -195,9 +223,9 @@ class TestShouldUseFastPath:
             latest_user_message="这里为什么用 present perfect",
         ) is False
 
-    def test_lookup_in_context_not_eligible(self) -> None:
-        # ``lookup_in_context`` is not in the fast-path set; it always
-        # uses the legacy planner to handle dictionary lookups.
+    def test_lookup_in_context_now_eligible(self) -> None:
+        # Round 3: ``lookup_in_context`` is no longer excluded by entry_action;
+        # all actions default to agent_loop_first unless a fallback triggers.
         assert fast_path_runtime.should_use_fast_path(
             entry_action="lookup_in_context",
             history_messages=_history(0),
@@ -205,7 +233,7 @@ class TestShouldUseFastPath:
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
-        ) is False
+        ) is True
 
     def test_dictionary_anchor_not_eligible(self) -> None:
         assert fast_path_runtime.should_use_fast_path(
@@ -553,6 +581,40 @@ class TestRuntimeStateTelemetryPreservation:
         assert rebuilt.planner_skipped is False
         assert rebuilt.planner_route_used == "planner_first"
 
+    def test_agent_loop_first_telemetry_preserved_on_rebuild(self) -> None:
+        from app.agents.reader_ask_agent import ReaderAskRuntimeState
+
+        original = ReaderAskRuntimeState()
+        original.planner_skipped = True
+        original.planner_route_used = "agent_loop_first"
+
+        rebuilt = ReaderAskRuntimeState(
+            citations=[],
+            source_labels={"current_record"},
+            planner_skipped=original.planner_skipped,
+            planner_route_used=original.planner_route_used,
+        )
+
+        assert rebuilt.planner_skipped is True
+        assert rebuilt.planner_route_used == "agent_loop_first"
+
+    def test_degenerate_metadata_preserved_on_rebuild(self) -> None:
+        from app.agents.reader_ask_agent import ReaderAskRuntimeState
+
+        original = ReaderAskRuntimeState()
+        original.degenerate_detected = True
+        original.degenerate_reason = "degenerate_answer"
+
+        rebuilt = ReaderAskRuntimeState(
+            citations=[],
+            source_labels={"current_record"},
+            degenerate_detected=original.degenerate_detected,
+            degenerate_reason=original.degenerate_reason,
+        )
+
+        assert rebuilt.degenerate_detected is True
+        assert rebuilt.degenerate_reason == "degenerate_answer"
+
 
 # ---------------------------------------------------------------------------
 # build_replan_event with planning_snapshot=None (fast path no replan)
@@ -575,5 +637,60 @@ class TestFastPathNoReplan:
             final_content_md="I cannot answer this question.",
             planning_snapshot=None,
             assistant_message_id="msg-1",
+        )
+        assert result is None
+
+    def test_agent_loop_first_never_replans(self) -> None:
+        # Round 3: agent_loop_first route never returns a replan event,
+        # even with a degenerate answer and a valid planning_snapshot.
+        result = agent_runner_svc.build_replan_event(
+            final_content_md="",
+            planning_snapshot=None,
+            assistant_message_id="msg-1",
+            planner_route="agent_loop_first",
+        )
+        assert result is None
+
+    def test_agent_loop_first_sets_degenerate_metadata(self) -> None:
+        # Round 3: agent_loop_first records degenerate metadata on runtime_state
+        # instead of triggering replan.
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.producer_result = MagicMock()
+
+        result = agent_runner_svc.build_replan_event(
+            final_content_md="",
+            planning_snapshot=None,
+            assistant_message_id="msg-1",
+            planner_route="agent_loop_first",
+            runtime_state=runtime,
+        )
+        assert result is None
+        assert runtime.degenerate_detected is True
+        assert runtime.degenerate_reason == "degenerate_answer"
+
+    def test_agent_loop_first_no_degenerate_metadata_for_valid_answer(self) -> None:
+        # Round 3: non-degenerate answer does not set degenerate metadata.
+        runtime = agent_runner_svc.AgentStreamRuntime()
+        runtime.producer_result = MagicMock()
+
+        result = agent_runner_svc.build_replan_event(
+            final_content_md="This is a valid answer with enough content.",
+            planning_snapshot=None,
+            assistant_message_id="msg-1",
+            planner_route="agent_loop_first",
+            runtime_state=runtime,
+        )
+        assert result is None
+        assert runtime.degenerate_detected is False
+        assert runtime.degenerate_reason is None
+
+    def test_agent_loop_first_no_runtime_state_no_error(self) -> None:
+        # Round 3: agent_loop_first with no runtime_state should not raise.
+        result = agent_runner_svc.build_replan_event(
+            final_content_md="",
+            planning_snapshot=None,
+            assistant_message_id="msg-1",
+            planner_route="agent_loop_first",
+            runtime_state=None,
         )
         assert result is None
