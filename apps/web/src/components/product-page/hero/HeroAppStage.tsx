@@ -690,7 +690,7 @@ export function HeroAppStage({
       <HeroAppStageStyles />
       <div
         ref={stageWindowRef}
-        className={`hero-app-window relative overflow-hidden bg-web-canvas text-ink ${
+        className={`hero-app-window relative overflow-hidden bg-[#F7F5F0] text-ink ${
           variant === "device"
             ? "h-full rounded-none border-0 shadow-none"
             : "h-[690px] rounded-[18px] border border-hairline/80 xl:h-[750px] 2xl:h-[800px]"
@@ -1777,7 +1777,7 @@ function HeroAppStageStyles() {
       [data-hero-app-stage] .hero-app-sidebar {
         background:
           linear-gradient(180deg, rgba(255,255,255,0.46), rgba(248,244,234,0.18)),
-          var(--web-canvas);
+          #F7F5F0;
       }
 
       [data-hero-app-stage] .hero-app-scroll {

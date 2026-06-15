@@ -186,8 +186,8 @@ function HeroSceneBridge({
       aria-hidden="true"
       style={{ opacity }}
     >
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(250,249,246,0)_0%,rgba(250,249,246,0.7)_48%,var(--web-canvas)_74%,var(--web-canvas)_100%)]" />
-      <div className="absolute inset-x-0 bottom-0 h-16 bg-web-canvas" />
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(250,249,246,0)_0%,rgba(250,249,246,0.7)_48%,#F7F5F0_74%,#F7F5F0_100%)]" />
+      <div className="absolute inset-x-0 bottom-0 h-16 bg-[#F7F5F0]" />
       <div className="absolute inset-x-[8vw] top-[42%] h-px bg-gradient-to-r from-transparent via-hairline/70 to-transparent" />
     </motion.div>
   );

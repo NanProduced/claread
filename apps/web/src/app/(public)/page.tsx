@@ -14,8 +14,8 @@ export default async function HomePage() {
   const primaryLabel = "打开 Claread";
 
   return (
-    <main className="min-h-screen bg-web-canvas text-ink">
-      <div className="sticky top-0 z-50 border-b border-hairline/80 bg-web-canvas/88 px-5 backdrop-blur-md sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[#F7F5F0] text-ink">
+      <div className="sticky top-0 z-50 border-b border-hairline/80 bg-[#F7F5F0]/88 px-5 backdrop-blur-md sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[76rem]">
           <PublicSiteHeader currentHref={homeRoute} priority ctaLabelOverride="打开 Claread" wide />
         </div>

@@ -40,7 +40,7 @@ export function ProductPainPoints() {
       className="relative overflow-hidden px-5 pb-8 pt-12 text-ink sm:px-6 sm:pb-12 sm:pt-16 lg:px-8"
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-hairline/70" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-b from-transparent to-web-canvas" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-b from-transparent to-[#F7F5F0]" />
 
       <div className="relative mx-auto grid max-w-[76rem] gap-10 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:gap-16">
         <div className="max-w-2xl">

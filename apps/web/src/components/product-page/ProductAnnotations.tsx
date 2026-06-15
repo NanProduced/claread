@@ -218,8 +218,8 @@ const translationSentences: TranslationSentence[] = [
 export function ProductAnnotations() {
   return (
     <section className="relative isolate overflow-hidden border-b border-hairline/80 bg-surface-warm px-5 py-20 text-ink sm:px-6 sm:py-28 lg:px-8 lg:py-32">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-web-canvas to-transparent" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-web-canvas to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[#F7F5F0] to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#F7F5F0] to-transparent" />
       <div className="pointer-events-none absolute left-[-12rem] top-24 h-[32rem] w-[32rem] rounded-full border border-ink/5" />
       <div className="pointer-events-none absolute right-[-14rem] top-[36rem] h-[38rem] w-[38rem] rounded-full border border-ink/5" />
 
@@ -394,8 +394,8 @@ function VocabularyStageButton({
       className={cn(
         "group rounded-[0.85rem] border px-4 py-3 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/22",
         active
-          ? "border-hairline bg-web-canvas/72 shadow-[0_1px_2px_rgba(23,21,17,0.04)]"
-          : "border-transparent hover:border-hairline/70 hover:bg-web-canvas/45",
+          ? "border-hairline bg-[#F7F5F0]/72 shadow-[0_1px_2px_rgba(23,21,17,0.04)]"
+          : "border-transparent hover:border-hairline/70 hover:bg-[#F7F5F0]/45",
       )}
     >
       <span className="flex items-center gap-2">
@@ -569,7 +569,7 @@ function GrammarFeatureCopy() {
 
 function GrammarCopyPoint({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-[0.85rem] border border-[#746694]/18 bg-web-canvas/55 px-4 py-3">
+    <div className="rounded-[0.85rem] border border-[#746694]/18 bg-[#F7F5F0]/55 px-4 py-3">
       <p className="text-sm font-semibold text-[#5f4e8a]">{title}</p>
       <p className="mt-1 text-sm leading-6 text-muted">{body}</p>
     </div>
@@ -725,7 +725,7 @@ function SentenceAnalysisCopy() {
 
 function SentenceCopyPoint({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-[0.85rem] border border-[#3c8c68]/18 bg-web-canvas/55 px-4 py-3">
+    <div className="rounded-[0.85rem] border border-[#3c8c68]/18 bg-[#F7F5F0]/55 px-4 py-3">
       <p className="text-sm font-semibold text-[#276c4d]">{title}</p>
       <p className="mt-1 text-sm leading-6 text-muted">{body}</p>
     </div>
@@ -943,7 +943,7 @@ function TranslationFeatureCopy() {
 
 function TranslationCopyPoint({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-[0.85rem] border border-[#4c91c2]/16 bg-web-canvas/55 px-4 py-3">
+    <div className="rounded-[0.85rem] border border-[#4c91c2]/16 bg-[#F7F5F0]/55 px-4 py-3">
       <p className="text-sm font-semibold text-[#355f87]">{title}</p>
       <p className="mt-1 text-sm leading-6 text-muted">{body}</p>
     </div>
