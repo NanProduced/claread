@@ -1,76 +1,84 @@
-import { AlertCircle, ArrowRight, HelpCircle, Layers } from "lucide-react";
-
-const painPoints = [
+const painNotes = [
   {
-    title: "词典困境",
-    subtitle: "查了每一个词，合起来依然看不懂句意",
-    problem: "传统的查词软件只提供孤立的词条解释，但英语长句中复杂的短语修饰、习惯搭配和语境义常常导致‘字面认识但句子不通’。",
-    solution: "Claread 提供语境义和短语联合标注，帮你把词汇放回具体的语义环境中解释。",
-    icon: HelpCircle,
+    label: "词义停顿",
+    body: "词都查了，还是不知道这句话里的意思。",
+    detail: "孤立释义没有处理短语、搭配和当前语境。",
+    railClass: "bg-vocab-amber",
+    labelClass: "text-[#8a6a0f]",
+    markerClass: "bg-[#f6d67a]/[0.32] text-[#8a6a0f]",
   },
   {
-    title: "翻译假象",
-    subtitle: "一键变中文，其实你并没有读懂原文",
-    problem: "整段整篇的划词翻译虽然快，但它代替你完成了阅读过程。大脑没有经历英文句法拆解的刺激，阅读能力便无法真正提升。",
-    solution: "Claread 保留原文为主体，仅在你停顿的难句下方架设语法桥梁，引导你真正读懂它。",
-    icon: AlertCircle,
+    label: "结构停顿",
+    body: "大意能猜，但语法关系没有接上。",
+    detail: "真正影响理解的，常常是从句、倒装、修饰边界。",
+    railClass: "bg-grammar-violet",
+    labelClass: "text-[#5f4e8a]",
+    markerClass: "bg-[#d0bff4]/[0.28] text-[#5f4e8a]",
   },
   {
-    title: "总结碎片",
-    subtitle: "对话框堆满冗余回复，打碎阅读心流",
-    problem: "通用 AI 助手习惯以长篇大论的对话框回复你，或者脱离原文生成摘要。你需要频繁在对话框和文章之间切回，阅读节奏支离破碎。",
-    solution: "Claread 采用行内旁注设计，所有注解、拆解和追问都像笔记一样锚定在具体句子下，用完即收，心流不断。",
-    icon: Layers,
+    label: "长句停顿",
+    body: "句子太长，读到后面忘了前面。",
+    detail: "主干被补充信息盖住，阅读顺序变得不稳定。",
+    railClass: "bg-structure-green",
+    labelClass: "text-[#276c4d]",
+    markerClass: "bg-[#3c8c68]/[0.14] text-[#276c4d]",
+  },
+  {
+    label: "译文停顿",
+    body: "中文看懂了，英文却没有真正读过。",
+    detail: "整段翻译给出答案，却跳过了英文理解过程。",
+    railClass: "bg-context-blue",
+    labelClass: "text-[#355f87]",
+    markerClass: "bg-[#a5d0ef]/[0.24] text-[#355f87]",
   },
 ];
 
 export function ProductPainPoints() {
   return (
-    <section className="relative overflow-hidden border-b border-hairline/80 bg-web-canvas px-5 pb-16 pt-12 sm:px-6 sm:pb-24 sm:pt-16 lg:px-8 lg:pb-28 lg:pt-20">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_-20%,rgba(245,160,0,0.03),transparent_40%)]" />
+    <section
+      data-product-pain-points
+      className="relative overflow-hidden px-5 pb-8 pt-12 text-ink sm:px-6 sm:pb-12 sm:pt-16 lg:px-8"
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-hairline/70" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-b from-transparent to-web-canvas" />
 
-      <div className="mx-auto max-w-[76rem]">
-        <div className="max-w-3xl text-left">
-          <p className="text-sm font-semibold tracking-wider text-lens-blue uppercase">Why Claread</p>
-          <h2 className="mt-3 font-headline text-3xl font-semibold leading-tight text-ink sm:text-4xl md:text-5xl">
-            读英文，不是拼凑单词的游戏。
+      <div className="relative mx-auto grid max-w-[76rem] gap-10 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:gap-16">
+        <div className="max-w-2xl">
+          <p className="text-sm font-semibold text-lens-blue">常见阅读卡点</p>
+          <h2 className="mt-4 max-w-[36rem] font-headline text-3xl font-semibold leading-[1.08] text-ink sm:text-4xl md:text-5xl">
+            英文阅读卡住，通常不是因为少一个中文翻译。
           </h2>
-          <p className="mt-5 max-w-2xl text-base leading-8 text-muted">
-            每一个英语阅读者都经历过这些隐形的摩擦。传统的翻译与词典工具只是替你跳过问题，而没有帮你真正看清句子。
+          <p className="mt-5 max-w-[34rem] text-base leading-8 text-muted">
+            很多时候，问题发生在原文里的某一个停顿。词义、结构、长句和译文依赖混在一起时，工具越多，阅读越乱。
+          </p>
+          <p className="mt-6 max-w-[32rem] rounded-[0.85rem] border border-hairline/80 bg-reader-paper/70 px-4 py-3 text-sm leading-7 text-ink-soft">
+            Claread 从这些停顿开始，把不同卡点交给不同标注处理。
           </p>
         </div>
 
-        <div className="mt-14 grid gap-8 md:grid-cols-3">
-          {painPoints.map(({ title, subtitle, problem, solution, icon: Icon }) => (
-            <article
-              key={title}
-              className="group relative flex flex-col justify-between rounded-xl border border-hairline bg-surface p-6 shadow-[0_4px_18px_rgba(17,17,17,0.03)] transition-all hover:translate-y-[-2px] hover:shadow-[0_12px_28px_rgba(17,17,17,0.06)]"
-            >
-              <div>
-                <div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-lens-blue-soft text-lens-blue">
-                  <Icon className="h-5 w-5" aria-hidden="true" />
+        <div className="relative">
+          <div className="pointer-events-none absolute left-4 top-5 hidden h-[calc(100%-2.5rem)] w-px bg-hairline/80 sm:block" />
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+            {painNotes.map((note, index) => (
+              <article
+                key={note.label}
+                className="group relative min-h-[10.25rem] overflow-hidden rounded-[0.75rem] border border-hairline/80 bg-surface-warm/90 px-5 py-4 shadow-[0_1px_2px_rgba(23,21,17,0.03),0_8px_20px_rgba(23,21,17,0.035)] transition duration-200 hover:-translate-y-0.5 hover:bg-surface"
+              >
+                <span className={`absolute inset-y-4 left-0 w-px ${note.railClass}`} aria-hidden="true" />
+                <div className="flex items-center justify-between gap-3">
+                  <span className={`text-sm font-semibold ${note.labelClass}`}>{note.label}</span>
+                  <span
+                    className={`inline-flex size-7 items-center justify-center rounded-full text-xs font-semibold ${note.markerClass}`}
+                    aria-hidden="true"
+                  >
+                    {index + 1}
+                  </span>
                 </div>
-                <h3 className="mt-6 text-lg font-semibold text-ink group-hover:text-lens-blue transition-colors">
-                  {title}
-                </h3>
-                <p className="mt-1.5 text-sm font-medium text-ink-soft/90 leading-relaxed">
-                  {subtitle}
-                </p>
-                <p className="mt-4 text-sm leading-6 text-muted border-t border-hairline/60 pt-4">
-                  {problem}
-                </p>
-              </div>
-
-              <div className="mt-8 rounded-lg bg-web-canvas/60 p-4 border border-hairline/40">
-                <span className="flex items-center gap-2 text-xs font-semibold text-lens-blue uppercase tracking-wider">
-                  Claread Solution <ArrowRight className="h-3.5 w-3.5" />
-                </span>
-                <p className="mt-2 text-xs leading-5 text-ink-soft">
-                  {solution}
-                </p>
-              </div>
-            </article>
-          ))}
+                <p className="mt-4 font-reading text-[1.1rem] leading-7 text-ink sm:text-[1.16rem]">{note.body}</p>
+                <p className="mt-3 text-sm leading-6 text-muted">{note.detail}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </div>
     </section>

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { PublicSiteHeader } from "@/components/layout";
 import { ProductHero } from "@/components/product-page/ProductHero";
-import { ProductBentoGrid } from "@/components/product-page/ProductBentoGrid";
+import { ProductCoreFeatures } from "@/components/product-page/ProductCoreFeatures";
+import { ProductPainPoints } from "@/components/product-page/ProductPainPoints";
 import { ProductReaderDemo } from "@/components/product-page/ProductReaderDemo";
 import { ProductFooter } from "@/components/product-page/ProductFooter";
 import { appReadRoute, homeRoute } from "@/lib/routes";
@@ -21,7 +22,8 @@ export default async function HomePage() {
       </div>
 
       <ProductHero ctaHref={session.hasAppAccess ? appReadRoute : cta.href} ctaLabel={primaryLabel} />
-      <ProductBentoGrid />
+      <ProductPainPoints />
+      <ProductCoreFeatures />
       <ProductReaderDemo />
 
       <section className="px-5 pb-20 pt-16 sm:px-6">
