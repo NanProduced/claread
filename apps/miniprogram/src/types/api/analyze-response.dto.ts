@@ -156,6 +156,13 @@ export interface InlineMark {
 
 export type SentenceEntryType = 'grammar_note' | 'sentence_analysis'
 
+export interface SentenceEntryChunk {
+  order?: number
+  label: string
+  text: string
+  occurrence?: number | null
+}
+
 export interface SentenceEntry {
   id: string
   sentence_id: string
@@ -163,6 +170,8 @@ export interface SentenceEntry {
   label: string
   title?: string
   content: string
+  analysis_text?: string | null
+  chunks?: SentenceEntryChunk[]
 }
 
 // ============ Learning 模式完整响应 ============

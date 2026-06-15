@@ -76,7 +76,29 @@ function createReaderSceneResponse(): ReaderSceneResponseDto {
           glossary: null,
         },
       ],
-      sentence_entries: [],
+      sentence_entries: [
+        {
+          id: "se-analysis",
+          sentence_id: "s1",
+          entry_type: "sentence_analysis",
+          label: "直接引语中的复杂宾语结构",
+          title: "直接引语中的复杂宾语结构",
+          content: "句子主干是 he said: \"...\"。",
+          analysis_text: "句子主干是 he said: \"...\"。",
+          chunks: [
+            {
+              order: 1,
+              label: "主句引述",
+              text: "Elon Musk has become",
+            },
+            {
+              order: 2,
+              label: "表语",
+              text: "the world's first ever trillionaire",
+            },
+          ],
+        },
+      ],
       warnings: [],
     },
     view_meta: {
@@ -93,6 +115,25 @@ describe("records adapter", () => {
     const record = adaptReaderSceneResponseToReaderRecord(createReaderSceneResponse());
 
     expect(record.reader.inlineMarks).toHaveLength(1);
+    expect(record.reader.sentenceEntries[0]).toMatchObject({
+      id: "se-analysis",
+      entryType: "sentence_analysis",
+      analysisText: "句子主干是 he said: \"...\"。",
+      chunks: [
+        {
+          order: 1,
+          label: "主句引述",
+          text: "Elon Musk has become",
+          occurrence: null,
+        },
+        {
+          order: 2,
+          label: "表语",
+          text: "the world's first ever trillionaire",
+          occurrence: null,
+        },
+      ],
+    });
     expect(record.reader.inlineMarks[0]?.anchor).toMatchObject({
       kind: "range",
       sentenceId: "s1",

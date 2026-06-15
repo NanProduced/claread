@@ -193,6 +193,13 @@ function transformSentenceEntry(entry: SentenceEntry): SentenceEntryModel {
     label: entry.label,
     title: entry.title,
     content: entry.content,
+    analysisText: entry.analysis_text,
+    chunks: entry.chunks?.map(chunk => ({
+      order: chunk.order,
+      label: chunk.label,
+      text: chunk.text,
+      occurrence: chunk.occurrence,
+    })),
   }
 }
 
@@ -410,6 +417,13 @@ function reverseSentenceEntry(entry: SentenceEntryModel): SentenceEntry {
     label: entry.label,
     title: entry.title,
     content: entry.content,
+    analysis_text: entry.analysisText,
+    chunks: entry.chunks?.map(chunk => ({
+      order: chunk.order,
+      label: chunk.label,
+      text: chunk.text,
+      occurrence: chunk.occurrence,
+    })),
   }
 }
 

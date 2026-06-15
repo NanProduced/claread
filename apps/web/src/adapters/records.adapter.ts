@@ -162,6 +162,10 @@ function readNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function readOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function mapAnchor(value: unknown): InlineMarkAnchor | null {
   if (!isRecord(value)) {
     return null;
@@ -350,13 +354,26 @@ function mapSentenceEntries(value: unknown): SentenceEntryModel[] {
     .map((entry) => {
       const sourceKind: SentenceEntryModel["sourceKind"] =
         entry.source_kind === "ask_supplement" ? "ask_supplement" : "workflow";
+      const analysisText = readOptionalString(entry.analysis_text ?? entry.analysisText);
+      const content = readString(entry.content, analysisText ?? "");
+      const chunks = readArray(entry.chunks)
+        .filter(isRecord)
+        .map((chunk) => ({
+          order: readOptionalNumber(chunk.order),
+          label: readString(chunk.label),
+          text: readString(chunk.text),
+          occurrence: readOptionalNumber(chunk.occurrence) ?? null,
+        }))
+        .filter((chunk) => chunk.label.length > 0 && chunk.text.length > 0);
       return {
         id: readString(entry.id),
         sentenceId: readString(entry.sentence_id),
         entryType: readString(entry.entry_type, "sentence_analysis") as SentenceEntryType,
         label: readString(entry.label, "解析"),
         title: readOptionalString(entry.title),
-        content: readString(entry.content),
+        content,
+        analysisText,
+        chunks: chunks.length > 0 ? chunks : undefined,
         sourceKind,
         supplementId: readOptionalString(entry.supplement_id),
         deletable: readBoolean(entry.deletable, false),

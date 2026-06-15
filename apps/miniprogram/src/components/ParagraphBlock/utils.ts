@@ -151,13 +151,41 @@ export interface AnalysisChunk {
   text: string
 }
 
+export interface StructuredAnalysisChunk {
+  order?: number
+  label: string
+  text: string
+}
+
 /**
  * 解析 sentence_analysis 的 content
  * 格式：
  * 前半段为整句说明
  * 后半段为：- **1. 主语**：`The article`
  */
-export function parseSentenceAnalysis(content: string): { summary: string; chunks: AnalysisChunk[] } {
+export function parseSentenceAnalysis(
+  content: string,
+  structuredChunks?: StructuredAnalysisChunk[],
+): { summary: string; chunks: AnalysisChunk[] } {
+  const directChunks = (structuredChunks ?? [])
+    .map((chunk, index) => ({
+      order: typeof chunk.order === 'number' ? String(chunk.order) : String(index + 1),
+      label: chunk.label.trim(),
+      text: chunk.text.trim(),
+    }))
+    .filter(chunk => chunk.label.length > 0 && chunk.text.length > 0)
+    .sort((a, b) => {
+      if (!a.order || !b.order || a.order === b.order) return 0
+      return parseInt(a.order) - parseInt(b.order)
+    })
+
+  if (directChunks.length > 0) {
+    return {
+      summary: content.trim(),
+      chunks: directChunks,
+    }
+  }
+
   const lines = content.split('\n')
   const summaryLines: string[] = []
   const chunks: AnalysisChunk[] = []

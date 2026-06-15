@@ -103,6 +103,8 @@ export interface ReaderAnalysisBlockNode {
   label: string;
   title?: string;
   content: string;
+  analysisText?: SentenceEntryModel["analysisText"];
+  chunks?: SentenceEntryModel["chunks"];
   sourceKind?: SentenceEntryModel["sourceKind"];
   supplementId?: string;
   deletable?: boolean;

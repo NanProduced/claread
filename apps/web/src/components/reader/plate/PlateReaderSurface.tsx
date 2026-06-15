@@ -253,7 +253,7 @@ export function PlateReaderSurface({
         const segmentsList: Array<SentenceAnalysisSegment & { entryId: string }> = [];
         sentenceNode.children.forEach((child) => {
           if (child.type === "reader_sentence_analysis" && expandedIds.has(child.entryId)) {
-            const parsed = parseSentenceAnalysisContent(child.content);
+            const parsed = parseSentenceAnalysisContent(child.content, child.chunks);
             const segments = buildSentenceAnalysisSegments(sentenceNode.sourceText, parsed.chunks);
             segmentsList.push(
               ...segments.map((segment) => ({

@@ -1,7 +1,18 @@
 import { useMemo, memo, useState, useEffect, useCallback } from 'react'
 import Taro from '@tarojs/taro'
 import { View, Text } from '@tarojs/components'
-import { AnyInlineMarkModel, AnySentenceEntryModel, VisualTone, AcademicVisualTone, SentenceModel, TranslationModel, type RangePart, type RangeAnchor, type MultiRangeAnchor } from '../../types/view/render-scene.vm'
+import {
+  AnyInlineMarkModel,
+  AnySentenceEntryModel,
+  VisualTone,
+  AcademicVisualTone,
+  SentenceModel,
+  TranslationModel,
+  type RangePart,
+  type RangeAnchor,
+  type MultiRangeAnchor,
+  type SentenceEntryModel,
+} from '../../types/view/render-scene.vm'
 import { UserAnnotationDto } from '../../services/api/user-annotations.client'
 import type { ReaderNoteDto } from '../../services/api/reader-notes.client'
 import ClickableWord from '../ClickableWord'
@@ -25,6 +36,10 @@ const TONE_PRIORITY: Record<VisualTone | AcademicVisualTone, number> = {
   grammar: 4,
   term: 5,
   logic: 6,
+}
+
+function isSentenceAnalysisEntry(entry: AnySentenceEntryModel): entry is SentenceEntryModel {
+  return entry.entryType === 'sentence_analysis'
 }
 
 export interface WordClickPayload {
@@ -967,9 +982,9 @@ const ParagraphBlock = memo(function ParagraphBlock({
           }
         }),
         ...sentenceEntries
-          .filter(e => e.entryType === 'sentence_analysis')
+          .filter(isSentenceAnalysisEntry)
           .map(e => {
-            const parsed = parseSentenceAnalysis(e.content)
+            const parsed = parseSentenceAnalysis(e.content, e.chunks)
             return {
               id: e.id,
               type: 'sentence' as const,

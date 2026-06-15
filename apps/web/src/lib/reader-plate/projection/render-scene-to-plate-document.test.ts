@@ -76,6 +76,18 @@ describe("renderSceneToPlateDocument", () => {
           label: "句子拆解",
           title: "句子拆解",
           content: "主语是 Institutional memory，谓语是 shapes。",
+          chunks: [
+            {
+              order: 1,
+              label: "主语",
+              text: "Institutional memory",
+            },
+            {
+              order: 2,
+              label: "谓语",
+              text: "shapes",
+            },
+          ],
         },
       ],
     };
@@ -152,6 +164,24 @@ describe("renderSceneToPlateDocument", () => {
       type: "reader_translation",
       sentenceId: "s1",
       translationZh: "制度记忆会塑造政策选择。",
+    });
+
+    const analysis = sentence.children[3];
+    expect(analysis).toMatchObject({
+      type: "reader_sentence_analysis",
+      entryId: "entry-analysis",
+      chunks: [
+        {
+          order: 1,
+          label: "主语",
+          text: "Institutional memory",
+        },
+        {
+          order: 2,
+          label: "谓语",
+          text: "shapes",
+        },
+      ],
     });
   });
 

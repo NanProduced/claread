@@ -149,6 +149,13 @@ export interface InlineMarkModel {
 
 export type SentenceEntryType = 'grammar_note' | 'sentence_analysis'
 
+export interface SentenceEntryChunk {
+  order?: number
+  label: string
+  text: string
+  occurrence?: number | null
+}
+
 export interface SentenceEntryModel {
   id: string
   sentenceId: string
@@ -156,6 +163,8 @@ export interface SentenceEntryModel {
   label: string
   title?: string
   content: string
+  analysisText?: string | null
+  chunks?: SentenceEntryChunk[]
 }
 
 export interface RenderSceneVmBase {

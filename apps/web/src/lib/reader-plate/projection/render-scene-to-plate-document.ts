@@ -447,6 +447,8 @@ function createAnalysisBlockNode(
     label: entry.label,
     title: entry.title,
     content: entry.content,
+    analysisText: entry.analysisText,
+    chunks: entry.chunks,
     sourceKind: entry.sourceKind,
     supplementId: entry.supplementId,
     deletable: entry.deletable,

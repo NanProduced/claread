@@ -172,6 +172,13 @@ export type SentenceEntryType =
   | 'interpretation_note'
   | 'content_summary'
 
+export interface SentenceEntryChunk {
+  order?: number
+  label: string
+  text: string
+  occurrence?: number | null
+}
+
 export interface SentenceEntryModel {
   id: string
   sentenceId: string
@@ -179,6 +186,8 @@ export interface SentenceEntryModel {
   label: string
   title?: string
   content: string
+  analysisText?: string
+  chunks?: SentenceEntryChunk[]
   sourceKind?: 'workflow' | 'ask_supplement'
   supplementId?: string
   deletable?: boolean
