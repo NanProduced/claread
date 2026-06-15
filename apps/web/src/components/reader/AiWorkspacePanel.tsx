@@ -68,10 +68,13 @@ import { SystemMessage } from "@/components/ui/system-message";
 import { IconButton } from "@/components/primitives/icon-button";
 import { AskComposer } from "@/components/reader/ask-chat/AskComposer";
 import { AssistantMessage } from "@/components/reader/ask-chat/AssistantMessage";
+import { CitationList } from "@/components/reader/ask-chat/CitationList";
 import { ConversationShell } from "@/components/reader/ask-chat/ConversationShell";
+import { FollowUpSuggestionChips } from "@/components/reader/ask-chat/FollowUpSuggestionChips";
 import { PromptSuggestions } from "@/components/reader/ask-chat/PromptSuggestions";
 import { ReasoningPanel } from "@/components/reader/ask-chat/ReasoningPanel";
 import { TaskProcessCard } from "@/components/reader/ask-chat/TaskProcessCard";
+import { ToolChipRow } from "@/components/reader/ask-chat/ToolChipRow";
 import {
   readerCommandControl,
   readerPanelItem,
@@ -116,6 +119,7 @@ import type {
   ReaderAskThreadDetailDto,
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
+  ReaderAskFollowUpSuggestionDto,
   ReaderAskUiMessageDto,
 } from "@/types/api/reader-ask";
 import { consumeReaderAskSse } from "./ask/sse";
@@ -201,7 +205,8 @@ type AskPanelBlockKind =
   | "evidence"
   | "trace_summary"
   | "citations"
-  | "tool_trace";
+  | "tool_trace"
+  | "follow_up_suggestions";
 
 type AskPanelBlock = {
   kind: AskPanelBlockKind;
@@ -842,6 +847,7 @@ export function createSseMessageHandler(
               persisted_supplements: payload.persisted_supplements ?? [],
               reasoning_md: nextReasoningMd,
               reasoning_status: nextReasoningStatus,
+              follow_up_suggestions: payload.follow_up_suggestions ?? [],
               replan_status: "idle",
               compacting: false,
               regenerate_preview: false,
@@ -912,12 +918,12 @@ function toolLabel(toolName: string) {
       return "当前文章上下文";
     case "get_record_insights":
       return "解析卡片";
-    case "search_user_vocabulary":
-      return "生词资产";
-    case "lookup_dictionary_entry":
-      return "词典";
-    case "run_dictionary_ai_context_explain":
-      return "词典 AI";
+    case "get_user_vocabulary_book":
+      return "生词本";
+    case "resolve_known_reference":
+      return "跨文章引用";
+    case "suggest_prompts":
+      return "追问建议";
     case "generate_sentence_annotation":
       return "句法生成";
     case "propose_save_note":
@@ -1372,6 +1378,15 @@ function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   }
   if (message.action_proposals.length > 0) {
     blocks.push({ kind: "action_proposals" });
+  }
+  if ((message.follow_up_suggestions ?? []).length > 0) {
+    blocks.push({ kind: "follow_up_suggestions" });
+  }
+  if (message.citations.length > 0) {
+    blocks.push({ kind: "citations" });
+  }
+  if (message.tool_trace.length > 0 && message.status !== "streaming") {
+    blocks.push({ kind: "tool_trace" });
   }
   if (
     pendingSupplementCandidates(message).length > 0 ||
@@ -2350,6 +2365,7 @@ function MessageBubble({
   onJumpToAttachment,
   onAnnotationFeedback,
   analysisRecordId,
+  onPickFollowUpSuggestion,
 }: {
   item: AskPanelConversationItem;
   currentRecordId: string;
@@ -2369,6 +2385,7 @@ function MessageBubble({
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
   analysisRecordId?: string;
+  onPickFollowUpSuggestion?: (prompt: string) => void;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -2501,7 +2518,7 @@ function MessageBubble({
                   />
                 );
               case "citations":
-                return null;
+                return <CitationList key={`${message.id}-${block.kind}-${index}`} citations={message.citations} />;
               case "context_summary":
                 return (
                   <div key={`${message.id}-${block.kind}-${index}`} className="space-y-3">
@@ -2555,6 +2572,22 @@ function MessageBubble({
               case "evidence":
               case "trace_summary":
               case "tool_trace":
+                return (
+                  <div key={`${message.id}-${block.kind}-${index}`} className="space-y-1.5 w-full">
+                    <ToolChipRow entries={message.tool_trace} toolLabelFn={toolLabel} />
+                    <ToolTraceBlock entries={message.tool_trace} />
+                  </div>
+                );
+              case "follow_up_suggestions":
+                return (
+                  <FollowUpSuggestionChips
+                    key={`${message.id}-${block.kind}-${index}`}
+                    suggestions={message.follow_up_suggestions ?? []}
+                    onPickSuggestion={(prompt) => {
+                      onPickFollowUpSuggestion?.(prompt);
+                    }}
+                  />
+                );
               default:
                 return null;
             }
@@ -3305,6 +3338,7 @@ export function AiWorkspacePanel({
       persisted_supplements: [],
       reasoning_md: "",
       reasoning_status: "idle",
+      follow_up_suggestions: [],
       compacting: false,
       regenerate_preview: false,
       usage_event_id: null,
@@ -3423,6 +3457,7 @@ export function AiWorkspacePanel({
               persisted_supplements: message.persisted_supplements,
               reasoning_status: "idle",
               reasoning_md: "",
+              follow_up_suggestions: [],
               compacting: false,
             }
           : message,
@@ -3593,6 +3628,9 @@ export function AiWorkspacePanel({
                 onJumpToAttachment={onJumpToAttachment}
                 onAnnotationFeedback={onAnnotationFeedback}
                 analysisRecordId={analysisRecordId}
+                onPickFollowUpSuggestion={(prompt) => {
+                  void sendMessage({ content: prompt });
+                }}
               />
             ))}
           </ConversationShell>

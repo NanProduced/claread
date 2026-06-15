@@ -425,6 +425,11 @@ export interface ReaderAskSentenceBreakdownCardDto {
   origin: "ask_ai";
 }
 
+export interface ReaderAskFollowUpSuggestionDto {
+  label: string;
+  prompt: string;
+}
+
 export type ReaderAskResponseCardDto =
   | ReaderAskGrammarNoteCardDto
   | ReaderAskSentenceBreakdownCardDto;
@@ -454,6 +459,7 @@ export interface ReaderAskMessageDto {
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
+  follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -554,6 +560,7 @@ export interface ReaderAskCompletedPayloadDto {
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
+  follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
   usage_event_id?: string | null;
 }
 

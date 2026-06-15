@@ -2,10 +2,13 @@ import type { Meta } from "@ladle/react";
 import { GitBranch, MessageSquare, PencilLine, Search } from "lucide-react";
 import { AskComposer } from "./AskComposer";
 import { AssistantMessage } from "./AssistantMessage";
+import { CitationList } from "./CitationList";
 import { ConversationShell } from "./ConversationShell";
+import { FollowUpSuggestionChips } from "./FollowUpSuggestionChips";
 import { PromptSuggestions } from "./PromptSuggestions";
 import { ReasoningPanel } from "./ReasoningPanel";
 import { TaskProcessCard } from "./TaskProcessCard";
+import { ToolChipRow } from "./ToolChipRow";
 
 export default {
   title: "Reader/AskChat",
@@ -112,7 +115,7 @@ export const ConversationState = () => {
           contextStrip={
             <>
               <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/70 bg-[rgba(255,255,255,0.82)] px-2.5 py-1.5 text-xs font-medium text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.03)]">
-                “追随激情”职业建议的陷阱与社会不平等
+                "追随激情"职业建议的陷阱与社会不平等
               </span>
               <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/70 bg-[rgba(255,255,255,0.82)] px-2.5 py-1.5 text-xs font-medium text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.03)]">
                 当前句子
@@ -131,3 +134,48 @@ export const ConversationState = () => {
     </div>
   );
 };
+
+export const FollowUpChips = () => (
+  <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,246,240,1),rgba(255,255,255,1))] p-6">
+    <div className="mx-auto max-w-[42rem] rounded-[32px] border border-hairline/80 bg-[radial-gradient(circle_at_top,rgba(31,94,255,0.06),transparent_30%),linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] p-5 shadow-[0_30px_84px_rgba(17,17,17,0.14)]">
+      <FollowUpSuggestionChips
+        suggestions={[
+          { label: "展开第二层论证", prompt: "展开第二层论证" },
+          { label: "作者用了哪些证据？", prompt: "作者用了哪些证据？" },
+          { label: "和另一篇对比", prompt: "和另一篇对比" },
+        ]}
+        onPickSuggestion={() => {}}
+      />
+    </div>
+  </div>
+);
+
+export const ToolChipRowStory = () => (
+  <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,246,240,1),rgba(255,255,255,1))] p-6">
+    <div className="mx-auto max-w-[42rem] rounded-[32px] border border-hairline/80 bg-[radial-gradient(circle_at_top,rgba(31,94,255,0.06),transparent_30%),linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] p-5 shadow-[0_30px_84px_rgba(17,17,17,0.14)]">
+      <ToolChipRow
+        entries={[
+          { tool_name: "get_record_context", status: "completed", next_actions: [], artifacts: [], metadata_json: {} },
+          { tool_name: "get_record_insights", status: "completed", next_actions: [], artifacts: [], metadata_json: {} },
+          { tool_name: "get_user_vocabulary_book", status: "started", next_actions: [], artifacts: [], metadata_json: {} },
+          { tool_name: "resolve_known_reference", status: "failed", next_actions: [], artifacts: [], metadata_json: {} },
+        ]}
+      />
+    </div>
+  </div>
+);
+
+export const CitationListStory = () => (
+  <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,246,240,1),rgba(255,255,255,1))] p-6">
+    <div className="mx-auto max-w-[42rem] rounded-[32px] border border-hairline/80 bg-[radial-gradient(circle_at_top,rgba(31,94,255,0.06),transparent_30%),linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] p-5 shadow-[0_30px_84px_rgba(17,17,17,0.14)]">
+      <CitationList
+        citations={[
+          { citation_id: "c1", kind: "anchor", label: "第 3 段", metadata_json: {} },
+          { citation_id: "c2", kind: "vocabulary", label: "passion principle", metadata_json: {} },
+          { citation_id: "c3", kind: "dictionary_entry", label: "inequality", source_article_title: "牛津高阶", metadata_json: {} },
+          { citation_id: "c4", kind: "dictionary_ai", label: "overwork", metadata_json: {} },
+        ]}
+      />
+    </div>
+  </div>
+);

@@ -1878,7 +1878,7 @@ describe("AiWorkspacePanel", () => {
     expect(onComposerTextareaBlur).toHaveBeenCalledTimes(1);
   });
 
-  it("hides citations in the Ask answer surface", async () => {
+  it("renders citation badges in the Ask answer surface", async () => {
     vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
@@ -1902,10 +1902,13 @@ describe("AiWorkspacePanel", () => {
               citations: [
                 {
                   citation_id: "cite-1",
+                  kind: "anchor",
                   label: "Paragraph 1",
                   record_id: "record-1",
                   target_key: "p1",
+                  source_article_title: "Source Article A",
                   selected_text: "This is the source text that was cited.",
+                  metadata_json: {},
                 }
               ],
               action_proposals: [],
@@ -1945,8 +1948,9 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("Here is the answer.")).not.toBeNull();
     });
 
-    expect(screen.queryByText("引用与来源")).toBeNull();
-    expect(screen.queryByText("当前文章")).toBeNull();
+    expect(screen.getByText("[1]")).not.toBeNull();
+    expect(screen.getByText("Paragraph 1")).not.toBeNull();
+    expect(screen.getByText("Source Article A")).not.toBeNull();
     expect(screen.queryByText("This is the source text that was cited.")).toBeNull();
   });
 
