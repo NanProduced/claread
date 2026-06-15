@@ -1084,39 +1084,6 @@ def _collect_sentence_entries(record: _RecordBundle, anchors: list[ReaderAskAnch
     return results[:cfg.MAX_PROMPT_ASSET_ITEMS]
 
 
-async def _tool_search_user_vocabulary(user_id: UUID, query: str) -> list[dict[str, Any]]:
-    """Deprecated: replaced by ``_tool_get_user_vocabulary_book``.
-
-    Kept for legacy callers (e.g. ``_search_user_vocabulary_cb``). New
-    agent-loop entry points must use ``_tool_get_user_vocabulary_book``.
-    """
-    items, _ = await vocabulary_svc.list_vocabulary(
-        user_id=user_id,
-        page=1,
-        limit=200,
-        lite=False,
-    )
-    query_lower = _normalize_text(query).lower()
-    matches: list[dict[str, Any]] = []
-    for item in items:
-        lemma = str(item.get("lemma") or "")
-        display_word = str(item.get("display_word") or "")
-        source_sentence = str(item.get("source_sentence") or "")
-        if query_lower and query_lower not in lemma.lower() and query_lower not in display_word.lower() and query_lower not in source_sentence.lower():
-            continue
-        matches.append(
-            {
-                "id": str(item.get("id")),
-                "lemma": lemma,
-                "display_word": display_word,
-                "short_meaning": _truncate_text(item.get("short_meaning"), 80),
-                "source_sentence": _truncate_text(source_sentence, 120),
-                "mastery_status": item.get("mastery_status"),
-            }
-        )
-    return matches[:cfg.MAX_PROMPT_ASSET_ITEMS]
-
-
 async def _tool_get_user_vocabulary_book(
     user_id: UUID,
     *,
@@ -2206,64 +2173,6 @@ async def _run_explicit_quick_action_annotation(
     if event_queue is not None:
         await event_queue.put((stream_events_svc.EVENT_TOOL_COMPLETED, stream_events_svc.tool_completed_payload("generate_sentence_annotation", summary)))
     return generated
-
-
-async def _ensure_task_card_data(
-    *,
-    task_mode: ReaderAskTaskMode,
-    runtime_state: ReaderAskRuntimeState,
-    get_record_context_cb: Callable[[], Any],
-    get_record_insights_cb: Callable[[], Any],
-    lookup_dictionary_entry_cb: Callable[..., Any],
-    run_dictionary_ai_context_explain_cb: Callable[..., Any],
-    record: _RecordBundle,
-    anchors: list[ReaderAskAnchorRef],
-) -> None:
-    if task_mode == "breakdown":
-        if not runtime_state.latest_record_insights:
-            runtime_state.latest_record_insights = await get_record_insights_cb()
-            if runtime_state.latest_record_insights:
-                runtime_state.source_labels.add("record_assets")
-        return
-    if task_mode != "vocabulary":
-        return
-
-    if runtime_state.latest_dictionary_entry is None:
-        dictionary_anchor = next((anchor for anchor in anchors if anchor.anchor_type == "dictionary_entry"), None)
-        query = dictionary_anchor.query if dictionary_anchor else None
-        entry_id = dictionary_anchor.dict_entry_id if dictionary_anchor else None
-        sentence_text = None
-        if anchors:
-            sentence_text = _render_scene_sentence_text(record, anchors[0].sentence_id) or _first_anchor_text(anchors[0])
-        runtime_state.latest_dictionary_entry = await lookup_dictionary_entry_cb(
-            query,
-            entry_id,
-            "phrase" if query and " " in query else "word",
-            sentence_text,
-            None,
-        )
-        if runtime_state.latest_dictionary_entry is not None:
-            runtime_state.source_labels.add("dictionary")
-    if runtime_state.latest_dictionary_entry is None or runtime_state.latest_dictionary_ai is not None:
-        return
-    sentence_text = None
-    if anchors:
-        sentence_text = _render_scene_sentence_text(record, anchors[0].sentence_id) or _first_anchor_text(anchors[0])
-    if not sentence_text:
-        return
-    query = str(runtime_state.latest_dictionary_entry.get("query") or runtime_state.latest_dictionary_entry.get("word") or "")
-    entry_id = runtime_state.latest_dictionary_entry.get("id")
-    if not query or not isinstance(entry_id, int):
-        return
-    runtime_state.latest_dictionary_ai = await run_dictionary_ai_context_explain_cb(
-        query,
-        entry_id,
-        sentence_text,
-        "phrase" if " " in query else "word",
-        None,
-    )
-    if runtime_state.latest_dictionary_ai is not None:
-        runtime_state.source_labels.add("dictionary")
 
 
 def _build_action_proposals(

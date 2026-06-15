@@ -39,7 +39,6 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_LOOKUP_RECORD_BY_EMBEDDING,
     TOOL_RESOLVE_KNOWN_REFERENCE,
     TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
-    TOOL_SEARCH_USER_VOCABULARY,
     TOOL_SUGGEST_PROMPTS,
     agent_callable_tool_names,
 )
@@ -149,10 +148,10 @@ class TestRound2AgentSurface:
             TOOL_SUGGEST_PROMPTS,
         }
         assert expected.issubset(names)
-        # Reserved RAG + deprecated vocabulary / dictionary are NOT
-        # agent-callable.
+        # Reserved RAG + deprecated dictionary are NOT
+        # agent-callable. Round 5: search_user_vocabulary fully removed.
         assert TOOL_LOOKUP_RECORD_BY_EMBEDDING not in names
-        assert TOOL_SEARCH_USER_VOCABULARY not in names
+        assert "search_user_vocabulary" not in names
         assert TOOL_LOOKUP_DICTIONARY_ENTRY not in names
         assert TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN not in names
 

@@ -19,6 +19,7 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_PROPOSE_SAVE_NOTE,
     TOOL_RESOLVE_KNOWN_REFERENCE,
     TOOL_SUGGEST_PROMPTS,
+    agent_callable_tool_names,
 )
 from app.agents.reader_ask_tool_runtime import (
     run_tool,
@@ -623,5 +624,16 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
         suggestions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return await _suggest_prompts_tool(ctx, suggestions)
+
+    # Round 5: verify agent tool surface matches registry.
+    # Uses explicit RuntimeError (not assert) so the check is not stripped
+    # under PYTHONOPTIMIZE=1 / python -O.
+    _registered = frozenset(agent._function_toolset.tools.keys())
+    _expected = agent_callable_tool_names()
+    if _registered != _expected:
+        raise RuntimeError(
+            f"Agent tool surface mismatch: registered={_registered - _expected}, "
+            f"missing={_expected - _registered}"
+        )
 
     return agent

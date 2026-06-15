@@ -135,16 +135,24 @@ planner schema 中的 `answer_policy` 当前属于可评估的后续输入，不
 
 ### Agent Tools / Write Gate
 
-Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` 统一定义。当前固定为 8 个工具：
+Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` 统一定义。当前固定为 8 个 agent-callable 工具：
 
 - `get_record_context`
 - `get_record_insights`
-- `search_user_vocabulary`
-- `lookup_dictionary_entry`
-- `run_dictionary_ai_context_explain`
+- `get_user_vocabulary_book`
+- `resolve_known_reference`
 - `generate_sentence_annotation`
 - `propose_save_note`
 - `propose_save_highlight`
+- `suggest_prompts`
+
+此外 registry 中还有 3 个 non-callable 工具：
+
+- `lookup_record_by_embedding` — reserved，未来 pgvector RAG 占位，`agent_callable=False`
+- `lookup_dictionary_entry` — deprecated，仍被 dictionary attachment 闭包调用，`agent_callable=False`
+- `run_dictionary_ai_context_explain` — deprecated，仍被 dictionary AI 闭包调用，`agent_callable=False`
+
+`search_user_vocabulary` 已在 Round 5 完全移除（零调用者，由 `get_user_vocabulary_book` 替代）。
 
 工具契约的稳定边界：
 

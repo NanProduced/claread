@@ -1,8 +1,10 @@
-"""Tests for the Ask Claread tool registry (P5-1, Round 2 tool surface)."""
+"""Tests for the Ask Claread tool registry (P5-1, Round 2 tool surface, Round 5 hardening)."""
 
 from app.agents.reader_ask_tool_registry import (
+    DEPRECATED_TOOL_NAMES,
     READER_ASK_TOOL_NAMES,
     READER_ASK_TOOL_REGISTRY,
+    RESERVED_TOOL_NAMES,
     TOOL_GENERATE_SENTENCE_ANNOTATION,
     TOOL_GET_RECORD_CONTEXT,
     TOOL_GET_RECORD_INSIGHTS,
@@ -13,13 +15,14 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_PROPOSE_SAVE_NOTE,
     TOOL_RESOLVE_KNOWN_REFERENCE,
     TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
-    TOOL_SEARCH_USER_VOCABULARY,
     TOOL_SUGGEST_PROMPTS,
     ToolSpec,
     agent_callable_tool_names,
+    assert_registry_invariants,
     get_tool_spec,
     is_agent_callable,
     is_write_proposal_tool,
+    non_agent_callable_tool_names,
     requires_anchor,
 )
 
@@ -43,8 +46,7 @@ _ALL_TOOL_NAMES = frozenset({
     TOOL_SUGGEST_PROMPTS,
     # Reserved RAG
     TOOL_LOOKUP_RECORD_BY_EMBEDDING,
-    # Deprecated (Round 2: kept as schema entries, agent_callable=False)
-    TOOL_SEARCH_USER_VOCABULARY,
+    # Deprecated (Round 2→5: kept as schema entries, agent_callable=False)
     TOOL_LOOKUP_DICTIONARY_ENTRY,
     TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
 })
@@ -92,9 +94,9 @@ def test_reserved_rag_tool_not_agent_callable() -> None:
 
 
 def test_deprecated_vocabulary_tool_not_agent_callable() -> None:
-    spec = READER_ASK_TOOL_REGISTRY[TOOL_SEARCH_USER_VOCABULARY]
-    assert spec.agent_callable is False
-    assert is_agent_callable(TOOL_SEARCH_USER_VOCABULARY) is False
+    """Round 5: search_user_vocabulary fully removed from registry."""
+    assert "search_user_vocabulary" not in READER_ASK_TOOL_REGISTRY
+    assert is_agent_callable("search_user_vocabulary") is False
 
 
 def test_deprecated_dictionary_tools_not_agent_callable() -> None:
@@ -193,15 +195,6 @@ _EXPECTED_SPECS: dict[str, dict] = {
         "agent_callable": False,
         "output_kind": "list_or_empty",
         "observation_statuses": ("success", "warning"),
-    },
-    TOOL_SEARCH_USER_VOCABULARY: {
-        "category": "vocabulary",
-        "effect": "read",
-        "requires_anchor": False,
-        "consumes_budget_when_precondition_fails": True,
-        "agent_callable": False,
-        "output_kind": "list_or_empty",
-        "observation_statuses": ("success",),
     },
     TOOL_LOOKUP_DICTIONARY_ENTRY: {
         "category": "dictionary",
@@ -308,7 +301,6 @@ def test_tool_name_constants_match_strings() -> None:
     assert TOOL_PROPOSE_SAVE_HIGHLIGHT == "propose_save_highlight"
     assert TOOL_SUGGEST_PROMPTS == "suggest_prompts"
     assert TOOL_LOOKUP_RECORD_BY_EMBEDDING == "lookup_record_by_embedding"
-    assert TOOL_SEARCH_USER_VOCABULARY == "search_user_vocabulary"
     assert TOOL_LOOKUP_DICTIONARY_ENTRY == "lookup_dictionary_entry"
     assert TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN == "run_dictionary_ai_context_explain"
 
@@ -421,16 +413,50 @@ def test_agent_tool_names_use_registry_constants() -> None:
 
 
 def test_agent_module_does_not_register_deprecated_tools() -> None:
-    """The agent module must not re-export constants for deprecated tools."""
+    """The agent module must not re-export constants for deprecated/reserved tools."""
     import importlib
 
     agent_module = importlib.import_module("app.agents.reader_ask_agent")
     for name in (
-        "TOOL_SEARCH_USER_VOCABULARY",
         "TOOL_LOOKUP_DICTIONARY_ENTRY",
         "TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN",
         "TOOL_LOOKUP_RECORD_BY_EMBEDDING",
     ):
         assert not hasattr(agent_module, name), (
-            f"reader_ask_agent should not re-export {name} in Round 2"
+            f"reader_ask_agent should not re-export {name}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Round 5: registry invariants
+# ---------------------------------------------------------------------------
+
+
+def test_registry_invariants_pass() -> None:
+    """Import-time invariant check must not raise."""
+    assert_registry_invariants()
+
+
+def test_deprecated_tool_names_are_non_callable() -> None:
+    assert DEPRECATED_TOOL_NAMES <= non_agent_callable_tool_names()
+
+
+def test_reserved_tool_names_are_non_callable() -> None:
+    assert RESERVED_TOOL_NAMES <= non_agent_callable_tool_names()
+
+
+def test_deprecated_and_reserved_disjoint() -> None:
+    assert DEPRECATED_TOOL_NAMES & RESERVED_TOOL_NAMES == frozenset()
+
+
+def test_callable_non_callable_partition_registry() -> None:
+    callable_names = agent_callable_tool_names()
+    non_callable_names = non_agent_callable_tool_names()
+    assert callable_names | non_callable_names == READER_ASK_TOOL_NAMES
+    assert callable_names & non_callable_names == frozenset()
+
+
+def test_search_user_vocabulary_not_in_registry() -> None:
+    """Round 5: search_user_vocabulary fully removed from registry."""
+    assert "search_user_vocabulary" not in READER_ASK_TOOL_REGISTRY
+    assert "search_user_vocabulary" not in READER_ASK_TOOL_NAMES

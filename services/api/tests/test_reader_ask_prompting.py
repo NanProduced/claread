@@ -1,4 +1,5 @@
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+from app.agents.reader_ask_tool_registry import DEPRECATED_TOOL_NAMES, RESERVED_TOOL_NAMES
 from app.services.reader_ask.prompting import load_prompt_layers
 
 
@@ -10,12 +11,12 @@ def test_load_prompt_layers_reads_reader_ask_prompt_files() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Round 2: prompt ↔ tool surface alignment.
+# Round 2→5: prompt ↔ tool surface alignment.
 #
 # The system prompt (loaded via ``load_agent_instructions("reader_ask")``)
 # is the model's view of which tools exist. It must NOT mention deprecated
-# tools (``search_user_vocabulary``, ``lookup_dictionary_entry``,
-# ``run_dictionary_ai_context_explain``) and MUST mention the new
+# tools (``lookup_dictionary_entry``, ``run_dictionary_ai_context_explain``)
+# or the fully removed ``search_user_vocabulary``, and MUST mention the
 # Round 2 tools the registry exposes (``get_user_vocabulary_book``,
 # ``resolve_known_reference``, ``suggest_prompts``).
 # ---------------------------------------------------------------------------
@@ -136,4 +137,29 @@ def test_reader_ask_prompt_documents_scope_for_get_record_context() -> None:
     for token in ("scope", "window", "paragraph", "full"):
         assert token in prompt, (
             f"reader_ask prompt must reference scope='{token}' for get_record_context"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Round 5: prompt must not mention deprecated/reserved tool names
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_does_not_mention_deprecated_tool_names() -> None:
+    """The system prompt must not mention any tool name in DEPRECATED_TOOL_NAMES."""
+    prompt = load_agent_instructions("reader_ask")
+    for name in DEPRECATED_TOOL_NAMES:
+        assert name not in prompt, (
+            f"reader_ask prompt references deprecated tool '{name}'; "
+            "deprecated tools must never appear in the prompt."
+        )
+
+
+def test_prompt_does_not_mention_reserved_tool_names() -> None:
+    """The system prompt must not mention any tool name in RESERVED_TOOL_NAMES."""
+    prompt = load_agent_instructions("reader_ask")
+    for name in RESERVED_TOOL_NAMES:
+        assert name not in prompt, (
+            f"reader_ask prompt references reserved tool '{name}'; "
+            "reserved tools must never appear in the prompt."
         )

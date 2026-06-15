@@ -17,10 +17,18 @@ Round 2 (Agent loop tool surface):
 - Reserved spec: ``lookup_record_by_embedding`` (``agent_callable=False``)
   — schema placeholder for the future pgvector-backed RAG.
 - Deprecated (kept as schema entries, ``agent_callable=False``):
-  ``search_user_vocabulary``, ``lookup_dictionary_entry``,
-  ``run_dictionary_ai_context_explain``. They are not removed in Round 2
-  to avoid breaking legacy call sites; the prompt no longer encourages
-  them and the agent never sees them.
+  ``lookup_dictionary_entry``, ``run_dictionary_ai_context_explain``.
+  They are not removed because legacy call sites still reference them;
+  the prompt no longer encourages them and the agent never sees them.
+
+Round 5 (Tool registration hardening):
+- ``search_user_vocabulary`` fully removed: the implementation function
+  had zero callers and the replacement ``get_user_vocabulary_book`` has
+  been in place since Round 2.
+- Added ``DEPRECATED_TOOL_NAMES``, ``RESERVED_TOOL_NAMES`` constants for
+  invariant checking.
+- Added ``non_agent_callable_tool_names()`` and ``assert_registry_invariants()``
+  for import-time and test-time structural validation.
 """
 
 from __future__ import annotations
@@ -89,8 +97,9 @@ TOOL_SUGGEST_PROMPTS = "suggest_prompts"
 # Reserved for future RAG (Round 2 spec; not yet implemented as a tool)
 TOOL_LOOKUP_RECORD_BY_EMBEDDING = "lookup_record_by_embedding"
 
-# Deprecated (Round 2): retained as schema entries only, agent_callable=False.
-TOOL_SEARCH_USER_VOCABULARY = "search_user_vocabulary"
+# Deprecated (Round 2→5): retained as schema entries only, agent_callable=False.
+# Round 5: search_user_vocabulary fully removed (zero callers, replaced by
+# get_user_vocabulary_book in Round 2).
 TOOL_LOOKUP_DICTIONARY_ENTRY = "lookup_dictionary_entry"
 TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN = "run_dictionary_ai_context_explain"
 
@@ -196,17 +205,7 @@ READER_ASK_TOOL_REGISTRY: dict[str, ToolSpec] = {
         output_kind="list_or_empty",
         observation_statuses=("success", "warning"),
     ),
-    # ----- Deprecated (Round 2): agent_callable=False, kept as schema entries -----
-    TOOL_SEARCH_USER_VOCABULARY: ToolSpec(
-        name=TOOL_SEARCH_USER_VOCABULARY,
-        category="vocabulary",
-        effect="read",
-        requires_anchor=False,
-        consumes_budget_when_precondition_fails=True,
-        agent_callable=False,  # superseded by get_user_vocabulary_book
-        output_kind="list_or_empty",
-        observation_statuses=("success",),
-    ),
+    # ----- Deprecated (Round 2→5): agent_callable=False, kept as schema entries -----
     TOOL_LOOKUP_DICTIONARY_ENTRY: ToolSpec(
         name=TOOL_LOOKUP_DICTIONARY_ENTRY,
         category="dictionary",
@@ -268,3 +267,80 @@ def agent_callable_tool_names() -> frozenset[str]:
     return frozenset(
         spec.name for spec in READER_ASK_TOOL_REGISTRY.values() if spec.agent_callable
     )
+
+
+def non_agent_callable_tool_names() -> frozenset[str]:
+    """Return the set of tool names the main agent must **not** call.
+
+    These are reserved specs, deprecated schema entries, or other tools
+    that exist in the registry but are excluded from the agent surface.
+    """
+    return frozenset(
+        spec.name for spec in READER_ASK_TOOL_REGISTRY.values() if not spec.agent_callable
+    )
+
+
+# ---------------------------------------------------------------------------
+# Deprecated / reserved tool-name sets (Round 5)
+# ---------------------------------------------------------------------------
+
+DEPRECATED_TOOL_NAMES: frozenset[str] = frozenset({
+    TOOL_LOOKUP_DICTIONARY_ENTRY,
+    TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
+})
+
+RESERVED_TOOL_NAMES: frozenset[str] = frozenset({
+    TOOL_LOOKUP_RECORD_BY_EMBEDDING,
+})
+
+
+# ---------------------------------------------------------------------------
+# Registry invariants (Round 5)
+# ---------------------------------------------------------------------------
+
+def assert_registry_invariants() -> None:
+    """Assert structural invariants of the tool registry.
+
+    Called at module load and from tests.  Fails fast if:
+
+    - callable + non-callable don't partition the registry
+    - deprecated/reserved tools are ``agent_callable``
+    - deprecated ∩ reserved is non-empty
+
+    Uses explicit ``RuntimeError`` instead of ``assert`` so that the check
+    is not stripped under ``PYTHONOPTIMIZE=1`` / ``python -O``.
+    """
+    callable_names = agent_callable_tool_names()
+    non_callable_names = non_agent_callable_tool_names()
+    # 1. Partition
+    if callable_names | non_callable_names != READER_ASK_TOOL_NAMES:
+        raise RuntimeError(
+            f"Registry partition broken: "
+            f"union={callable_names | non_callable_names}, "
+            f"READER_ASK_TOOL_NAMES={READER_ASK_TOOL_NAMES}"
+        )
+    if callable_names & non_callable_names:
+        raise RuntimeError(
+            f"Registry partition broken: overlap={callable_names & non_callable_names}"
+        )
+    # 2. Deprecated/reserved are non-callable
+    if not (DEPRECATED_TOOL_NAMES <= non_callable_names):
+        raise RuntimeError(
+            f"Deprecated tools must be non-callable: "
+            f"callable deprecated={DEPRECATED_TOOL_NAMES & callable_names}"
+        )
+    if not (RESERVED_TOOL_NAMES <= non_callable_names):
+        raise RuntimeError(
+            f"Reserved tools must be non-callable: "
+            f"callable reserved={RESERVED_TOOL_NAMES & callable_names}"
+        )
+    # 3. No overlap
+    if DEPRECATED_TOOL_NAMES & RESERVED_TOOL_NAMES:
+        raise RuntimeError(
+            f"Deprecated and reserved must be disjoint: "
+            f"overlap={DEPRECATED_TOOL_NAMES & RESERVED_TOOL_NAMES}"
+        )
+
+
+# Import-time invariant check
+assert_registry_invariants()

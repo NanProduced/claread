@@ -38,7 +38,6 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
     TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
-    TOOL_SEARCH_USER_VOCABULARY,
 )
 from app.agents.reader_ask_tool_runtime import run_tool
 from app.agents.reader_ask_write_gate import (

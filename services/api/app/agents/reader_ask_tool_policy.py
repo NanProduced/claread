@@ -13,7 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.agents.reader_ask_tool_registry import (
+    DEPRECATED_TOOL_NAMES,
     READER_ASK_TOOL_REGISTRY,
+    RESERVED_TOOL_NAMES,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
     agent_callable_tool_names,
@@ -77,6 +79,16 @@ def build_tool_availability(inp: ToolAvailabilityInput) -> ToolAvailabilityResul
        ``has_dictionary_anchor``, or ``has_generated_annotation_cache``.
     """
     allowed: frozenset[str] = agent_callable_tool_names()
+
+    # Round 5: hard guard — deprecated/reserved tools must never leak into
+    # the allowed set.  Uses explicit RuntimeError (not assert) so the check
+    # is not stripped under PYTHONOPTIMIZE=1 / python -O.
+    _forbidden = DEPRECATED_TOOL_NAMES | RESERVED_TOOL_NAMES
+    _leaked = allowed & _forbidden
+    if _leaked:
+        raise RuntimeError(
+            f"Forbidden tools leaked into allowed_tool_names: {_leaked}"
+        )
 
     unavailable_reasons: dict[str, str] = {}
 
