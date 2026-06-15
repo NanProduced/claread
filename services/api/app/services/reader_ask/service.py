@@ -1815,8 +1815,9 @@ def _metrics_json(
     planner_route: str | None = None,
     degenerate_detected: bool = False,
     degenerate_reason: str | None = None,
+    runtime_state: ReaderAskRuntimeState | None = None,
 ) -> dict[str, Any]:
-    return {
+    base: dict[str, Any] = {
         "planner_mode": trace_summary.planner_mode if trace_summary else None,
         "working_set_mode": trace_summary.working_set_mode if trace_summary else None,
         "cross_record_context_allowed": trace_summary.cross_record_context_allowed if trace_summary else False,
@@ -1835,6 +1836,76 @@ def _metrics_json(
         "degenerate_reason": degenerate_reason,
     }
 
+    # Round 6: extended observability from runtime_state
+    if runtime_state is not None:
+        # Route
+        base["planner_skipped"] = runtime_state.planner_skipped
+
+        # Tool metrics
+        completed_traces = [t for t in runtime_state.tool_trace if t.status == "completed"]
+        failed_traces = [t for t in runtime_state.tool_trace if t.status == "failed"]
+        base["tool_call_count"] = runtime_state.tool_call_count
+        base["tool_completed_count"] = len(completed_traces)
+        base["tool_failed_count"] = len(failed_traces)
+        base["tool_budget_exceeded"] = runtime_state.tool_call_count > runtime_state.max_tool_calls
+        base["tool_durations_ms"] = {
+            t.tool_name: t.metadata_json.get("duration_ms")
+            for t in completed_traces
+            if t.metadata_json.get("duration_ms") is not None
+        }
+
+        # Latency
+        base["run_started_at"] = runtime_state.run_started_at
+        base["first_token_at"] = runtime_state.first_token_at
+        if runtime_state.run_started_at and runtime_state.first_token_at:
+            _started = datetime.fromisoformat(runtime_state.run_started_at)
+            _first = datetime.fromisoformat(runtime_state.first_token_at)
+            base["ttft_ms"] = int((_first - _started).total_seconds() * 1000)
+
+        # Output metrics
+        base["citations_count"] = len(runtime_state.citations)
+        base["follow_up_suggestions_count"] = len(runtime_state.latest_suggestions)
+        base["action_proposals_count"] = len(runtime_state.action_requests)
+
+    return base
+
+
+_TRACE_SUMMARY_METRIC_KEYS = (
+    "planner_mode",
+    "working_set_mode",
+    "cross_record_context_allowed",
+    "cross_record_context_used",
+    "used_known_reference_resolution",
+    "used_external_record_context",
+    "used_structured_asset_lookup",
+    "used_hitp_disambiguation",
+    "used_external_asset_context",
+    "used_external_asset_disambiguation",
+)
+
+
+def _merge_eval_metrics_json(
+    *,
+    existing_metrics: dict[str, Any],
+    next_metrics: dict[str, Any],
+    trace_summary: ReaderAskTraceSummary | None,
+    billed_points: int,
+    usage_event_id: UUID | None,
+) -> dict[str, Any]:
+    if not existing_metrics:
+        return next_metrics
+
+    merged = {**existing_metrics, **next_metrics}
+    if trace_summary is None:
+        for key in _TRACE_SUMMARY_METRIC_KEYS:
+            if key in existing_metrics:
+                merged[key] = existing_metrics[key]
+    if billed_points == 0 and usage_event_id is None and "billed_points" in existing_metrics:
+        merged["billed_points"] = existing_metrics["billed_points"]
+    if usage_event_id is None and "usage_event_id" in existing_metrics:
+        merged["usage_event_id"] = existing_metrics["usage_event_id"]
+    return merged
+
 
 async def _upsert_eval_trace_record(
     *,
@@ -1849,6 +1920,22 @@ async def _upsert_eval_trace_record(
     usage_event_id: UUID | None = None,
 ) -> dict[str, Any]:
     existing = await repo.get_eval_trace(turn_run_id)
+    existing_metrics = (existing or {}).get("metrics_json") or {}
+    next_metrics = _merge_eval_metrics_json(
+        existing_metrics=existing_metrics,
+        next_metrics=_metrics_json(
+            trace_summary=trace_summary,
+            billed_points=billed_points,
+            usage_event_id=usage_event_id,
+            planner_route=runtime_state.planner_route_used,
+            degenerate_detected=runtime_state.degenerate_detected,
+            degenerate_reason=runtime_state.degenerate_reason,
+            runtime_state=runtime_state,
+        ),
+        trace_summary=trace_summary,
+        billed_points=billed_points,
+        usage_event_id=usage_event_id,
+    )
     return await repo.upsert_eval_trace(
         turn_run_id=turn_run_id,
         trace_schema_version=_EVAL_TRACE_SCHEMA_VERSION,
@@ -1860,16 +1947,7 @@ async def _upsert_eval_trace_record(
         supplement_audit_json=supplement_audit_json
         if supplement_audit_json is not None
         else (existing or {}).get("supplement_audit_json") or [],
-        metrics_json=_metrics_json(
-            trace_summary=trace_summary,
-            billed_points=billed_points,
-            usage_event_id=usage_event_id,
-            planner_route=runtime_state.planner_route_used,
-            degenerate_detected=runtime_state.degenerate_detected,
-            degenerate_reason=runtime_state.degenerate_reason,
-        )
-        if trace_summary is not None or usage_event_id is not None or billed_points
-        else (existing or {}).get("metrics_json") or {},
+        metrics_json=next_metrics,
     )
 
 
@@ -3396,6 +3474,8 @@ async def stream_thread_message(
             ),
             update_turn_run_cb=repo.update_turn_run,
         )
+        # Round 6: record run start time for latency tracking
+        runtime_state.run_started_at = datetime.now(UTC).isoformat()
         async for stream_item in stream_reader_ask_agent_run(
             agent=agent,
             deps=deps,
@@ -4643,6 +4723,8 @@ async def retry_thread_message(
             ),
             update_turn_run_cb=repo.update_turn_run,
         )
+        # Round 6: record run start time for latency tracking
+        runtime_state.run_started_at = datetime.now(UTC).isoformat()
         async for stream_item in stream_reader_ask_agent_run(
             agent=agent,
             deps=deps,

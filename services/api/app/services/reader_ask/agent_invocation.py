@@ -161,6 +161,10 @@ async def stream_reader_ask_agent_run(
         runtime=stream_runtime,
         assistant_message_id=assistant_message_id,
     )
+
+    # Round 6: propagate first_token_at from stream runtime to deps state
+    if stream_runtime.first_token_at is not None:
+        deps.state.first_token_at = stream_runtime.first_token_at
     if interrupted_event is not None:
         yield ReaderAskStreamSseEvent(
             encoded_sse=stream_events_svc.encode_sse(interrupted_event[0], interrupted_event[1]),

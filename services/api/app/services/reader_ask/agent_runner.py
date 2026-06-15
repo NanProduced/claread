@@ -127,6 +127,9 @@ class AgentStreamRuntime:
     # observe the detection without triggering a replan.
     degenerate_detected: bool = False
     degenerate_reason: str | None = None
+    # Round 6 — observability: first token latency.
+    # ISO 8601 timestamp of the first text delta emitted.
+    first_token_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +298,11 @@ async def _append_text_delta(
 ) -> None:
     if not text_delta:
         return
+    # Round 6: record first token latency
+    if not runtime.emitted_text:
+        from datetime import UTC, datetime
+
+        runtime.first_token_at = datetime.now(UTC).isoformat()
     runtime.emitted_text += text_delta
     runtime.content_parts.append(text_delta)
     await event_queue.put(

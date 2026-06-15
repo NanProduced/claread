@@ -90,6 +90,9 @@ class ReaderAskRuntimeState:
     # Round 3 — degenerate-loop detection telemetry.
     degenerate_detected: bool = False
     degenerate_reason: str | None = None
+    # Round 6 — observability: latency tracking.
+    first_token_at: str | None = None  # ISO 8601, first text delta time
+    run_started_at: str | None = None  # ISO 8601, run entry time
 
 
 @dataclass(slots=True)

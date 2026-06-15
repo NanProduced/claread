@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any, Literal, Protocol, TypeVar, cast
 
 from app.agents.reader_ask_tool_observation import normalize_tool_observation
@@ -65,24 +66,27 @@ def _tool_trace(
     summary: str | None = None,
     next_actions: list[str] | None = None,
     artifacts: list[str] | None = None,
+    duration_ms: int | None = None,
+    started_at: str | None = None,
 ) -> ReaderAskToolTraceEntry:
     now = _iso_now()
     if status == "started":
         return ReaderAskToolTraceEntry(
             tool_name=tool_name,
             status=status,
-            started_at=now,
+            started_at=started_at or now,
             input_summary=input_summary,
         )
     return ReaderAskToolTraceEntry(
         tool_name=tool_name,
         status=status,
-        started_at=now,
+        started_at=started_at or now,
         completed_at=now,
         input_summary=input_summary,
         summary=summary,
         next_actions=next_actions or [],
         artifacts=artifacts or [],
+        metadata_json={"duration_ms": duration_ms} if duration_ms is not None else {},
     )
 
 
@@ -171,6 +175,8 @@ async def run_tool(
             f"Tool call limit exceeded ({deps.state.max_tool_calls}). "
             "Please provide a direct answer without additional tool calls."
         )
+        # Budget exceeded: no prior started entry for this invocation, so
+        # no meaningful duration should be recorded.
         deps.state.tool_trace.append(
             _tool_trace(
                 tool_name,
@@ -182,12 +188,21 @@ async def run_tool(
         )
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
         raise RuntimeError(detail)
-    deps.state.tool_trace.append(_tool_trace(tool_name, "started", input_summary=input_summary))
+
+    # Record start time for duration calculation — single timestamp for
+    # both the started trace entry and the completed/failed entry.
+    started_at_iso = _iso_now()
+    started_perf = perf_counter()
+
+    deps.state.tool_trace.append(
+        _tool_trace(tool_name, "started", input_summary=input_summary, started_at=started_at_iso)
+    )
     await _emit_tool_event(deps, "tool.started", tool_name=tool_name)
     try:
         result = await runner()
     except Exception as exc:
         detail = str(exc) or "Tool failed"
+        duration_ms = int((perf_counter() - started_perf) * 1000)
         deps.state.tool_trace.append(
             _tool_trace(
                 tool_name,
@@ -195,12 +210,15 @@ async def run_tool(
                 input_summary=input_summary,
                 summary=detail,
                 next_actions=["Retry only after clarifying the missing input or context."],
+                duration_ms=duration_ms,
+                started_at=started_at_iso,
             )
         )
         await _emit_tool_event(deps, "tool.failed", tool_name=tool_name, detail=detail)
         raise
     obs = normalize_tool_observation(result)
     summary, next_actions, artifacts = obs.summary, obs.next_actions, obs.artifacts
+    duration_ms = int((perf_counter() - started_perf) * 1000)
     deps.state.tool_trace.append(
         _tool_trace(
             tool_name,
@@ -209,6 +227,8 @@ async def run_tool(
             summary=summary,
             next_actions=next_actions,
             artifacts=artifacts,
+            duration_ms=duration_ms,
+            started_at=started_at_iso,
         )
     )
     await _emit_tool_event(deps, "tool.completed", tool_name=tool_name, summary=summary)
