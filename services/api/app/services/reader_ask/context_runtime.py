@@ -187,6 +187,7 @@ def build_agent_loop_context(
     user_id: UUID,
     page_identity: Any,
     entry_action: ReaderAskEntryAction,
+    latest_user_message: str = "",
 ) -> Any:
     """Build a minimal resolved_context_input for the agent loop.
 
@@ -195,7 +196,20 @@ def build_agent_loop_context(
     does NOT invoke the planner.  It assembles a lightweight context with only
     the record identity, overview, and source_labels — suitable for the agent
     loop where full context materialization is unnecessary.
+
+    Round 8: detects deictic-without-anchor and sets
+    ``runtime_state.deictic_clarification_hint`` so the service layer can
+    inject a clarification hint into the prompt payload.
     """
+    from app.services.reader_ask.planner_route_policy import has_deictic_without_anchor
+
+    # Round 8: detect deictic without anchor and set clarification hint.
+    if has_deictic_without_anchor(latest_user_message, anchors):
+        runtime_state.deictic_clarification_hint = (
+            "用户使用了指代表达（如'这句''这段'）但未选中具体文本。"
+            "请先追问用户选中具体位置，再进行解释。"
+        )
+
     resolved_overview = utils.resolve_record_overview(
         render_scene=record.render_scene,
         page_state_json=getattr(record, "page_state_json", None),
@@ -258,7 +272,7 @@ async def materialize_planned_context(
 
     All repo-dependent operations are injected via callbacks.
 
-    When ``planning_snapshot`` is None (fast-path), the working_set-driven
+    When ``planning_snapshot`` is None (agent-loop-first), the working_set-driven
     fetches are skipped — only the article_overview is attempted, and the
     external lists are empty. The returned ``resolved_context_input`` is a
     minimal shape that satisfies the rest of the runtime contract.
@@ -308,7 +322,7 @@ async def materialize_planned_context(
             runtime_state.used_cross_record_context = True
             runtime_state.source_labels.update({"external_record_context", "external_assets"})
     else:
-        # Fast-path: skip record/insights/external fetches. Still attempt the
+        # Agent-loop-first: skip record/insights/external fetches. Still attempt the
         # article overview so source_labels can pick it up if present.
         if not runtime_state.latest_article_overview:
             article_overview = render_scene_article_overview(record)

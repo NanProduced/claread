@@ -1,10 +1,10 @@
-"""Round 1 baseline tests for the Ask Claread agent-loop fast path.
+"""Baseline tests for the Ask Claread planner route policy and agent-loop-first path.
 
 These tests cover the minimal-helper and decision-helper surface introduced
 in Round 1:
 
-- ``fast_path_runtime.resolve_planner_route`` decision logic.
-- ``fast_path_runtime.detect_cross_record_in_message`` keyword detection.
+- ``planner_route_policy.resolve_planner_route`` decision logic.
+- ``planner_route_policy.detect_cross_record_in_message`` keyword detection.
 - ``planner.build_minimal_resolved_intent`` entry_action mapping.
 - ``planner.build_minimal_context_plan`` / ``build_minimal_trace_summary``
   shape contracts.
@@ -33,7 +33,7 @@ from app.schemas.reader_ask import (
     ReaderAskPageIdentity,
 )
 from app.services.reader_ask import agent_runner as agent_runner_svc
-from app.services.reader_ask import fast_path_runtime
+from app.services.reader_ask import planner_route_policy
 from app.services.reader_ask import planner as planner_svc
 from app.services.reader_ask.runtime_contract import ReaderAskAnswerRuntimeInput
 
@@ -66,7 +66,7 @@ def _history(n: int) -> list[dict[str, Any]]:
 
 class TestResolvePlannerRoute:
     def test_simple_article_question_with_anchor(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
@@ -76,7 +76,7 @@ class TestResolvePlannerRoute:
         ) == "agent_loop_first"
 
     def test_simple_article_question_no_anchor(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
@@ -86,7 +86,7 @@ class TestResolvePlannerRoute:
         ) == "agent_loop_first"
 
     def test_false_for_long_history(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(11),
             attachments=[],
@@ -96,7 +96,7 @@ class TestResolvePlannerRoute:
         ) == "planner_first"
 
     def test_false_for_cross_record_attachment(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[_attachment("record_ref", "related_record")],
@@ -106,7 +106,7 @@ class TestResolvePlannerRoute:
         ) == "planner_first"
 
     def test_false_for_analysis_ref_attachment(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[_attachment("analysis_ref", "summary")],
@@ -116,7 +116,7 @@ class TestResolvePlannerRoute:
         ) == "planner_first"
 
     def test_false_for_supplement_ref_attachment(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[_attachment("supplement_ref", "grammar_note")],
@@ -127,7 +127,7 @@ class TestResolvePlannerRoute:
 
     def test_false_for_cross_record_keyword_chinese(self) -> None:
         # Round 3: cross-record keywords only block when cross_record_toggle is True
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -138,7 +138,7 @@ class TestResolvePlannerRoute:
 
     def test_false_for_cross_record_keyword_english(self) -> None:
         # Round 3: cross-record keywords only block when cross_record_toggle is True
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -149,7 +149,7 @@ class TestResolvePlannerRoute:
 
     def test_cross_record_keyword_without_toggle_still_eligible(self) -> None:
         # Round 3: cross-record keywords without toggle → still agent_loop_first
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -161,7 +161,7 @@ class TestResolvePlannerRoute:
     def test_true_for_unknown_entry_action(self) -> None:
         # Round 3: entry_action is no longer a whitelist gate; all actions
         # default to agent_loop_first unless a fallback condition triggers.
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="some_custom_action",  # type: ignore[arg-type]
             history_messages=_history(0),
             attachments=[],
@@ -173,7 +173,7 @@ class TestResolvePlannerRoute:
     def test_false_when_toggle_on_with_cross_record_keywords(self) -> None:
         # Round 3: cross_record_toggle alone is not sufficient; the message
         # must also contain cross-record keywords.
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
@@ -184,7 +184,7 @@ class TestResolvePlannerRoute:
 
     def test_true_when_toggle_on_without_cross_record_keywords(self) -> None:
         # Round 3: toggle on but no cross-record keywords → still agent_loop_first.
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
@@ -194,7 +194,7 @@ class TestResolvePlannerRoute:
         ) == "agent_loop_first"
 
     def test_explain_this_is_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="explain_this",
             history_messages=_history(0),
             attachments=[],
@@ -204,7 +204,7 @@ class TestResolvePlannerRoute:
         ) == "agent_loop_first"
 
     def test_why_here_with_anchor_is_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
@@ -213,20 +213,21 @@ class TestResolvePlannerRoute:
             latest_user_message="这里为什么用 present perfect",
         ) == "agent_loop_first"
 
-    def test_why_here_without_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+    def test_why_here_without_anchor_agent_loop_first(self) -> None:
+        # Round 8: deictic without anchor no longer triggers planner_first
+        assert planner_route_policy.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="这里为什么用 present perfect",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_lookup_in_context_now_eligible(self) -> None:
         # Round 3: ``lookup_in_context`` is no longer excluded by entry_action;
         # all actions default to agent_loop_first unless a fallback triggers.
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="lookup_in_context",
             history_messages=_history(0),
             attachments=[],
@@ -236,7 +237,7 @@ class TestResolvePlannerRoute:
         ) == "agent_loop_first"
 
     def test_dictionary_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -246,17 +247,18 @@ class TestResolvePlannerRoute:
         ) == "planner_first"
 
     def test_deictic_without_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        # Round 8: deictic without anchor no longer triggers planner_first
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_deictic_with_anchor_is_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -265,18 +267,19 @@ class TestResolvePlannerRoute:
             latest_user_message="解释这句",
         ) == "agent_loop_first"
 
-    def test_deictic_english_without_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+    def test_deictic_english_without_anchor_agent_loop_first(self) -> None:
+        # Round 8: deictic without anchor no longer triggers planner_first
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="explain this sentence",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_non_deictic_without_anchor_is_eligible(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -293,45 +296,45 @@ class TestResolvePlannerRoute:
 
 class TestHasDeicticWithoutAnchor:
     def test_deictic_chinese_no_anchor(self) -> None:
-        assert fast_path_runtime._has_deictic_without_anchor("解释这句", []) is True
+        assert planner_route_policy.has_deictic_without_anchor("解释这句", []) is True
 
     def test_deictic_chinese_with_anchor(self) -> None:
-        assert fast_path_runtime._has_deictic_without_anchor("解释这句", [_anchor("sentence")]) is False
+        assert planner_route_policy.has_deictic_without_anchor("解释这句", [_anchor("sentence")]) is False
 
     def test_deictic_english_no_anchor(self) -> None:
-        assert fast_path_runtime._has_deictic_without_anchor("explain this sentence", []) is True
+        assert planner_route_policy.has_deictic_without_anchor("explain this sentence", []) is True
 
     def test_non_deictic_no_anchor(self) -> None:
-        assert fast_path_runtime._has_deictic_without_anchor("这篇文章的主题是什么", []) is False
+        assert planner_route_policy.has_deictic_without_anchor("这篇文章的主题是什么", []) is False
 
     def test_empty_text(self) -> None:
-        assert fast_path_runtime._has_deictic_without_anchor("", []) is False
+        assert planner_route_policy.has_deictic_without_anchor("", []) is False
 
 
 class TestHasDictionaryAnchorOrAttachment:
     def test_dictionary_anchor(self) -> None:
-        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy._has_dictionary_anchor_or_attachment(
             [_dict_anchor()], []
         ) is True
 
     def test_sentence_anchor_not_dictionary(self) -> None:
-        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy._has_dictionary_anchor_or_attachment(
             [_anchor("sentence")], []
         ) is False
 
     def test_no_anchors_no_attachments(self) -> None:
-        assert fast_path_runtime._has_dictionary_anchor_or_attachment([], []) is False
+        assert planner_route_policy._has_dictionary_anchor_or_attachment([], []) is False
 
     def test_dictionary_attachment_subtype(self) -> None:
         # The helper checks both kind and subtype defensively for
         # dictionary_entry, even though it is not a valid attachment kind.
         # Test via subtype since dictionary_entry is not a valid kind.
-        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy._has_dictionary_anchor_or_attachment(
             [], [_attachment("text_selection", "dictionary_entry")]
         ) is True
 
     def test_non_dictionary_attachment_not_flagged(self) -> None:
-        assert fast_path_runtime._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy._has_dictionary_anchor_or_attachment(
             [], [_attachment("text_selection", "highlight")]
         ) is False
 
@@ -354,7 +357,7 @@ class TestDetectCrossRecordInMessage:
         ],
     )
     def test_keywords_detected(self, text: str) -> None:
-        assert fast_path_runtime.detect_cross_record_in_message(text) is True
+        assert planner_route_policy.detect_cross_record_in_message(text) is True
 
     @pytest.mark.parametrize(
         "text",
@@ -366,7 +369,7 @@ class TestDetectCrossRecordInMessage:
         ],
     )
     def test_clean_text_not_detected(self, text: str) -> None:
-        assert fast_path_runtime.detect_cross_record_in_message(text) is False
+        assert planner_route_policy.detect_cross_record_in_message(text) is False
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +430,7 @@ class TestBuildMinimalContextPlanForRuntimeInput:
             attachments=[],
             anchors=[_anchor("sentence")],
         )
-        plan = fast_path_runtime.build_minimal_context_plan_for_runtime_input(contract)
+        plan = planner_route_policy.build_minimal_context_plan_for_runtime_input(contract)
         assert plan.entry_action == "ask_about_this"
         assert plan.primary_anchor_type == "sentence"
         assert plan.used_record_context is True
@@ -464,7 +467,7 @@ class TestBuildMinimalTraceSummaryForRuntimeInput:
         )
 
     def test_direct_answer_with_skipped_note(self) -> None:
-        trace = fast_path_runtime.build_minimal_trace_summary_for_runtime_input(
+        trace = planner_route_policy.build_minimal_trace_summary_for_runtime_input(
             self._contract(), planner_skipped=True
         )
         assert trace.planner_mode == "direct_answer"
@@ -473,13 +476,13 @@ class TestBuildMinimalTraceSummaryForRuntimeInput:
 
 
 # ---------------------------------------------------------------------------
-# FastPathPlanningSnapshot duck-typed access (smoke)
+# MinimalPlanningSnapshot duck-typed access (smoke)
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathPlanningSnapshotShape:
+class TestMinimalPlanningSnapshotShape:
     def test_default_construction(self) -> None:
-        snap = planner_svc.FastPathPlanningSnapshot()
+        snap = planner_svc.MinimalPlanningSnapshot()
         assert snap.retrieval_needs == "none"
         assert snap.clarification_mode == "none"
         assert snap.context_plan is None
@@ -490,7 +493,7 @@ class TestFastPathPlanningSnapshotShape:
     def test_with_minimal_context_plan(self) -> None:
         from app.services.reader_ask.planner import build_minimal_context_plan
 
-        snap = planner_svc.FastPathPlanningSnapshot(
+        snap = planner_svc.MinimalPlanningSnapshot(
             retrieval_needs="none",
             working_set=planner_svc.ReaderAskWorkingSet(
                 local_context_window_needed=True,
@@ -544,13 +547,13 @@ class TestRuntimeStateTelemetryPreservation:
     """Verify that ``planner_skipped`` and ``planner_route_used`` are
     preserved when ``ReaderAskRuntimeState`` is rebuilt."""
 
-    def test_fast_path_telemetry_preserved_on_rebuild(self) -> None:
+    def test_agent_loop_first_telemetry_preserved_on_rebuild(self) -> None:
         from app.agents.reader_ask_agent import ReaderAskRuntimeState
 
-        # Simulate the fast path setting telemetry before rebuild
+        # Simulate the agent-loop-first path setting telemetry before rebuild
         original = ReaderAskRuntimeState()
         original.planner_skipped = True
-        original.planner_route_used = "fast_path"
+        original.planner_route_used = "agent_loop_first"
 
         # Rebuild as service.py does
         rebuilt = ReaderAskRuntimeState(
@@ -561,7 +564,7 @@ class TestRuntimeStateTelemetryPreservation:
         )
 
         assert rebuilt.planner_skipped is True
-        assert rebuilt.planner_route_used == "fast_path"
+        assert rebuilt.planner_route_used == "agent_loop_first"
 
     def test_legacy_path_telemetry_preserved_on_rebuild(self) -> None:
         from app.agents.reader_ask_agent import ReaderAskRuntimeState
@@ -581,7 +584,7 @@ class TestRuntimeStateTelemetryPreservation:
         assert rebuilt.planner_skipped is False
         assert rebuilt.planner_route_used == "planner_first"
 
-    def test_agent_loop_first_telemetry_preserved_on_rebuild(self) -> None:
+    def test_agent_loop_first_telemetry_preserved_on_rebuild_duplicate(self) -> None:
         from app.agents.reader_ask_agent import ReaderAskRuntimeState
 
         original = ReaderAskRuntimeState()
@@ -617,12 +620,12 @@ class TestRuntimeStateTelemetryPreservation:
 
 
 # ---------------------------------------------------------------------------
-# build_replan_event with planning_snapshot=None (fast path no replan)
+# build_replan_event with planning_snapshot=None (agent-loop-first no replan)
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathNoReplan:
-    """Fast path sets ``planning_snapshot=None``, which must prevent replan."""
+class TestAgentLoopFirstNoReplan:
+    """Agent-loop-first path sets ``planning_snapshot=None``, which must prevent replan."""
 
     def test_none_snapshot_never_replans(self) -> None:
         result = agent_runner_svc.build_replan_event(

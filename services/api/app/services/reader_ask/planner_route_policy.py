@@ -1,9 +1,13 @@
-"""Route policy and fast-path runtime helpers for the Ask Claread agent-loop.
+"""Route policy and planner-route helpers for Ask Claread.
 
 Round 3 flips the default from planner-first to agent-loop-first. The route
 policy determines whether a request should use the agent-loop path (model
 decides context on demand via tools) or fall back to the legacy planner-first
 path (planner pre-fetches working set before the answer agent runs).
+
+Round 8 migrates the deictic-without-anchor fallback from planner_first to
+agent_loop_first with a clarification hint, so the agent asks the user to
+select a specific location instead of silently falling back to the planner.
 
 Route values:
 
@@ -11,8 +15,8 @@ Route values:
   receives a minimal payload (overview, anchors, attachments, history) and
   calls read tools on demand.
 - ``"planner_first"`` — legacy fallback for complex scenarios that need the
-  planner to resolve context before answering (external references, deictic
-  without anchor, dictionary anchors, long threads).
+  planner to resolve context before answering (external references, dictionary
+  anchors, long threads).
 
 Decision logic lives in :func:`resolve_planner_route`.
 
@@ -71,8 +75,9 @@ _CROSS_RECORD_KEYWORDS: tuple[str, ...] = (
 )
 
 # Deictic expressions that strongly refer to a specific location in the
-# text without an anchor. These require the planner to resolve the
-# reference before answering.
+# text without an anchor. Round 8: these no longer trigger planner_first;
+# instead, the agent-loop-first path injects a clarification hint so the
+# agent asks the user to select a specific location.
 _DEICTIC_PATTERNS: tuple[str, ...] = (
     "这里",
     "这句",
@@ -112,12 +117,12 @@ def detect_cross_record_in_message(text: str) -> bool:
     return any(keyword.lower() in lowered for keyword in _CROSS_RECORD_KEYWORDS)
 
 
-def _has_deictic_without_anchor(text: str, anchors: list[ReaderAskAnchorRef]) -> bool:
+def has_deictic_without_anchor(text: str, anchors: list[ReaderAskAnchorRef]) -> bool:
     """Return True if ``text`` contains a strong deictic expression but
     the request has no anchors to ground the reference.
 
-    When the user says "explain this sentence" but no anchor is provided,
-    the planner is needed to resolve the reference.
+    Round 8: this is now a public API used by ``build_agent_loop_context``
+    to inject a clarification hint instead of triggering planner_first.
     """
     if not text:
         return False
@@ -172,10 +177,14 @@ def resolve_planner_route(
     - Has attachments requiring planner resolution (record_ref / analysis_ref /
       supplement_ref).
     - Has a dictionary anchor or dictionary attachment.
-    - Contains a deictic expression without an anchor.
     - ``cross_record_toggle`` is True **and** the message contains cross-article
       keywords.
     - History exceeds ``_LONG_HISTORY_THRESHOLD`` messages.
+
+    Round 8: deictic-without-anchor no longer triggers planner_first. Instead,
+    the agent-loop-first path detects deictic expressions and injects a
+    clarification hint so the agent asks the user to select a specific location.
+    See :func:`has_deictic_without_anchor`.
 
     The ``entry_action`` is no longer used as a whitelist gate — all entry
     actions default to agent-loop-first unless one of the explicit fallback
@@ -184,8 +193,6 @@ def resolve_planner_route(
     if _has_planner_required_attachments(attachments):
         return "planner_first"
     if _has_dictionary_anchor_or_attachment(anchors, attachments):
-        return "planner_first"
-    if _has_deictic_without_anchor(latest_user_message, anchors):
         return "planner_first"
     if cross_record_toggle and detect_cross_record_in_message(latest_user_message):
         return "planner_first"

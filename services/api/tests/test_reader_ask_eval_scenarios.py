@@ -29,7 +29,7 @@ from app.agents.reader_ask_tool_registry import (
 )
 from app.agents.reader_ask_tool_runtime import run_tool
 from app.schemas.reader_ask import ReaderAskAnchorRef, ReaderAskTraceSummary
-from app.services.reader_ask.fast_path_runtime import resolve_planner_route
+from app.services.reader_ask.planner_route_policy import resolve_planner_route
 
 
 # ---------------------------------------------------------------------------
@@ -152,19 +152,19 @@ def test_s2_write_proposals_flagged_without_anchor():
 
 
 # ===========================================================================
-# S3: 指代但无 anchor — fallback to planner_first
+# S3: 指代但无 anchor — agent_loop_first (Round 8)
 # ===========================================================================
 
 
-def test_s3_deictic_without_anchor_falls_back_to_planner_first():
-    """S3: 指代表达 + 无 anchor → planner_first。"""
+def test_s3_deictic_without_anchor_uses_agent_loop_first():
+    """S3: 指代表达 + 无 anchor → agent_loop_first (Round 8: deictic no longer triggers planner_first)。"""
     route = resolve_planner_route(
         **_default_route_kwargs(
             latest_user_message="解释这句话",
             anchors=[],
         )
     )
-    assert route == "planner_first"
+    assert route == "agent_loop_first"
 
 
 def test_s3_deictic_with_anchor_uses_agent_loop_first():

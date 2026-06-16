@@ -1236,7 +1236,7 @@ class TestDecisionConfidenceValidation:
 
 
 # ---------------------------------------------------------------------------
-# Round 1 — Planner-minimal helpers for the agent-loop fast path
+# Round 1 — Planner-minimal helpers for the agent-loop-first path
 # ---------------------------------------------------------------------------
 
 
@@ -1259,7 +1259,7 @@ def _attachment(kind: str, subtype: str = "x") -> ReaderAskAttachment:
 
 class TestBuildMinimalContextPlan:
     """`build_minimal_context_plan` produces a `ReaderAskContextPlan` for the
-    fast path with conservative defaults — no cross-record, no external refs."""
+    agent-loop-first path with conservative defaults — no cross-record, no external refs."""
 
     def test_ask_about_this_with_anchor(self) -> None:
         from app.services.reader_ask.planner import build_minimal_context_plan
@@ -1328,7 +1328,7 @@ class TestBuildMinimalContextPlan:
 
 class TestBuildMinimalTraceSummary:
     """`build_minimal_trace_summary` produces a `ReaderAskTraceSummary` for the
-    fast path with `planner_mode='direct_answer'` and no cross-record signal."""
+    agent-loop-first path with `planner_mode='direct_answer'` and no cross-record signal."""
 
     def test_default_planner_mode_direct_answer(self) -> None:
         from app.services.reader_ask.planner import build_minimal_trace_summary
@@ -1353,7 +1353,7 @@ class TestBuildMinimalTraceSummary:
             anchors=[],
             planner_skipped=True,
         )
-        assert any("skipped" in note.lower() or "fast_path" in note.lower() for note in trace.notes)
+        assert any("skipped" in note.lower() or "planner_skipped" in note.lower() for note in trace.notes)
 
     def test_records_attachment_count_in_notes(self) -> None:
         from app.services.reader_ask.planner import build_minimal_trace_summary

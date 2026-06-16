@@ -75,17 +75,18 @@ class ReaderAskRuntimeState:
     latest_resolved_references: dict[str, Any] | None = None
     latest_generated_annotations: list[dict[str, Any]] = field(default_factory=list)
     latest_suggestions: list[dict[str, Any]] = field(default_factory=list)
-    # Round 1 — fast-path routing telemetry. ``planner_skipped`` is True
-    # when the request was eligible for the agent-loop fast path and
+    # Round 1 — agent-loop-first routing telemetry. ``planner_skipped`` is True
+    # when the request was eligible for the agent-loop-first path and
     # bypassed the legacy ``resolve_semantic_planning`` call.
     # ``planner_route_used`` records which path actually ran for billing
-    # and eval: "planner_first" (legacy), "fast_path", or
+    # and eval: "planner_first" (legacy) or
     # "agent_loop_first" (Round 3 agent-loop-first entry).
     planner_skipped: bool = False
     planner_route_used: str = "planner_first"
     # Round 3 — degenerate-loop detection telemetry.
     degenerate_detected: bool = False
     degenerate_reason: str | None = None
+    deictic_clarification_hint: str | None = None
     # Round 6 — observability: latency tracking.
     first_token_at: str | None = None  # ISO 8601, first text delta time
     run_started_at: str | None = None  # ISO 8601, run entry time

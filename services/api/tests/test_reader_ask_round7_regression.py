@@ -82,10 +82,11 @@ class TestRealLlmMarkerGuard:
 
         assert callable(real_llm_tests_allowed)
 
-    def test_real_llm_tests_not_allowed_by_default(self) -> None:
+    def test_real_llm_tests_not_allowed_by_default(self, monkeypatch) -> None:
         """In normal pytest runs, real_llm_tests_allowed() should be False."""
         from app.llm.call_guard import real_llm_tests_allowed
 
+        monkeypatch.delenv("CLAREAD_ALLOW_REAL_LLM_TESTS", raising=False)
         assert not real_llm_tests_allowed()
 
     def test_real_llm_model_env_not_set_by_default(self) -> None:
@@ -103,17 +104,17 @@ class TestRealLlmMarkerGuard:
 class TestDeletedCodeStaysDeleted:
     """Verify that code removed in Round 5/7 has not been re-introduced."""
 
-    def test_should_use_fast_path_not_in_fast_path_runtime(self) -> None:
+    def test_should_use_fast_path_not_in_planner_route_policy(self) -> None:
         """should_use_fast_path was deleted in Round 7."""
-        from app.services.reader_ask import fast_path_runtime
+        from app.services.reader_ask import planner_route_policy
 
-        assert not hasattr(fast_path_runtime, "should_use_fast_path")
+        assert not hasattr(planner_route_policy, "should_use_fast_path")
 
-    def test_fast_path_actions_constant_not_in_fast_path_runtime(self) -> None:
+    def test_fast_path_actions_constant_not_in_planner_route_policy(self) -> None:
         """_FAST_PATH_ACTIONS was deleted in Round 7."""
-        from app.services.reader_ask import fast_path_runtime
+        from app.services.reader_ask import planner_route_policy
 
-        assert not hasattr(fast_path_runtime, "_FAST_PATH_ACTIONS")
+        assert not hasattr(planner_route_policy, "_FAST_PATH_ACTIONS")
 
     def test_tool_search_user_vocabulary_not_in_registry(self) -> None:
         """search_user_vocabulary was deleted in Round 5."""
@@ -222,22 +223,30 @@ class TestPreservedCodeStaysAlive:
 
     def test_resolve_planner_route_exists(self) -> None:
         """resolve_planner_route is the core routing function."""
-        from app.services.reader_ask.fast_path_runtime import resolve_planner_route
+        from app.services.reader_ask.planner_route_policy import resolve_planner_route
 
         assert callable(resolve_planner_route)
 
     def test_planner_first_route_value_still_valid(self) -> None:
-        """planner_first is still a valid route value."""
-        from app.services.reader_ask.fast_path_runtime import resolve_planner_route
+        """planner_first is still a valid route value for non-deictic fallbacks."""
+        from app.services.reader_ask.planner_route_policy import resolve_planner_route
 
-        # Deictic without anchor → planner_first
+        # External attachment → planner_first (deictic migrated to agent_loop_first in Round 8)
+        from app.schemas.reader_ask import ReaderAskAttachment, ReaderAskAttachmentMetadata
+
+        att = ReaderAskAttachment(
+            kind="record_ref",
+            subtype="related_record",
+            label="att",
+            metadata=ReaderAskAttachmentMetadata(source_surface="reader_page"),
+        )
         route = resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=[],
-            attachments=[],
+            attachments=[att],
             anchors=[],
             cross_record_toggle=False,
-            latest_user_message="这句话是什么意思",
+            latest_user_message="对照我之前那篇",
         )
         assert route == "planner_first"
 

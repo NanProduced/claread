@@ -1120,19 +1120,19 @@ def build_trace_summary(
 
 
 # ---------------------------------------------------------------------------
-# Round 1 — Planner-minimal helpers for the agent-loop fast path
+# Round 1 — Planner-minimal helpers for the agent-loop-first path
 # ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
-class FastPathPlanningSnapshot:
-    """Lightweight planning snapshot used by the agent-loop fast path.
+class MinimalPlanningSnapshot:
+    """Lightweight planning snapshot used by the agent-loop-first path.
 
     Satisfies the duck-typed access in ``runtime_contract.build_prompt_payload``
     (lines 280-316 of runtime_contract.py). NOT a substitute for
     ``ReaderAskPlanningSnapshot`` on the legacy planner-first path. The
     legacy path constructs a full ``ReaderAskPlanningSnapshot`` from
-    ``_resolve_semantic_planning``; the fast path constructs this lighter
+    ``_resolve_semantic_planning``; the minimal path constructs this lighter
     shape from the request data only.
     """
 
@@ -1164,7 +1164,7 @@ def build_minimal_context_plan(
     attachments: list[ReaderAskAttachment],
     anchors: list[ReaderAskAnchorRef],
 ) -> ReaderAskContextPlan:
-    """Build a minimal ``ReaderAskContextPlan`` for the fast path.
+    """Build a minimal ``ReaderAskContextPlan`` for the agent-loop-first path.
 
     Conservative defaults: no cross-record, no external refs, no
     disambiguation. Used when ``planning_snapshot=None`` to keep
@@ -1204,14 +1204,14 @@ def build_minimal_trace_summary(
     anchors: list[ReaderAskAnchorRef],
     planner_skipped: bool,
 ) -> ReaderAskTraceSummary:
-    """Build a minimal ``ReaderAskTraceSummary`` for the fast path.
+    """Build a minimal ``ReaderAskTraceSummary`` for the agent-loop-first path.
 
     ``planner_mode='direct_answer'`` signals the eval pipeline that the
     answer was produced without going through the legacy planner.
     """
     notes: list[str] = []
     if planner_skipped:
-        notes.append(f"fast_path: skipped semantic planner (entry_action={entry_action})")
+        notes.append(f"planner_skipped: skipped semantic planner (entry_action={entry_action})")
     if attachments:
         notes.append(f"{len(attachments)} attachment(s) carried in without planner resolution")
     return ReaderAskTraceSummary(
@@ -1234,7 +1234,7 @@ def build_minimal_trace_summary(
     )
 
 
-# entry_action → (resolved_intent, label) mapping used by the fast path.
+# entry_action → (resolved_intent, label) mapping used by the agent-loop-first path.
 # Mirrors the deterministic fallback in
 # ``planner_runtime.fallback_semantic_planner_decision`` (line 272).
 _MINIMAL_INTENT_BY_ENTRY_ACTION: dict[str, tuple[ReaderAskResolvedIntent, str]] = {
@@ -1250,7 +1250,7 @@ def build_minimal_resolved_intent(
 ) -> tuple[ReaderAskResolvedIntent, str]:
     """Map an ``entry_action`` to a minimal ``(resolved_intent, label)``.
 
-    Pure deterministic function used by the fast path to construct
+    Pure deterministic function used by the agent-loop-first path to construct
     ``ReaderAskAnswerRuntimeInput.resolved_intent`` / ``resolved_intent_label``
     without consulting the LLM planner.
     """

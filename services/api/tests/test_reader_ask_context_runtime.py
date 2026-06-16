@@ -424,12 +424,12 @@ class TestMaterializePlannedContext:
 
 
 # ---------------------------------------------------------------------------
-# materialize_planned_context with planning_snapshot=None (fast-path safety)
+# materialize_planned_context with planning_snapshot=None (agent-loop-first safety)
 # ---------------------------------------------------------------------------
 
 
 class TestMaterializeMinimalContext:
-    """When `planning_snapshot` is None (fast-path), ``materialize_planned_context``
+    """When `planning_snapshot` is None (agent-loop-first), ``materialize_planned_context``
     must NOT call the record/insights callbacks, must still attempt the
     article_overview, and must return a minimal ``resolved_context_input``
     with empty external lists.
@@ -438,7 +438,7 @@ class TestMaterializeMinimalContext:
     def _make_record(self) -> MagicMock:
         record = MagicMock()
         record.record_id = uuid4()
-        record.title = "Fast Path Record"
+        record.title = "Agent Loop First Record"
         record.render_scene = {"content_summary": {"overview": "Article overview from render_scene."}}
         record.page_state_json = {}
         return record

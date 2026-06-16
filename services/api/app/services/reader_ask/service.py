@@ -116,7 +116,7 @@ from app.services.analysis.credit_service import (
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import context_runtime as context_runtime_svc
-from app.services.reader_ask import fast_path_runtime
+from app.services.reader_ask import planner_route_policy
 from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner
 from app.services.reader_ask import post_process as post_process_svc
@@ -1513,7 +1513,7 @@ def _build_minimal_contract(
     resolved_intent: ReaderAskResolvedIntent,
     resolved_intent_label: str,
 ) -> runtime_contract_svc.ReaderAskAnswerRuntimeInput:
-    """Build a minimal ``ReaderAskAnswerRuntimeInput`` for the fast path.
+    """Build a minimal ``ReaderAskAnswerRuntimeInput`` for the agent-loop-first path.
 
     The contract is read-only from the helpers' perspective — they consume
     ``entry_action`` / ``attachments`` / ``anchors`` to produce minimal
@@ -1552,13 +1552,13 @@ def _planning_snapshot_json(
             "planner_skipped": planner_route_used == "agent_loop_first",
             "planner_route_used": planner_route_used,
         }
-    # Round 1 — FastPathPlanningSnapshot is a lightweight dataclass that
+    # Round 1 — MinimalPlanningSnapshot is a lightweight dataclass that
     # does not carry planner_decision / reference_needs / structured_asset_*
     # fields. The legacy serializer assumes the full ReaderAskPlanningSnapshot
-    # shape; emit a minimal JSON for the fast path that preserves the
+    # shape; emit a minimal JSON for the agent-loop-first path that preserves the
     # ``context_plan`` / ``trace_summary`` / ``working_set`` / ``retrieval_needs``
     # fields used by eval, and skip the legacy-only fields.
-    if isinstance(planning_snapshot, planner.FastPathPlanningSnapshot):
+    if isinstance(planning_snapshot, planner.MinimalPlanningSnapshot):
         return {
             "resolved_intent": planning_snapshot.resolved_intent,
             "planner_decision": None,
@@ -2672,7 +2672,7 @@ async def stream_thread_message(
             return
 
         planning_result = None
-        planner_route = fast_path_runtime.resolve_planner_route(
+        planner_route = planner_route_policy.resolve_planner_route(
             entry_action=body.entry_action,
             history_messages=history_messages,
             attachments=attachments,
@@ -2991,7 +2991,7 @@ async def stream_thread_message(
             _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
             for anchor in resolved_anchors
         ]
-        # Preserve fast-path telemetry across the runtime_state rebuild.
+        # Preserve agent-loop-first telemetry across the runtime_state rebuild.
         _prev_planner_skipped = runtime_state.planner_skipped
         _prev_planner_route = runtime_state.planner_route_used
         runtime_state = ReaderAskRuntimeState(
@@ -3002,7 +3002,7 @@ async def stream_thread_message(
         )
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
-            # Fast-path safety: a None snapshot is legal iff planner_skipped
+            # Agent-loop-first safety: a None snapshot is legal iff planner_skipped
             # is True. Legacy planner-first paths must always produce a
             # snapshot.
             if not runtime_state.planner_skipped:
@@ -3099,6 +3099,8 @@ async def stream_thread_message(
             # Round 3 — agent-loop-first: skip materialize_planned_context.
             # Build a minimal context with overview only; the model will call
             # read tools on demand when it needs more detail.
+            # Round 8 — pass latest_user_message so build_agent_loop_context
+            # can detect deictic-without-anchor and set a clarification hint.
             resolved_context_input = context_runtime_svc.build_agent_loop_context(
                 record=record,
                 runtime_state=runtime_state,
@@ -3107,6 +3109,7 @@ async def stream_thread_message(
                 user_id=user_id,
                 page_identity=body.page_identity,
                 entry_action=body.entry_action,
+                latest_user_message=body.content,
             )
         else:
             resolved_context_input = await context_runtime_svc.materialize_planned_context(
@@ -3151,7 +3154,9 @@ async def stream_thread_message(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
-            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "none",
+            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else (
+                "can_answer_with_followup" if runtime_state.deictic_clarification_hint else "none"
+            ),
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3178,6 +3183,7 @@ async def stream_thread_message(
                 quick_action_annotation=quick_action_annotation,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
+                followup_hint=runtime_state.deictic_clarification_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
@@ -3909,7 +3915,7 @@ async def retry_thread_message(
             return
 
         planning_result = None
-        planner_route = fast_path_runtime.resolve_planner_route(
+        planner_route = planner_route_policy.resolve_planner_route(
             entry_action=body.entry_action,
             history_messages=history_messages,
             attachments=attachments,
@@ -4181,7 +4187,7 @@ async def retry_thread_message(
             _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
             for anchor in resolved_anchors
         ]
-        # Preserve fast-path telemetry across the runtime_state rebuild.
+        # Preserve agent-loop-first telemetry across the runtime_state rebuild.
         _prev_planner_skipped = runtime_state.planner_skipped
         _prev_planner_route = runtime_state.planner_route_used
         runtime_state = ReaderAskRuntimeState(
@@ -4192,7 +4198,7 @@ async def retry_thread_message(
         )
         query_seed = _query_seed(body.content, resolved_anchors)
         if planning_snapshot is None:
-            # Fast-path safety: a None snapshot is legal iff planner_skipped
+            # Agent-loop-first safety: a None snapshot is legal iff planner_skipped
             # is True. Legacy planner-first paths must always produce a
             # snapshot.
             if not runtime_state.planner_skipped:
@@ -4289,6 +4295,8 @@ async def retry_thread_message(
             # Round 3 — agent-loop-first: skip materialize_planned_context.
             # Build a minimal context with overview only; the model will call
             # read tools on demand when it needs more detail.
+            # Round 8 — pass latest_user_message so build_agent_loop_context
+            # can detect deictic-without-anchor and set a clarification hint.
             resolved_context_input = context_runtime_svc.build_agent_loop_context(
                 record=record,
                 runtime_state=runtime_state,
@@ -4297,6 +4305,7 @@ async def retry_thread_message(
                 user_id=user_id,
                 page_identity=body.page_identity,
                 entry_action=body.entry_action,
+                latest_user_message=body.content,
             )
         else:
             resolved_context_input = await context_runtime_svc.materialize_planned_context(
@@ -4341,7 +4350,9 @@ async def retry_thread_message(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
-            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "none",
+            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else (
+                "can_answer_with_followup" if runtime_state.deictic_clarification_hint else "none"
+            ),
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -4368,6 +4379,7 @@ async def retry_thread_message(
                 quick_action_annotation=quick_action_annotation,
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
+                followup_hint=runtime_state.deictic_clarification_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )

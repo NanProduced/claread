@@ -3,10 +3,10 @@
 These tests cover the route policy introduced in Round 3, where the default
 flipped from planner-first to agent-loop-first:
 
-- ``fast_path_runtime.resolve_planner_route`` decision logic.
-- ``fast_path_runtime.PlannerRoute`` type contract.
+- ``planner_route_policy.resolve_planner_route`` decision logic.
+- ``planner_route_policy.PlannerRoute`` type contract.
 
-See ``fast_path_runtime`` module docstring for the design rationale.
+See ``planner_route_policy`` module docstring for the design rationale.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from app.schemas.reader_ask import (
     ReaderAskAttachment,
     ReaderAskAttachmentMetadata,
 )
-from app.services.reader_ask import fast_path_runtime
+from app.services.reader_ask import planner_route_policy
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ class TestResolvePlannerRoute:
         """Simple article-bound query with any entry_action, short history,
         no attachments defaults to agent_loop_first."""
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(2),
                 attachments=[],
@@ -76,7 +76,7 @@ class TestResolvePlannerRoute:
         """The 'general' entry_action defaults to agent_loop_first.
         This is the key Round 3 change — entry_action is no longer a gate."""
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="general",  # type: ignore[arg-type]
                 history_messages=_history(2),
                 attachments=[],
@@ -89,7 +89,7 @@ class TestResolvePlannerRoute:
 
     def test_explain_this_backward_compat(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="explain_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -102,7 +102,7 @@ class TestResolvePlannerRoute:
 
     def test_ask_about_this_backward_compat(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -115,7 +115,7 @@ class TestResolvePlannerRoute:
 
     def test_why_here_backward_compat(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="why_here",
                 history_messages=_history(0),
                 attachments=[],
@@ -128,7 +128,7 @@ class TestResolvePlannerRoute:
 
     def test_record_ref_attachment_returns_planner_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[_attachment("record_ref", "related_record")],
@@ -141,7 +141,7 @@ class TestResolvePlannerRoute:
 
     def test_analysis_ref_attachment_returns_planner_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[_attachment("analysis_ref", "summary")],
@@ -154,7 +154,7 @@ class TestResolvePlannerRoute:
 
     def test_supplement_ref_attachment_returns_planner_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[_attachment("supplement_ref", "grammar_note")],
@@ -167,7 +167,7 @@ class TestResolvePlannerRoute:
 
     def test_dictionary_anchor_returns_planner_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -180,7 +180,7 @@ class TestResolvePlannerRoute:
 
     def test_dictionary_attachment_returns_planner_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[_attachment("text_selection", "dictionary_entry")],
@@ -191,9 +191,10 @@ class TestResolvePlannerRoute:
             == "planner_first"
         )
 
-    def test_deictic_without_anchor_returns_planner_first(self) -> None:
+    def test_deictic_without_anchor_returns_agent_loop_first(self) -> None:
+        # Round 8: deictic without anchor no longer triggers planner_first
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -201,13 +202,13 @@ class TestResolvePlannerRoute:
                 cross_record_toggle=False,
                 latest_user_message="解释这句",
             )
-            == "planner_first"
+            == "agent_loop_first"
         )
 
     def test_deictic_with_anchor_returns_agent_loop_first(self) -> None:
         """Anchor grounds the deictic reference, so agent-loop can handle it."""
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -220,7 +221,7 @@ class TestResolvePlannerRoute:
 
     def test_cross_record_toggle_with_keywords_returns_planner_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -233,7 +234,7 @@ class TestResolvePlannerRoute:
 
     def test_cross_record_toggle_without_keywords_returns_agent_loop_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -247,7 +248,7 @@ class TestResolvePlannerRoute:
     def test_cross_record_off_with_keywords_returns_agent_loop_first(self) -> None:
         """Toggle off: agent handles via resolve_known_reference tool."""
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(0),
                 attachments=[],
@@ -260,7 +261,7 @@ class TestResolvePlannerRoute:
 
     def test_long_history_returns_planner_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(11),
                 attachments=[],
@@ -273,7 +274,7 @@ class TestResolvePlannerRoute:
 
     def test_short_history_returns_agent_loop_first(self) -> None:
         assert (
-            fast_path_runtime.resolve_planner_route(
+            planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=_history(10),
                 attachments=[],
@@ -295,12 +296,12 @@ class TestPlannerRouteType:
 
     def test_planner_route_is_literal_with_two_values(self) -> None:
         """PlannerRoute is a Literal type with exactly the two expected values."""
-        args = fast_path_runtime.PlannerRoute.__args__
+        args = planner_route_policy.PlannerRoute.__args__
         assert set(args) == {"agent_loop_first", "planner_first"}
 
     def test_resolve_planner_route_returns_valid_value(self) -> None:
         """resolve_planner_route always returns a valid PlannerRoute value."""
-        result = fast_path_runtime.resolve_planner_route(
+        result = planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=[],
             attachments=[],
@@ -308,4 +309,4 @@ class TestPlannerRouteType:
             cross_record_toggle=False,
             latest_user_message="hello",
         )
-        assert result in fast_path_runtime.PlannerRoute.__args__
+        assert result in planner_route_policy.PlannerRoute.__args__

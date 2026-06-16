@@ -1260,7 +1260,7 @@ def test_planning_snapshot_json_none_uses_planner_route_used() -> None:
     assert data_agent["planner_skipped"] is True
     assert data_agent["planner_route_used"] == "agent_loop_first"
 
-    # planner_first route (e.g. snapshot is None due to an error, not fast path)
+    # planner_first route (e.g. snapshot is None due to an error, not agent-loop-first path)
     data_legacy = _planning_snapshot_json(None, planner_route_used="planner_first")
     assert data_legacy["planner_skipped"] is False
     assert data_legacy["planner_route_used"] == "planner_first"
@@ -1271,17 +1271,17 @@ def test_planning_snapshot_json_none_uses_planner_route_used() -> None:
     assert data_default["planner_route_used"] == "planner_first"
 
 
-def test_planning_snapshot_json_fast_path_snapshot_includes_route() -> None:
-    """``FastPathPlanningSnapshot`` trace includes ``planner_route_used``."""
-    snap = planner_svc.FastPathPlanningSnapshot()
-    data = _planning_snapshot_json(snap, planner_route_used="fast_path")
+def test_planning_snapshot_json_minimal_snapshot_includes_route() -> None:
+    """``MinimalPlanningSnapshot`` trace includes ``planner_route_used``."""
+    snap = planner_svc.MinimalPlanningSnapshot()
+    data = _planning_snapshot_json(snap, planner_route_used="agent_loop_first")
     assert data["planner_skipped"] is True
-    assert data["planner_route_used"] == "fast_path"
+    assert data["planner_route_used"] == "agent_loop_first"
 
 
-def test_planning_snapshot_json_fast_path_snapshot_agent_loop_first_route() -> None:
-    """Round 3: ``FastPathPlanningSnapshot`` with ``agent_loop_first`` route."""
-    snap = planner_svc.FastPathPlanningSnapshot()
+def test_planning_snapshot_json_minimal_snapshot_agent_loop_first_route() -> None:
+    """Round 3: ``MinimalPlanningSnapshot`` with ``agent_loop_first`` route."""
+    snap = planner_svc.MinimalPlanningSnapshot()
     data = _planning_snapshot_json(snap, planner_route_used="agent_loop_first")
     assert data["planner_skipped"] is True
     assert data["planner_route_used"] == "agent_loop_first"

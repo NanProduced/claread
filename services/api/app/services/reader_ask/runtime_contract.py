@@ -161,6 +161,7 @@ class ReaderAskAnswerRuntimeInput:
     planning_snapshot: planner.ReaderAskPlanningSnapshot | None
     max_history_messages: int
     max_message_text: int
+    followup_hint: str | None = None
 
 
 def _truncate_history_message(content: str | None, *, role: str, limit: int) -> str:
@@ -309,23 +310,27 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
                 else False,
             },
             "context_plan": contract.planning_snapshot.context_plan.model_dump(mode="json")
-            if contract.planning_snapshot
+            if contract.planning_snapshot and contract.planning_snapshot.context_plan
             else None,
             "trace_summary": contract.planning_snapshot.trace_summary.model_dump(mode="json")
-            if contract.planning_snapshot
+            if contract.planning_snapshot and contract.planning_snapshot.trace_summary
             else None,
         },
         "cross_record_context_allowed": contract.cross_record_context_allowed,
         "followup_hint": (
-            contract.planning_snapshot.clarification_reason
-            if contract.planning_snapshot and contract.planning_snapshot.clarification_mode == "can_answer_with_followup"
-            else None
+            contract.followup_hint
+            if contract.followup_hint
+            else (
+                contract.planning_snapshot.clarification_reason
+                if contract.planning_snapshot and contract.planning_snapshot.clarification_mode == "can_answer_with_followup"
+                else None
+            )
         ),
         "tooling_contract": {
             "call_tools_on_demand": True,
             "cross_record_context_requires_explicit_intent": contract.cross_record_context_allowed,
             "writes_require_confirmation": True,
-            "dictionary_context_explain_available": True,
+            "dictionary_context_explain_available": False,
         },
         "response_contract": {
             "format": "markdown",
@@ -350,6 +355,6 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
     }
 
 
-# Round 1 re-exports so service.py can build the fast-path runtime input
+# Round 1 re-exports so service.py can build the agent-loop-first runtime input
 # without a direct planner import (keeps the import graph narrow).
 build_minimal_resolved_intent = planner.build_minimal_resolved_intent

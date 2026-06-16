@@ -1,16 +1,17 @@
-"""Service-level integration tests for the Ask Claread fast path route.
+"""Service-level integration tests for the Ask Claread agent-loop-first path.
 
-These tests verify the fast path routing decision and its downstream effects
-within the service layer, without requiring real LLM/network dependencies.
+These tests verify the agent-loop-first routing decision and its downstream
+effects within the service layer, without requiring real LLM/network
+dependencies.
 
 Coverage:
-- Simple article-bound queries use fast path (planner_skipped=True)
-- Deictic/no-anchor queries do NOT use fast path
-- Fast path does not trigger replan
-- Fast path materialize still gets article_overview
-- Fast path retry stays on fast path
-- stream_thread_message fast path skips planner, sets planning_snapshot=None
-- retry_thread_message fast path skips planner
+- Simple article-bound queries use agent-loop-first path (planner_skipped=True)
+- Deictic/no-anchor queries also use agent-loop-first path (Round 8)
+- Agent-loop-first path does not trigger replan
+- Agent-loop-first path materialize still gets article_overview
+- Agent-loop-first path retry stays on agent-loop-first path
+- stream_thread_message agent-loop-first path skips planner, sets planning_snapshot=None
+- retry_thread_message agent-loop-first path skips planner
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from app.schemas.reader_ask import (
     ReaderAskPageIdentity,
 )
 from app.services.reader_ask import agent_runner as agent_runner_svc
-from app.services.reader_ask import fast_path_runtime
+from app.services.reader_ask import planner_route_policy
 from app.services.reader_ask import planner as planner_svc
 from app.services.reader_ask import service as service_svc
 
@@ -57,16 +58,16 @@ def _history(n: int) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Fast path routing decision
+# Agent-loop-first routing decision
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathRoutingDecision:
-    """Test that the fast path routing decision is correct for various
+class TestAgentLoopFirstRoutingDecision:
+    """Test that the agent-loop-first routing decision is correct for various
     request configurations, matching the ``resolve_planner_route`` logic."""
 
-    def test_simple_article_bound_uses_fast_path(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+    def test_simple_article_bound_uses_agent_loop_first(self) -> None:
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
@@ -75,18 +76,19 @@ class TestFastPathRoutingDecision:
             latest_user_message="这篇文章想表达什么？",
         ) == "agent_loop_first"
 
-    def test_deictic_no_anchor_uses_planner(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+    def test_deictic_no_anchor_uses_agent_loop_first(self) -> None:
+        # Round 8: deictic without anchor no longer triggers planner_first
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_cross_record_keyword_uses_planner(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -96,7 +98,7 @@ class TestFastPathRoutingDecision:
         ) == "planner_first"
 
     def test_record_ref_attachment_uses_planner(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[_attachment("record_ref")],
@@ -106,7 +108,7 @@ class TestFastPathRoutingDecision:
         ) == "planner_first"
 
     def test_long_history_uses_planner(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(11),
             attachments=[],
@@ -116,7 +118,7 @@ class TestFastPathRoutingDecision:
         ) == "planner_first"
 
     def test_cross_record_toggle_uses_planner(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -126,7 +128,7 @@ class TestFastPathRoutingDecision:
         ) == "planner_first"
 
     def test_dictionary_anchor_uses_planner(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
@@ -135,8 +137,8 @@ class TestFastPathRoutingDecision:
             latest_user_message="这个词什么意思",
         ) == "planner_first"
 
-    def test_explain_this_with_anchor_uses_fast_path(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+    def test_explain_this_with_anchor_uses_agent_loop_first(self) -> None:
+        assert planner_route_policy.resolve_planner_route(
             entry_action="explain_this",
             history_messages=_history(0),
             attachments=[],
@@ -145,8 +147,8 @@ class TestFastPathRoutingDecision:
             latest_user_message="解释一下",
         ) == "agent_loop_first"
 
-    def test_why_here_with_anchor_uses_fast_path(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+    def test_why_here_with_anchor_uses_agent_loop_first(self) -> None:
+        assert planner_route_policy.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
@@ -155,24 +157,25 @@ class TestFastPathRoutingDecision:
             latest_user_message="这里为什么用 present perfect",
         ) == "agent_loop_first"
 
-    def test_why_here_without_anchor_uses_planner(self) -> None:
-        assert fast_path_runtime.resolve_planner_route(
+    def test_why_here_without_anchor_uses_agent_loop_first(self) -> None:
+        # Round 8: deictic without anchor no longer triggers planner_first
+        assert planner_route_policy.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="这里为什么用 present perfect",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
 
 # ---------------------------------------------------------------------------
-# Fast path does not trigger replan
+# Agent-loop-first path does not trigger replan
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathNoReplan:
-    """Fast path sets ``planning_snapshot=None``, which must prevent replan."""
+class TestAgentLoopFirstNoReplan:
+    """Agent-loop-first path sets ``planning_snapshot=None``, which must prevent replan."""
 
     def test_none_snapshot_no_replan_on_degenerate(self) -> None:
         result = agent_runner_svc.build_replan_event(
@@ -190,30 +193,30 @@ class TestFastPathNoReplan:
         )
         assert result is None
 
-    def test_fast_path_planning_snapshot_also_no_replan(self) -> None:
-        snap = planner_svc.FastPathPlanningSnapshot()
+    def test_agent_loop_first_planning_snapshot_also_no_replan(self) -> None:
+        snap = planner_svc.MinimalPlanningSnapshot()
         result = agent_runner_svc.build_replan_event(
             final_content_md="",
             planning_snapshot=snap,
             assistant_message_id="msg-1",
         )
-        # FastPathPlanningSnapshot has clarification_mode="none" which
+        # MinimalPlanningSnapshot has clarification_mode="none" which
         # does not block replan, but the degenerate check should still
-        # work. However, since FastPathPlanningSnapshot IS a planning
+        # work. However, since MinimalPlanningSnapshot IS a planning
         # snapshot (not None), replan IS allowed in theory. The key
         # contract is: when the service sets planning_snapshot=None
-        # (the actual fast path), replan is blocked.
-        # For FastPathPlanningSnapshot, replan behavior depends on
+        # (the actual agent-loop-first path), replan is blocked.
+        # For MinimalPlanningSnapshot, replan behavior depends on
         # clarification_mode.
-        assert result is not None  # FastPathPlanningSnapshot allows replan
+        assert result is not None  # MinimalPlanningSnapshot allows replan
 
 
 # ---------------------------------------------------------------------------
-# Fast path materialize gets overview
+# Agent-loop-first path materialize gets overview
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathMaterializeOverview:
+class TestAgentLoopFirstMaterializeOverview:
     """When ``planning_snapshot=None``, ``materialize_planned_context`` still
     fetches ``article_overview``."""
 
@@ -251,21 +254,21 @@ class TestFastPathMaterializeOverview:
 
 
 # ---------------------------------------------------------------------------
-# Fast path runtime state telemetry
+# Agent-loop-first path runtime state telemetry
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathRuntimeStateTelemetry:
-    """Verify that fast path telemetry is correctly set and preserved."""
+class TestAgentLoopFirstRuntimeStateTelemetry:
+    """Verify that agent-loop-first path telemetry is correctly set and preserved."""
 
-    def test_fast_path_sets_planner_skipped(self) -> None:
+    def test_agent_loop_first_sets_planner_skipped(self) -> None:
         state = ReaderAskRuntimeState()
         state.planner_skipped = True
         state.planner_route_used = "agent_loop_first"
         assert state.planner_skipped is True
         assert state.planner_route_used == "agent_loop_first"
 
-    def test_fast_path_telemetry_preserved_on_rebuild(self) -> None:
+    def test_agent_loop_first_telemetry_preserved_on_rebuild(self) -> None:
         original = ReaderAskRuntimeState()
         original.planner_skipped = True
         original.planner_route_used = "agent_loop_first"
@@ -297,15 +300,15 @@ class TestFastPathRuntimeStateTelemetry:
 
 
 # ---------------------------------------------------------------------------
-# Fast path trace semantics
+# Agent-loop-first path trace semantics
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathTraceSemantics:
-    """Verify that eval trace correctly reflects fast path route via
+class TestAgentLoopFirstTraceSemantics:
+    """Verify that eval trace correctly reflects agent-loop-first route via
     ``planner_route_used`` instead of bare ``planning_snapshot is None``."""
 
-    def test_none_snapshot_fast_path_trace(self) -> None:
+    def test_none_snapshot_agent_loop_first_trace(self) -> None:
         data = service_svc._planning_snapshot_json(
             None, planner_route_used="agent_loop_first"
         )
@@ -314,15 +317,15 @@ class TestFastPathTraceSemantics:
 
     def test_none_snapshot_planner_first_trace(self) -> None:
         """When planning_snapshot is None but route is planner_first (e.g.
-        error case), trace should NOT claim fast_path."""
+        error case), trace should NOT claim agent_loop_first."""
         data = service_svc._planning_snapshot_json(
             None, planner_route_used="planner_first"
         )
         assert data["planner_skipped"] is False
         assert data["planner_route_used"] == "planner_first"
 
-    def test_fast_path_snapshot_trace(self) -> None:
-        snap = planner_svc.FastPathPlanningSnapshot()
+    def test_minimal_snapshot_trace(self) -> None:
+        snap = planner_svc.MinimalPlanningSnapshot()
         data = service_svc._planning_snapshot_json(
             snap, planner_route_used="agent_loop_first"
         )
@@ -376,18 +379,18 @@ class TestFastPathTraceSemantics:
 
 
 # ---------------------------------------------------------------------------
-# Fast path retry stays on fast path
+# Agent-loop-first path retry stays on agent-loop-first path
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathRetryConsistency:
-    """Verify that retry logic also respects fast path routing."""
+class TestAgentLoopFirstRetryConsistency:
+    """Verify that retry logic also respects agent-loop-first routing."""
 
-    def test_retry_fast_path_eligible_request_stays_fast_path(self) -> None:
-        """A request that was eligible for fast path should still be
+    def test_retry_agent_loop_first_eligible_request_stays_agent_loop_first(self) -> None:
+        """A request that was eligible for agent-loop-first path should still be
         eligible on retry (same entry_action, same conditions)."""
         # Simulate first call
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
@@ -396,8 +399,8 @@ class TestFastPathRetryConsistency:
             latest_user_message="这篇文章想表达什么？",
         ) == "agent_loop_first"
 
-        # Retry with same conditions should also be fast path
-        assert fast_path_runtime.resolve_planner_route(
+        # Retry with same conditions should also be agent-loop-first path
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
@@ -406,27 +409,26 @@ class TestFastPathRetryConsistency:
             latest_user_message="这篇文章想表达什么？",
         ) == "agent_loop_first"
 
-    def test_retry_deictic_stays_planner(self) -> None:
-        """A deictic/no-anchor request that went to planner should still
-        go to planner on retry."""
-        assert fast_path_runtime.resolve_planner_route(
+    def test_retry_deictic_stays_agent_loop_first(self) -> None:
+        """A deictic/no-anchor request now uses agent_loop_first (Round 8)."""
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
         # Retry with same conditions
-        assert fast_path_runtime.resolve_planner_route(
+        assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
 
 # ---------------------------------------------------------------------------
@@ -480,16 +482,16 @@ async def _collect_sse_events(gen: Any) -> list[str]:
     return events
 
 
-def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool = False, fast_path: bool = True) -> Any:
+def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool = False, agent_loop_first: bool = True) -> Any:
     """Return a dict of patch contexts for all service boundaries.
 
     Callers should enter all patches, then configure repo mocks.
     If ``include_planning_deps`` is True, also patch
     ``build_reader_ask_resolve_planning_deps``.
-    If ``fast_path`` is True, ``resolve_planner_route`` returns
+    If ``agent_loop_first`` is True, ``resolve_planner_route`` returns
     ``"agent_loop_first"``; otherwise ``"planner_first"``.
     """
-    route = "agent_loop_first" if fast_path else "planner_first"
+    route = "agent_loop_first" if agent_loop_first else "planner_first"
     patches = {
         "load_record": patch.object(service_svc, "_load_record_bundle", new_callable=AsyncMock),
         "resolve_model": patch.object(service_svc, "_resolve_thread_model_option", new_callable=AsyncMock),
@@ -512,7 +514,7 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
         "checkpoint": patch.object(service_svc, "stream_checkpoint_svc"),
         "repo": patch.object(service_svc, "repo"),
         "resolve_planner_route": patch(
-            "app.services.reader_ask.service.fast_path_runtime.resolve_planner_route",
+            "app.services.reader_ask.service.planner_route_policy.resolve_planner_route",
             return_value=route,
         ),
         "refund_points": patch.object(service_svc, "refund_reserved_points", new_callable=AsyncMock),
@@ -584,16 +586,16 @@ def _configure_common_mocks(
     mock_checkpoint.build_stream_checkpoint_output_json = MagicMock(return_value=None)
 
 
-class TestStreamThreadMessageFastPath:
-    """Integration tests for ``stream_thread_message`` that verify the fast
-    path orchestration: planner is NOT called, planning_snapshot is None,
-    and replan is not triggered.
+class TestStreamThreadMessageAgentLoopFirst:
+    """Integration tests for ``stream_thread_message`` that verify the
+    agent-loop-first path orchestration: planner is NOT called,
+    planning_snapshot is None, and replan is not triggered.
     """
 
     @pytest.mark.asyncio
-    async def test_fast_path_skips_planner(self) -> None:
-        """When fast path conditions are met, ``resolve_semantic_planning``
-        must NOT be called."""
+    async def test_agent_loop_first_skips_planner(self) -> None:
+        """When agent-loop-first path conditions are met,
+        ``resolve_semantic_planning`` must NOT be called."""
         from app.services.reader_ask import service as service_svc
 
         user_id = uuid4()
@@ -646,7 +648,7 @@ class TestStreamThreadMessageFastPath:
 
     @pytest.mark.asyncio
     async def test_planner_first_path_calls_planner(self) -> None:
-        """When fast path conditions are NOT met (deictic without anchor),
+        """When agent-loop-first path conditions are NOT met (e.g. long history),
         ``resolve_semantic_planning`` must be called."""
         from app.services.reader_ask import service as service_svc
 
@@ -657,7 +659,7 @@ class TestStreamThreadMessageFastPath:
         model_option = _make_model_option()
 
         body = service_svc.ReaderAskMessageStreamRequest(
-            content="解释这句",  # deictic without anchor
+            content="继续",  # long history triggers planner_first
             page_identity=ReaderAskPageIdentity(record_id=str(record_id)),
             attachments=[],
             entry_action="ask_about_this",
@@ -676,7 +678,7 @@ class TestStreamThreadMessageFastPath:
         mock_planning_result.planner_usage_summary = {"total_tokens": 100}
         mock_planning_result.reference_resolution = MagicMock()
 
-        p = _patch_service_boundaries(service_svc, include_planning_deps=True, fast_path=False)
+        p = _patch_service_boundaries(service_svc, include_planning_deps=True, agent_loop_first=False)
 
         with contextlib.ExitStack() as stack:
             mocks = {k: stack.enter_context(v) for k, v in p.items()}
@@ -708,17 +710,17 @@ class TestStreamThreadMessageFastPath:
             assert gate_kwargs["attachments"] == []
             assert gate_kwargs["anchors"] == []
             assert gate_kwargs["cross_record_toggle"] is False
-            assert gate_kwargs["latest_user_message"] == "解释这句"
+            assert gate_kwargs["latest_user_message"] == "继续"
             mocks["planner_runtime"].resolve_semantic_planning.assert_called_once()
 
 
-class TestRetryThreadMessageFastPath:
-    """Integration tests for ``retry_thread_message`` that verify the fast
-    path orchestration in the retry flow."""
+class TestRetryThreadMessageAgentLoopFirst:
+    """Integration tests for ``retry_thread_message`` that verify the
+    agent-loop-first path orchestration in the retry flow."""
 
     @pytest.mark.asyncio
-    async def test_retry_fast_path_skips_planner(self) -> None:
-        """When retry conditions meet fast path, planner must NOT be called."""
+    async def test_retry_agent_loop_first_skips_planner(self) -> None:
+        """When retry conditions meet agent-loop-first path, planner must NOT be called."""
         from app.services.reader_ask import service as service_svc
 
         user_id = uuid4()
