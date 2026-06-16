@@ -163,6 +163,7 @@ class ReaderAskAnswerRuntimeInput:
     max_message_text: int
     followup_hint: str | None = None
     cross_record_intent_hint: str | None = None
+    external_attachment_hint: str | None = None
 
 
 def _truncate_history_message(content: str | None, *, role: str, limit: int) -> str:
@@ -233,6 +234,30 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
         }
         for anchor in contract.anchors
     ]
+    # Resolve tool_record_id / tool_asset_id using planner's fallback logic.
+    # record_ref uses _attachment_target_record (metadata.asset_id fallback for record id).
+    # analysis_ref / supplement_ref use _attachment_record_id + _attachment_asset_id.
+    from app.services.reader_ask.planner import (
+        _attachment_asset_id,
+        _attachment_record_id,
+        _attachment_target_record,
+    )
+
+    def _resolve_tool_ids(attachment: ReaderAskAttachment) -> dict[str, str]:
+        if attachment.kind not in ("record_ref", "analysis_ref", "supplement_ref"):
+            return {}
+        if attachment.kind == "record_ref":
+            rid = _attachment_target_record(attachment)
+        else:
+            rid = _attachment_record_id(attachment)
+        if not rid:
+            return {}
+        if attachment.kind == "record_ref":
+            aid = ""
+        else:
+            aid = _attachment_asset_id(attachment) or ""
+        return {"tool_record_id": rid, "tool_asset_id": aid}
+
     attachment_payload = [
         {
             "kind": attachment.kind,
@@ -241,6 +266,10 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             "selected_text": utils.truncate_text(attachment.selected_text, 200) or None,
             "target_key": attachment.target_key,
             "metadata": attachment.metadata.model_dump(mode="json"),
+            # Round 10 fix: normalized tool parameters for load_explicit_attachment_context.
+            # These are the canonical record_id/asset_id values the agent should pass
+            # to the tool, and the same values used in the allowlist validation.
+            **_resolve_tool_ids(attachment),
         }
         for attachment in contract.attachments
     ]
@@ -319,6 +348,7 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
         },
         "cross_record_context_allowed": contract.cross_record_context_allowed,
         "cross_record_intent_hint": contract.cross_record_intent_hint,
+        "external_attachment_hint": contract.external_attachment_hint,
         "followup_hint": (
             contract.followup_hint
             if contract.followup_hint

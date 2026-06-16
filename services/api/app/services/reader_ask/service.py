@@ -1231,6 +1231,187 @@ async def _tool_resolve_known_reference_for_agent(
     }
 
 
+def _build_allowed_external_attachments(
+    attachments: list[ReaderAskAttachment],
+) -> list[dict[str, str]]:
+    """Build the allowlist of external attachments the agent may load.
+
+    Round 10 fix: only records/assets present in this manifest can be
+    loaded by load_explicit_attachment_context. This prevents the agent
+    from reading arbitrary records not explicitly attached by the user.
+
+    Uses planner's _attachment_target_record for record_ref (which supports
+    metadata.asset_id as record id fallback) and _attachment_record_id /
+    _attachment_asset_id for analysis_ref / supplement_ref.
+    """
+    from app.services.reader_ask.planner import (
+        _attachment_asset_id,
+        _attachment_record_id,
+        _attachment_target_record,
+    )
+
+    manifest: list[dict[str, str]] = []
+    for att in attachments:
+        if att.kind not in ("record_ref", "analysis_ref", "supplement_ref"):
+            continue
+        # record_ref uses _attachment_target_record (asset_id fallback for record id)
+        # analysis_ref / supplement_ref use _attachment_record_id + _attachment_asset_id
+        if att.kind == "record_ref":
+            record_id = _attachment_target_record(att)
+        else:
+            record_id = _attachment_record_id(att)
+        if not record_id:
+            continue
+        entry: dict[str, str] = {"tool_record_id": record_id}
+        # record_ref: no asset_id (loads whole record overview)
+        # analysis_ref / supplement_ref: resolve asset_id
+        if att.kind == "record_ref":
+            entry["tool_asset_id"] = ""
+        else:
+            asset_id = _attachment_asset_id(att)
+            if asset_id:
+                entry["tool_asset_id"] = asset_id
+            else:
+                entry["tool_asset_id"] = ""
+        manifest.append(entry)
+    return manifest
+
+
+async def _tool_load_explicit_attachment_context(
+    *,
+    user_id: UUID,
+    current_record_id: UUID,
+    record_id: str,
+    asset_id: str | None = None,
+) -> dict[str, Any]:
+    """Round 10 tool: load context for an explicitly attached external reference.
+
+    For record_ref (asset_id is None): loads the referenced record's
+    article overview and record insights.
+
+    For analysis_ref / supplement_ref (asset_id provided): loads the
+    specific asset's content from the referenced record using the
+    resolver service and supplements service.
+
+    Returns a dict with status="loaded" on success or status="not_found"
+    on failure.
+    """
+    from app.services.reader_ask import resolver as resolver_svc
+
+    try:
+        target_uuid = UUID(record_id)
+    except ValueError:
+        return {
+            "status": "not_found",
+            "record_id": record_id,
+            "summary": "Invalid record_id format",
+            "ok": False,
+        }
+
+    if target_uuid == current_record_id:
+        return {
+            "status": "not_found",
+            "record_id": record_id,
+            "summary": "Cannot load current record as external attachment",
+            "ok": False,
+        }
+
+    try:
+        bundle = await _load_record_bundle(user_id, target_uuid)
+    except HTTPException:
+        return {
+            "status": "not_found",
+            "record_id": record_id,
+            "summary": f"Record {record_id} not found or not accessible",
+            "ok": False,
+        }
+
+    if asset_id is None:
+        # record_ref: return overview + insights
+        structured = resolver_svc.lookup_structured_record_assets(
+            record_id=str(bundle.record_id),
+            record_title=bundle.title,
+            render_scene=bundle.render_scene,
+            page_state_json=bundle.page_state_json,
+            reason="explicit_attachment",
+        )
+        return {
+            "status": "loaded",
+            "record_id": record_id,
+            "record_title": structured.get("record_title"),
+            "article_overview": structured.get("article_overview"),
+            "article_overview_status": structured.get("article_overview_status"),
+            "article_overview_source": structured.get("article_overview_source"),
+            "article_overview_confidence": structured.get("article_overview_confidence"),
+            "record_insights": structured.get("record_insights", []),
+            "source_labels": structured.get("source_labels", []),
+            "ok": True,
+        }
+
+    # analysis_ref / supplement_ref: use resolver to find the specific asset
+    # across both sentence_entries (analysis) and supplements (supplement).
+    asset_resolution = await resolver_svc.resolve_structured_asset_references(
+        user_id=user_id,
+        current_record_id=current_record_id,
+        external_record_refs=[{"record_id": record_id}],
+        structured_asset_needs=planner.ReaderAskStructuredAssetNeeds(
+            requested=True,
+            requested_asset_type=None,
+        ),
+        bundle_loader=lambda uid, rid: _load_record_bundle_dict(uid, rid),
+        supplement_loader=lambda uid, rid: _list_supplements_for_resolver(uid, rid),
+        explicit_asset_refs=[{
+            "record_id": record_id,
+            "asset_id": asset_id,
+        }],
+    )
+
+    resolved = asset_resolution.resolved_assets
+    if resolved:
+        asset = resolved[0]
+        return {
+            "status": "loaded",
+            "record_id": record_id,
+            "record_title": asset.get("record_title"),
+            "asset_id": asset_id,
+            "asset_type": asset.get("asset_type", "analysis"),
+            "entry_type": asset.get("entry_type"),
+            "asset_title": asset.get("asset_title") or asset.get("title"),
+            "content_md": asset.get("content_md") or asset.get("content"),
+            "content_summary": asset.get("content_summary"),
+            "source_labels": asset.get("source_labels", ["external_attachment", "external_assets"]),
+            "ok": True,
+        }
+
+    return {
+        "status": "not_found",
+        "record_id": record_id,
+        "asset_id": asset_id,
+        "summary": f"Asset {asset_id} not found in record {record_id}",
+        "ok": False,
+    }
+
+
+async def _load_record_bundle_dict(user_id: UUID, record_id: UUID) -> dict[str, Any]:
+    """Load a record bundle and return as dict for resolver consumption."""
+    bundle = await _load_record_bundle(user_id, record_id)
+    return {
+        "record_id": str(bundle.record_id),
+        "title": bundle.title,
+        "render_scene": bundle.render_scene,
+        "page_state_json": bundle.page_state_json,
+    }
+
+
+async def _list_supplements_for_resolver(user_id: UUID, record_id: UUID) -> list[dict[str, Any]]:
+    """Load supplements for a record for resolver consumption."""
+    from app.services.reader_ask import supplements as supplements_svc
+    try:
+        return await supplements_svc.list_supplements_for_record(user_id, record_id)
+    except Exception:
+        return []
+
+
 async def _tool_suggest_prompts(
     suggestions: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -3085,6 +3266,18 @@ async def stream_thread_message(
                 top_k=top_k,
             )
 
+        async def load_explicit_attachment_context_cb(
+            _deps: Any = None,
+            record_id: str = "",
+            asset_id: str | None = None,
+        ) -> dict[str, Any]:
+            return await _tool_load_explicit_attachment_context(
+                user_id=user_id,
+                current_record_id=record.record_id,
+                record_id=record_id,
+                asset_id=asset_id,
+            )
+
         async def suggest_prompts_cb(
             suggestions: list[dict[str, Any]],
         ) -> dict[str, Any]:
@@ -3191,6 +3384,7 @@ async def stream_thread_message(
                 planning_snapshot=planning_snapshot,
                 followup_hint=runtime_state.deictic_clarification_hint,
                 cross_record_intent_hint=runtime_state.cross_record_intent_hint,
+                external_attachment_hint=runtime_state.external_attachment_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
@@ -3305,6 +3499,8 @@ async def stream_thread_message(
             get_record_insights_fn=get_record_insights_cb,
             get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
             resolve_known_reference_fn=resolve_known_reference_cb,
+            load_explicit_attachment_context_fn=load_explicit_attachment_context_cb,
+            allowed_external_attachments=_build_allowed_external_attachments(attachments),
             generate_sentence_annotation_fn=generate_sentence_annotation_cb,
             suggest_prompts_fn=suggest_prompts_cb,
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
@@ -3465,6 +3661,8 @@ async def stream_thread_message(
                         get_record_insights_fn=get_record_insights_cb,
                         get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
                         resolve_known_reference_fn=resolve_known_reference_cb,
+                        load_explicit_attachment_context_fn=load_explicit_attachment_context_cb,
+                        allowed_external_attachments=_build_allowed_external_attachments(attachments),
                         generate_sentence_annotation_fn=generate_sentence_annotation_cb,
                         suggest_prompts_fn=suggest_prompts_cb,
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
@@ -4288,6 +4486,18 @@ async def retry_thread_message(
                 top_k=top_k,
             )
 
+        async def load_explicit_attachment_context_cb(
+            _deps: Any = None,
+            record_id: str = "",
+            asset_id: str | None = None,
+        ) -> dict[str, Any]:
+            return await _tool_load_explicit_attachment_context(
+                user_id=user_id,
+                current_record_id=record.record_id,
+                record_id=record_id,
+                asset_id=asset_id,
+            )
+
         async def suggest_prompts_cb(
             suggestions: list[dict[str, Any]],
         ) -> dict[str, Any]:
@@ -4394,6 +4604,7 @@ async def retry_thread_message(
                 planning_snapshot=planning_snapshot,
                 followup_hint=runtime_state.deictic_clarification_hint,
                 cross_record_intent_hint=runtime_state.cross_record_intent_hint,
+                external_attachment_hint=runtime_state.external_attachment_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
@@ -4509,6 +4720,8 @@ async def retry_thread_message(
             get_record_insights_fn=get_record_insights_cb,
             get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
             resolve_known_reference_fn=resolve_known_reference_cb,
+            load_explicit_attachment_context_fn=load_explicit_attachment_context_cb,
+            allowed_external_attachments=_build_allowed_external_attachments(attachments),
             generate_sentence_annotation_fn=generate_sentence_annotation_cb,
             suggest_prompts_fn=suggest_prompts_cb,
             vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
@@ -4669,6 +4882,8 @@ async def retry_thread_message(
                         get_record_insights_fn=get_record_insights_cb,
                         get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
                         resolve_known_reference_fn=resolve_known_reference_cb,
+                        load_explicit_attachment_context_fn=load_explicit_attachment_context_cb,
+                        allowed_external_attachments=_build_allowed_external_attachments(attachments),
                         generate_sentence_annotation_fn=generate_sentence_annotation_cb,
                         suggest_prompts_fn=suggest_prompts_cb,
                         vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,

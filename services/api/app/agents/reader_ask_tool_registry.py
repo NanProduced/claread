@@ -87,6 +87,9 @@ TOOL_GET_USER_VOCABULARY_BOOK = "get_user_vocabulary_book"
 # Resolver tool (Round 2)
 TOOL_RESOLVE_KNOWN_REFERENCE = "resolve_known_reference"
 
+# External attachment context loader (Round 10)
+TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT = "load_explicit_attachment_context"
+
 # Annotation tool
 TOOL_GENERATE_SENTENCE_ANNOTATION = "generate_sentence_annotation"
 
@@ -141,6 +144,17 @@ READER_ASK_TOOL_REGISTRY: dict[str, ToolSpec] = {
     TOOL_RESOLVE_KNOWN_REFERENCE: ToolSpec(
         name=TOOL_RESOLVE_KNOWN_REFERENCE,
         category="resolver",
+        effect="read",
+        requires_anchor=False,
+        consumes_budget_when_precondition_fails=True,
+        agent_callable=True,
+        output_kind="dict_or_none",
+        observation_statuses=("success", "warning"),
+    ),
+    # ----- External attachment context loader (Round 10: agent-callable) -----
+    TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT: ToolSpec(
+        name=TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT,
+        category="context",
         effect="read",
         requires_anchor=False,
         consumes_budget_when_precondition_fails=True,

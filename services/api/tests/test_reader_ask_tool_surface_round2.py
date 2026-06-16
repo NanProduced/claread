@@ -101,6 +101,9 @@ def _make_deps(**overrides: object) -> ReaderAskAgentDeps:
         resolve_known_reference_fn=AsyncMock(
             return_value={"status": "not_found", "ok": False}
         ),
+        load_explicit_attachment_context_fn=AsyncMock(
+            return_value={"status": "not_found", "ok": False}
+        ),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
         suggest_prompts_fn=AsyncMock(
             return_value={"status": "success", "suggestions": []}
@@ -133,8 +136,8 @@ def _make_ctx(**overrides: object) -> MagicMock:
 
 
 class TestRound2AgentSurface:
-    def test_exactly_eight_agent_callable_tools(self) -> None:
-        assert len(agent_callable_tool_names()) == 8
+    def test_exactly_nine_agent_callable_tools(self) -> None:
+        assert len(agent_callable_tool_names()) == 9
 
     def test_agent_callable_set_lists_round2_tools(self) -> None:
         names = agent_callable_tool_names()
@@ -825,6 +828,7 @@ class TestAgentModuleToolRegistration:
                 "TOOL_GET_RECORD_INSIGHTS",
                 "TOOL_GET_USER_VOCABULARY_BOOK",
                 "TOOL_RESOLVE_KNOWN_REFERENCE",
+                "TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT",
                 "TOOL_GENERATE_SENTENCE_ANNOTATION",
                 "TOOL_PROPOSE_SAVE_NOTE",
                 "TOOL_PROPOSE_SAVE_HIGHLIGHT",

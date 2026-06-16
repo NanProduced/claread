@@ -256,6 +256,7 @@ def test_run_tool_uses_normalize_for_trace() -> None:
         get_record_insights_fn=AsyncMock(return_value=[]),
         get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
         resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
+        load_explicit_attachment_context_fn=AsyncMock(return_value={"status": "not_found", "ok": False}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
         suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),

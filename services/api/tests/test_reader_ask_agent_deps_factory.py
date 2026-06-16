@@ -54,6 +54,7 @@ def _make_deps(
         get_record_insights_fn=AsyncMock(),
         get_user_vocabulary_book_fn=AsyncMock(),
         resolve_known_reference_fn=AsyncMock(),
+        load_explicit_attachment_context_fn=AsyncMock(),
         generate_sentence_annotation_fn=AsyncMock(),
         suggest_prompts_fn=AsyncMock(),
         vocabulary_item_to_citation_fn=_vocab_cite,
@@ -64,14 +65,14 @@ def _make_deps(
 
 class TestBuildReaderAskAgentDepsToolAvailability:
     """Tool availability is correctly wired by the factory (Round 2: only
-    the 8 agent-callable tools are exposed)."""
+    the 9 agent-callable tools are exposed)."""
 
     def test_with_primary_anchor_all_agent_callable_tools_allowed(self) -> None:
         deps = _make_deps(primary_anchor=_anchor())
         assert deps.tool_availability is not None
         assert deps.tool_availability.allowed_tool_names == agent_callable_tool_names()
-        # 8 agent-callable tools total
-        assert len(deps.tool_availability.allowed_tool_names) == 8
+        # 9 agent-callable tools total
+        assert len(deps.tool_availability.allowed_tool_names) == 9
 
     def test_without_primary_anchor_write_tools_unavailable(self) -> None:
         deps = _make_deps(primary_anchor=None)
@@ -113,6 +114,7 @@ class TestBuildReaderAskAgentDepsPreservesCallbacks:
             get_record_insights_fn=get_insights,
             get_user_vocabulary_book_fn=get_vocab,
             resolve_known_reference_fn=resolve_known,
+            load_explicit_attachment_context_fn=AsyncMock(),
             generate_sentence_annotation_fn=gen_annot,
             suggest_prompts_fn=suggest,
             vocabulary_item_to_citation_fn=_vocab_cite,
@@ -148,6 +150,7 @@ class TestBuildReaderAskAgentDepsPreservesCallbacks:
             get_record_insights_fn=AsyncMock(),
             get_user_vocabulary_book_fn=AsyncMock(),
             resolve_known_reference_fn=AsyncMock(),
+            load_explicit_attachment_context_fn=AsyncMock(),
             generate_sentence_annotation_fn=AsyncMock(),
             suggest_prompts_fn=AsyncMock(),
             vocabulary_item_to_citation_fn=_vocab_cite,
@@ -186,6 +189,7 @@ class TestBuildReaderAskAgentDepsBaselineDefaults:
             get_record_insights_fn=AsyncMock(),
             get_user_vocabulary_book_fn=AsyncMock(),
             resolve_known_reference_fn=AsyncMock(),
+            load_explicit_attachment_context_fn=AsyncMock(),
             generate_sentence_annotation_fn=AsyncMock(),
             suggest_prompts_fn=AsyncMock(),
             vocabulary_item_to_citation_fn=_vocab_cite,

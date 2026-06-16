@@ -63,6 +63,10 @@ def build_reader_ask_agent_deps(
         [ReaderAskAgentDeps | None, str, int | None],
         Awaitable[dict[str, Any]],
     ],
+    load_explicit_attachment_context_fn: Callable[
+        [ReaderAskAgentDeps | None, str, str | None],
+        Awaitable[dict[str, Any]],
+    ],
     generate_sentence_annotation_fn: Callable[
         [Literal["grammar_note", "sentence_analysis"]],
         Awaitable[dict[str, Any] | None],
@@ -74,6 +78,7 @@ def build_reader_ask_agent_deps(
     vocabulary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation],
     has_dictionary_anchor: bool = False,
     has_generated_annotation_cache: bool = False,
+    allowed_external_attachments: list[dict[str, str]] | None = None,
 ) -> ReaderAskAgentDeps:
     """Construct a fully-wired ``ReaderAskAgentDeps`` with tool availability.
 
@@ -105,6 +110,8 @@ def build_reader_ask_agent_deps(
         get_record_insights_fn=get_record_insights_fn,
         get_user_vocabulary_book_fn=get_user_vocabulary_book_fn,
         resolve_known_reference_fn=resolve_known_reference_fn,
+        load_explicit_attachment_context_fn=load_explicit_attachment_context_fn,
+        allowed_external_attachments=allowed_external_attachments or [],
         generate_sentence_annotation_fn=generate_sentence_annotation_fn,
         suggest_prompts_fn=suggest_prompts_fn,
         vocabulary_item_to_citation_fn=vocabulary_item_to_citation_fn,

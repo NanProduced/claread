@@ -8,6 +8,7 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_GET_RECORD_CONTEXT,
     TOOL_GET_RECORD_INSIGHTS,
     TOOL_GET_USER_VOCABULARY_BOOK,
+    TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT,
     TOOL_LOOKUP_RECORD_BY_EMBEDDING,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
@@ -34,6 +35,8 @@ _ALL_TOOL_NAMES = frozenset({
     TOOL_GET_USER_VOCABULARY_BOOK,
     # Resolver
     TOOL_RESOLVE_KNOWN_REFERENCE,
+    # External attachment context loader
+    TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT,
     # Annotation
     TOOL_GENERATE_SENTENCE_ANNOTATION,
     # Write-proposal
@@ -50,6 +53,7 @@ _AGENT_CALLABLE_NAMES = frozenset({
     TOOL_GET_RECORD_INSIGHTS,
     TOOL_GET_USER_VOCABULARY_BOOK,
     TOOL_RESOLVE_KNOWN_REFERENCE,
+    TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT,
     TOOL_GENERATE_SENTENCE_ANNOTATION,
     TOOL_PROPOSE_SAVE_NOTE,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
@@ -131,6 +135,15 @@ _EXPECTED_SPECS: dict[str, dict] = {
     },
     TOOL_RESOLVE_KNOWN_REFERENCE: {
         "category": "resolver",
+        "effect": "read",
+        "requires_anchor": False,
+        "consumes_budget_when_precondition_fails": True,
+        "agent_callable": True,
+        "output_kind": "dict_or_none",
+        "observation_statuses": ("success", "warning"),
+    },
+    TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT: {
+        "category": "context",
         "effect": "read",
         "requires_anchor": False,
         "consumes_budget_when_precondition_fails": True,
@@ -265,6 +278,7 @@ def test_tool_name_constants_match_strings() -> None:
     assert TOOL_GET_RECORD_INSIGHTS == "get_record_insights"
     assert TOOL_GET_USER_VOCABULARY_BOOK == "get_user_vocabulary_book"
     assert TOOL_RESOLVE_KNOWN_REFERENCE == "resolve_known_reference"
+    assert TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT == "load_explicit_attachment_context"
     assert TOOL_GENERATE_SENTENCE_ANNOTATION == "generate_sentence_annotation"
     assert TOOL_PROPOSE_SAVE_NOTE == "propose_save_note"
     assert TOOL_PROPOSE_SAVE_HIGHLIGHT == "propose_save_highlight"
@@ -285,6 +299,7 @@ _AGENT_MODULE_TOOL_CONSTANTS = frozenset({
     "TOOL_GET_RECORD_INSIGHTS",
     "TOOL_GET_USER_VOCABULARY_BOOK",
     "TOOL_RESOLVE_KNOWN_REFERENCE",
+    "TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT",
     "TOOL_GENERATE_SENTENCE_ANNOTATION",
     "TOOL_PROPOSE_SAVE_NOTE",
     "TOOL_PROPOSE_SAVE_HIGHLIGHT",

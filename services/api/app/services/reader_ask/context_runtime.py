@@ -205,8 +205,29 @@ def build_agent_loop_context(
     Round 9: detects cross-record intent (toggle + keywords) and sets
     ``runtime_state.cross_record_intent_hint`` so the agent calls
     ``resolve_known_reference`` on demand.
+
+    Round 10: detects explicit external attachments (record_ref /
+    analysis_ref / supplement_ref) and sets
+    ``runtime_state.external_attachment_hint`` so the agent calls
+    ``load_explicit_attachment_context`` on demand.
     """
-    from app.services.reader_ask.planner_route_policy import has_cross_record_intent
+    from app.services.reader_ask.planner_route_policy import (
+        has_cross_record_intent,
+        has_deictic_without_anchor,
+        has_explicit_external_attachments,
+    )
+
+    # Round 10: detect external attachments and set hint.
+    if has_explicit_external_attachments(
+        attachments, current_record_id=str(record.record_id)
+    ):
+        runtime_state.external_attachment_hint = (
+            "用户附加了外部引用（其他文章/分析/笔记）。"
+            "请查看 canonical_context.attachments 中的 record_ref/analysis_ref/supplement_ref，"
+            "然后调用 load_explicit_attachment_context(record_id, asset_id) 加载具体内容。"
+            "使用 attachment 中的 tool_record_id 作为 record_id，tool_asset_id 作为 asset_id（空字符串则不传）。"
+            "只能加载本轮 attachments 中列出的外部引用。"
+        )
 
     # Round 9: detect cross-record intent and set hint.
     if has_cross_record_intent(cross_record_toggle, latest_user_message):
@@ -214,8 +235,6 @@ def build_agent_loop_context(
             "用户表达了跨文章意图（如'另一篇''之前那篇'）且已开启跨文章功能。"
             "请优先调用 resolve_known_reference(query, top_k=5) 查找相关文章。"
         )
-
-    from app.services.reader_ask.planner_route_policy import has_deictic_without_anchor
 
     # Round 8: detect deictic without anchor and set clarification hint.
     if has_deictic_without_anchor(latest_user_message, anchors):

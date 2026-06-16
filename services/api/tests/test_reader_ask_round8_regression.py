@@ -333,7 +333,8 @@ class TestFastPathNamingCleanup:
 class TestPlannerFirstFallbacksPreserved:
     """Verify that the remaining planner_first fallbacks are still intact."""
 
-    def test_external_attachment_fallback(self) -> None:
+    def test_external_attachment_agent_loop_first(self) -> None:
+        # Round 10: external attachments no longer trigger planner_first
         att = ReaderAskAttachment(
             kind="record_ref",
             subtype="related_record",
@@ -348,7 +349,7 @@ class TestPlannerFirstFallbacksPreserved:
             cross_record_toggle=False,
             latest_user_message="对照我之前那篇",
         )
-        assert route == "planner_first"
+        assert route == "agent_loop_first"
 
     def test_dictionary_anchor_fallback(self) -> None:
         dict_anchor = ReaderAskAnchorRef(

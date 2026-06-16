@@ -15,6 +15,7 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_GET_RECORD_CONTEXT,
     TOOL_GET_RECORD_INSIGHTS,
     TOOL_GET_USER_VOCABULARY_BOOK,
+    TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
     TOOL_RESOLVE_KNOWN_REFERENCE,
@@ -91,6 +92,11 @@ class ReaderAskRuntimeState:
     # toggle and the message contains cross-article keywords, the agent-loop-
     # first path injects this hint so the agent calls resolve_known_reference.
     cross_record_intent_hint: str | None = None
+    # Round 10 — external attachment hint. When the user has attached
+    # external references (record_ref / analysis_ref / supplement_ref),
+    # the agent-loop-first path injects this hint so the agent calls
+    # load_explicit_attachment_context on demand.
+    external_attachment_hint: str | None = None
     # Round 6 — observability: latency tracking.
     first_token_at: str | None = None  # ISO 8601, first text delta time
     run_started_at: str | None = None  # ISO 8601, run entry time
@@ -123,6 +129,10 @@ class ReaderAskAgentDeps:
         ["ReaderAskAgentDeps" | None, str, int | None],
         Awaitable[dict[str, Any]],
     ]
+    load_explicit_attachment_context_fn: Callable[
+        ["ReaderAskAgentDeps" | None, str, str | None],
+        Awaitable[dict[str, Any]],
+    ]
     generate_sentence_annotation_fn: Callable[
         [Literal["grammar_note", "sentence_analysis"]],
         Awaitable[dict[str, Any] | None],
@@ -133,6 +143,9 @@ class ReaderAskAgentDeps:
     ]
     vocabulary_item_to_citation_fn: Callable[[dict[str, Any]], ReaderAskCitation]
     tool_availability: ToolAvailabilityResult | None = None
+    # Round 10 fix: allowlist of external attachments the agent is permitted
+    # to load. Each entry has tool_record_id and optional tool_asset_id.
+    allowed_external_attachments: list[dict[str, str]] = field(default_factory=list)
 
 
 def build_reader_ask_prompt(deps: ReaderAskAgentDeps) -> str:
@@ -334,6 +347,140 @@ async def _resolve_known_reference_tool(
         runner,
         input_summary=truncate_tool_arg(query),
     )
+
+
+# ---------------------------------------------------------------------------
+# External attachment context loader (Round 10)
+# ---------------------------------------------------------------------------
+
+
+async def _load_explicit_attachment_context_tool(
+    ctx: RunContext[ReaderAskAgentDeps],
+    record_id: str,
+    asset_id: str | None = None,
+) -> dict[str, Any]:
+    """Agent tool: load context for an explicitly attached external reference.
+
+    When the user has attached a record_ref, analysis_ref, or supplement_ref,
+    this tool loads the relevant context on demand:
+
+    - For ``record_ref`` (``asset_id=None``): returns the referenced record's
+      article overview and record insights.
+    - For ``analysis_ref`` / ``supplement_ref`` (``asset_id`` provided):
+      returns the specific asset's content.
+
+    The tool only allows loading records/assets that are present in the
+    current request's ``allowed_external_attachments`` manifest.
+
+    Returns a dict with ``status`` = ``"loaded"`` on success or
+    ``"not_found"`` / ``"forbidden"`` on failure.
+    """
+    # Round 10 fix: validate against allowlist before loading.
+    # Empty allowlist = no external attachments allowed (default deny).
+    allowed = ctx.deps.allowed_external_attachments
+    if not allowed:
+        return {
+            "status": "forbidden",
+            "record_id": record_id,
+            "asset_id": asset_id,
+            "summary": "No external attachments are available in this request",
+            "ok": False,
+        }
+
+    # Strict matching: asset_id provided → must match tool_record_id + tool_asset_id exactly.
+    # asset_id is None/empty → must match a record-only entry (tool_asset_id == "").
+    if asset_id:
+        # Asset-level: exact match on both record_id and asset_id
+        allowed_asset_keys = {
+            (e.get("tool_record_id", ""), e.get("tool_asset_id", ""))
+            for e in allowed
+            if e.get("tool_asset_id")  # only entries with a non-empty asset_id
+        }
+        if (record_id, asset_id) not in allowed_asset_keys:
+            return {
+                "status": "forbidden",
+                "record_id": record_id,
+                "asset_id": asset_id,
+                "summary": "This record/asset is not in the current request's external attachments",
+                "ok": False,
+            }
+    else:
+        # Record-level: must match an entry with empty tool_asset_id
+        allowed_record_only = {
+            e.get("tool_record_id", "")
+            for e in allowed
+            if e.get("tool_record_id") and not e.get("tool_asset_id")
+        }
+        if record_id not in allowed_record_only:
+            return {
+                "status": "forbidden",
+                "record_id": record_id,
+                "asset_id": asset_id,
+                "summary": "This record is not in the current request's external attachments",
+                "ok": False,
+            }
+
+    async def runner() -> dict[str, Any]:
+        result = await ctx.deps.load_explicit_attachment_context_fn(
+            ctx.deps, record_id, asset_id,
+        )
+        status = result.get("status") if isinstance(result, dict) else None
+        if status == "loaded":
+            ctx.deps.state.source_labels.add("external_attachment_loaded")
+            ctx.deps.state.used_cross_record_context = True
+            # Round 10 fix: write loaded context back to runtime state
+            # so evidence/trace can see the external context.
+            _write_external_context_to_runtime_state(ctx.deps.state, result)
+        return result
+
+    summary = f"{record_id}:{asset_id}" if asset_id else record_id
+    return await run_tool(
+        ctx.deps,
+        TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT,
+        runner,
+        input_summary=truncate_tool_arg(summary),
+    )
+
+
+def _write_external_context_to_runtime_state(
+    state: ReaderAskRuntimeState,
+    result: dict[str, Any],
+) -> None:
+    """Write loaded external context back to runtime state for evidence/trace."""
+    from app.schemas.reader_ask import (
+        ReaderAskExternalAssetContext,
+        ReaderAskExternalRecordContext,
+    )
+
+    if result.get("asset_id"):
+        # analysis_ref / supplement_ref
+        ctx = ReaderAskExternalAssetContext(
+            record_id=result["record_id"],
+            record_title=result.get("record_title"),
+            asset_type=result.get("asset_type", "analysis"),
+            asset_id=result["asset_id"],
+            entry_type=result.get("entry_type"),
+            asset_title=result.get("asset_title"),
+            content_md=result.get("content_md"),
+            content_summary=result.get("content_summary"),
+            source_labels=result.get("source_labels", ["external_attachment", "external_assets"]),
+            reason="explicit_attachment_tool",
+        )
+        state.latest_external_asset_contexts.append(ctx.model_dump(mode="json"))
+    else:
+        # record_ref
+        ctx = ReaderAskExternalRecordContext(
+            record_id=result["record_id"],
+            record_title=result.get("record_title"),
+            article_overview=result.get("article_overview"),
+            article_overview_status=result.get("article_overview_status"),
+            article_overview_source=result.get("article_overview_source"),
+            article_overview_confidence=result.get("article_overview_confidence"),
+            record_insights=result.get("record_insights", []),
+            source_labels=result.get("source_labels", ["external_attachment", "external_record_context"]),
+            reason="explicit_attachment_tool",
+        )
+        state.latest_external_record_contexts.append(ctx.model_dump(mode="json"))
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +750,14 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
         top_k: int = 5,
     ) -> dict[str, Any]:
         return await _resolve_known_reference_tool(ctx, query, top_k)
+
+    @agent.tool(name=TOOL_LOAD_EXPLICIT_ATTACHMENT_CONTEXT)
+    async def load_explicit_attachment_context(
+        ctx: RunContext[ReaderAskAgentDeps],
+        record_id: str,
+        asset_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await _load_explicit_attachment_context_tool(ctx, record_id, asset_id)
 
     @agent.tool(name=TOOL_GENERATE_SENTENCE_ANNOTATION)
     async def generate_sentence_annotation(

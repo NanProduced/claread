@@ -211,14 +211,15 @@ def test_service_agent_deps_wires_tool_availability_all_paths() -> None:
         "service.py must use build_reader_ask_resolve_planning_deps for all 4 planning deps constructions"
     )
 
-    # service.py must not reference resolver_svc (removed import)
+    # service.py must not reference resolver_svc at module level (removed import)
+    # It is allowed inside _tool_load_explicit_attachment_context_for_agent as a local import.
     resolver_svc_refs = [
         node
         for node in ast.walk(module)
         if isinstance(node, ast.Name) and node.id == "resolver_svc"
     ]
-    assert len(resolver_svc_refs) == 0, (
-        "service.py must not reference resolver_svc; use planning_deps_factory instead"
+    assert len(resolver_svc_refs) == 2, (
+        "service.py may reference resolver_svc only inside _tool_load_explicit_attachment_context functions"
     )
 
 
@@ -2348,6 +2349,7 @@ async def test_generate_sentence_annotation_grammar_cache_hit_skips_run_tool() -
         get_record_insights_fn=AsyncMock(return_value=[]),
         get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
         resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
+        load_explicit_attachment_context_fn=AsyncMock(return_value={"status": "not_found", "ok": False}),
         generate_sentence_annotation_fn=annotation_fn,
         suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),
@@ -2408,6 +2410,7 @@ async def test_generate_sentence_annotation_breakdown_cache_hit_skips_run_tool()
         get_record_insights_fn=AsyncMock(return_value=[]),
         get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
         resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
+        load_explicit_attachment_context_fn=AsyncMock(return_value={"status": "not_found", "ok": False}),
         generate_sentence_annotation_fn=annotation_fn,
         suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),
@@ -2568,6 +2571,7 @@ def _make_agent_deps(
         get_record_insights_fn=AsyncMock(return_value=[]),
         get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
         resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
+        load_explicit_attachment_context_fn=AsyncMock(return_value={"status": "not_found", "ok": False}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
         suggest_prompts_fn=AsyncMock(return_value={"suggestions": []}),
         vocabulary_item_to_citation_fn=MagicMock(),

@@ -228,25 +228,22 @@ class TestPreservedCodeStaysAlive:
         assert callable(resolve_planner_route)
 
     def test_planner_first_route_value_still_valid(self) -> None:
-        """planner_first is still a valid route value for non-deictic fallbacks."""
+        """planner_first is still a valid route value for dictionary/long-history fallbacks."""
         from app.services.reader_ask.planner_route_policy import resolve_planner_route
 
-        # External attachment → planner_first (deictic migrated to agent_loop_first in Round 8)
-        from app.schemas.reader_ask import ReaderAskAttachment, ReaderAskAttachmentMetadata
+        # Dictionary anchor → planner_first (external attachments migrated in Round 10)
+        from app.schemas.reader_ask import ReaderAskAnchorRef
 
-        att = ReaderAskAttachment(
-            kind="record_ref",
-            subtype="related_record",
-            label="att",
-            metadata=ReaderAskAttachmentMetadata(source_surface="reader_page"),
+        dict_anchor = ReaderAskAnchorRef(
+            anchor_type="dictionary_entry", label="dict", dict_entry_id=1
         )
         route = resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=[],
-            attachments=[att],
-            anchors=[],
+            attachments=[],
+            anchors=[dict_anchor],
             cross_record_toggle=False,
-            latest_user_message="对照我之前那篇",
+            latest_user_message="这个词什么意思",
         )
         assert route == "planner_first"
 
@@ -298,17 +295,17 @@ class TestPreservedCodeStaysAlive:
 class TestRegistryInvariantsAfterCleanup:
     """Verify registry invariants hold after Round 7 dictionary cleanup."""
 
-    def test_registry_has_9_entries(self) -> None:
-        """Registry should have 9 entries: 8 callable + 1 reserved."""
+    def test_registry_has_10_entries(self) -> None:
+        """Registry should have 10 entries: 9 callable + 1 reserved."""
         from app.agents.reader_ask_tool_registry import READER_ASK_TOOL_REGISTRY
 
-        assert len(READER_ASK_TOOL_REGISTRY) == 9
+        assert len(READER_ASK_TOOL_REGISTRY) == 10
 
-    def test_8_agent_callable_tools(self) -> None:
-        """Exactly 8 tools should be agent-callable."""
+    def test_9_agent_callable_tools(self) -> None:
+        """Exactly 9 tools should be agent-callable."""
         from app.agents.reader_ask_tool_registry import agent_callable_tool_names
 
-        assert len(agent_callable_tool_names()) == 8
+        assert len(agent_callable_tool_names()) == 9
 
     def test_1_non_agent_callable_tool(self) -> None:
         """Exactly 1 tool should be non-agent-callable (reserved)."""

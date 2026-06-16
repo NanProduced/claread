@@ -60,6 +60,7 @@ def _make_deps(**overrides) -> ReaderAskAgentDeps:
         get_record_insights_fn=AsyncMock(return_value=[]),
         get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
         resolve_known_reference_fn=AsyncMock(return_value={"status": "not_found"}),
+        load_explicit_attachment_context_fn=AsyncMock(return_value={"status": "not_found", "ok": False}),
         generate_sentence_annotation_fn=AsyncMock(return_value={"status": "ok"}),
         suggest_prompts_fn=AsyncMock(return_value={"status": "warning", "summary": "No suggestions"}),
         vocabulary_item_to_citation_fn=lambda item: None,
@@ -93,8 +94,8 @@ def test_s1_route_agent_loop_first_for_general_action():
     assert route == "agent_loop_first"
 
 
-def test_s1_tool_availability_allows_all_8_tools():
-    """S1: 默认输入允许全部 8 个 agent-callable 工具。"""
+def test_s1_tool_availability_allows_all_9_tools():
+    """S1: 默认输入允许全部 9 个 agent-callable 工具。"""
     inp = ToolAvailabilityInput(
         task_mode="explain",
         entry_action="ask_about_this",
@@ -103,7 +104,7 @@ def test_s1_tool_availability_allows_all_8_tools():
     result = build_tool_availability(inp)
     expected = agent_callable_tool_names()
     assert result.allowed_tool_names == expected
-    assert len(result.allowed_tool_names) == 8
+    assert len(result.allowed_tool_names) == 9
 
 
 # ===========================================================================

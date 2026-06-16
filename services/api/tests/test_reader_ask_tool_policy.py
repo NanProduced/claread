@@ -26,12 +26,12 @@ def _default_input(**overrides: object) -> ToolAvailabilityInput:
 
 
 # ---------------------------------------------------------------------------
-# Default: 8 agent-callable tools (Round 2 surface)
+# Default: 9 agent-callable tools (Round 2 surface)
 # ---------------------------------------------------------------------------
 
-def test_default_input_allows_8_agent_callable_tools() -> None:
+def test_default_input_allows_9_agent_callable_tools() -> None:
     result = build_tool_availability(_default_input())
-    assert len(result.allowed_tool_names) == 8
+    assert len(result.allowed_tool_names) == 9
 
 
 def test_default_input_excludes_reserved() -> None:
@@ -59,7 +59,7 @@ def test_no_primary_anchor_write_proposals_still_allowed() -> None:
     result = build_tool_availability(_default_input(has_primary_anchor=False))
     assert TOOL_PROPOSE_SAVE_NOTE in result.allowed_tool_names
     assert TOOL_PROPOSE_SAVE_HIGHLIGHT in result.allowed_tool_names
-    assert len(result.allowed_tool_names) == 8
+    assert len(result.allowed_tool_names) == 9
 
 
 def test_no_primary_anchor_write_proposals_flagged_in_reasons() -> None:
@@ -94,7 +94,7 @@ def test_allowed_tools_subset_of_registry() -> None:
 def test_task_mode_does_not_remove_tools(task_mode: str) -> None:
     result = build_tool_availability(_default_input(task_mode=task_mode))
     # Always exactly the agent-callable set
-    assert len(result.allowed_tool_names) == 8
+    assert len(result.allowed_tool_names) == 9
 
 
 def test_vocabulary_mode_includes_get_user_vocabulary_book() -> None:
@@ -111,7 +111,7 @@ def test_grammar_mode_does_not_remove_annotation_tools() -> None:
 
 def test_general_mode_does_not_remove_any_tools() -> None:
     result = build_tool_availability(_default_input(task_mode="general"))
-    assert len(result.allowed_tool_names) == 8
+    assert len(result.allowed_tool_names) == 9
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +205,7 @@ def _make_deps_for_policy_test(**overrides: object):
         get_record_insights_fn=AsyncMock(return_value=[]),
         get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
         resolve_known_reference_fn=AsyncMock(return_value={}),
+        load_explicit_attachment_context_fn=AsyncMock(return_value={"status": "not_found", "ok": False}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
         suggest_prompts_fn=AsyncMock(return_value={}),
         vocabulary_item_to_citation_fn=MagicMock(),
@@ -215,7 +216,7 @@ def _make_deps_for_policy_test(**overrides: object):
 def test_deps_carries_tool_availability() -> None:
     deps = _make_deps_for_policy_test()
     assert deps.tool_availability is not None
-    assert len(deps.tool_availability.allowed_tool_names) == 8
+    assert len(deps.tool_availability.allowed_tool_names) == 9
 
 
 def test_deps_tool_availability_defaults_to_none() -> None:
@@ -243,6 +244,7 @@ def test_deps_tool_availability_defaults_to_none() -> None:
         get_record_insights_fn=AsyncMock(return_value=[]),
         get_user_vocabulary_book_fn=AsyncMock(return_value=[]),
         resolve_known_reference_fn=AsyncMock(return_value={}),
+        load_explicit_attachment_context_fn=AsyncMock(return_value={"status": "not_found", "ok": False}),
         generate_sentence_annotation_fn=AsyncMock(return_value=None),
         suggest_prompts_fn=AsyncMock(return_value={}),
         vocabulary_item_to_citation_fn=MagicMock(),

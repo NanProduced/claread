@@ -95,7 +95,8 @@ class TestResolvePlannerRoute:
             latest_user_message="继续",
         ) == "planner_first"
 
-    def test_false_for_cross_record_attachment(self) -> None:
+    def test_agent_loop_first_for_cross_record_attachment(self) -> None:
+        # Round 10: external attachments no longer trigger planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
@@ -103,9 +104,10 @@ class TestResolvePlannerRoute:
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="对照我之前那篇",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
-    def test_false_for_analysis_ref_attachment(self) -> None:
+    def test_agent_loop_first_for_analysis_ref_attachment(self) -> None:
+        # Round 10: external attachments no longer trigger planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
@@ -113,9 +115,10 @@ class TestResolvePlannerRoute:
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="解释一下",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
-    def test_false_for_supplement_ref_attachment(self) -> None:
+    def test_agent_loop_first_for_supplement_ref_attachment(self) -> None:
+        # Round 10: external attachments no longer trigger planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
@@ -123,7 +126,7 @@ class TestResolvePlannerRoute:
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="解释一下",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_false_for_cross_record_keyword_chinese(self) -> None:
         # Round 9: cross-record toggle + keywords no longer triggers planner_first

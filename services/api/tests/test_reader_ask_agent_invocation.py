@@ -68,6 +68,7 @@ def _make_deps(**kwargs) -> ReaderAskAgentDeps:
         get_record_insights_fn=AsyncMock(),
         get_user_vocabulary_book_fn=AsyncMock(),
         resolve_known_reference_fn=AsyncMock(),
+        load_explicit_attachment_context_fn=AsyncMock(),
         generate_sentence_annotation_fn=AsyncMock(),
         suggest_prompts_fn=AsyncMock(),
         vocabulary_item_to_citation_fn=_vocab_cite,

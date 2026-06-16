@@ -14,14 +14,20 @@ planner_first to agent_loop_first with a cross-record intent hint, so the
 agent calls resolve_known_reference on demand instead of requiring planner
 pre-resolution.
 
+Round 10 migrates the explicit external attachments (record_ref /
+analysis_ref / supplement_ref) fallback from planner_first to
+agent_loop_first. The agent-loop-first path detects external attachments,
+injects a hint, and the agent calls load_explicit_attachment_context on
+demand instead of requiring planner pre-resolution.
+
 Route values:
 
 - ``"agent_loop_first"`` — default for article-bound queries. The main agent
   receives a minimal payload (overview, anchors, attachments, history) and
   calls read tools on demand.
 - ``"planner_first"`` — legacy fallback for complex scenarios that need the
-  planner to resolve context before answering (external references, dictionary
-  anchors, long threads).
+  planner to resolve context before answering (dictionary anchors, long
+  threads).
 
 Decision logic lives in :func:`resolve_planner_route`.
 
@@ -60,10 +66,10 @@ PlannerRoute = Literal["agent_loop_first", "planner_first"]
 # Planner-first trigger conditions
 # ---------------------------------------------------------------------------
 
-# Attachment kinds that require the planner to resolve context before
-# answering. These carry external references (records, analyses, supplements)
-# that need planner-level resolution.
-_PLANNER_REQUIRED_ATTACHMENT_KINDS: frozenset[str] = frozenset(
+# Attachment kinds that carry external references (records, analyses,
+# supplements). Round 10: these no longer trigger planner_first; the
+# agent-loop-first path handles them via load_explicit_attachment_context.
+_EXTERNAL_ATTACHMENT_KINDS: frozenset[str] = frozenset(
     {"record_ref", "analysis_ref", "supplement_ref"}
 )
 
@@ -150,6 +156,49 @@ def has_cross_record_intent(cross_record_toggle: bool, text: str) -> bool:
     return detect_cross_record_in_message(text)
 
 
+def has_explicit_external_attachments(
+    attachments: list[ReaderAskAttachment],
+    *,
+    current_record_id: str | None = None,
+) -> bool:
+    """Return True if any attachment is an explicit external reference.
+
+    Round 10: this is a public API used by ``build_agent_loop_context``
+    to inject an external attachment hint instead of triggering planner_first.
+    The agent can then call ``load_explicit_attachment_context`` on demand.
+
+    Filtering rules (Round 10 Fix 3):
+
+    - ``record_ref`` with ``subtype="related_record"`` is always external.
+    - ``record_ref`` with ``subtype="current_record"`` is NOT external — it
+      refers to the current record and needs no external loading.
+    - ``analysis_ref`` / ``supplement_ref`` are only external if they resolve
+      to a record_id that differs from ``current_record_id``.  When
+      ``current_record_id`` is not provided, they are conservatively treated
+      as external.
+    """
+    from app.services.reader_ask.planner import (
+        _attachment_record_id,
+        _attachment_target_record,
+    )
+
+    for att in attachments:
+        if att.kind == "record_ref":
+            # Only related_record is external; current_record is local.
+            if att.subtype == "related_record":
+                return True
+            continue
+        if att.kind in ("analysis_ref", "supplement_ref"):
+            if current_record_id is None:
+                # No current_record_id → conservatively treat as external.
+                return True
+            resolved_rid = _attachment_record_id(att)
+            if resolved_rid and resolved_rid != current_record_id:
+                return True
+            continue
+    return False
+
+
 def _has_dictionary_anchor_or_attachment(
     anchors: list[ReaderAskAnchorRef],
     attachments: list[ReaderAskAttachment],
@@ -169,8 +218,13 @@ def _has_dictionary_anchor_or_attachment(
 
 
 def _has_planner_required_attachments(attachments: list[ReaderAskAttachment]) -> bool:
-    """Return True if any attachment requires planner-level resolution."""
-    return any(attachment.kind in _PLANNER_REQUIRED_ATTACHMENT_KINDS for attachment in attachments)
+    """Return True if any attachment requires planner-level resolution.
+
+    Round 10: this is kept for backward compatibility but no longer used
+    in route resolution. External attachments are now handled by the
+    agent-loop-first path via load_explicit_attachment_context.
+    """
+    return any(attachment.kind in _EXTERNAL_ATTACHMENT_KINDS for attachment in attachments)
 
 
 # ---------------------------------------------------------------------------
@@ -192,8 +246,6 @@ def resolve_planner_route(
     Returns ``"agent_loop_first"`` by default. Returns ``"planner_first"``
     when any of the following conditions hold:
 
-    - Has attachments requiring planner resolution (record_ref / analysis_ref /
-      supplement_ref).
     - Has a dictionary anchor or dictionary attachment.
     - History exceeds ``_LONG_HISTORY_THRESHOLD`` messages.
 
@@ -207,12 +259,16 @@ def resolve_planner_route(
     a hint so the agent calls ``resolve_known_reference`` on demand.
     See :func:`has_cross_record_intent`.
 
+    Round 10: explicit external attachments (record_ref / analysis_ref /
+    supplement_ref) no longer trigger planner_first. Instead, the agent-loop-
+    first path detects external attachments and injects a hint so the agent
+    calls ``load_explicit_attachment_context`` on demand.
+    See :func:`has_explicit_external_attachments`.
+
     The ``entry_action`` is no longer used as a whitelist gate — all entry
     actions default to agent-loop-first unless one of the explicit fallback
     conditions triggers.
     """
-    if _has_planner_required_attachments(attachments):
-        return "planner_first"
     if _has_dictionary_anchor_or_attachment(anchors, attachments):
         return "planner_first"
     if len(history_messages) > _LONG_HISTORY_THRESHOLD:
