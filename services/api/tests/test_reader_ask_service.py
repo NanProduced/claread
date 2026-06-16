@@ -17,6 +17,7 @@ from app.schemas.reader_ask import (
     ReaderAskAttachment,
     ReaderAskAttachmentMetadata,
     ReaderAskAttachmentPayload,
+    ReaderAskCitation,
     ReaderAskContextPlan,
     ReaderAskDisambiguationCandidate,
     ReaderAskCurrentRecordContext,
@@ -53,7 +54,6 @@ from app.services.reader_ask.service import (
     _metrics_json,
     _build_response_cards,
     _build_supplement_candidates_from_runtime,
-    _dictionary_ai_to_citation,
     _merge_usage_summaries,
     _next_run_info,
 )
@@ -364,18 +364,6 @@ def test_merge_usage_summaries_accumulates_nested_tool_usage() -> None:
             }
         ],
     }
-
-
-def test_dictionary_ai_citation_uses_distinct_kind() -> None:
-    citation = _dictionary_ai_to_citation(
-        {"summary": "这里表示一种特定语境义。", "best_fit_sense": "sense-1", "translation": "这里是这个意思", "confidence": "high"},
-        "run into",
-        123,
-    )
-
-    assert citation.kind == "dictionary_ai"
-    assert citation.label == "run into"
-    assert citation.metadata_json["dict_entry_id"] == 123
 
 
 def test_build_response_cards_creates_sentence_breakdown_card() -> None:
@@ -984,12 +972,12 @@ def test_build_resolved_context_input_distinguishes_current_and_external_records
     assert context_input.external_record_contexts[0].record_title == "Climate Policy"
 
 
-def test_build_context_plan_records_history_and_dictionary_usage() -> None:
+def test_build_context_plan_records_history_usage() -> None:
     runtime_state = ReaderAskRuntimeState(
         used_cross_record_context=True,
         latest_record_context={"sentence_windows": []},
         latest_record_insights=[{"entry_type": "sentence_analysis"}],
-        source_labels={"current_record", "external_record_context", "dictionary"},
+        source_labels={"current_record", "external_record_context"},
     )
 
     context_plan = planner_svc.build_context_plan(
@@ -997,13 +985,12 @@ def test_build_context_plan_records_history_and_dictionary_usage() -> None:
         attachments=[],
         anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
         runtime_state=runtime_state,
-        citations=[_dictionary_ai_to_citation({"summary": "x"}, "test", 1)],
+        citations=[ReaderAskCitation(citation_id="c1", kind="anchor", label="test")],
     )
 
     assert context_plan.used_cross_record_context is True
     assert context_plan.used_record_context is True
     assert context_plan.used_record_insights is True
-    assert context_plan.used_dictionary is True
     assert context_plan.used_article_overview is False
 
 
@@ -1175,7 +1162,7 @@ def test_planning_snapshot_json_captures_working_set_and_resolution() -> None:
     assert "resolution_meta" in data["resolved_references"]
     # planner_route_used defaults to "planner_first" for legacy snapshots
     assert data["planner_route_used"] == "planner_first"
-    assert data["is_fast_path"] is False
+    assert data["planner_skipped"] is False
 
 
 def test_planning_snapshot_json_preserves_resolution_meta_all_paths() -> None:
@@ -1266,26 +1253,21 @@ def test_planning_snapshot_json_preserves_resolution_meta_all_paths() -> None:
 
 
 def test_planning_snapshot_json_none_uses_planner_route_used() -> None:
-    """When ``planning_snapshot is None``, ``is_fast_path`` is derived from
+    """When ``planning_snapshot is None``, ``planner_skipped`` is derived from
     ``planner_route_used`` instead of being hardcoded to ``True``."""
-    # fast_path route
-    data_fast = _planning_snapshot_json(None, planner_route_used="fast_path")
-    assert data_fast["is_fast_path"] is True
-    assert data_fast["planner_route_used"] == "fast_path"
-
-    # agent_loop_first route (Round 3) — also counts as fast path
+    # agent_loop_first route — planner was skipped
     data_agent = _planning_snapshot_json(None, planner_route_used="agent_loop_first")
-    assert data_agent["is_fast_path"] is True
+    assert data_agent["planner_skipped"] is True
     assert data_agent["planner_route_used"] == "agent_loop_first"
 
     # planner_first route (e.g. snapshot is None due to an error, not fast path)
     data_legacy = _planning_snapshot_json(None, planner_route_used="planner_first")
-    assert data_legacy["is_fast_path"] is False
+    assert data_legacy["planner_skipped"] is False
     assert data_legacy["planner_route_used"] == "planner_first"
 
     # default is planner_first
     data_default = _planning_snapshot_json(None)
-    assert data_default["is_fast_path"] is False
+    assert data_default["planner_skipped"] is False
     assert data_default["planner_route_used"] == "planner_first"
 
 
@@ -1293,7 +1275,7 @@ def test_planning_snapshot_json_fast_path_snapshot_includes_route() -> None:
     """``FastPathPlanningSnapshot`` trace includes ``planner_route_used``."""
     snap = planner_svc.FastPathPlanningSnapshot()
     data = _planning_snapshot_json(snap, planner_route_used="fast_path")
-    assert data["is_fast_path"] is True
+    assert data["planner_skipped"] is True
     assert data["planner_route_used"] == "fast_path"
 
 
@@ -1301,7 +1283,7 @@ def test_planning_snapshot_json_fast_path_snapshot_agent_loop_first_route() -> N
     """Round 3: ``FastPathPlanningSnapshot`` with ``agent_loop_first`` route."""
     snap = planner_svc.FastPathPlanningSnapshot()
     data = _planning_snapshot_json(snap, planner_route_used="agent_loop_first")
-    assert data["is_fast_path"] is True
+    assert data["planner_skipped"] is True
     assert data["planner_route_used"] == "agent_loop_first"
 
 
@@ -1381,12 +1363,11 @@ def test_build_agent_loop_context_syncs_overview_to_runtime_state() -> None:
 
 def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
     runtime_state = ReaderAskRuntimeState(
-        source_labels={"current_record", "record_assets", "article_overview", "external_record_context", "dictionary"},
+        source_labels={"current_record", "record_assets", "article_overview", "external_record_context"},
         latest_record_context={"sentence_windows": []},
         latest_record_insights=[{"entry_type": "sentence_analysis"}],
         latest_article_overview="overview",
         latest_external_record_contexts=[{"record_id": "r-2"}],
-        latest_dictionary_entry={"id": 1, "query": "policy"},
     )
     context_plan = ReaderAskContextPlan(
         entry_action="ask_about_this",
@@ -1406,7 +1387,6 @@ def test_capability_trace_json_marks_used_capabilities_and_reasons() -> None:
     assert trace["local_context_window"]["used"] is True
     assert trace["record_insights"]["reason"] == "grammar_intent"
     assert trace["article_overview"]["used"] is True
-    assert trace["dictionary"]["used"] is True
     assert trace["external_record_context"]["source_labels"] == ["external_record_context"]
 
 

@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -114,11 +114,6 @@ from app.services.analysis.credit_service import (
     reserve_points,
 )
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
-from app.services.dictionary import get_service as get_dictionary_service
-from app.services.dictionary.errors import ServiceUnavailableError, WordNotFoundError
-from app.services.dictionary.schemas import DictionaryLookupRequest
-from app.services.dictionary_ai.schemas import DictionaryAIContextExplainRequest
-from app.services.dictionary_ai.service import get_service as get_dictionary_ai_service
 from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import context_runtime as context_runtime_svc
 from app.services.reader_ask import fast_path_runtime
@@ -1269,82 +1264,6 @@ async def _tool_suggest_prompts(
     }
 
 
-async def _tool_lookup_dictionary_entry(
-    *,
-    query: str | None,
-    entry_id: int | None,
-    query_type: str | None,
-    context_sentence: str | None,
-    occurrence: int | None,
-) -> dict[str, Any] | None:
-    service = get_dictionary_service()
-    try:
-        if entry_id is not None:
-            result = await service.lookup_entry(entry_id)
-        elif query:
-            result = await service.lookup(
-                DictionaryLookupRequest(
-                    query=query,
-                    query_type=query_type if query_type in {"word", "phrase"} else ("phrase" if " " in query else "word"),
-                    context_sentence=context_sentence,
-                    occurrence=occurrence,
-                )
-            )
-        else:
-            return None
-    except (WordNotFoundError, ServiceUnavailableError):
-        return None
-
-    entry = result.get("entry") if isinstance(result, dict) else None
-    if not isinstance(entry, dict):
-        return None
-    return {
-        "id": entry.get("id"),
-        "word": entry.get("word"),
-        "base_word": entry.get("base_word"),
-        "phonetic": entry.get("phonetic"),
-        "meanings": entry.get("meanings", [])[:2],
-        "query": result.get("query") if isinstance(result, dict) else query,
-    }
-
-
-async def _tool_run_dictionary_ai_context_explain(
-    *,
-    query: str,
-    entry_id: int,
-    context_sentence: str,
-    query_type: str,
-    occurrence: int | None,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    service = get_dictionary_ai_service()
-    result = await service.run_context_explain(
-        DictionaryAIContextExplainRequest(
-            query=query,
-            query_type=query_type if query_type in {"word", "phrase"} else ("phrase" if " " in query else "word"),
-            context_sentence=context_sentence,
-            occurrence=occurrence,
-            entry_id=entry_id,
-        )
-    )
-    response = result.response
-    return (
-        {
-            "mode": response.mode,
-            "query": response.query,
-            "summary": response.summary,
-            "best_fit_sense": response.best_fit_sense,
-            "why_here": response.why_here,
-            "cue": response.cue,
-            "translation": response.translation,
-            "contrast": response.contrast,
-            "learning_tip": response.learning_tip,
-            "confidence": response.confidence,
-            "entry_id": entry_id,
-        },
-        result.usage_data,
-    )
-
-
 def _vocabulary_item_to_citation(item: dict[str, Any]) -> ReaderAskCitation:
     return ReaderAskCitation(
         citation_id=str(uuid4()),
@@ -1356,34 +1275,6 @@ def _vocabulary_item_to_citation(item: dict[str, Any]) -> ReaderAskCitation:
             "lemma": item.get("lemma"),
             "mastery_status": item.get("mastery_status"),
             "short_meaning": item.get("short_meaning"),
-        },
-    )
-
-
-def _dictionary_item_to_citation(item: dict[str, Any]) -> ReaderAskCitation:
-    return ReaderAskCitation(
-        citation_id=str(uuid4()),
-        kind="dictionary_entry",
-        label=item.get("word") or item.get("base_word") or "词典词条",
-        metadata_json={
-            "dict_entry_id": item.get("id"),
-            "phonetic": item.get("phonetic"),
-            "meanings": item.get("meanings"),
-        },
-    )
-
-
-def _dictionary_ai_to_citation(item: dict[str, Any], query: str, entry_id: int) -> ReaderAskCitation:
-    return ReaderAskCitation(
-        citation_id=str(uuid4()),
-        kind="dictionary_ai",
-        label=query or "词典 AI 解释",
-        metadata_json={
-            "dict_entry_id": entry_id,
-            "summary": _truncate_text(item.get("summary"), 160),
-            "best_fit_sense": item.get("best_fit_sense"),
-            "translation": item.get("translation"),
-            "confidence": item.get("confidence"),
         },
     )
 
@@ -1658,7 +1549,7 @@ def _planning_snapshot_json(
 ) -> dict[str, Any]:
     if planning_snapshot is None:
         return {
-            "is_fast_path": planner_route_used in ("fast_path", "agent_loop_first"),
+            "planner_skipped": planner_route_used == "agent_loop_first",
             "planner_route_used": planner_route_used,
         }
     # Round 1 — FastPathPlanningSnapshot is a lightweight dataclass that
@@ -1694,7 +1585,7 @@ def _planning_snapshot_json(
             else None,
             "disambiguation_state": None,
             "external_asset_disambiguation_state": None,
-            "is_fast_path": True,
+            "planner_skipped": True,
             "planner_route_used": planner_route_used,
         }
     return {
@@ -1752,7 +1643,7 @@ def _planning_snapshot_json(
         "external_asset_disambiguation_state": planning_snapshot.external_asset_disambiguation_state.model_dump(mode="json")
         if planning_snapshot.external_asset_disambiguation_state
         else None,
-        "is_fast_path": planner_route_used in ("fast_path", "agent_loop_first"),
+        "planner_skipped": planner_route_used == "agent_loop_first",
         "planner_route_used": planner_route_used,
     }
 
@@ -1779,13 +1670,6 @@ def _capability_trace_json(
             "used": bool(runtime_state.latest_article_overview),
             "reason": context_plan.article_overview_reason if context_plan else None,
             "source_labels": ["article_overview"] if runtime_state.latest_article_overview else [],
-        },
-        "dictionary": {
-            "used": bool(runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai),
-            "reason": context_plan.dictionary_reason if context_plan else None,
-            "source_labels": ["dictionary"]
-            if runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai
-            else [],
         },
         "external_record_context": {
             "used": bool(runtime_state.latest_external_record_contexts),
@@ -3148,7 +3032,6 @@ async def stream_thread_message(
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
         primary_anchor = resolved_anchors[0] if resolved_anchors else None
-        dictionary_anchor = next((anchor for anchor in resolved_anchors if anchor.anchor_type == "dictionary_entry"), None)
 
         async def get_record_context_cb(
             _deps: Any = None,
@@ -3203,44 +3086,6 @@ async def stream_thread_message(
             suggestions: list[dict[str, Any]],
         ) -> dict[str, Any]:
             return await _tool_suggest_prompts(suggestions)
-
-        async def lookup_dictionary_entry_cb(
-            query: str | None,
-            entry_id: int | None,
-            query_type: str | None,
-            context_sentence: str | None,
-            occurrence: int | None,
-        ) -> dict[str, Any] | None:
-            fallback_query = query
-            fallback_entry_id = entry_id
-            if dictionary_anchor is not None:
-                fallback_query = fallback_query or dictionary_anchor.query
-                fallback_entry_id = fallback_entry_id or dictionary_anchor.dict_entry_id
-            return await _tool_lookup_dictionary_entry(
-                query=fallback_query,
-                entry_id=fallback_entry_id,
-                query_type=query_type,
-                context_sentence=context_sentence,
-                occurrence=occurrence,
-            )
-
-        async def run_dictionary_ai_context_explain_cb(
-            query: str,
-            entry_id: int,
-            context_sentence: str,
-            query_type: str,
-            occurrence: int | None,
-        ) -> dict[str, Any] | None:
-            result, usage = await _tool_run_dictionary_ai_context_explain(
-                query=query,
-                entry_id=entry_id,
-                context_sentence=context_sentence,
-                query_type=query_type,
-                occurrence=occurrence,
-            )
-            if usage:
-                nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
-            return result
 
         async def generate_sentence_annotation_cb(
             kind: Literal["grammar_note", "sentence_analysis"],
@@ -3632,25 +3477,6 @@ async def stream_thread_message(
             except Exception:
                 logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
 
-        if resolved_intent == "vocabulary":
-            if runtime_state.latest_dictionary_entry is not None:
-                runtime_state.source_labels.add("dictionary")
-                _merge_citation(
-                    runtime_state.citations,
-                    _dictionary_item_to_citation(runtime_state.latest_dictionary_entry),
-                )
-            if runtime_state.latest_dictionary_ai is not None and runtime_state.latest_dictionary_entry is not None:
-                query = str(
-                    runtime_state.latest_dictionary_entry.get("query")
-                    or runtime_state.latest_dictionary_entry.get("word")
-                    or ""
-                )
-                entry_id = runtime_state.latest_dictionary_entry.get("id")
-                if query and isinstance(entry_id, int):
-                    _merge_citation(
-                        runtime_state.citations,
-                        _dictionary_ai_to_citation(runtime_state.latest_dictionary_ai, query, entry_id),
-                    )
         runtime_proposals = _build_action_proposals_from_runtime(
             record=record,
             action_requests=runtime_state.action_requests,
@@ -4396,7 +4222,6 @@ async def retry_thread_message(
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
         primary_anchor = resolved_anchors[0] if resolved_anchors else None
-        dictionary_anchor = next((anchor for anchor in resolved_anchors if anchor.anchor_type == "dictionary_entry"), None)
 
         async def get_record_context_cb(
             _deps: Any = None,
@@ -4451,44 +4276,6 @@ async def retry_thread_message(
             suggestions: list[dict[str, Any]],
         ) -> dict[str, Any]:
             return await _tool_suggest_prompts(suggestions)
-
-        async def lookup_dictionary_entry_cb(
-            query: str | None,
-            entry_id: int | None,
-            query_type: str | None,
-            context_sentence: str | None,
-            occurrence: int | None,
-        ) -> dict[str, Any] | None:
-            fallback_query = query
-            fallback_entry_id = entry_id
-            if dictionary_anchor is not None:
-                fallback_query = fallback_query or dictionary_anchor.query
-                fallback_entry_id = fallback_entry_id or dictionary_anchor.dict_entry_id
-            return await _tool_lookup_dictionary_entry(
-                query=fallback_query,
-                entry_id=fallback_entry_id,
-                query_type=query_type,
-                context_sentence=context_sentence,
-                occurrence=occurrence,
-            )
-
-        async def run_dictionary_ai_context_explain_cb(
-            query: str,
-            entry_id: int,
-            context_sentence: str,
-            query_type: str,
-            occurrence: int | None,
-        ) -> dict[str, Any] | None:
-            result, usage = await _tool_run_dictionary_ai_context_explain(
-                query=query,
-                entry_id=entry_id,
-                context_sentence=context_sentence,
-                query_type=query_type,
-                occurrence=occurrence,
-            )
-            if usage:
-                nested_tool_usages.append({"tool_name": "run_dictionary_ai_context_explain", "usage_summary": usage})
-            return result
 
         async def generate_sentence_annotation_cb(
             kind: Literal["grammar_note", "sentence_analysis"],
@@ -4881,25 +4668,6 @@ async def retry_thread_message(
             except Exception:
                 logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
 
-        if resolved_intent == "vocabulary":
-            if runtime_state.latest_dictionary_entry is not None:
-                runtime_state.source_labels.add("dictionary")
-                _merge_citation(
-                    runtime_state.citations,
-                    _dictionary_item_to_citation(runtime_state.latest_dictionary_entry),
-                )
-            if runtime_state.latest_dictionary_ai is not None and runtime_state.latest_dictionary_entry is not None:
-                query = str(
-                    runtime_state.latest_dictionary_entry.get("query")
-                    or runtime_state.latest_dictionary_entry.get("word")
-                    or ""
-                )
-                entry_id = runtime_state.latest_dictionary_entry.get("id")
-                if query and isinstance(entry_id, int):
-                    _merge_citation(
-                        runtime_state.citations,
-                        _dictionary_ai_to_citation(runtime_state.latest_dictionary_ai, query, entry_id),
-                    )
         runtime_proposals = _build_action_proposals_from_runtime(
             record=record,
             action_requests=runtime_state.action_requests,

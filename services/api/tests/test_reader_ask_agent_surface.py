@@ -2,7 +2,6 @@
 
 from app.agents.reader_ask_agent import get_reader_ask_agent
 from app.agents.reader_ask_tool_registry import (
-    DEPRECATED_TOOL_NAMES,
     RESERVED_TOOL_NAMES,
     agent_callable_tool_names,
 )
@@ -17,16 +16,6 @@ def test_agent_tool_definitions_match_registry() -> None:
         f"Agent tool surface mismatch: registered={registered - expected}, "
         f"missing={expected - registered}"
     )
-
-
-def test_agent_tool_definitions_exclude_deprecated() -> None:
-    """Deprecated tool names must not appear in the agent's tool definitions."""
-    agent = get_reader_ask_agent()
-    registered = frozenset(agent._function_toolset.tools.keys())
-    for name in DEPRECATED_TOOL_NAMES:
-        assert name not in registered, (
-            f"Deprecated tool '{name}' leaked into agent tool definitions"
-        )
 
 
 def test_agent_tool_definitions_exclude_reserved() -> None:

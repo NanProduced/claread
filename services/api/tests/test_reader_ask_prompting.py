@@ -1,5 +1,5 @@
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
-from app.agents.reader_ask_tool_registry import DEPRECATED_TOOL_NAMES, RESERVED_TOOL_NAMES
+from app.agents.reader_ask_tool_registry import RESERVED_TOOL_NAMES
 from app.services.reader_ask.prompting import load_prompt_layers
 
 
@@ -146,9 +146,9 @@ def test_reader_ask_prompt_documents_scope_for_get_record_context() -> None:
 
 
 def test_prompt_does_not_mention_deprecated_tool_names() -> None:
-    """The system prompt must not mention any tool name in DEPRECATED_TOOL_NAMES."""
+    """The system prompt must not mention deprecated dictionary tool names."""
     prompt = load_agent_instructions("reader_ask")
-    for name in DEPRECATED_TOOL_NAMES:
+    for name in ("lookup_dictionary_entry", "run_dictionary_ai_context_explain"):
         assert name not in prompt, (
             f"reader_ask prompt references deprecated tool '{name}'; "
             "deprecated tools must never appear in the prompt."

@@ -72,10 +72,6 @@ class ReaderAskRuntimeState:
     latest_external_record_contexts: list[dict[str, Any]] = field(default_factory=list)
     latest_external_asset_contexts: list[dict[str, Any]] = field(default_factory=list)
     latest_user_vocabulary: list[dict[str, Any]] = field(default_factory=list)
-    # Round 2: dictionary tools are deprecated — fields kept for legacy
-    # context_runtime / service plumbing until Round 3 cleanup.
-    latest_dictionary_entry: dict[str, Any] | None = None
-    latest_dictionary_ai: dict[str, Any] | None = None
     latest_resolved_references: dict[str, Any] | None = None
     latest_generated_annotations: list[dict[str, Any]] = field(default_factory=list)
     latest_suggestions: list[dict[str, Any]] = field(default_factory=list)

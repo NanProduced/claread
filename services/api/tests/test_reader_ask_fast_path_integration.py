@@ -63,107 +63,107 @@ def _history(n: int) -> list[dict[str, Any]]:
 
 class TestFastPathRoutingDecision:
     """Test that the fast path routing decision is correct for various
-    request configurations, matching the ``should_use_fast_path`` logic."""
+    request configurations, matching the ``resolve_planner_route`` logic."""
 
     def test_simple_article_bound_uses_fast_path(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="这篇文章想表达什么？",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_deictic_no_anchor_uses_planner(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) is False
+        ) == "planner_first"
 
     def test_cross_record_keyword_uses_planner(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=True,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
-        ) is False
+        ) == "planner_first"
 
     def test_record_ref_attachment_uses_planner(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[_attachment("record_ref")],
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="解释一下",
-        ) is False
+        ) == "planner_first"
 
     def test_long_history_uses_planner(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(11),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="继续",
-        ) is False
+        ) == "planner_first"
 
     def test_cross_record_toggle_uses_planner(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=True,
             latest_user_message="和另一篇有什么不同",
-        ) is False
+        ) == "planner_first"
 
     def test_dictionary_anchor_uses_planner(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[ReaderAskAnchorRef(anchor_type="dictionary_entry", label="dict", dict_entry_id=1)],
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
-        ) is False
+        ) == "planner_first"
 
     def test_explain_this_with_anchor_uses_fast_path(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="explain_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="解释一下",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_why_here_with_anchor_uses_fast_path(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="这里为什么用 present perfect",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_why_here_without_anchor_uses_planner(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="这里为什么用 present perfect",
-        ) is False
+        ) == "planner_first"
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ class TestFastPathTraceSemantics:
         data = service_svc._planning_snapshot_json(
             None, planner_route_used="agent_loop_first"
         )
-        assert data["is_fast_path"] is True
+        assert data["planner_skipped"] is True
         assert data["planner_route_used"] == "agent_loop_first"
 
     def test_none_snapshot_planner_first_trace(self) -> None:
@@ -318,7 +318,7 @@ class TestFastPathTraceSemantics:
         data = service_svc._planning_snapshot_json(
             None, planner_route_used="planner_first"
         )
-        assert data["is_fast_path"] is False
+        assert data["planner_skipped"] is False
         assert data["planner_route_used"] == "planner_first"
 
     def test_fast_path_snapshot_trace(self) -> None:
@@ -326,7 +326,7 @@ class TestFastPathTraceSemantics:
         data = service_svc._planning_snapshot_json(
             snap, planner_route_used="agent_loop_first"
         )
-        assert data["is_fast_path"] is True
+        assert data["planner_skipped"] is True
         assert data["planner_route_used"] == "agent_loop_first"
 
     def test_legacy_snapshot_trace(self) -> None:
@@ -371,7 +371,7 @@ class TestFastPathTraceSemantics:
         data = service_svc._planning_snapshot_json(
             snapshot, planner_route_used="planner_first"
         )
-        assert data["is_fast_path"] is False
+        assert data["planner_skipped"] is False
         assert data["planner_route_used"] == "planner_first"
 
 
@@ -387,46 +387,46 @@ class TestFastPathRetryConsistency:
         """A request that was eligible for fast path should still be
         eligible on retry (same entry_action, same conditions)."""
         # Simulate first call
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="这篇文章想表达什么？",
-        ) is True
+        ) == "agent_loop_first"
 
         # Retry with same conditions should also be fast path
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="这篇文章想表达什么？",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_retry_deictic_stays_planner(self) -> None:
         """A deictic/no-anchor request that went to planner should still
         go to planner on retry."""
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) is False
+        ) == "planner_first"
 
         # Retry with same conditions
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) is False
+        ) == "planner_first"
 
 
 # ---------------------------------------------------------------------------

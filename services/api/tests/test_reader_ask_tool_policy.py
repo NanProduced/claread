@@ -7,7 +7,6 @@ from app.agents.reader_ask_tool_policy import (
     build_tool_availability,
 )
 from app.agents.reader_ask_tool_registry import (
-    DEPRECATED_TOOL_NAMES,
     READER_ASK_TOOL_NAMES,
     RESERVED_TOOL_NAMES,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
@@ -35,17 +34,13 @@ def test_default_input_allows_8_agent_callable_tools() -> None:
     assert len(result.allowed_tool_names) == 8
 
 
-def test_default_input_excludes_deprecated_and_reserved() -> None:
-    """Deprecated tools + reserved RAG tool must NOT be in allowed_tool_names."""
+def test_default_input_excludes_reserved() -> None:
+    """Reserved RAG tool must NOT be in allowed_tool_names."""
     from app.agents.reader_ask_tool_registry import (
-        TOOL_LOOKUP_DICTIONARY_ENTRY,
         TOOL_LOOKUP_RECORD_BY_EMBEDDING,
-        TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
     )
 
     result = build_tool_availability(_default_input())
-    assert TOOL_LOOKUP_DICTIONARY_ENTRY not in result.allowed_tool_names
-    assert TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN not in result.allowed_tool_names
     assert TOOL_LOOKUP_RECORD_BY_EMBEDDING not in result.allowed_tool_names
     # Round 5: search_user_vocabulary fully removed from registry
     assert "search_user_vocabulary" not in result.allowed_tool_names
@@ -263,13 +258,8 @@ def test_deps_no_anchor_unavailable_reasons_contains_write_proposals() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Round 5: deprecated/reserved tools never leak into allowed set
+# Round 5: reserved tools never leak into allowed set
 # ---------------------------------------------------------------------------
-
-
-def test_allowed_tools_disjoint_from_deprecated() -> None:
-    result = build_tool_availability(_default_input())
-    assert result.allowed_tool_names & DEPRECATED_TOOL_NAMES == frozenset()
 
 
 def test_allowed_tools_disjoint_from_reserved() -> None:

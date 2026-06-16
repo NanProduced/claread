@@ -63,8 +63,6 @@ def current_record_source_labels(runtime_state: ReaderAskRuntimeState) -> list[s
         labels.append("record_assets")
     if runtime_state.latest_article_overview:
         labels.append("article_overview")
-    if runtime_state.latest_dictionary_entry or runtime_state.latest_dictionary_ai:
-        labels.append("dictionary")
     return labels
 
 

@@ -14,8 +14,7 @@ Route values:
   planner to resolve context before answering (external references, deictic
   without anchor, dictionary anchors, long threads).
 
-Decision logic lives in :func:`resolve_planner_route`. The older
-:func:`should_use_fast_path` is retained as a thin compatibility wrapper.
+Decision logic lives in :func:`resolve_planner_route`.
 
 See ``docs/tmp/ask-claread/TMP-ask-claread-agent-loop-refactor-task-tracker-2026-06-13.md``
 §Round 3 for the design rationale.
@@ -193,44 +192,6 @@ def resolve_planner_route(
     if len(history_messages) > _LONG_HISTORY_THRESHOLD:
         return "planner_first"
     return "agent_loop_first"
-
-
-# ---------------------------------------------------------------------------
-# Compatibility wrapper (Round 1 API)
-# ---------------------------------------------------------------------------
-
-# Entry actions that were eligible for the fast path in Round 1.
-# Retained for backward compatibility with existing tests; no longer used
-# by ``resolve_planner_route``.
-_FAST_PATH_ACTIONS: frozenset[ReaderAskEntryAction] = frozenset(
-    {"explain_this", "ask_about_this", "why_here"}
-)
-
-
-def should_use_fast_path(
-    *,
-    entry_action: ReaderAskEntryAction,
-    history_messages: list[dict[str, Any]],
-    attachments: list[ReaderAskAttachment],
-    anchors: list[ReaderAskAnchorRef],
-    cross_record_toggle: bool,
-    latest_user_message: str,
-) -> bool:
-    """Compatibility wrapper — delegates to :func:`resolve_planner_route`.
-
-    Returns True when the route is ``"agent_loop_first"``.
-    """
-    return (
-        resolve_planner_route(
-            entry_action=entry_action,
-            history_messages=history_messages,
-            attachments=attachments,
-            anchors=anchors,
-            cross_record_toggle=cross_record_toggle,
-            latest_user_message=latest_user_message,
-        )
-        == "agent_loop_first"
-    )
 
 
 def build_minimal_context_plan_for_runtime_input(

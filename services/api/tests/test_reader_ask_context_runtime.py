@@ -67,12 +67,6 @@ class TestCurrentRecordSourceLabels:
         labels = context_runtime_svc.current_record_source_labels(state)
         assert "article_overview" in labels
 
-    def test_with_dictionary(self) -> None:
-        state = ReaderAskRuntimeState()
-        state.latest_dictionary_entry = {"word": "test"}
-        labels = context_runtime_svc.current_record_source_labels(state)
-        assert "dictionary" in labels
-
 
 # ---------------------------------------------------------------------------
 # external_context_has_structured_assets / external_asset_context_has_items

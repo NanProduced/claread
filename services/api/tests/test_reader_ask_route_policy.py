@@ -4,7 +4,6 @@ These tests cover the route policy introduced in Round 3, where the default
 flipped from planner-first to agent-loop-first:
 
 - ``fast_path_runtime.resolve_planner_route`` decision logic.
-- ``fast_path_runtime.should_use_fast_path`` backward compatibility.
 - ``fast_path_runtime.PlannerRoute`` type contract.
 
 See ``fast_path_runtime`` module docstring for the design rationale.
@@ -283,42 +282,6 @@ class TestResolvePlannerRoute:
                 latest_user_message="继续",
             )
             == "agent_loop_first"
-        )
-
-
-# ---------------------------------------------------------------------------
-# should_use_fast_path backward compatibility
-# ---------------------------------------------------------------------------
-
-
-class TestShouldUseFastPathCompat:
-    """Verify that ``should_use_fast_path`` is a thin wrapper over
-    ``resolve_planner_route``."""
-
-    def test_returns_true_when_agent_loop_first(self) -> None:
-        assert (
-            fast_path_runtime.should_use_fast_path(
-                entry_action="ask_about_this",
-                history_messages=_history(2),
-                attachments=[],
-                anchors=[],
-                cross_record_toggle=False,
-                latest_user_message="这篇文章的主题是什么",
-            )
-            is True
-        )
-
-    def test_returns_false_when_planner_first(self) -> None:
-        assert (
-            fast_path_runtime.should_use_fast_path(
-                entry_action="ask_about_this",
-                history_messages=_history(0),
-                attachments=[_attachment("record_ref", "related_record")],
-                anchors=[],
-                cross_record_toggle=False,
-                latest_user_message="对照我之前那篇",
-            )
-            is False
         )
 
 

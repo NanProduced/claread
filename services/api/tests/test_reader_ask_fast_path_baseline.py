@@ -3,7 +3,7 @@
 These tests cover the minimal-helper and decision-helper surface introduced
 in Round 1:
 
-- ``fast_path_runtime.should_use_fast_path`` decision logic.
+- ``fast_path_runtime.resolve_planner_route`` decision logic.
 - ``fast_path_runtime.detect_cross_record_in_message`` keyword detection.
 - ``planner.build_minimal_resolved_intent`` entry_action mapping.
 - ``planner.build_minimal_context_plan`` / ``build_minimal_trace_summary``
@@ -60,230 +60,230 @@ def _history(n: int) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# should_use_fast_path decision
+# resolve_planner_route decision
 # ---------------------------------------------------------------------------
 
 
-class TestShouldUseFastPath:
+class TestResolvePlannerRoute:
     def test_simple_article_question_with_anchor(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="这句话想表达什么？",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_simple_article_question_no_anchor(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="这篇文章想表达什么？",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_false_for_long_history(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(11),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="继续",
-        ) is False
+        ) == "planner_first"
 
     def test_false_for_cross_record_attachment(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[_attachment("record_ref", "related_record")],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="对照我之前那篇",
-        ) is False
+        ) == "planner_first"
 
     def test_false_for_analysis_ref_attachment(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[_attachment("analysis_ref", "summary")],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="解释一下",
-        ) is False
+        ) == "planner_first"
 
     def test_false_for_supplement_ref_attachment(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[_attachment("supplement_ref", "grammar_note")],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="解释一下",
-        ) is False
+        ) == "planner_first"
 
     def test_false_for_cross_record_keyword_chinese(self) -> None:
         # Round 3: cross-record keywords only block when cross_record_toggle is True
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
-        ) is False
+        ) == "planner_first"
 
     def test_false_for_cross_record_keyword_english(self) -> None:
         # Round 3: cross-record keywords only block when cross_record_toggle is True
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="How does this compare to the previous article on this topic?",
-        ) is False
+        ) == "planner_first"
 
     def test_cross_record_keyword_without_toggle_still_eligible(self) -> None:
         # Round 3: cross-record keywords without toggle → still agent_loop_first
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_true_for_unknown_entry_action(self) -> None:
         # Round 3: entry_action is no longer a whitelist gate; all actions
         # default to agent_loop_first unless a fallback condition triggers.
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="some_custom_action",  # type: ignore[arg-type]
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="hello",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_false_when_toggle_on_with_cross_record_keywords(self) -> None:
         # Round 3: cross_record_toggle alone is not sufficient; the message
         # must also contain cross-record keywords.
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="和我之前那篇有什么不同",
-        ) is False
+        ) == "planner_first"
 
     def test_true_when_toggle_on_without_cross_record_keywords(self) -> None:
         # Round 3: toggle on but no cross-record keywords → still agent_loop_first.
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="hello",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_explain_this_is_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="explain_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="解释一下",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_why_here_with_anchor_is_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="这里为什么用 present perfect",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_why_here_without_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="why_here",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="这里为什么用 present perfect",
-        ) is False
+        ) == "planner_first"
 
     def test_lookup_in_context_now_eligible(self) -> None:
         # Round 3: ``lookup_in_context`` is no longer excluded by entry_action;
         # all actions default to agent_loop_first unless a fallback triggers.
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="lookup_in_context",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_dictionary_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_dict_anchor()],
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
-        ) is False
+        ) == "planner_first"
 
     def test_deictic_without_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) is False
+        ) == "planner_first"
 
     def test_deictic_with_anchor_is_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="解释这句",
-        ) is True
+        ) == "agent_loop_first"
 
     def test_deictic_english_without_anchor_not_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="explain this sentence",
-        ) is False
+        ) == "planner_first"
 
     def test_non_deictic_without_anchor_is_eligible(self) -> None:
-        assert fast_path_runtime.should_use_fast_path(
+        assert fast_path_runtime.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
             attachments=[],
             anchors=[],
             cross_record_toggle=False,
             latest_user_message="这篇文章的主题是什么",
-        ) is True
+        ) == "agent_loop_first"
 
 
 # ---------------------------------------------------------------------------

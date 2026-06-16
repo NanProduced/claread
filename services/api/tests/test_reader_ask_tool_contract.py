@@ -34,10 +34,8 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_GENERATE_SENTENCE_ANNOTATION,
     TOOL_GET_RECORD_CONTEXT,
     TOOL_GET_RECORD_INSIGHTS,
-    TOOL_LOOKUP_DICTIONARY_ENTRY,
     TOOL_PROPOSE_SAVE_HIGHLIGHT,
     TOOL_PROPOSE_SAVE_NOTE,
-    TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN,
 )
 from app.agents.reader_ask_tool_runtime import run_tool
 from app.agents.reader_ask_write_gate import (
@@ -160,12 +158,6 @@ class TestRegistryContractConsistency:
         from app.agents.reader_ask_tool_registry import TOOL_GET_USER_VOCABULARY_BOOK
         vocab = READER_ASK_TOOL_REGISTRY[TOOL_GET_USER_VOCABULARY_BOOK]
         assert vocab.output_kind == "list_or_empty"
-
-    def test_dictionary_tools_output_kind(self) -> None:
-        lookup = READER_ASK_TOOL_REGISTRY[TOOL_LOOKUP_DICTIONARY_ENTRY]
-        assert lookup.output_kind == "dict_or_none"
-        ai = READER_ASK_TOOL_REGISTRY[TOOL_RUN_DICTIONARY_AI_CONTEXT_EXPLAIN]
-        assert ai.output_kind == "dict_or_none"
 
     def test_annotation_tool_output_kind(self) -> None:
         ann = READER_ASK_TOOL_REGISTRY[TOOL_GENERATE_SENTENCE_ANNOTATION]
