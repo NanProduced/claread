@@ -228,10 +228,18 @@ class TestPreservedCodeStaysAlive:
         assert callable(resolve_planner_route)
 
     def test_planner_first_route_value_still_valid(self) -> None:
-        """planner_first is still a valid route value for long-history fallbacks."""
+        """planner_first is still a valid PlannerRoute literal for backward compat.
+        Round 12: long history now routes to agent_loop_first."""
+        from app.services.reader_ask.planner_route_policy import PlannerRoute
+
+        # planner_first is a valid route value for backward-compatible trace
+        # serialization, even though no live condition triggers it anymore.
+        assert "planner_first" in PlannerRoute.__args__
+
+    def test_long_history_now_routes_agent_loop_first(self) -> None:
+        """Round 12: long history no longer triggers planner_first."""
         from app.services.reader_ask.planner_route_policy import resolve_planner_route
 
-        # Long history → planner_first (dictionary migrated in Round 11)
         history = [{"role": "user", "content_md": f"msg {i}"} for i in range(11)]
         route = resolve_planner_route(
             entry_action="ask_about_this",
@@ -241,7 +249,7 @@ class TestPreservedCodeStaysAlive:
             cross_record_toggle=False,
             latest_user_message="继续",
         )
-        assert route == "planner_first"
+        assert route == "agent_loop_first"
 
     def test_materialize_planned_context_exists(self) -> None:
         """materialize_planned_context is still used by planner_first path."""

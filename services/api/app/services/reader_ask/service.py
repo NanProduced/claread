@@ -3309,6 +3309,7 @@ async def stream_thread_message(
                 entry_action=body.entry_action,
                 latest_user_message=body.content,
                 cross_record_toggle=runtime_state.cross_record_context_allowed,
+                history_messages=history_messages,
             )
         else:
             resolved_context_input = await context_runtime_svc.materialize_planned_context(
@@ -3386,6 +3387,7 @@ async def stream_thread_message(
                 cross_record_intent_hint=runtime_state.cross_record_intent_hint,
                 external_attachment_hint=runtime_state.external_attachment_hint,
                 dictionary_anchor_hint=runtime_state.dictionary_anchor_hint,
+                long_history_hint=runtime_state.long_history_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
@@ -4530,6 +4532,7 @@ async def retry_thread_message(
                 entry_action=body.entry_action,
                 latest_user_message=body.content,
                 cross_record_toggle=runtime_state.cross_record_context_allowed,
+                history_messages=history_messages,
             )
         else:
             resolved_context_input = await context_runtime_svc.materialize_planned_context(
@@ -4607,6 +4610,7 @@ async def retry_thread_message(
                 cross_record_intent_hint=runtime_state.cross_record_intent_hint,
                 external_attachment_hint=runtime_state.external_attachment_hint,
                 dictionary_anchor_hint=runtime_state.dictionary_anchor_hint,
+                long_history_hint=runtime_state.long_history_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )

@@ -103,6 +103,11 @@ class ReaderAskRuntimeState:
     # explicit dictionary anchor metadata instead of requiring planner
     # pre-resolution.
     dictionary_anchor_hint: str | None = None
+    # Round 12 — long history hint. When the conversation has more than
+    # 10 messages, the agent-loop-first path injects this hint so the
+    # model knows older messages have been summarized. This is NOT a
+    # follow-up prompt — it is purely informational.
+    long_history_hint: str | None = None
     # Round 6 — observability: latency tracking.
     first_token_at: str | None = None  # ISO 8601, first text delta time
     run_started_at: str | None = None  # ISO 8601, run entry time

@@ -83,6 +83,18 @@ def test_reader_ask_prompt_separates_cross_record_hint_from_followup_hint() -> N
     assert "不要把跨文章引用解析写进 `followup_hint`" in prompt
 
 
+def test_reader_ask_prompt_documents_long_history_hint() -> None:
+    """Long history is a compression signal, not a claim that all old
+    messages are preserved."""
+    prompt = load_agent_instructions("reader_ask")
+
+    assert "long_history_hint" in prompt
+    assert "历史压缩提示" in prompt
+    assert "不是追问提示" in prompt
+    assert "实际存在" in prompt
+    assert "不要声称记得缺失的早期消息" in prompt
+
+
 def test_reader_ask_prompt_documents_suggest_prompts_bounds() -> None:
     """The prompt must specify the 2-3 suggestion bound and the
     label/prompt character caps so the model's suggestions pass

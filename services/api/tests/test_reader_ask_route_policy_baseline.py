@@ -85,7 +85,8 @@ class TestResolvePlannerRoute:
             latest_user_message="这篇文章想表达什么？",
         ) == "agent_loop_first"
 
-    def test_false_for_long_history(self) -> None:
+    def test_long_history_returns_agent_loop_first(self) -> None:
+        # Round 12: long history no longer triggers planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(11),
@@ -93,7 +94,7 @@ class TestResolvePlannerRoute:
             anchors=[_anchor("sentence")],
             cross_record_toggle=False,
             latest_user_message="继续",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_agent_loop_first_for_cross_record_attachment(self) -> None:
         # Round 10: external attachments no longer trigger planner_first

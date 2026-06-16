@@ -26,13 +26,21 @@ dictionary anchors/attachments, injects a dictionary_anchor_hint, and the
 agent answers based on article context and the explicit dictionary anchor
 metadata instead of requiring planner pre-resolution.
 
+Round 12 migrates the long-history fallback from planner_first to
+agent_loop_first. The agent-loop-first path detects long history and
+injects a long_history_hint so the model knows older messages have been
+summarized. The structured history summary and recent-window truncation
+in runtime_contract.py handle the actual compression — no planner call
+needed.
+
 Route values:
 
-- ``"agent_loop_first"`` — default for article-bound queries. The main agent
-  receives a minimal payload (overview, anchors, attachments, history) and
-  calls read tools on demand.
-- ``"planner_first"`` — legacy fallback for complex scenarios that need the
-  planner to resolve context before answering (long threads).
+- ``"agent_loop_first"`` — the only live route. The main agent receives a
+  minimal payload (overview, anchors, attachments, history) and calls read
+  tools on demand.
+- ``"planner_first"`` — legacy route, no longer triggered by any live
+  condition. The code path is preserved for backward-compatible trace
+  serialization and future emergency fallback.
 
 Decision logic lives in :func:`resolve_planner_route`.
 
@@ -225,6 +233,22 @@ def has_dictionary_anchor_or_attachment(
     return False
 
 
+def has_long_history(
+    history_messages: list[dict[str, Any]],
+    *,
+    threshold: int = _LONG_HISTORY_THRESHOLD,
+) -> bool:
+    """Return True if history length exceeds the threshold.
+
+    Round 12: public API used by ``build_agent_loop_context`` to inject a
+    ``long_history_hint`` instead of triggering planner_first. The
+    structured history summary and recent-window truncation in
+    ``runtime_contract.py`` handle the actual compression — no planner
+    call needed.
+    """
+    return len(history_messages) > threshold
+
+
 def _has_planner_required_attachments(attachments: list[ReaderAskAttachment]) -> bool:
     """Return True if any attachment requires planner-level resolution.
 
@@ -251,37 +275,22 @@ def resolve_planner_route(
 ) -> PlannerRoute:
     """Determine the planner route for a given request.
 
-    Returns ``"agent_loop_first"`` by default. Returns ``"planner_first"``
-    when history exceeds ``_LONG_HISTORY_THRESHOLD`` messages.
+    Always returns ``"agent_loop_first"``. All former planner_first triggers
+    have been migrated:
 
-    Round 8: deictic-without-anchor no longer triggers planner_first. Instead,
-    the agent-loop-first path detects deictic expressions and injects a
-    clarification hint so the agent asks the user to select a specific location.
-    See :func:`has_deictic_without_anchor`.
+    - Round 8: deictic-without-anchor → clarification hint
+    - Round 9: cross-record intent → cross_record_intent_hint
+    - Round 10: external attachments → external_attachment_hint
+    - Round 11: dictionary anchor/attachment → dictionary_anchor_hint
+    - Round 12: long history → long_history_hint
 
-    Round 9: cross-record-toggle + keywords no longer triggers planner_first.
-    Instead, the agent-loop-first path detects cross-record intent and injects
-    a hint so the agent calls ``resolve_known_reference`` on demand.
-    See :func:`has_cross_record_intent`.
-
-    Round 10: explicit external attachments (record_ref / analysis_ref /
-    supplement_ref) no longer trigger planner_first. Instead, the agent-loop-
-    first path detects external attachments and injects a hint so the agent
-    calls ``load_explicit_attachment_context`` on demand.
-    See :func:`has_explicit_external_attachments`.
-
-    Round 11: dictionary anchor / dictionary attachment no longer triggers
-    planner_first. Instead, the agent-loop-first path detects dictionary
-    anchors/attachments and injects a ``dictionary_anchor_hint`` so the agent
-    answers based on article context and the explicit dictionary anchor
-    metadata. See :func:`has_dictionary_anchor_or_attachment`.
+    The ``"planner_first"`` route value is still a valid ``PlannerRoute``
+    literal for backward-compatible trace serialization, but no live
+    condition triggers it.
 
     The ``entry_action`` is no longer used as a whitelist gate — all entry
-    actions default to agent-loop-first unless one of the explicit fallback
-    conditions triggers.
+    actions default to agent-loop-first.
     """
-    if len(history_messages) > _LONG_HISTORY_THRESHOLD:
-        return "planner_first"
     return "agent_loop_first"
 
 

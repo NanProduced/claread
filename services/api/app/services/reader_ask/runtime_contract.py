@@ -165,6 +165,7 @@ class ReaderAskAnswerRuntimeInput:
     cross_record_intent_hint: str | None = None
     external_attachment_hint: str | None = None
     dictionary_anchor_hint: str | None = None
+    long_history_hint: str | None = None
 
 
 def _truncate_history_message(content: str | None, *, role: str, limit: int) -> str:
@@ -356,6 +357,7 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
         "cross_record_intent_hint": contract.cross_record_intent_hint,
         "external_attachment_hint": contract.external_attachment_hint,
         "dictionary_anchor_hint": contract.dictionary_anchor_hint,
+        "long_history_hint": contract.long_history_hint,
         "followup_hint": (
             contract.followup_hint
             if contract.followup_hint

@@ -265,7 +265,8 @@ class TestResolvePlannerRoute:
             == "agent_loop_first"
         )
 
-    def test_long_history_returns_planner_first(self) -> None:
+    def test_long_history_returns_agent_loop_first(self) -> None:
+        # Round 12: long history no longer triggers planner_first
         assert (
             planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
@@ -275,7 +276,7 @@ class TestResolvePlannerRoute:
                 cross_record_toggle=False,
                 latest_user_message="继续",
             )
-            == "planner_first"
+            == "agent_loop_first"
         )
 
     def test_short_history_returns_agent_loop_first(self) -> None:

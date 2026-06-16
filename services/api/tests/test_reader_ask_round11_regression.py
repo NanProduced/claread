@@ -5,7 +5,7 @@ These tests verify:
 2. has_dictionary_anchor_or_attachment() is a public API
 3. build_agent_loop_context sets dictionary_anchor_hint
 4. dictionary_anchor_hint flows to prompt payload
-5. Long history (>10) still triggers planner_first
+5. Long history (>10) now returns agent_loop_first (Round 12)
 6. Old dictionary tools are not exposed to the agent
 7. Tool registry invariants still hold
 """
@@ -69,8 +69,8 @@ class TestDictionaryRoutesToAgentLoopFirst:
             == "agent_loop_first"
         )
 
-    def test_dictionary_anchor_with_long_history_still_planner_first(self) -> None:
-        """Dictionary + long history: long history wins."""
+    def test_dictionary_anchor_with_long_history_agent_loop_first(self) -> None:
+        """Dictionary + long history: Round 12 — long history no longer triggers planner_first."""
         dict_anchor = ReaderAskAnchorRef(
             anchor_type="dictionary_entry", label="dict", dict_entry_id=1
         )
@@ -84,7 +84,7 @@ class TestDictionaryRoutesToAgentLoopFirst:
                 cross_record_toggle=False,
                 latest_user_message="这个词什么意思",
             )
-            == "planner_first"
+            == "agent_loop_first"
         )
 
 
@@ -367,14 +367,13 @@ class TestDictionaryAnchorHintInPayload:
 
 
 # ---------------------------------------------------------------------------
-# 5. Long history still triggers planner_first
-# ---------------------------------------------------------------------------
+# 5. Long history now returns agent_loop_first (Round 12)
 
 
-class TestLongHistoryFallbackPreserved:
-    """Verify that long history is the only remaining planner_first trigger."""
+class TestLongHistoryRoutesToAgentLoopFirst:
+    """Verify that long history no longer triggers planner_first (Round 12)."""
 
-    def test_long_history_triggers_planner_first(self) -> None:
+    def test_long_history_returns_agent_loop_first(self) -> None:
         history = [{"role": "user", "content_md": f"msg {i}"} for i in range(11)]
         route = planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
@@ -384,7 +383,7 @@ class TestLongHistoryFallbackPreserved:
             cross_record_toggle=False,
             latest_user_message="继续",
         )
-        assert route == "planner_first"
+        assert route == "agent_loop_first"
 
     def test_short_history_returns_agent_loop_first(self) -> None:
         history = [{"role": "user", "content_md": f"msg {i}"} for i in range(5)]

@@ -771,14 +771,15 @@ class TestLoadExplicitAttachmentContextAllowlist:
 
 
 class TestPlannerFirstFallbacksPreserved:
-    """Verify that long-history fallback is still intact.
+    """Verify that long-history fallback now routes to agent_loop_first.
 
     Round 11: dictionary anchor/attachment no longer triggers planner_first.
     Dictionary fallbacks have been migrated to agent_loop_first with a
     dictionary_anchor_hint (tested in Round 11 regression tests).
+    Round 12: long history no longer triggers planner_first either.
     """
 
-    def test_long_history_fallback(self) -> None:
+    def test_long_history_routes_agent_loop_first(self) -> None:
         history = [{"role": "user", "content_md": f"msg {i}"} for i in range(11)]
         route = planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
@@ -788,7 +789,7 @@ class TestPlannerFirstFallbacksPreserved:
             cross_record_toggle=False,
             latest_user_message="继续",
         )
-        assert route == "planner_first"
+        assert route == "agent_loop_first"
 
 
 # ---------------------------------------------------------------------------

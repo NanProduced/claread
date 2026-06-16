@@ -189,6 +189,7 @@ def build_agent_loop_context(
     entry_action: ReaderAskEntryAction,
     latest_user_message: str = "",
     cross_record_toggle: bool = False,
+    history_messages: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Build a minimal resolved_context_input for the agent loop.
 
@@ -215,13 +216,29 @@ def build_agent_loop_context(
     ``runtime_state.dictionary_anchor_hint`` so the agent answers based
     on article context and the explicit dictionary anchor metadata
     instead of requiring planner pre-resolution.
+
+    Round 12: detects long history and sets ``runtime_state.long_history_hint``
+    so the model knows older messages have been summarized. The structured
+    history summary and recent-window truncation in runtime_contract.py
+    handle the actual compression — no planner call needed.
     """
     from app.services.reader_ask.planner_route_policy import (
         has_cross_record_intent,
         has_deictic_without_anchor,
         has_dictionary_anchor_or_attachment,
         has_explicit_external_attachments,
+        has_long_history,
     )
+
+    # Round 12: detect long history and set hint.
+    if history_messages and has_long_history(history_messages):
+        runtime_state.long_history_hint = (
+            "对话历史较长。"
+            "history 会保留最近消息窗口；如果早期消息中有可提取的结构化状态，"
+            "history 还会包含 [History summary] 摘要。"
+            "如果用户提到早期对话内容，只能基于 payload 中实际存在的摘要和最近消息回答，"
+            "不要声称记得未在 payload 中出现的内容。"
+        )
 
     # Round 11: detect dictionary anchors/attachments and set hint.
     if has_dictionary_anchor_or_attachment(anchors, attachments):

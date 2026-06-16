@@ -109,7 +109,8 @@ class TestAgentLoopFirstRoutingDecision:
             latest_user_message="解释一下",
         ) == "agent_loop_first"
 
-    def test_long_history_uses_planner(self) -> None:
+    def test_long_history_uses_agent_loop_first(self) -> None:
+        """Round 12: long history no longer triggers planner_first."""
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(11),
@@ -117,7 +118,7 @@ class TestAgentLoopFirstRoutingDecision:
             anchors=[_anchor()],
             cross_record_toggle=False,
             latest_user_message="继续",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_cross_record_toggle_uses_agent_loop_first(self) -> None:
         # Round 9: cross-record toggle + keywords no longer triggers planner_first
@@ -651,9 +652,9 @@ class TestStreamThreadMessageAgentLoopFirst:
             mocks["planner_runtime"].resolve_semantic_planning.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_planner_first_path_calls_planner(self) -> None:
-        """When agent-loop-first path conditions are NOT met (e.g. long history),
-        ``resolve_semantic_planning`` must be called."""
+    async def test_planner_first_path_still_calls_planner_when_forced(self) -> None:
+        """When planner_first route is forced (not triggered by any live condition),
+        ``resolve_semantic_planning`` must still be called."""
         from app.services.reader_ask import service as service_svc
 
         user_id = uuid4()
@@ -663,11 +664,14 @@ class TestStreamThreadMessageAgentLoopFirst:
         model_option = _make_model_option()
 
         body = service_svc.ReaderAskMessageStreamRequest(
-            content="继续",  # long history triggers planner_first
+            content="继续",
             page_identity=ReaderAskPageIdentity(record_id=str(record_id)),
             attachments=[],
             entry_action="ask_about_this",
         )
+
+        # planner_first is no longer triggered by any live condition; this test
+        # validates the legacy code path still works
 
         # Build a mock planning result for the planner-first path
         mock_planning_snapshot = MagicMock()
