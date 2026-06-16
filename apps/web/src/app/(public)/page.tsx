@@ -5,6 +5,7 @@ import { ProductCoreFeatures } from "@/components/product-page/ProductCoreFeatur
 import { ProductPainPoints } from "@/components/product-page/ProductPainPoints";
 import { ProductReaderDemo } from "@/components/product-page/ProductReaderDemo";
 import { ProductFooter } from "@/components/product-page/ProductFooter";
+import { ProductUtilityBento } from "@/components/product-page/ProductUtilityBento";
 import { appReadRoute, homeRoute } from "@/lib/routes";
 import { appCtaForSession, getProjectedWebSession } from "@/services/bff/session";
 
@@ -25,6 +26,7 @@ export default async function HomePage() {
       <ProductPainPoints />
       <ProductCoreFeatures />
       <ProductReaderDemo />
+      <ProductUtilityBento />
 
       <section className="px-5 pb-20 pt-16 sm:px-6">
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-8 rounded-[2rem] border border-hairline bg-reader-paper p-8 sm:p-10 lg:flex-row lg:items-center">

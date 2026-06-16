@@ -1,330 +1,244 @@
 # Claread 产品页方向
 
-本文定义 Claread public product page 的正式方向。它约束 `/` 产品页的定位、模块顺序、文案原则、视觉原则和能力承诺边界；不定义具体组件实现。
+本文记录 Claread public landing page 当前冻结的页面骨架、叙事顺序、实现边界和后续优化原则。它描述当前 `/` 页面事实，不再作为早期方向探索稿使用。
 
-最后更新：2026-06-08
+最后更新：2026-06-16
 
-## 核心定位
+## 页面定位
 
-Claread 的中文名是 **透读**。产品页第一版优先做中文页面，面向有一定英语基础、希望真正读懂英文材料的中国用户。
+Claread 产品页面向有一定英语基础、希望真正读懂英文材料的中文用户。页面不把 Claread 讲成 AI chat、词典、翻译器或学习打卡工具，而是讲成一枚围绕原文工作的英文阅读镜头。
 
-对外核心表达：
+当前对外核心表达：
 
 ```text
 Claread 透读
-Read Deeply, Understand Clearly.
-透读英文文章，一句一句看清语法、结构和意思。
+透读英文文章。
+把词汇、语法、句子结构和译文贴回原文位置。
 ```
 
-品牌口径：
+页面需要完成三件事：
 
-- **中文名**: 透读。不止翻译，不止查词，而是把词、句、段、篇都读透。
-- **Name story**: `Cla = Clarify`。Claread 主动帮你把英文读懂、讲清楚。
-- **Slogan**: `Read Deeply, Understand Clearly`。英文保留，不翻译。
-- **产品中心**: 文章是入口，句子是记忆点，AI 是方法，不是界面中心。
+1. 让用户知道英文阅读真正卡在哪里。
+2. 证明 Claread 的解释贴着原文展开，不替代原文。
+3. 引导用户进入 Claread，开始自己的第一篇文章。
 
-## 页面目标
+## 当前页面骨架
 
-产品页需要完成三件事：
+当前 `/` 页面顺序以代码为准：
 
-1. 让冷用户理解“透读”是什么。
-2. 证明 Claread 能按阅读目标把英文讲清楚。
-3. 引导用户开始自己的第一篇文章，或先读一篇 Daily。
+1. `PublicSiteHeader`
+2. `ProductHero`
+3. `ProductPainPoints`
+4. `ProductCoreFeatures`
+5. `ProductReaderDemo`
+6. `ProductUtilityBento`
+7. Final CTA
+8. `ProductFooter`
 
-用户核心疑问：
+实现入口：
 
-- “透读”是什么意思？
-- 它和翻译、词典、通用 AI chat 有什么不同？
-- 它如何帮我读懂一句英文？
-- 日常阅读、考试阅读和专业文献阅读有什么不同？
-- 我不登录能不能先看看？
-- 读完后能留下什么？
+- `apps/web/src/app/(public)/page.tsx`
+- `apps/web/src/components/product-page/ProductHero.tsx`
+- `apps/web/src/components/product-page/ProductPainPoints.tsx`
+- `apps/web/src/components/product-page/TextDiagnosisPlate.tsx`
+- `apps/web/src/components/product-page/ProductCoreFeatures.tsx`
+- `apps/web/src/components/product-page/ProductReaderDemo.tsx`
+- `apps/web/src/components/product-page/GoalReaderCropPreview.tsx`
+- `apps/web/src/components/product-page/ProductUtilityBento.tsx`
+- `apps/web/src/lib/product-page/reader-goal-demo.ts`
 
-## 页面骨架
+## 叙事结构
 
 ### 1. Hero
 
-目的：建立品牌记忆和核心承诺。
+Hero 先建立 Claread 品牌和主行动入口，不在本轮冻结范围内重做。当前方向是明亮纸面、品牌可见、产品体验作为首屏信号。
 
-推荐内容：
+Hero 的职责：
 
-```text
-Claread 透读
+- 让 Claread 透读成为第一记忆点。
+- 把行动导向 `打开 Claread`。
+- 保持比后续说明区更强的产品现场感。
 
-Read Deeply,
-Understand Clearly.
+### 2. Pain Points: 常见阅读卡点
 
-透读英文文章，一句一句看清语法、结构和意思。
-不是替你跳过原文，而是帮你真正读懂它。
+当前痛点区使用 `TextDiagnosisPlate`，用编辑感大字 `Text` 做 typographic diagnosis。四个字母引出四类阅读卡点：
 
-[解读我的第一篇文章] [打开 Daily]
-```
+- `T / Terms`：词义离开语境。
+- `e / Edges`：结构边界断开。
+- `x / X-ray`：长句主干失焦。
+- `t / Translation`：译文替代阅读。
 
-视觉方向：可吸收品牌光圈的裁切和聚焦感，但不要让装饰压过阅读主张。
+这一段的作用是诊断，不是功能列表。它说明用户卡住通常不是缺一个中文翻译，而是词义、边界、主干和译文依赖混在一起。它为下一段“四类输出标注”做铺垫。
 
-### 2. What Is 透读
+交互原则：
 
-目的：在进入 Demo 前解释新品类，降低理解成本。
+- 桌面端以大字母、编辑线和分支 note 展开。
+- 移动端降级为可切换诊断卡。
+- 交互只用于理解四类痛点，不承诺真实 Reader 中存在完全相同的 UI。
 
-推荐表达：
+### 3. Core Features: 四类输出标注
 
-```text
-透读不是把英文交给 AI 总结。
-透读是围绕原文，把词汇、语法、句子结构和自然理解一层一层展开。
-```
+当前核心能力区使用 2x2 editorial grid，展示四类贴着原文出现的输出：
 
-可展开为三个轻量层级：
+- `Vocabulary`：高阶词汇标注。
+- `Grammar`：情境语法旁注。
+- `Structure`：句级透视拆解。
+- `Translation`：句间双语对照。
 
-- 看清词汇：不是孤立释义，而是语境中的意思。
-- 拆开句子：先抓主干，再看修饰关系。
-- 理解篇章：把句子放回段落和文章里。
+这一段是 Claread 的主要能力说明，不再另做普通 feature card grid。每一格都应该像一小段 Reader 工作现场，而不是营销插图。
 
-### 3. How It Works
+约束：
 
-目的：说明从文章到理解的基本路径。
+- 词汇、语法、结构、译文必须锚定原文。
+- `grammar_note` 和 `sentence_analysis` 是能力差异的重点。
+- 不展示 chat bubble。
+- 不暗示每篇文章一定生成所有标注。
+- 不引入未定稿的 Grammar X-Ray 命名。
 
-推荐流程：
+### 4. Goal-Based Reader Demo
 
-```text
-放入英文文章 -> 选择阅读目标 -> 锚定原文句子 -> 生成分层标注 -> 在 Reader 中展开理解
-```
+当前 Demo 已改为页面级 sticky scroll sequence。滚动到该 block 后，整屏稳定，左侧文字 rail 随页面滚动切换阅读目标和 variant，右侧 preview 稳定展示对应解析样张。
 
-页面展示可压缩为四步：
+数据结构在 `apps/web/src/lib/product-page/reader-goal-demo.ts`：
 
-- 放入文章：从自己的英文材料或 Daily 开始。
-- 选择目标：日常阅读、考试阅读或 Academic。
-- 围绕原句标注：词汇、短语、语法、句子拆解、术语或逻辑关系都回到原文锚点。
-- 展开并沉淀：在 Reader 中查看解释，留下高亮、笔记和生词。
+- `daily_reading`
+  - `beginner_reading`
+  - `intensive_reading`
+- `exam`
+  - `cet`
+  - `kaoyan`
+  - `ielts_toefl`
+- `academic`
+  - `academic_general`
+  - 当前标记为 Beta
 
-每一步都围绕文章和句子，不围绕工具按钮。不要把 workflow 讲成“AI 先总结文章”，也不要把阅读目标讲成普通筛选标签。
+右侧 `GoalReaderCropPreview` 当前采用降级后的展示策略：
 
-### 4. Four Layers Of Understanding
+- Preview 卡片内只放一段英文原文和中文译文。
+- 文中高亮随 variant 切换。
+- `grammar_note` 以浮动 note 的方式贴在 preview 表面或边缘。
+- 不展示 `sentence_analysis` chunk，不展示 vocabulary 词卡，不做真实 Reader 长页面。
 
-目的：把能力从功能名翻译成理解结果。
-
-推荐四层：
-
-- 词与短语：语境义、搭配、考试高频词或学术术语。
-- 语法与结构：从句、非谓语、修饰关系、长难句主干。
-- 句子理解：自然译文、句子拆解、解释性改写。
-- 篇章逻辑：段落关系、论证功能、作者意图或学术逻辑。
-
-不同 `reading_goal` 会改变每一层的解释重点：日常阅读更顺读，考试阅读更关注考点、定位和同义替换，Academic 更关注术语、限定条件和论证关系。
-
-不要做普通 SaaS feature card grid。可以用一张文章剖面或四层阅读标注来表达。不要暗示每篇文章都会完整输出四层内容；标注应按文本真实需要出现。
-
-### 5. Goal-Based Reader Demo
-
-目的：展示 Claread 的第一记忆点，并证明“同一套 Reader，可按阅读目标调整解析策略”。
-
-Demo 使用三段手写英文文章，分别对应三种 `reading_goal`。内容可服务产品说明，但 mock 数据必须贴近真实 Reader 数据结构和渲染方式。
-
-- 日常阅读：用自然英文介绍 Claread，展示轻量、顺读、低打扰的解释。
-- 考试阅读：承接上一段，写备考用户面对长难句、指代、转折、信息定位和选项判断时的痛点，展示考试策略化解析。
-- Academic：用论文或专业说明文口吻介绍 Claread 的解析工作流，展示术语、限定、因果链、逻辑关系和解释性改写。
-
-推荐交互：
-
-- 顶部切换 `日常阅读` / `考试阅读` / `Academic`。
-- `日常阅读` 默认可用 `intermediate_reading`；`考试阅读` 默认用 `cet`，并尽量支持全部考试 variant 切换；`Academic` 只展示 `academic_general`。
-- 左侧展示对应英文段落，保留文章阅读感。
-- 右侧或句后展开 Reader 解析面板。
-- 日常 / 考试输出可展示 `词汇短语`、`语境义`、`语法旁注`、`句子拆解`、`译文`。
-- Academic 输出可展示 `术语`、`逻辑`、`解释性改写`、`研究阅读级译文`。
-
-要求：
-
-- 这是产品页 mock，不接真实 workflow。
-- mock 数据应优先贴近 Web 的 Reader scene / ReaderMockVm 视图，而不是只准备视觉文案。
-- mock 数据必须按真实 Reader 能力准备，不展示当前产品明确做不到的能力，也不承诺每种文本一定生成所有标注。
-- 解释层像编辑旁注从句子下方展开。
-- 不做 chat bubble。
-- 不命名或承诺 Grammar X-Ray。
-- 不把 Academic 讲成“更高级语法模式”；它是术语、逻辑和研究阅读理解模式。
-- 首版可用高拟真静态 Demo 加少量 hover / click。
-- 可以学习 Langik 产品页的表达方法：核心能力不用静态截图或普通 feature card，而是用可交互产品 mock 展示真实工作现场。但不要复制其暗色电子书气质，Claread 仍应保持暖纸、编辑台和原文透读气质。
-
-### 6. Not Another AI Chat
-
-目的：处理误解和竞品对比。
-
-推荐表达：
+这个 Demo 的目的不是复刻 Reader UI，而是证明同一类文章在不同阅读目标下，讲解重点会变。差异化载体优先级是：
 
 ```text
-Claread is not a study app.
-Claread is not a chat with your articles.
-Claread is not a vocab list with streaks.
-Claread is not a read-it-later inbox.
+grammar_note > sentence_analysis > vocabulary > translation
 ```
 
-中文收束：
+当前冻结版本只保留 `grammar_note`，因为它在有限空间里最能展示策略差异。
+
+### 5. Reading Tools Bento
+
+当前二级功能区使用 Magic UI bento grid 形态，组件为 `ProductUtilityBento`，底层通用组件为 `apps/web/src/components/ui/bento-grid.tsx`。
+
+四个格子：
+
+- `Ask Claread`：围绕当前句子的指代、语法和含义追问，答案回到原文坐标。
+- `点词查询`：词义从原句里抬起，不离开阅读位置。
+- `高亮 / 笔记`：把自己的判断贴回句子边缘。
+- `生词本`：从文章中留下的词片自动归档，复习带着原文来源。
+
+视觉策略：
+
+- 使用 Light Vercel Grid 风格：浅纸面、细分隔、少量 Claread 语义色。
+- 插画不再使用高保真真实页面，而是意象化线稿或轻量 PNG 基底。
+- `Ask Claread` 和 `生词本` 使用 `apps/web/public/product/utility-bento/` 下的 PNG 基底，运行时通过 `next/image` 加载，再叠加少量 SVG hover 动效。
+- hover 反馈只发生在插画内部，不改变整张卡片材质。
+
+这一段只承接二级工具，不应压过前面的核心解析能力。
+
+### 6. Final CTA
+
+Final CTA 当前是轻量纸面行动区：
 
 ```text
-Claread 是一个阅读器。它围绕文章本身工作，不抢文章的位置。
+选一篇英文，开始透读。
+从公开示例开始，或进入工作区解读自己的第一篇文章。
 ```
 
-这一段不要写成攻击竞品，也不要变成长篇竞品分析。
+主按钮沿用 `打开 Claread`，根据 session 状态指向读文章入口或登录相关入口。
 
-### 7. Daily Preview
+### 7. Footer
 
-目的：给未登录用户低门槛体验入口。
-
-推荐表达：
-
-```text
-先读一篇公开精读，再决定是否把自己的英文文章交给 Claread。
-```
-
-可展示 Daily 的真实阅读气质：公开文章、词汇 / 句子标注、低打扰阅读。
-
-展示方式应优先使用小型可交互 Reader mock，而不是纯文字介绍或静态截图。
-
-### 8. Reading Assets
-
-目的：说明阅读不是一次性会话，会沉淀为个人资产。
-
-当前可承诺：
-
-- 高亮。
-- 笔记。
-- 生词。
-- 阅读记录。
-- 文章收藏。
-
-暂不承诺导出、分享页、Notion 同步或 PDF / Markdown / 长图。
-
-展示方式可以延续产品 mock 语言：从一段原文锚点引出高亮、笔记、生词和阅读记录，让资产看起来来自一次真实阅读，而不是四张孤立功能卡。
-
-### 9. FAQ / Objections
-
-目的：回答用户关键顾虑。
-
-第一版建议问题：
-
-- Claread 适合什么英语水平？
-- 它和翻译软件有什么不同？
-- 它和通用 AI 对话工具有什么不同？
-- 不登录可以先体验吗？
-- Ask Claread 是做什么的？
-- 解释一定准确吗？如果我觉得不对怎么办？
-
-FAQ 应短、具体、克制，不写营销口号。
-
-### 10. Final CTA + Footer
-
-目的：收束行动。
-
-主 CTA：
-
-```text
-解读我的第一篇文章
-```
-
-次 CTA：
-
-```text
-打开 Daily
-```
-
-Footer 链接建议：
-
-- Daily
-- 关于
-- 帮助
-- 隐私
-- 反馈
-
-## 语言原则
-
-第一版产品页使用中文为主。英文只保留在：
-
-- `Claread`
-- `Read Deeply, Understand Clearly`
-- `Ask Claread`
-- `Daily`
-
-文案应优先使用：
-
-- 透读
-- 英文文章
-- 原文
-- 句子
-- 语法
-- 结构
-- 自然理解
-- 高亮、笔记、生词
-
-避免：
-
-- AI-powered
-- supercharge / transform / unlock
-- productivity / 10x
-- Get started / Sign up
-- 泛泛的“提升英语能力”
-
-## 视觉原则
-
-产品页继承 Claread Web 的编辑台母语言。
-
-应采用：
-
-- Paper / Light 暖纸工作面。
-- Source Serif 4 + Inter / 中文系统字体。
-- 真实或高拟真的 Reader surface。
-- 1px hairline、清楚 baseline、克制间距。
-- 句后解释像旁注展开。
-- Lens Blue 只用于焦点和少量品牌记忆点。
-- 品牌光圈用于“聚焦、透读、展开”，不平铺装饰。
-
-避免：
-
-- 紫色 AI dashboard。
-- 大面积深色 SaaS hero。
-- 玻璃、glow、渐变球、抽象 3D。
-- customer logo 墙、pricing、metrics。
-- chatbox 中心。
-- 应试培训 App 气质。
-- 过度 feature card grid。
-
-现代感应来自排版精度、真实产品现场、克制动效和信息层级。
+Footer 当前包含品牌说明、法律/项目链接和 `ProductStickerWall`。这一段更偏品牌收束和视觉记忆，不承担新的功能说明。
 
 ## 能力边界
 
-可以承诺：
+当前产品页可以承诺：
 
-- 粘贴英文文章进入透读。
-- 句子层面的语法、结构和意思解释。
-- 原文、译文、词汇、短语和语境标注。
-- 选词查词。
-- 高亮、笔记、生词、阅读记录、收藏。
-- Daily 公开精读。
-- Ask Claread 作为当前文章上下文内的辅助追问。
+- 粘贴或打开英文文章进入 Claread。
+- 围绕原文句子展开词汇、语法、结构和译文。
+- 按阅读目标调整解释重点。
+- 点词查询。
+- Ask Claread 作为文章上下文内追问。
+- 高亮、笔记、生词本。
+- Daily / 公开示例入口。
 
-不应承诺：
+当前产品页不应承诺：
 
-- Grammar X-Ray。
-- PDF / Markdown / 长图导出。
-- 真实分享页产物。
-- 移动 Web 完整适配。
-- 跨文章知识库问答。
-- 多文档工作台。
+- PDF、Markdown、长图或 Notion 导出。
+- 多文档知识库问答。
 - 完整 read-it-later inbox。
-- 打卡、排行榜、学习小组、连续学习天数。
-- 与通用 AI chatbox 同级的全能 agent。
+- 学习打卡、排行榜、社区小组。
+- 全能 agent 工作台。
+- 每篇文章都固定输出所有标注。
+- Academic 策略已经完全定稿。
+
+## 视觉原则
+
+当前 landing 页可以继续做 UI polish，但不应推翻已经冻结的叙事骨架。
+
+保留：
+
+- 明亮纸面背景，只作用于公开 landing 页面，不改全局。
+- Claread 的 lucid / editorial / tactile 气质。
+- 原文、译文、旁注、编辑线、纸面样张、阅读镜头这些品牌语汇。
+- Lens Blue 作为少量品牌焦点，不大面积铺色。
+- Core Features 的四格结构。
+- Goal-Based Reader Demo 的页面级 sticky scroll sequence。
+- Reading Tools 的 bento grid 位置和四个功能。
+
+后续可优化：
+
+- 各 section 的背景层次和过渡。
+- Core Features 的细节动效和排版精度。
+- Goal-Based Reader Demo 的 preview 样张、浮动 note 和滚动节奏。
+- Reading Tools bento 的插画比例、材质融合和 hover 反馈。
+- Footer 的文案、链接和视觉密度。
+- 移动端降级体验。
+
+避免：
+
+- 把页面改回普通 SaaS feature card grid。
+- 新增 customer logo、pricing、增长数字或虚构评价。
+- 把 AI chat 放到核心叙事中心。
+- 过度使用高保真 Reader 截图，让页面变成截图堆叠。
+- 大面积紫色 AI SaaS 风格、玻璃拟态、渐变球或 3D 装饰。
 
 ## 实现边界
 
-第一版页面优先验证产品叙事和视觉方向：
+当前 landing 页中的 demo 数据是手写静态数据，不接真实 workflow。它必须贴近真实产品能力和 prompt policy，但不作为后端 schema、API 或真实解析结果的事实来源。
 
-- Demo 内容可手写，确保准确、克制、好读。
-- 不接真实解析 API。
-- 不引入未来功能命名。
-- 不编造用户评价、客户 logo 或增长数字。
-- 不把页面做成长篇营销站。
+新增或调整 demo 时应遵守：
 
-## 文档关系
+- mock 文案必须准确、克制、好读。
+- 解析差异必须来自 reading goal / variant 的策略差异。
+- 展示载体优先使用 `grammar_note`。
+- 只展示当前产品合理可达的能力。
+- 不用 mock 数据绕过真实 Reader 的长期架构。
 
-- `docs/product/competitive-landscape.md`: 竞品和差异化。
-- `docs/product/design-context.md`: 产品气质。
-- `apps/web/DESIGN.md`: Web 视觉系统。
-- `docs/product/current-state.md`: 当前真实能力边界。
+## 冻结说明
+
+本次冻结锁定的是页面流程和模块骨架，不锁定最终 UI 细节。后续工作可以继续打磨视觉，但默认不再重排模块顺序，也不再恢复旧文档里的 What Is、How It Works、Not Another AI Chat、Daily Preview、Reading Assets、FAQ 等独立章节。
+
+如果未来确实需要恢复这些内容，应先重新评审页面信息密度和转化目标，再作为新一轮产品页改版处理。
+
+## 相关文档
+
+- `docs/product/overview.md`
+- `docs/product/current-state.md`
+- `docs/product/design-context.md`
+- `docs/product/competitive-landscape.md`
+- `docs/product/ask-claread.md`
+- `apps/web/DESIGN.md`
+- `apps/web/docs/design/README.md`
