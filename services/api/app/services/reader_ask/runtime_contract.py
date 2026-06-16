@@ -164,6 +164,7 @@ class ReaderAskAnswerRuntimeInput:
     followup_hint: str | None = None
     cross_record_intent_hint: str | None = None
     external_attachment_hint: str | None = None
+    dictionary_anchor_hint: str | None = None
 
 
 def _truncate_history_message(content: str | None, *, role: str, limit: int) -> str:
@@ -231,6 +232,11 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             "selected_text": utils.truncate_text(anchor.selected_text, 200),
             "note": utils.truncate_text(anchor.note, 180) or None,
             "entry_type": anchor.entry_type,
+            # Round 11 fix: dictionary anchor key fields so the agent can
+            # identify the queried word/entry without old dictionary tools.
+            "dict_entry_id": anchor.dict_entry_id,
+            "query": anchor.query,
+            "payload_json": anchor.payload_json if anchor.payload_json else None,
         }
         for anchor in contract.anchors
     ]
@@ -349,6 +355,7 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
         "cross_record_context_allowed": contract.cross_record_context_allowed,
         "cross_record_intent_hint": contract.cross_record_intent_hint,
         "external_attachment_hint": contract.external_attachment_hint,
+        "dictionary_anchor_hint": contract.dictionary_anchor_hint,
         "followup_hint": (
             contract.followup_hint
             if contract.followup_hint

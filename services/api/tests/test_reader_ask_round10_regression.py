@@ -771,38 +771,12 @@ class TestLoadExplicitAttachmentContextAllowlist:
 
 
 class TestPlannerFirstFallbacksPreserved:
-    """Verify that dictionary and long-history fallbacks are still intact."""
+    """Verify that long-history fallback is still intact.
 
-    def test_dictionary_anchor_fallback(self) -> None:
-        dict_anchor = ReaderAskAnchorRef(
-            anchor_type="dictionary_entry", label="dict", dict_entry_id=1
-        )
-        route = planner_route_policy.resolve_planner_route(
-            entry_action="ask_about_this",
-            history_messages=[],
-            attachments=[],
-            anchors=[dict_anchor],
-            cross_record_toggle=False,
-            latest_user_message="这个词什么意思",
-        )
-        assert route == "planner_first"
-
-    def test_dictionary_attachment_fallback(self) -> None:
-        dict_att = ReaderAskAttachment(
-            kind="text_selection",
-            subtype="dictionary_entry",
-            label="dict",
-            metadata=ReaderAskAttachmentMetadata(source_surface="reader_page"),
-        )
-        route = planner_route_policy.resolve_planner_route(
-            entry_action="ask_about_this",
-            history_messages=[],
-            attachments=[dict_att],
-            anchors=[],
-            cross_record_toggle=False,
-            latest_user_message="这个词什么意思",
-        )
-        assert route == "planner_first"
+    Round 11: dictionary anchor/attachment no longer triggers planner_first.
+    Dictionary fallbacks have been migrated to agent_loop_first with a
+    dictionary_anchor_hint (tested in Round 11 regression tests).
+    """
 
     def test_long_history_fallback(self) -> None:
         history = [{"role": "user", "content_md": f"msg {i}"} for i in range(11)]

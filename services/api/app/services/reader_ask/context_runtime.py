@@ -210,12 +210,31 @@ def build_agent_loop_context(
     analysis_ref / supplement_ref) and sets
     ``runtime_state.external_attachment_hint`` so the agent calls
     ``load_explicit_attachment_context`` on demand.
+
+    Round 11: detects dictionary anchors/attachments and sets
+    ``runtime_state.dictionary_anchor_hint`` so the agent answers based
+    on article context and the explicit dictionary anchor metadata
+    instead of requiring planner pre-resolution.
     """
     from app.services.reader_ask.planner_route_policy import (
         has_cross_record_intent,
         has_deictic_without_anchor,
+        has_dictionary_anchor_or_attachment,
         has_explicit_external_attachments,
     )
+
+    # Round 11: detect dictionary anchors/attachments and set hint.
+    if has_dictionary_anchor_or_attachment(anchors, attachments):
+        runtime_state.dictionary_anchor_hint = (
+            "用户查询了词典条目。"
+            "请基于当前文章语境和 canonical_context.anchors 中的 dictionary_entry 锚点信息"
+            "（dict_entry_id / query / payload_json）回答词义/用法问题；"
+            "如果 anchors 为空但 canonical_context.attachments 中有 subtype=dictionary_entry 的附件，"
+            "则从该附件的 label / selected_text / metadata 获取被查词信息。"
+            "优先用你的语言能力解释该词在当前语境中的含义和用法；"
+            "如果需要更精确的释义，引导用户打开 reader 右侧的词典卡片查看。"
+            "不要调用任何词典类工具——这些工具已不在 agent 可见集合里。"
+        )
 
     # Round 10: detect external attachments and set hint.
     if has_explicit_external_attachments(

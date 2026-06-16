@@ -3385,6 +3385,7 @@ async def stream_thread_message(
                 followup_hint=runtime_state.deictic_clarification_hint,
                 cross_record_intent_hint=runtime_state.cross_record_intent_hint,
                 external_attachment_hint=runtime_state.external_attachment_hint,
+                dictionary_anchor_hint=runtime_state.dictionary_anchor_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
@@ -4605,6 +4606,7 @@ async def retry_thread_message(
                 followup_hint=runtime_state.deictic_clarification_hint,
                 cross_record_intent_hint=runtime_state.cross_record_intent_hint,
                 external_attachment_hint=runtime_state.external_attachment_hint,
+                dictionary_anchor_hint=runtime_state.dictionary_anchor_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )

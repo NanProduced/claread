@@ -97,6 +97,12 @@ class ReaderAskRuntimeState:
     # the agent-loop-first path injects this hint so the agent calls
     # load_explicit_attachment_context on demand.
     external_attachment_hint: str | None = None
+    # Round 11 — dictionary anchor hint. When the user has a dictionary
+    # anchor or dictionary attachment, the agent-loop-first path injects
+    # this hint so the agent answers based on article context and the
+    # explicit dictionary anchor metadata instead of requiring planner
+    # pre-resolution.
+    dictionary_anchor_hint: str | None = None
     # Round 6 — observability: latency tracking.
     first_token_at: str | None = None  # ISO 8601, first text delta time
     run_started_at: str | None = None  # ISO 8601, run entry time

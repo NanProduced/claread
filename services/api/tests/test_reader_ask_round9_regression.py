@@ -374,7 +374,8 @@ class TestPlannerFirstFallbacksPreserved:
         )
         assert route == "agent_loop_first"
 
-    def test_dictionary_anchor_fallback(self) -> None:
+    def test_dictionary_anchor_routes_agent_loop_first(self) -> None:
+        """Round 11: dictionary anchor no longer triggers planner_first."""
         dict_anchor = ReaderAskAnchorRef(
             anchor_type="dictionary_entry", label="dict", dict_entry_id=1
         )
@@ -386,9 +387,10 @@ class TestPlannerFirstFallbacksPreserved:
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
         )
-        assert route == "planner_first"
+        assert route == "agent_loop_first"
 
-    def test_dictionary_attachment_fallback(self) -> None:
+    def test_dictionary_attachment_routes_agent_loop_first(self) -> None:
+        """Round 11: dictionary attachment no longer triggers planner_first."""
         dict_att = ReaderAskAttachment(
             kind="text_selection",
             subtype="dictionary_entry",
@@ -403,7 +405,7 @@ class TestPlannerFirstFallbacksPreserved:
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
         )
-        assert route == "planner_first"
+        assert route == "agent_loop_first"
 
     def test_long_history_fallback(self) -> None:
         history = [{"role": "user", "content_md": f"msg {i}"} for i in range(11)]

@@ -228,22 +228,18 @@ class TestPreservedCodeStaysAlive:
         assert callable(resolve_planner_route)
 
     def test_planner_first_route_value_still_valid(self) -> None:
-        """planner_first is still a valid route value for dictionary/long-history fallbacks."""
+        """planner_first is still a valid route value for long-history fallbacks."""
         from app.services.reader_ask.planner_route_policy import resolve_planner_route
 
-        # Dictionary anchor → planner_first (external attachments migrated in Round 10)
-        from app.schemas.reader_ask import ReaderAskAnchorRef
-
-        dict_anchor = ReaderAskAnchorRef(
-            anchor_type="dictionary_entry", label="dict", dict_entry_id=1
-        )
+        # Long history → planner_first (dictionary migrated in Round 11)
+        history = [{"role": "user", "content_md": f"msg {i}"} for i in range(11)]
         route = resolve_planner_route(
             entry_action="ask_about_this",
-            history_messages=[],
+            history_messages=history,
             attachments=[],
-            anchors=[dict_anchor],
+            anchors=[],
             cross_record_toggle=False,
-            latest_user_message="这个词什么意思",
+            latest_user_message="继续",
         )
         assert route == "planner_first"
 

@@ -20,18 +20,23 @@ agent_loop_first. The agent-loop-first path detects external attachments,
 injects a hint, and the agent calls load_explicit_attachment_context on
 demand instead of requiring planner pre-resolution.
 
+Round 11 migrates the dictionary anchor / dictionary attachment fallback
+from planner_first to agent_loop_first. The agent-loop-first path detects
+dictionary anchors/attachments, injects a dictionary_anchor_hint, and the
+agent answers based on article context and the explicit dictionary anchor
+metadata instead of requiring planner pre-resolution.
+
 Route values:
 
 - ``"agent_loop_first"`` — default for article-bound queries. The main agent
   receives a minimal payload (overview, anchors, attachments, history) and
   calls read tools on demand.
 - ``"planner_first"`` — legacy fallback for complex scenarios that need the
-  planner to resolve context before answering (dictionary anchors, long
-  threads).
+  planner to resolve context before answering (long threads).
 
 Decision logic lives in :func:`resolve_planner_route`.
 
-See ``docs/tmp/ask-claread/TMP-ask-claread-agent-loop-refactor-task-tracker-2026-06-13.md``
+See ``docs/tmp/ask-claread/TMP-ask-claread-agent-loop-design-2026-06-12.md``
 §Round 3 for the design rationale.
 """
 
@@ -199,14 +204,17 @@ def has_explicit_external_attachments(
     return False
 
 
-def _has_dictionary_anchor_or_attachment(
+def has_dictionary_anchor_or_attachment(
     anchors: list[ReaderAskAnchorRef],
     attachments: list[ReaderAskAttachment],
 ) -> bool:
     """Return True if any anchor is a dictionary_entry or any attachment
     carries a dictionary-related subtype.
 
-    Dictionary lookups need the planner to decide retrieval strategy.
+    Round 11: public API used by ``build_agent_loop_context`` to inject a
+    ``dictionary_anchor_hint`` instead of triggering planner_first. The
+    agent answers based on article context and the explicit dictionary
+    anchor metadata.
     """
     for anchor in anchors:
         if anchor.anchor_type == "dictionary_entry":
@@ -244,10 +252,7 @@ def resolve_planner_route(
     """Determine the planner route for a given request.
 
     Returns ``"agent_loop_first"`` by default. Returns ``"planner_first"``
-    when any of the following conditions hold:
-
-    - Has a dictionary anchor or dictionary attachment.
-    - History exceeds ``_LONG_HISTORY_THRESHOLD`` messages.
+    when history exceeds ``_LONG_HISTORY_THRESHOLD`` messages.
 
     Round 8: deictic-without-anchor no longer triggers planner_first. Instead,
     the agent-loop-first path detects deictic expressions and injects a
@@ -265,12 +270,16 @@ def resolve_planner_route(
     calls ``load_explicit_attachment_context`` on demand.
     See :func:`has_explicit_external_attachments`.
 
+    Round 11: dictionary anchor / dictionary attachment no longer triggers
+    planner_first. Instead, the agent-loop-first path detects dictionary
+    anchors/attachments and injects a ``dictionary_anchor_hint`` so the agent
+    answers based on article context and the explicit dictionary anchor
+    metadata. See :func:`has_dictionary_anchor_or_attachment`.
+
     The ``entry_action`` is no longer used as a whitelist gate — all entry
     actions default to agent-loop-first unless one of the explicit fallback
     conditions triggers.
     """
-    if _has_dictionary_anchor_or_attachment(anchors, attachments):
-        return "planner_first"
     if len(history_messages) > _LONG_HISTORY_THRESHOLD:
         return "planner_first"
     return "agent_loop_first"

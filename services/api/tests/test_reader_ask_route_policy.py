@@ -168,7 +168,8 @@ class TestResolvePlannerRoute:
             == "agent_loop_first"
         )
 
-    def test_dictionary_anchor_returns_planner_first(self) -> None:
+    def test_dictionary_anchor_returns_agent_loop_first(self) -> None:
+        # Round 11: dictionary anchor no longer triggers planner_first
         assert (
             planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
@@ -178,10 +179,11 @@ class TestResolvePlannerRoute:
                 cross_record_toggle=False,
                 latest_user_message="这个词什么意思",
             )
-            == "planner_first"
+            == "agent_loop_first"
         )
 
-    def test_dictionary_attachment_returns_planner_first(self) -> None:
+    def test_dictionary_attachment_returns_agent_loop_first(self) -> None:
+        # Round 11: dictionary attachment no longer triggers planner_first
         assert (
             planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
@@ -191,7 +193,7 @@ class TestResolvePlannerRoute:
                 cross_record_toggle=False,
                 latest_user_message="这个词什么意思",
             )
-            == "planner_first"
+            == "agent_loop_first"
         )
 
     def test_deictic_without_anchor_returns_agent_loop_first(self) -> None:

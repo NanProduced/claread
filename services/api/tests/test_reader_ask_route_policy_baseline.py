@@ -238,7 +238,8 @@ class TestResolvePlannerRoute:
             latest_user_message="这个词什么意思",
         ) == "agent_loop_first"
 
-    def test_dictionary_anchor_not_eligible(self) -> None:
+    def test_dictionary_anchor_agent_loop_first(self) -> None:
+        # Round 11: dictionary anchor no longer triggers planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
@@ -246,7 +247,7 @@ class TestResolvePlannerRoute:
             anchors=[_dict_anchor()],
             cross_record_toggle=False,
             latest_user_message="这个词什么意思",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_deictic_without_anchor_not_eligible(self) -> None:
         # Round 8: deictic without anchor no longer triggers planner_first
@@ -315,28 +316,28 @@ class TestHasDeicticWithoutAnchor:
 
 class TestHasDictionaryAnchorOrAttachment:
     def test_dictionary_anchor(self) -> None:
-        assert planner_route_policy._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy.has_dictionary_anchor_or_attachment(
             [_dict_anchor()], []
         ) is True
 
     def test_sentence_anchor_not_dictionary(self) -> None:
-        assert planner_route_policy._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy.has_dictionary_anchor_or_attachment(
             [_anchor("sentence")], []
         ) is False
 
     def test_no_anchors_no_attachments(self) -> None:
-        assert planner_route_policy._has_dictionary_anchor_or_attachment([], []) is False
+        assert planner_route_policy.has_dictionary_anchor_or_attachment([], []) is False
 
     def test_dictionary_attachment_subtype(self) -> None:
         # The helper checks both kind and subtype defensively for
         # dictionary_entry, even though it is not a valid attachment kind.
         # Test via subtype since dictionary_entry is not a valid kind.
-        assert planner_route_policy._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy.has_dictionary_anchor_or_attachment(
             [], [_attachment("text_selection", "dictionary_entry")]
         ) is True
 
     def test_non_dictionary_attachment_not_flagged(self) -> None:
-        assert planner_route_policy._has_dictionary_anchor_or_attachment(
+        assert planner_route_policy.has_dictionary_anchor_or_attachment(
             [], [_attachment("text_selection", "highlight")]
         ) is False
 
