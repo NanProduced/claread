@@ -87,7 +87,8 @@ class TestAgentLoopFirstRoutingDecision:
             latest_user_message="解释这句",
         ) == "agent_loop_first"
 
-    def test_cross_record_keyword_uses_planner(self) -> None:
+    def test_cross_record_keyword_uses_agent_loop_first(self) -> None:
+        # Round 9: cross-record toggle + keywords no longer triggers planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
@@ -95,7 +96,7 @@ class TestAgentLoopFirstRoutingDecision:
             anchors=[_anchor()],
             cross_record_toggle=True,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_record_ref_attachment_uses_planner(self) -> None:
         assert planner_route_policy.resolve_planner_route(
@@ -117,7 +118,8 @@ class TestAgentLoopFirstRoutingDecision:
             latest_user_message="继续",
         ) == "planner_first"
 
-    def test_cross_record_toggle_uses_planner(self) -> None:
+    def test_cross_record_toggle_uses_agent_loop_first(self) -> None:
+        # Round 9: cross-record toggle + keywords no longer triggers planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
@@ -125,7 +127,7 @@ class TestAgentLoopFirstRoutingDecision:
             anchors=[_anchor()],
             cross_record_toggle=True,
             latest_user_message="和另一篇有什么不同",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_dictionary_anchor_uses_planner(self) -> None:
         assert planner_route_policy.resolve_planner_route(

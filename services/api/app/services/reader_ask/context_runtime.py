@@ -188,6 +188,7 @@ def build_agent_loop_context(
     page_identity: Any,
     entry_action: ReaderAskEntryAction,
     latest_user_message: str = "",
+    cross_record_toggle: bool = False,
 ) -> Any:
     """Build a minimal resolved_context_input for the agent loop.
 
@@ -200,7 +201,20 @@ def build_agent_loop_context(
     Round 8: detects deictic-without-anchor and sets
     ``runtime_state.deictic_clarification_hint`` so the service layer can
     inject a clarification hint into the prompt payload.
+
+    Round 9: detects cross-record intent (toggle + keywords) and sets
+    ``runtime_state.cross_record_intent_hint`` so the agent calls
+    ``resolve_known_reference`` on demand.
     """
+    from app.services.reader_ask.planner_route_policy import has_cross_record_intent
+
+    # Round 9: detect cross-record intent and set hint.
+    if has_cross_record_intent(cross_record_toggle, latest_user_message):
+        runtime_state.cross_record_intent_hint = (
+            "用户表达了跨文章意图（如'另一篇''之前那篇'）且已开启跨文章功能。"
+            "请优先调用 resolve_known_reference(query, top_k=5) 查找相关文章。"
+        )
+
     from app.services.reader_ask.planner_route_policy import has_deictic_without_anchor
 
     # Round 8: detect deictic without anchor and set clarification hint.

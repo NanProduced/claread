@@ -162,6 +162,7 @@ class ReaderAskAnswerRuntimeInput:
     max_history_messages: int
     max_message_text: int
     followup_hint: str | None = None
+    cross_record_intent_hint: str | None = None
 
 
 def _truncate_history_message(content: str | None, *, role: str, limit: int) -> str:
@@ -317,6 +318,7 @@ def build_prompt_payload(contract: ReaderAskAnswerRuntimeInput) -> dict[str, Any
             else None,
         },
         "cross_record_context_allowed": contract.cross_record_context_allowed,
+        "cross_record_intent_hint": contract.cross_record_intent_hint,
         "followup_hint": (
             contract.followup_hint
             if contract.followup_hint

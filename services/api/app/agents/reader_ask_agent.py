@@ -87,6 +87,10 @@ class ReaderAskRuntimeState:
     degenerate_detected: bool = False
     degenerate_reason: str | None = None
     deictic_clarification_hint: str | None = None
+    # Round 9 — cross-record intent hint. When the user enables cross-record
+    # toggle and the message contains cross-article keywords, the agent-loop-
+    # first path injects this hint so the agent calls resolve_known_reference.
+    cross_record_intent_hint: str | None = None
     # Round 6 — observability: latency tracking.
     first_token_at: str | None = None  # ISO 8601, first text delta time
     run_started_at: str | None = None  # ISO 8601, run entry time

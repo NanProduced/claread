@@ -9,6 +9,11 @@ Round 8 migrates the deictic-without-anchor fallback from planner_first to
 agent_loop_first with a clarification hint, so the agent asks the user to
 select a specific location instead of silently falling back to the planner.
 
+Round 9 migrates the cross-record-toggle + keywords fallback from
+planner_first to agent_loop_first with a cross-record intent hint, so the
+agent calls resolve_known_reference on demand instead of requiring planner
+pre-resolution.
+
 Route values:
 
 - ``"agent_loop_first"`` — default for article-bound queries. The main agent
@@ -132,6 +137,19 @@ def has_deictic_without_anchor(text: str, anchors: list[ReaderAskAnchorRef]) -> 
     return any(pattern.lower() in lowered for pattern in _DEICTIC_PATTERNS)
 
 
+def has_cross_record_intent(cross_record_toggle: bool, text: str) -> bool:
+    """Return True if the user has enabled cross-record context and the
+    message contains cross-article intent keywords.
+
+    Round 9: this is a public API used by ``build_agent_loop_context``
+    to inject a cross-record intent hint instead of triggering planner_first.
+    The agent can then call ``resolve_known_reference`` on demand.
+    """
+    if not cross_record_toggle:
+        return False
+    return detect_cross_record_in_message(text)
+
+
 def _has_dictionary_anchor_or_attachment(
     anchors: list[ReaderAskAnchorRef],
     attachments: list[ReaderAskAttachment],
@@ -177,14 +195,17 @@ def resolve_planner_route(
     - Has attachments requiring planner resolution (record_ref / analysis_ref /
       supplement_ref).
     - Has a dictionary anchor or dictionary attachment.
-    - ``cross_record_toggle`` is True **and** the message contains cross-article
-      keywords.
     - History exceeds ``_LONG_HISTORY_THRESHOLD`` messages.
 
     Round 8: deictic-without-anchor no longer triggers planner_first. Instead,
     the agent-loop-first path detects deictic expressions and injects a
     clarification hint so the agent asks the user to select a specific location.
     See :func:`has_deictic_without_anchor`.
+
+    Round 9: cross-record-toggle + keywords no longer triggers planner_first.
+    Instead, the agent-loop-first path detects cross-record intent and injects
+    a hint so the agent calls ``resolve_known_reference`` on demand.
+    See :func:`has_cross_record_intent`.
 
     The ``entry_action`` is no longer used as a whitelist gate — all entry
     actions default to agent-loop-first unless one of the explicit fallback
@@ -193,8 +214,6 @@ def resolve_planner_route(
     if _has_planner_required_attachments(attachments):
         return "planner_first"
     if _has_dictionary_anchor_or_attachment(anchors, attachments):
-        return "planner_first"
-    if cross_record_toggle and detect_cross_record_in_message(latest_user_message):
         return "planner_first"
     if len(history_messages) > _LONG_HISTORY_THRESHOLD:
         return "planner_first"

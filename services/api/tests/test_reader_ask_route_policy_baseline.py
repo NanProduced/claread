@@ -126,7 +126,7 @@ class TestResolvePlannerRoute:
         ) == "planner_first"
 
     def test_false_for_cross_record_keyword_chinese(self) -> None:
-        # Round 3: cross-record keywords only block when cross_record_toggle is True
+        # Round 9: cross-record toggle + keywords no longer triggers planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
@@ -134,10 +134,10 @@ class TestResolvePlannerRoute:
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="和我之前那篇 chronic absenteeism 的文章有什么不同？",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_false_for_cross_record_keyword_english(self) -> None:
-        # Round 3: cross-record keywords only block when cross_record_toggle is True
+        # Round 9: cross-record toggle + keywords no longer triggers planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(0),
@@ -145,7 +145,7 @@ class TestResolvePlannerRoute:
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="How does this compare to the previous article on this topic?",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_cross_record_keyword_without_toggle_still_eligible(self) -> None:
         # Round 3: cross-record keywords without toggle → still agent_loop_first
@@ -170,9 +170,8 @@ class TestResolvePlannerRoute:
             latest_user_message="hello",
         ) == "agent_loop_first"
 
-    def test_false_when_toggle_on_with_cross_record_keywords(self) -> None:
-        # Round 3: cross_record_toggle alone is not sufficient; the message
-        # must also contain cross-record keywords.
+    def test_agent_loop_first_when_toggle_on_with_cross_record_keywords(self) -> None:
+        # Round 9: cross-record toggle + keywords no longer triggers planner_first
         assert planner_route_policy.resolve_planner_route(
             entry_action="ask_about_this",
             history_messages=_history(2),
@@ -180,7 +179,7 @@ class TestResolvePlannerRoute:
             anchors=[_anchor("sentence")],
             cross_record_toggle=True,
             latest_user_message="和我之前那篇有什么不同",
-        ) == "planner_first"
+        ) == "agent_loop_first"
 
     def test_true_when_toggle_on_without_cross_record_keywords(self) -> None:
         # Round 3: toggle on but no cross-record keywords → still agent_loop_first.

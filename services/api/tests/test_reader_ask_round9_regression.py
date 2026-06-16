@@ -1,13 +1,13 @@
-"""Round 8 regression tests: fast_path naming cleanup + deictic migration.
+"""Round 9 regression tests: cross-record toggle + keywords migration.
 
 These tests verify:
-1. Deictic-without-anchor now routes to agent_loop_first (not planner_first)
-2. has_deictic_without_anchor is a public API
-3. build_agent_loop_context sets deictic_clarification_hint
-4. followup_hint flows to prompt payload
-5. fast_path naming has been cleaned up (no stale references)
-6. Remaining planner_first fallbacks are preserved
-7. MinimalPlanningSnapshot naming is correct
+1. Cross-record toggle + keywords now routes to agent_loop_first
+2. has_cross_record_intent() is a public API
+3. build_agent_loop_context sets cross_record_intent_hint
+4. cross_record_intent_hint flows to prompt payload without becoming followup_hint
+5. cross_record_context_allowed is correctly passed in agent_loop_first path
+6. planner_first fallbacks are preserved (dictionary, external attachments, long history)
+7. resolve_known_reference is still agent-callable
 """
 
 from __future__ import annotations
@@ -27,14 +27,54 @@ from app.services.reader_ask import planner_route_policy
 
 
 # ---------------------------------------------------------------------------
-# 1. Deictic-without-anchor routes to agent_loop_first
+# 1. Cross-record toggle + keywords routes to agent_loop_first
 # ---------------------------------------------------------------------------
 
 
-class TestDeicticRoutesToAgentLoopFirst:
-    """Verify that deictic-without-anchor no longer triggers planner_first."""
+class TestCrossRecordRoutesToAgentLoopFirst:
+    """Verify that cross-record toggle + keywords no longer triggers planner_first."""
 
-    def test_deictic_chinese_returns_agent_loop_first(self) -> None:
+    def test_toggle_on_with_chinese_keyword(self) -> None:
+        assert (
+            planner_route_policy.resolve_planner_route(
+                entry_action="ask_about_this",
+                history_messages=[],
+                attachments=[],
+                anchors=[],
+                cross_record_toggle=True,
+                latest_user_message="和我之前那篇文章有什么不同？",
+            )
+            == "agent_loop_first"
+        )
+
+    def test_toggle_on_with_english_keyword(self) -> None:
+        assert (
+            planner_route_policy.resolve_planner_route(
+                entry_action="ask_about_this",
+                history_messages=[],
+                attachments=[],
+                anchors=[],
+                cross_record_toggle=True,
+                latest_user_message="compare with the previous article",
+            )
+            == "agent_loop_first"
+        )
+
+    def test_toggle_on_with_lingyi_keyword(self) -> None:
+        assert (
+            planner_route_policy.resolve_planner_route(
+                entry_action="ask_about_this",
+                history_messages=[],
+                attachments=[],
+                anchors=[],
+                cross_record_toggle=True,
+                latest_user_message="另一篇讲了什么",
+            )
+            == "agent_loop_first"
+        )
+
+    def test_toggle_off_with_keywords_still_agent_loop_first(self) -> None:
+        """Toggle off: agent handles via resolve_known_reference tool."""
         assert (
             planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
@@ -42,83 +82,56 @@ class TestDeicticRoutesToAgentLoopFirst:
                 attachments=[],
                 anchors=[],
                 cross_record_toggle=False,
-                latest_user_message="解释这句",
+                latest_user_message="和我之前那篇文章有什么不同？",
             )
             == "agent_loop_first"
         )
 
-    def test_deictic_english_returns_agent_loop_first(self) -> None:
+    def test_toggle_on_without_keywords_agent_loop_first(self) -> None:
+        """Toggle on but no keywords: no cross-record intent detected."""
         assert (
             planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
                 history_messages=[],
                 attachments=[],
                 anchors=[],
-                cross_record_toggle=False,
-                latest_user_message="explain this sentence",
-            )
-            == "agent_loop_first"
-        )
-
-    def test_deictic_zheli_returns_agent_loop_first(self) -> None:
-        assert (
-            planner_route_policy.resolve_planner_route(
-                entry_action="ask_about_this",
-                history_messages=[],
-                attachments=[],
-                anchors=[],
-                cross_record_toggle=False,
-                latest_user_message="这里什么意思",
-            )
-            == "agent_loop_first"
-        )
-
-    def test_deictic_with_anchor_still_agent_loop_first(self) -> None:
-        """Anchor grounds the deictic, so agent-loop handles it."""
-        assert (
-            planner_route_policy.resolve_planner_route(
-                entry_action="ask_about_this",
-                history_messages=[],
-                attachments=[],
-                anchors=[ReaderAskAnchorRef(anchor_type="sentence", label="a", sentence_id="s1")],  # type: ignore[arg-type]
-                cross_record_toggle=False,
-                latest_user_message="解释这句",
+                cross_record_toggle=True,
+                latest_user_message="这篇文章的主题是什么",
             )
             == "agent_loop_first"
         )
 
 
 # ---------------------------------------------------------------------------
-# 2. has_deictic_without_anchor is public API
+# 2. has_cross_record_intent is public API
 # ---------------------------------------------------------------------------
 
 
-class TestHasDeicticWithoutAnchorPublic:
-    """Verify has_deictic_without_anchor is a public, callable API."""
+class TestHasCrossRecordIntentPublic:
+    """Verify has_cross_record_intent is a public, callable API."""
 
     def test_function_is_callable(self) -> None:
-        assert callable(planner_route_policy.has_deictic_without_anchor)
+        assert callable(planner_route_policy.has_cross_record_intent)
 
-    def test_returns_true_for_deictic_no_anchors(self) -> None:
-        assert planner_route_policy.has_deictic_without_anchor("解释这句", []) is True
+    def test_returns_true_for_toggle_on_with_keywords(self) -> None:
+        assert planner_route_policy.has_cross_record_intent(True, "和我之前那篇") is True
 
-    def test_returns_false_for_deictic_with_anchors(self) -> None:
-        anchors = [ReaderAskAnchorRef(anchor_type="sentence", label="a", sentence_id="s1")]  # type: ignore[arg-type]
-        assert planner_route_policy.has_deictic_without_anchor("解释这句", anchors) is False
+    def test_returns_false_for_toggle_off(self) -> None:
+        assert planner_route_policy.has_cross_record_intent(False, "和我之前那篇") is False
 
-    def test_returns_false_for_non_deictic(self) -> None:
-        assert planner_route_policy.has_deictic_without_anchor("这篇文章的主题", []) is False
+    def test_returns_false_for_toggle_on_without_keywords(self) -> None:
+        assert planner_route_policy.has_cross_record_intent(True, "这篇文章的主题") is False
 
     def test_returns_false_for_empty_string(self) -> None:
-        assert planner_route_policy.has_deictic_without_anchor("", []) is False
+        assert planner_route_policy.has_cross_record_intent(True, "") is False
 
 
 # ---------------------------------------------------------------------------
-# 3. build_agent_loop_context sets deictic_clarification_hint
+# 3. build_agent_loop_context sets cross_record_intent_hint
 # ---------------------------------------------------------------------------
 
 
-class TestDeicticClarificationHint:
+class TestCrossRecordIntentHint:
     """Verify that build_agent_loop_context sets the hint on runtime_state."""
 
     def _make_record(self) -> MagicMock:
@@ -129,7 +142,7 @@ class TestDeicticClarificationHint:
         record.page_state_json = {}
         return record
 
-    def test_hint_set_when_deictic_no_anchor(self) -> None:
+    def test_hint_set_when_cross_record_intent(self) -> None:
         from app.services.reader_ask.context_runtime import build_agent_loop_context
 
         record = self._make_record()
@@ -144,34 +157,36 @@ class TestDeicticClarificationHint:
                 user_id=uuid4(),
                 page_identity=MagicMock(),
                 entry_action="ask_about_this",
-                latest_user_message="解释这句",
+                latest_user_message="和我之前那篇文章有什么不同？",
+                cross_record_toggle=True,
             )
 
-        assert runtime_state.deictic_clarification_hint is not None
-        assert "指代表达" in runtime_state.deictic_clarification_hint
+        assert runtime_state.cross_record_intent_hint is not None
+        assert "跨文章意图" in runtime_state.cross_record_intent_hint
+        assert "resolve_known_reference" in runtime_state.cross_record_intent_hint
 
-    def test_hint_not_set_when_anchor_present(self) -> None:
+    def test_hint_not_set_when_toggle_off(self) -> None:
         from app.services.reader_ask.context_runtime import build_agent_loop_context
 
         record = self._make_record()
         runtime_state = ReaderAskRuntimeState()
-        anchors = [ReaderAskAnchorRef(anchor_type="sentence", label="a", sentence_id="s1")]  # type: ignore[arg-type]
 
         with patch("app.services.reader_ask.context_runtime.planner.build_resolved_context_input", return_value={}):
             build_agent_loop_context(
                 record=record,
                 runtime_state=runtime_state,
-                anchors=anchors,
+                anchors=[],
                 attachments=[],
                 user_id=uuid4(),
                 page_identity=MagicMock(),
                 entry_action="ask_about_this",
-                latest_user_message="解释这句",
+                latest_user_message="和我之前那篇文章有什么不同？",
+                cross_record_toggle=False,
             )
 
-        assert runtime_state.deictic_clarification_hint is None
+        assert runtime_state.cross_record_intent_hint is None
 
-    def test_hint_not_set_when_no_deictic(self) -> None:
+    def test_hint_not_set_when_no_keywords(self) -> None:
         from app.services.reader_ask.context_runtime import build_agent_loop_context
 
         record = self._make_record()
@@ -187,20 +202,27 @@ class TestDeicticClarificationHint:
                 page_identity=MagicMock(),
                 entry_action="ask_about_this",
                 latest_user_message="这篇文章的主题",
+                cross_record_toggle=True,
             )
 
-        assert runtime_state.deictic_clarification_hint is None
+        assert runtime_state.cross_record_intent_hint is None
 
 
 # ---------------------------------------------------------------------------
-# 4. followup_hint flows to prompt payload
+# 4. cross_record_intent_hint flows to prompt payload
 # ---------------------------------------------------------------------------
 
 
-class TestFollowupHintInPayload:
-    """Verify followup_hint is included in the prompt payload."""
+class TestCrossRecordIntentHintInPayload:
+    """Verify cross-record hint is included in the prompt payload separately."""
 
-    def _make_contract(self, *, followup_hint: str | None = None, planning_snapshot=None):
+    def _make_contract(
+        self,
+        *,
+        followup_hint: str | None = None,
+        cross_record_intent_hint: str | None = None,
+        planning_snapshot=None,
+    ):
         from app.services.reader_ask.runtime_contract import ReaderAskAnswerRuntimeInput
         from app.schemas.reader_ask import ReaderAskPageIdentity
 
@@ -213,7 +235,7 @@ class TestFollowupHintInPayload:
         return ReaderAskAnswerRuntimeInput(
             thread={"id": "t-1", "record_id": "r-1", "title": "Test"},
             record=record,
-            user_message="解释这句",
+            user_message="和另一篇有什么不同",
             history_messages=[],
             page_identity=ReaderAskPageIdentity(
                 record_id="r-1",
@@ -230,7 +252,7 @@ class TestFollowupHintInPayload:
             resolved_intent_label="Explain",
             entry_action="ask_about_this",
             submission_mode="chat",
-            cross_record_context_allowed=False,
+            cross_record_context_allowed=True,
             resolved_context_input=None,
             quick_action_annotation=None,
             reference_resolution=None,
@@ -238,95 +260,96 @@ class TestFollowupHintInPayload:
             max_history_messages=10,
             max_message_text=800,
             followup_hint=followup_hint,
+            cross_record_intent_hint=cross_record_intent_hint,
         )
 
-    def test_followup_hint_in_payload(self) -> None:
+    def test_cross_record_hint_in_payload(self) -> None:
         from app.services.reader_ask.runtime_contract import build_prompt_payload
 
-        contract = self._make_contract(followup_hint="请先追问用户选中具体位置")
+        contract = self._make_contract(
+            cross_record_intent_hint="请优先调用 resolve_known_reference(query, top_k=5) 查找相关文章"
+        )
         payload = build_prompt_payload(contract)
-        assert payload["followup_hint"] == "请先追问用户选中具体位置"
+        assert payload["cross_record_intent_hint"] is not None
+        assert "resolve_known_reference" in payload["cross_record_intent_hint"]
+        assert payload["followup_hint"] is None
 
-    def test_followup_hint_none_in_payload(self) -> None:
+    def test_cross_record_hint_does_not_overwrite_followup_hint(self) -> None:
+        from app.services.reader_ask.runtime_contract import build_prompt_payload
+
+        contract = self._make_contract(
+            followup_hint="请用户选中具体句子",
+            cross_record_intent_hint="请优先调用 resolve_known_reference(query, top_k=5) 查找相关文章",
+        )
+        payload = build_prompt_payload(contract)
+        assert payload["followup_hint"] == "请用户选中具体句子"
+        assert "resolve_known_reference" in payload["cross_record_intent_hint"]
+
+    def test_cross_record_context_allowed_in_payload(self) -> None:
         from app.services.reader_ask.runtime_contract import build_prompt_payload
 
         contract = self._make_contract(followup_hint=None)
         payload = build_prompt_payload(contract)
-        assert payload["followup_hint"] is None
-
-    def test_followup_hint_takes_priority_over_planning_snapshot(self) -> None:
-        """When both followup_hint and planning_snapshot.clarification_reason exist,
-        followup_hint takes priority."""
-        from app.services.reader_ask.runtime_contract import build_prompt_payload
-        from app.services.reader_ask.planner import MinimalPlanningSnapshot
-
-        snap = MinimalPlanningSnapshot(
-            clarification_mode="can_answer_with_followup",
-            clarification_reason="planner says followup",
-        )
-        contract = self._make_contract(
-            followup_hint="agent-loop deictic hint",
-            planning_snapshot=snap,
-        )
-        payload = build_prompt_payload(contract)
-        assert payload["followup_hint"] == "agent-loop deictic hint"
-
-    def test_planning_snapshot_clarification_used_as_fallback(self) -> None:
-        """When followup_hint is None but planning_snapshot has clarification,
-        the planning_snapshot clarification is used."""
-        from app.services.reader_ask.runtime_contract import build_prompt_payload
-        from app.services.reader_ask.planner import MinimalPlanningSnapshot
-
-        snap = MinimalPlanningSnapshot(
-            clarification_mode="can_answer_with_followup",
-            clarification_reason="planner says followup",
-        )
-        contract = self._make_contract(
-            followup_hint=None,
-            planning_snapshot=snap,
-        )
-        payload = build_prompt_payload(contract)
-        assert payload["followup_hint"] == "planner says followup"
-
-    def test_dictionary_context_explain_not_advertised(self) -> None:
-        """Round 7 removed Ask dictionary tools; payload must not advertise them."""
-        from app.services.reader_ask.runtime_contract import build_prompt_payload
-
-        contract = self._make_contract()
-        payload = build_prompt_payload(contract)
-        assert payload["tooling_contract"]["dictionary_context_explain_available"] is False
+        assert payload["cross_record_context_allowed"] is True
+        assert payload["tooling_contract"]["cross_record_context_requires_explicit_intent"] is True
 
 
 # ---------------------------------------------------------------------------
-# 5. fast_path naming cleanup
+# 5. cross_record_context_allowed in agent_loop_first path
 # ---------------------------------------------------------------------------
 
 
-class TestFastPathNamingCleanup:
-    """Verify that fast_path naming has been cleaned up."""
+class TestCrossRecordContextAllowedInAgentLoopFirst:
+    """Verify that cross_record_context_allowed is correctly passed when
+    the agent_loop_first path is used (planning_snapshot=None)."""
 
-    def test_no_fast_path_runtime_module(self) -> None:
-        """fast_path_runtime.py should not exist as a module."""
-        from app.services.reader_ask import planner_route_policy
+    def test_payload_reflects_cross_record_allowed(self) -> None:
+        from app.services.reader_ask.runtime_contract import build_prompt_payload, ReaderAskAnswerRuntimeInput
+        from app.schemas.reader_ask import ReaderAskPageIdentity
 
-        # The module should be planner_route_policy, not fast_path_runtime
-        assert planner_route_policy.__name__.endswith("planner_route_policy")
+        record = MagicMock()
+        record.record_id = uuid4()
+        record.title = "Test"
+        record.workflow_version = "1"
+        record.schema_version = "1"
 
-    def test_no_fast_path_planning_snapshot_class(self) -> None:
-        """FastPathPlanningSnapshot should not exist; use MinimalPlanningSnapshot."""
-        from app.services.reader_ask import planner
-
-        assert not hasattr(planner, "FastPathPlanningSnapshot")
-        assert hasattr(planner, "MinimalPlanningSnapshot")
-
-    def test_has_deictic_without_anchor_is_public(self) -> None:
-        """has_deictic_without_anchor should be a public function (no underscore prefix)."""
-        assert hasattr(planner_route_policy, "has_deictic_without_anchor")
-        assert not planner_route_policy.has_deictic_without_anchor.__name__.startswith("_")
+        contract = ReaderAskAnswerRuntimeInput(
+            thread={"id": "t-1", "record_id": "r-1", "title": "Test"},
+            record=record,
+            user_message="和另一篇有什么不同",
+            history_messages=[],
+            page_identity=ReaderAskPageIdentity(
+                record_id="r-1",
+                title="Test",
+                available_context_capabilities=["record_context"],
+                has_article_overview=True,
+                has_sentence_entries=True,
+                has_annotations=False,
+                has_reader_notes=False,
+            ),
+            attachments=[],
+            anchors=[],
+            resolved_intent="explain",
+            resolved_intent_label="Explain",
+            entry_action="ask_about_this",
+            submission_mode="chat",
+            cross_record_context_allowed=True,
+            resolved_context_input=None,
+            quick_action_annotation=None,
+            reference_resolution=None,
+            planning_snapshot=None,
+            max_history_messages=10,
+            max_message_text=800,
+        )
+        payload = build_prompt_payload(contract)
+        # When planning_snapshot is None, cross_record_context_allowed should
+        # come from the contract, not be hardcoded to False.
+        assert payload["cross_record_context_allowed"] is True
+        assert payload["tooling_contract"]["cross_record_context_requires_explicit_intent"] is True
 
 
 # ---------------------------------------------------------------------------
-# 6. Remaining planner_first fallbacks preserved
+# 6. planner_first fallbacks preserved
 # ---------------------------------------------------------------------------
 
 
@@ -381,18 +404,6 @@ class TestPlannerFirstFallbacksPreserved:
         )
         assert route == "planner_first"
 
-    def test_cross_record_toggle_with_keywords_agent_loop_first(self) -> None:
-        # Round 9: cross-record toggle + keywords no longer triggers planner_first
-        route = planner_route_policy.resolve_planner_route(
-            entry_action="ask_about_this",
-            history_messages=[],
-            attachments=[],
-            anchors=[],
-            cross_record_toggle=True,
-            latest_user_message="和我之前那篇文章有什么不同？",
-        )
-        assert route == "agent_loop_first"
-
     def test_long_history_fallback(self) -> None:
         history = [{"role": "user", "content_md": f"msg {i}"} for i in range(11)]
         route = planner_route_policy.resolve_planner_route(
@@ -407,35 +418,24 @@ class TestPlannerFirstFallbacksPreserved:
 
 
 # ---------------------------------------------------------------------------
-# 7. MinimalPlanningSnapshot naming
+# 7. resolve_known_reference is still agent-callable
 # ---------------------------------------------------------------------------
 
 
-class TestMinimalPlanningSnapshotNaming:
-    """Verify MinimalPlanningSnapshot is correctly named and functional."""
+class TestResolveKnownReferenceStillCallable:
+    """Verify resolve_known_reference remains in the agent-callable tool set."""
 
-    def test_class_exists(self) -> None:
-        from app.services.reader_ask.planner import MinimalPlanningSnapshot
+    def test_tool_in_registry(self) -> None:
+        from app.agents.reader_ask_tool_registry import READER_ASK_TOOL_REGISTRY
 
-        assert MinimalPlanningSnapshot is not None
+        assert "resolve_known_reference" in READER_ASK_TOOL_REGISTRY
 
-    def test_has_required_fields(self) -> None:
-        import dataclasses
-        from app.services.reader_ask.planner import MinimalPlanningSnapshot
+    def test_tool_is_agent_callable(self) -> None:
+        from app.agents.reader_ask_tool_registry import agent_callable_tool_names
 
-        field_names = {f.name for f in dataclasses.fields(MinimalPlanningSnapshot)}
-        required = {
-            "retrieval_needs",
-            "working_set",
-            "context_plan",
-            "trace_summary",
-            "clarification_mode",
-            "clarification_reason",
-        }
-        assert required <= field_names
+        assert "resolve_known_reference" in agent_callable_tool_names()
 
-    def test_default_clarification_mode_is_none(self) -> None:
-        from app.services.reader_ask.planner import MinimalPlanningSnapshot
+    def test_tool_not_reserved(self) -> None:
+        from app.agents.reader_ask_tool_registry import RESERVED_TOOL_NAMES
 
-        snap = MinimalPlanningSnapshot()
-        assert snap.clarification_mode == "none"
+        assert "resolve_known_reference" not in RESERVED_TOOL_NAMES

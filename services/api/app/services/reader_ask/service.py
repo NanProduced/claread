@@ -3007,7 +3007,10 @@ async def stream_thread_message(
             # snapshot.
             if not runtime_state.planner_skipped:
                 raise RuntimeError("planning snapshot is required")
-            cross_record_context_allowed = False
+            # Round 9: respect cross_record_toggle from runtime_state instead
+            # of hardcoding False. The agent-loop-first path needs to know
+            # whether the user allowed cross-record context.
+            cross_record_context_allowed = runtime_state.cross_record_context_allowed
         else:
             cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
@@ -3101,6 +3104,8 @@ async def stream_thread_message(
             # read tools on demand when it needs more detail.
             # Round 8 — pass latest_user_message so build_agent_loop_context
             # can detect deictic-without-anchor and set a clarification hint.
+            # Round 9 — pass cross_record_toggle so build_agent_loop_context
+            # can detect cross-record intent and set a hint.
             resolved_context_input = context_runtime_svc.build_agent_loop_context(
                 record=record,
                 runtime_state=runtime_state,
@@ -3110,6 +3115,7 @@ async def stream_thread_message(
                 page_identity=body.page_identity,
                 entry_action=body.entry_action,
                 latest_user_message=body.content,
+                cross_record_toggle=runtime_state.cross_record_context_allowed,
             )
         else:
             resolved_context_input = await context_runtime_svc.materialize_planned_context(
@@ -3184,6 +3190,7 @@ async def stream_thread_message(
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
                 followup_hint=runtime_state.deictic_clarification_hint,
+                cross_record_intent_hint=runtime_state.cross_record_intent_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
@@ -4203,7 +4210,10 @@ async def retry_thread_message(
             # snapshot.
             if not runtime_state.planner_skipped:
                 raise RuntimeError("planning snapshot is required")
-            cross_record_context_allowed = False
+            # Round 9: respect cross_record_toggle from runtime_state instead
+            # of hardcoding False. The agent-loop-first path needs to know
+            # whether the user allowed cross-record context.
+            cross_record_context_allowed = runtime_state.cross_record_context_allowed
         else:
             cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
 
@@ -4297,6 +4307,8 @@ async def retry_thread_message(
             # read tools on demand when it needs more detail.
             # Round 8 — pass latest_user_message so build_agent_loop_context
             # can detect deictic-without-anchor and set a clarification hint.
+            # Round 9 — pass cross_record_toggle so build_agent_loop_context
+            # can detect cross-record intent and set a hint.
             resolved_context_input = context_runtime_svc.build_agent_loop_context(
                 record=record,
                 runtime_state=runtime_state,
@@ -4306,6 +4318,7 @@ async def retry_thread_message(
                 page_identity=body.page_identity,
                 entry_action=body.entry_action,
                 latest_user_message=body.content,
+                cross_record_toggle=runtime_state.cross_record_context_allowed,
             )
         else:
             resolved_context_input = await context_runtime_svc.materialize_planned_context(
@@ -4380,6 +4393,7 @@ async def retry_thread_message(
                 reference_resolution=reference_resolution,
                 planning_snapshot=planning_snapshot,
                 followup_hint=runtime_state.deictic_clarification_hint,
+                cross_record_intent_hint=runtime_state.cross_record_intent_hint,
                 max_history_messages=cfg.MAX_HISTORY_MESSAGES,
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )

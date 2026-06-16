@@ -71,6 +71,18 @@ def test_reader_ask_prompt_documents_resolver_three_states() -> None:
         )
 
 
+def test_reader_ask_prompt_separates_cross_record_hint_from_followup_hint() -> None:
+    """Cross-record resolution is a tool-use hint, not a local-anchor
+    clarification hint."""
+    prompt = load_agent_instructions("reader_ask")
+
+    assert "cross_record_intent_hint" in prompt
+    assert "followup_hint" in prompt
+    assert "resolve_known_reference(query, top_k=5)" in prompt
+    assert "不是追问提示" in prompt
+    assert "不要把跨文章引用解析写进 `followup_hint`" in prompt
+
+
 def test_reader_ask_prompt_documents_suggest_prompts_bounds() -> None:
     """The prompt must specify the 2-3 suggestion bound and the
     label/prompt character caps so the model's suggestions pass

@@ -219,7 +219,8 @@ class TestResolvePlannerRoute:
             == "agent_loop_first"
         )
 
-    def test_cross_record_toggle_with_keywords_returns_planner_first(self) -> None:
+    def test_cross_record_toggle_with_keywords_returns_agent_loop_first(self) -> None:
+        # Round 9: cross-record toggle + keywords no longer triggers planner_first
         assert (
             planner_route_policy.resolve_planner_route(
                 entry_action="ask_about_this",
@@ -229,7 +230,7 @@ class TestResolvePlannerRoute:
                 cross_record_toggle=True,
                 latest_user_message="和我之前那篇文章有什么不同？",
             )
-            == "planner_first"
+            == "agent_loop_first"
         )
 
     def test_cross_record_toggle_without_keywords_returns_agent_loop_first(self) -> None:
