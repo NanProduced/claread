@@ -11,7 +11,6 @@ from app.services.reader_ask.runtime_contract import (
     format_structured_history_summary,
 )
 from app.services.reader_ask import planner as planner_svc
-from app.services.reader_ask.planner_runtime import planner_history_messages
 from app.schemas.reader_ask import (
     ReaderAskPageIdentity,
 )
@@ -345,51 +344,8 @@ class TestFormatStructuredHistorySummary:
 # Real payload tests: planner history and answer payload
 # ---------------------------------------------------------------------------
 
-
-class TestPlannerHistoryMessages:
-    """Test that planner_history_messages correctly inserts
-    the structured summary as a system message before recent raw turns."""
-
-    def test_summary_prepended_to_planner_history(self) -> None:
-        """When history exceeds the window, a system summary message is
-        prepended to the planner history."""
-        messages = [
-            _make_history_message(
-                resolved_intent="grammar",
-                content_md="What tense?",
-                context_anchors=[{"selected_text": "has been running", "anchor_type": "sentence"}],
-            ),
-            {"role": "assistant", "content_md": "Present perfect continuous."},
-            _make_history_message(resolved_intent="explain", content_md="Why?"),
-            {"role": "assistant", "content_md": "Because..."},
-            # Recent window starts here
-            _make_history_message(resolved_intent="grammar", content_md="And here?"),
-            {"role": "assistant", "content_md": "Past simple."},
-            _make_history_message(resolved_intent="explain", content_md="What about this?"),
-            {"role": "assistant", "content_md": "It means..."},
-            _make_history_message(resolved_intent="vocabulary", content_md="Define this word"),
-        ]
-        result = planner_history_messages(messages, max_messages=4)
-
-        # First message should be system summary
-        assert result[0]["role"] == "system"
-        assert "[History summary]" in str(result[0]["content_md"])
-        assert "grammar" in str(result[0]["content_md"])
-
-        # Remaining messages should be user/assistant from recent window
-        recent_roles = [m["role"] for m in result[1:]]
-        assert "system" not in recent_roles
-        assert all(r in {"user", "assistant"} for r in recent_roles)
-
-    def test_no_summary_when_within_window(self) -> None:
-        """When history fits within the window, no system summary is added."""
-        messages = [
-            _make_history_message(resolved_intent="explain", content_md="What?"),
-            {"role": "assistant", "content_md": "It means..."},
-        ]
-        result = planner_history_messages(messages, max_messages=8)
-        roles = [m["role"] for m in result]
-        assert "system" not in roles
+# Round 15: TestPlannerHistoryMessages has been removed because
+# planner_history_messages has been deleted from planner_runtime.
 
 
 class TestAnswerPayloadHistory:

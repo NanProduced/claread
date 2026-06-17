@@ -22,15 +22,11 @@ from app.services.reader_ask.agent_invocation import (
     AgentStreamRuntime,
     ReaderAskStreamCompleted,
     ReaderAskStreamSseEvent,
-    build_reader_ask_replan_event,
     resolve_reader_ask_agent,
     run_reader_ask_replan,
     stream_reader_ask_agent_run,
 )
 from app.services.reader_ask.agent_runner import is_degenerate_answer
-from app.services.reader_ask.planning_deps_factory import (
-    build_reader_ask_resolve_planning_deps,
-)
 from app.config.settings import get_settings
 from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
@@ -3037,54 +3033,26 @@ async def stream_thread_message(
             cross_record_toggle=runtime_state.cross_record_context_allowed,
             latest_user_message=body.content,
         )
-        if planner_route == "agent_loop_first":
-            # Round 3 — agent-loop-first: default path. Skip the LLM planner
-            # call and materialize_planned_context. The model calls read tools
-            # on demand instead of receiving a pre-fetched working set.
-            runtime_state.planner_skipped = True
-            runtime_state.planner_route_used = "agent_loop_first"
-            resolved_intent, resolved_intent_label = (
-                runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
-            )
-            planning_snapshot = None
-            reference_resolution = None
-            resolved_context_input = None
-            disambiguation = None
-            external_asset_disambiguation = None
-            clarification_only = False
-            clarification_mode = "none"
-            submission_mode = planner_runtime_svc.submission_mode(
-                entry_action=body.entry_action, attachments=attachments
-            )
-            planner_usage_summary = None
-        else:
-            planning_result = await planner_runtime_svc.resolve_semantic_planning(
-                user_id=user_id,
-                record=record,
-                history_messages=history_messages,
-                user_message=body.content,
-                page_identity=body.page_identity,
-                entry_action=body.entry_action,
-                attachments=attachments,
-                anchors=resolved_anchors,
-                deps=build_reader_ask_resolve_planning_deps(
-                    current_record_affordances_cb=_current_record_affordances,
-                    load_record_bundle_cb=_load_record_bundle,
-                    reference_reranker=_build_reference_reranker(),
-                    model_selection=selected_model_option.selection,
-                ),
-                truncate_history_message_cb=_truncate_history_message,
-            )
-            planner_usage_summary = planning_result.planner_usage_summary
-            reference_resolution = planning_result.reference_resolution
-            planning_snapshot = planning_result.planning_snapshot
-            resolved_intent = planning_snapshot.resolved_intent
-            resolved_context_input = planning_snapshot.resolved_context_input
-            disambiguation = planning_snapshot.disambiguation_state
-            external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
-            clarification_only = planning_snapshot.clarification_only
-            clarification_mode = planning_snapshot.clarification_mode
-            submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
+        # Round 15: agent-loop-first is the only live route. The legacy
+        # planner_first else-branch (resolve_semantic_planning) has been
+        # removed. ``planner_route`` is always ``"agent_loop_first"``;
+        # the ``planner_first`` literal survives only as a trace value.
+        runtime_state.planner_skipped = True
+        runtime_state.planner_route_used = "agent_loop_first"
+        resolved_intent, resolved_intent_label = (
+            runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
+        )
+        planning_snapshot = None
+        reference_resolution = None
+        resolved_context_input = None
+        disambiguation = None
+        external_asset_disambiguation = None
+        clarification_only = False
+        clarification_mode = "none"
+        submission_mode = planner_runtime_svc.submission_mode(
+            entry_action=body.entry_action, attachments=attachments
+        )
+        planner_usage_summary = None
         if clarification_only and clarification_mode == "must_clarify":
             user_message = await repo.create_message(
                 thread_id=thread_id,
@@ -3467,40 +3435,21 @@ async def stream_thread_message(
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
-        if planner_route == "agent_loop_first":
-            # Round 3 — agent-loop-first: skip materialize_planned_context.
-            # Build a minimal context with overview only; the model will call
-            # read tools on demand when it needs more detail.
-            # Round 8 — pass latest_user_message so build_agent_loop_context
-            # can detect deictic-without-anchor and set a clarification hint.
-            # Round 9 — pass cross_record_toggle so build_agent_loop_context
-            # can detect cross-record intent and set a hint.
-            resolved_context_input = context_runtime_svc.build_agent_loop_context(
-                record=record,
-                runtime_state=runtime_state,
-                anchors=resolved_anchors,
-                attachments=attachments,
-                user_id=user_id,
-                page_identity=body.page_identity,
-                entry_action=body.entry_action,
-                latest_user_message=body.content,
-                cross_record_toggle=runtime_state.cross_record_context_allowed,
-                history_messages=history_messages,
-            )
-        else:
-            resolved_context_input = await context_runtime_svc.materialize_planned_context(
-                user_id=user_id,
-                record=record,
-                runtime_state=runtime_state,
-                planning_snapshot=planning_snapshot,
-                page_identity=body.page_identity,
-                entry_action=body.entry_action,
-                attachments=attachments,
-                anchors=resolved_anchors,
-                get_record_context_cb=get_record_context_cb,
-                get_record_insights_cb=get_record_insights_cb,
-                load_record_bundle_cb=_load_record_bundle,
-            )
+        # Round 15: agent-loop-first is the only live route. The legacy
+        # planner_first else-branch (materialize_planned_context with a
+        # planning_snapshot) has been removed.
+        resolved_context_input = context_runtime_svc.build_agent_loop_context(
+            record=record,
+            runtime_state=runtime_state,
+            anchors=resolved_anchors,
+            attachments=attachments,
+            user_id=user_id,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            latest_user_message=body.content,
+            cross_record_toggle=runtime_state.cross_record_context_allowed,
+            history_messages=history_messages,
+        )
         quick_action_annotation = await _run_explicit_quick_action_annotation(
             submission_mode=submission_mode,
             task_mode=resolved_intent,
@@ -3801,146 +3750,11 @@ async def stream_thread_message(
                     exc_info=True,
                 )
 
-        # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
-        # not already clarified, attempt a single replan with expanded context
-        replan_event = build_reader_ask_replan_event(
-            final_content_md=final_content_md,
-            planning_snapshot=planning_snapshot,
-            assistant_message_id=assistant_message["id"],
-            planner_route=planner_route,
-            runtime_state=runtime_state,
-        )
-        if replan_event is not None:
-            yield stream_events_svc.encode_sse(replan_event[0], replan_event[1])
-        replan_triggered = replan_event is not None
-        if replan_triggered:
-            try:
-                replan_result = await planner_runtime_svc.resolve_semantic_planning(
-                    user_id=user_id,
-                    record=record,
-                    history_messages=history_messages,
-                    user_message=body.content,
-                    page_identity=body.page_identity,
-                    entry_action=body.entry_action,
-                    attachments=attachments,
-                    anchors=resolved_anchors,
-                    deps=build_reader_ask_resolve_planning_deps(
-                        current_record_affordances_cb=_current_record_affordances,
-                        load_record_bundle_cb=_load_record_bundle,
-                        reference_reranker=_build_reference_reranker(),
-                        model_selection=selected_model_option.selection,
-                    ),
-                    truncate_history_message_cb=_truncate_history_message,
-                )
-                if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
-                    replan_runtime_state = deepcopy(runtime_state)
-                    replan_planning_snapshot = replan_result.planning_snapshot
-                    replan_resolved_intent = replan_planning_snapshot.resolved_intent
-                    replan_resolved_context_input = replan_planning_snapshot.resolved_context_input
-                    replan_reference_resolution = replan_result.reference_resolution
-                    replan_disambiguation = replan_planning_snapshot.disambiguation_state
-                    replan_external_asset_disambiguation = replan_planning_snapshot.external_asset_disambiguation_state
-                    replan_resolved_context_input = await context_runtime_svc.materialize_planned_context(
-                        user_id=user_id,
-                        record=record,
-                        runtime_state=replan_runtime_state,
-                        planning_snapshot=replan_planning_snapshot,
-                        page_identity=body.page_identity,
-                        entry_action=body.entry_action,
-                        attachments=attachments,
-                        anchors=resolved_anchors,
-                        get_record_context_cb=get_record_context_cb,
-                        get_record_insights_cb=get_record_insights_cb,
-                        load_record_bundle_cb=_load_record_bundle,
-                    )
-                    replan_cross_record_context_allowed = replan_planning_snapshot.retrieval_needs == "known_reference_only"
-                    replan_quick_action_annotation = await _run_explicit_quick_action_annotation(
-                        submission_mode=submission_mode,
-                        task_mode=replan_resolved_intent,
-                        entry_action=body.entry_action,
-                        record=record,
-                        primary_anchor=primary_anchor,
-                        runtime_state=replan_runtime_state,
-                        event_queue=event_queue,
-                    )
-                    replan_payload = runtime_contract_svc.build_prompt_payload(
-                        runtime_contract_svc.ReaderAskAnswerRuntimeInput(
-                            thread=thread,
-                            record=record,
-                            user_message=body.content,
-                            history_messages=history_messages,
-                            page_identity=body.page_identity,
-                            attachments=attachments,
-                            anchors=resolved_anchors,
-                            resolved_intent=replan_resolved_intent,
-                            resolved_intent_label=_TASK_MODE_LABELS[replan_resolved_intent],
-                            entry_action=body.entry_action,
-                            submission_mode=submission_mode,
-                            cross_record_context_allowed=replan_cross_record_context_allowed,
-                            resolved_context_input=replan_resolved_context_input,
-                            quick_action_annotation=replan_quick_action_annotation,
-                            reference_resolution=replan_reference_resolution,
-                            planning_snapshot=replan_planning_snapshot,
-                            max_history_messages=cfg.MAX_HISTORY_MESSAGES,
-                            max_message_text=cfg.MAX_MESSAGE_TEXT,
-                        )
-                    )
-                    _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
-                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
-                    )
-                    if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
-                        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
-                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
-                        replan_payload,
-                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
-                        budget_buffer_tokens=runtime_budget_kwargs["prompt_buffer_tokens"],
-                        default_max_output_tokens=route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
-                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
-                    )
-                    if _replan_context_too_large:
-                        logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
-                        raise recovery_svc.ReplanContextTooLargeError()
-                    replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
-                    replan_deps = build_reader_ask_agent_deps(
-                        payload=replan_payload,
-                        event_queue=event_queue,
-                        state=replan_runtime_state,
-                        query_seed=query_seed,
-                        task_mode=replan_resolved_intent,
-                        entry_action=body.entry_action,
-                        record_id=str(record.record_id),
-                        record_title=record.title,
-                        primary_anchor=primary_anchor,
-                        get_record_context_fn=get_record_context_cb,
-                        get_record_insights_fn=get_record_insights_cb,
-                        get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
-                        resolve_known_reference_fn=resolve_known_reference_cb,
-                        load_explicit_attachment_context_fn=load_explicit_attachment_context_cb,
-                        allowed_external_attachments=_build_allowed_external_attachments(attachments),
-                        generate_sentence_annotation_fn=generate_sentence_annotation_cb,
-                        suggest_prompts_fn=suggest_prompts_cb,
-                        vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
-                    )
-                    replan_content = await run_reader_ask_replan(
-                        replan_deps=replan_deps,
-                        replan_max_output=replan_max_output,
-                        route_settings=route_settings,
-                        model_selection=selected_model_option.selection,
-                    )
-                    if len(replan_content) >= len(final_content_md.strip()):
-                        final_content_md = replan_content
-                        planning_snapshot = replan_planning_snapshot
-                        resolved_intent = replan_resolved_intent
-                        resolved_context_input = replan_resolved_context_input
-                        reference_resolution = replan_reference_resolution
-                        disambiguation = replan_disambiguation
-                        external_asset_disambiguation = replan_external_asset_disambiguation
-                        cross_record_context_allowed = replan_cross_record_context_allowed
-                        quick_action_annotation = replan_quick_action_annotation
-                        runtime_state = replan_runtime_state
-                        trace_summary = replan_trace_summary
-            except Exception:
-                logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
+        # Round 15: the legacy bounded-replan block (which called
+        # resolve_semantic_planning) has been removed. For agent_loop_first,
+        # build_replan_event always returns None, so the replan path was
+        # unreachable dead code. Degenerate answers are now handled by the
+        # agent-loop repair above.
 
         runtime_proposals = _build_action_proposals_from_runtime(
             record=record,
@@ -4382,52 +4196,26 @@ async def retry_thread_message(
             cross_record_toggle=runtime_state.cross_record_context_allowed,
             latest_user_message=body.content,
         )
-        if planner_route == "agent_loop_first":
-            # Round 3 — agent-loop-first: default path. Skip the LLM planner
-            # call and materialize_planned_context. The model calls read tools
-            # on demand instead of receiving a pre-fetched working set.
-            runtime_state.planner_skipped = True
-            runtime_state.planner_route_used = "agent_loop_first"
-            resolved_intent, resolved_intent_label = (
-                runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
-            )
-            planning_snapshot = None
-            reference_resolution = None
-            resolved_context_input = None
-            disambiguation = None
-            external_asset_disambiguation = None
-            clarification_only = False
-            clarification_mode = "none"
-            submission_mode = planner_runtime_svc.submission_mode(
-                entry_action=body.entry_action, attachments=attachments
-            )
-            planner_usage_summary = None
-        else:
-            planning_result = await planner_runtime_svc.resolve_semantic_planning(
-                user_id=user_id,
-                record=record,
-                history_messages=history_messages,
-                user_message=body.content,
-                page_identity=body.page_identity,
-                entry_action=body.entry_action,
-                attachments=attachments,
-                anchors=resolved_anchors,
-                deps=build_reader_ask_resolve_planning_deps(
-                    current_record_affordances_cb=_current_record_affordances,
-                    load_record_bundle_cb=_load_record_bundle,
-                    reference_reranker=_build_reference_reranker(),
-                    model_selection=selected_model_option.selection,
-                ),
-                truncate_history_message_cb=_truncate_history_message,
-            )
-            planner_usage_summary = planning_result.planner_usage_summary
-            reference_resolution = planning_result.reference_resolution
-            planning_snapshot = planning_result.planning_snapshot
-            resolved_intent = planning_snapshot.resolved_intent
-            resolved_context_input = planning_snapshot.resolved_context_input
-            disambiguation = planning_snapshot.disambiguation_state
-            external_asset_disambiguation = planning_snapshot.external_asset_disambiguation_state
-            submission_mode = planner_runtime_svc.submission_mode(entry_action=body.entry_action, attachments=attachments)
+        # Round 15: agent-loop-first is the only live route. The legacy
+        # planner_first else-branch (resolve_semantic_planning) has been
+        # removed. ``planner_route`` is always ``"agent_loop_first"``;
+        # the ``planner_first`` literal survives only as a trace value.
+        runtime_state.planner_skipped = True
+        runtime_state.planner_route_used = "agent_loop_first"
+        resolved_intent, resolved_intent_label = (
+            runtime_contract_svc.build_minimal_resolved_intent(body.entry_action)
+        )
+        planning_snapshot = None
+        reference_resolution = None
+        resolved_context_input = None
+        disambiguation = None
+        external_asset_disambiguation = None
+        clarification_only = False
+        clarification_mode = "none"
+        submission_mode = planner_runtime_svc.submission_mode(
+            entry_action=body.entry_action, attachments=attachments
+        )
+        planner_usage_summary = None
         run_info, run_history = _next_run_info(assistant_message)
         turn_run = await repo.create_turn_run(
             message_id=message_id,
@@ -4765,40 +4553,21 @@ async def retry_thread_message(
             return await _generate_sentence_annotation(record=record, anchor=primary_anchor, kind=kind)
 
         quick_action_annotation: dict[str, Any] | None = None
-        if planner_route == "agent_loop_first":
-            # Round 3 — agent-loop-first: skip materialize_planned_context.
-            # Build a minimal context with overview only; the model will call
-            # read tools on demand when it needs more detail.
-            # Round 8 — pass latest_user_message so build_agent_loop_context
-            # can detect deictic-without-anchor and set a clarification hint.
-            # Round 9 — pass cross_record_toggle so build_agent_loop_context
-            # can detect cross-record intent and set a hint.
-            resolved_context_input = context_runtime_svc.build_agent_loop_context(
-                record=record,
-                runtime_state=runtime_state,
-                anchors=resolved_anchors,
-                attachments=attachments,
-                user_id=user_id,
-                page_identity=body.page_identity,
-                entry_action=body.entry_action,
-                latest_user_message=body.content,
-                cross_record_toggle=runtime_state.cross_record_context_allowed,
-                history_messages=history_messages,
-            )
-        else:
-            resolved_context_input = await context_runtime_svc.materialize_planned_context(
-                user_id=user_id,
-                record=record,
-                runtime_state=runtime_state,
-                planning_snapshot=planning_snapshot,
-                page_identity=body.page_identity,
-                entry_action=body.entry_action,
-                attachments=attachments,
-                anchors=resolved_anchors,
-                get_record_context_cb=get_record_context_cb,
-                get_record_insights_cb=get_record_insights_cb,
-                load_record_bundle_cb=_load_record_bundle,
-            )
+        # Round 15: agent-loop-first is the only live route. The legacy
+        # planner_first else-branch (materialize_planned_context with a
+        # planning_snapshot) has been removed.
+        resolved_context_input = context_runtime_svc.build_agent_loop_context(
+            record=record,
+            runtime_state=runtime_state,
+            anchors=resolved_anchors,
+            attachments=attachments,
+            user_id=user_id,
+            page_identity=body.page_identity,
+            entry_action=body.entry_action,
+            latest_user_message=body.content,
+            cross_record_toggle=runtime_state.cross_record_context_allowed,
+            history_messages=history_messages,
+        )
         quick_action_annotation = await _run_explicit_quick_action_annotation(
             submission_mode=submission_mode,
             task_mode=resolved_intent,
@@ -5100,146 +4869,11 @@ async def retry_thread_message(
                     exc_info=True,
                 )
 
-        # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
-        # not already clarified, attempt a single replan with expanded context
-        replan_event = build_reader_ask_replan_event(
-            final_content_md=final_content_md,
-            planning_snapshot=planning_snapshot,
-            assistant_message_id=assistant_message["id"],
-            planner_route=planner_route,
-            runtime_state=runtime_state,
-        )
-        if replan_event is not None:
-            yield stream_events_svc.encode_sse(replan_event[0], replan_event[1])
-        replan_triggered = replan_event is not None
-        if replan_triggered:
-            try:
-                replan_result = await planner_runtime_svc.resolve_semantic_planning(
-                    user_id=user_id,
-                    record=record,
-                    history_messages=history_messages,
-                    user_message=body.content,
-                    page_identity=body.page_identity,
-                    entry_action=body.entry_action,
-                    attachments=attachments,
-                    anchors=resolved_anchors,
-                    deps=build_reader_ask_resolve_planning_deps(
-                        current_record_affordances_cb=_current_record_affordances,
-                        load_record_bundle_cb=_load_record_bundle,
-                        reference_reranker=_build_reference_reranker(),
-                        model_selection=selected_model_option.selection,
-                    ),
-                    truncate_history_message_cb=_truncate_history_message,
-                )
-                if replan_result.planning_snapshot and replan_result.planning_snapshot.clarification_mode != "must_clarify":
-                    replan_runtime_state = deepcopy(runtime_state)
-                    replan_planning_snapshot = replan_result.planning_snapshot
-                    replan_resolved_intent = replan_planning_snapshot.resolved_intent
-                    replan_resolved_context_input = replan_planning_snapshot.resolved_context_input
-                    replan_reference_resolution = replan_result.reference_resolution
-                    replan_disambiguation = replan_planning_snapshot.disambiguation_state
-                    replan_external_asset_disambiguation = replan_planning_snapshot.external_asset_disambiguation_state
-                    replan_resolved_context_input = await context_runtime_svc.materialize_planned_context(
-                        user_id=user_id,
-                        record=record,
-                        runtime_state=replan_runtime_state,
-                        planning_snapshot=replan_planning_snapshot,
-                        page_identity=body.page_identity,
-                        entry_action=body.entry_action,
-                        attachments=attachments,
-                        anchors=resolved_anchors,
-                        get_record_context_cb=get_record_context_cb,
-                        get_record_insights_cb=get_record_insights_cb,
-                        load_record_bundle_cb=_load_record_bundle,
-                    )
-                    replan_cross_record_context_allowed = replan_planning_snapshot.retrieval_needs == "known_reference_only"
-                    replan_quick_action_annotation = await _run_explicit_quick_action_annotation(
-                        submission_mode=submission_mode,
-                        task_mode=replan_resolved_intent,
-                        entry_action=body.entry_action,
-                        record=record,
-                        primary_anchor=primary_anchor,
-                        runtime_state=replan_runtime_state,
-                        event_queue=event_queue,
-                    )
-                    replan_payload = runtime_contract_svc.build_prompt_payload(
-                        runtime_contract_svc.ReaderAskAnswerRuntimeInput(
-                            thread=thread,
-                            record=record,
-                            user_message=body.content,
-                            history_messages=history_messages,
-                            page_identity=body.page_identity,
-                            attachments=attachments,
-                            anchors=resolved_anchors,
-                            resolved_intent=replan_resolved_intent,
-                            resolved_intent_label=_TASK_MODE_LABELS[replan_resolved_intent],
-                            entry_action=body.entry_action,
-                            submission_mode=submission_mode,
-                            cross_record_context_allowed=replan_cross_record_context_allowed,
-                            resolved_context_input=replan_resolved_context_input,
-                            quick_action_annotation=replan_quick_action_annotation,
-                            reference_resolution=replan_reference_resolution,
-                            planning_snapshot=replan_planning_snapshot,
-                            max_history_messages=cfg.MAX_HISTORY_MESSAGES,
-                            max_message_text=cfg.MAX_MESSAGE_TEXT,
-                        )
-                    )
-                    _replan_max_input_budget = prompt_preparation_svc.compute_max_input_budget(
-                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
-                    )
-                    if prompt_preparation_svc.should_emit_compacting(replan_payload, max_input_budget=_replan_max_input_budget):
-                        yield stream_events_svc.encode_sse(stream_events_svc.EVENT_CONTEXT_COMPACTING, stream_events_svc.context_compacting_payload(assistant_message["id"]))
-                    replan_payload, replan_max_output, _replan_compaction_audit, _replan_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
-                        replan_payload,
-                        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
-                        budget_buffer_tokens=runtime_budget_kwargs["prompt_buffer_tokens"],
-                        default_max_output_tokens=route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
-                        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
-                    )
-                    if _replan_context_too_large:
-                        logger.warning("reader_ask_replan_context_too_large: Replan context too large, using original answer")
-                        raise recovery_svc.ReplanContextTooLargeError()
-                    replan_trace_summary = prompt_preparation_svc.inject_compaction_audit(trace_summary, _replan_compaction_audit)
-                    replan_deps = build_reader_ask_agent_deps(
-                        payload=replan_payload,
-                        event_queue=event_queue,
-                        state=replan_runtime_state,
-                        query_seed=query_seed,
-                        task_mode=replan_resolved_intent,
-                        entry_action=body.entry_action,
-                        record_id=str(record.record_id),
-                        record_title=record.title,
-                        primary_anchor=primary_anchor,
-                        get_record_context_fn=get_record_context_cb,
-                        get_record_insights_fn=get_record_insights_cb,
-                        get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
-                        resolve_known_reference_fn=resolve_known_reference_cb,
-                        load_explicit_attachment_context_fn=load_explicit_attachment_context_cb,
-                        allowed_external_attachments=_build_allowed_external_attachments(attachments),
-                        generate_sentence_annotation_fn=generate_sentence_annotation_cb,
-                        suggest_prompts_fn=suggest_prompts_cb,
-                        vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
-                    )
-                    replan_content = await run_reader_ask_replan(
-                        replan_deps=replan_deps,
-                        replan_max_output=replan_max_output,
-                        route_settings=route_settings,
-                        model_selection=selected_model_option.selection,
-                    )
-                    if len(replan_content) >= len(final_content_md.strip()):
-                        final_content_md = replan_content
-                        planning_snapshot = replan_planning_snapshot
-                        resolved_intent = replan_resolved_intent
-                        resolved_context_input = replan_resolved_context_input
-                        reference_resolution = replan_reference_resolution
-                        disambiguation = replan_disambiguation
-                        external_asset_disambiguation = replan_external_asset_disambiguation
-                        cross_record_context_allowed = replan_cross_record_context_allowed
-                        quick_action_annotation = replan_quick_action_annotation
-                        runtime_state = replan_runtime_state
-                        trace_summary = replan_trace_summary
-            except Exception:
-                logger.warning("reader_ask_replan_failed: Replan failed, using original answer")
+        # Round 15: the legacy bounded-replan block (which called
+        # resolve_semantic_planning) has been removed. For agent_loop_first,
+        # build_replan_event always returns None, so the replan path was
+        # unreachable dead code. Degenerate answers are now handled by the
+        # agent-loop repair above.
 
         runtime_proposals = _build_action_proposals_from_runtime(
             record=record,

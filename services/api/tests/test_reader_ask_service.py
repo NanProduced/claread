@@ -89,7 +89,12 @@ def test_service_agent_deps_wires_tool_availability_all_paths() -> None:
         if isinstance(node, ast.Call) and _call_name(node.func) == "build_reader_ask_agent_deps"
     ]
 
-    assert len(factory_calls) == 5
+    # Round 15: the legacy planner_first branches have been removed.
+    # build_reader_ask_agent_deps is now called exactly 3 times:
+    #   1. agent-loop repair (_run_agent_loop_repair)
+    #   2. stream_thread_message main run
+    #   3. retry_thread_message main run
+    assert len(factory_calls) == 3
     for call in factory_calls:
         keyword_by_name = {keyword.arg: keyword.value for keyword in call.keywords}
         # Factory must receive entry_action (which it uses to build ToolAvailabilityInput)
@@ -151,14 +156,15 @@ def test_service_agent_deps_wires_tool_availability_all_paths() -> None:
         "service.py must not reference agent_runner_svc directly"
     )
 
-    # service.py must call build_reader_ask_replan_event exactly twice
+    # Round 15: service.py no longer calls build_reader_ask_replan_event
+    # (the legacy bounded-replan block has been removed).
     replan_event_calls = [
         node
         for node in ast.walk(module)
         if isinstance(node, ast.Call)
         and _call_name(node.func) == "build_reader_ask_replan_event"
     ]
-    assert len(replan_event_calls) == 2
+    assert len(replan_event_calls) == 0
 
     # service.py must not reference MODEL_ROUTE_READER_ASK_PLANNER directly
     direct_planner_route_refs = [
@@ -170,45 +176,16 @@ def test_service_agent_deps_wires_tool_availability_all_paths() -> None:
         "service.py must not reference MODEL_ROUTE_READER_ASK_PLANNER directly"
     )
 
-    # service.py must not reference build_reader_ask_planner_model_route directly
-    # (moved to planning_deps_factory in P6-6)
-    planner_cb_refs = [
-        node
-        for node in ast.walk(module)
-        if isinstance(node, ast.Name) and node.id == "build_reader_ask_planner_model_route"
-    ]
-    assert len(planner_cb_refs) == 0, (
-        "service.py must not reference build_reader_ask_planner_model_route; use planning_deps_factory"
-    )
-
-    # service.py must not construct ResolvePlanningDeps directly
-    direct_resolve_planning_deps_calls = [
-        node
-        for node in ast.walk(module)
-        if isinstance(node, ast.Call) and _call_name(node.func) == "ResolvePlanningDeps"
-    ]
-    assert len(direct_resolve_planning_deps_calls) == 0, (
-        "service.py must not construct ResolvePlanningDeps directly; use build_reader_ask_resolve_planning_deps"
-    )
-
-    # service.py must not construct RunPlannerDeps directly
-    direct_run_planner_deps_calls = [
-        node
-        for node in ast.walk(module)
-        if isinstance(node, ast.Call) and _call_name(node.func) == "RunPlannerDeps"
-    ]
-    assert len(direct_run_planner_deps_calls) == 0, (
-        "service.py must not construct RunPlannerDeps directly; use build_reader_ask_resolve_planning_deps"
-    )
-
-    # service.py must reference build_reader_ask_resolve_planning_deps exactly 4 times
+    # Round 15: service.py must not reference build_reader_ask_resolve_planning_deps
+    # (planning_deps_factory.py has been deleted).
     planning_deps_factory_refs = [
         node
         for node in ast.walk(module)
         if isinstance(node, ast.Name) and node.id == "build_reader_ask_resolve_planning_deps"
     ]
-    assert len(planning_deps_factory_refs) == 4, (
-        "service.py must use build_reader_ask_resolve_planning_deps for all 4 planning deps constructions"
+    assert len(planning_deps_factory_refs) == 0, (
+        "service.py must not reference build_reader_ask_resolve_planning_deps; "
+        "planning_deps_factory.py has been deleted in Round 15"
     )
 
     # service.py must not reference resolver_svc at module level (removed import)
@@ -764,44 +741,6 @@ def test_planner_decision_normalizes_chinese_labels() -> None:
     assert decision.working_set.article_overview_needed is True
 
 
-def test_fallback_semantic_planner_decision_handles_article_level_question() -> None:
-    record = type(
-        "Record",
-        (),
-        {
-            "title": "Dracula",
-            "render_scene": {
-                "content_summary": {"overview": "本文讨论叙事推进与恐惧升级。"},
-                "sentence_entries": [],
-            },
-        },
-    )()
-    page_identity = ReaderAskPageIdentity(
-        record_id="00000000-0000-0000-0000-000000000001",
-        title="Dracula",
-        available_context_capabilities=["record_context"],
-        has_article_overview=False,
-        has_sentence_entries=False,
-        has_annotations=False,
-        has_reader_notes=False,
-    )
-
-    decision = planner_runtime_svc.fallback_semantic_planner_decision(
-        user_message="这篇文章是怎么展开论证的？",
-        entry_action="ask_about_this",
-        page_identity=page_identity,
-        attachments=[],
-        anchors=[],
-        record=record,
-        failure_reason="validation failed",
-        render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-        has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-    )
-
-    assert decision.clarification_only is False
-    assert decision.working_set.article_overview_needed is True
-    assert decision.working_set.local_context_window_needed is True
-
 def test_list_context_records_includes_overview_hint_fields(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     user_id = uuid4()
 
@@ -839,34 +778,6 @@ def test_list_context_records_includes_overview_hint_fields(monkeypatch) -> None
     assert response.items[0].overview_hint == "文章比较灵长类和人类的用手偏好。"
     assert response.items[0].overview_hint_status == "ready"
     assert response.items[0].overview_hint_source == "learning_overview_hint_agent"
-
-
-def test_fallback_semantic_planner_decision_preserves_title_like_reference_request() -> None:
-    record = type("Record", (), {"title": "Current", "render_scene": {"sentence_entries": []}})()
-    page_identity = ReaderAskPageIdentity(
-        record_id="00000000-0000-0000-0000-000000000001",
-        title="Current",
-        available_context_capabilities=["record_context"],
-        has_article_overview=False,
-        has_sentence_entries=False,
-        has_annotations=False,
-        has_reader_notes=False,
-    )
-
-    decision = planner_runtime_svc.fallback_semantic_planner_decision(
-        user_message='我之前那篇《Climate Policy》里也提过这个吗？',
-        entry_action="ask_about_this",
-        page_identity=page_identity,
-        attachments=[],
-        anchors=[],
-        record=record,
-        failure_reason="validation failed",
-        render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-        has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-    )
-
-    assert decision.reference_request.requested is True
-    assert decision.reference_request.query == "Climate Policy"
 
 
 def test_resolved_context_summary_marks_article_assets_and_history_usage() -> None:
@@ -3602,21 +3513,15 @@ async def test_replan_not_triggered_when_no_planning_snapshot() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fallback planner: intent coverage, weak references, conservative path
+# Fallback planner: conservative reason promotion (plan_request consumption)
 # ---------------------------------------------------------------------------
-
-
-def _fallback_record(**overrides: object) -> object:
-    """Build a minimal record stub for fallback planner tests."""
-    defaults = {
-        "title": "Test Article",
-        "render_scene": {
-            "content_summary": {"overview": "A test article about AI."},
-            "sentence_entries": [],
-        },
-    }
-    defaults.update(overrides)
-    return type("Record", (), defaults)()
+# Round 15: the fallback builder tests (``TestFallbackReferenceQuery``,
+# ``TestFallbackIntentCoverage``, ``TestFallbackWeakReferenceConservativePath``)
+# have been removed along with ``_fallback_record``. The
+# ``_fallback_page_identity`` helper is retained for
+# ``TestFallbackPlannerConservativeReasonPromotion`` below, which exercises
+# ``planner.plan_request``'s promotion of ``fallback_*`` clarification
+# reasons — behavior that still lives in ``planner.plan_request``.
 
 
 def _fallback_page_identity(**overrides: object) -> ReaderAskPageIdentity:
@@ -3633,255 +3538,14 @@ def _fallback_page_identity(**overrides: object) -> ReaderAskPageIdentity:
     return ReaderAskPageIdentity(**defaults)  # type: ignore[arg-type]
 
 
-class TestFallbackReferenceQuery:
-    """Test fallback_reference_query with explicit title markers only.
-
-    P3-S3: Weak reference regex patterns removed. Only explicit structural
-    markers (《》, "", quotes) are extracted by fallback.
-    """
-
-    def test_book_title_marks(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query("之前那篇《Climate Policy》里也提过") == "Climate Policy"
-
-    def test_double_quotes(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query('关于"AI Ethics"那篇文章') == "AI Ethics"
-
-    def test_weak_chinese_no_longer_matches(self) -> None:
-        """P3-S3: Natural language weak references no longer extracted."""
-        assert planner_runtime_svc.fallback_reference_query("之前那篇climate policy的文章也提过吗？") is None
-
-    def test_weak_english_no_longer_matches(self) -> None:
-        """P3-S3: 'that article about X' no longer extracted."""
-        assert planner_runtime_svc.fallback_reference_query("that article about climate policy also mentioned this") is None
-
-    def test_no_reference_returns_none(self) -> None:
-        assert planner_runtime_svc.fallback_reference_query("这句话什么意思？") is None
-
-    def test_explicit_title_takes_priority(self) -> None:
-        """Explicit title markers are still extracted."""
-        result = planner_runtime_svc.fallback_reference_query("之前那篇《Climate Policy》的文章")
-        assert result == "Climate Policy"
-
-
-class TestFallbackIntentCoverage:
-    """Test that fallback planner only uses explicit signals for intent.
-
-    P3-S2: Fallback no longer uses keyword matching. Natural language
-    messages default to 'explain' unless an explicit signal (entry_action
-    or dictionary anchor) overrides.
-    """
-
-    @pytest.mark.parametrize(
-        "message,expected_intent",
-        [
-            # Natural language → explain (no keyword matching)
-            ("这句话的语法结构是什么？", "explain"),
-            ("为什么这里用过去式？", "explain"),
-            ("帮我拆解这个长句", "explain"),
-            ("break down this sentence", "explain"),
-            ("这个词什么意思？", "explain"),
-            ("phrase的含义", "explain"),
-            ("这篇文章和之前那篇有什么不同？", "explain"),
-            ("对比一下这两篇文章", "explain"),
-            ("比较两者的观点", "explain"),
-            ("总结一下这篇文章", "explain"),
-            ("translate this paragraph", "explain"),
-            ("帮我复习一下", "explain"),
-            ("这篇文章讲了什么？", "explain"),
-            ("What is this about?", "explain"),
-        ],
-    )
-    def test_fallback_intent_recognition(self, message: str, expected_intent: str) -> None:
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message=message,
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.resolved_intent == expected_intent
-
-    def test_entry_action_lookup_in_context_overrides_message(self) -> None:
-        """entry_action=lookup_in_context should force vocabulary intent
-        even if the message contains grammar keywords."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="这里的语法结构",
-            entry_action="lookup_in_context",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.resolved_intent == "vocabulary"
-
-    def test_entry_action_why_here_overrides_message(self) -> None:
-        """entry_action=why_here should force grammar intent."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="这个词什么意思",
-            entry_action="why_here",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.resolved_intent == "grammar"
-
-    def test_compare_defaults_to_explain(self) -> None:
-        """Compare/difference questions now default to 'explain' in fallback.
-        LLM planner should resolve these to 'general' when available."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="这两篇文章的观点有什么区别？",
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.resolved_intent == "explain"
-
-    def test_vs_pattern_defaults_to_explain(self) -> None:
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="democracy vs authoritarianism",
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.resolved_intent == "explain"
-
-
-class TestFallbackWeakReferenceConservativePath:
-    """Test fallback reference behavior after P3-S3.
-
-    P3-S3: Weak natural language references no longer trigger cross_record
-    or reference_request in fallback. Only explicit title markers (《》/"")
-    and explicit attachments trigger these.
-    """
-
-    def test_weak_natural_language_no_cross_record(self) -> None:
-        """P3-S3: Natural language weak references no longer trigger cross_record."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="之前那篇climate policy的文章也提过这个吗？",
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.reference_request.requested is False
-        assert decision.working_set.cross_record_context_allowed is False
-
-    def test_title_marker_enables_cross_record(self) -> None:
-        """Explicit title markers (《》) still trigger cross_record."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="之前那篇《Climate Policy》里也提过这个吗？",
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.reference_request.requested is True
-        assert decision.reference_request.query is not None
-        assert decision.working_set.cross_record_context_allowed is True
-
-    def test_title_reference_without_anchor_sets_conservative_reason(self) -> None:
-        """Title reference without anchor should set clarification_reason
-        to signal uncertainty (conservative path)."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message='关于"AI Ethics"那篇文章也提过这个吗？',
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.clarification_reason == "fallback_title_reference_without_anchor"
-        # Should NOT be must_clarify — we can still answer at article level
-        assert decision.clarification_only is False
-
-    def test_title_reference_with_anchor_no_conservative_reason(self) -> None:
-        """Title reference WITH anchor should NOT trigger conservative path."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message='之前那篇《Climate Policy》里也提过这个吗？',
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.clarification_reason is None
-        assert decision.reference_request.requested is True
-
-    def test_no_reference_no_cross_record(self) -> None:
-        """Without any reference, cross_record_context_allowed should be False."""
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="这句话什么意思？",
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.reference_request.requested is False
-        assert decision.working_set.cross_record_context_allowed is False
-
-    def test_external_attachment_still_enables_cross_record(self) -> None:
-        """Explicit external record attachment should still enable cross_record
-        even without any reference query."""
-        attachment = ReaderAskAttachment(
-            kind="record_ref",
-            subtype="related_record",
-            label="Related Article",
-            metadata=ReaderAskAttachmentMetadata(
-                source_surface="test",
-                record_id="00000000-0000-0000-0000-000000000002",
-            ),
-        )
-        decision = planner_runtime_svc.fallback_semantic_planner_decision(
-            user_message="这篇文章讲了什么？",
-            entry_action="ask_about_this",
-            page_identity=_fallback_page_identity(),
-            attachments=[attachment],
-            anchors=[],
-            record=_fallback_record(),
-            failure_reason="test",
-            render_overview_cb=lambda r: r.render_scene.get("content_summary", {}).get("overview"),
-            has_sentence_entries_cb=lambda r: bool(r.render_scene.get("sentence_entries")),
-        )
-        assert decision.working_set.cross_record_context_allowed is True
+# Round 15: ``TestFallbackReferenceQuery``, ``TestFallbackIntentCoverage``,
+# and ``TestFallbackWeakReferenceConservativePath`` have been removed.
+# They asserted behavior of the deleted ``planner_runtime.fallback_reference_query``
+# and ``planner_runtime.fallback_semantic_planner_decision`` builders. The
+# schema-level and ``planner.plan_request`` consumption tests below
+# (``TestFallbackPlannerConservativeReasonPromotion``) continue to cover
+# the ``fallback_*`` clarification_reason promotion path, which still
+# lives in ``planner.plan_request``.
 
 
 class TestFallbackPlannerConservativeReasonPromotion:
@@ -4543,125 +4207,5 @@ class TestReferenceRerankerWiring:
         assert "SemanticRerankOutput" not in content
         assert "LlmReferenceReranker" not in content
 
-    async def test_resolve_semantic_planning_passes_reranker_to_callback(self) -> None:
-        """resolve_semantic_planning passes deps.reference_reranker to
-        resolve_known_references_cb as the reranker kwarg."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from app.services.reader_ask import planner_runtime as planner_runtime_svc
-        from app.services.reader_ask import planner as planner_svc
-
-        fake_reranker = object()
-
-        captured_reranker: list[object] = []
-
-        async def fake_resolve_known_references_cb(**kwargs):  # type: ignore[no-untyped-def]
-            captured_reranker.append(kwargs.get("reranker"))
-            return planner_svc.ReaderAskReferenceResolution()
-
-        deps = planner_runtime_svc.ResolvePlanningDeps(
-            run_planner_deps=planner_runtime_svc.RunPlannerDeps(
-                current_record_affordances_cb=MagicMock(return_value=planner_svc.ReaderAskCurrentRecordAffordances()),
-                build_model_route_cb=MagicMock(return_value=(MagicMock(), MagicMock())),
-            ),
-            resolve_known_references_cb=fake_resolve_known_references_cb,
-            load_record_bundle_cb=AsyncMock(return_value=MagicMock(record_id=uuid4(), title="Test", render_scene={})),
-            resolve_structured_asset_refs_cb=AsyncMock(return_value=planner_svc.ReaderAskStructuredAssetResolution()),
-            list_supplements_cb=AsyncMock(return_value=[]),
-            reference_reranker=fake_reranker,
-        )
-
-        planner_decision = planner_svc.ReaderAskPlannerDecision(
-            resolved_intent="general",
-            local_context_window_needed=True,
-            reference_requested=True,
-            reference_query="climate policy",
-        )
-
-        page_identity = ReaderAskPageIdentity(
-            record_id=str(uuid4()),
-            title="Test Article",
-            available_context_capabilities=["record_context"],
-            has_article_overview=True,
-            has_sentence_entries=True,
-        )
-
-        # Patch run_semantic_planner to return a tuple (decision, status, usage)
-        with patch.object(
-            planner_runtime_svc, "run_semantic_planner",
-            new=AsyncMock(return_value=(planner_decision, "valid", None)),
-        ):
-            await planner_runtime_svc.resolve_semantic_planning(
-                user_id=uuid4(),
-                record=MagicMock(record_id=uuid4()),
-                history_messages=[],
-                user_message="test",
-                page_identity=page_identity,
-                entry_action="ask_about_this",
-                attachments=[],
-                anchors=[],
-                deps=deps,
-                truncate_history_message_cb=lambda msg, **kw: msg,
-            )
-
-        assert len(captured_reranker) == 1
-        assert captured_reranker[0] is fake_reranker
-
-    async def test_resolve_semantic_planning_default_reranker_is_none(self) -> None:
-        """When reference_reranker is not provided, callback receives None."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from app.services.reader_ask import planner_runtime as planner_runtime_svc
-        from app.services.reader_ask import planner as planner_svc
-
-        captured_reranker: list[object] = []
-
-        async def fake_resolve_known_references_cb(**kwargs):  # type: ignore[no-untyped-def]
-            captured_reranker.append(kwargs.get("reranker"))
-            return planner_svc.ReaderAskReferenceResolution()
-
-        deps = planner_runtime_svc.ResolvePlanningDeps(
-            run_planner_deps=planner_runtime_svc.RunPlannerDeps(
-                current_record_affordances_cb=MagicMock(return_value=planner_svc.ReaderAskCurrentRecordAffordances()),
-                build_model_route_cb=MagicMock(return_value=(MagicMock(), MagicMock())),
-            ),
-            resolve_known_references_cb=fake_resolve_known_references_cb,
-            load_record_bundle_cb=AsyncMock(return_value=MagicMock(record_id=uuid4(), title="Test", render_scene={})),
-            resolve_structured_asset_refs_cb=AsyncMock(return_value=planner_svc.ReaderAskStructuredAssetResolution()),
-            list_supplements_cb=AsyncMock(return_value=[]),
-        )
-
-        planner_decision = planner_svc.ReaderAskPlannerDecision(
-            resolved_intent="general",
-            local_context_window_needed=True,
-            reference_requested=True,
-            reference_query="climate policy",
-        )
-
-        page_identity = ReaderAskPageIdentity(
-            record_id=str(uuid4()),
-            title="Test Article",
-            available_context_capabilities=["record_context"],
-            has_article_overview=True,
-            has_sentence_entries=True,
-        )
-
-        with patch.object(
-            planner_runtime_svc, "run_semantic_planner",
-            new=AsyncMock(return_value=(planner_decision, "valid", None)),
-        ):
-            await planner_runtime_svc.resolve_semantic_planning(
-                user_id=uuid4(),
-                record=MagicMock(record_id=uuid4()),
-                history_messages=[],
-                user_message="test",
-                page_identity=page_identity,
-                entry_action="ask_about_this",
-                attachments=[],
-                anchors=[],
-                deps=deps,
-                truncate_history_message_cb=lambda msg, **kw: msg,
-            )
-
-        assert len(captured_reranker) == 1
-        assert captured_reranker[0] is None
+    # Round 15: the resolve_semantic_planning unit tests have been removed
+    # because resolve_semantic_planning has been deleted from planner_runtime.

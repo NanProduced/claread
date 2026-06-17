@@ -491,8 +491,8 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
     """Return a dict of patch contexts for all service boundaries.
 
     Callers should enter all patches, then configure repo mocks.
-    If ``include_planning_deps`` is True, also patch
-    ``build_reader_ask_resolve_planning_deps``.
+    ``include_planning_deps`` is accepted for backward compatibility but
+    no longer patches anything (planning_deps_factory.py deleted in Round 15).
     If ``agent_loop_first`` is True, ``resolve_planner_route`` returns
     ``"agent_loop_first"``; otherwise ``"planner_first"``.
     """
@@ -509,7 +509,6 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
         "stream_run": patch.object(service_svc, "stream_reader_ask_agent_run"),
         "build_deps": patch.object(service_svc, "build_reader_ask_agent_deps", return_value=MagicMock()),
         "resolve_agent": patch.object(service_svc, "resolve_reader_ask_agent", return_value=MagicMock()),
-        "replan_event": patch.object(service_svc, "build_reader_ask_replan_event", return_value=None),
         "settle": patch.object(service_svc, "_settle_reader_ask_reservation", new_callable=AsyncMock),
         "record_usage": patch.object(service_svc, "record_ai_usage_event", new_callable=AsyncMock),
         "cost_points": patch.object(service_svc, "compute_reader_ask_cost_points", return_value=5),
@@ -524,10 +523,6 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
         ),
         "refund_points": patch.object(service_svc, "refund_reserved_points", new_callable=AsyncMock),
     }
-    if include_planning_deps:
-        patches["planning_deps"] = patch.object(
-            service_svc, "build_reader_ask_resolve_planning_deps", return_value=MagicMock()
-        )
     return patches
 
 
@@ -651,75 +646,9 @@ class TestStreamThreadMessageAgentLoopFirst:
             assert gate_kwargs["latest_user_message"] == "这篇文章想表达什么？"
             mocks["planner_runtime"].resolve_semantic_planning.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_planner_first_path_still_calls_planner_when_forced(self) -> None:
-        """When planner_first route is forced (not triggered by any live condition),
-        ``resolve_semantic_planning`` must still be called."""
-        from app.services.reader_ask import service as service_svc
-
-        user_id = uuid4()
-        thread_id = uuid4()
-        record_id = uuid4()
-        record = _make_record_bundle(record_id)
-        model_option = _make_model_option()
-
-        body = service_svc.ReaderAskMessageStreamRequest(
-            content="继续",
-            page_identity=ReaderAskPageIdentity(record_id=str(record_id)),
-            attachments=[],
-            entry_action="ask_about_this",
-        )
-
-        # planner_first is no longer triggered by any live condition; this test
-        # validates the legacy code path still works
-
-        # Build a mock planning result for the planner-first path
-        mock_planning_snapshot = MagicMock()
-        mock_planning_snapshot.resolved_intent = MagicMock(value="explain")
-        mock_planning_snapshot.resolved_context_input = MagicMock()
-        mock_planning_snapshot.disambiguation_state = None
-        mock_planning_snapshot.external_asset_disambiguation_state = None
-        mock_planning_snapshot.clarification_only = False
-        mock_planning_snapshot.clarification_mode = "none"
-        mock_planning_result = MagicMock()
-        mock_planning_result.planning_snapshot = mock_planning_snapshot
-        mock_planning_result.planner_usage_summary = {"total_tokens": 100}
-        mock_planning_result.reference_resolution = MagicMock()
-
-        p = _patch_service_boundaries(service_svc, include_planning_deps=True, agent_loop_first=False)
-
-        with contextlib.ExitStack() as stack:
-            mocks = {k: stack.enter_context(v) for k, v in p.items()}
-
-            mocks["load_record"].return_value = record
-            mocks["resolve_model"].return_value = ({"id": str(thread_id), "record_id": str(record_id)}, model_option)
-            mocks["resolve_anchors"].return_value = []
-            mocks["check_quota"].return_value = 100
-            mocks["reserve_points"].return_value = MagicMock(
-                reservation_id=uuid4(), total_points=10
-            )
-
-            _configure_common_mocks(
-                mocks["repo"], mocks["planner_runtime"], mocks["context_runtime"],
-                mocks["stream_run"], mocks["prompt_prep"], mocks["output_contract"],
-                mocks["post_process"], mocks["checkpoint"],
-                planner_result=mock_planning_result,
-            )
-
-            events = await _collect_sse_events(
-                service_svc.stream_thread_message(user_id, thread_id, body)
-            )
-
-            # The planner MUST have been called
-            mocks["resolve_planner_route"].assert_called_once()
-            gate_kwargs = mocks["resolve_planner_route"].call_args.kwargs
-            assert gate_kwargs["entry_action"] == "ask_about_this"
-            assert gate_kwargs["history_messages"] == []
-            assert gate_kwargs["attachments"] == []
-            assert gate_kwargs["anchors"] == []
-            assert gate_kwargs["cross_record_toggle"] is False
-            assert gate_kwargs["latest_user_message"] == "继续"
-            mocks["planner_runtime"].resolve_semantic_planning.assert_called_once()
+    # Round 15: test_planner_first_path_still_calls_planner_when_forced has
+    # been removed because the legacy planner_first executable path has been
+    # deleted from service.py. planner_first survives only as a trace value.
 
 
 class TestRetryThreadMessageAgentLoopFirst:

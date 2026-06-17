@@ -15,9 +15,16 @@ Coverage:
 6. Interrupted answer does not trigger repair.
 7. Repair telemetry fields appear in ``_metrics_json``.
 8. ``planner_route_used`` stays ``"agent_loop_first"`` after repair.
-9. Forced ``planner_first`` legacy path still calls
-   ``resolve_semantic_planning`` and does NOT set ``repair_attempted``.
-10. ``retry_thread_message`` live route also repairs instead of planning.
+9. ``retry_thread_message`` live route also repairs instead of planning.
+
+Round 15 update: the forced ``planner_first`` legacy path
+(``TestForcedPlannerFirstReplanUnchanged``) has been removed. There is no
+longer an executable branch that reaches
+``planner_runtime.resolve_semantic_planning``; ``planner_first`` survives
+only as a trace/historical value. The ``resolve_semantic_planning``
+references that remain in this file are mock attributes used solely for
+``assert_not_called`` regression assertions on the fully-mocked
+``planner_runtime_svc``.
 
 All tests use mocks — no real LLM is called.
 """
@@ -460,68 +467,11 @@ class TestAgentLoopRepairTelemetry:
 
 
 # ---------------------------------------------------------------------------
-# 9. Forced planner_first legacy path unchanged
+# 9. Forced planner_first legacy path — REMOVED in Round 15
 # ---------------------------------------------------------------------------
-
-
-class TestForcedPlannerFirstReplanUnchanged:
-    """Round 14: forced ``planner_first`` legacy path still calls
-    ``resolve_semantic_planning`` and does NOT set ``repair_attempted``.
-    """
-
-    @pytest.mark.asyncio
-    async def test_forced_planner_first_still_uses_resolve_semantic_planning(self) -> None:
-        from app.services.reader_ask import service as service_svc
-
-        user_id = uuid4()
-        thread_id = uuid4()
-        record_id = uuid4()
-        record = _make_record_bundle(record_id)
-        model_option = _make_model_option()
-        body = _build_stream_body(record_id)
-
-        # Build a mock planning result for the planner-first path.
-        mock_planning_snapshot = MagicMock()
-        mock_planning_snapshot.resolved_intent = MagicMock(value="explain")
-        mock_planning_snapshot.resolved_context_input = MagicMock()
-        mock_planning_snapshot.disambiguation_state = None
-        mock_planning_snapshot.external_asset_disambiguation_state = None
-        mock_planning_snapshot.clarification_only = False
-        mock_planning_snapshot.clarification_mode = "none"
-        mock_planning_snapshot.retrieval_needs = "known_reference_only"
-        mock_planning_result = MagicMock()
-        mock_planning_result.planning_snapshot = mock_planning_snapshot
-        mock_planning_result.planner_usage_summary = {"total_tokens": 100}
-        mock_planning_result.reference_resolution = MagicMock()
-
-        # agent_loop_first=False → monkeypatch resolve_planner_route to
-        # return "planner_first".
-        p = _patch_service_boundaries(service_svc, agent_loop_first=False)
-        p["run_replan"] = patch.object(
-            service_svc, "run_reader_ask_replan", new_callable=AsyncMock,
-            return_value="planner replan content that is substantive",
-        )
-        p.update(_apply_repair_test_patches(service_svc))
-
-        with contextlib.ExitStack() as stack:
-            mocks = {k: stack.enter_context(v) for k, v in p.items()}
-            _setup_common_mocks_for_repair(
-                mocks, record=record, thread_id=thread_id,
-                record_id=record_id, model_option=model_option,
-            )
-            # Configure planner_runtime to return the mock planning result.
-            mocks["planner_runtime"].resolve_semantic_planning = AsyncMock(
-                return_value=mock_planning_result,
-            )
-            # Main answer is degenerate so replan triggers.
-            mocks["stream_run"].side_effect = _make_degenerate_stream_factory(content_md="")
-
-            events = await _collect_sse_events(
-                service_svc.stream_thread_message(user_id, thread_id, body)
-            )
-
-            # Legacy path: planner MUST be called.
-            mocks["planner_runtime"].resolve_semantic_planning.assert_called_once()
+# The TestForcedPlannerFirstReplanUnchanged class has been removed in
+# Round 15 because the legacy planner_first executable path has been deleted
+# from service.py. planner_first survives only as a trace/historical value.
 
 
 # ---------------------------------------------------------------------------

@@ -4,12 +4,20 @@ P3-S1: Verify that the planner decision contract can carry LLM semantic
 decisions, that new fields are backward-compatible, and that focused
 fixture cases cover Chinese, English, mixed, selection, weak reference,
 explicit attachment, and sentence/article-level context scenarios.
+
+Round 15: the ``fallback_semantic_planner_decision`` executable path has
+been removed from ``planner_runtime``. Tests that exercised the fallback
+builder (``TestFallbackDecisionNewFields``,
+``TestFallbackExplicitSignals``, ``TestFallbackDecisionFixtureCases``,
+and the fallback-specific case in ``TestCombinedFieldConsumption``) have
+been removed. The schema-level and ``plan_request`` consumption tests
+remain, since ``ReaderAskPlannerDecision`` is still the contract used by
+the agent-loop-first path to carry planner-shaped decisions.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 import pytest
 
@@ -23,31 +31,12 @@ from app.schemas.reader_ask import (
     ReaderAskPlannerStructuredAssetRequest,
     ReaderAskPlannerWorkingSetDecision,
 )
-from app.services.reader_ask import planner_runtime
 from app.services.reader_ask import planner as planner_svc
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _record(
-    *,
-    record_id: Any = None,
-    title: str = "Test Article",
-    overview: str | None = "A test article about AI.",
-    sentence_entries: list[dict[str, Any]] | None = None,
-) -> Any:
-    render_scene: dict[str, Any] = {}
-    if overview is not None:
-        render_scene["content_summary"] = {"overview": overview}
-    render_scene["sentence_entries"] = sentence_entries or []
-    return type("Record", (), {
-        "record_id": record_id or uuid4(),
-        "title": title,
-        "render_scene": render_scene,
-    })()
-
 
 def _page_identity(**overrides: object) -> ReaderAskPageIdentity:
     defaults = {
@@ -61,32 +50,6 @@ def _page_identity(**overrides: object) -> ReaderAskPageIdentity:
     }
     defaults.update(overrides)
     return ReaderAskPageIdentity(**defaults)  # type: ignore[arg-type]
-
-
-def _render_overview_cb(record: Any) -> str | None:
-    return record.render_scene.get("content_summary", {}).get("overview")
-
-
-def _has_sentence_entries_cb(record: Any) -> bool:
-    entries = record.render_scene.get("sentence_entries") or record.render_scene.get("sentenceEntries")
-    return isinstance(entries, list) and bool(entries)
-
-
-def _fallback_decision(**kwargs: object) -> ReaderAskPlannerDecision:
-    """Build a fallback decision with sensible defaults for testing."""
-    defaults = {
-        "user_message": "test",
-        "entry_action": "ask_about_this",
-        "page_identity": _page_identity(),
-        "attachments": [],
-        "anchors": [],
-        "record": _record(),
-        "failure_reason": "test",
-        "render_overview_cb": _render_overview_cb,
-        "has_sentence_entries_cb": _has_sentence_entries_cb,
-    }
-    defaults.update(kwargs)
-    return planner_runtime.fallback_semantic_planner_decision(**defaults)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -222,86 +185,14 @@ class TestPlannerDecisionClarificationSync:
 
 
 # ---------------------------------------------------------------------------
-# 5. Fallback decision contract: new fields
+# 6. Focused fixture cases: planner decision shape
 # ---------------------------------------------------------------------------
-
-class TestFallbackDecisionNewFields:
-    def test_fallback_decision_confidence_is_low(self) -> None:
-        decision = _fallback_decision()
-        assert decision.decision_confidence == "low"
-
-    def test_fallback_context_scope_is_set(self) -> None:
-        """P3-S4: Fallback decision now sets context_scope based on working_set."""
-        decision = _fallback_decision()
-        assert decision.context_scope is not None
-        assert decision.context_scope in ("sentence", "paragraph", "article", "cross_article")
-
-    def test_fallback_requires_local_anchor_is_none(self) -> None:
-        decision = _fallback_decision()
-        assert decision.requires_local_anchor is None
-
-    def test_fallback_answer_policy_is_none(self) -> None:
-        decision = _fallback_decision()
-        assert decision.answer_policy is None
-
-    def test_fallback_tool_hints_is_none(self) -> None:
-        decision = _fallback_decision()
-        assert decision.tool_hints is None
-
-
-# ---------------------------------------------------------------------------
-# 5b. Fallback explicit signal tests
-# ---------------------------------------------------------------------------
-
-class TestFallbackExplicitSignals:
-    """Verify that fallback only uses explicit signals (entry_action, anchor type)
-    to determine intent, not keyword matching."""
-
-    def test_lookup_in_context_forces_vocabulary(self) -> None:
-        decision = _fallback_decision(
-            user_message="这里的语法结构",
-            entry_action="lookup_in_context",
-        )
-        assert decision.resolved_intent == "vocabulary"
-
-    def test_dictionary_anchor_forces_vocabulary(self) -> None:
-        decision = _fallback_decision(
-            user_message="这是什么",
-            entry_action="ask_about_this",
-            anchors=[ReaderAskAnchorRef(
-                anchor_type="dictionary_entry",
-                sentence_id=None,
-                selected_text="test",
-                dict_entry_id=1,
-            )],
-        )
-        assert decision.resolved_intent == "vocabulary"
-
-    def test_why_here_forces_grammar(self) -> None:
-        decision = _fallback_decision(
-            user_message="这个词什么意思",
-            entry_action="why_here",
-        )
-        assert decision.resolved_intent == "grammar"
-
-    def test_explain_this_defaults_to_explain(self) -> None:
-        decision = _fallback_decision(
-            user_message="explain this",
-            entry_action="explain_this",
-        )
-        assert decision.resolved_intent == "explain"
-
-    def test_ask_about_this_defaults_to_explain(self) -> None:
-        decision = _fallback_decision(
-            user_message="这篇文章讲了什么",
-            entry_action="ask_about_this",
-        )
-        assert decision.resolved_intent == "explain"
-
-
-# ---------------------------------------------------------------------------
-# 6. Focused fixture cases: fallback decision behavior
-# ---------------------------------------------------------------------------
+# Round 15: the fallback decision builder has been removed. The fixture
+# cases below are retained as data for the schema-level
+# ``TestPlannerDecisionCanCarryLLMOutput`` tests, which verify that
+# ``ReaderAskPlannerDecision`` can still represent an LLM-style decision
+# for each scenario. The ``expected_*`` keys reflect the fallback's
+# historical behavior and are no longer asserted against a live builder.
 
 FIXTURE_CASES: list[dict[str, Any]] = [
     {
@@ -490,75 +381,15 @@ FIXTURE_CASES: list[dict[str, Any]] = [
 ]
 
 
-class TestFallbackDecisionFixtureCases:
-    @pytest.mark.parametrize(
-        "case",
-        FIXTURE_CASES,
-        ids=[c["id"] for c in FIXTURE_CASES],
-    )
-    def test_fallback_resolved_intent(self, case: dict[str, Any]) -> None:
-        decision = _fallback_decision(
-            user_message=case["user_message"],
-            entry_action=case["entry_action"],
-            anchors=case.get("anchors", []),
-            attachments=case.get("attachments", []),
-        )
-        assert decision.resolved_intent == case["expected_intent"], (
-            f"{case['id']}: expected intent {case['expected_intent']}, got {decision.resolved_intent}"
-        )
-
-    @pytest.mark.parametrize(
-        "case",
-        FIXTURE_CASES,
-        ids=[c["id"] for c in FIXTURE_CASES],
-    )
-    def test_fallback_cross_record(self, case: dict[str, Any]) -> None:
-        decision = _fallback_decision(
-            user_message=case["user_message"],
-            entry_action=case["entry_action"],
-            anchors=case.get("anchors", []),
-            attachments=case.get("attachments", []),
-        )
-        expected = case.get("expected_cross_record", False)
-        assert decision.working_set.cross_record_context_allowed is expected, (
-            f"{case['id']}: expected cross_record={expected}, got {decision.working_set.cross_record_context_allowed}"
-        )
-
-    @pytest.mark.parametrize(
-        "case",
-        FIXTURE_CASES,
-        ids=[c["id"] for c in FIXTURE_CASES],
-    )
-    def test_fallback_reference_requested(self, case: dict[str, Any]) -> None:
-        decision = _fallback_decision(
-            user_message=case["user_message"],
-            entry_action=case["entry_action"],
-            anchors=case.get("anchors", []),
-            attachments=case.get("attachments", []),
-        )
-        expected = case.get("expected_reference_requested", False)
-        assert decision.reference_request.requested is expected, (
-            f"{case['id']}: expected reference_requested={expected}, got {decision.reference_request.requested}"
-        )
-
-    @pytest.mark.parametrize(
-        "case",
-        FIXTURE_CASES,
-        ids=[c["id"] for c in FIXTURE_CASES],
-    )
-    def test_fallback_decision_confidence_is_low(self, case: dict[str, Any]) -> None:
-        decision = _fallback_decision(
-            user_message=case["user_message"],
-            entry_action=case["entry_action"],
-            anchors=case.get("anchors", []),
-            attachments=case.get("attachments", []),
-        )
-        assert decision.decision_confidence == "low"
-
-
 # ---------------------------------------------------------------------------
 # 7. Schema can carry LLM output for fixture cases
 # ---------------------------------------------------------------------------
+# Round 15: ``TestFallbackDecisionFixtureCases`` (which asserted fallback
+# builder behavior against ``FIXTURE_CASES``) has been removed. The
+# schema-level ``TestPlannerDecisionCanCarryLLMOutput`` class below
+# continues to use ``FIXTURE_CASES`` to verify that
+# ``ReaderAskPlannerDecision`` can represent an LLM-style decision for
+# each scenario.
 
 class TestPlannerDecisionCanCarryLLMOutput:
     """Verify that ReaderAskPlannerDecision can represent what an LLM planner
@@ -1163,39 +994,12 @@ class TestCombinedFieldConsumption:
         assert snapshot.working_set.dictionary_needed is True
         assert snapshot.working_set.record_insights_needed is False
 
-    def test_fallback_decision_context_scope_matches_working_set(self) -> None:
-        """Fallback decision's context_scope should match its working_set derivation."""
-        # With anchor → sentence scope
-        decision = _fallback_decision(
-            user_message="test",
-            entry_action="ask_about_this",
-            anchors=[ReaderAskAnchorRef(anchor_type="sentence", sentence_id="s1", selected_text="Test.")],
-        )
-        assert decision.context_scope == "sentence"
-
-        # Without anchor, no cross_record → article scope
-        decision = _fallback_decision(
-            user_message="test",
-            entry_action="ask_about_this",
-        )
-        assert decision.context_scope == "article"
-
-        # With cross_record attachment → cross_article scope
-        attachment = ReaderAskAttachment(
-            kind="record_ref",
-            subtype="related_record",
-            label="Related Article",
-            metadata=ReaderAskAttachmentMetadata(
-                source_surface="test",
-                record_id="00000000-0000-0000-0000-000000000002",
-            ),
-        )
-        decision = _fallback_decision(
-            user_message="test",
-            entry_action="ask_about_this",
-            attachments=[attachment],
-        )
-        assert decision.context_scope == "cross_article"
+    # Round 15: ``test_fallback_decision_context_scope_matches_working_set``
+    # has been removed. It asserted behavior of the deleted
+    # ``fallback_semantic_planner_decision`` builder. The
+    # ``context_scope`` derivation now lives behind
+    # ``build_minimal_resolved_intent`` and is covered by the
+    # ``TestBuildMinimalResolvedIntent`` suite.
 
 
 # ---------------------------------------------------------------------------

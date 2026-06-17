@@ -15,9 +15,14 @@ These tests verify the post-Round-12 state of the Ask Claread routing layer:
    ``planner_runtime.resolve_semantic_planning``.
 5. ``planner_first`` remains a valid ``PlannerRoute`` literal for
    backward-compatible trace serialization.
-6. Forcing ``planner_first`` route (monkeypatch) still triggers
-   ``resolve_semantic_planning`` — the legacy code path is intact and
-   was not damaged by the Round 13 cleanup.
+
+Round 15 update: the forced ``planner_first`` executable path
+(``resolve_semantic_planning`` call sites in ``service.py``) has been
+removed. ``planner_first`` survives only as a trace/historical value;
+there is no longer an executable branch that reaches
+``planner_runtime.resolve_semantic_planning``. The
+``TestForcedPlannerFirstStillCallsPlanner`` class that previously
+asserted the legacy path was intact has been deleted.
 
 Round 13 only audits and small-scale cleans; it does NOT delete
 ``planner.py`` / ``planner_runtime.py``. See
@@ -136,7 +141,6 @@ def _patch_service_boundaries(service_svc: Any, *, agent_loop_first: bool = True
         "stream_run": patch.object(service_svc, "stream_reader_ask_agent_run"),
         "build_deps": patch.object(service_svc, "build_reader_ask_agent_deps", return_value=MagicMock()),
         "resolve_agent": patch.object(service_svc, "resolve_reader_ask_agent", return_value=MagicMock()),
-        "replan_event": patch.object(service_svc, "build_reader_ask_replan_event", return_value=None),
         "settle": patch.object(service_svc, "_settle_reader_ask_reservation", new_callable=AsyncMock),
         "record_usage": patch.object(service_svc, "record_ai_usage_event", new_callable=AsyncMock),
         "cost_points": patch.object(service_svc, "compute_reader_ask_cost_points", return_value=5),
@@ -147,14 +151,9 @@ def _patch_service_boundaries(service_svc: Any, *, agent_loop_first: bool = True
         "repo": patch.object(service_svc, "repo"),
         "refund_points": patch.object(service_svc, "refund_reserved_points", new_callable=AsyncMock),
     }
-    if not agent_loop_first:
-        patches["planning_deps"] = patch.object(
-            service_svc, "build_reader_ask_resolve_planning_deps", return_value=MagicMock()
-        )
-        patches["resolve_planner_route"] = patch(
-            "app.services.reader_ask.service.planner_route_policy.resolve_planner_route",
-            return_value="planner_first",
-        )
+    # Round 15: agent_loop_first=False no longer patches planning_deps
+    # (planning_deps_factory.py deleted). The planner_first executable path
+    # has been removed; this parameter is retained for backward compat.
     return patches
 
 
@@ -527,80 +526,11 @@ class TestPlannerFirstBackwardCompatRound13:
 
 
 # ---------------------------------------------------------------------------
-# 6. Forced planner_first route still triggers resolve_semantic_planning
+# 6. Forced planner_first route — REMOVED in Round 15
 # ---------------------------------------------------------------------------
-
-
-class TestForcedPlannerFirstStillCallsPlanner:
-    """Round 13: when ``resolve_planner_route`` is monkeypatched to return
-    ``"planner_first"`` (the only way to reach the legacy path now), the
-    legacy code path must still call ``resolve_semantic_planning``.
-
-    This guards against accidental damage to the legacy path during the
-    Round 13 cleanup.
-    """
-
-    @pytest.mark.asyncio
-    async def test_forced_planner_first_calls_planner(self) -> None:
-        from app.services.reader_ask import service as service_svc
-
-        user_id = uuid4()
-        thread_id = uuid4()
-        record_id = uuid4()
-        record = _make_record_bundle(record_id)
-        model_option = _make_model_option()
-
-        body = service_svc.ReaderAskMessageStreamRequest(
-            content="继续",
-            page_identity=ReaderAskPageIdentity(record_id=str(record_id)),
-            attachments=[],
-            entry_action="ask_about_this",
-        )
-
-        # Build a mock planning result for the planner-first path
-        mock_planning_snapshot = MagicMock()
-        mock_planning_snapshot.resolved_intent = MagicMock(value="explain")
-        mock_planning_snapshot.resolved_context_input = MagicMock()
-        mock_planning_snapshot.disambiguation_state = None
-        mock_planning_snapshot.external_asset_disambiguation_state = None
-        mock_planning_snapshot.clarification_only = False
-        mock_planning_snapshot.clarification_mode = "none"
-        mock_planning_result = MagicMock()
-        mock_planning_result.planning_snapshot = mock_planning_snapshot
-        mock_planning_result.planner_usage_summary = {"total_tokens": 100}
-        mock_planning_result.reference_resolution = MagicMock()
-
-        # agent_loop_first=False → monkeypatch resolve_planner_route to
-        # return "planner_first" and patch planning_deps factory.
-        p = _patch_service_boundaries(service_svc, agent_loop_first=False)
-
-        with contextlib.ExitStack() as stack:
-            mocks = {k: stack.enter_context(v) for k, v in p.items()}
-
-            mocks["load_record"].return_value = record
-            mocks["resolve_model"].return_value = (
-                {"id": str(thread_id), "record_id": str(record_id)},
-                model_option,
-            )
-            mocks["resolve_anchors"].return_value = []
-            mocks["check_quota"].return_value = 100
-            mocks["reserve_points"].return_value = MagicMock(
-                reservation_id=uuid4(), total_points=10
-            )
-
-            _configure_common_mocks(
-                mocks["repo"], mocks["planner_runtime"], mocks["context_runtime"],
-                mocks["stream_run"], mocks["prompt_prep"], mocks["output_contract"],
-                mocks["post_process"], mocks["checkpoint"],
-                planner_result=mock_planning_result,
-            )
-
-            events = await _collect_sse_events(
-                service_svc.stream_thread_message(user_id, thread_id, body)
-            )
-
-            # The planner MUST have been called on the forced planner_first path.
-            mocks["planner_runtime"].resolve_semantic_planning.assert_called_once()
+# The TestForcedPlannerFirstStillCallsPlanner class has been removed in
+# Round 15 because the legacy planner_first executable path has been deleted
+# from service.py. planner_first survives only as a trace/historical value.
 
 
 # ---------------------------------------------------------------------------

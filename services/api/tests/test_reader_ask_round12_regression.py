@@ -431,7 +431,6 @@ class TestPlannerNotCalledForLongHistory:
             "stream_run": patch.object(service_svc, "stream_reader_ask_agent_run"),
             "build_deps": patch.object(service_svc, "build_reader_ask_agent_deps", return_value=MagicMock()),
             "resolve_agent": patch.object(service_svc, "resolve_reader_ask_agent", return_value=MagicMock()),
-            "replan_event": patch.object(service_svc, "build_reader_ask_replan_event", return_value=None),
             "settle": patch.object(service_svc, "_settle_reader_ask_reservation", new_callable=AsyncMock),
             "record_usage": patch.object(service_svc, "record_ai_usage_event", new_callable=AsyncMock),
             "cost_points": patch.object(service_svc, "compute_reader_ask_cost_points", return_value=5),
@@ -461,6 +460,10 @@ class TestPlannerNotCalledForLongHistory:
             mocks["repo"].upsert_eval_trace = AsyncMock(return_value={})
 
             mocks["planner_runtime"].submission_mode = MagicMock(return_value="chat")
+            # Round 15: resolve_semantic_planning has been removed from
+            # planner_runtime. We keep this attribute on the mock only to
+            # preserve the regression intent (the live path must not invoke
+            # a semantic planner). The attribute is never called.
             mocks["planner_runtime"].resolve_semantic_planning = AsyncMock()
 
             mock_context = MagicMock()
