@@ -43,7 +43,7 @@ Ask Claread 当前采用四层真相源：
 
 1. 读取请求与线程状态
 2. 解析 attachments / anchors / page identity
-3. `resolve_planner_route(...)` 始终返回 `"agent_loop_first"`；`planner_first` 仅作为 trace value 保留
+3. live service 不再调用 route resolver；`planner_first` 仅作为 trace value 保留
 4. 基于 attachments / anchors 构造 minimal context plan 与 minimal trace summary，不调用任何 planner LLM
 5. 若为 `selection_toolbar` 触发的快捷分析操作，先执行结构化句法生成
 6. 构建 answer runtime input contract（包含 overview、anchors、attachments、history、agent-loop hints）
@@ -78,7 +78,7 @@ Ask Claread 当前采用四层真相源：
 
 `ReaderAskPlanningSnapshot` 作为 typed dataclass 仍保留，用于 trace 与 eval 观测，但 `planner_decision` / `planner_validation_status` / `reference_needs` / `retrieval_needs` / `resolved_references` / `structured_asset_needs` / `structured_asset_resolution` / `working_set` / `disambiguation_state` / `external_asset_disambiguation_state` / `clarification_only` 等字段在 agent-loop-first 路径下不再由独立 planner LLM 产出，而是由主回答 agent 在 tool loop 内按需解析。
 
-`resolve_planner_route(...)` 始终返回 `"agent_loop_first"`；`"planner_first"` 仅作为 `PlannerRoute` Literal 与 trace value 保留，没有任何 live condition 触发它。
+live service 不再调用 route resolver；`"planner_first"` 仅作为 `PlannerRoute` Literal 与 trace value 保留，没有任何 live condition 触发它。`planner_route_policy.py` 仅保留历史 literal、兼容 helper 和 agent-loop hint predicate。
 
 ### Resolver
 

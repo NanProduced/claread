@@ -113,7 +113,6 @@ from app.services.analysis.credit_service import (
 from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import context_runtime as context_runtime_svc
-from app.services.reader_ask import planner_route_policy
 from app.services.reader_ask import output_contract as output_contract_svc
 from app.services.reader_ask import planner
 from app.services.reader_ask import post_process as post_process_svc
@@ -3023,19 +3022,9 @@ async def stream_thread_message(
             )
             return
 
-        planning_result = None
-        planner_route = planner_route_policy.resolve_planner_route(
-            entry_action=body.entry_action,
-            history_messages=history_messages,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            cross_record_toggle=runtime_state.cross_record_context_allowed,
-            latest_user_message=body.content,
-        )
-        # Round 15: agent-loop-first is the only live route. The legacy
-        # planner_first else-branch (resolve_semantic_planning) has been
-        # removed. ``planner_route`` is always ``"agent_loop_first"``;
-        # the ``planner_first`` literal survives only as a trace value.
+        # Agent-loop is the only live route. ``planner_first`` survives only
+        # as a historical trace value; service runtime no longer resolves a
+        # planner route for new runs.
         runtime_state.planner_skipped = True
         runtime_state.planner_route_used = "agent_loop_first"
         resolved_intent, resolved_intent_label = (
@@ -3046,213 +3035,10 @@ async def stream_thread_message(
         resolved_context_input = None
         disambiguation = None
         external_asset_disambiguation = None
-        clarification_only = False
-        clarification_mode = "none"
         submission_mode = planner_runtime_svc.submission_mode(
             entry_action=body.entry_action, attachments=attachments
         )
         planner_usage_summary = None
-        if clarification_only and clarification_mode == "must_clarify":
-            user_message = await repo.create_message(
-                thread_id=thread_id,
-                role="user",
-                status="completed",
-                content_md=body.content,
-                context_anchors=anchor_payload,
-                metadata=_user_message_metadata(
-                    resolved_intent=resolved_intent,
-                    resolved_context_input=resolved_context_input,
-                    submission_mode=submission_mode,
-                ),
-            )
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_THREAD_READY, stream_events_svc.thread_ready_payload(str(thread_id), str(record.record_id)))
-
-            assistant_md = post_process_svc.build_clarification_message(
-                local_anchor_required=planning_snapshot.context_plan.clarification_reason == "missing_required_context",
-                reference_resolution=reference_resolution,
-                structured_asset_resolution=planning_snapshot.structured_asset_resolution,
-            )
-            assistant_message = await repo.create_message(
-                thread_id=thread_id,
-                role="assistant",
-                status="completed",
-                content_md=assistant_md,
-                context_anchors=anchor_payload,
-                metadata=_assistant_message_metadata(
-                    resolved_intent=resolved_intent,
-                    resolved_context_input=resolved_context_input,
-                    submission_mode=submission_mode,
-                ),
-            )
-            turn_run = await repo.create_turn_run(
-                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
-                thread_id=thread_id,
-                user_id=user_id,
-                record_id=record.record_id,
-                turn_id=_parse_uuid(user_message["id"], "user message id is invalid"),
-                run_attempt=1,
-                supersedes_run_id=None,
-                status="completed",
-                resolved_intent=resolved_intent,
-            )
-            run_info = _build_run_info(turn_id=user_message["id"], run_id=turn_run["id"], attempt=1)
-            citations = [
-                _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
-                for anchor in resolved_anchors
-            ]
-            runtime_state = ReaderAskRuntimeState(
-                citations=list(citations),
-                source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
-            )
-            context_plan = planner.build_context_plan(
-                entry_action=body.entry_action,
-                attachments=attachments,
-                anchors=resolved_anchors,
-                runtime_state=runtime_state,
-                citations=citations,
-                reference_resolution=reference_resolution,
-                planning_snapshot=planning_snapshot,
-            )
-            evidence = _build_evidence_items(
-                attachments=attachments,
-                citations=citations,
-                current_record_id=str(record.record_id),
-                current_record_title=record.title,
-                reference_resolution=reference_resolution,
-                disambiguation=disambiguation,
-                external_asset_disambiguation=external_asset_disambiguation,
-                include_clarification=True,
-            )
-            trace_summary = planner.build_trace_summary(
-                runtime_state=runtime_state,
-                context_plan=context_plan,
-                planning_snapshot=planning_snapshot,
-                clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
-            )
-            computed_cost_points = compute_reader_ask_cost_points(
-                planner_usage_summary,
-                selected_model_option.billing,
-            )
-            billed_points = min(computed_cost_points, reservation.total_points)
-            unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
-            if unused_reservation.total_points > 0:
-                await refund_reserved_points(
-                    user_id,
-                    unused_reservation,
-                    metadata={
-                        "reason": "reader_ask_unused_reservation_clarification",
-                        "thread_id": str(thread_id),
-                        "record_id": str(record.record_id),
-                    },
-                )
-            usage_event_id = await record_ai_usage_event(
-                AIUsageEventCreate(
-                    usage_scope=USAGE_SCOPE_USER_BILLED,
-                    capability_code=CAPABILITY_READER_ASK,
-                    billing_mode=BILLING_MODE_USER_POINTS,
-                    status=STATUS_SUCCEEDED,
-                    user_id=user_id,
-                    record_id=record.record_id,
-                    workflow_name=_WORKFLOW_NAME,
-                    workflow_version=_WORKFLOW_VERSION,
-                    schema_version=_SCHEMA_VERSION,
-                    prompt_version=get_prompt_version(),
-                    usage_data=planner_usage_summary,
-                    latency_ms=int((perf_counter() - start_perf) * 1000),
-                    billed_points=billed_points,
-                    billing_policy_version=build_reader_ask_billing_metadata(
-                        planner_usage_summary,
-                        selected_model_option.billing,
-                    ).get(
-                        "billing_policy_version"
-                    ),
-                    metadata_json={
-                        "entrypoint": "/reader-ask/threads/{thread_id}/messages/stream",
-                        "thread_id": str(thread_id),
-                        "message_id": assistant_message["id"],
-                        "cross_record_context_used": False,
-                        "anchor_count": len(resolved_anchors),
-                        "clarification_only": True,
-                        "reservation_points": selected_model_option.billing.reserved_points,
-                        "computed_cost_points": computed_cost_points,
-                        **_reader_ask_model_metadata(selected_model_option),
-                    },
-                )
-            )
-            output = _build_user_visible_output(
-                content_md=assistant_md,
-                submission_mode=submission_mode,
-                resolved_intent=resolved_intent,
-                citations=citations,
-                action_proposals=[],
-                tool_trace=[],
-                evidence=evidence,
-                trace_summary=trace_summary,
-                disambiguation=disambiguation,
-                external_asset_disambiguation=external_asset_disambiguation,
-                response_cards=[],
-                usage_summary=planner_usage_summary,
-                billed_points=billed_points,
-                resolved_context=planner.build_resolved_context_summary(
-                    record_id=str(record.record_id),
-                    record_title=record.title,
-                    anchors=resolved_anchors,
-                    explicit_attachment_count=len(attachments),
-                    runtime_state=runtime_state,
-                    used_cross_record_context=False,
-                    citations=citations,
-                ),
-                context_plan=context_plan,
-                resolved_context_input=resolved_context_input,
-                run_info=run_info,
-                supplement_candidates=[],
-                persisted_supplements=[],
-            )
-            payload = _build_completed_payload(
-                message_id=assistant_message["id"],
-                thread_id=str(thread_id),
-                output=output,
-                usage_event_id=usage_event_id,
-            )
-            assistant_metadata = _assistant_message_metadata(
-                resolved_intent=resolved_intent,
-                run_info=run_info,
-                resolved_context_input=resolved_context_input,
-                submission_mode=submission_mode,
-            )
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_STARTED, stream_events_svc.message_started_payload(assistant_message["id"], user_message["id"]))
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_DELTA, stream_events_svc.message_delta_payload(assistant_message["id"], assistant_md))
-            await repo.update_message(
-                message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
-                status="completed",
-                content_md=assistant_md,
-                context_anchors=anchor_payload,
-                citations=[citation.model_dump(mode="json") for citation in citations],
-                action_proposals=[],
-                tool_trace=[],
-                metadata=assistant_metadata,
-                usage_event_id=usage_event_id,
-                current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-            )
-            await repo.update_turn_run(
-                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-                status="completed",
-                resolved_intent=resolved_intent,
-                user_visible_output_json=output.model_dump(mode="json"),
-                usage_summary_json=planner_usage_summary,
-                usage_event_id=usage_event_id,
-                completed_at=datetime.now(UTC),
-            )
-            await _upsert_eval_trace_record(
-                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-                planning_snapshot=planning_snapshot,
-                runtime_state=runtime_state,
-                context_plan=context_plan,
-                trace_summary=trace_summary,
-            )
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_COMPLETED, payload.model_dump(mode="json"))
-            return
-
         user_message = await repo.create_message(
             thread_id=thread_id,
             role="user",
@@ -3325,18 +3111,7 @@ async def stream_thread_message(
             planner_route_used=_prev_planner_route,
         )
         query_seed = _query_seed(body.content, resolved_anchors)
-        if planning_snapshot is None:
-            # Agent-loop-first safety: a None snapshot is legal iff planner_skipped
-            # is True. Legacy planner-first paths must always produce a
-            # snapshot.
-            if not runtime_state.planner_skipped:
-                raise RuntimeError("planning snapshot is required")
-            # Round 9: respect cross_record_toggle from runtime_state instead
-            # of hardcoding False. The agent-loop-first path needs to know
-            # whether the user allowed cross-record context.
-            cross_record_context_allowed = runtime_state.cross_record_context_allowed
-        else:
-            cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+        cross_record_context_allowed = runtime_state.cross_record_context_allowed
 
         resolved = resolve_reader_ask_agent(selected_model_option.selection)
         agent = resolved.agent
@@ -3478,9 +3253,7 @@ async def stream_thread_message(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
-            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else (
-                "can_answer_with_followup" if runtime_state.deictic_clarification_hint else "none"
-            ),
+            clarification_mode="can_answer_with_followup" if runtime_state.deictic_clarification_hint else "none",
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -3676,11 +3449,9 @@ async def stream_thread_message(
 
         # Round 14: agent-loop repair — when the main answer is
         # degenerate, attempt a single agent-loop repair (re-run answer
-        # agent with repair hint) instead of falling back to
-        # planner_runtime.resolve_semantic_planning(). Forced planner_first
-        # legacy path keeps the existing replan logic below.
+        # agent with repair hint) instead of falling back to a planner.
         _agent_loop_repair_eligible = (
-            planner_route == "agent_loop_first"
+            runtime_state.planner_route_used == "agent_loop_first"
             and is_degenerate_answer(final_content_md)
             and not stream_outcome.interrupted
         )
@@ -4186,19 +3957,9 @@ async def retry_thread_message(
             )
             return
 
-        planning_result = None
-        planner_route = planner_route_policy.resolve_planner_route(
-            entry_action=body.entry_action,
-            history_messages=history_messages,
-            attachments=attachments,
-            anchors=resolved_anchors,
-            cross_record_toggle=runtime_state.cross_record_context_allowed,
-            latest_user_message=body.content,
-        )
-        # Round 15: agent-loop-first is the only live route. The legacy
-        # planner_first else-branch (resolve_semantic_planning) has been
-        # removed. ``planner_route`` is always ``"agent_loop_first"``;
-        # the ``planner_first`` literal survives only as a trace value.
+        # Agent-loop is the only live route. ``planner_first`` survives only
+        # as a historical trace value; service runtime no longer resolves a
+        # planner route for retry runs.
         runtime_state.planner_skipped = True
         runtime_state.planner_route_used = "agent_loop_first"
         resolved_intent, resolved_intent_label = (
@@ -4209,8 +3970,6 @@ async def retry_thread_message(
         resolved_context_input = None
         disambiguation = None
         external_asset_disambiguation = None
-        clarification_only = False
-        clarification_mode = "none"
         submission_mode = planner_runtime_svc.submission_mode(
             entry_action=body.entry_action, attachments=attachments
         )
@@ -4236,178 +3995,6 @@ async def retry_thread_message(
             attempt=int(run_info.get("run_attempt") or 1),
             supersedes_run_id=str(run_info.get("supersedes_run_id")) if run_info.get("supersedes_run_id") else None,
         )
-        if planning_snapshot is not None:
-            clarification_only = planning_snapshot.clarification_only
-            clarification_mode = planning_snapshot.clarification_mode
-        else:
-            clarification_only = False
-            clarification_mode = "none"
-        if clarification_only and clarification_mode == "must_clarify":
-            assistant_md = post_process_svc.build_clarification_message(
-                local_anchor_required=planning_snapshot.context_plan.clarification_reason == "missing_required_context",
-                reference_resolution=reference_resolution,
-                structured_asset_resolution=planning_snapshot.structured_asset_resolution,
-            )
-            citations = [
-                _anchor_to_citation(anchor, record_id=str(record.record_id), record_title=record.title)
-                for anchor in resolved_anchors
-            ]
-            runtime_state = ReaderAskRuntimeState(
-                citations=list(citations),
-                source_labels={"current_record", *({"current_anchor"} if resolved_anchors else set())},
-            )
-            resolved_context = planner.build_resolved_context_summary(
-                record_id=str(record.record_id),
-                record_title=record.title,
-                anchors=resolved_anchors,
-                explicit_attachment_count=len(attachments),
-                runtime_state=runtime_state,
-                used_cross_record_context=False,
-                citations=citations,
-            )
-            context_plan = planner.build_context_plan(
-                entry_action=body.entry_action,
-                attachments=attachments,
-                anchors=resolved_anchors,
-                runtime_state=runtime_state,
-                citations=citations,
-                reference_resolution=reference_resolution,
-                planning_snapshot=planning_snapshot,
-            )
-            evidence = _build_evidence_items(
-                attachments=attachments,
-                citations=citations,
-                current_record_id=str(record.record_id),
-                current_record_title=record.title,
-                reference_resolution=reference_resolution,
-                disambiguation=disambiguation,
-                external_asset_disambiguation=external_asset_disambiguation,
-                include_clarification=True,
-            )
-            trace_summary = planner.build_trace_summary(
-                runtime_state=runtime_state,
-                context_plan=context_plan,
-                planning_snapshot=planning_snapshot,
-                clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else "must_clarify",
-            )
-            computed_cost_points = compute_reader_ask_cost_points(
-                planner_usage_summary,
-                selected_model_option.billing,
-            )
-            billed_points = min(computed_cost_points, reservation.total_points)
-            unused_reservation = recovery_svc.build_unused_reservation(reservation, billed_points)
-            if unused_reservation.total_points > 0:
-                await refund_reserved_points(
-                    user_id,
-                    unused_reservation,
-                    metadata={
-                        "reason": "reader_ask_unused_reservation_clarification",
-                        "thread_id": str(thread_id),
-                        "record_id": str(record.record_id),
-                    },
-                )
-            usage_event_id = await record_ai_usage_event(
-                AIUsageEventCreate(
-                    usage_scope=USAGE_SCOPE_USER_BILLED,
-                    capability_code=CAPABILITY_READER_ASK,
-                    billing_mode=BILLING_MODE_USER_POINTS,
-                    status=STATUS_SUCCEEDED,
-                    user_id=user_id,
-                    record_id=record.record_id,
-                    workflow_name=_WORKFLOW_NAME,
-                    workflow_version=_WORKFLOW_VERSION,
-                    schema_version=_SCHEMA_VERSION,
-                    prompt_version=get_prompt_version(),
-                    usage_data=planner_usage_summary,
-                    latency_ms=int((perf_counter() - start_perf) * 1000),
-                    billed_points=billed_points,
-                    billing_policy_version=build_reader_ask_billing_metadata(
-                        planner_usage_summary,
-                        selected_model_option.billing,
-                    ).get(
-                        "billing_policy_version"
-                    ),
-                    metadata_json={
-                        "entrypoint": "/reader-ask/threads/{thread_id}/messages/retry",
-                        "thread_id": str(thread_id),
-                        "message_id": str(message_id),
-                        "cross_record_context_used": False,
-                        "anchor_count": len(resolved_anchors),
-                        "clarification_only": True,
-                        "retry_message_id": str(message_id),
-                        "reservation_points": selected_model_option.billing.reserved_points,
-                        "computed_cost_points": computed_cost_points,
-                        **_reader_ask_model_metadata(selected_model_option),
-                    },
-                )
-            )
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_THREAD_READY, stream_events_svc.thread_ready_payload(str(thread_id), str(record.record_id)))
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_STARTED, stream_events_svc.message_started_payload(assistant_message["id"], user_message["id"]))
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_DELTA, stream_events_svc.message_delta_payload(assistant_message["id"], assistant_md))
-            await repo.update_message(
-                message_id=message_id,
-                status="completed",
-                content_md=assistant_md,
-                context_anchors=anchor_payload,
-                citations=[citation.model_dump(mode="json") for citation in citations],
-                action_proposals=[],
-                tool_trace=[],
-                metadata=_assistant_message_metadata(
-                    resolved_intent=resolved_intent,
-                    run_info=run_info,
-                    run_history=run_history,
-                    resolved_context_input=resolved_context_input,
-                    submission_mode=submission_mode,
-                ),
-                usage_event_id=usage_event_id,
-                current_turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-            )
-            output = _build_user_visible_output(
-                content_md=assistant_md,
-                submission_mode=submission_mode,
-                resolved_intent=resolved_intent,
-                citations=citations,
-                action_proposals=[],
-                tool_trace=[],
-                evidence=evidence,
-                trace_summary=trace_summary,
-                disambiguation=disambiguation,
-                external_asset_disambiguation=external_asset_disambiguation,
-                response_cards=[],
-                usage_summary=planner_usage_summary,
-                billed_points=billed_points,
-                resolved_context=resolved_context,
-                context_plan=context_plan,
-                resolved_context_input=resolved_context_input,
-                run_info=run_info,
-                supplement_candidates=[],
-                persisted_supplements=persisted_supplements_json,
-            )
-            payload = _build_completed_payload(
-                message_id=str(message_id),
-                thread_id=str(thread_id),
-                output=output,
-                usage_event_id=usage_event_id,
-            )
-            await repo.update_turn_run(
-                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-                status="completed",
-                resolved_intent=resolved_intent,
-                user_visible_output_json=output.model_dump(mode="json"),
-                usage_summary_json=planner_usage_summary,
-                usage_event_id=usage_event_id,
-                completed_at=datetime.now(UTC),
-            )
-            await _upsert_eval_trace_record(
-                turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
-                planning_snapshot=planning_snapshot,
-                runtime_state=runtime_state,
-                context_plan=context_plan,
-                trace_summary=trace_summary,
-            )
-            yield stream_events_svc.encode_sse(stream_events_svc.EVENT_MESSAGE_COMPLETED, payload.model_dump(mode="json"))
-            return
-
         assistant_message = await repo.update_message(
             message_id=message_id,
             status="streaming",
@@ -4443,18 +4030,7 @@ async def retry_thread_message(
             planner_route_used=_prev_planner_route,
         )
         query_seed = _query_seed(body.content, resolved_anchors)
-        if planning_snapshot is None:
-            # Agent-loop-first safety: a None snapshot is legal iff planner_skipped
-            # is True. Legacy planner-first paths must always produce a
-            # snapshot.
-            if not runtime_state.planner_skipped:
-                raise RuntimeError("planning snapshot is required")
-            # Round 9: respect cross_record_toggle from runtime_state instead
-            # of hardcoding False. The agent-loop-first path needs to know
-            # whether the user allowed cross-record context.
-            cross_record_context_allowed = runtime_state.cross_record_context_allowed
-        else:
-            cross_record_context_allowed = planning_snapshot.retrieval_needs == "known_reference_only"
+        cross_record_context_allowed = runtime_state.cross_record_context_allowed
 
         resolved = resolve_reader_ask_agent(selected_model_option.selection)
         agent = resolved.agent
@@ -4596,9 +4172,7 @@ async def retry_thread_message(
             runtime_state=runtime_state,
             context_plan=context_plan,
             planning_snapshot=planning_snapshot,
-            clarification_mode=planning_snapshot.clarification_mode if planning_snapshot else (
-                "can_answer_with_followup" if runtime_state.deictic_clarification_hint else "none"
-            ),
+            clarification_mode="can_answer_with_followup" if runtime_state.deictic_clarification_hint else "none",
         )
         await _upsert_eval_trace_record(
             turn_run_id=_parse_uuid(turn_run["id"], "turn run id is invalid"),
@@ -4795,11 +4369,9 @@ async def retry_thread_message(
 
         # Round 14: agent-loop repair — when the main answer is
         # degenerate, attempt a single agent-loop repair (re-run answer
-        # agent with repair hint) instead of falling back to
-        # planner_runtime.resolve_semantic_planning(). Forced planner_first
-        # legacy path keeps the existing replan logic below.
+        # agent with repair hint) instead of falling back to a planner.
         _agent_loop_repair_eligible = (
-            planner_route == "agent_loop_first"
+            runtime_state.planner_route_used == "agent_loop_first"
             and is_degenerate_answer(final_content_md)
             and not stream_outcome.interrupted
         )

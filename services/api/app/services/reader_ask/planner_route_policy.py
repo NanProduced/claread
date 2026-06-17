@@ -1,9 +1,8 @@
-"""Route policy and planner-route helpers for Ask Claread.
+"""Route-policy compatibility helpers for Ask Claread.
 
-Round 3 flips the default from planner-first to agent-loop-first. The route
-policy determines whether a request should use the agent-loop path (model
-decides context on demand via tools) or fall back to the legacy planner-first
-path (planner pre-fetches working set before the answer agent runs).
+The live service runtime is agent-loop-only and no longer calls a route
+resolver. This module retains the historical ``PlannerRoute`` literal plus
+the hint predicate helpers used by ``build_agent_loop_context``.
 
 Round 8 migrates the deictic-without-anchor fallback from planner_first to
 agent_loop_first with a clarification hint, so the agent asks the user to
@@ -42,10 +41,11 @@ Route values:
   condition. The code path is preserved for backward-compatible trace
   serialization and future emergency fallback.
 
-Decision logic lives in :func:`resolve_planner_route`.
+``resolve_planner_route`` is retained only as a compatibility helper for older
+route-policy tests and always returns ``"agent_loop_first"``. It is not called
+by ``service.py``.
 
-See ``docs/tmp/ask-claread/TMP-ask-claread-agent-loop-design-2026-06-12.md``
-§Round 3 for the design rationale.
+See ``docs/architecture/ask-claread.md`` for the current architecture.
 """
 
 from __future__ import annotations

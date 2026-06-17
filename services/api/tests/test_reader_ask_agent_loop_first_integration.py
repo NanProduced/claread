@@ -448,10 +448,10 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
     Callers should enter all patches, then configure repo mocks.
     ``include_planning_deps`` is accepted for backward compatibility but
     no longer patches anything (planning_deps_factory.py deleted in Round 15).
-    If ``agent_loop_first`` is True, ``resolve_planner_route`` returns
-    ``"agent_loop_first"``; otherwise ``"planner_first"``.
+    ``agent_loop_first`` is accepted for backward compatibility but no longer
+    changes service behavior; service runtime is always agent-loop-only.
     """
-    route = "agent_loop_first" if agent_loop_first else "planner_first"
+    _ = include_planning_deps, agent_loop_first
     patches = {
         "load_record": patch.object(service_svc, "_load_record_bundle", new_callable=AsyncMock),
         "resolve_model": patch.object(service_svc, "_resolve_thread_model_option", new_callable=AsyncMock),
@@ -472,10 +472,6 @@ def _patch_service_boundaries(service_svc: Any, *, include_planning_deps: bool =
         "post_process": patch.object(service_svc, "post_process_svc"),
         "checkpoint": patch.object(service_svc, "stream_checkpoint_svc"),
         "repo": patch.object(service_svc, "repo"),
-        "resolve_planner_route": patch(
-            "app.services.reader_ask.service.planner_route_policy.resolve_planner_route",
-            return_value=route,
-        ),
         "refund_points": patch.object(service_svc, "refund_reserved_points", new_callable=AsyncMock),
     }
     return patches
@@ -590,15 +586,9 @@ class TestStreamThreadMessageAgentLoopFirst:
                 service_svc.stream_thread_message(user_id, thread_id, body)
             )
 
-            # The planner must NOT have been called
-            mocks["resolve_planner_route"].assert_called_once()
-            gate_kwargs = mocks["resolve_planner_route"].call_args.kwargs
-            assert gate_kwargs["entry_action"] == "ask_about_this"
-            assert gate_kwargs["history_messages"] == []
-            assert gate_kwargs["attachments"] == []
-            assert gate_kwargs["anchors"] == [resolved_anchor]
-            assert gate_kwargs["cross_record_toggle"] is False
-            assert gate_kwargs["latest_user_message"] == "这篇文章想表达什么？"
+            assert events
+            # Round 19: service runtime no longer calls a route resolver at all.
+            assert "resolve_planner_route" not in mocks
             mocks["planner_runtime"].resolve_semantic_planning.assert_not_called()
 
     # Round 15: test_planner_first_path_still_calls_planner_when_forced has
@@ -682,13 +672,7 @@ class TestRetryThreadMessageAgentLoopFirst:
                 service_svc.retry_thread_message(user_id, thread_id, message_id)
             )
 
-            # The planner must NOT have been called
-            mocks["resolve_planner_route"].assert_called_once()
-            gate_kwargs = mocks["resolve_planner_route"].call_args.kwargs
-            assert gate_kwargs["entry_action"] == "ask_about_this"
-            assert gate_kwargs["history_messages"] == [user_msg]
-            assert gate_kwargs["attachments"] == []
-            assert gate_kwargs["anchors"] == []
-            assert gate_kwargs["cross_record_toggle"] is False
-            assert gate_kwargs["latest_user_message"] == "这篇文章想表达什么？"
+            assert events
+            # Round 19: service runtime no longer calls a route resolver at all.
+            assert "resolve_planner_route" not in mocks
             mocks["planner_runtime"].resolve_semantic_planning.assert_not_called()
